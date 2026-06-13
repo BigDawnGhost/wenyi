@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+state/
+*.db
+.DS_Store
+*.zh.epub
+*.zh.txt
+*.txt

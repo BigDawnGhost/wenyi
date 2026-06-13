@@ -1,0 +1,49 @@
+# trans-novel 配置（日译中）
+# 修改后无需改代码；模型 ID、档位、流水线开关都在这里。
+
+language:
+  source: ja          # 原文语言
+  target: zh          # 译文语言
+
+# ── LLM：DeepSeek 双档（经 OpenAI SDK 调 https://api.deepseek.com）─────────
+# 两档都开 thinking 模式；强档 effort 高求质量，廉价档 effort 低控成本。
+llm:
+  provider: deepseek            # deepseek | fake（fake 用于离线测试，不发网络请求）
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY # 从该环境变量读取 key
+  timeout: 600                  # 单次请求超时（秒），思考模式耗时较长
+  max_retries: 4                # 失败重试次数（指数退避）
+  tiers:
+    strong:
+      model: deepseek-v4-pro    # 翻译 / 润色 / 全局分析
+      reasoning_effort: high
+      thinking: true
+    cheap:
+      model: deepseek-v4-flash  # 术语抽取 / 审校 / 一致性 QA / 回译抽检
+      reasoning_effort: low
+      thinking: true
+
+# ── 切分 ─────────────────────────────────────────────────────────────────
+segment:
+  # 一个翻译批次（句群）的目标大小，按字符估算 token（日文≈1字符1token）。
+  max_chars_per_batch: 1800
+  # 单个段落超过该长度时按句子再切，避免超长段。
+  max_chars_per_segment: 1200
+
+# ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
+pipeline:
+  review: true              # 审校（廉价档）：漏译/误译/术语/人称检查
+  review_retry_limit: 2     # 审校发现严重问题时的回炉重译上限
+  polish: true              # 润色（强档）：中文文学性二次加工
+  backtranslate_sample: 0.05  # 回译抽检比例（0 关闭）
+  consistency_qa: true      # 全书跨章一致性收尾扫描
+  rolling_context_segments: 6 # 注入的前文译文尾段数
+
+# ── 敬称策略（日译中专用）──────────────────────────────────────────────
+honorific:
+  # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
+  strategy: keep_style
+
+# ── 路径 ─────────────────────────────────────────────────────────────────
+paths:
+  state_dir: state          # 运行状态、各章中间产物、术语库
