@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import tempfile
 import unittest
 
 from trans_novel.config import Config
 from trans_novel.llm.base import FakeClient
-from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.runstore import STATUS_DONE
+from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
+from trans_novel.pipeline.runstore import RunStore, slugify, STATUS_DONE, STATUS_PENDING
 from tests.sample_data import write_sample_txt
 from tests.fake_llm import routing_handler
+
+
+def _translated_para_count(calls) -> int:
+    """统计送进翻译模型的源段总数（按编号行计）。"""
+    n = 0
+    for c in calls:
+        if "文学翻译" in c["messages"][0]["content"]:
+            n += len(re.findall(r"^\[(\d+)\]", c["messages"][-1]["content"], re.M))
+    return n
 
 
 def _config(state_dir: str):
@@ -60,7 +71,7 @@ class TestOrchestrator(unittest.TestCase):
             orch2 = Orchestrator(cfg, client=client2)
             orch2.run(txt)  # resume 语义
             translate_calls = [c for c in client2.calls
-                               if "资深的日译中文学翻译" in c["messages"][0]["content"]]
+                               if "文学翻译" in c["messages"][0]["content"]]
             self.assertEqual(len(translate_calls), 0)
 
     def test_resume_after_partial(self):
@@ -84,6 +95,58 @@ class TestOrchestrator(unittest.TestCase):
             store2 = orch2.run(txt)
             m2 = store2.load_manifest()
             self.assertTrue(all(c["status"] == STATUS_DONE for c in m2["chapters"]))
+
+
+class TestSegmentLevelResume(unittest.TestCase):
+    def _tr_handler(self, tag):
+        """返回带标记的翻译 handler（译文形如 {tag}译{i}），其余走默认路由。"""
+        def handler(messages, tier, json_mode):
+            if "文学翻译" in messages[0]["content"]:
+                n = len(re.findall(r"^\[(\d+)\]", messages[-1]["content"], re.M))
+                return json.dumps({"translations": [f"{tag}译{i}" for i in range(n)]},
+                                  ensure_ascii=False)
+            return routing_handler(messages, tier, json_mode)
+        return handler
+
+    def test_resume_skips_done_segments_keeps_their_text(self):
+        """中断后续跑：已译完的段原样保留、不重翻；只补译未完成的段。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.segment.max_chars_per_batch = 8     # 每段≈独立批，便于精确续跑
+            cfg.pipeline.polish = False             # 保留翻译标记，便于断言（与续跑无关）
+
+            # 第一次：用 R1 译完第 0 章
+            c1 = FakeClient(handler=self._tr_handler("R1"))
+            store = Orchestrator(cfg, client=c1).run(txt, only_chapter=0)
+            ch = store.load_chapter(0)
+            self.assertTrue(all(s.target and s.target.startswith("R1") for s in ch.text_segments))
+
+            # 模拟中断：清空最后一段译文、章状态改回 pending
+            ch.segments[-1].target = ""
+            store.save_chapter(ch)
+            store.set_chapter_status(0, STATUS_PENDING)
+
+            # 第二次：用 R2 续跑——只应补译被清空的那 1 段
+            c2 = FakeClient(handler=self._tr_handler("R2"))
+            Orchestrator(cfg, client=c2).run(txt, only_chapter=0)
+            self.assertEqual(_translated_para_count(c2.calls), 1)   # 仅 1 段被重翻
+
+            ch2 = store.load_chapter(0)
+            # 之前已译的段仍是 R1（未被跨位置复用、也未重翻），补译段是 R2
+            self.assertTrue(ch2.text_segments[0].target.startswith("R1"))
+            self.assertTrue(ch2.text_segments[-1].target.startswith("R2"))
+
+
+class TestLangNormalize(unittest.TestCase):
+    def test_normalize_lang(self):
+        self.assertEqual(_normalize_lang("Japanese"), "ja")
+        self.assertEqual(_normalize_lang("日语"), "ja")
+        self.assertEqual(_normalize_lang("RU"), "ru")
+        self.assertEqual(_normalize_lang("russian"), "ru")
+        self.assertEqual(_normalize_lang("fr"), "fr")
+        self.assertEqual(_normalize_lang(""), "")
 
 
 if __name__ == "__main__":

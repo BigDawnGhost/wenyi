@@ -1,61 +1,59 @@
-"""配置加载。读取 config.yaml，提供带默认值的类型化访问。"""
+"""配置加载。读取 config.yaml，提供带默认值的类型化访问（pydantic v2）。"""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field
 
 
-@dataclass
-class TierConfig:
+class TierConfig(BaseModel):
     model: str
     reasoning_effort: str = "high"
     thinking: bool = True
 
 
-@dataclass
-class LLMConfig:
+class LLMConfig(BaseModel):
     provider: str = "deepseek"
     base_url: str = "https://api.deepseek.com"
     api_key_env: str = "DEEPSEEK_API_KEY"
     timeout: int = 600
     max_retries: int = 4
-    tiers: dict[str, TierConfig] = field(default_factory=dict)
+    tiers: dict[str, TierConfig] = Field(default_factory=dict)
 
     @property
     def api_key(self) -> str | None:
         return os.environ.get(self.api_key_env)
 
 
-@dataclass
-class SegmentConfig:
+class SegmentConfig(BaseModel):
     max_chars_per_batch: int = 1800
     max_chars_per_segment: int = 1200
 
 
-@dataclass
-class PipelineConfig:
+class PipelineConfig(BaseModel):
     review: bool = True
-    review_retry_limit: int = 2
-    polish: bool = True
+    review_retry_limit: int = 2      # 已弃用：严重项不再自动重译（改人工介入）
+    polish: bool = False             # 默认关：润色=用强档把全书再翻一遍，最烧钱；需要时显式开
     backtranslate_sample: float = 0.05
     consistency_qa: bool = True
     rolling_context_segments: int = 6
 
 
-@dataclass
-class Config:
-    source_lang: str = "ja"
+class Config(BaseModel):
+    source_lang: str = "auto"        # auto | ja | en | …（auto 时按正文脚本自动检测）
     target_lang: str = "zh"
-    llm: LLMConfig = field(default_factory=LLMConfig)
-    segment: SegmentConfig = field(default_factory=SegmentConfig)
-    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    segment: SegmentConfig = Field(default_factory=SegmentConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     honorific_strategy: str = "keep_style"
+    concurrency: int = 1             # 已弃用：章内现为串行（逐批刷新上下文保证连贯），仅兼容保留
+    punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
+    glossary_audit: bool = True      # 收尾做术语 AI 审计统一（改写正文）
     state_dir: str = "state"
-    raw: dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "Config":
@@ -68,11 +66,7 @@ class Config:
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})
         tiers = {
-            name: TierConfig(
-                model=t["model"],
-                reasoning_effort=t.get("reasoning_effort", "high"),
-                thinking=t.get("thinking", True),
-            )
+            name: TierConfig.model_validate(t)
             for name, t in (llm_raw.get("tiers", {}) or {}).items()
         }
         llm = LLMConfig(
@@ -83,27 +77,19 @@ class Config:
             max_retries=llm_raw.get("max_retries", 4),
             tiers=tiers,
         )
-        seg_raw = raw.get("segment", {})
-        segment = SegmentConfig(
-            max_chars_per_batch=seg_raw.get("max_chars_per_batch", 1800),
-            max_chars_per_segment=seg_raw.get("max_chars_per_segment", 1200),
-        )
-        pipe_raw = raw.get("pipeline", {})
-        pipeline = PipelineConfig(
-            review=pipe_raw.get("review", True),
-            review_retry_limit=pipe_raw.get("review_retry_limit", 2),
-            polish=pipe_raw.get("polish", True),
-            backtranslate_sample=pipe_raw.get("backtranslate_sample", 0.05),
-            consistency_qa=pipe_raw.get("consistency_qa", True),
-            rolling_context_segments=pipe_raw.get("rolling_context_segments", 6),
-        )
+        segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
+        pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
+        punct = raw.get("punctuation", {}) or {}
         return cls(
-            source_lang=lang.get("source", "ja"),
+            source_lang=lang.get("source", "auto"),
             target_lang=lang.get("target", "zh"),
             llm=llm,
             segment=segment,
             pipeline=pipeline,
             honorific_strategy=raw.get("honorific", {}).get("strategy", "keep_style"),
+            concurrency=int(raw.get("concurrency", 1)),  # 已弃用，章内串行
+            punctuation_normalize=bool(punct.get("normalize", True)),
+            glossary_audit=bool(raw.get("glossary_audit", True)),
             state_dir=raw.get("paths", {}).get("state_dir", "state"),
             raw=raw,
         )

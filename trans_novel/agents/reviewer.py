@@ -10,13 +10,16 @@ from typing import Any
 
 from ..config import Config
 from ..llm.base import LLMClient
-from . import prompts
+from . import langprofile, prompts
 
-_BACKTRANS_COMPARE_SYSTEM = (
-    "你是翻译保真度核查员。给定原文（日文）与由译文回译得到的日文，"
-    "判断两者语义是否一致。只报实质性偏离（信息缺失、含义改变），忽略措辞差异。"
-    '仅输出 JSON：{"issues":[{"index":整数,"detail":"偏离描述"}]}，无偏离则 {"issues":[]}。'
-)
+
+def _backtrans_compare_system(src: str) -> str:
+    lbl = langprofile.label(src)
+    return (
+        f"你是翻译保真度核查员。给定原文（{lbl}）与由译文回译得到的{lbl}，"
+        "判断两者语义是否一致。只报实质性偏离（信息缺失、含义改变），忽略措辞差异。"
+        '仅输出 JSON：{"issues":[{"index":整数,"detail":"偏离描述"}]}，无偏离则 {"issues":[]}。'
+    )
 
 
 class Reviewer:
@@ -49,16 +52,6 @@ class Reviewer:
             return []
         issues = data.get("issues", []) if isinstance(data, dict) else (data or [])
         return [i for i in issues if isinstance(i, dict)]
-
-    @staticmethod
-    def severe_indices(issues: list[dict[str, Any]]) -> set[int]:
-        """需要回炉重译的严重问题段号（漏译/误译/人称错误）。"""
-        severe = {"missing", "mistranslation", "pronoun"}
-        out: set[int] = set()
-        for i in issues:
-            if i.get("type") in severe and isinstance(i.get("index"), int):
-                out.add(i["index"])
-        return out
 
 
 class BackTranslator:
@@ -97,7 +90,7 @@ class BackTranslator:
         )
         try:
             data = self.client.complete_json(
-                [{"role": "system", "content": _BACKTRANS_COMPARE_SYSTEM},
+                [{"role": "system", "content": _backtrans_compare_system(self.src)},
                  {"role": "user", "content": pairs}],
                 tier="cheap",
             )

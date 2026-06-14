@@ -2,8 +2,8 @@
 
 设计要点：
 - 双档 tier："strong"（deepseek-v4-pro，翻译/润色/分析）与 "cheap"
-  （deepseek-v4-flash，术语/审校/QA/回译）；两档都开 thinking 模式，
-  effort 不同以平衡质量与成本。
+  （deepseek-v4-flash，术语/审校/QA/回译）；两档都开 thinking 模式、
+  reasoning_effort 都用 high，成本差异只靠模型（flash vs pro）区分。
 - complete() 返回纯文本；complete_json() 强制 JSON 输出并 loose 解析。
 - DeepSeekClient 经由 OpenAI SDK 调 https://api.deepseek.com，openai 惰性导入；
   未装 openai 时仍可用 FakeClient 跑通离线流程（切分/对齐/术语库/状态机）。
@@ -13,9 +13,15 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
+
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config import Config, LLMConfig
 
@@ -133,17 +139,18 @@ class DeepSeekClient(LLMClient):
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
-        last_err: Exception | None = None
-        for attempt in range(self.cfg.max_retries + 1):
-            try:
-                resp = client.chat.completions.create(**kwargs)
-                return resp.choices[0].message.content or ""
-            except Exception as e:  # 网络/限流/超时 → 指数退避重试
-                last_err = e
-                if attempt >= self.cfg.max_retries:
-                    break
-                time.sleep(min(2 ** attempt, 30))
-        raise RuntimeError(f"DeepSeek 调用失败（重试 {self.cfg.max_retries} 次）：{last_err}")
+        # 网络/限流/超时 → tenacity 指数退避重试（最多 max_retries 次重试）
+        @retry(
+            stop=stop_after_attempt(self.cfg.max_retries + 1),
+            wait=wait_exponential(multiplier=1, max=30),
+            retry=retry_if_exception_type(Exception),
+            reraise=True,
+        )
+        def _call() -> str:
+            resp = client.chat.completions.create(**kwargs)
+            return resp.choices[0].message.content or ""
+
+        return _call()
 
 
 # ── 离线 Fake（测试 / 不发网络请求）───────────────────────────────────────

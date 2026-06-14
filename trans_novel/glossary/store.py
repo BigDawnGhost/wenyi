@@ -103,6 +103,9 @@ class GlossaryStore:
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
+        # 并发写等待，避免 Web 编辑与翻译 worker 同写时报 "database is locked"
+        self.conn.execute("PRAGMA busy_timeout = 5000")
+        self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(_SCHEMA)
         self.conn.commit()
 
@@ -183,6 +186,12 @@ class GlossaryStore:
             (source, existing_target, proposed_target, chapter, time.time()),
         )
 
+    def delete_term(self, source: str) -> bool:
+        """删除一个术语条目（前端编辑用）。返回是否确有删除。"""
+        cur = self.conn.execute("DELETE FROM glossary WHERE source = ?", (source,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def lock_term(self, source: str, target: Optional[str] = None) -> None:
         if target is not None:
             self.conn.execute(
@@ -202,14 +211,22 @@ class GlossaryStore:
         ).fetchall()
         return [GlossaryTerm.from_row(r) for r in rows]
 
-    def terms_in_text(self, text: str) -> list[GlossaryTerm]:
-        """返回 source 或任一别名在 text 中出现的术语（注入翻译 prompt 用）。"""
+    @staticmethod
+    def terms_in(terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
+        """从给定术语列表里筛出 source 或任一别名在 text 中出现的项。
+
+        与 terms_in_text 同义，但接受预取的术语快照，避免逐批重复查库（章内术语表不变）。
+        """
         out: list[GlossaryTerm] = []
-        for term in self.all_terms():
+        for term in terms:
             keys = [term.source] + term.aliases
             if any(k and k in text for k in keys):
                 out.append(term)
         return out
+
+    def terms_in_text(self, text: str) -> list[GlossaryTerm]:
+        """返回 source 或任一别名在 text 中出现的术语（注入翻译 prompt 用）。"""
+        return self.terms_in(self.all_terms(), text)
 
     def mark_conflicts_resolved(self, source: str) -> None:
         self.conn.execute(

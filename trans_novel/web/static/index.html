@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>trans-novel · 翻译可视化</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>trans-novel <span class="sub">多 Agent 小说翻译 · 可视化</span></h1>
+    <div class="controls">
+      <input id="input" type="text" placeholder="输入文件路径（.epub / .txt / .md）" />
+      <label class="all"><input type="checkbox" id="step-all" checked> 全选（连续全流程）</label>
+      <span class="steps">
+        <label><input type="checkbox" class="step" value="translate" checked> 翻译</label>
+        <label><input type="checkbox" class="step" value="audit" checked> 术语审计</label>
+        <label><input type="checkbox" class="step" value="qa" checked> 一致性QA</label>
+        <label><input type="checkbox" class="step" value="report" checked> 报告</label>
+        <label><input type="checkbox" class="step" value="assemble" checked> 回填EPUB</label>
+      </span>
+      <select id="format"><option value="epub">EPUB</option><option value="txt">TXT</option></select>
+      <button id="run">运行</button>
+      <button id="refresh" class="ghost">刷新状态</button>
+    </div>
+    <div class="progress">
+      <div class="bar"><div id="bar-fill"></div></div>
+      <span id="status-label">就绪</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="stream">双语流</button>
+    <button class="tab" data-tab="revisions">建议 / 修订</button>
+    <button class="tab" data-tab="glossary">术语表</button>
+    <button class="tab" data-tab="report">报告</button>
+    <button class="tab" data-tab="state">状态 / 角色</button>
+  </nav>
+
+  <main>
+    <section id="tab-stream" class="panel active">
+      <div id="stream"></div>
+    </section>
+
+    <section id="tab-revisions" class="panel">
+      <div id="revisions"></div>
+    </section>
+
+    <section id="tab-glossary" class="panel">
+      <div id="glossary-conflicts"></div>
+      <table class="grid" id="glossary-table">
+        <thead><tr><th>原文</th><th>译法</th><th>类型</th><th>性别</th><th>锁</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="add-row">
+        <input id="new-source" placeholder="原文词"><input id="new-target" placeholder="中文译法">
+        <input id="new-type" placeholder="类型(人物/地名/术语…)"><button id="add-term">新增术语</button>
+        <button id="reapply" class="ghost">重新应用术语表到正文</button>
+      </div>
+    </section>
+
+    <section id="tab-report" class="panel">
+      <div id="report"></div>
+    </section>
+
+    <section id="tab-state" class="panel">
+      <div id="state"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -8,3 +8,9 @@ state/
 *.zh.epub
 *.zh.txt
 *.txt
+
+# 输入书籍 / 生成产物（勿入库）
+*.epub
+*.fb2
+*.mobi
+*.azw3

@@ -20,7 +20,7 @@ def _cfg():
 
 
 class TestReviewer(unittest.TestCase):
-    def test_review_and_severe(self):
+    def test_review_reports_issues(self):
         issues = {"issues": [
             {"index": 0, "type": "missing", "detail": "漏了后半句"},
             {"index": 1, "type": "terminology", "detail": "人名译法不符"},
@@ -29,9 +29,7 @@ class TestReviewer(unittest.TestCase):
         r = Reviewer(client, _cfg())
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
-        self.assertEqual(client.calls[-1]["tier"], "cheap")
-        severe = Reviewer.severe_indices(out)
-        self.assertEqual(severe, {0})  # missing 严重；terminology 不触发重译
+        self.assertEqual(client.calls[-1]["tier"], "cheap")  # 审校走廉价档
 
 
 class TestPolisher(unittest.TestCase):

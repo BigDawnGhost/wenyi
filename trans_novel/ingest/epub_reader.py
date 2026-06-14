@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import os
 import posixpath
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 
 from bs4 import BeautifulSoup
 
-from .models import Chapter, Document, Segment, KIND_HEADING, KIND_TEXT
+from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 _CONTAINER = "META-INF/container.xml"
 _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"}
@@ -118,8 +118,13 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             if not any(s.source.strip() for s in segments):
                 continue  # 无正文（封面/版权页等）→ writer 原样拷贝，不作为章节
             chapters.append(
-                Chapter(index=ci, title=title, segments=segments,
-                        href=href, template=template)
+                Chapter(
+                    index=ci,
+                    title=title,
+                    segments=segments,
+                    href=href,
+                    template=template,
+                )
             )
             ci += 1
 

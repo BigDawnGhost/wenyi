@@ -12,7 +12,7 @@ from __future__ import annotations
 from ..config import Config
 from ..glossary.store import GlossaryTerm
 from ..llm.base import LLMClient
-from . import prompts
+from . import langprofile, prompts
 
 
 class AlignmentError(Exception):
@@ -35,8 +35,9 @@ class Translator:
     ) -> list[str]:
         n = len(sources)
         system = prompts.render(
-            "translator_system", src=self.src, tgt=self.tgt,
-            n=n, honorific_rule=prompts.honorific_rule(self.config.honorific_strategy),
+            "translator_system", src=self.src, tgt=self.tgt, n=n,
+            lang_guidance=langprofile.translate_guidance(
+                self.src, self.config.honorific_strategy),
         )
         user = prompts.render(
             "translator_user", src=self.src, tgt=self.tgt,

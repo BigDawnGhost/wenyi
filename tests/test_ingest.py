@@ -6,8 +6,9 @@ import os
 import tempfile
 import unittest
 
-from trans_novel.ingest.segmenter import load_document, chapter_batches
-from trans_novel.ingest.models import KIND_HEADING
+from trans_novel.ingest.segmenter import (
+    load_document, chapter_batches, split_long_segments, _split_text)
+from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from tests.sample_data import write_sample_txt, write_sample_epub
 
 
@@ -36,6 +37,136 @@ class TestTextIngest(unittest.TestCase):
         total = sum(len(b) for b in batches)
         self.assertEqual(total, len(doc.chapters[0].text_segments))
         self.assertGreater(len(batches), 1)  # 60 字符预算应切出多批
+
+
+_FB2_FLAT = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>平铺之书</book-title></title-info></description>
+<body>
+  <section><title><p>第一章</p></title><p>第一段。</p><p>第二段。</p></section>
+  <section><title><p>第二章</p></title><p>仅一段。</p></section>
+</body>
+<body name="notes"><section><p>这是注释，应被跳过。</p></section></body>
+</FictionBook>
+"""
+
+# 嵌套：部 → 章（section 套 section）。容器节正文不得丢失。
+_FB2_NESTED = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>嵌套之书</book-title></title-info></description>
+<body>
+  <section>
+    <title><p>第一部</p></title>
+    <section><title><p>第一章</p></title><p>一章首段。</p><p>一章次段。</p></section>
+    <section><title><p>第二章</p></title><p>二章仅一段。</p></section>
+  </section>
+</body>
+</FictionBook>
+"""
+
+
+# subtitle / poem / cite / text-author 等正文块不得丢字
+_FB2_BLOCKS = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>块之书</book-title></title-info></description>
+<body>
+  <section>
+    <title><p>第一章</p></title>
+    <epigraph><p>题记一行。</p><text-author>题记作者</text-author></epigraph>
+    <p>普通段落。</p>
+    <subtitle>场景小标题</subtitle>
+    <poem><title><p>诗名</p></title>
+      <stanza><v>第一诗行。</v><v>第二诗行。</v></stanza>
+      <text-author>诗人</text-author></poem>
+    <cite><p>引文段落。</p><text-author>引文作者</text-author></cite>
+    <p>结尾段落。</p>
+  </section>
+</body>
+</FictionBook>
+"""
+
+
+class TestFb2Ingest(unittest.TestCase):
+    def _load(self, content: str):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.fb2")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(content)
+            return load_document(p, "ja", "zh")
+
+    def test_flat_sections_and_notes_skipped(self):
+        doc = self._load(_FB2_FLAT)
+        self.assertEqual(doc.fmt, "fb2")
+        self.assertEqual(doc.title, "平铺之书")
+        self.assertEqual(len(doc.chapters), 2)  # notes body 不计入
+        ch1 = doc.chapters[0]
+        self.assertEqual(ch1.title, "第一章")
+        self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
+        self.assertEqual(len(ch1.text_segments), 3)  # 标题 + 2 段
+        # 注释正文不应出现在任何章中
+        all_src = [s.source for ch in doc.chapters for s in ch.segments]
+        self.assertNotIn("这是注释，应被跳过。", all_src)
+
+    def test_block_types_not_lost(self):
+        doc = self._load(_FB2_BLOCKS)
+        ch = doc.chapters[0]
+        texts = [s.source for s in ch.segments]
+        for expect in ["题记一行。", "题记作者", "普通段落。", "诗名",
+                       "第一诗行。", "第二诗行。", "诗人", "引文段落。",
+                       "引文作者", "结尾段落。"]:
+            self.assertIn(expect, texts)
+        # subtitle 作为 heading
+        headings = [s.source for s in ch.segments if s.kind == KIND_HEADING]
+        self.assertIn("场景小标题", headings)
+
+    def test_nested_sections_not_lost(self):
+        doc = self._load(_FB2_NESTED)
+        # 部标题成一章 + 两个子章，正文一段不丢
+        titles = [ch.title for ch in doc.chapters]
+        self.assertEqual(titles, ["第一部", "第一章", "第二章"])
+        all_text = [s.source for ch in doc.chapters
+                    for s in ch.text_segments if s.kind != KIND_HEADING]
+        self.assertIn("一章首段。", all_text)
+        self.assertIn("一章次段。", all_text)
+        self.assertIn("二章仅一段。", all_text)
+
+
+class TestSplitLongSegments(unittest.TestCase):
+    def test_split_by_sentence_and_cont_flag(self):
+        long_src = "第一句。" * 10            # 40 字符
+        ch = Chapter(index=0, title="章", segments=[
+            Segment(index=0, source="标题", kind=KIND_HEADING, anchor="a0"),
+            Segment(index=1, source=long_src, kind=KIND_TEXT, anchor="a1"),
+            Segment(index=2, source="短。", kind=KIND_TEXT, anchor="a2"),
+        ])
+        split_long_segments([ch], max_chars=30)
+        # 长段被拆成多段：首段保留 anchor，续段 cont=True 且无 anchor
+        conts = [s.cont for s in ch.segments]
+        self.assertIn(True, conts)
+        long_parts = [s for s in ch.segments if not s.cont and s.anchor == "a1"]
+        self.assertEqual(len(long_parts), 1)            # 首段唯一带 a1
+        cont_parts = [s for s in ch.segments if s.cont]
+        self.assertTrue(all(s.anchor is None for s in cont_parts))
+        # index 连续重排
+        self.assertEqual([s.index for s in ch.segments], list(range(len(ch.segments))))
+        # 拼回去等于原文
+        joined = "".join(s.source for s in ch.segments if s.anchor == "a1" or s.cont)
+        self.assertEqual(joined, long_src)
+
+    def test_no_split_when_short(self):
+        ch = Chapter(index=0, title="章", segments=[
+            Segment(index=0, source="短句。", kind=KIND_TEXT, anchor="a0")])
+        split_long_segments([ch], max_chars=100)
+        self.assertEqual(len(ch.segments), 1)
+        self.assertFalse(ch.segments[0].cont)
+
+    def test_oversized_single_sentence_hard_split(self):
+        chunks = _split_text("あ" * 50, 20)   # 无句末标点的超长串
+        self.assertTrue(all(len(c) <= 20 for c in chunks))
+        self.assertEqual("".join(chunks), "あ" * 50)
 
 
 class TestEpubIngest(unittest.TestCase):

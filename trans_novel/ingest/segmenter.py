@@ -1,27 +1,104 @@
 """文档加载分发 + 翻译批次切分。
 
-- load_document：按扩展名分发到 EPUB / 纯文本读取器。
+- load_document：按扩展名分发到 EPUB / 纯文本读取器；可选把超长 Segment 按句拆分。
 - batch_segments：把一章的 Segment 按字符预算（≈token）打包成批次，
   一个批次整体发给翻译模型；模型须返回等长译文数组以做对齐校验。
-  单个超长 Segment 自成一批（不物理拆分 Segment，保证回填一一对应）。
+- split_long_segments：单个 Segment 超过 max_chars 时按句切成多段（续段标 cont=True），
+  回填时由 writer 把续段并回同一段落/同一 EPUB 元素，保持结构一一对应。
 """
 
 from __future__ import annotations
 
 import os
+import re
 
-from .models import Chapter, Document, Segment
+from .detect import detect_language
 from .epub_reader import read_epub
+from .fb2_reader import read_fb2
+from .models import KIND_TEXT, Chapter, Document, Segment
 from .text_reader import read_text
 
+# 句末标点（中/日/英），用于超长段的按句拆分
+_SENT_SPLIT = re.compile(r"(?<=[。．！？!?…\n])")
 
-def load_document(path: str, source_lang: str, target_lang: str) -> Document:
+
+def _split_text(text: str, max_chars: int) -> list[str]:
+    """把超长文本按句末标点贪心打包成 ≤max_chars 的块；单句过长则硬切。"""
+    chunks: list[str] = []
+    cur = ""
+    for p in _SENT_SPLIT.split(text):
+        if not p:
+            continue
+        if len(p) > max_chars:                      # 单句本身超长 → 硬切
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            for i in range(0, len(p), max_chars):
+                chunks.append(p[i:i + max_chars])
+            continue
+        if cur and len(cur) + len(p) > max_chars:
+            chunks.append(cur)
+            cur = ""
+        cur += p
+    if cur:
+        chunks.append(cur)
+    return chunks or [text]
+
+
+def split_long_segments(chapters: list[Chapter], max_chars: int) -> None:
+    """就地把各章里超过 max_chars 的 Segment 拆成多段；续段 cont=True、不带 anchor。"""
+    if not max_chars or max_chars <= 0:
+        return
+    for ch in chapters:
+        new_segs: list[Segment] = []
+        idx = 0
+        for s in ch.segments:
+            if len(s.source) <= max_chars:
+                s.index = idx
+                new_segs.append(s)
+                idx += 1
+                continue
+            for k, piece in enumerate(_split_text(s.source, max_chars)):
+                if k == 0:
+                    new_segs.append(Segment(index=idx, source=piece, kind=s.kind,
+                                            anchor=s.anchor, cont=False))
+                else:  # 续段：并回首段，无独立 anchor
+                    new_segs.append(Segment(index=idx, source=piece, kind=KIND_TEXT,
+                                            anchor=None, cont=True))
+                idx += 1
+        ch.segments = new_segs
+
+
+def load_document(path: str, source_lang: str, target_lang: str,
+                  split_segments: int = 0) -> Document:
     ext = os.path.splitext(path)[1].lower()
     if ext == ".epub":
-        return read_epub(path, source_lang, target_lang)
-    if ext in (".txt", ".md", ".markdown", ".text"):
-        return read_text(path, source_lang, target_lang)
-    raise ValueError(f"不支持的格式：{ext}（支持 .epub / .txt / .md）")
+        doc = read_epub(path, source_lang, target_lang)
+    elif ext in (".txt", ".md", ".markdown", ".text"):
+        doc = read_text(path, source_lang, target_lang)
+    elif ext == ".fb2":
+        doc = read_fb2(path, source_lang, target_lang)
+    else:
+        raise ValueError(f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2）")
+
+    if source_lang in ("auto", "", None):
+        doc.source_lang = detect_language(_sample_for_detect(doc))
+    if split_segments and split_segments > 0:
+        split_long_segments(doc.chapters, split_segments)
+    return doc
+
+
+def _sample_for_detect(doc: Document, limit: int = 4000) -> str:
+    """拼接若干正文段供语言检测。"""
+    buf: list[str] = []
+    total = 0
+    for ch in doc.chapters:
+        for s in ch.text_segments:
+            buf.append(s.source)
+            total += len(s.source)
+            if total >= limit:
+                return "\n".join(buf)
+    return "\n".join(buf)
 
 
 def batch_segments(segments: list[Segment], max_chars: int) -> list[list[Segment]]:
