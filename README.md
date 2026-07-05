@@ -1,100 +1,158 @@
-# trans-novel —— 多 Agent 协同长篇小说翻译（日/英 → 中）
+# trans-novel
 
-一套以"媲美人类翻译、尽量减少漏译/出错、靠专有名词对照表保证一致性"为目标的流水线。
-多个职责单一的 Agent 协同，模拟出版社流程：**全书理解预扫 → 分析 → 翻译 → 审校 → 标点规范化 → 跨章一致性把关**，全程围绕一个持久化的术语库。**一条 `translate` 命令连续跑完并直接产出 EPUB。**
+把多语言 EPUB、FB2 或 TXT 小说翻译成中文，并尽量保留 EPUB 原排版、图片、目录和跳转。
 
-- **语言方向**：日/英 → 中，**AI 自动检测来源语言**（`config.yaml` 设 `language.source: auto`，也可写死 `ja`/`en`）。提示词按源语言切换（日语：敬称/假名读音/第一人称语气；英语：性别推断/从句重组/称谓处理）。
-- **模型**：DeepSeek 双档，经 OpenAI SDK 调 `https://api.deepseek.com`，两档都开 thinking 模式、`reasoning_effort=high`（成本差异只靠模型区分）：
-  - `strong` = `deepseek-v4-pro` → 翻译 / 全局分析 / 标题翻译 / 手动术语审计 /（可选）润色
-  - `cheap`  = `deepseek-v4-flash` → 审校 / 一致性 QA / 回译比对（判断类，开 thinking）
-  - `fast`   = `deepseek-v4-flash` → 梗概 / 全书概览 / 术语抽取 / 回译（机械任务，免思考大幅省钱提速）- **输入**：EPUB、FB2 与 纯文本（TXT/Markdown）。**输出默认 EPUB**（EPUB 输入按原模板回填保留排版，并改写书名/目录为译名；TXT 输入用 ebooklib 生成规范 EPUB3）；`--format txt` 可导出纯文本。
-- **全书理解**：翻译前用廉价档**预扫整本源文**，产出"逐章梗概 + 全书概览"，作为恒定前缀注入每章翻译——让译者翻任意章前就把握主线/人物/伏笔，不盲译早章。
-- **省成本（提示词缓存）**：system 全静态、术语表/全书概览等恒定块前置，命中 DeepSeek 自动前缀缓存（命中输入价≈0.1×）；章内批次**串行**逐批刷新上下文以保连贯。
-- **标点**：译文统一为简体中文大陆通用全角标点（“”‘’、，。！？、……、——）。
+项目的日常入口只有一个命令：`translate`。它会完成预扫、分析、翻译、可选润色、章末审校、标点规范化和 EPUB 导出；中断后可以继续跑。
 
-## 安装
+## 快速开始
 
 ```bash
-uv sync                          # 用 uv 安装依赖（pydantic / typer / rich / tenacity / ebooklib / lxml / openai …）
-export DEEPSEEK_API_KEY=sk-...   # DeepSeek API key（运行真实翻译时需要）
+uv sync
+export DEEPSEEK_API_KEY=sk-...
+uv run trans-novel translate book.epub
 ```
 
-> 仅离线跑切分/对齐/术语库/状态机等逻辑（不发网络请求）时，把 `config.yaml` 的
-> `llm.provider` 设为 `fake` 即可。
+翻译完成后，默认会在源文件目录下生成译文 EPUB。运行状态、章节 JSON、术语库和报告会放在 `state/` 目录下。
 
-## 使用
-
-日常只需 `translate` 一个命令；细粒度/调试工具收敛到 `tools` 子命令。
+中断后继续：
 
 ```bash
-# 连续全流程
-uv run trans-novel translate book.epub    # 预扫→分析→翻译→审校→标点→QA→出 EPUB（断点可续）
-uv run trans-novel resume    book.epub    # 中断后续跑，跳过已完成章/批
-uv run trans-novel status    book.epub    # 查看各章进度与术语库统计
-
-# 高级/调试工具（收在 tools 下）
-uv run trans-novel tools glossary book.epub list      # 查看术语表
-uv run trans-novel tools glossary book.epub conflicts # 待裁决的译法冲突
-uv run trans-novel tools glossary book.epub audit     # AI 审计统一译法并改写正文
-uv run trans-novel tools qa        book.epub          # 全书跨章一致性扫描
-uv run trans-novel tools report    book.epub          # 生成 QA 报告（漏译/冲突/低置信度汇总）
-uv run trans-novel tools assemble  book.epub          # 回填生成译文 EPUB（--format txt 出纯文本）
+uv run trans-novel resume book.epub
 ```
 
-`translate` 自带段级进度条（不止于章），长文也能看清进度。
-开关：`--polish`（默认关，开启=用强档把全书再加工一遍，较烧 token）/ `--no-qa`；调试单章：`translate book.epub --chapter 0`。
+查看进度：
 
-> 自动改写边界：连续翻译流程不会自动改写正文；**一致性 QA / 报告**只汇总不改正文。需要统一术语时，可手动运行 `tools glossary ... audit`。
-
-### 连续流程（默认）
-
-`translate` 一步到位：先**预扫整本源文**（fast 免思考并行）建立全书理解（逐章梗概+全书概览）+ 强档多点分析样章建立术语表 → 章内批次**串行**翻译（逐批刷新上下文、跨章串行保连贯）→ 标点规范化 → **章末整章审校 + 严重项自动重译**（autofix_severe，过长度校验才采纳）→ 术语 AI 审计统一（消除如 佳穂/佳穗 的译法漂移并改写正文）→ 跨章一致性 QA → 写报告 → 回填出 EPUB（书名/目录用译名）。
-
-## 一致性 / 防漏译机制
-
-- **句段对齐强制**：翻译按批输入 N 段、要求输出 N 段 JSON 数组；段数不符则重试，
-  仍不符则逐段兜底翻译，从结构上杜绝整段漏译。
-- **专有名词对照表（SQLite）**：人名/地名/术语/敬称统一译法，含读音、性别、别名、
-  置信度、锁定位；每章增量抽取、冲突裁决，翻译时注入整章全量表（恒定块命中缓存）。
-- **全书理解 + 滚动上下文**：预扫源文得"全书概览/本章梗概"（恒定前缀），加最近译文尾段（局部衔接），
-  共同保证跨批次/跨章连贯、代词指代与对全书走向的把握。
-- **校验 + 定向修复**：章末整章分块审校（漏译/误译/术语/人称，不阻塞翻译主路径）；
-  严重项（missing/mistranslation）带审校意见定向重译一次，过长度校验才采纳（`autofix_severe` 开关，默认开）。
-  无成本长度校验留在批内实时标记；回译抽检可选；全书跨章一致性扫描。润色可选（默认关）。
-- **断点续跑（章/批级）**：每批译完即增量落盘，中断（含 Ctrl+C）后再次运行 `translate`/`resume`
-  跳过已完成的批，只补未完成的。
-
-## 配置（`config.yaml`）
-
-模型 ID、三档 tier effort、流水线开关（审校 / 自动重译 / 润色 / 回译比例 / 一致性 / `book_understanding` 全书理解预扫 / 术语裁剪 / 预扫并行）、
-敬称策略、切分粒度（`max_chars_per_batch` 批大小、`max_chars_per_segment` 超长段按句拆分）都在这里改。
-
-> 若 `deepseek-v4-flash` / `deepseek-v4-pro` 模型 ID 与官方不符，直接在 `config.yaml` 的 `llm.tiers` 改即可。
-
-## 目录
-
+```bash
+uv run trans-novel status book.epub
 ```
+
+仅重新导出 EPUB：
+
+```bash
+uv run trans-novel tools assemble book.epub
+```
+
+## 输入和输出
+
+- 输入：EPUB、FB2、TXT。
+- 默认输出：中文 EPUB。
+- EPUB 输入会按原 XHTML 模板回填译文，尽量保留原书样式、图片、目录和锚点。
+- TXT 输入会生成新的 EPUB。
+- 需要纯文本时使用 `--format txt`。
+
+示例：
+
+```bash
+uv run trans-novel translate book.epub
+uv run trans-novel translate book.epub --format txt
+uv run trans-novel translate book.epub --chapter 3
+```
+
+## 常用开关
+
+```bash
+uv run trans-novel translate book.epub --polish
+uv run trans-novel translate book.epub --no-polish
+uv run trans-novel translate book.epub --qa
+uv run trans-novel translate book.epub --no-qa
+```
+
+`--polish/--no-polish` 会覆盖 `config.yaml` 里的 `pipeline.polish`。当前仓库的 `config.yaml` 写的是 `polish: true`，所以不加参数时默认会润色；代码层面的缺省值是 `false`，只在配置文件没写该字段时生效。
+
+润色会让每个翻译批次多一次 `strong` 档 LLM 请求，质量可能更稳，但会明显增加耗时和成本。已经翻译完成的批次会被断点续跑跳过，后来再开关润色不会自动重跑旧译文。
+
+## 配置
+
+主要配置都在 `config.yaml`：
+
+- `language.source`: `auto` 自动识别源语言，也可以写死语言代码，如 `ja`、`en`、`ko`、`de` 等。
+- `llm.tiers`: 配置 `strong`、`cheap`、`fast` 三档模型。
+- `pipeline.review`: 章末审校。
+- `pipeline.autofix_severe`: 对严重问题自动重译并采纳通过校验的结果。
+- `pipeline.polish`: 翻译后再做中文润色。
+- `pipeline.backtranslate_sample`: 回译抽检比例，`0` 为关闭。
+- `pipeline.consistency_qa`: 全书跨章一致性扫描。
+- `pipeline.book_understanding`: 翻译前预扫整本书，生成全书概览和逐章梗概。
+- `pipeline.rolling_context_segments`: 每批翻译时带入的前文译文段数。
+- `segment.max_chars_per_batch`: 每个翻译批次的大小。
+- `segment.max_chars_per_segment`: 超长段落的拆分阈值。
+
+离线测试或调试流程时，可以把 `llm.provider` 改成 `fake`，不会发网络请求。
+
+## 工作流程
+
+默认连续流程大致是：
+
+```text
+读取输入
+→ 解析章节、正文段落和 EPUB 目录
+→ 自动识别源语言
+→ 预扫整本书，生成全书概览和逐章梗概
+→ 分析样章，建立初始术语表
+→ 按章、按批翻译
+→ 可选润色
+→ 标点规范化
+→ 章末 review
+→ 可选严重项自动重译
+→ 可选一致性 QA
+→ 回填导出 EPUB/TXT
+```
+
+每个批次翻译完成后都会写入 `state/`，所以长书中断后可以续跑。已经有译文的批次会跳过，只补未完成部分。
+
+## 一致性机制
+
+- **术语库**：人名、地名、专有名词和敬称会进入 SQLite 术语库，翻译时按配置注入提示词。
+- **全书理解**：翻译前预扫源文，生成全书概览和章节梗概，让早期章节也能参考全书走向。
+- **滚动上下文**：章内批次串行处理，后一个批次能看到前面最近几段译文。
+- **段数对齐**：每批输入 N 段，要求模型输出 N 段 JSON；段数不符会重试，仍失败则逐段兜底。
+- **章末 review**：按章检查漏译、误译、术语、人称等问题；默认只记录问题，是否自动修复由 `autofix_severe` 控制。
+- **标点规范化**：译文统一为简体中文大陆常用全角标点。
+
+## 常用工具
+
+```bash
+uv run trans-novel tools glossary book.epub list
+uv run trans-novel tools glossary book.epub conflicts
+uv run trans-novel tools qa book.epub
+uv run trans-novel tools report book.epub
+uv run trans-novel tools assemble book.epub
+```
+
+这些工具主要用于查看术语库、检查一致性、生成报告或重新导出成品。QA 和报告默认只汇总问题，不会自动改正文。
+
+## 模型档位
+
+默认配置使用 DeepSeek，并通过 OpenAI SDK 调用 `https://api.deepseek.com`。
+
+- `strong`: 翻译、润色、全局分析、标题翻译。
+- `cheap`: 章末 review、一致性 QA、回译比对。
+- `fast`: 全书预扫、章节梗概、术语抽取、回译等机械任务。
+
+如果模型 ID 变化，直接改 `config.yaml` 里的 `llm.tiers`。
+
+## 项目结构
+
+```text
 trans_novel/
-  ingest/      摄取与切分（EPUB/FB2/TXT → Chapter/Segment）+ 语言检测 + 超长段拆分
-  llm/         LLM 抽象接口 + DeepSeek provider + 离线 FakeClient
-  glossary/    术语库(SQLite) + 抽取 + 冲突裁决
-  agents/      base(Agent 基类) / analyzer / synopsis(全书理解) / translator / reviewer / polisher / consistency / glossary_auditor + 提示词
-  pipeline/    orchestrator(状态机/续跑) / context(滚动上下文) / checks(对齐校验) / runstore
-  postprocess/ 标点规范化
-  assemble/    回填(EPUB/TXT，书名/目录译名) + QA 报告
-prompts/       提示词覆盖（可选，见其 README）
-tests/         离线测试（不发网络请求）
+  ingest/       输入解析、EPUB/FB2/TXT 切分、语言检测
+  llm/          LLM 抽象接口、DeepSeek provider、FakeClient
+  glossary/     SQLite 术语库、抽取、冲突处理
+  agents/       分析、翻译、审校、润色、一致性、提示词
+  pipeline/     编排器、断点状态、滚动上下文、校验
+  postprocess/  标点规范化
+  assemble/     EPUB/TXT 回填导出、QA 报告
+prompts/        可选提示词覆盖
+tests/          离线测试
 ```
-
-## 实现取舍
-
-- LLM 层是**可插拔接口**：要换平台只需实现 `LLMClient`（见 `llm/base.py`），其余不动。
-- 建模用 `pydantic`，LLM 重试用 `tenacity`，CLI/进度用 `typer`+`rich`，TXT→EPUB 用 `ebooklib`。
-- EPUB 输入回填仍走 zip 原样拷贝 + 锚点替换，最大程度保留原排版/资源。
-- 章内批次**串行**：逐批把刚译出的译文并入上下文供下一批参照，换取代词/术语/语气的跨批连贯；
-  靠提示词缓存（恒定前缀）而非并发来控成本与时延。
 
 ## 测试
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m unittest discover -s tests
+```
+
+如果本机 `uv` 缓存目录可写，也可以直接运行：
 
 ```bash
 uv run python -m unittest discover -s tests

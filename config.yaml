@@ -2,7 +2,7 @@
 # 修改后无需改代码；模型 ID、档位、流水线开关都在这里。
 
 language:
-  source: auto # auto 自动检测来源语言（主攻 日/英）；也可写死 ja / en
+  source: auto # auto 自动检测来源语言；也可写死 ja / en / ko / de 等语言代码
   target: zh # 译文语言
 
 # ── LLM：DeepSeek 三档（经 OpenAI SDK 调 https://api.deepseek.com）─────────
@@ -40,7 +40,7 @@ pipeline:
   autofix_severe: false # 审校后自动重译严重项（漏译/误译）；关掉仅上报，不改正文
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认关
-  backtranslate_sample: 0.05 # 回译抽检比例（0 关闭）
+  backtranslate_sample: 0 # 回译抽检比例（0 关闭）
   consistency_qa: false # 全书跨章一致性收尾扫描
   rolling_context_segments: 6 # 注入的前文译文尾段数
   book_understanding:
