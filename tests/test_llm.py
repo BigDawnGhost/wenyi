@@ -64,5 +64,61 @@ class TestFakeClient(unittest.TestCase):
         self.assertEqual(len(c.calls), 2)
 
 
+class TestConfigEnvOverrides(unittest.TestCase):
+    def setUp(self):
+        import os
+        self.original_env = dict(os.environ)
+
+    def tearDown(self):
+        import os
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def test_env_overrides(self):
+        import os
+        from trans_novel.config import Config
+        
+        os.environ["LLM_PROVIDER"] = "custom-provider"
+        os.environ["LLM_BASE_URL"] = "https://custom-api.com"
+        os.environ["LLM_API_KEY_ENV"] = "CUSTOM_API_KEY"
+        os.environ["LLM_MODEL_STRONG"] = "custom-model-strong"
+        
+        cfg = Config.from_dict({
+            "llm": {
+                "provider": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+                "tiers": {
+                    "strong": {"model": "default-pro"}
+                }
+            }
+        })
+        
+        self.assertEqual(cfg.llm.provider, "custom-provider")
+        self.assertEqual(cfg.llm.base_url, "https://custom-api.com")
+        self.assertEqual(cfg.llm.api_key_env, "CUSTOM_API_KEY")
+        self.assertEqual(cfg.llm.tiers["strong"].model, "custom-model-strong")
+
+    def test_api_key_fallback(self):
+        import os
+        from trans_novel.config import Config
+        
+        # Test 1: LLM_API_KEY takes precedence
+        os.environ["LLM_API_KEY"] = "key-llm"
+        os.environ["CUSTOM_API_KEY"] = "key-custom"
+        cfg = Config.from_dict({"llm": {"api_key_env": "CUSTOM_API_KEY"}})
+        self.assertEqual(cfg.llm.api_key, "key-llm")
+        
+        # Test 2: Fallback to custom api_key_env
+        del os.environ["LLM_API_KEY"]
+        self.assertEqual(cfg.llm.api_key, "key-custom")
+        
+        # Test 3: Fallback to provider-specific default
+        del os.environ["CUSTOM_API_KEY"]
+        os.environ["OPENAI_API_KEY"] = "key-openai"
+        cfg2 = Config.from_dict({"llm": {"provider": "openai", "api_key_env": "SOME_NONEXISTENT"}})
+        self.assertEqual(cfg2.llm.api_key, "key-openai")
+
+
 if __name__ == "__main__":
     unittest.main()

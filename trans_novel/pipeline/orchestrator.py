@@ -380,79 +380,180 @@ class Orchestrator:
 
         batches = batch_segments(text_segs, self.config.segment.max_chars_per_batch)
         label = f"第{ci}章 {chapter.title}"
-        # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
-        # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
         term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
 
-        # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
-        # 不再并发，换取章内跨批的代词/术语/语气连贯。
-        # 断点续跑（段/批级）：上次中断前已译完并落盘的批次，整批跳过、不重翻，只重建上下文。
+        # 确保已有的目标翻译同步记录到 draft 中，并清除已被置空的 target 的 draft 记录
+        for s in text_segs:
+            if not s.target:
+                s.meta.pop("draft", None)
+            elif not s.meta.get("draft"):
+                s.meta["draft"] = s.target
+
+        # 第一阶段：并行/串行起草
+        todo_batches = []
+        for idx, b in enumerate(batches):
+            need_draft = False
+            for s in b:
+                if not s.meta.get("draft") and not s.target:
+                    need_draft = True
+                    break
+            if need_draft:
+                todo_batches.append((idx, b))
+
+        if todo_batches:
+            concurrency = max(1, self.config.pipeline.prescan_concurrency)
+            use_parallel = self.config.pipeline.polish and concurrency > 1
+
+            if use_parallel:
+                store.log_event(
+                    "chapter_drafting_started",
+                    chapter=ci,
+                    todo_count=len(todo_batches),
+                    workers=concurrency,
+                )
+                with ThreadPoolExecutor(max_workers=concurrency) as ex:
+                    futures = {}
+                    for idx, b in todo_batches:
+                        sources = [s.source for s in b]
+                        fut = ex.submit(
+                            self.translator.translate_batch,
+                            sources,
+                            glossary_terms=term_snapshot,
+                            style=style,
+                            context="",
+                            book_synopsis=book_synopsis,
+                            chapter_digest=chapter_digest
+                        )
+                        futures[fut] = (idx, b)
+                    
+                    for fut in as_completed(futures):
+                        idx, b = futures[fut]
+                        try:
+                            res_targets = fut.result()
+                        except Exception as e:
+                            store.log_event("batch_drafting_failed", chapter=ci, batch_index=idx, error=str(e))
+                            res_targets = []
+                        
+                        if len(res_targets) == len(b):
+                            for s, t in zip(b, res_targets):
+                                s.meta["draft"] = t
+                        else:
+                            for s in b:
+                                if not s.meta.get("draft"):
+                                    s.meta["draft"] = ""
+                        store.save_chapter(chapter)
+            else:
+                draft_context = RollingContext()
+                for idx, b in enumerate(batches):
+                    existing = [s.target or s.meta.get("draft") or "" for s in b]
+                    if all(existing) and (idx, b) not in todo_batches:
+                        draft_context.add_targets(existing)
+                        continue
+                    
+                    sources = [s.source for s in b]
+                    ctx_text = draft_context.render(self.config.pipeline.rolling_context_segments)
+                    try:
+                        res_targets = self.translator.translate_batch(
+                            sources,
+                            glossary_terms=term_snapshot,
+                            style=style,
+                            context=ctx_text,
+                            book_synopsis=book_synopsis,
+                            chapter_digest=chapter_digest
+                        )
+                    except Exception as e:
+                        store.log_event("batch_drafting_failed", chapter=ci, batch_index=idx, error=str(e))
+                        res_targets = []
+                    
+                    if len(res_targets) == len(b):
+                        for s, t in zip(b, res_targets):
+                            s.meta["draft"] = t
+                            if not self.config.pipeline.polish:
+                                s.target = t
+                        draft_context.add_targets(res_targets)
+                    else:
+                        for s in b:
+                            if not s.meta.get("draft"):
+                                s.meta["draft"] = ""
+                        draft_context.add_targets(["" for _ in b])
+                    
+                    store.save_chapter(chapter)
+                    self._extract_batch_glossary(glossary, store, ci, idx * len(b), b)
+                    term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+
+        # 第二阶段：串行精修（润色与衔接）
         review_issues: list[dict] = [
             i for i in chapter.meta.get("review_issues", [])
             if i.get("stage") != "length"
         ]
         bt_samples: list[tuple[str, str]] = []
-        seg_base = 0   # 当前批首段的章内段号（issue 批内下标 → 章内段号）
+        seg_base = 0
+
         for b in batches:
             existing_targets = [s.target for s in b if s.target and s.target.strip()]
             if len(existing_targets) == len(b):
-                # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
                 context.add_targets(existing_targets)
-                summary = self._extract_batch_glossary(glossary, store, ci, seg_base, b)
+                self._extract_batch_glossary(glossary, store, ci, seg_base, b)
                 term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
-                store.log_event(
-                    "batch_skipped",
-                    chapter=ci,
-                    start_index=seg_base,
-                    count=len(b),
-                    reason="already_translated",
-                    glossary_extraction=summary,
-                    segments=[
-                        {"index": seg_base + i, "source": s.source, "target": s.target}
-                        for i, s in enumerate(b)
-                    ],
-                )
                 done += len(b)
                 seg_base += len(b)
                 if progress:
                     progress(done, total, label)
                 continue
 
+            drafts = [s.meta.get("draft") or "" for s in b]
             ctx_text = context.render(self.config.pipeline.rolling_context_segments)
-            res = self._process_batch(b, term_snapshot, ctx_text, style,
-                                      book_synopsis, chapter_digest)
-            for s, t in zip(b, res.targets):
+            
+            if self.config.pipeline.polish:
+                try:
+                    polished_targets = self.polisher.polish(
+                        drafts,
+                        glossary_terms=term_snapshot,
+                        style=style,
+                        context=ctx_text
+                    )
+                except Exception:
+                    polished_targets = drafts
+                if len(polished_targets) != len(b):
+                    polished_targets = drafts
+            else:
+                polished_targets = drafts
+
+            if self.config.punctuation_normalize:
+                polished_targets = [normalize_zh(t) if t else t for t in polished_targets]
+
+            for s, t in zip(b, polished_targets):
                 s.target = t
-            batch_start = seg_base
+
+            context.add_targets(polished_targets)
+
+            # 收集回译样本
+            rate = self.config.pipeline.backtranslate_sample
+            if rate > 0:
+                for s in b:
+                    if random.random() < rate:
+                        bt_samples.append((s.source, s.target or ""))
+            
             store.log_event(
                 "batch_translated",
                 chapter=ci,
-                start_index=batch_start,
+                start_index=seg_base,
                 count=len(b),
                 polished=self.config.pipeline.polish,
                 punctuation_normalized=self.config.punctuation_normalize,
-                issues=res.issues,
-                backtranslate_sample_count=len(res.bt_samples),
                 segments=[
-                    {"index": batch_start + i, "source": s.source, "target": t}
-                    for i, (s, t) in enumerate(zip(b, res.targets))
+                    {"index": seg_base + i, "source": s.source, "target": s.target}
+                    for i, s in enumerate(b)
                 ],
             )
-            context.add_targets(res.targets)
-            for it in res.issues:
-                it["chapter"] = ci
-                it["index"] += batch_start   # 批内下标 → 章内段号
-            review_issues.extend(res.issues)
-            bt_samples.extend(res.bt_samples)
+
             done += len(b)
             seg_base += len(b)
             if progress:
                 progress(done, total, label)
-            # 增量持久化：本批译文 + 累计问题落盘，下次中断从此批之后续跑
-            chapter.meta["review_issues"] = review_issues
+
             store.save_chapter(chapter)
-            # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
-            self._extract_batch_glossary(glossary, store, ci, batch_start, b)
+            self._extract_batch_glossary(glossary, store, ci, seg_base - len(b), b)
             term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
 
         # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
@@ -638,37 +739,7 @@ class Orchestrator:
                     issues=seg_issues,
                 )
 
-    def _process_batch(self, batch, terms, ctx_text: str, style: str,
-                       book_synopsis: str = "", chapter_digest: str = "") -> _BatchResult:
-        """单个批次：整批翻译 → 润色 → 标点规范化。
 
-        每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
-        全书概览/本章梗概作为恒定前缀注入，让译者把握全局。
-        LLM 审校不在批内做（移至章末统一做，见 _review_chapter，不阻塞翻译主路径）。
-        """
-        sources = [s.source for s in batch]
-        targets = self.translator.translate_batch(
-            sources, glossary_terms=terms, style=style, context=ctx_text,
-            book_synopsis=book_synopsis, chapter_digest=chapter_digest)
-
-        issues: list[dict] = []
-
-        if self.config.pipeline.polish:
-            polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
-            if len(polished) == len(targets):
-                targets = polished
-
-        if self.config.punctuation_normalize:
-            targets = [normalize_zh(t) if t else t for t in targets]
-
-        bt_samples: list[tuple[str, str]] = []
-        rate = self.config.pipeline.backtranslate_sample
-        if rate > 0:
-            for s, t in zip(sources, targets):
-                if random.random() < rate:
-                    bt_samples.append((s, t or ""))
-
-        return _BatchResult(targets=targets, issues=issues, bt_samples=bt_samples)
 
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
     ALL_STEPS = ("translate", "qa", "report", "assemble")

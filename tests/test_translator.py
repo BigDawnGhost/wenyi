@@ -21,8 +21,8 @@ class TestTranslatorAlignment(unittest.TestCase):
         return Config.from_dict({
             "language": {"source": "ja", "target": "zh"},
             "llm": {"provider": "fake", "tiers": {
-                "strong": {"model": "deepseek-v4-pro"},
-                "cheap": {"model": "deepseek-v4-flash"},
+                "strong": {"model": "gpt-4o"},
+                "cheap": {"model": "gpt-4o-mini"},
             }},
             "pipeline": {"align_retry_limit": 1},
         })

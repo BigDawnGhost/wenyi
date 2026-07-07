@@ -5,26 +5,25 @@ language:
   source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
   target: zh # 译文语言
 
-# ── LLM：DeepSeek 三档（经 OpenAI SDK 调 https://api.deepseek.com）─────────
-# strong/cheap 开 thinking（求质量的判断类任务）；fast 关 thinking（机械任务，
-# thinking 推理 token 按输出计费，关掉大幅省钱提速）。缺档按 fast→cheap→strong 回退。
+# ── LLM 配置：三档配置 ───────────────────────────────────────────────────
+# 缺档按 fast→cheap→strong 回退。
 llm:
-  provider: deepseek # deepseek | fake（fake 用于离线测试，不发网络请求）
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY # 从该环境变量读取 key
-  timeout: 600 # 单次请求超时（秒），思考模式耗时较长
-  max_retries: 4 # 失败重试次数（指数退避）
+  provider: openai # openai | fake（fake 用于离线测试，不发网络请求）
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY # 从该环境变量读取 key
+  timeout: 600
+  max_retries: 4
   tiers:
     strong:
-      model: deepseek-v4-pro # 翻译 / 润色 / 全局分析 / 标题
+      model: gpt-4o # 翻译 / 润色 / 全局分析 / 标题
       reasoning_effort: high
       thinking: true
     cheap:
-      model: deepseek-v4-flash # 审校 / 一致性 QA / 回译比对（判断类，保留思考）
+      model: gpt-4o-mini # 审校 / 一致性 QA / 回译比对
       reasoning_effort: high
       thinking: true
     fast:
-      model: deepseek-v4-flash # 梗概 / 全书概览 / 术语抽取 / 回译（机械任务，免思考）
+      model: gpt-4o-mini # 梗概 / 全书概览 / 术语抽取 / 回译
       thinking: false
 
 # ── 切分 ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,3 @@
-"""配置加载。读取 config.yaml，提供带默认值的类型化访问（pydantic v2）。"""
-
 from __future__ import annotations
 
 import os
@@ -13,19 +11,25 @@ class TierConfig(BaseModel):
     model: str
     reasoning_effort: str = "high"
     thinking: bool = True
+    extra_body: dict[str, Any] | None = None
 
 
 class LLMConfig(BaseModel):
-    provider: str = "deepseek"
-    base_url: str = "https://api.deepseek.com"
-    api_key_env: str = "DEEPSEEK_API_KEY"
+    provider: str = "openai"
+    base_url: str = "https://api.openai.com/v1"
+    api_key_env: str = "OPENAI_API_KEY"
     timeout: int = 600
     max_retries: int = 4
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
 
     @property
     def api_key(self) -> str | None:
-        return os.environ.get(self.api_key_env)
+        if os.environ.get("LLM_API_KEY"):
+            return os.environ.get("LLM_API_KEY")
+        val = os.environ.get(self.api_key_env)
+        if val:
+            return val
+        return os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
 
 
 class SegmentConfig(BaseModel):
@@ -35,49 +39,82 @@ class SegmentConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     review: bool = True
-    autofix_severe: bool = True      # 章末审校后自动重译严重项（漏译/误译）；关闭则仅上报留人工
-    align_retry_limit: int = 2       # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
-    polish: bool = False             # 默认关：润色=用强档把全书再翻一遍，最烧钱；需要时显式开
+    autofix_severe: bool = True
+    align_retry_limit: int = 2
+    polish: bool = False
     backtranslate_sample: float = 0.05
     consistency_qa: bool = True
     rolling_context_segments: int = 6
-    # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
-    # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
     book_understanding: bool = True
-    prescan_concurrency: int = 4     # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-    glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条+锁定人物（省 token）；full=全量表
+    prescan_concurrency: int = 4
+    glossary_scope: str = "chapter"
 
 
 class Config(BaseModel):
-    source_lang: str = "auto"        # auto | ja | en | …（auto 时由模型检测）
+    source_lang: str = "auto"
     target_lang: str = "zh"
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     honorific_strategy: str = "keep_style"
-    punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
+    punctuation_normalize: bool = True
     state_dir: str = "state"
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "Config":
-        with open(path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
+
+        raw = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
         return cls.from_dict(raw)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
-        lang = raw.get("language", {})
-        llm_raw = raw.get("llm", {})
-        tiers = {
-            name: TierConfig.model_validate(t)
-            for name, t in (llm_raw.get("tiers", {}) or {}).items()
-        }
+        lang = raw.get("language", {}) or {}
+        llm_raw = raw.get("llm", {}) or {}
+        
+        provider = os.environ.get("LLM_PROVIDER") or llm_raw.get("provider", "openai")
+        base_url = os.environ.get("LLM_BASE_URL") or llm_raw.get("base_url", "https://api.openai.com/v1")
+        api_key_env = os.environ.get("LLM_API_KEY_ENV") or llm_raw.get("api_key_env", "OPENAI_API_KEY")
+        
+        try:
+            timeout = int(os.environ.get("LLM_TIMEOUT") or llm_raw.get("timeout", 600))
+        except ValueError:
+            timeout = 600
+            
+        try:
+            max_retries = int(os.environ.get("LLM_MAX_RETRIES") or llm_raw.get("max_retries", 4))
+        except ValueError:
+            max_retries = 4
+
+        raw_tiers = llm_raw.get("tiers", {}) or {}
+        if not raw_tiers:
+            raw_tiers = {
+                "strong": {"model": "gpt-4o", "reasoning_effort": "high", "thinking": True},
+                "cheap": {"model": "gpt-4o-mini", "reasoning_effort": "high", "thinking": True},
+                "fast": {"model": "gpt-4o-mini", "thinking": False},
+            }
+            
+        tiers = {}
+        for name, t in raw_tiers.items():
+            t_obj = TierConfig.model_validate(t)
+            env_model = os.environ.get(f"LLM_MODEL_{name.upper()}")
+            if env_model:
+                t_obj.model = env_model
+            tiers[name] = t_obj
+
         llm = LLMConfig(
-            provider=llm_raw.get("provider", "deepseek"),
-            base_url=llm_raw.get("base_url", "https://api.deepseek.com"),
-            api_key_env=llm_raw.get("api_key_env", "DEEPSEEK_API_KEY"),
-            timeout=llm_raw.get("timeout", 600),
-            max_retries=llm_raw.get("max_retries", 4),
+            provider=provider,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            timeout=timeout,
+            max_retries=max_retries,
             tiers=tiers,
         )
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})

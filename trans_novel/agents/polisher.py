@@ -13,7 +13,7 @@ from .base import Agent
 
 class Polisher(Agent):
     def polish(self, targets: list[str], *, glossary_terms: list[GlossaryTerm] | None = None,
-               style: str = "") -> list[str]:
+               style: str = "", context: str = "") -> list[str]:
         if not targets:
             return []
         n = len(targets)
@@ -22,6 +22,7 @@ class Polisher(Agent):
             "polisher_user", src=self.src, tgt=self.tgt,
             glossary=prompts.render_glossary(glossary_terms or []),
             style=style or "（无）", n=n,
+            context=context or "（无）",
             numbered_target=prompts.numbered(targets),
         )
         items = self._ask_json(system, user, tier="strong", key="polished", default=None)

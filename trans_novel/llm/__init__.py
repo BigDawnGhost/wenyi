@@ -1,4 +1,4 @@
-"""LLM 调用层：抽象接口 + DeepSeek provider + 离线 FakeClient。"""
+"""LLM 调用层。"""
 
 from .base import LLMClient, FakeClient, build_client, parse_json_loose
 

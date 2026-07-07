@@ -8,7 +8,7 @@
 
 ```bash
 uv sync
-export DEEPSEEK_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...
 uv run trans-novel translate book.epub
 ```
 
@@ -123,20 +123,20 @@ uv run trans-novel tools assemble book.epub
 
 ## 模型档位
 
-默认配置使用 DeepSeek，并通过 OpenAI SDK 调用 `https://api.deepseek.com`。
+配置默认支持 OpenAI 兼容格式，可通过环境变量或 `.env` 自由配置任意兼容节点与模型。
 
 - `strong`: 翻译、润色、全局分析、标题翻译。
 - `cheap`: 章末 review、一致性 QA、回译比对。
 - `fast`: 全书预扫、章节梗概、术语抽取、回译等机械任务。
 
-如果模型 ID 变化，直接改 `config.yaml` 里的 `llm.tiers`。
+如果模型 ID 变化，直接在 `.env` 或 `config.yaml` 里的 `llm.tiers` 中修改。
 
 ## 项目结构
 
 ```text
 trans_novel/
   ingest/       输入解析、EPUB/FB2/TXT 切分
-  llm/          LLM 抽象接口、DeepSeek provider、FakeClient
+  llm/          LLM 抽象接口与通用 OpenAI 客户端、FakeClient
   glossary/     SQLite 术语库、抽取、冲突处理
   agents/       分析、翻译、审校、润色、一致性、提示词
   pipeline/     编排器、断点状态、滚动上下文、校验
