@@ -91,6 +91,8 @@ def _translate_impl(
     out: Optional[str] = None,
     polish: Optional[bool] = None,
     qa: Optional[bool] = None,
+    mono: Optional[bool] = None,
+    bilingual: Optional[bool] = None,
 ) -> None:
     """translate/resume 共享实现，避免 CLI 参数转发漂移。"""
     from .pipeline.orchestrator import Orchestrator
@@ -99,6 +101,10 @@ def _translate_impl(
     config = _load_config()
     if polish is not None:
         config.pipeline.polish = polish
+    if mono is not None:
+        config.output.mono = mono
+    if bilingual is not None:
+        config.output.bilingual = bilingual
     orch = Orchestrator(config)
 
     with Progress(
@@ -133,7 +139,8 @@ def _translate_impl(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
-    console.print(f"译文：[bold]{result['output']}[/]")
+    for path in result.get("outputs") or [result["output"]]:
+        console.print(f"译文：[bold]{path}[/]")
 
 
 # ── translate / resume：连续全流程 ──────────────────────────────────────────
@@ -157,9 +164,28 @@ def translate(
         "--qa/--no-qa",
         help="覆盖配置文件中的一致性 QA 开关",
     ),
+    mono: Optional[bool] = typer.Option(
+        None,
+        "--mono/--no-mono",
+        help="覆盖配置文件中的单语版产出开关",
+    ),
+    bilingual: Optional[bool] = typer.Option(
+        None,
+        "--bilingual/--no-bilingual",
+        help="覆盖配置文件中的双语版产出开关",
+    ),
 ):
     """翻译（连续全流程；可断点续跑）。"""
-    _translate_impl(input, chapter=chapter, fmt=fmt, out=out, polish=polish, qa=qa)
+    _translate_impl(
+        input,
+        chapter=chapter,
+        fmt=fmt,
+        out=out,
+        polish=polish,
+        qa=qa,
+        mono=mono,
+        bilingual=bilingual,
+    )
 
 
 @app.command()
@@ -261,17 +287,49 @@ def assemble(
     input: str = typer.Argument(..., help="输入文件"),
     out: Optional[str] = typer.Option(None, "--out"),
     fmt: str = typer.Option("epub", "--format", help="epub | txt"),
+    mono: Optional[bool] = typer.Option(
+        None,
+        "--mono/--no-mono",
+        help="覆盖配置文件中的单语版产出开关",
+    ),
+    bilingual: Optional[bool] = typer.Option(
+        None,
+        "--bilingual/--no-bilingual",
+        help="覆盖配置文件中的双语版产出开关",
+    ),
 ):
     """回填生成译文文件（默认 EPUB）。"""
     from .assemble.writer import assemble as do_assemble
+    from .assemble.writer import bilingual_out_path
 
     config = _load_config()
     store = _runstore_for(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 translate。[/]")
         raise typer.Exit(1)
-    path = do_assemble(store, input, out_path=out, out_format=fmt)
-    console.print(f"已生成译文：[bold]{path}[/]")
+    do_mono = config.output.mono if mono is None else mono
+    do_bilingual = config.output.bilingual if bilingual is None else bilingual
+    if not do_mono and not do_bilingual:
+        do_mono = True  # 兜底：至少产一个单语产物
+    paths: list[str] = []
+    if do_mono:
+        paths.append(
+            do_assemble(store, input, out_path=out, out_format=fmt, bilingual=False)
+        )
+    if do_bilingual:
+        bi_out = bilingual_out_path(out) if out else None
+        paths.append(
+            do_assemble(
+                store,
+                input,
+                out_path=bi_out,
+                out_format=fmt,
+                bilingual=True,
+                order=config.output.bilingual_order,
+            )
+        )
+    for path in paths:
+        console.print(f"已生成译文：[bold]{path}[/]")
 
 
 @tools_app.command()

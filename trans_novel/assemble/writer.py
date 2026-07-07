@@ -25,6 +25,25 @@ _VERTICAL_MARKERS = (
     re.compile(rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b", re.I),
 )
 _HORIZONTAL_OVERRIDE_ID = "trans-novel-horizontal-override"
+_BILINGUAL_STYLE_ID = "tn-bilingual-style"
+_BILINGUAL_CSS = """\
+.tn-source {
+  font-size: 0.88em;
+  line-height: 1.55;
+  color: #6b6b6b;
+  background-color: #f4f3f0;
+  padding: 0.5em 0.8em;
+  border-radius: 5px;
+  margin: 0.2em 0 1em;
+}
+@media (prefers-color-scheme: dark) {
+  .tn-source {
+    color: #a8a8a8;
+    background-color: #2a2a2a;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+  }
+}
+"""
 
 
 def _sanitize_filename(name: str, fallback: str = "translated") -> str:
@@ -33,7 +52,13 @@ def _sanitize_filename(name: str, fallback: str = "translated") -> str:
     return name[:120] or fallback
 
 
-def _default_out(source_path: str, out_format: str, title: str | None = None) -> str:
+def _default_out(
+    source_path: str,
+    out_format: str,
+    title: str | None = None,
+    *,
+    bilingual: bool = False,
+) -> str:
     """Return the default export path under the input file's ``output`` folder."""
     ext = ".epub" if out_format == "epub" else ".txt"
     output_dir = os.path.join(os.path.dirname(os.path.abspath(source_path)), "output")
@@ -42,10 +67,17 @@ def _default_out(source_path: str, out_format: str, title: str | None = None) ->
         # 保留给显式调用方使用；默认 assemble 不传书名译名。
         return os.path.join(output_dir, _sanitize_filename(title) + ext)
     base, _ = os.path.splitext(source_path)
+    suffix = ".zh-bi" if bilingual else ".zh"
     return os.path.join(
         output_dir,
-        f"{os.path.basename(base)}.zh{ext}",
+        f"{os.path.basename(base)}{suffix}{ext}",
     )
+
+
+def bilingual_out_path(out_path: str) -> str:
+    """调用方显式指定了 out_path 时，派生双语版路径：stem 追加 -bi。"""
+    base, ext = os.path.splitext(out_path)
+    return f"{base}-bi{ext}"
 
 
 def _ch_title(c: dict) -> str:
@@ -65,46 +97,82 @@ def _epub_lang(lang: str | None) -> str:
     return lang or "zh-Hans"
 
 
-def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str]]:
-    """把章内 Segment 合并为段落，cont 续段并回上一段。返回 [(kind, text), ...]。"""
-    paras: list[list[str]] = []      # 每段累积的文本片段
+def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:
+    """把章内 Segment 合并为段落，cont 续段并回上一段。返回 [(kind, target, source), ...]。"""
+    paras: list[list[str]] = []  # 每段累积的译文片段
+    srcs: list[list[str]] = []  # 每段累积的原文片段
     kinds: list[str] = []
     for s in chapter.segments:
         if not s.source.strip():
             continue
         if s.cont and paras:
             paras[-1].append(_seg_text(s))
+            srcs[-1].append(s.source)
         else:
             paras.append([_seg_text(s)])
+            srcs.append([s.source])
             kinds.append(s.kind)
-    return [(k, "".join(p)) for k, p in zip(kinds, paras)]
+    return [(k, "".join(p), "".join(sr)) for k, p, sr in zip(kinds, paras, srcs)]
+
+
+def _bilingual_source(source: str, target: str) -> str:
+    """双语原文去重：原文为空白，或与译文相同（翻译回退到原文）时不输出原文。"""
+    return source if (source.strip() and source != target) else ""
 
 
 # ── 纯文本 ──────────────────────────────────────────────────────────────────
-def _assemble_text(store: RunStore, out_path: str) -> str:
+def _assemble_text(
+    store: RunStore,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+) -> str:
     m = store.load_manifest()
     chapter_blocks: list[str] = []
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
-        paras = [text for _, text in _merged_paragraphs(ch)]
-        chapter_blocks.append("\n\n".join(paras))
+        blocks: list[str] = []
+        for kind, target, source in _merged_paragraphs(ch):
+            src = (
+                _bilingual_source(source, target)
+                if (bilingual and kind != KIND_HEADING)
+                else ""
+            )
+            if not src:
+                blocks.append(target)
+            elif order == "source_first":
+                blocks.extend((src, target))
+            else:
+                blocks.extend((target, src))
+        chapter_blocks.append("\n\n".join(blocks))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n\n".join(chapter_blocks) + "\n")
     return out_path
 
 
 # ── EPUB ────────────────────────────────────────────────────────────────────
-def _render_chapter_html(chapter: Chapter) -> str:
+def _render_chapter_html(
+    chapter: Chapter,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+) -> str:
     soup = BeautifulSoup(chapter.template or "", "html.parser")
     # 合并 cont 续段：续段文本并回其所属 anchor 元素
     by_anchor: dict[str, str] = {}
+    src_by_anchor: dict[str, str] = {}
+    kind_by_anchor: dict[str, str] = {}
     cur_anchor: str | None = None
     for s in chapter.segments:
         if s.cont and cur_anchor is not None:
             by_anchor[cur_anchor] += _seg_text(s)
+            src_by_anchor[cur_anchor] += s.source
         elif s.anchor:
             cur_anchor = s.anchor
             by_anchor[cur_anchor] = _seg_text(s)
+            src_by_anchor[cur_anchor] = s.source
+            kind_by_anchor[cur_anchor] = s.kind
     for anchor, text in by_anchor.items():
         el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
@@ -112,6 +180,18 @@ def _render_chapter_html(chapter: Chapter) -> str:
         el.clear()
         el.append(text)
         del el["data-tn-id"]
+        if not bilingual or kind_by_anchor.get(anchor) == KIND_HEADING:
+            continue
+        src = _bilingual_source(src_by_anchor.get(anchor, ""), text)
+        if not src:
+            continue
+        src_el = soup.new_tag("p")
+        src_el["class"] = ["tn-source", "ibooks-dark-theme-use-custom-text-color"]
+        src_el.append(src)
+        if order == "source_first":
+            el.insert_before(src_el)
+        else:
+            el.insert_after(src_el)
     return str(soup)
 
 
@@ -174,8 +254,14 @@ def _epub_looks_vertical(zf: zipfile.ZipFile) -> bool:
     return False
 
 
-def _rewrite_html_document(data: bytes | str, *, lang: str, force_horizontal: bool) -> bytes:
-    """给 XHTML/HTML 写入译后语言；必要时注入横排覆盖样式。"""
+def _rewrite_html_document(
+    data: bytes | str,
+    *,
+    lang: str,
+    force_horizontal: bool,
+    bilingual: bool = False,
+) -> bytes:
+    """给 XHTML/HTML 写入译后语言；必要时注入横排覆盖样式/双语原文样式。"""
     try:
         text = data.decode("utf-8") if isinstance(data, bytes) else data
         soup = BeautifulSoup(text, "html.parser")
@@ -209,6 +295,15 @@ def _rewrite_html_document(data: bytes | str, *, lang: str, force_horizontal: bo
                 "direction: ltr !important; "
                 "}"
             )
+            head.append(style)
+
+        if bilingual and soup.find(id=_BILINGUAL_STYLE_ID) is None:
+            head = soup.find("head")
+            if head is None:
+                head = soup.new_tag("head")
+                html.insert(0, head)
+            style = soup.new_tag("style", id=_BILINGUAL_STYLE_ID)
+            style.string = _BILINGUAL_CSS
             head.append(style)
         return str(soup).encode("utf-8")
     except Exception:
@@ -247,7 +342,14 @@ def _rewrite_toc(data: bytes, title_by_base: dict[str, str], *, is_ncx: bool) ->
         return data
 
 
-def _assemble_epub(store: RunStore, source_path: str, out_path: str) -> str:
+def _assemble_epub(
+    store: RunStore,
+    source_path: str,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+) -> str:
     m = store.load_manifest()
     target_lang = _epub_lang(m.get("target_lang", "zh"))
     # href -> 渲染后的 XHTML
@@ -255,7 +357,9 @@ def _assemble_epub(store: RunStore, source_path: str, out_path: str) -> str:
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
         if ch.href and ch.template:
-            rendered[ch.href] = _render_chapter_html(ch)
+            rendered[ch.href] = _render_chapter_html(
+                ch, bilingual=bilingual, order=order
+            )
 
     # 目录标题映射（文件名 → 译名）；书名保持原文，不改 OPF 主标题。
     title_by_base: dict[str, str] = {}
@@ -294,6 +398,7 @@ def _assemble_epub(store: RunStore, source_path: str, out_path: str) -> str:
                             rendered[name],
                             lang=target_lang,
                             force_horizontal=force_horizontal,
+                            bilingual=bilingual,
                         ),
                     )
                 elif name == "mimetype":
@@ -319,6 +424,7 @@ def _assemble_epub(store: RunStore, source_path: str, out_path: str) -> str:
                             data,
                             lang=target_lang,
                             force_horizontal=force_horizontal,
+                            bilingual=bilingual,
                         ),
                     )
                 else:
@@ -330,7 +436,36 @@ def _is_nav(data: bytes) -> bool:
     return b"epub:type" in data and b"toc" in data
 
 
-def _build_epub_from_chapters(store: RunStore, out_path: str) -> str:
+def _inject_bilingual_style(
+    out_path: str, chapter_filenames: set[str], lang: str
+) -> None:
+    """ebooklib 写盘时按模板重建每章 <head>，内联样式会被丢弃；这里对写好的 zip
+    做一次后处理，把双语样式补回各章节 head（复用 _rewrite_html_document）。"""
+    with zipfile.ZipFile(out_path, "r") as zin:
+        infos = zin.infolist()
+        entries = {info.filename: zin.read(info.filename) for info in infos}
+    tmp_path = out_path + ".tmp"
+    with zipfile.ZipFile(tmp_path, "w") as zout:
+        for info in infos:
+            data = entries[info.filename]
+            if os.path.basename(info.filename) in chapter_filenames:
+                data = _rewrite_html_document(
+                    data,
+                    lang=lang,
+                    force_horizontal=False,
+                    bilingual=True,
+                )
+            zout.writestr(info, data)
+    os.replace(tmp_path, out_path)
+
+
+def _build_epub_from_chapters(
+    store: RunStore,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+) -> str:
     """从章节数据生成一个规范的 EPUB3（用于纯文本输入），使用 ebooklib。"""
     from html import escape
 
@@ -347,14 +482,32 @@ def _build_epub_from_chapters(store: RunStore, out_path: str) -> str:
 
     spine: list = ["nav"]
     toc: list = []
+    chapter_filenames: set[str] = set()
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
         ch_title = _ch_title(c) or ch.title
         body_parts = []
-        for kind, text in _merged_paragraphs(ch):
+        for kind, target, source in _merged_paragraphs(ch):
             tag = "h1" if kind == KIND_HEADING else "p"
-            body_parts.append(f"<{tag}>{escape(text)}</{tag}>")
+            target_html = f"<{tag}>{escape(target)}</{tag}>"
+            src = (
+                _bilingual_source(source, target)
+                if (bilingual and kind != KIND_HEADING)
+                else ""
+            )
+            if not src:
+                body_parts.append(target_html)
+                continue
+            src_html = (
+                '<p class="tn-source ibooks-dark-theme-use-custom-text-color">'
+                f"{escape(src)}</p>"
+            )
+            if order == "source_first":
+                body_parts.extend((src_html, target_html))
+            else:
+                body_parts.extend((target_html, src_html))
         fname = f"ch{c['index']}.xhtml"
+        chapter_filenames.add(fname)
         item = epub.EpubHtml(title=ch_title, file_name=fname, lang=lang)
         item.content = (
             f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}">'
@@ -370,6 +523,8 @@ def _build_epub_from_chapters(store: RunStore, out_path: str) -> str:
     book.add_item(epub.EpubNav())
     book.spine = spine
     epub.write_epub(out_path, book)
+    if bilingual:
+        _inject_bilingual_style(out_path, chapter_filenames, lang)
     return out_path
 
 
@@ -378,6 +533,9 @@ def assemble(
     source_path: str,
     out_path: str | None = None,
     out_format: str = "epub",
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
 ) -> str:
     """生成译文文件（默认 EPUB）。
 
@@ -385,13 +543,17 @@ def assemble(
       - 原文是 EPUB → 按原模板回填，保留排版/资源；
       - 原文是纯文本 → 生成一个规范的 EPUB（标题 h1 + 段落 p）。
     out_format="txt"：无论原文格式，按章重建为纯文本。
+    bilingual=True 时额外输出原文（淡背景块），order 控制译文/原文先后。
     """
     m = store.load_manifest()
     if out_format == "txt":
-        return _assemble_text(store, out_path or _default_out(source_path, "txt", ""))
+        out_path = out_path or _default_out(source_path, "txt", "", bilingual=bilingual)
+        return _assemble_text(store, out_path, bilingual=bilingual, order=order)
     # epub
-    out_path = out_path or _default_out(source_path, "epub", "")
+    out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
     if m["fmt"] == "epub":
-        return _assemble_epub(store, source_path, out_path)
+        return _assemble_epub(
+            store, source_path, out_path, bilingual=bilingual, order=order
+        )
     # fb2 / text → 从章节数据生成规范 EPUB
-    return _build_epub_from_chapters(store, out_path)
+    return _build_epub_from_chapters(store, out_path, bilingual=bilingual, order=order)

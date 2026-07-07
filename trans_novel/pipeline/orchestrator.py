@@ -684,7 +684,7 @@ class Orchestrator:
                   out_format: str = "epub", out_path: str | None = None) -> dict[str, Any]:
         """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
         from ..agents.consistency import ConsistencyChecker
-        from ..assemble.writer import assemble
+        from ..assemble.writer import assemble, bilingual_out_path
         from ..assemble.report import build_report
 
         steps = set(steps)
@@ -718,19 +718,49 @@ class Orchestrator:
         finally:
             glossary.close()
 
-        out = None
+        outputs: list[str] = []
         if "assemble" in steps:
-            out = assemble(store, input_path, out_path=out_path, out_format=out_format)
-            store.log_event("assembled", output=out, out_format=out_format)
+            out_cfg = self.config.output
+            do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
+            if not do_mono and not do_bilingual:
+                do_mono = True  # 兜底：mono/bilingual 都关时至少产一个单语产物
+            if do_mono:
+                outputs.append(
+                    assemble(
+                        store,
+                        input_path,
+                        out_path=out_path,
+                        out_format=out_format,
+                        bilingual=False,
+                    )
+                )
+            if do_bilingual:
+                bi_out_path = bilingual_out_path(out_path) if out_path else None
+                outputs.append(
+                    assemble(
+                        store,
+                        input_path,
+                        out_path=bi_out_path,
+                        out_format=out_format,
+                        bilingual=True,
+                        order=out_cfg.bilingual_order,
+                    )
+                )
+            store.log_event("assembled", outputs=outputs, out_format=out_format)
 
         store.log_event(
             "run_steps_finished",
             steps=run_steps_input,
-            output=out,
+            outputs=outputs,
             qa_issue_count=len(qa_issues),
         )
-        return {"store": store, "output": out, "report": report,
-                "qa_issues": qa_issues}
+        return {
+            "store": store,
+            "output": outputs[0] if outputs else None,
+            "outputs": outputs,
+            "report": report,
+            "qa_issues": qa_issues,
+        }
 
     def run_all(self, input_path: str, *, progress: Optional[ProgressFn] = None,
                 out_format: str = "epub", out_path: str | None = None,

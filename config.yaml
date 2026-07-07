@@ -61,3 +61,9 @@ punctuation:
 # ── 路径 ─────────────────────────────────────────────────────────────────
 paths:
   state_dir: state # 运行状态、各章中间产物、术语库
+
+# ── 双语输出 ───────────────────────────────────────────────────────────────
+output:
+  mono: true            # 产出单语中文版
+  bilingual: true       # 产出双语版（原文淡化，与译文对照）
+  bilingual_order: target_first  # target_first=译文在上原文在下; source_first=原文在上

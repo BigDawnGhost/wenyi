@@ -114,12 +114,21 @@ class PipelineConfig(BaseModel):
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条+锁定人物（省 token）；full=全量表
 
 
+class OutputConfig(BaseModel):
+    mono: bool = True  # 产出单语版
+    bilingual: bool = True  # 产出双语版
+    bilingual_order: str = (
+        "target_first"  # target_first=译文在上原文在下(默认); source_first=原文在上
+    )
+
+
 class Config(BaseModel):
     source_lang: str = "auto"        # auto | ja | en | …（auto 时由模型检测）
     target_lang: str = "zh"
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    output: OutputConfig = Field(default_factory=OutputConfig)
     honorific_strategy: str = "keep_style"
     punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
     state_dir: str = "state"
@@ -161,6 +170,7 @@ class Config(BaseModel):
         )
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
+        output = OutputConfig.model_validate(raw.get("output", {}) or {})
         punct = raw.get("punctuation", {}) or {}
         return cls(
             source_lang=lang.get("source", "auto"),
@@ -168,6 +178,7 @@ class Config(BaseModel):
             llm=llm,
             segment=segment,
             pipeline=pipeline,
+            output=output,
             honorific_strategy=raw.get("honorific", {}).get("strategy", "keep_style"),
             punctuation_normalize=bool(punct.get("normalize", True)),
             state_dir=raw.get("paths", {}).get("state_dir", "state"),
