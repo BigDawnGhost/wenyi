@@ -540,5 +540,18 @@ class TestLangNormalize(unittest.TestCase):
         self.assertEqual(_normalize_lang(""), "")
 
 
+class TestProgressLabels(unittest.TestCase):
+    def test_progress_label_prefers_real_title(self):
+        self.assertEqual(Orchestrator._chapter_progress_label("引言", 0), "引言")
+        self.assertEqual(Orchestrator._chapter_progress_label("第一章", 1), "第一章")
+        self.assertEqual(Orchestrator._chapter_progress_label("", 1), "章节 2")
+
+    def test_consistency_label_prefers_real_title(self):
+        from trans_novel.agents.consistency import ConsistencyChecker
+
+        self.assertEqual(ConsistencyChecker._chapter_label("第一章", 1), "第一章")
+        self.assertEqual(ConsistencyChecker._chapter_label("", 1), "章节 2")
+
+
 if __name__ == "__main__":
     unittest.main()

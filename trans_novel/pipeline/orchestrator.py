@@ -379,7 +379,7 @@ class Orchestrator:
         chapter_digest = chapter.meta.get("source_digest", "")
 
         batches = batch_segments(text_segs, self.config.segment.max_chars_per_batch)
-        label = f"第{ci}章 {chapter.title}"
+        label = self._chapter_progress_label(chapter.title, ci)
         # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
         # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
         term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
@@ -528,6 +528,12 @@ class Orchestrator:
         hit = {t.source for t in GlossaryStore.terms_in(terms, src_text)}
         return [t for t in terms
                 if t.source in hit or (t.type == TYPE_PERSON and t.locked)]
+
+    @staticmethod
+    def _chapter_progress_label(title: str, index: int) -> str:
+        """进度展示用章节名：优先用书内标题，避免内部序号与“第一章”等标题冲突。"""
+        title = (title or "").strip()
+        return title or f"章节 {index + 1}"
 
     def _extract_batch_glossary(self, glossary: GlossaryStore, store: RunStore,
                                 chapter: int, start_index: int, batch) -> dict[str, int]:

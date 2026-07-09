@@ -15,6 +15,11 @@ from .base import Agent
 
 
 class ConsistencyChecker(Agent):
+    @staticmethod
+    def _chapter_label(title: str, index: int) -> str:
+        title = (title or "").strip()
+        return title or f"章节 {index + 1}"
+
     def _chapter_digests(self, store: RunStore, max_chars_each: int = 600) -> str:
         m = store.load_manifest()
         parts: list[str] = []
@@ -26,7 +31,9 @@ class ConsistencyChecker(Agent):
             head = targets[:3]
             tail = targets[-2:] if len(targets) > 3 else []
             snippet = "……".join([t for t in head + tail if t])[:max_chars_each]
-            parts.append(f"[第{c['index']}章 {c['title']}]\n{snippet}")
+            parts.append(
+                f"[{self._chapter_label(str(c.get('title', '')), int(c['index']))}]\n{snippet}"
+            )
         return "\n\n".join(parts)
 
     def check(self, store: RunStore, glossary: GlossaryStore) -> list[dict[str, Any]]:
