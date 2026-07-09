@@ -39,7 +39,13 @@ class GlossaryExtractor(Agent):
 
     def extract_and_store(self, store: GlossaryStore, source_text: str,
                           target_text: str, chapter: int) -> dict[str, int]:
-        existing = store.all_terms()
+        # 只注入源文里确实出现了的已有术语（source 或别名命中均可，
+        # 抽取阶段无翻译注入时的 SOURCE_ONLY_TYPES 限制）。
+        all_terms = store.all_terms()
+        existing = [
+            t for t in all_terms
+            if any(k and k in source_text for k in ([t.source] + t.aliases))
+        ]
         terms = self.extract(source_text, target_text, existing)
         summary = {"inserted": 0, "updated": 0, "conflict": 0, "unchanged": 0}
         for t in terms:
