@@ -1,0 +1,174 @@
+"""OpenAI 兼容 provider 共用的传输、重试与档位解析。"""
+
+from __future__ import annotations
+
+import os
+import threading
+from abc import abstractmethod
+from dataclasses import dataclass
+from typing import Any, Generic, Optional, TypeVar
+
+from pydantic import BaseModel
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from ...config import LLMConfig, TierConfig
+from ..base import LLMClient, Messages
+from ..tiers import resolve_tier
+
+OptionsT = TypeVar("OptionsT", bound=BaseModel)
+
+
+@dataclass(frozen=True)
+class ResolvedTier(Generic[OptionsT]):
+    """provider 已补全并校验的运行时档位。"""
+
+    model: str
+    options: OptionsT
+
+
+def resolve_provider_tiers(
+    overrides: dict[str, TierConfig],
+    *,
+    options_type: type[OptionsT],
+    defaults: dict[str, ResolvedTier[OptionsT]] | None = None,
+) -> dict[str, ResolvedTier[OptionsT]]:
+    """合并通用档位覆盖，并交给 provider 专属 options 模型校验。"""
+    tiers = dict(defaults or {})
+    for name, override in overrides.items():
+        current = tiers.get(name)
+        model = override.model or (current.model if current else None)
+        if not model:
+            raise ValueError(f"llm.tiers.{name}.model 不能为空")
+        option_values = current.options.model_dump() if current else {}
+        option_values.update(override.options)
+        tiers[name] = ResolvedTier(
+            model=model,
+            options=options_type.model_validate(option_values),
+        )
+    if "strong" not in tiers:
+        raise ValueError("配置缺少 llm.tiers.strong.model")
+    return tiers
+
+
+def base_request_kwargs(
+    model: str,
+    messages: Messages,
+    *,
+    json_mode: bool,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    return kwargs
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """递归合并 provider 请求体；用户值优先。"""
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
+    """所有 OpenAI Chat Completions 兼容 provider 的共用客户端。"""
+
+    def __init__(
+        self,
+        cfg: LLMConfig,
+        *,
+        provider_name: str,
+        default_base_url: str | None,
+        default_api_key_env: str | None,
+        tiers: dict[str, ResolvedTier[OptionsT]],
+        requires_api_key: bool,
+    ) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.provider_name = provider_name
+        self.base_url = cfg.base_url or default_base_url
+        self.api_key_env = cfg.api_key_env or default_api_key_env
+        self.tiers = tiers
+        self.requires_api_key = requires_api_key
+        if not self.base_url:
+            raise ValueError(f"{provider_name} provider 需要配置 llm.base_url")
+        self._client: Any = None
+        self._client_lock = threading.Lock()
+
+    def _ensure_client(self) -> Any:
+        with self._client_lock:
+            if self._client is None:
+                try:
+                    from openai import OpenAI
+                except ImportError as error:  # pragma: no cover
+                    raise RuntimeError(
+                        "需要 openai SDK：pip install openai"
+                        "（或把 llm.provider 设为 fake 做离线测试）"
+                    ) from error
+                api_key = os.environ.get(self.api_key_env) if self.api_key_env else None
+                if (self.requires_api_key or self.api_key_env) and not api_key:
+                    raise RuntimeError(
+                        f"未设置环境变量 {self.api_key_env}（{self.provider_name} API key）"
+                    )
+                self._client = OpenAI(
+                    api_key=api_key or "no-key",
+                    base_url=self.base_url,
+                    timeout=self.cfg.timeout,
+                )
+        return self._client
+
+    @abstractmethod
+    def _build_request_kwargs(
+        self,
+        tier_config: ResolvedTier[OptionsT],
+        messages: Messages,
+        *,
+        json_mode: bool,
+        max_tokens: Optional[int],
+    ) -> dict[str, Any]:
+        """把通用调用转换成 provider 的请求方言。"""
+        raise NotImplementedError
+
+    def complete(
+        self,
+        messages: Messages,
+        *,
+        tier: str = "strong",
+        json_mode: bool = False,
+        max_tokens: Optional[int] = None,
+        stage: Optional[str] = None,
+    ) -> str:
+        tier_config = resolve_tier(self.tiers, tier)
+        kwargs = self._build_request_kwargs(
+            tier_config,
+            messages,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+        )
+        client = self._ensure_client()
+
+        @retry(
+            stop=stop_after_attempt(self.cfg.max_retries + 1),
+            wait=wait_exponential(multiplier=1, max=30),
+            retry=retry_if_exception_type(Exception),
+            reraise=True,
+        )
+        def _call() -> str:
+            response = client.chat.completions.create(**kwargs)
+            self.usage.record(tier, getattr(response, "usage", None), stage)
+            return response.choices[0].message.content or ""
+
+        return _call()

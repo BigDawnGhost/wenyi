@@ -59,6 +59,59 @@ llm:
 `options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
 只属于 DeepSeek，不会进入通用 LLM 抽象层。
 
+### OpenAI 与 OpenRouter
+
+OpenAI 和 OpenRouter 分别维护独立 provider，会自动选择各自的 Base URL、API Key
+环境变量和思考参数格式。模型档位需要显式配置：
+
+```yaml
+llm:
+  provider: openrouter
+  tiers:
+    strong:
+      model: anthropic/claude-opus-4.6
+      options:
+        thinking: true
+        reasoning_effort: high
+    cheap:
+      model: openai/gpt-5-mini
+      options:
+        thinking: true
+        reasoning_effort: medium
+    fast:
+      model: google/gemini-3-flash
+      options:
+        thinking: false
+```
+
+`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取
+`OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+
+### 其他 OpenAI 兼容端点
+
+任意兼容 Chat Completions 的端点可使用 `openai-compatible`：
+
+```yaml
+llm:
+  provider: openai-compatible
+  base_url: https://api.example.com/v1
+  api_key_env: EXAMPLE_API_KEY
+  tiers:
+    strong:
+      model: provider-model-name
+      options:
+        thinking: true
+        extra_body:
+          enable_thinking: true
+```
+
+通用兼容 provider 不猜测厂商的思考参数方言。私有请求字段统一放入
+`options.extra_body`；它会在 provider 默认请求体之后递归合并。
+
+本地 Ollama 和 vLLM 还可以分别使用 `ollama`、`vllm`，默认地址为
+`http://localhost:11434/v1` 和 `http://localhost:8000/v1`，默认不要求 API Key。
+两者同样需要配置实际部署的模型档位。
+
 ## 流水线
 
 ```yaml

@@ -1,4 +1,4 @@
-"""通过 DeepSeek 原生 OpenAI 兼容接口调用模型。"""
+"""通过 OpenAI 官方 Chat Completions 接口调用模型。"""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ from ._openai_compatible import (
     resolve_provider_tiers,
 )
 
-DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 
 
-class DeepSeekTierOptions(BaseModel):
-    """DeepSeek 档位的专属请求选项。"""
+class OpenAITierOptions(BaseModel):
+    """OpenAI 档位的专属请求选项。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -30,39 +30,18 @@ class DeepSeekTierOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
-def _default_tiers() -> dict[str, ResolvedTier[DeepSeekTierOptions]]:
-    return {
-        "strong": ResolvedTier(
-            model="deepseek-v4-pro",
-            options=DeepSeekTierOptions(),
-        ),
-        "cheap": ResolvedTier(
-            model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(),
-        ),
-        "fast": ResolvedTier(
-            model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(thinking=False),
-        ),
-    }
-
-
 def build_request_kwargs(
-    tier_config: ResolvedTier[DeepSeekTierOptions],
+    tier_config: ResolvedTier[OpenAITierOptions],
     messages: Messages,
     *,
     json_mode: bool = False,
     max_tokens: Optional[int] = None,
 ) -> dict[str, Any]:
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
-    extra_body: dict[str, Any] = {}
     if tier_config.options.thinking:
         kwargs["reasoning_effort"] = tier_config.options.reasoning_effort
-        extra_body = {"thinking": {"type": "enabled"}}
     if tier_config.options.extra_body:
-        extra_body = deep_merge(extra_body, tier_config.options.extra_body)
-    if extra_body:
-        kwargs["extra_body"] = extra_body
+        kwargs["extra_body"] = deep_merge({}, tier_config.options.extra_body)
     if max_tokens is not None:
         kwargs["max_tokens"] = (
             max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
@@ -70,16 +49,15 @@ def build_request_kwargs(
     return kwargs
 
 
-class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
+class OpenAIClient(OpenAICompatibleBaseClient[OpenAITierOptions]):
     def __init__(self, cfg: LLMConfig):
         tiers = resolve_provider_tiers(
             cfg.tiers,
-            options_type=DeepSeekTierOptions,
-            defaults=_default_tiers(),
+            options_type=OpenAITierOptions,
         )
         super().__init__(
             cfg,
-            provider_name="DeepSeek",
+            provider_name="OpenAI",
             default_base_url=DEFAULT_BASE_URL,
             default_api_key_env=DEFAULT_API_KEY_ENV,
             tiers=tiers,
@@ -88,7 +66,7 @@ class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
 
     def _build_request_kwargs(
         self,
-        tier_config: ResolvedTier[DeepSeekTierOptions],
+        tier_config: ResolvedTier[OpenAITierOptions],
         messages: Messages,
         *,
         json_mode: bool,
