@@ -66,3 +66,21 @@ class TestFakeClient(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParseJsonLooseRepairs(unittest.TestCase):
+    def test_inner_ascii_quotes_repaired(self):
+        # 真实案例：claude-opus-4.6 经 OpenRouter 输出的译文含未转义英文引号
+        raw = '{"translations":["磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。"]}'
+        got = parse_json_loose(raw)
+        self.assertEqual(got["translations"][0], '磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。')
+
+    def test_trailing_extra_brace(self):
+        # 真实案例：gemini-3.1-pro 输出末尾多一个 }
+        self.assertEqual(parse_json_loose('{"a": 1}\n}'), {"a": 1})
+
+    def test_valid_json_untouched(self):
+        self.assertEqual(parse_json_loose('{"a": "b, c: d"}'), {"a": "b, c: d"})
+
+    def test_escaped_quotes_still_work(self):
+        self.assertEqual(parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'})
