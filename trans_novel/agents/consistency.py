@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..glossary.store import GlossaryStore
 from ..pipeline.runstore import RunStore, STATUS_DONE
 from . import prompts
