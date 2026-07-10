@@ -8,8 +8,16 @@ language:
 # ── LLM：DeepSeek 三档（经 OpenAI SDK 调 https://api.deepseek.com）─────────
 # strong/cheap 开 thinking（求质量的判断类任务）；fast 关 thinking（机械任务，
 # thinking 推理 token 按输出计费，关掉大幅省钱提速）。缺档按 fast→cheap→strong 回退。
+#
+# 也支持任意 OpenAI 兼容 API（OpenAI 官方 / OpenRouter / vLLM / Ollama 等）：
+#   provider: openai
+#   base_url: https://openrouter.ai/api/v1
+#   api_key_env: OPENROUTER_API_KEY
+#   reasoning_style: openrouter  # 思考参数方言：auto | deepseek | openrouter | openai | none
+#   tiers 里的 model 换成对应平台的模型 ID（如 anthropic/claude-opus-4.6）；
+#   个别厂商私有参数可在 tier 里用 extra_body 追加（如 {"enable_thinking": true}）。
 llm:
-  provider: deepseek # deepseek | fake（fake 用于离线测试，不发网络请求）
+  provider: deepseek # deepseek | openai | openai-compatible | fake（fake 离线测试）
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY # 从该环境变量读取 key
   timeout: 600 # 单次请求超时（秒），思考模式耗时较长

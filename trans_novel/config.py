@@ -13,14 +13,19 @@ class TierConfig(BaseModel):
     model: str
     reasoning_effort: str = "high"
     thinking: bool = True
+    # 逃生舱：该档请求 extra_body 追加/覆盖的厂商私有参数（如 {"enable_thinking": true}）
+    extra_body: dict[str, Any] | None = None
 
 
 class LLMConfig(BaseModel):
-    provider: str = "deepseek"
+    provider: str = "deepseek"  # deepseek | openai | openai-compatible | fake
     base_url: str = "https://api.deepseek.com"
     api_key_env: str = "DEEPSEEK_API_KEY"
     timeout: int = 600
     max_retries: int = 4
+    # 思考参数方言：auto | deepseek | openrouter | openai | none
+    # auto：provider=deepseek 走 deepseek；base_url 含 openrouter 走 openrouter；其余 openai
+    reasoning_style: str = "auto"
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
 
     @property
@@ -78,6 +83,7 @@ class Config(BaseModel):
             api_key_env=llm_raw.get("api_key_env", "DEEPSEEK_API_KEY"),
             timeout=llm_raw.get("timeout", 600),
             max_retries=llm_raw.get("max_retries", 4),
+            reasoning_style=llm_raw.get("reasoning_style", "auto"),
             tiers=tiers,
         )
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})

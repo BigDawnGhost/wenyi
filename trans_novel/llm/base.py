@@ -7,8 +7,10 @@
   thinking 推理 token 按输出计费，机械任务关掉可大幅省钱提速）。
   缺档时按回退链向"更便宜优先"回退（fast→cheap→strong），老双档配置行为不变。
 - complete() 返回纯文本；complete_json() 强制 JSON 输出并 loose 解析。
-- DeepSeekClient 经由 OpenAI SDK 调 https://api.deepseek.com，openai 惰性导入；
-  未装 openai 时仍可用 FakeClient 跑通离线流程（切分/对齐/术语库/状态机）。
+- OpenAICompatClient 经 OpenAI SDK 调任意 OpenAI 兼容端点（DeepSeek 原生 /
+  OpenAI 官方 / OpenRouter / vLLM 等），思考参数按 reasoning_style 方言生成；
+  DeepSeekClient 保留为向后兼容别名。openai 惰性导入，未装时仍可用 FakeClient
+  跑通离线流程（切分/对齐/术语库/状态机）。
 """
 
 from __future__ import annotations
@@ -103,8 +105,70 @@ class LLMClient(ABC):
         return parse_json_loose(text)
 
 
-# ── DeepSeek（OpenAI SDK 兼容）────────────────────────────────────────────
-class DeepSeekClient(LLMClient):
+# ── OpenAI 兼容客户端（DeepSeek / OpenAI / OpenRouter / vLLM 等）──────────
+def resolve_reasoning_style(cfg: LLMConfig) -> str:
+    """确定思考参数方言。
+
+    显式配置优先；auto 时按现状推断：provider=deepseek 且 base_url 非
+    OpenRouter 走 deepseek 方言（历史行为不变），base_url 含 openrouter
+    走 openrouter 统一参数，其余走 openai 标准参数。
+    """
+    style = (cfg.reasoning_style or "auto").lower()
+    if style != "auto":
+        return style
+    if "openrouter" in (cfg.base_url or ""):
+        return "openrouter"
+    if cfg.provider.lower() == "deepseek":
+        return "deepseek"
+    return "openai"
+
+
+def build_request_kwargs(
+    cfg: LLMConfig,
+    tcfg: TierConfig,
+    messages: Messages,
+    *,
+    json_mode: bool = False,
+    max_tokens: Optional[int] = None,
+) -> dict[str, Any]:
+    """组装 chat.completions.create 参数（纯函数，便于测试）。
+
+    思考参数按方言生成：
+    - deepseek:   reasoning_effort + extra_body.thinking（DeepSeek 原生）
+    - openrouter: extra_body.reasoning.effort / enabled=false（OpenRouter 统一格式，
+                  由其翻译成各家原生参数；免思考档显式关闭防混合推理模型默认开启）
+    - openai:     reasoning_effort（GPT-5 / o 系列官方参数）
+    - none:       不发任何思考参数（vLLM / Ollama 等会拒绝未知参数的端点）
+    tier 配置里的 extra_body 最后浅合并，可覆盖/补充任意厂商私有参数。
+    """
+    kwargs: dict[str, Any] = {
+        "model": tcfg.model,
+        "messages": messages,
+        "stream": False,
+    }
+    style = resolve_reasoning_style(cfg)
+    if tcfg.thinking:
+        if style == "deepseek":
+            kwargs["reasoning_effort"] = tcfg.reasoning_effort
+            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        elif style == "openrouter":
+            kwargs["extra_body"] = {"reasoning": {"effort": tcfg.reasoning_effort}}
+        elif style == "openai":
+            kwargs["reasoning_effort"] = tcfg.reasoning_effort
+    elif style == "openrouter":
+        kwargs["extra_body"] = {"reasoning": {"enabled": False}}
+    if tcfg.extra_body:
+        kwargs["extra_body"] = {**kwargs.get("extra_body", {}), **tcfg.extra_body}
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    if max_tokens:
+        # thinking 模式下 max_tokens 含推理 token（总输出上限）。
+        # 带紧上限的调用若经回退链落到 thinking 档，抬到安全下限防推理被截断。
+        kwargs["max_tokens"] = max(max_tokens, 4096) if tcfg.thinking else max_tokens
+    return kwargs
+
+
+class OpenAICompatClient(LLMClient):
     def __init__(self, cfg: LLMConfig):
         self.cfg = cfg
         if not cfg.tiers:
@@ -127,7 +191,7 @@ class DeepSeekClient(LLMClient):
             api_key = self.cfg.api_key
             if not api_key:
                 raise RuntimeError(
-                    f"未设置环境变量 {self.cfg.api_key_env}（DeepSeek API key）"
+                    f"未设置环境变量 {self.cfg.api_key_env}（LLM API key）"
                 )
             self._client = OpenAI(
                 api_key=api_key,
@@ -146,21 +210,9 @@ class DeepSeekClient(LLMClient):
     ) -> str:
         tcfg = resolve_tier(self.cfg.tiers, tier)
         client = self._ensure_client()
-
-        kwargs: dict[str, Any] = {
-            "model": tcfg.model,
-            "messages": messages,
-            "stream": False,
-        }
-        if tcfg.thinking:
-            kwargs["reasoning_effort"] = tcfg.reasoning_effort
-            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        if max_tokens:
-            # DeepSeek thinking 模式下 max_tokens 含推理 token（总输出上限）。
-            # 带紧上限的调用若经回退链落到 thinking 档，抬到安全下限防推理被截断。
-            kwargs["max_tokens"] = max(max_tokens, 4096) if tcfg.thinking else max_tokens
+        kwargs = build_request_kwargs(
+            self.cfg, tcfg, messages, json_mode=json_mode, max_tokens=max_tokens
+        )
 
         # 网络/限流/超时 → tenacity 指数退避重试（最多 max_retries 次重试）
         @retry(
@@ -203,10 +255,16 @@ class FakeClient(LLMClient):
         return "[]" if json_mode else ""
 
 
+# 向后兼容旧名
+DeepSeekClient = OpenAICompatClient
+
+
 def build_client(config: Config) -> LLMClient:
     provider = config.llm.provider.lower()
-    if provider == "deepseek":
-        return DeepSeekClient(config.llm)
+    if provider in ("deepseek", "openai", "openai-compatible"):
+        return OpenAICompatClient(config.llm)
     if provider == "fake":
         return FakeClient()
-    raise ValueError(f"未知 provider：{provider}（支持 deepseek / fake）")
+    raise ValueError(
+        f"未知 provider：{provider}（支持 deepseek / openai / openai-compatible / fake）"
+    )

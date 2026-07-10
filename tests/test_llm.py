@@ -66,3 +66,69 @@ class TestFakeClient(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBuildRequestKwargs(unittest.TestCase):
+    def _cfg(self, **kw):
+        from trans_novel.config import LLMConfig
+        return LLMConfig(**kw)
+
+    def _tier(self, **kw):
+        from trans_novel.config import TierConfig
+        return TierConfig(model="m", **kw)
+
+    def _build(self, cfg, tcfg, **kw):
+        from trans_novel.llm.base import build_request_kwargs
+        return build_request_kwargs(cfg, tcfg, [{"role": "user", "content": "x"}], **kw)
+
+    def test_deepseek_style_unchanged(self):
+        k = self._build(self._cfg(), self._tier(thinking=True, reasoning_effort="high"))
+        self.assertEqual(k["reasoning_effort"], "high")
+        self.assertEqual(k["extra_body"], {"thinking": {"type": "enabled"}})
+
+    def test_openrouter_auto_by_base_url(self):
+        cfg = self._cfg(base_url="https://openrouter.ai/api/v1")
+        k = self._build(cfg, self._tier(thinking=True, reasoning_effort="high"))
+        self.assertNotIn("reasoning_effort", k)
+        self.assertEqual(k["extra_body"], {"reasoning": {"effort": "high"}})
+        k2 = self._build(cfg, self._tier(thinking=False))
+        self.assertEqual(k2["extra_body"], {"reasoning": {"enabled": False}})
+
+    def test_openai_style(self):
+        cfg = self._cfg(provider="openai", base_url="https://api.openai.com/v1")
+        k = self._build(cfg, self._tier(thinking=True, reasoning_effort="low"))
+        self.assertEqual(k["reasoning_effort"], "low")
+        self.assertNotIn("extra_body", k)
+
+    def test_none_style_sends_nothing(self):
+        cfg = self._cfg(provider="openai", reasoning_style="none")
+        k = self._build(cfg, self._tier(thinking=True))
+        self.assertNotIn("reasoning_effort", k)
+        self.assertNotIn("extra_body", k)
+
+    def test_explicit_style_overrides_auto(self):
+        cfg = self._cfg(base_url="https://openrouter.ai/api/v1", reasoning_style="deepseek")
+        k = self._build(cfg, self._tier(thinking=True))
+        self.assertIn("reasoning_effort", k)
+
+    def test_tier_extra_body_merges_and_overrides(self):
+        cfg = self._cfg(provider="openai", reasoning_style="none")
+        t = self._tier(thinking=True, extra_body={"enable_thinking": True})
+        k = self._build(cfg, t)
+        self.assertEqual(k["extra_body"], {"enable_thinking": True})
+
+    def test_max_tokens_floor_with_thinking(self):
+        k = self._build(self._cfg(), self._tier(thinking=True), max_tokens=100)
+        self.assertEqual(k["max_tokens"], 4096)
+        k2 = self._build(self._cfg(), self._tier(thinking=False), max_tokens=100)
+        self.assertEqual(k2["max_tokens"], 100)
+
+    def test_deepseek_client_alias(self):
+        from trans_novel.llm.base import DeepSeekClient, OpenAICompatClient
+        self.assertIs(DeepSeekClient, OpenAICompatClient)
+
+    def test_build_client_accepts_openai_provider(self):
+        from trans_novel.config import Config
+        from trans_novel.llm.base import OpenAICompatClient, build_client
+        cfg = Config.from_dict({"llm": {"provider": "openai", "tiers": {"strong": {"model": "m"}}}})
+        self.assertIsInstance(build_client(cfg), OpenAICompatClient)
