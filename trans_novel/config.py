@@ -114,17 +114,17 @@ class SegmentConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     review: bool = False
-    autofix_severe: bool = False     # 最终审校后自动重译严重项；关闭则仅上报留人工
-    align_retry_limit: int = 2       # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
-    polish: bool = True              # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
+    autofix_severe: bool = False  # 最终审校后自动重译严重项；关闭则仅上报留人工
+    align_retry_limit: int = 2  # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
+    polish: bool = True  # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
     backtranslate_sample: float = 0.0
     consistency_qa: bool = False
     rolling_context_segments: int = 6
     # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
     book_understanding: bool = True
-    prescan_concurrency: int = 4     # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-    review_concurrency: int = 4      # 最终审校连续分块并发数（结果按原块序合并，1=串行）
+    prescan_concurrency: int = 4  # 预扫逐章梗概的并发线程数（各章独立，1=串行）
+    review_concurrency: int = 4  # 最终审校连续分块并发数（结果按原块序合并，1=串行）
     review_output_retries: int = Field(
         default=2,
         ge=0,
@@ -144,7 +144,7 @@ class OutputConfig(BaseModel):
 
 
 class Config(BaseModel):
-    source_lang: str = "auto"        # auto | ja | en | …（auto 时由模型检测）
+    source_lang: str = "auto"  # auto | ja | en | …（auto 时由模型检测）
     target_lang: str = "zh"
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)

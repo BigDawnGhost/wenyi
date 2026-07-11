@@ -22,8 +22,20 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=3.7",
     "pytest>=8.0",
+    "ruff>=0.12",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import 排序
+select = ["E", "W", "F", "I"]
+# 超长行主要是中文 prompt 字面量，formatter 不会拆字符串
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

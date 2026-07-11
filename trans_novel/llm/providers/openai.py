@@ -40,9 +40,7 @@ def build_request_kwargs(
     """构造 OpenAI 请求，并使用 max_completion_tokens 限制输出。"""
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
     kwargs["reasoning_effort"] = (
-        tier_config.options.reasoning_effort
-        if tier_config.options.thinking
-        else "none"
+        tier_config.options.reasoning_effort if tier_config.options.thinking else "none"
     )
     if tier_config.options.extra_body:
         kwargs["extra_body"] = deep_merge({}, tier_config.options.extra_body)

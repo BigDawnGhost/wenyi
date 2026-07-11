@@ -7,32 +7,44 @@ import os
 import tempfile
 import unittest
 
+from trans_novel.agents.analyzer import Analyzer
 from trans_novel.config import Config
-from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.glossary.store import GlossaryStore
 from trans_novel.glossary.extractor import (
     GlossaryExtractor,
     TranslatedSegmentEvidence,
 )
-from trans_novel.agents.analyzer import Analyzer
+from trans_novel.glossary.store import GlossaryStore
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.context import RollingContext
 
 
 def _cfg():
-    return Config.from_dict({
-        "language": {"source": "ja", "target": "zh"},
-        "llm": {"provider": "fake", "tiers": {
-            "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-    })
+    return Config.from_dict(
+        {
+            "language": {"source": "ja", "target": "zh"},
+            "llm": {
+                "provider": "fake",
+                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+            },
+        }
+    )
 
 
 class TestAnalyzer(unittest.TestCase):
     def test_analyze_and_seed(self):
         analysis = {
-            "genre": "校园", "tone": "冷峻第三人称",
+            "genre": "校园",
+            "tone": "冷峻第三人称",
             "style_guide": "保持克制",
-            "characters": [{"source": "綾小路", "target": "绫小路",
-                            "gender": "男", "reading": "あやのこうじ", "note": "第一人称用俺"}],
+            "characters": [
+                {
+                    "source": "綾小路",
+                    "target": "绫小路",
+                    "gender": "男",
+                    "reading": "あやのこうじ",
+                    "note": "第一人称用俺",
+                }
+            ],
             "terms": [{"source": "高度育成高校", "target": "高度育成高中", "type": "组织"}],
         }
         client = FakeClient(handler=lambda m, t, j: json.dumps(analysis, ensure_ascii=False))
@@ -63,9 +75,7 @@ class TestAnalyzer(unittest.TestCase):
             "characters": ["bad", {"source": "綾小路", "target": "绫小路"}],
             "terms": [1, {"source": "学校", "target": "学校", "type": {"bad": 1}}],
         }
-        client = FakeClient(
-            handler=lambda m, t, j: json.dumps(analysis, ensure_ascii=False)
-        )
+        client = FakeClient(handler=lambda m, t, j: json.dumps(analysis, ensure_ascii=False))
         analyzer = Analyzer(client, _cfg())
         result = analyzer.analyze("……样章……")
 
@@ -84,11 +94,18 @@ class TestAnalyzer(unittest.TestCase):
 
 class TestExtractor(unittest.TestCase):
     def test_extract_and_store(self):
-        terms = {"terms": [
-            {"source": "堀北", "target": "堀北", "type": "人物", "gender": "女",
-             "aliases": ["堀北さん"]},
-            {"source": "屋上", "target": "天台", "type": "地名", "gender": "未知"},
-        ]}
+        terms = {
+            "terms": [
+                {
+                    "source": "堀北",
+                    "target": "堀北",
+                    "type": "人物",
+                    "gender": "女",
+                    "aliases": ["堀北さん"],
+                },
+                {"source": "屋上", "target": "天台", "type": "地名", "gender": "未知"},
+            ]
+        }
         client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
         ext = GlossaryExtractor(client, _cfg())
         with tempfile.TemporaryDirectory() as d:
@@ -121,9 +138,7 @@ class TestExtractor(unittest.TestCase):
                 }
             ]
         }
-        extractor = GlossaryExtractor(
-            FakeClient(handler=lambda m, t, j: json.dumps(terms)), _cfg()
-        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda m, t, j: json.dumps(terms)), _cfg())
 
         result = extractor.extract("term", "术语", [])
 
@@ -146,17 +161,21 @@ class TestExtractor(unittest.TestCase):
                 self.assertIn("堀北站在窗边。", user)
                 self.assertIn('"proposed_target": "掘北"', user)
                 return json.dumps(
-                    {"terms": [
-                        {"source": "綾小路", "target": "绫小路"},
-                        {"source": "堀北", "target": "堀北"},
-                    ]},
+                    {
+                        "terms": [
+                            {"source": "綾小路", "target": "绫小路"},
+                            {"source": "堀北", "target": "堀北"},
+                        ]
+                    },
                     ensure_ascii=False,
                 )
             return json.dumps(
-                {"terms": [
-                    {"source": "綾小路", "target": "凌小路", "type": "人物"},
-                    {"source": "堀北", "target": "掘北", "type": "人物"},
-                ]},
+                {
+                    "terms": [
+                        {"source": "綾小路", "target": "凌小路", "type": "人物"},
+                        {"source": "堀北", "target": "掘北", "type": "人物"},
+                    ]
+                },
                 ensure_ascii=False,
             )
 
@@ -202,12 +221,8 @@ class TestExtractor(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_new_term_without_prior_occurrence_is_inserted_directly(self):
-        terms = {
-            "terms": [{"source": "綾小路", "target": "绫小路", "type": "人物"}]
-        }
-        client = FakeClient(
-            handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False)
-        )
+        terms = {"terms": [{"source": "綾小路", "target": "绫小路", "type": "人物"}]}
+        client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
         extractor = GlossaryExtractor(client, _cfg())
 
         with tempfile.TemporaryDirectory() as d:
@@ -227,19 +242,19 @@ class TestExtractor(unittest.TestCase):
         self.assertEqual(len(client.calls), 1)
 
     def test_unresolved_historical_term_is_not_locked_to_later_translation(self):
-        responses = iter([
-            json.dumps(
-                {"terms": [{"source": "綾小路", "target": "凌小路"}]},
-                ensure_ascii=False,
-            ),
-            json.dumps(
-                {"terms": [{"source": "綾小路", "target": ""}]},
-                ensure_ascii=False,
-            ),
-        ])
-        extractor = GlossaryExtractor(
-            FakeClient(handler=lambda m, t, j: next(responses)), _cfg()
+        responses = iter(
+            [
+                json.dumps(
+                    {"terms": [{"source": "綾小路", "target": "凌小路"}]},
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {"terms": [{"source": "綾小路", "target": ""}]},
+                    ensure_ascii=False,
+                ),
+            ]
         )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda m, t, j: next(responses)), _cfg())
         history = [
             TranslatedSegmentEvidence(
                 chapter=0,

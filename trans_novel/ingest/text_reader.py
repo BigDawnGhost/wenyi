@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 
-from .models import Chapter, Document, Segment, KIND_HEADING, KIND_TEXT
+from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 # Markdown 标题
 _MD_HEADING = re.compile(r"^(#{1,3})\s+(.*\S)\s*$")
@@ -76,9 +76,7 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
         idx = 0
         # 标题作为 heading segment（便于翻译并回填）
         if explicit_title:
-            segments.append(
-                Segment(index=idx, source=explicit_title, kind=KIND_HEADING)
-            )
+            segments.append(Segment(index=idx, source=explicit_title, kind=KIND_HEADING))
             idx += 1
         body = "\n".join(body_lines)
         for para in _split_paragraphs(body):

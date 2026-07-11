@@ -11,9 +11,13 @@ import zipfile
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from trans_novel.ingest.segmenter import (
-    load_document, chapter_batches, split_long_segments, _split_text)
-from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
+from tests.sample_data import (
+    write_cross_resource_toc_epub,
+    write_grouped_nav_epub,
+    write_nested_toc_epub,
+    write_sample_epub,
+    write_sample_txt,
+)
 from trans_novel.ingest.epub_reader import (
     _decode_markup,
     _find_opf_path,
@@ -22,12 +26,12 @@ from trans_novel.ingest.epub_reader import (
 )
 from trans_novel.ingest.epub_toc import parse_toc_entries, resolve_epub_href
 from trans_novel.ingest.fb2_reader import read_fb2_binaries
-from tests.sample_data import (
-    write_cross_resource_toc_epub,
-    write_grouped_nav_epub,
-    write_nested_toc_epub,
-    write_sample_epub,
-    write_sample_txt,
+from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
+from trans_novel.ingest.segmenter import (
+    _split_text,
+    chapter_batches,
+    load_document,
+    split_long_segments,
 )
 
 
@@ -195,9 +199,7 @@ class TestFb2Ingest(unittest.TestCase):
     def test_namespace_variants_are_supported(self):
         variants = {
             "2.1": _FB2_FLAT.replace("fictionbook/2.0", "fictionbook/2.1"),
-            "none": _FB2_FLAT.replace(
-                ' xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"', ""
-            ),
+            "none": _FB2_FLAT.replace(' xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"', ""),
         }
         for name, content in variants.items():
             with self.subTest(namespace=name):
@@ -251,9 +253,18 @@ class TestFb2Ingest(unittest.TestCase):
         doc = self._load(_FB2_BLOCKS)
         ch = doc.chapters[0]
         texts = [s.source for s in ch.segments]
-        for expect in ["题记一行。", "题记作者", "普通段落。", "诗名",
-                       "第一诗行。", "第二诗行。", "诗人", "引文段落。",
-                       "引文作者", "结尾段落。"]:
+        for expect in [
+            "题记一行。",
+            "题记作者",
+            "普通段落。",
+            "诗名",
+            "第一诗行。",
+            "第二诗行。",
+            "诗人",
+            "引文段落。",
+            "引文作者",
+            "结尾段落。",
+        ]:
             self.assertIn(expect, texts)
         # subtitle 作为 heading
         headings = [s.source for s in ch.segments if s.kind == KIND_HEADING]
@@ -264,8 +275,9 @@ class TestFb2Ingest(unittest.TestCase):
         # 部标题成一章 + 两个子章，正文一段不丢
         titles = [ch.title for ch in doc.chapters]
         self.assertEqual(titles, ["第一部", "第一章", "第二章"])
-        all_text = [s.source for ch in doc.chapters
-                    for s in ch.text_segments if s.kind != KIND_HEADING]
+        all_text = [
+            s.source for ch in doc.chapters for s in ch.text_segments if s.kind != KIND_HEADING
+        ]
         self.assertIn("一章首段。", all_text)
         self.assertIn("一章次段。", all_text)
         self.assertIn("二章仅一段。", all_text)
@@ -298,18 +310,22 @@ class TestFb2Ingest(unittest.TestCase):
 
 class TestSplitLongSegments(unittest.TestCase):
     def test_split_by_sentence_and_cont_flag(self):
-        long_src = "第一句。" * 10            # 40 字符
-        ch = Chapter(index=0, title="章", segments=[
-            Segment(index=0, source="标题", kind=KIND_HEADING, anchor="a0"),
-            Segment(index=1, source=long_src, kind=KIND_TEXT, anchor="a1"),
-            Segment(index=2, source="短。", kind=KIND_TEXT, anchor="a2"),
-        ])
+        long_src = "第一句。" * 10  # 40 字符
+        ch = Chapter(
+            index=0,
+            title="章",
+            segments=[
+                Segment(index=0, source="标题", kind=KIND_HEADING, anchor="a0"),
+                Segment(index=1, source=long_src, kind=KIND_TEXT, anchor="a1"),
+                Segment(index=2, source="短。", kind=KIND_TEXT, anchor="a2"),
+            ],
+        )
         split_long_segments([ch], max_chars=30)
         # 长段被拆成多段：首段保留 anchor，续段 cont=True 且无 anchor
         conts = [s.cont for s in ch.segments]
         self.assertIn(True, conts)
         long_parts = [s for s in ch.segments if not s.cont and s.anchor == "a1"]
-        self.assertEqual(len(long_parts), 1)            # 首段唯一带 a1
+        self.assertEqual(len(long_parts), 1)  # 首段唯一带 a1
         cont_parts = [s for s in ch.segments if s.cont]
         self.assertTrue(all(s.anchor is None for s in cont_parts))
         # index 连续重排
@@ -342,14 +358,17 @@ class TestSplitLongSegments(unittest.TestCase):
         self.assertTrue(all(not segment.meta for segment in ch.segments[1:]))
 
     def test_no_split_when_short(self):
-        ch = Chapter(index=0, title="章", segments=[
-            Segment(index=0, source="短句。", kind=KIND_TEXT, anchor="a0")])
+        ch = Chapter(
+            index=0,
+            title="章",
+            segments=[Segment(index=0, source="短句。", kind=KIND_TEXT, anchor="a0")],
+        )
         split_long_segments([ch], max_chars=100)
         self.assertEqual(len(ch.segments), 1)
         self.assertFalse(ch.segments[0].cont)
 
     def test_oversized_single_sentence_hard_split(self):
-        chunks = _split_text("あ" * 50, 20)   # 无句末标点的超长串
+        chunks = _split_text("あ" * 50, 20)  # 无句末标点的超长串
         self.assertTrue(all(len(c) <= 20 for c in chunks))
         self.assertEqual("".join(chunks), "あ" * 50)
 
@@ -412,9 +431,7 @@ class TestEpubIngest(unittest.TestCase):
             ["PART I", "PART II"],
         )
         self.assertEqual(document.meta["toc_paths"], ["OEBPS/toc.xml"])
-        self.assertTrue(
-            all(entry["kind"] == "ncx" for entry in document.meta["toc_entries"])
-        )
+        self.assertTrue(all(entry["kind"] == "ncx" for entry in document.meta["toc_entries"]))
 
     def test_real_boundary_wins_when_empty_title_page_has_same_position(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -469,12 +486,8 @@ class TestEpubIngest(unittest.TestCase):
             [segment.source for segment in doc.chapters[1].segments],
             ["Section 2", "Two."],
         )
-        group_entries = [
-            entry for entry in doc.meta["toc_entries"] if entry["depth"] == 0
-        ]
-        self.assertTrue(
-            all("inherited_boundary_from" in entry for entry in group_entries)
-        )
+        group_entries = [entry for entry in doc.meta["toc_entries"] if entry["depth"] == 0]
+        self.assertTrue(all("inherited_boundary_from" in entry for entry in group_entries))
 
     def test_nav_is_canonical_when_epub_also_contains_legacy_ncx(self):
         with tempfile.TemporaryDirectory() as d:
@@ -495,9 +508,7 @@ class TestEpubIngest(unittest.TestCase):
             doc = load_document(path, "en", "zh")
 
         self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I"])
-        broken = next(
-            entry for entry in doc.meta["toc_entries"] if entry["title"] == "PART II"
-        )
+        broken = next(entry for entry in doc.meta["toc_entries"] if entry["title"] == "PART II")
         self.assertNotIn("segment_anchor", broken)
         self.assertNotIn("boundary_position", broken)
 
@@ -653,22 +664,16 @@ class TestEpubIngest(unittest.TestCase):
             ],
         )
         rendered = BeautifulSoup(template, "html.parser")
+        self.assertTrue(all(not item.has_attr("data-tn-id") for item in rendered.find_all("li")))
         self.assertTrue(
-            all(not item.has_attr("data-tn-id") for item in rendered.find_all("li"))
-        )
-        self.assertTrue(
-            all(
-                not quote.has_attr("data-tn-id")
-                for quote in rendered.find_all("blockquote")
-            )
+            all(not quote.has_attr("data-tn-id") for quote in rendered.find_all("blockquote"))
         )
         self.assertEqual(len(rendered.select("a[data-tn-id]")), 3)
         self.assertEqual(len(rendered.select("blockquote div[data-tn-id]")), 2)
 
     def test_declared_legacy_xhtml_encoding_is_honored(self):
         markup = (
-            '<?xml version="1.0" encoding="Shift_JIS"?>'
-            "<html><body><p>日本語</p></body></html>"
+            '<?xml version="1.0" encoding="Shift_JIS"?><html><body><p>日本語</p></body></html>'
         ).encode("shift_jis")
 
         decoded = _decode_markup(markup)
@@ -878,8 +883,7 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(doc.chapters[0].title, "第一章")
         self.assertTrue(
             any(
-                entry.get("resource_href") == "title.xhtml"
-                and entry.get("title") == "第一章"
+                entry.get("resource_href") == "title.xhtml" and entry.get("title") == "第一章"
                 for entry in doc.meta["toc_entries"]
             )
         )

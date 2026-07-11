@@ -54,16 +54,43 @@ ProgressFn = Callable[[int, int, str], None]
 
 # 语言名/代码 → ISO 639-1 两字母代码（模型检测结果归一化）
 _LANG_ALIASES = {
-    "japanese": "ja", "日语": "ja", "日文": "ja", "jp": "ja", "jpn": "ja",
-    "english": "en", "英语": "en", "英文": "en", "eng": "en",
-    "russian": "ru", "俄语": "ru", "俄文": "ru", "rus": "ru",
-    "chinese": "zh", "中文": "zh", "汉语": "zh", "zh-cn": "zh", "zho": "zh",
-    "korean": "ko", "韩语": "ko", "韩文": "ko", "kor": "ko",
-    "french": "fr", "法语": "fr", "法文": "fr",
-    "german": "de", "德语": "de", "德文": "de",
-    "spanish": "es", "西班牙语": "es", "西班牙文": "es",
-    "italian": "it", "意大利语": "it", "意大利文": "it",
-    "portuguese": "pt", "葡萄牙语": "pt", "葡萄牙文": "pt",
+    "japanese": "ja",
+    "日语": "ja",
+    "日文": "ja",
+    "jp": "ja",
+    "jpn": "ja",
+    "english": "en",
+    "英语": "en",
+    "英文": "en",
+    "eng": "en",
+    "russian": "ru",
+    "俄语": "ru",
+    "俄文": "ru",
+    "rus": "ru",
+    "chinese": "zh",
+    "中文": "zh",
+    "汉语": "zh",
+    "zh-cn": "zh",
+    "zho": "zh",
+    "korean": "ko",
+    "韩语": "ko",
+    "韩文": "ko",
+    "kor": "ko",
+    "french": "fr",
+    "法语": "fr",
+    "法文": "fr",
+    "german": "de",
+    "德语": "de",
+    "德文": "de",
+    "spanish": "es",
+    "西班牙语": "es",
+    "西班牙文": "es",
+    "italian": "it",
+    "意大利语": "it",
+    "意大利文": "it",
+    "portuguese": "pt",
+    "葡萄牙语": "pt",
+    "葡萄牙文": "pt",
 }
 
 
@@ -123,9 +150,7 @@ class Orchestrator:
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
         target = (self.config.target_lang or "").lower().replace("_", "-")
-        return self.config.punctuation_normalize and (
-            target == "zh" or target.startswith("zh-")
-        )
+        return self.config.punctuation_normalize and (target == "zh" or target.startswith("zh-"))
 
     def _flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
         """把当前 client 尚未落盘的用量增量合并到本书 usage.json。"""
@@ -161,8 +186,15 @@ class Orchestrator:
                 "请修改 config.yaml 中的 language.source 或 language.target。"
             )
         self.config.source_lang = resolved
-        for ag in (self.analyzer, self.synopsizer, self.translator, self.reviewer,
-                   self.backtrans, self.polisher, self.extractor):
+        for ag in (
+            self.analyzer,
+            self.synopsizer,
+            self.translator,
+            self.reviewer,
+            self.backtrans,
+            self.polisher,
+            self.extractor,
+        ):
             ag.src = resolved
 
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
@@ -198,8 +230,7 @@ class Orchestrator:
             raise ValueError("尚无翻译进度。请先运行 translate。")
         return store
 
-    def prepare(self, input_path: str, *,
-                progress: ProgressFn | None = None) -> RunStore:
+    def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
         """解析输入并定位状态目录；首次运行时在书级锁内完成初始化。
 
         PDF 的状态目录可直接由文件名确定，因此续跑时先检查 manifest，
@@ -283,9 +314,7 @@ class Orchestrator:
             store.log_event("analysis_saved", has_analysis=bool(analysis))
             store.save_context(
                 RollingContext(
-                    max_recent_keep=max(
-                        40, self.config.pipeline.rolling_context_segments
-                    )
+                    max_recent_keep=max(40, self.config.pipeline.rolling_context_segments)
                 ).to_dict()
             )
 
@@ -309,9 +338,7 @@ class Orchestrator:
                     "consistency_qa": self.config.pipeline.consistency_qa,
                     "book_understanding": self.config.pipeline.book_understanding,
                     "review_concurrency": self.config.pipeline.review_concurrency,
-                    "review_output_retries": (
-                        self.config.pipeline.review_output_retries
-                    ),
+                    "review_output_retries": (self.config.pipeline.review_output_retries),
                 },
             )
         finally:
@@ -331,9 +358,10 @@ class Orchestrator:
         )
         try:
             data = self.client.complete_json(
-                [{"role": "system", "content": system},
-                 {"role": "user", "content": sample}], tier="cheap",
-                stage="language_detect")
+                [{"role": "system", "content": system}, {"role": "user", "content": sample}],
+                tier="cheap",
+                stage="language_detect",
+            )
             code = (data.get("language") if isinstance(data, dict) else "") or ""
             return _normalize_lang(str(code))
         except Exception:  # noqa: BLE001 - provider errors mean detection failed
@@ -346,8 +374,7 @@ class Orchestrator:
         texts = ["\n".join(s.source for s in ch.text_segments) for ch in doc.chapters]
         texts = [t for t in texts if len(t) > 200]
         if not texts:  # 兜底：全书都是短章
-            joined = "\n".join(
-                s.source for ch in doc.chapters[:2] for s in ch.text_segments)
+            joined = "\n".join(s.source for ch in doc.chapters[:2] for s in ch.text_segments)
             return joined[:6000]
         if not labeled:
             return texts[0][:6000]
@@ -363,8 +390,13 @@ class Orchestrator:
             parts.append(f"【{tag}】\n{chunk}")
         return "\n\n".join(parts)
 
-    def run(self, input_path: str, *, only_chapter: int | None = None,
-            progress: ProgressFn | None = None) -> RunStore:
+    def run(
+        self,
+        input_path: str,
+        *,
+        only_chapter: int | None = None,
+        progress: ProgressFn | None = None,
+    ) -> RunStore:
         """准备运行状态并在书级锁内翻译待处理章节。"""
         store = self.prepare(input_path, progress=progress)
         with store.lock():
@@ -384,9 +416,7 @@ class Orchestrator:
         store = self.prepare(input_path, progress=progress)
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(
-                manifest.get("source_lang") or self.config.source_lang
-            )
+            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
             try:
                 self._build_understanding(store, progress=progress)
                 store.log_event(
@@ -408,19 +438,11 @@ class Orchestrator:
         """恢复语言和上下文，依次翻译章节并持续保存用量与进度。"""
         manifest = store.load_manifest()
         self._apply_language(manifest.get("source_lang") or self.config.source_lang)
-        chapter_indices = {
-            chapter.get("index") for chapter in manifest.get("chapters", [])
-        }
+        chapter_indices = {chapter.get("index") for chapter in manifest.get("chapters", [])}
         if only_chapter is not None and only_chapter not in chapter_indices:
-            available = sorted(
-                index for index in chapter_indices if isinstance(index, int)
-            )
-            valid_range = (
-                f"0–{available[-1]}" if available else "无可翻译章节"
-            )
-            raise ValueError(
-                f"章节编号 {only_chapter} 不存在；可用范围：{valid_range}"
-            )
+            available = sorted(index for index in chapter_indices if isinstance(index, int))
+            valid_range = f"0–{available[-1]}" if available else "无可翻译章节"
+            raise ValueError(f"章节编号 {only_chapter} 不存在；可用范围：{valid_range}")
         glossary = GlossaryStore(store.glossary_path)
         context = RollingContext.from_dict(
             store.load_context() or {},
@@ -435,9 +457,7 @@ class Orchestrator:
             progress_chapters = targets
         else:
             targets = store.pending_chapters()
-            progress_chapters = [
-                chapter["index"] for chapter in manifest.get("chapters", [])
-            ]
+            progress_chapters = [chapter["index"] for chapter in manifest.get("chapters", [])]
 
         total, done = self._progress_counts(store, progress_chapters)
         translation_history = self._load_translation_history(store)
@@ -450,9 +470,17 @@ class Orchestrator:
         try:
             for ci in targets:
                 done = self._translate_chapter(
-                    ci, store, glossary, context, style, book_synopsis,
+                    ci,
+                    store,
+                    glossary,
+                    context,
+                    style,
+                    book_synopsis,
                     translation_history=translation_history,
-                    progress=progress, done=done, total=total)
+                    progress=progress,
+                    done=done,
+                    total=total,
+                )
                 store.save_context(context.to_dict())
                 self._flush_usage(store, scope="chapter")
             # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
@@ -512,8 +540,7 @@ class Orchestrator:
                 target=target,
             )
 
-    def _progress_counts(self, store: RunStore,
-                         chapter_indices: list[int]) -> tuple[int, int]:
+    def _progress_counts(self, store: RunStore, chapter_indices: list[int]) -> tuple[int, int]:
         """按全书批次检查点计算进度，续跑从已有译文数量开始显示。
 
         只有整批译文齐全时才计入 done；不完整批次会整体重跑，提前计入其中
@@ -524,17 +551,13 @@ class Orchestrator:
         for ci in chapter_indices:
             segments = store.load_chapter(ci).text_segments
             total += len(segments)
-            for batch in _resume_batches(
-                segments, self.config.segment.max_chars_per_batch
-            ):
-                if all(segment.target and segment.target.strip()
-                       for segment in batch):
+            for batch in _resume_batches(segments, self.config.segment.max_chars_per_batch):
+                if all(segment.target and segment.target.strip() for segment in batch):
                     done += len(batch)
         return total, done
 
     # ── 全书理解预扫（源文逐章梗概 + 全书概览）────────────────────────────────
-    def _build_understanding(self, store: RunStore,
-                             progress: ProgressFn | None = None) -> str:
+    def _build_understanding(self, store: RunStore, progress: ProgressFn | None = None) -> str:
         """翻译前预扫源文：逐章梗概存入 chapter.meta，归并出全书概览存入 analysis。
 
         幂等、可续跑：已有梗概/概览则跳过。返回全书概览（注入各章翻译 prompt）。
@@ -548,10 +571,14 @@ class Orchestrator:
 
         # 各章梗概相互独立 → 并行调用（LLM 调用进线程池；落盘全部在主线程，
         # 保持原子写不竞争，且逐章增量落盘、续跑粒度不变）。已有梗概的章跳过（幂等）。
-        loaded = {c.get("index", i): store.load_chapter(c.get("index", i))
-                  for i, c in enumerate(chapters)}
-        todo = [(ci, "\n".join(s.source for s in ch.text_segments))
-                for ci, ch in loaded.items() if not ch.meta.get("source_digest")]
+        loaded = {
+            c.get("index", i): store.load_chapter(c.get("index", i)) for i, c in enumerate(chapters)
+        }
+        todo = [
+            (ci, "\n".join(s.source for s in ch.text_segments))
+            for ci, ch in loaded.items()
+            if not ch.meta.get("source_digest")
+        ]
         if todo:
             store.log_event(
                 "book_understanding_chapter_digest_started",
@@ -562,8 +589,7 @@ class Orchestrator:
             if progress:
                 progress(0, len(todo), "预扫章节梗概")
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs = {ex.submit(self.synopsizer.digest_chapter, src): ci
-                        for ci, src in todo}
+                futs = {ex.submit(self.synopsizer.digest_chapter, src): ci for ci, src in todo}
                 for n_done, fut in enumerate(as_completed(futs), 1):
                     ci = futs[fut]
                     loaded[ci].meta["source_digest"] = fut.result()  # 失败时 _ask_text 已回退 ""
@@ -577,24 +603,26 @@ class Orchestrator:
                         progress(n_done, len(todo), "预扫章节梗概")
 
         # 按 manifest 章序组装（与并发完成顺序无关）
-        digests = [loaded[c.get("index", i)].meta.get("source_digest", "") or ""
-                   for i, c in enumerate(chapters)]
+        digests = [
+            loaded[c.get("index", i)].meta.get("source_digest", "") or ""
+            for i, c in enumerate(chapters)
+        ]
 
         analysis = store.load_analysis() or {}
         synopsis = analysis.get("book_synopsis", "")
         if not synopsis and any(d.strip() for d in digests):
             if progress:
                 progress(0, 0, "生成全书概览…")
-            synopsis = self.synopsizer.book_synopsis(
-                digests, self.analyzer.style_brief(analysis))
+            synopsis = self.synopsizer.book_synopsis(digests, self.analyzer.style_brief(analysis))
             analysis["book_synopsis"] = synopsis
             store.save_analysis(analysis)
             store.log_event("book_synopsis_saved", synopsis=synopsis)
         return synopsis
 
     # ── 章节标题 / 目录项翻译（书名保持原文）──────────────────────────────
-    def _translate_titles(self, store: RunStore, glossary: GlossaryStore,
-                          progress: ProgressFn | None = None) -> None:
+    def _translate_titles(
+        self, store: RunStore, glossary: GlossaryStore, progress: ProgressFn | None = None
+    ) -> None:
         """翻译所有逻辑章标题和 NCX/NAV 目录节点并写回 manifest。
 
         目录节点若已定位到正文 heading Segment，直接复用完整译文，
@@ -699,9 +727,7 @@ class Orchestrator:
                 continue
             anchor = entry.get("segment_anchor")
             linked = anchor_targets.get(anchor) if isinstance(anchor, str) else None
-            can_reuse = bool(
-                linked and _flat(linked[1]) == _flat(entry.get("title"))
-            )
+            can_reuse = bool(linked and _flat(linked[1]) == _flat(entry.get("title")))
             target = linked[2] if linked and can_reuse else ""
             if target.strip():
                 entry["title_translated"] = target.strip()
@@ -853,14 +879,20 @@ class Orchestrator:
                 progress(completed, len(pending), "翻译章节标题")
 
     # ── 单章 ──────────────────────────────────────────────────────────────
-    def _translate_chapter(self, ci: int, store: RunStore,
-                           glossary: GlossaryStore, context: RollingContext,
-                           style: str, book_synopsis: str = "", *,
-                           translation_history: dict[
-                               tuple[int, int], TranslatedSegmentEvidence
-                           ],
-                           progress: ProgressFn | None = None,
-                           done: int = 0, total: int = 0) -> int:
+    def _translate_chapter(
+        self,
+        ci: int,
+        store: RunStore,
+        glossary: GlossaryStore,
+        context: RollingContext,
+        style: str,
+        book_synopsis: str = "",
+        *,
+        translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
+        progress: ProgressFn | None = None,
+        done: int = 0,
+        total: int = 0,
+    ) -> int:
         """翻译、润色和抽取单章并落盘，返回更新后的完成段数。"""
         chapter = store.load_chapter(ci)
         text_segs = chapter.text_segments
@@ -870,9 +902,7 @@ class Orchestrator:
             return done
         chapter_digest = chapter.meta.get("source_digest", "")
 
-        batches = _resume_batches(
-            text_segs, self.config.segment.max_chars_per_batch
-        )
+        batches = _resume_batches(text_segs, self.config.segment.max_chars_per_batch)
         label = self._chapter_progress_label(chapter.title, ci)
         # prepare() 的最后一个标签通常是“解析文档…”。续跑首批可能先恢复术语，
         # 若不在章首刷新，整个模型请求期间都会错误地显示成仍在解析源文件。
@@ -888,7 +918,7 @@ class Orchestrator:
         # 断点续跑（段/批级）：上次中断前已译完并落盘的批次，整批跳过、不重翻，只重建上下文。
         bt_samples: list[tuple[str, str]] = []
         translation_changed = False
-        seg_base = 0   # 当前批首段的章内段号（issue 批内下标 → 章内段号）
+        seg_base = 0  # 当前批首段的章内段号（issue 批内下标 → 章内段号）
         for b in batches:
             batch_start = seg_base
             glossary_key = store.batch_glossary_key(batch_start, len(b))
@@ -897,11 +927,20 @@ class Orchestrator:
                 # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
                 context.add_targets(existing_targets)
                 if glossary_key in glossary_checkpoints:
-                    summary = {"inserted": 0, "conflict": 0, "unchanged": 0,
-                               "updated": 0, "skipped": 1}
+                    summary = {
+                        "inserted": 0,
+                        "conflict": 0,
+                        "unchanged": 0,
+                        "updated": 0,
+                        "skipped": 1,
+                    }
                 else:
                     summary = self._extract_batch_glossary(
-                        glossary, store, ci, batch_start, b,
+                        glossary,
+                        store,
+                        ci,
+                        batch_start,
+                        b,
                         translation_history,
                     )
                     glossary_checkpoints.add(glossary_key)
@@ -929,8 +968,9 @@ class Orchestrator:
                 chapter.meta["review_issues"] = []
                 chapter.meta.pop("review_digest", None)
                 translation_changed = True
-            res = self._process_batch(b, term_snapshot, ctx_text, style,
-                                      book_synopsis, chapter_digest)
+            res = self._process_batch(
+                b, term_snapshot, ctx_text, style, book_synopsis, chapter_digest
+            )
             for s, t in zip(b, res.targets):
                 s.target = t
             store.log_event(
@@ -955,12 +995,8 @@ class Orchestrator:
             # 增量持久化译文，下次中断从此批之后续跑。
             store.save_chapter(chapter)
             # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
-            self._extract_batch_glossary(
-                glossary, store, ci, batch_start, b, translation_history
-            )
-            self._update_translation_history(
-                translation_history, ci, batch_start, b
-            )
+            self._extract_batch_glossary(glossary, store, ci, batch_start, b, translation_history)
+            self._update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
             term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
 
@@ -978,9 +1014,7 @@ class Orchestrator:
             retained = min(len(normalized_targets), len(context.recent_targets))
             if retained:
                 context.recent_targets[-retained:] = normalized_targets[-retained:]
-            self._update_translation_history(
-                translation_history, ci, 0, text_segs
-            )
+            self._update_translation_history(translation_history, ci, 0, text_segs)
 
         # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
         # 最终 Review 会在全书翻译完成后读取此时已经稳定的最终术语库。
@@ -1045,11 +1079,15 @@ class Orchestrator:
         title = (title or "").strip()
         return title or f"章节 {index + 1}"
 
-    def _extract_batch_glossary(self, glossary: GlossaryStore, store: RunStore,
-                                chapter: int, start_index: int, batch,
-                                translation_history: dict[
-                                    tuple[int, int], TranslatedSegmentEvidence
-                                ]) -> dict[str, int]:
+    def _extract_batch_glossary(
+        self,
+        glossary: GlossaryStore,
+        store: RunStore,
+        chapter: int,
+        start_index: int,
+        batch,
+        translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
+    ) -> dict[str, int]:
         """每批译完/续跑跳过后即时抽取术语，供同章后续批次使用。"""
         src_text = "\n".join(s.source for s in batch)
         tgt_text = "\n".join(s.target or "" for s in batch)
@@ -1086,8 +1124,7 @@ class Orchestrator:
             "target_lang": self.config.target_lang,
             "autofix": autofix,
             "segments": [
-                {"source": segment.source, "target": segment.target or ""}
-                for segment in text_segs
+                {"source": segment.source, "target": segment.target or ""} for segment in text_segs
             ],
             "terms": [
                 {
@@ -1130,19 +1167,11 @@ class Orchestrator:
         if pending:
             joined = ", ".join(str(index) for index in pending[:10])
             suffix = "…" if len(pending) > 10 else ""
-            raise ValueError(
-                "全书审校要求所有章节先完成翻译；"
-                f"仍待翻译章节：{joined}{suffix}"
-            )
+            raise ValueError(f"全书审校要求所有章节先完成翻译；仍待翻译章节：{joined}{suffix}")
 
-        do_autofix = (
-            self.config.pipeline.autofix_severe if autofix is None else autofix
-        )
+        do_autofix = self.config.pipeline.autofix_severe if autofix is None else autofix
         chapters = manifest.get("chapters", [])
-        loaded = {
-            item["index"]: store.load_chapter(item["index"])
-            for item in chapters
-        }
+        loaded = {item["index"]: store.load_chapter(item["index"]) for item in chapters}
         total = sum(len(chapter.text_segments) for chapter in loaded.values())
         done = 0
         all_issues: list[dict] = []
@@ -1162,9 +1191,7 @@ class Orchestrator:
             chapter = loaded[ci]
             text_segs = chapter.text_segments
             term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
-            digest = self._review_digest(
-                text_segs, term_snapshot, autofix=do_autofix
-            )
+            digest = self._review_digest(text_segs, term_snapshot, autofix=do_autofix)
             label = f"全书审校：{self._chapter_progress_label(chapter.title, ci)}"
 
             if (
@@ -1309,8 +1336,7 @@ class Orchestrator:
                     chunk_issues.append(it)
                 else:
                     warnings.warn(
-                        f"忽略无效审校索引 {it.get('index')!r}；"
-                        f"当前审校块长度为 {len(chunk)}",
+                        f"忽略无效审校索引 {it.get('index')!r}；当前审校块长度为 {len(chunk)}",
                         RuntimeWarning,
                         stacklevel=2,
                     )
@@ -1331,9 +1357,8 @@ class Orchestrator:
                         right_count=len(chunk) - mid,
                         reason=error.reason,
                     )
-                    return (
-                        review_adaptive(chunk_base, chunk[:mid])
-                        + review_adaptive(chunk_base + mid, chunk[mid:])
+                    return review_adaptive(chunk_base, chunk[:mid]) + review_adaptive(
+                        chunk_base + mid, chunk[mid:]
                     )
 
                 last_error = error
@@ -1428,10 +1453,18 @@ class Orchestrator:
             chunks.append(cur)
         return chunks
 
-    def _autofix_severe(self, text_segs, issues, terms, style,
-                        book_synopsis: str = "", chapter_digest: str = "", *,
-                        store: RunStore | None = None,
-                        chapter_index: int | None = None) -> None:
+    def _autofix_severe(
+        self,
+        text_segs,
+        issues,
+        terms,
+        style,
+        book_synopsis: str = "",
+        chapter_digest: str = "",
+        *,
+        store: RunStore | None = None,
+        chapter_index: int | None = None,
+    ) -> None:
         """对审校严重项（漏译/误译）带审校意见定向重译，每段最多一次。
 
         采纳条件 = 重译非空且过长度校验：采纳则标点规范化后更新 seg.target 并标 fixed=True；
@@ -1444,17 +1477,23 @@ class Orchestrator:
                 by_seg.setdefault(it["index"], []).append(it)
         for idx, seg_issues in sorted(by_seg.items()):
             seg = text_segs[idx]
-            before = "\n".join(text_segs[j].target or ""
-                               for j in range(max(0, idx - 2), idx))
-            after = "\n".join(text_segs[j].target or ""
-                              for j in range(idx + 1, min(len(text_segs), idx + 3)))
+            before = "\n".join(text_segs[j].target or "" for j in range(max(0, idx - 2), idx))
+            after = "\n".join(
+                text_segs[j].target or "" for j in range(idx + 1, min(len(text_segs), idx + 3))
+            )
             feedback = "；".join(
-                f"{it.get('detail', '')}（建议：{it.get('suggestion', '')}）"
-                for it in seg_issues)
+                f"{it.get('detail', '')}（建议：{it.get('suggestion', '')}）" for it in seg_issues
+            )
             new_t = self.translator.retranslate_with_feedback(
-                seg.source, feedback=feedback, glossary_terms=terms, style=style,
-                context_before=before, context_after=after,
-                book_synopsis=book_synopsis, chapter_digest=chapter_digest)
+                seg.source,
+                feedback=feedback,
+                glossary_terms=terms,
+                style=style,
+                context_before=before,
+                context_after=after,
+                book_synopsis=book_synopsis,
+                chapter_digest=chapter_digest,
+            )
             if new_t and not checks.length_flags([seg.source], [new_t]):
                 if self._punctuation_enabled():
                     new_t = normalize_zh(new_t)
@@ -1483,8 +1522,15 @@ class Orchestrator:
                     issues=seg_issues,
                 )
 
-    def _process_batch(self, batch, terms, ctx_text: str, style: str,
-                       book_synopsis: str = "", chapter_digest: str = "") -> _BatchResult:
+    def _process_batch(
+        self,
+        batch,
+        terms,
+        ctx_text: str,
+        style: str,
+        book_synopsis: str = "",
+        chapter_digest: str = "",
+    ) -> _BatchResult:
         """单个批次：整批翻译 → 润色。
 
         每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
@@ -1494,8 +1540,13 @@ class Orchestrator:
         """
         sources = [s.source for s in batch]
         targets = self.translator.translate_batch(
-            sources, glossary_terms=terms, style=style, context=ctx_text,
-            book_synopsis=book_synopsis, chapter_digest=chapter_digest)
+            sources,
+            glossary_terms=terms,
+            style=style,
+            context=ctx_text,
+            book_synopsis=book_synopsis,
+            chapter_digest=chapter_digest,
+        )
 
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
@@ -1526,9 +1577,7 @@ class Orchestrator:
         store = self._locate_existing_store(input_path, progress=progress)
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(
-                manifest.get("source_lang") or self.config.source_lang
-            )
+            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
             glossary = GlossaryStore(store.glossary_path)
             try:
                 issues = self._review_book(
@@ -1543,9 +1592,15 @@ class Orchestrator:
                 self._flush_usage(store, scope="review")
         return {"store": store, "review_issues": issues}
 
-    def run_steps(self, input_path: str, steps, *,
-                  progress: ProgressFn | None = None,
-                  out_format: str = "epub", out_path: str | None = None) -> dict[str, Any]:
+    def run_steps(
+        self,
+        input_path: str,
+        steps,
+        *,
+        progress: ProgressFn | None = None,
+        out_format: str = "epub",
+        out_path: str | None = None,
+    ) -> dict[str, Any]:
         """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
         steps = set(steps)
         run_steps_input = sorted(steps)
@@ -1648,9 +1703,7 @@ class Orchestrator:
                         out_format=out_format,
                         bilingual=True,
                         order=out_cfg.bilingual_order,
-                        preserve_source_style=(
-                            out_cfg.bilingual_preserve_source_style
-                        ),
+                        preserve_source_style=(out_cfg.bilingual_preserve_source_style),
                         about_page=out_cfg.about_page,
                     )
                 )
@@ -1671,14 +1724,21 @@ class Orchestrator:
             "qa_issues": qa_issues,
         }
 
-    def run_all(self, input_path: str, *, progress: ProgressFn | None = None,
-                out_format: str = "epub", out_path: str | None = None,
-                do_qa: bool | None = None) -> dict[str, Any]:
+    def run_all(
+        self,
+        input_path: str,
+        *,
+        progress: ProgressFn | None = None,
+        out_format: str = "epub",
+        out_path: str | None = None,
+        do_qa: bool | None = None,
+    ) -> dict[str, Any]:
         """翻译 → 最终审校 → 一致性 QA → 报告 → 回填，返回结果汇总。"""
         steps = {"translate", "report", "assemble"}
         if self.config.pipeline.review:
             steps.add("review")
         if do_qa if do_qa is not None else self.config.pipeline.consistency_qa:
             steps.add("qa")
-        return self.run_steps(input_path, steps, progress=progress,
-                              out_format=out_format, out_path=out_path)
+        return self.run_steps(
+            input_path, steps, progress=progress, out_format=out_format, out_path=out_path
+        )

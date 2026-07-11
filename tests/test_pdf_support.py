@@ -19,7 +19,6 @@ from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
-
 _HTML = """\
 <!doctype html>
 <html>

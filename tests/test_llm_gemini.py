@@ -35,12 +35,22 @@ def test_gemini_tier_options_thinking_mutual_exclusion():
 
 def test_api_key_env_precedence():
     """测试 API Key 获取的环境变量优先级与退避规则。"""
-    with patch.dict(os.environ, {"CUSTOM_KEY": "custom_val", "GEMINI_API_KEY": "gemini_val", "GOOGLE_API_KEY": "google_val"}, clear=True):
+    with patch.dict(
+        os.environ,
+        {
+            "CUSTOM_KEY": "custom_val",
+            "GEMINI_API_KEY": "gemini_val",
+            "GOOGLE_API_KEY": "google_val",
+        },
+        clear=True,
+    ):
         key, env_name = get_api_key_from_env("CUSTOM_KEY")
         assert key == "custom_val"
         assert env_name == "CUSTOM_KEY"
 
-    with patch.dict(os.environ, {"GEMINI_API_KEY": "gemini_val", "GOOGLE_API_KEY": "google_val"}, clear=True):
+    with patch.dict(
+        os.environ, {"GEMINI_API_KEY": "gemini_val", "GOOGLE_API_KEY": "google_val"}, clear=True
+    ):
         key, env_name = get_api_key_from_env()
         assert key == "gemini_val"
         assert env_name == "GEMINI_API_KEY"
@@ -146,15 +156,18 @@ def test_gemini_client_complete_and_usage():
     cfg = LLMConfig(
         provider="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        tiers={
-            "strong": TierConfig(model="gemini-3.6-flash", options={"temperature": 0.3})
-        },
+        tiers={"strong": TierConfig(model="gemini-3.6-flash", options={"temperature": 0.3})},
     )
 
     mock_client_instance = MagicMock()
     mock_response = SimpleNamespace(
         text="翻译结果测试",
-        candidates=[SimpleNamespace(finish_reason="STOP", content=SimpleNamespace(parts=[SimpleNamespace(text="翻译结果测试")]))],
+        candidates=[
+            SimpleNamespace(
+                finish_reason="STOP",
+                content=SimpleNamespace(parts=[SimpleNamespace(text="翻译结果测试")]),
+            )
+        ],
         usage_metadata=SimpleNamespace(
             prompt_token_count=80,
             candidates_token_count=20,

@@ -35,14 +35,18 @@ class TranslatedSegmentEvidence:
 
 
 class GlossaryExtractor(Agent):
-    def extract(self, source_text: str, target_text: str,
-                existing: list[GlossaryTerm]) -> list[GlossaryTerm]:
+    def extract(
+        self, source_text: str, target_text: str, existing: list[GlossaryTerm]
+    ) -> list[GlossaryTerm]:
         """从一组原译文中抽取有效术语，并清洗模型返回的字段类型。"""
         system = prompts.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
-            "glossary_extractor_user", src=self.src, tgt=self.tgt,
+            "glossary_extractor_user",
+            src=self.src,
+            tgt=self.tgt,
             glossary=prompts.render_glossary(existing),
-            source=source_text, target=target_text,
+            source=source_text,
+            target=target_text,
         )
         raw = self._ask_json(system, user, tier="fast", key="terms", default=[])
         terms: list[GlossaryTerm] = []
@@ -54,15 +58,17 @@ class GlossaryExtractor(Agent):
             raw_aliases = d.get("aliases")
             aliases = raw_aliases if isinstance(raw_aliases, list) else []
             gender = _text(d.get("gender"))
-            terms.append(GlossaryTerm(
-                source=source,
-                target=target,
-                reading=_text(d.get("reading")),
-                type=_text(d.get("type"), "术语"),
-                gender="" if gender == "未知" else gender,
-                aliases=[alias for a in aliases if (alias := _text(a))],
-                note=_text(d.get("note")),
-            ))
+            terms.append(
+                GlossaryTerm(
+                    source=source,
+                    target=target,
+                    reading=_text(d.get("reading")),
+                    type=_text(d.get("type"), "术语"),
+                    gender="" if gender == "未知" else gender,
+                    aliases=[alias for a in aliases if (alias := _text(a))],
+                    note=_text(d.get("note")),
+                )
+            )
         return terms
 
     @staticmethod
@@ -73,18 +79,12 @@ class GlossaryExtractor(Agent):
         before: tuple[int, int],
     ) -> dict[str, TranslatedSegmentEvidence]:
         """找到尚未入库术语在指定位置之前的首个已译段落。"""
-        pending = {
-            term.source
-            for term in terms
-            if store.get_term(term.source) is None
-        }
+        pending = {term.source for term in terms if store.get_term(term.source) is None}
         if not pending:
             return {}
 
         first: dict[str, TranslatedSegmentEvidence] = {}
-        ordered_history = sorted(
-            history, key=lambda item: (item.chapter, item.segment)
-        )
+        ordered_history = sorted(history, key=lambda item: (item.chapter, item.segment))
         for evidence in ordered_history:
             if (evidence.chapter, evidence.segment) >= before:
                 continue
@@ -111,29 +111,27 @@ class GlossaryExtractor(Agent):
             evidence = occurrences.get(term.source)
             if evidence is None:
                 continue
-            candidates.append({
-                "source": term.source,
-                "proposed_target": term.target,
-                "first_occurrence": {
-                    "chapter": evidence.chapter,
-                    "segment": evidence.segment,
-                    "source": evidence.source,
-                    "target": evidence.target,
-                },
-            })
+            candidates.append(
+                {
+                    "source": term.source,
+                    "proposed_target": term.target,
+                    "first_occurrence": {
+                        "chapter": evidence.chapter,
+                        "segment": evidence.segment,
+                        "source": evidence.source,
+                        "target": evidence.target,
+                    },
+                }
+            )
 
-        system = prompts.render(
-            "glossary_history_system", src=self.src, tgt=self.tgt
-        )
+        system = prompts.render("glossary_history_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "glossary_history_user",
             src=self.src,
             tgt=self.tgt,
             candidates_json=json.dumps(candidates, ensure_ascii=False, indent=2),
         )
-        raw = self._ask_json(
-            system, user, tier="fast", key="terms", default=[]
-        )
+        raw = self._ask_json(system, user, tier="fast", key="terms", default=[])
         resolved = {
             source: target
             for item in self.dict_items(raw)
@@ -173,13 +171,9 @@ class GlossaryExtractor(Agent):
         existing = store.all_terms()
         terms = self.extract(source_text, target_text, existing)
         occurrences = (
-            self._first_occurrences(terms, store, history, before)
-            if before is not None
-            else {}
+            self._first_occurrences(terms, store, history, before) if before is not None else {}
         )
-        terms, aligned, unresolved = self._align_with_first_occurrences(
-            terms, occurrences
-        )
+        terms, aligned, unresolved = self._align_with_first_occurrences(terms, occurrences)
         summary = {
             "inserted": 0,
             "conflict": 0,

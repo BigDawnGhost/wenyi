@@ -12,6 +12,7 @@ ABOUT_TITLE = "关于此翻译"
 ABOUT_FILENAME = "trans-novel-about.xhtml"
 ABOUT_REPOSITORY = "https://github.com/BigDawnGhost/wenyi"
 
+
 def about_xhtml(lang: str) -> bytes:
     """返回可独立加入 EPUB spine 的 XHTML 页面。"""
     return f"""<?xml version="1.0" encoding="utf-8"?>

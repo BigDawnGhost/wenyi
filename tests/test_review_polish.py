@@ -19,19 +19,26 @@ from trans_novel.pipeline.runstore import RunStore
 
 
 def _cfg():
-    return Config.from_dict({
-        "language": {"source": "ja", "target": "zh"},
-        "llm": {"provider": "fake", "tiers": {
-            "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-    })
+    return Config.from_dict(
+        {
+            "language": {"source": "ja", "target": "zh"},
+            "llm": {
+                "provider": "fake",
+                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+            },
+        }
+    )
 
 
 def _review_response(issues, count):
-    return json.dumps({
-        "issues": issues,
-        "reviewed_segments": count,
-        "complete": True,
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "issues": issues,
+            "reviewed_segments": count,
+            "complete": True,
+        },
+        ensure_ascii=False,
+    )
 
 
 class TestReviewer(unittest.TestCase):
@@ -67,12 +74,19 @@ class TestReviewer(unittest.TestCase):
 
     def test_reviewer_rejects_bare_issue_array_without_completion_footer(self):
         reviewer = Reviewer(
-            FakeClient(handler=lambda m, t, j: json.dumps([{
-                "index": 0,
-                "type": "missing",
-                "detail": "漏译",
-                "suggestion": "补译",
-            }], ensure_ascii=False)),
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    [
+                        {
+                            "index": 0,
+                            "type": "missing",
+                            "detail": "漏译",
+                            "suggestion": "补译",
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+            ),
             _cfg(),
         )
 
@@ -89,9 +103,7 @@ class TestReviewer(unittest.TestCase):
             reviewer.review(["あ", "い"], ["甲", "乙"])
 
     def test_missing_final_brace_is_repaired_without_another_model_call(self):
-        response = (
-            '{"issues":[],"reviewed_segments":2,"complete":true'
-        )
+        response = '{"issues":[],"reviewed_segments":2,"complete":true'
         client = FakeClient(handler=lambda m, t, j: response)
         cfg = _cfg()
         cfg.pipeline.review_concurrency = 1
@@ -113,10 +125,7 @@ class TestReviewer(unittest.TestCase):
 
         self.assertEqual(issues, [])
         self.assertEqual(len(client.calls), 1)
-        repaired = [
-            event for event in events
-            if event["event"] == "review_json_repaired"
-        ]
+        repaired = [event for event in events if event["event"] == "review_json_repaired"]
         self.assertEqual(len(repaired), 1)
         self.assertEqual(repaired[0]["count"], 2)
 
@@ -142,25 +151,28 @@ class TestReviewer(unittest.TestCase):
             count = len(re.findall(r"^\[(\d+)\]", user, re.MULTILINE))
             if count > 1:
                 return '{"issues":['
-            return json.dumps({"issues": [{
-                "index": 0,
-                "type": "missing",
-                "detail": "单段恢复成功",
-                "suggestion": "补译",
-            }],
-                "reviewed_segments": count,
-                "complete": True,
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "issues": [
+                        {
+                            "index": 0,
+                            "type": "missing",
+                            "detail": "单段恢复成功",
+                            "suggestion": "补译",
+                        }
+                    ],
+                    "reviewed_segments": count,
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
 
         cfg = _cfg()
         cfg.segment.max_chars_per_batch = 100_000
         cfg.pipeline.review_concurrency = 1
         client = FakeClient(handler=handler)
         orch = Orchestrator(cfg, client=client)
-        segments = [
-            Segment(index=i, source=f"源文{i}", target=f"译文{i}")
-            for i in range(4)
-        ]
+        segments = [Segment(index=i, source=f"源文{i}", target=f"译文{i}") for i in range(4)]
 
         with tempfile.TemporaryDirectory() as d:
             store = RunStore(os.path.join(d, "state"))
@@ -178,15 +190,8 @@ class TestReviewer(unittest.TestCase):
         splits = [event for event in events if event["event"] == "review_chunk_split"]
         self.assertEqual(len(splits), 3)
         self.assertTrue(all(event["chapter"] == 7 for event in splits))
-        self.assertTrue(
-            all(
-                event["reason"] == "completion_footer_not_last"
-                for event in splits
-            )
-        )
-        self.assertTrue(
-            all("source" not in event and "target" not in event for event in events)
-        )
+        self.assertTrue(all(event["reason"] == "completion_footer_not_last" for event in splits))
+        self.assertTrue(all("source" not in event and "target" not in event for event in events))
 
     def test_singleton_retries_then_recovers(self):
         attempts = 0
@@ -230,12 +235,17 @@ class TestReviewer(unittest.TestCase):
             user = messages[1]["content"]
             barrier.wait(timeout=2)
             detail = "甲" if "源文甲" in user else "乙"
-            return _review_response([{
-                "index": 0,
-                "type": "missing",
-                "detail": detail,
-                "suggestion": "补译",
-            }], 1)
+            return _review_response(
+                [
+                    {
+                        "index": 0,
+                        "type": "missing",
+                        "detail": detail,
+                        "suggestion": "补译",
+                    }
+                ],
+                1,
+            )
 
         cfg = _cfg()
         cfg.segment.max_chars_per_batch = 1  # 审校预算=3，使两个 3 字段落各成一块
@@ -254,16 +264,20 @@ class TestReviewer(unittest.TestCase):
 
 class TestPolisher(unittest.TestCase):
     def test_polish_ok(self):
-        client = FakeClient(handler=lambda m, t, j: json.dumps(
-            {"polished": ["润色甲", "润色乙"]}, ensure_ascii=False))
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps(
+                {"polished": ["润色甲", "润色乙"]}, ensure_ascii=False
+            )
+        )
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(out, ["润色甲", "润色乙"])
         self.assertEqual(client.calls[-1]["tier"], "strong")
 
     def test_polish_mismatch_keeps_original(self):
-        client = FakeClient(handler=lambda m, t, j: json.dumps(
-            {"polished": ["只有一段"]}, ensure_ascii=False))
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps({"polished": ["只有一段"]}, ensure_ascii=False)
+        )
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(out, ["甲", "乙"])  # 段数不符 → 保守保留原译
@@ -276,8 +290,9 @@ class TestBackTranslator(unittest.TestCase):
             if "回译译者" in system:
                 return json.dumps({"backtranslations": ["あ", "い"]}, ensure_ascii=False)
             if "保真度" in system:
-                return json.dumps({"issues": [{"index": 1, "detail": "含义改变"}]},
-                                  ensure_ascii=False)
+                return json.dumps(
+                    {"issues": [{"index": 1, "detail": "含义改变"}]}, ensure_ascii=False
+                )
             return "{}"
 
         bt = BackTranslator(FakeClient(handler=handler), _cfg())

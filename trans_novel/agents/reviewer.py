@@ -41,19 +41,23 @@ def _backtrans_compare_system(src: str) -> str:
 
 
 class Reviewer(Agent):
-    def review(self, sources: list[str], targets: list[str],
-               glossary_terms=None) -> list[dict[str, Any]]:
+    def review(
+        self, sources: list[str], targets: list[str], glossary_terms=None
+    ) -> list[dict[str, Any]]:
         """返回问题列表：[{index,type,detail,suggestion}]。"""
         return self.review_result(sources, targets, glossary_terms).issues
 
-    def review_result(self, sources: list[str], targets: list[str],
-                      glossary_terms=None) -> ReviewResult:
+    def review_result(
+        self, sources: list[str], targets: list[str], glossary_terms=None
+    ) -> ReviewResult:
         """返回带恢复元数据的问题列表；服务异常仍由调用方直接处理。"""
         if not sources:
             return ReviewResult([])
         system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
-            "reviewer_user", src=self.src, tgt=self.tgt,
+            "reviewer_user",
+            src=self.src,
+            tgt=self.tgt,
             glossary=prompts.render_glossary(glossary_terms or []),
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
@@ -136,10 +140,20 @@ class BackTranslator(Agent):
         if not targets:
             return []
         system = prompts.render("backtranslate_system", src=self.src, tgt=self.tgt)
-        user = prompts.render("backtranslate_user", src=self.src, tgt=self.tgt,
-                              n=len(targets), numbered_target=prompts.numbered(targets))
-        items = self._ask_json(system, user, tier="fast",  # 机械回译免思考；语义比对(check)仍走 cheap
-                               key="backtranslations", default=[])
+        user = prompts.render(
+            "backtranslate_user",
+            src=self.src,
+            tgt=self.tgt,
+            n=len(targets),
+            numbered_target=prompts.numbered(targets),
+        )
+        items = self._ask_json(
+            system,
+            user,
+            tier="fast",  # 机械回译免思考；语义比对(check)仍走 cheap
+            key="backtranslations",
+            default=[],
+        )
         return [str(x) for x in items] if isinstance(items, list) else []
 
     def check(self, sources: list[str], targets: list[str]) -> list[dict[str, Any]]:
@@ -151,5 +165,7 @@ class BackTranslator(Agent):
             f"[{i}] 原文：{s}\n    回译：{b}" for i, (s, b) in enumerate(zip(sources, back))
         )
         return self.dict_items(
-            self._ask_json(_backtrans_compare_system(self.src), pairs,
-                           tier="cheap", key="issues", default=[]))
+            self._ask_json(
+                _backtrans_compare_system(self.src), pairs, tier="cheap", key="issues", default=[]
+            )
+        )

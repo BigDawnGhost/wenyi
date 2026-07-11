@@ -52,9 +52,7 @@ class MinerUApi:
     def close(self) -> None:
         self._client.close()
 
-    def submit_batch(
-        self, file_paths: list[str], timeout: int = MAX_WAIT_PER_TASK
-    ) -> list[bytes]:
+    def submit_batch(self, file_paths: list[str], timeout: int = MAX_WAIT_PER_TASK) -> list[bytes]:
         """Upload files, wait for extraction, return list of ZIP bytes in order."""
         # 1. Request pre-signed upload URLs
         files_meta = [{"name": Path(p).name} for p in file_paths]
@@ -258,9 +256,7 @@ def convert_pdf_to_html(
             cp.unlink(missing_ok=True)
 
     html = (
-        html_parts[0]
-        if len(html_parts) == 1
-        else _assemble_html(html_parts, Path(pdf_path).name)
+        html_parts[0] if len(html_parts) == 1 else _assemble_html(html_parts, Path(pdf_path).name)
     )
     Path(output_path).write_text(html, encoding="utf-8")
     msg(f"Done → {output_path} ({len(html):,} chars)")

@@ -23,9 +23,16 @@ class Agent:
         self.src = config.source_lang
         self.tgt = config.target_lang
 
-    def _ask_json(self, system: str, user: str, *, tier: str,
-                  key: str | None = None, default: Any = _RAISE,
-                  max_tokens: int | None = None) -> Any:
+    def _ask_json(
+        self,
+        system: str,
+        user: str,
+        *,
+        tier: str,
+        key: str | None = None,
+        default: Any = _RAISE,
+        max_tokens: int | None = None,
+    ) -> Any:
         """system/user → complete_json。
 
         异常时返回 default（未给 default 则照常抛出，如 Translator 交由重试逻辑处理）。
@@ -33,9 +40,11 @@ class Agent:
         """
         try:
             data = self.client.complete_json(
-                [{"role": "system", "content": system},
-                 {"role": "user", "content": user}], tier=tier,
-                max_tokens=max_tokens, stage=type(self).__name__)
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                tier=tier,
+                max_tokens=max_tokens,
+                stage=type(self).__name__,
+            )
         except Exception:
             if default is _RAISE:
                 raise
@@ -47,14 +56,20 @@ class Agent:
             return data.get(key, fb)
         return data if data else fb
 
-    def _ask_text(self, system: str, user: str, *, tier: str,
-                  default: str = "", max_tokens: int | None = None) -> str:
+    def _ask_text(
+        self, system: str, user: str, *, tier: str, default: str = "", max_tokens: int | None = None
+    ) -> str:
         """complete 纯文本并 strip；异常返回 default。"""
         try:
-            return (self.client.complete(
-                [{"role": "system", "content": system},
-                 {"role": "user", "content": user}], tier=tier,
-                max_tokens=max_tokens, stage=type(self).__name__) or "").strip()
+            return (
+                self.client.complete(
+                    [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    tier=tier,
+                    max_tokens=max_tokens,
+                    stage=type(self).__name__,
+                )
+                or ""
+            ).strip()
         except Exception:  # noqa: BLE001 - 文本型辅助调用按契约回退默认值
             return default
 

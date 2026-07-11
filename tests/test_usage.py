@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from tests.fake_llm import routing_handler
+from tests.sample_data import write_sample_txt
 from trans_novel.agents.base import Agent
 from trans_novel.config import Config, LLMConfig, TierConfig
 from trans_novel.llm.factory import build_client
@@ -31,8 +33,6 @@ from trans_novel.llm.usage import (
 )
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
-from tests.fake_llm import routing_handler
-from tests.sample_data import write_sample_txt
 
 
 def _make_usage(
@@ -187,9 +187,7 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         ]
         msgs = [{"role": "user", "content": "hi"}]
         with patch.object(c, "_ensure_client", return_value=_ClientStub(responses)):
-            self.assertEqual(
-                c.complete(msgs, tier="strong", stage="Translator"), "strong-out"
-            )
+            self.assertEqual(c.complete(msgs, tier="strong", stage="Translator"), "strong-out")
             self.assertEqual(c.complete(msgs, tier="cheap"), "cheap-out")
 
         summary = c.usage_summary()
@@ -416,13 +414,9 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
     def test_delta_and_merge_do_not_double_count(self):
         client = FakeClient()
-        self._record(
-            client, "strong", prompt=100, completion=20, stage="Translator"
-        )
+        self._record(client, "strong", prompt=100, completion=20, stage="Translator")
         first = client.usage_summary()
-        self._record(
-            client, "strong", prompt=50, completion=10, stage="Translator"
-        )
+        self._record(client, "strong", prompt=50, completion=10, stage="Translator")
         self._record(client, "fast", prompt=30, completion=5, stage="Synopsizer")
         second = client.usage_summary()
 

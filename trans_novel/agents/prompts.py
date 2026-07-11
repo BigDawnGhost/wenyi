@@ -313,6 +313,7 @@ _DEFAULTS = {
     "book_synopsis_user": BOOK_SYNOPSIS_USER,
 }
 
+
 def render(name: str, *, src: str = "ja", tgt: str = "zh", **kwargs) -> str:
     """渲染内置模板；按 src 自动注入语言相关默认占位。"""
     tmpl = _DEFAULTS[name]

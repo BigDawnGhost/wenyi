@@ -87,9 +87,7 @@ class _ConfigInitializingGroup(TyperGroup):
         cli_args = list(args) if args is not None else sys.argv[1:]
         config_path = _config_path_from_args(cli_args)
         _CONFIG["path"] = config_path
-        _CONFIG["skip_api_check"] = any(
-            arg in {"--help", "-h"} for arg in cli_args
-        )
+        _CONFIG["skip_api_check"] = any(arg in {"--help", "-h"} for arg in cli_args)
         Config.create_default_file(config_path)
         return super().main(*main_args, args=args, **main_kwargs)
 
@@ -164,10 +162,7 @@ def _validate_output_format(fmt: str) -> str:
     normalized = fmt.strip().lower()
     allowed = {"epub", "txt", "html", "markdown"}
     if normalized not in allowed:
-        console.print(
-            "[red]不支持的输出格式："
-            f"{fmt}（可选 epub / txt / html / markdown）[/]"
-        )
+        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown）[/]")
         raise typer.Exit(2)
     return normalized
 
@@ -267,8 +262,7 @@ def _translate_impl_or_raise(
             ignored.append("--bilingual/--no-bilingual")
         if ignored:
             raise ValueError(
-                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项："
-                + "、".join(ignored)
+                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项：" + "、".join(ignored)
             )
 
     orch = Orchestrator(config)
@@ -359,8 +353,7 @@ def _prepare_impl(input_path: str) -> None:
     chapters = manifest.get("chapters", [])
     analysis = store.load_analysis() or {}
     digests = sum(
-        bool(store.load_chapter(item["index"]).meta.get("source_digest"))
-        for item in chapters
+        bool(store.load_chapter(item["index"]).meta.get("source_digest")) for item in chapters
     )
     console.print(
         f"[bold green]准备完成[/]：解析 {len(chapters)} 章，"
@@ -477,9 +470,7 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
-    force: bool = typer.Option(
-        False, "--force", help="忽略审校摘要，强制重新审校全部章节"
-    ),
+    force: bool = typer.Option(False, "--force", help="忽略审校摘要，强制重新审校全部章节"),
     fix: bool | None = typer.Option(
         None,
         "--fix/--no-fix",
@@ -552,9 +543,7 @@ def status(
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     m = store.load_manifest()
-    console.print(
-        f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}"
-    )
+    console.print(f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}")
     table = Table("", "#", "章节", "翻译", "审校")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
@@ -711,9 +700,7 @@ def assemble(
                 out_format=fmt,
                 bilingual=True,
                 order=config.output.bilingual_order,
-                preserve_source_style=(
-                    config.output.bilingual_preserve_source_style
-                ),
+                preserve_source_style=(config.output.bilingual_preserve_source_style),
                 about_page=config.output.about_page,
             )
         )
@@ -743,9 +730,7 @@ def qa(
         g.close()
     console.print(f"一致性问题 {len(issues)} 项：")
     for it in issues:
-        console.print(
-            f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})"
-        )
+        console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
 
 
 @app.command(rich_help_panel="状态与输出")

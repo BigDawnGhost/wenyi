@@ -156,9 +156,7 @@ def write_nested_toc_epub(
     spine_attr = ' toc="toc"' if toc_kind in {"ncx", "both"} else ""
     nav_spine_id = "toc" if toc_kind == "nav" else "nav"
     nav_itemref = (
-        f'<itemref idref="{nav_spine_id}"/>'
-        if nav_in_spine and toc_kind in {"nav", "both"}
-        else ""
+        f'<itemref idref="{nav_spine_id}"/>' if nav_in_spine and toc_kind in {"nav", "both"} else ""
     )
     title_item = (
         '<item id="title" href="title.xhtml" media-type="application/xhtml+xml"/>'
@@ -185,10 +183,10 @@ def write_nested_toc_epub(
                 '<content src="title.xhtml"/></navPoint>',
             )
             nav = nav.replace(
-                "<nav epub:type=\"toc\"><ol>",
+                '<nav epub:type="toc"><ol>',
                 '<nav epub:type="toc"><ol><li><a href="title.xhtml">Title Page</a></li>',
             )
-            zf.writestr("OEBPS/title.xhtml", "<html><body><div class=\"cover\"></div></body></html>")
+            zf.writestr("OEBPS/title.xhtml", '<html><body><div class="cover"></div></body></html>')
         if toc_kind == "ncx":
             zf.writestr(f"OEBPS/{ncx_filename}", ncx)
         elif toc_kind == "nav":

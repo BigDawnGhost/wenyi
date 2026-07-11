@@ -26,6 +26,7 @@ TYPE_FIXED_EXPR = "固定表达"
 
 _SOURCE_ONLY_TYPES = {TYPE_APPELLATION, TYPE_HONORIFIC, TYPE_SPEECH, TYPE_FIXED_EXPR}
 
+
 @dataclass
 class GlossaryTerm:
     source: str
@@ -69,7 +70,10 @@ CREATE TABLE IF NOT EXISTS glossary (
 )
 """
 
-_SCHEMA = _CREATE_GLOSSARY_TABLE + ";" + """
+_SCHEMA = (
+    _CREATE_GLOSSARY_TABLE
+    + ";"
+    + """
 CREATE TABLE IF NOT EXISTS term_conflicts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     source          TEXT NOT NULL,
@@ -82,6 +86,7 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
 );
 DROP TABLE IF EXISTS translation_memory;
 """
+)
 
 
 def _match_text(text: str) -> str:
@@ -100,10 +105,13 @@ def source_matches_text(source: str, text: str) -> bool:
         return False
     normalized_text = _match_text(text)
     if key.isascii():
-        return re.search(
-            rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])",
-            normalized_text,
-        ) is not None
+        return (
+            re.search(
+                rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])",
+                normalized_text,
+            )
+            is not None
+        )
     return key in normalized_text
 
 
@@ -126,9 +134,7 @@ class GlossaryStore:
     # ── 术语 ──────────────────────────────────────────────────────────────
     def get_term(self, source: str) -> GlossaryTerm | None:
         """按原文精确查询术语；不存在时返回 None。"""
-        row = self.conn.execute(
-            "SELECT * FROM glossary WHERE source = ?", (source,)
-        ).fetchone()
+        row = self.conn.execute("SELECT * FROM glossary WHERE source = ?", (source,)).fetchone()
         return GlossaryTerm.from_row(row) if row else None
 
     def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
@@ -149,10 +155,16 @@ class GlossaryStore:
                         status,updated_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        term.source, term.target, term.reading, term.type, term.gender,
+                        term.source,
+                        term.target,
+                        term.reading,
+                        term.type,
+                        term.gender,
                         json.dumps(term.aliases, ensure_ascii=False),
                         term.first_chapter if term.first_chapter is not None else chapter,
-                        term.note, term.status, now,
+                        term.note,
+                        term.status,
+                        now,
                     ),
                 )
                 result = "inserted"
@@ -175,9 +187,7 @@ class GlossaryStore:
                 result = "unchanged"
             else:
                 # target 不同：保留当前译法，记录候选译法等待人工裁决。
-                self._log_conflict(
-                    term.source, existing.target, term.target, chapter
-                )
+                self._log_conflict(term.source, existing.target, term.target, chapter)
                 self.conn.execute(
                     "UPDATE glossary SET status='conflict', updated_at=? WHERE source=?",
                     (now, term.source),
@@ -209,9 +219,7 @@ class GlossaryStore:
 
     def all_terms(self) -> list[GlossaryTerm]:
         """按术语类型和原文排序返回全部术语。"""
-        rows = self.conn.execute(
-            "SELECT * FROM glossary ORDER BY type, source"
-        ).fetchall()
+        rows = self.conn.execute("SELECT * FROM glossary ORDER BY type, source").fetchall()
         return [GlossaryTerm.from_row(r) for r in rows]
 
     @staticmethod
@@ -226,9 +234,7 @@ class GlossaryStore:
             # 称谓/口癖/固定表达是带语气或场景的派生写法，不能因为 alias
             # 命中裸名就把派生译法注入到普通称呼处。
             keys = (
-                [term.source]
-                if term.type in _SOURCE_ONLY_TYPES
-                else [term.source] + term.aliases
+                [term.source] if term.type in _SOURCE_ONLY_TYPES else [term.source] + term.aliases
             )
             if any(source_matches_text(k, normalized_text) for k in keys):
                 out.append(term)
@@ -240,9 +246,7 @@ class GlossaryStore:
 
     def mark_conflicts_resolved(self, source: str) -> None:
         """把指定原文术语的全部未决冲突标记为已处理。"""
-        self.conn.execute(
-            "UPDATE term_conflicts SET resolved=1 WHERE source=?", (source,)
-        )
+        self.conn.execute("UPDATE term_conflicts SET resolved=1 WHERE source=?", (source,))
         self.conn.commit()
 
     def open_conflicts(self) -> list[dict[str, Any]]:

@@ -35,20 +35,14 @@ def _reasoning_body(
     kwargs: dict[str, Any] = {}
     extra_body: dict[str, Any] = {}
     if reasoning_style == "deepseek":
-        extra_body["thinking"] = {
-            "type": "enabled" if options.thinking else "disabled"
-        }
+        extra_body["thinking"] = {"type": "enabled" if options.thinking else "disabled"}
         if options.thinking:
             kwargs["reasoning_effort"] = options.reasoning_effort
     elif reasoning_style == "openai":
-        kwargs["reasoning_effort"] = (
-            options.reasoning_effort if options.thinking else "none"
-        )
+        kwargs["reasoning_effort"] = options.reasoning_effort if options.thinking else "none"
     elif reasoning_style == "openrouter":
         extra_body["reasoning"] = (
-            {"effort": options.reasoning_effort}
-            if options.thinking
-            else {"enabled": False}
+            {"effort": options.reasoning_effort} if options.thinking else {"enabled": False}
         )
     return kwargs, extra_body
 
@@ -76,15 +70,11 @@ def build_request_kwargs(
     if extra_body:
         kwargs["extra_body"] = extra_body
     if max_tokens is not None:
-        kwargs["max_tokens"] = (
-            max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
-        )
+        kwargs["max_tokens"] = max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
     return kwargs
 
 
-class OpenAICompatibleClient(
-    OpenAICompatibleBaseClient[OpenAICompatibleTierOptions]
-):
+class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleTierOptions]):
     def __init__(
         self,
         cfg: LLMConfig,

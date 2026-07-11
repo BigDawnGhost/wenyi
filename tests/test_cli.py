@@ -27,9 +27,7 @@ class FakeStore:
 
 class TestCliConfig(unittest.TestCase):
     def test_standalone_tools_restore_manifest_languages(self):
-        cfg = Config.from_dict(
-            {"language": {"source": "auto", "target": "zh"}}
-        )
+        cfg = Config.from_dict({"language": {"source": "auto", "target": "zh"}})
 
         class Store:
             @staticmethod
@@ -281,9 +279,7 @@ class TestCliConfig(unittest.TestCase):
             with self.subTest(args=args):
                 with patch(
                     "trans_novel.cli._validate_api_configuration",
-                    side_effect=AssertionError(
-                        f"{args} must not validate credentials"
-                    ),
+                    side_effect=AssertionError(f"{args} must not validate credentials"),
                 ) as validate:
                     result = CliRunner().invoke(app, args)
                 self.assertEqual(result.exit_code, 1, result.output)
@@ -368,15 +364,14 @@ class TestCliConfig(unittest.TestCase):
         self.assertNotIn("DEEPSEEK_API_KEY", result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
-        cfg = Config.from_dict(
-            {"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}}
-        )
+        cfg = Config.from_dict({"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}})
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
             ValueError("不支持的输出格式：xml"),
         ):
             with self.subTest(error=type(error).__name__):
+
                 class FakeOrchestrator:
                     def __init__(self, config):
                         pass
@@ -404,9 +399,7 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
         ):
-            result = CliRunner().invoke(
-                app, ["translate", "input.txt", "--format", "pdf"]
-            )
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "pdf"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("不支持的输出格式", result.output)
@@ -426,9 +419,7 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(
-                app, ["translate", "input.txt", "--chapter", "9"]
-            )
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--chapter", "9"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("章节编号 9 不存在", result.output)

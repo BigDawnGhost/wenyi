@@ -63,9 +63,7 @@ class TestFakeClient(unittest.TestCase):
 
         c = FakeClient(handler=handler)
         self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "hello")
-        self.assertEqual(
-            c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"]
-        )
+        self.assertEqual(c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"])
         self.assertEqual(len(c.calls), 2)
 
 
@@ -99,9 +97,7 @@ class TestParseJsonLooseRepairs(unittest.TestCase):
         self.assertEqual(parse_json_loose('{"a": "b, c: d"}'), {"a": "b, c: d"})
 
     def test_escaped_quotes_still_work(self):
-        self.assertEqual(
-            parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'}
-        )
+        self.assertEqual(parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'})
 
 
 class TestProviderRequestKwargs(unittest.TestCase):

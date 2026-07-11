@@ -29,8 +29,14 @@ class TestGlossary(unittest.TestCase):
 
     def test_insert_and_lookup(self):
         r = self.store.upsert_term(
-            GlossaryTerm(source="綾小路", target="绫小路", type=TYPE_PERSON,
-                         gender="男", aliases=["綾小路くん"], reading="あやのこうじ"),
+            GlossaryTerm(
+                source="綾小路",
+                target="绫小路",
+                type=TYPE_PERSON,
+                gender="男",
+                aliases=["綾小路くん"],
+                reading="あやのこうじ",
+            ),
             chapter=0,
         )
         self.assertEqual(r, "inserted")
@@ -48,12 +54,8 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(hits[0].source, "綾小路")
 
     def test_terms_in_text_normalizes_case_and_character_width(self):
-        self.store.upsert_term(
-            GlossaryTerm(source="OpenAI", target="开放人工智能")
-        )
-        self.store.upsert_term(
-            GlossaryTerm(source="ＡＢＣ", target="ABC 组织")
-        )
+        self.store.upsert_term(GlossaryTerm(source="OpenAI", target="开放人工智能"))
+        self.store.upsert_term(GlossaryTerm(source="ＡＢＣ", target="ABC 组织"))
 
         hits = self.store.terms_in_text("openai 与 ABC")
 
@@ -82,13 +84,9 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(hits[0].source, "夏帆ちゃん")
 
     def test_conflict_keeps_current_until_resolved(self):
-        self.store.upsert_term(
-            GlossaryTerm(source="堀北", target="堀北"), chapter=0
-        )
+        self.store.upsert_term(GlossaryTerm(source="堀北", target="堀北"), chapter=0)
         # 提交不同译法：保留当前译法并记录候选项。
-        r = self.store.upsert_term(
-            GlossaryTerm(source="堀北", target="掘北"), chapter=1
-        )
+        r = self.store.upsert_term(GlossaryTerm(source="堀北", target="掘北"), chapter=1)
         self.assertEqual(r, "conflict")
         term = self.store.get_term("堀北")
         assert term is not None
@@ -113,9 +111,7 @@ class TestGlossary(unittest.TestCase):
             store = GlossaryStore(path)
             try:
                 barrier.wait()
-                return store.upsert_term(
-                    GlossaryTerm(source="Name", target=target), chapter=1
-                )
+                return store.upsert_term(GlossaryTerm(source="Name", target=target), chapter=1)
             finally:
                 store.close()
 
@@ -140,9 +136,7 @@ class TestGlossary(unittest.TestCase):
                     target_text TEXT NOT NULL
                 )"""
             )
-            conn.execute(
-                "INSERT INTO translation_memory VALUES ('hash', 'source', 'target')"
-            )
+            conn.execute("INSERT INTO translation_memory VALUES ('hash', 'source', 'target')")
 
         self.store = GlossaryStore(self.store.db_path)
         row = self.store.conn.execute(
