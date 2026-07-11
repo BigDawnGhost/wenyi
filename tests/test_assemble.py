@@ -83,6 +83,7 @@ class TestAssembleText(unittest.TestCase):
             out = assemble(store, txt, out_format="txt")
             self.assertTrue(out.endswith(".txt"))
             self.assertEqual(os.path.basename(out), "novel.zh.txt")
+            self.assertEqual(os.path.dirname(out), os.path.join(d, "output"))
             with open(out, encoding="utf-8") as f:
                 content = f.read()
             self.assertIn("润0", content)  # 译文已写入
@@ -95,6 +96,7 @@ class TestAssembleText(unittest.TestCase):
             out = assemble(store, txt, out_format="epub")
             self.assertTrue(out.endswith(".epub"))
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
+            self.assertEqual(os.path.dirname(out), os.path.join(d, "output"))
             self.assertTrue(zipfile.is_zipfile(out))
             # 重新解析生成的 EPUB，应能读出章节且含译文
             doc = load_document(out, "ja", "zh")

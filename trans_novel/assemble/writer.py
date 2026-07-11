@@ -34,13 +34,18 @@ def _sanitize_filename(name: str, fallback: str = "translated") -> str:
 
 
 def _default_out(source_path: str, out_format: str, title: str | None = None) -> str:
+    """Return the default export path under the input file's ``output`` folder."""
     ext = ".epub" if out_format == "epub" else ".txt"
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(source_path)), "output")
+    os.makedirs(output_dir, exist_ok=True)
     if title and title.strip():
         # 保留给显式调用方使用；默认 assemble 不传书名译名。
-        d = os.path.dirname(os.path.abspath(source_path))
-        return os.path.join(d, _sanitize_filename(title) + ext)
+        return os.path.join(output_dir, _sanitize_filename(title) + ext)
     base, _ = os.path.splitext(source_path)
-    return f"{base}.zh{ext}"
+    return os.path.join(
+        output_dir,
+        f"{os.path.basename(base)}.zh{ext}",
+    )
 
 
 def _ch_title(c: dict) -> str:

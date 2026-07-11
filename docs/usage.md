@@ -33,7 +33,7 @@ setx DEEPSEEK_API_KEY "sk-..."
 ## 输入与输出
 
 - 输入格式：EPUB、FB2、TXT。
-- 默认输出：与源文件相同目录的中文 EPUB。
+- 默认输出：源文件所在目录的 `output/` 中的中文 EPUB。
 - `--format txt`：输出纯文本；TXT 输入默认仍生成 EPUB。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 状态文件位于 `state/`，包含章节中间结果、术语 SQLite 库和报告。
