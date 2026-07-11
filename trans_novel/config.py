@@ -52,7 +52,7 @@ pipeline:
   review: true # 章末整章审校（廉价档）：漏译/误译/术语/人称检查
   autofix_severe: false # 审校后自动重译严重项（漏译/误译）；关掉仅上报，不改正文
   align_retry_limit: 2
-  polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认关
+  polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
   consistency_qa: false # 全书跨章一致性收尾扫描
   rolling_context_segments: 6 # 注入的前文译文尾段数
@@ -107,11 +107,11 @@ class SegmentConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     review: bool = True
-    autofix_severe: bool = True      # 章末审校后自动重译严重项（漏译/误译）；关闭则仅上报留人工
+    autofix_severe: bool = False     # 章末审校后自动重译严重项（漏译/误译）；关闭则仅上报留人工
     align_retry_limit: int = 2       # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
-    polish: bool = False             # 默认关：润色=用强档把全书再翻一遍，最烧钱；需要时显式开
-    backtranslate_sample: float = 0.05
-    consistency_qa: bool = True
+    polish: bool = True              # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
+    backtranslate_sample: float = 0.0
+    consistency_qa: bool = False
     rolling_context_segments: int = 6
     # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
