@@ -12,6 +12,14 @@ export DEEPSEEK_API_KEY=sk-...
 uv run trans-novel translate book.epub
 ```
 
+Windows PowerShell（打包版 `wenyi.exe`）先设置 API Key：
+
+```powershell
+# 仅当前 PowerShell 窗口生效
+$env:DEEPSEEK_API_KEY = "sk-..."
+.\wenyi.exe translate .\book.epub
+```
+
 翻译完成后，默认会在源文件目录下生成译文 EPUB。运行状态、章节 JSON、术语库和报告会放在 `state/` 目录下。
 
 中断后继续：
