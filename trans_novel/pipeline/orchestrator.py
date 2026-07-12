@@ -22,7 +22,12 @@ from typing import Any, Callable, Optional
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor
 from ..glossary.store import GlossaryStore, TYPE_PERSON
-from ..llm.base import LLMClient, build_client
+from ..llm.base import (
+    LLMClient,
+    build_client,
+    merge_usage_summaries,
+    usage_delta,
+)
 from ..ingest.segmenter import load_document, batch_segments
 from ..postprocess.punct import normalize_zh
 from ..agents.analyzer import Analyzer
@@ -72,6 +77,8 @@ class Orchestrator:
     def __init__(self, config: Config, client: LLMClient | None = None):
         self.config = config
         self.client = client or build_client(config)
+        # client 的统计是进程内累计；checkpoint 用于每次落盘时只提取新增部分。
+        self._usage_checkpoint = self.client.usage_summary()
         self.analyzer = Analyzer(self.client, config)
         self.synopsizer = Synopsizer(self.client, config)
         self.translator = Translator(self.client, config)
@@ -79,6 +86,24 @@ class Orchestrator:
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
+
+    def _flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
+        """把当前 client 尚未落盘的用量增量合并到本书 usage.json。"""
+        current = self.client.usage_summary()
+        increment = usage_delta(current, self._usage_checkpoint)
+        self._usage_checkpoint = current
+        accumulated = store.load_usage() or {"totals": {}, "by_tier": {}}
+        if not increment["totals"]["calls"]:
+            return merge_usage_summaries(accumulated, increment)
+        cumulative = merge_usage_summaries(accumulated, increment)
+        store.save_usage(cumulative)
+        store.log_event(
+            "usage_summary",
+            scope=scope,
+            increment=increment,
+            cumulative=cumulative,
+        )
+        return cumulative
 
     # ── 语言解析 ────────────────────────────────────────────────────────────
     def _apply_language(self, lang: str) -> None:
@@ -90,7 +115,10 @@ class Orchestrator:
             ag.src = resolved
 
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
-    def prepare(self, input_path: str) -> RunStore:
+    def prepare(self, input_path: str, *,
+                progress: Optional[ProgressFn] = None) -> RunStore:
+        if progress:
+            progress(0, 0, "解析文档…")
         # 超长段按句拆分（max_chars_per_segment），续段标 cont 供回填并回
         doc = load_document(input_path, self.config.source_lang, self.config.target_lang,
                             split_segments=self.config.segment.max_chars_per_segment)
@@ -102,6 +130,8 @@ class Orchestrator:
 
         # 新建：auto 时只使用模型检测主要语言；失败则要求用户显式指定。
         if self.config.source_lang in ("auto", "", None):
+            if progress:
+                progress(0, 0, "识别语言…")
             detected = self._detect_language_ai(doc)
             if not detected:
                 store.log_event("language_detection_failed", source_lang=doc.source_lang)
@@ -134,6 +164,8 @@ class Orchestrator:
             },
         )
         glossary = GlossaryStore(store.glossary_path)
+        if progress:
+            progress(0, 0, "分析全书风格…")
         sample = self._sample_text(doc)
         analysis = self.analyzer.analyze(sample) if sample else {}
         if analysis:
@@ -190,14 +222,14 @@ class Orchestrator:
 
     def run(self, input_path: str, *, only_chapter: int | None = None,
             progress: Optional[ProgressFn] = None) -> RunStore:
-        store = self.prepare(input_path)
+        store = self.prepare(input_path, progress=progress)
         manifest = store.load_manifest()
         self._apply_language(manifest.get("source_lang") or self.config.source_lang)
         glossary = GlossaryStore(store.glossary_path)
         context = RollingContext.from_dict(store.load_context() or {})
         style = self.analyzer.style_brief(store.load_analysis() or {})
         # 翻译前预扫源文，建立全书理解（幂等、可续跑）；全书概览注入每章翻译
-        book_synopsis = self._build_understanding(store)
+        book_synopsis = self._build_understanding(store, progress=progress)
 
         if only_chapter is not None:
             targets = [only_chapter]
@@ -220,9 +252,10 @@ class Orchestrator:
                 store.save_context(context.to_dict())
             # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
             if not store.pending_chapters():
-                self._translate_titles(store, glossary)
+                self._translate_titles(store, glossary, progress=progress)
         finally:
             glossary.close()
+            self._flush_usage(store, scope="translate")
         if progress and total:
             progress(total, total, "翻译完成")
         store.log_event("translate_run_finished", total_segments=total)
@@ -236,7 +269,8 @@ class Orchestrator:
         return total
 
     # ── 全书理解预扫（源文逐章梗概 + 全书概览）────────────────────────────────
-    def _build_understanding(self, store: RunStore) -> str:
+    def _build_understanding(self, store: RunStore,
+                             progress: Optional[ProgressFn] = None) -> str:
         """翻译前预扫源文：逐章梗概存入 chapter.meta，归并出全书概览存入 analysis。
 
         幂等、可续跑：已有梗概/概览则跳过。返回全书概览（注入各章翻译 prompt）。
@@ -261,10 +295,12 @@ class Orchestrator:
                 workers=max(1, self.config.pipeline.prescan_concurrency),
             )
             workers = max(1, self.config.pipeline.prescan_concurrency)
+            if progress:
+                progress(0, len(todo), "预扫章节梗概")
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futs = {ex.submit(self.synopsizer.digest_chapter, src): ci
                         for ci, src in todo}
-                for fut in as_completed(futs):
+                for n_done, fut in enumerate(as_completed(futs), 1):
                     ci = futs[fut]
                     loaded[ci].meta["source_digest"] = fut.result()  # 失败时 _ask_text 已回退 ""
                     store.save_chapter(loaded[ci])
@@ -273,6 +309,8 @@ class Orchestrator:
                         chapter=ci,
                         digest=loaded[ci].meta["source_digest"],
                     )
+                    if progress:
+                        progress(n_done, len(todo), "预扫章节梗概")
 
         # 按 manifest 章序组装（与并发完成顺序无关）
         digests = [loaded[c.get("index", i)].meta.get("source_digest", "") or ""
@@ -281,6 +319,8 @@ class Orchestrator:
         analysis = store.load_analysis() or {}
         synopsis = analysis.get("book_synopsis", "")
         if not synopsis and any(d.strip() for d in digests):
+            if progress:
+                progress(0, 0, "生成全书概览…")
             synopsis = self.synopsizer.book_synopsis(
                 digests, self.analyzer.style_brief(analysis))
             analysis["book_synopsis"] = synopsis
@@ -289,7 +329,8 @@ class Orchestrator:
         return synopsis
 
     # ── 章节标题 / 目录项翻译（书名保持原文）──────────────────────────────
-    def _translate_titles(self, store: RunStore, glossary: GlossaryStore) -> None:
+    def _translate_titles(self, store: RunStore, glossary: GlossaryStore,
+                          progress: Optional[ProgressFn] = None) -> None:
         """把各章标题和额外目录项翻成中文，写回 manifest（幂等：已全部译过则跳过）。
 
         书名保持原文，不写 title_translated；借术语表保证章节标题里的专名一致。
@@ -327,6 +368,8 @@ class Orchestrator:
         )
         if not any(t.strip() for t in titles):
             return
+        if progress:
+            progress(0, 0, "翻译章节标题…")
         system = prompts.render("title_translator_system",
                                 src=self.config.source_lang, tgt=self.config.target_lang,
                                 n=len(titles))
@@ -716,7 +759,7 @@ class Orchestrator:
         if "translate" in steps:
             store = self.run(input_path, progress=progress)
         else:
-            store = self.prepare(input_path)
+            store = self.prepare(input_path, progress=progress)
             m = store.load_manifest()
             self._apply_language(m.get("source_lang") or self.config.source_lang)
         store.log_event("run_steps_started", steps=run_steps_input, input_path=input_path)
@@ -726,6 +769,8 @@ class Orchestrator:
         report: dict[str, Any] | None = None
         try:
             if "qa" in steps:
+                if progress:
+                    progress(0, 0, "一致性 QA…")
                 qa_issues = ConsistencyChecker(self.client, self.config).check(store, glossary)
                 store.log_event(
                     "consistency_qa_finished",
@@ -733,16 +778,22 @@ class Orchestrator:
                     issues=qa_issues,
                 )
 
+            self._flush_usage(store, scope="pipeline")
             if "report" in steps:
+                if progress:
+                    progress(0, 0, "生成报告…")
                 report = build_report(store, glossary)
                 report["consistency_issues"] = qa_issues
                 store.save_report(report)
                 store.log_event("report_saved", path=store.report_path)
         finally:
             glossary.close()
+            self._flush_usage(store, scope="pipeline")
 
         outputs: list[str] = []
         if "assemble" in steps:
+            if progress:
+                progress(0, 0, "回填译文…")
             out_cfg = self.config.output
             do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
             if not do_mono and not do_bilingual:

@@ -13,6 +13,11 @@ from trans_novel.cli import _configure_windows_console, app
 from trans_novel.config import Config
 
 
+class FakeStore:
+    def load_usage(self):
+        return None
+
+
 class TestCliConfig(unittest.TestCase):
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
@@ -40,6 +45,7 @@ class TestCliConfig(unittest.TestCase):
                     "audit": [],
                     "qa_issues": [],
                     "output": "out.epub",
+                    "store": FakeStore(),
                 }
 
         with (
@@ -79,6 +85,7 @@ class TestCliConfig(unittest.TestCase):
                     "audit": [],
                     "qa_issues": [],
                     "output": "out.epub",
+                    "store": FakeStore(),
                 }
 
         with (
@@ -121,6 +128,7 @@ class TestCliConfig(unittest.TestCase):
                     },
                     "qa_issues": [],
                     "output": "out.txt",
+                    "store": FakeStore(),
                 }
 
         with (

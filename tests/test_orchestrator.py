@@ -135,8 +135,14 @@ class TestSegmentLevelResume(unittest.TestCase):
 
             ch2 = store.load_chapter(0)
             # 之前已译的段仍是 R1（未被跨位置复用、也未重翻），补译段是 R2
-            self.assertTrue(ch2.text_segments[0].target.startswith("R1"))
-            self.assertTrue(ch2.text_segments[-1].target.startswith("R2"))
+            first_target = ch2.text_segments[0].target
+            last_target = ch2.text_segments[-1].target
+            self.assertIsNotNone(first_target)
+            self.assertIsNotNone(last_target)
+            assert first_target is not None
+            assert last_target is not None
+            self.assertTrue(first_target.startswith("R1"))
+            self.assertTrue(last_target.startswith("R2"))
 
 
 class TestBookUnderstanding(unittest.TestCase):
@@ -225,7 +231,8 @@ class TestRunSteps(unittest.TestCase):
     def test_subset_only_assemble(self):
         """run_steps 步骤子集：仅回填时不应再产生翻译调用（幂等）。"""
         with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt"); write_sample_txt(txt)
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             orch.run_steps(txt, {"translate"})
@@ -260,7 +267,8 @@ class TestReviewReporting(unittest.TestCase):
         return handler
 
     def _run(self, d, *, autofix, fix_text=None):
-        txt = os.path.join(d, "novel.txt"); write_sample_txt(txt)
+        txt = os.path.join(d, "novel.txt")
+        write_sample_txt(txt)
         cfg = _config(os.path.join(d, "state"))
         cfg.pipeline.autofix_severe = autofix
         handler = self._handler(fix_text or self.FIX_TEXT)
@@ -308,7 +316,8 @@ class TestReviewReporting(unittest.TestCase):
             return routing_handler(messages, tier, json_mode)
 
         with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt"); write_sample_txt(txt)
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             cfg.segment.max_chars_per_batch = 8   # 审校块预算=24 → 每段自成一块
             cfg.pipeline.autofix_severe = False
@@ -551,6 +560,36 @@ class TestProgressLabels(unittest.TestCase):
 
         self.assertEqual(ConsistencyChecker._chapter_label("第一章", 1), "第一章")
         self.assertEqual(ConsistencyChecker._chapter_label("", 1), "章节 2")
+
+    def test_progress_covers_preparation_and_output_stages(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            events: list[tuple[int, int, str]] = []
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+
+            orch.run_steps(
+                txt,
+                {"translate", "qa", "report", "assemble"},
+                progress=lambda done, total, label: events.append((done, total, label)),
+            )
+
+            labels = [label for _, _, label in events]
+            expected = [
+                "解析文档…",
+                "分析全书风格…",
+                "预扫章节梗概",
+                "生成全书概览…",
+                "翻译章节标题…",
+                "翻译完成",
+                "一致性 QA…",
+                "生成报告…",
+                "回填译文…",
+            ]
+            positions = [labels.index(label) for label in expected]
+            self.assertEqual(positions, sorted(positions), labels)
+            self.assertIn((0, 0, "生成全书概览…"), events)
 
 
 if __name__ == "__main__":

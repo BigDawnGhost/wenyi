@@ -350,6 +350,10 @@ class TestCliBilingualFlags(unittest.TestCase):
         )
         captured = {}
 
+        class FakeStore:
+            def load_usage(self):
+                return None
+
         class FakeOrchestrator:
             def __init__(self, config):
                 captured["mono"] = config.output.mono
@@ -363,6 +367,7 @@ class TestCliBilingualFlags(unittest.TestCase):
                     "qa_issues": [],
                     "output": "novel.zh.epub",
                     "outputs": ["novel.zh.epub", "novel.zh-bi.epub"],
+                    "store": FakeStore(),
                 }
 
         with (
