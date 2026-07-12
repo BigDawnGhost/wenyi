@@ -13,6 +13,7 @@ state/
 *.txt
 
 # 输入书籍 / 生成产物（勿入库）
+output/
 *.epub
 *.fb2
 *.mobi
