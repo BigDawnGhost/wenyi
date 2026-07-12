@@ -141,9 +141,121 @@ def parse_json_loose(text: str) -> Any:
     raise ValueError(f"无法解析为 JSON：{text[:200]!r}")
 
 
+# ── Token 用量统计 ────────────────────────────────────────────────────────
+_USAGE_FIELDS = (
+    "calls", "prompt_tokens", "completion_tokens", "total_tokens",
+    "cache_hit_tokens", "cache_miss_tokens",
+)
+
+
+def _usage_int(usage: Any, name: str) -> int:
+    """从响应 usage 对象/字典读取整数字段，缺失或非数返回 0。"""
+    val = getattr(usage, name, None)
+    if val is None and isinstance(usage, dict):
+        val = usage.get(name)
+    try:
+        return int(val) if val is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _hit_rate(hit: int, miss: int) -> float:
+    total = hit + miss
+    return round(hit / total, 4) if total else 0.0
+
+
+def _usage_summary_from_tiers(by_tier: dict[str, dict[str, int]]) -> dict[str, Any]:
+    """由各档计数生成规范汇总，并重新计算总计与缓存命中率。"""
+    tiers: dict[str, dict[str, Any]] = {
+        tier: {field: int(values.get(field, 0)) for field in _USAGE_FIELDS}
+        for tier, values in by_tier.items()
+    }
+    totals: dict[str, Any] = dict.fromkeys(_USAGE_FIELDS, 0)
+    for values in tiers.values():
+        for field in _USAGE_FIELDS:
+            totals[field] += values[field]
+    for slot in (*tiers.values(), totals):
+        slot["cache_hit_rate"] = _hit_rate(
+            slot["cache_hit_tokens"], slot["cache_miss_tokens"]
+        )
+    return {"totals": totals, "by_tier": tiers}
+
+
+def usage_delta(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    """计算两个累计快照之间的非负增量，用于避免重复落盘。"""
+    current_tiers = current.get("by_tier") or {}
+    previous_tiers = previous.get("by_tier") or {}
+    delta: dict[str, dict[str, int]] = {}
+    for tier, values in current_tiers.items():
+        old = previous_tiers.get(tier) or {}
+        slot = {
+            field: max(0, _usage_int(values, field) - _usage_int(old, field))
+            for field in _USAGE_FIELDS
+        }
+        if any(slot.values()):
+            delta[tier] = slot
+    return _usage_summary_from_tiers(delta)
+
+
+def merge_usage_summaries(
+    accumulated: dict[str, Any], increment: dict[str, Any]
+) -> dict[str, Any]:
+    """把一次运行增量合并进某本书的历史累计用量。"""
+    merged: dict[str, dict[str, int]] = {}
+    for summary in (accumulated, increment):
+        for tier, values in (summary.get("by_tier") or {}).items():
+            slot = merged.setdefault(tier, dict.fromkeys(_USAGE_FIELDS, 0))
+            for field in _USAGE_FIELDS:
+                slot[field] += _usage_int(values, field)
+    return _usage_summary_from_tiers(merged)
+
+
+class UsageTracker:
+    """线程安全的 token 用量累加器，按 tier 分档统计（worker 线程并发共享一个 client）。
+
+    DeepSeek 的 usage 里 prompt_cache_hit_tokens + prompt_cache_miss_tokens == prompt_tokens；
+    缓存命中率 = cache_hit /(cache_hit + cache_miss)。fake provider 不产生 usage，保持空。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._by_tier: dict[str, dict[str, int]] = {}
+
+    def record(self, tier: str, usage: Any) -> None:
+        """累加一次响应的 usage；usage 缺失时静默跳过（不影响正常返回）。"""
+        if usage is None:
+            return
+        pt = _usage_int(usage, "prompt_tokens")
+        ct = _usage_int(usage, "completion_tokens")
+        tt = _usage_int(usage, "total_tokens") or (pt + ct)
+        hit = _usage_int(usage, "prompt_cache_hit_tokens")
+        miss = _usage_int(usage, "prompt_cache_miss_tokens")
+        with self._lock:
+            slot = self._by_tier.setdefault(tier, dict.fromkeys(_USAGE_FIELDS, 0))
+            slot["calls"] += 1
+            slot["prompt_tokens"] += pt
+            slot["completion_tokens"] += ct
+            slot["total_tokens"] += tt
+            slot["cache_hit_tokens"] += hit
+            slot["cache_miss_tokens"] += miss
+
+    def summary(self) -> dict[str, Any]:
+        """返回 {"totals": {...}, "by_tier": {tier: {...}}}，各档含 cache_hit_rate。"""
+        with self._lock:
+            by_tier = {t: dict(v) for t, v in self._by_tier.items()}
+        return _usage_summary_from_tiers(by_tier)
+
+
 # ── 抽象接口 ──────────────────────────────────────────────────────────────
 class LLMClient(ABC):
     """所有 provider 实现此接口。"""
+
+    def __init__(self) -> None:
+        self.usage = UsageTracker()
+
+    def usage_summary(self) -> dict[str, Any]:
+        """返回累计 token 用量快照（totals + by_tier + cache_hit_rate）。"""
+        return self.usage.summary()
 
     @abstractmethod
     def complete(
@@ -172,6 +284,7 @@ class LLMClient(ABC):
 # ── DeepSeek（OpenAI SDK 兼容）────────────────────────────────────────────
 class DeepSeekClient(LLMClient):
     def __init__(self, cfg: LLMConfig):
+        super().__init__()
         self.cfg = cfg
         if not cfg.tiers:
             raise ValueError("配置缺少 llm.tiers")
@@ -237,6 +350,7 @@ class DeepSeekClient(LLMClient):
         )
         def _call() -> str:
             resp = client.chat.completions.create(**kwargs)
+            self.usage.record(tier, getattr(resp, "usage", None))
             return resp.choices[0].message.content or ""
 
         return _call()
@@ -251,6 +365,7 @@ class FakeClient(LLMClient):
     """
 
     def __init__(self, handler: Optional[Callable[[Messages, str, bool], str]] = None):
+        super().__init__()
         self.handler = handler
         self.calls: list[dict[str, Any]] = []  # 记录调用，便于断言
 
