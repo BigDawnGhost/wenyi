@@ -5,6 +5,7 @@
   chapters/ch{n}.json  各章（含 source/target 的 Segment）
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
+  usage.json        本书跨 translate/resume 累计的 LLM token 用量
   glossary.db       术语库 + 翻译记忆库
   report.json       QA 报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
@@ -59,6 +60,10 @@ class RunStore:
     @property
     def report_path(self) -> str:
         return os.path.join(self.run_dir, "report.json")
+
+    @property
+    def usage_path(self) -> str:
+        return os.path.join(self.run_dir, "usage.json")
 
     @property
     def event_log_path(self) -> str:
@@ -144,6 +149,12 @@ class RunStore:
 
     def save_report(self, data: dict) -> None:
         self._write_json(self.report_path, data)
+
+    def save_usage(self, data: dict) -> None:
+        self._write_json(self.usage_path, data)
+
+    def load_usage(self) -> dict | None:
+        return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
 
     # ── 追加式事件日志 ────────────────────────────────────────────────────
     def log_event(self, event: str, **data: Any) -> None:

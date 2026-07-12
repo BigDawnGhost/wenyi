@@ -130,6 +130,7 @@ def _translate_impl(
         if chapter is not None:
             store = orch.run(input_path, only_chapter=chapter, progress=cb)
             console.print(f"[green]已翻第 {chapter} 章[/]，状态目录：{store.run_dir}")
+            _print_usage({"usage": store.load_usage() or {}})
             return
 
         result = orch.run_all(
@@ -145,8 +146,28 @@ def _translate_impl(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
+    _print_usage({"usage": result["store"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
+
+
+def _print_usage(report: dict) -> None:
+    """打印本书累计 token 用量与分档缓存命中率（无数据时静默跳过）。"""
+    usage = report.get("usage") or {}
+    totals = usage.get("totals") or {}
+    if not totals.get("total_tokens"):
+        return
+    console.print(
+        f"用量（本书累计）：{totals['total_tokens']:,} tok"
+        f"（提示 {totals['prompt_tokens']:,} / 生成 {totals['completion_tokens']:,}），"
+        f"缓存命中率 {totals.get('cache_hit_rate', 0.0):.1%}"
+        f"（命中 {totals['cache_hit_tokens']:,} / 未命中 {totals['cache_miss_tokens']:,} tok）"
+    )
+    for tier, v in sorted(usage.get("by_tier", {}).items()):
+        console.print(
+            f"  · {tier}：{v['total_tokens']:,} tok，{v['calls']} 次调用，"
+            f"缓存命中率 {v['cache_hit_rate']:.1%}"
+        )
 
 
 # ── translate / resume：连续全流程 ──────────────────────────────────────────
