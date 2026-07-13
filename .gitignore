@@ -17,3 +17,20 @@ state/
 *.fb2
 *.mobi
 *.azw3
+
+# ── Web 升级（monorepo）─────────────────────────────────────────
+node_modules/
+.next/
+.turbo/
+.env
+.env.local
+data/
+output/
+*.zh-bi.epub
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+local_references

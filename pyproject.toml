@@ -1,26 +1,31 @@
 [project]
-name = "trans-novel"
-version = "0.1.0"
-description = "多 Agent 协同长篇小说翻译系统（多语言到中文），维护专有名词对照表以保证一致性、减少漏译。"
+name = "wenyi"
+version = "0.2.0"
+description = "文译（Wenyi）：基于 AI 的长篇小说翻译平台 — monorepo 根"
 requires-python = ">=3.10"
-dependencies = [
-    "openai>=1.40",        # DeepSeek（OpenAI 兼容）调用
-    "pydantic>=2.7",       # 模型 / 配置校验
-    "pyyaml>=6.0",         # 读取 config.yaml
-    "tenacity>=8.2",       # LLM 调用重试/退避
-    "beautifulsoup4>=4.12", # EPUB 正文块提取
-    "lxml>=5.0",           # bs4 的 XHTML 解析后端
-    "ebooklib>=0.18",      # EPUB 读写
-    "typer>=0.12",         # CLI
-    "rich>=13.7",          # 表格 / 进度条
+
+[tool.uv.workspace]
+members = ["packages/core", "packages/cli", "apps/api"]
+
+[tool.uv.sources]
+wenyi-core = { workspace = true }
+wenyi-cli = { workspace = true }
+wenyi-api = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8",
 ]
 
-[project.scripts]
-trans-novel = "trans_novel.cli:main"
+[tool.ruff]
+line-length = 100
+target-version = "py310"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["trans_novel"]
+[tool.pytest.ini_options]
+testpaths = ["packages/core/tests", "apps/api/tests"]
+pythonpath = ["packages/core", "packages/cli"]
