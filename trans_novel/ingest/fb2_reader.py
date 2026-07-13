@@ -1,7 +1,7 @@
 """FB2 (FictionBook) 读取器。
 
-FB2 即一种 XML 格式（.fb2），标准命名空间
-http://www.gribuser.ru/xml/fictionbook/2.0。
+FB2 即一种 XML 格式（.fb2），常见命名空间为
+http://www.gribuser.ru/xml/fictionbook/2.0；部分文件使用 2.1 或省略命名空间。
 
 结构：
   <FictionBook>
@@ -30,9 +30,6 @@ import re
 import xml.etree.ElementTree as ET
 
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
-
-_NS = {"fb": "http://www.gribuser.ru/xml/fictionbook/2.0"}
-
 
 def _local(el: ET.Element) -> str:
     return el.tag.rsplit("}", 1)[-1]
@@ -168,7 +165,9 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
 
     # ── 书名 ──
     title = os.path.splitext(os.path.basename(path))[0]
-    for desc in root.iter(f"{{{_NS['fb']}}}title-info"):
+    for desc in root.iter():
+        if _local(desc) != "title-info":
+            continue
         for child in desc:
             if _local(child) == "book-title":
                 if child.text:
@@ -178,22 +177,27 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
     # ── 章节 ──
     chapters: list[Chapter] = []
     # 只取第一个正文 <body>，跳过 body[name="notes"] 等附属 body
-    for body in root.findall(f"{{{_NS['fb']}}}body"):
+    for body in root:
+        if _local(body) != "body":
+            continue
         body_name = body.attrib.get("name", "")
         if body_name:  # notes, comments 等附属 body
             continue
         title_chapter = _body_title_chapter(body)
         if title_chapter is not None:
             chapters.append(title_chapter)
-        for section in body.findall(f"{{{_NS['fb']}}}section"):
-            _walk_sections(section, chapters)
+        for section in body:
+            if _local(section) == "section":
+                _walk_sections(section, chapters)
         break  # 只处理第一个 body
 
     if not chapters:
         # 兜底：整篇当作一章
         segments: list[Segment] = []
         idx = 0
-        for p in root.iter(f"{{{_NS['fb']}}}p"):
+        for p in root.iter():
+            if _local(p) != "p":
+                continue
             text = _strip_markup(p).strip()
             if text:
                 segments.append(

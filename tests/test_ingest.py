@@ -122,6 +122,23 @@ class TestFb2Ingest(unittest.TestCase):
         all_src = [s.source for ch in doc.chapters for s in ch.segments]
         self.assertNotIn("这是注释，应被跳过。", all_src)
 
+    def test_namespace_variants_are_supported(self):
+        variants = {
+            "2.1": _FB2_FLAT.replace("fictionbook/2.0", "fictionbook/2.1"),
+            "none": _FB2_FLAT.replace(
+                ' xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"', ""
+            ),
+        }
+        for name, content in variants.items():
+            with self.subTest(namespace=name):
+                doc = self._load(content)
+                self.assertEqual(doc.title, "平铺之书")
+                self.assertEqual([ch.title for ch in doc.chapters], ["第一章", "第二章"])
+                self.assertEqual(
+                    [s.source for s in doc.chapters[0].text_segments],
+                    ["第一章", "第一段。", "第二段。"],
+                )
+
     def test_body_title_becomes_a_separate_chapter(self):
         doc = self._load(_FB2_BODY_TITLE)
         self.assertEqual(len(doc.chapters), 2)
