@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from trans_novel.agents.base import Agent
 from trans_novel.config import Config, LLMConfig, TierConfig
 from trans_novel.llm.base import (
     DeepSeekClient,
@@ -117,7 +118,9 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         ]
         msgs = [{"role": "user", "content": "hi"}]
         with patch.object(c, "_ensure_client", return_value=_ClientStub(responses)):
-            self.assertEqual(c.complete(msgs, tier="strong"), "strong-out")
+            self.assertEqual(
+                c.complete(msgs, tier="strong", stage="Translator"), "strong-out"
+            )
             self.assertEqual(c.complete(msgs, tier="cheap"), "cheap-out")
 
         summary = c.usage_summary()
@@ -137,6 +140,9 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         self.assertEqual(by_tier["cheap"]["calls"], 1)
         self.assertEqual(by_tier["strong"]["prompt_tokens"], 1000)
         self.assertEqual(by_tier["cheap"]["prompt_tokens"], 500)
+        self.assertEqual(list(summary["by_stage"]), ["Translator"])
+        self.assertEqual(summary["by_stage"]["Translator"]["total_tokens"], 1200)
+        self.assertEqual(summary["by_stage"]["Translator"]["cache_hit_rate"], 0.8)
 
 
 class TestMissingUsage(unittest.TestCase):
@@ -147,6 +153,7 @@ class TestMissingUsage(unittest.TestCase):
         self.assertEqual(summary["totals"]["calls"], 0)
         self.assertEqual(summary["totals"]["total_tokens"], 0)
         self.assertEqual(summary["by_tier"], {})
+        self.assertEqual(summary["by_stage"], {})
 
     def test_complete_with_none_usage_does_not_count(self):
         cfg = _minimal_deepseek_cfg()
@@ -161,6 +168,7 @@ class TestMissingUsage(unittest.TestCase):
         self.assertEqual(summary["totals"]["calls"], 0)
         self.assertEqual(summary["totals"]["total_tokens"], 0)
         self.assertEqual(summary["by_tier"], {})
+        self.assertEqual(summary["by_stage"], {})
 
     def test_complete_with_missing_usage_attr_does_not_count(self):
         cfg = _minimal_deepseek_cfg()
@@ -210,6 +218,7 @@ class TestEmptyCacheHitRate(unittest.TestCase):
         self.assertEqual(totals["cache_hit_tokens"], 0)
         self.assertEqual(totals["cache_miss_tokens"], 0)
         self.assertEqual(c.usage_summary()["by_tier"], {})
+        self.assertEqual(c.usage_summary()["by_stage"], {})
 
 
 class TestUsageThreadSafety(unittest.TestCase):
@@ -247,9 +256,27 @@ class TestUsageThreadSafety(unittest.TestCase):
         self.assertEqual(summary["by_tier"]["strong"]["calls"], total_calls)
 
 
+class TestAgentStageAttribution(unittest.TestCase):
+    def test_agent_helpers_pass_class_name_as_stage(self):
+        client = FakeClient()
+        agent = Agent(client, Config.from_dict({"llm": {"provider": "fake"}}))
+
+        agent._ask_text("system", "user", tier="strong")
+        agent._ask_json("system", "user", tier="cheap", default=[])
+
+        self.assertEqual([call["stage"] for call in client.calls], ["Agent", "Agent"])
+
+
 class TestUsageIncrementalPersistence(unittest.TestCase):
     @staticmethod
-    def _record(client: FakeClient, tier: str, *, prompt: int, completion: int) -> None:
+    def _record(
+        client: FakeClient,
+        tier: str,
+        *,
+        prompt: int,
+        completion: int,
+        stage: str | None = None,
+    ) -> None:
         client.usage.record(
             tier,
             _make_usage(
@@ -259,18 +286,25 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 prompt_cache_hit_tokens=prompt // 2,
                 prompt_cache_miss_tokens=prompt - prompt // 2,
             ),
+            stage,
         )
 
     def test_delta_and_merge_do_not_double_count(self):
         client = FakeClient()
-        self._record(client, "strong", prompt=100, completion=20)
+        self._record(
+            client, "strong", prompt=100, completion=20, stage="Translator"
+        )
         first = client.usage_summary()
-        self._record(client, "strong", prompt=50, completion=10)
-        self._record(client, "fast", prompt=30, completion=5)
+        self._record(
+            client, "strong", prompt=50, completion=10, stage="Translator"
+        )
+        self._record(client, "fast", prompt=30, completion=5, stage="Synopsizer")
         second = client.usage_summary()
 
         increment = usage_delta(second, first)
         self.assertEqual(increment["totals"]["total_tokens"], 95)
+        self.assertEqual(increment["by_stage"]["Translator"]["total_tokens"], 60)
+        self.assertEqual(increment["by_stage"]["Synopsizer"]["total_tokens"], 35)
         merged = merge_usage_summaries(first, increment)
         self.assertEqual(merged, second)
 
@@ -281,7 +315,13 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
             first_client = FakeClient()
             first = Orchestrator(config, client=first_client)
-            self._record(first_client, "strong", prompt=100, completion=20)
+            self._record(
+                first_client,
+                "strong",
+                prompt=100,
+                completion=20,
+                stage="Translator",
+            )
             cumulative = first._flush_usage(store, scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
 
@@ -292,13 +332,21 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             # 模拟 resume：新 client / Orchestrator 的增量继续累加到同一本书。
             resumed_client = FakeClient()
             resumed = Orchestrator(config, client=resumed_client)
-            self._record(resumed_client, "cheap", prompt=40, completion=10)
+            self._record(
+                resumed_client,
+                "cheap",
+                prompt=40,
+                completion=10,
+                stage="Reviewer",
+            )
             cumulative = resumed._flush_usage(store, scope="translate")
 
             self.assertEqual(cumulative["totals"]["total_tokens"], 170)
             self.assertEqual(cumulative["totals"]["calls"], 2)
             self.assertEqual(cumulative["by_tier"]["strong"]["total_tokens"], 120)
             self.assertEqual(cumulative["by_tier"]["cheap"]["total_tokens"], 50)
+            self.assertEqual(cumulative["by_stage"]["Translator"]["total_tokens"], 120)
+            self.assertEqual(cumulative["by_stage"]["Reviewer"]["total_tokens"], 50)
             self.assertEqual(store.load_usage(), cumulative)
             self.assertTrue(os.path.isfile(store.usage_path))
 

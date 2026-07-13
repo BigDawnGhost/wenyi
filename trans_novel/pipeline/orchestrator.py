@@ -92,7 +92,11 @@ class Orchestrator:
         current = self.client.usage_summary()
         increment = usage_delta(current, self._usage_checkpoint)
         self._usage_checkpoint = current
-        accumulated = store.load_usage() or {"totals": {}, "by_tier": {}}
+        accumulated = store.load_usage() or {
+            "totals": {},
+            "by_tier": {},
+            "by_stage": {},
+        }
         if not increment["totals"]["calls"]:
             return merge_usage_summaries(accumulated, increment)
         cumulative = merge_usage_summaries(accumulated, increment)
@@ -190,7 +194,8 @@ class Orchestrator:
         try:
             data = self.client.complete_json(
                 [{"role": "system", "content": system},
-                 {"role": "user", "content": sample}], tier="cheap")
+                 {"role": "user", "content": sample}], tier="cheap",
+                stage="language_detect")
             code = (data.get("language") if isinstance(data, dict) else "") or ""
             return _normalize_lang(str(code))
         except Exception:
@@ -250,6 +255,7 @@ class Orchestrator:
                     ci, store, glossary, context, style, book_synopsis,
                     progress=progress, done=done, total=total)
                 store.save_context(context.to_dict())
+                self._flush_usage(store, scope="chapter")
             # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
             if not store.pending_chapters():
                 self._translate_titles(store, glossary, progress=progress)
@@ -380,7 +386,8 @@ class Orchestrator:
         try:
             data = self.client.complete_json(
                 [{"role": "system", "content": system},
-                 {"role": "user", "content": user}], tier="strong")
+                 {"role": "user", "content": user}], tier="strong",
+                stage="title_translate")
         except Exception:
             return
         out = data.get("titles") if isinstance(data, dict) else data
