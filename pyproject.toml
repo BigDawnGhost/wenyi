@@ -1,6 +1,6 @@
 [project]
 name = "trans-novel"
-version = "0.1.0"
+version = "0.2.0"
 description = "多 Agent 协同长篇小说翻译系统（多语言到中文），维护专有名词对照表以保证一致性、减少漏译。"
 requires-python = ">=3.10"
 dependencies = [
