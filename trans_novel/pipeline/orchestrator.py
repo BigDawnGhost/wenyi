@@ -267,6 +267,19 @@ class Orchestrator:
         store = self.prepare(input_path, progress=progress)
         manifest = store.load_manifest()
         self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+        chapter_indices = {
+            chapter.get("index") for chapter in manifest.get("chapters", [])
+        }
+        if only_chapter is not None and only_chapter not in chapter_indices:
+            available = sorted(
+                index for index in chapter_indices if isinstance(index, int)
+            )
+            valid_range = (
+                f"0–{available[-1]}" if available else "无可翻译章节"
+            )
+            raise ValueError(
+                f"章节编号 {only_chapter} 不存在；可用范围：{valid_range}"
+            )
         glossary = GlossaryStore(store.glossary_path)
         context = RollingContext.from_dict(
             store.load_context() or {},

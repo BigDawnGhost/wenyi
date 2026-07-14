@@ -113,6 +113,14 @@ def _require_input_file(input_path: str) -> None:
         raise typer.Exit(1)
 
 
+def _validate_output_format(fmt: str) -> str:
+    normalized = fmt.strip().lower()
+    if normalized not in {"epub", "txt"}:
+        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt）[/]")
+        raise typer.Exit(2)
+    return normalized
+
+
 def _runstore_for(config: Config, input_path: str) -> RunStore:
     _require_input_file(input_path)
     doc = load_document(input_path, config.source_lang, config.target_lang)
@@ -146,6 +154,7 @@ def _translate_impl(
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input_path)
+    fmt = _validate_output_format(fmt)
     config = _load_config()
     if polish is not None:
         config.pipeline.polish = polish
@@ -176,7 +185,11 @@ def _translate_impl(
             task = prog.add_task(label, total=None)
 
         if chapter is not None:
-            store = orch.run(input_path, only_chapter=chapter, progress=cb)
+            try:
+                store = orch.run(input_path, only_chapter=chapter, progress=cb)
+            except ValueError as error:
+                console.print(f"[red]{error}[/]")
+                raise typer.Exit(2) from error
             console.print(f"[green]已翻第 {chapter} 章[/]，状态目录：{store.run_dir}")
             _print_usage({"usage": store.load_usage() or {}})
             return
@@ -230,9 +243,9 @@ def _print_usage(report: dict) -> None:
 # ── translate / resume：连续全流程 ──────────────────────────────────────────
 @app.command()
 def translate(
-    input: str = typer.Argument(..., help="输入文件（.epub / .txt / .md）"),
+    input: str = typer.Argument(..., help="输入文件（.epub / .fb2 / .txt / .md）"),
     chapter: Optional[int] = typer.Option(
-        None, "--chapter", help="只翻指定章（调试用，不做收尾）"
+        None, "--chapter", min=0, help="只翻指定章（从 0 起；调试用，不做收尾）"
     ),
     fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt"),
     out: Optional[str] = typer.Option(
@@ -378,6 +391,7 @@ def assemble(
     from .assemble.writer import bilingual_out_path
 
     config = _load_config()
+    fmt = _validate_output_format(fmt)
     store = _runstore_for(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 translate。[/]")
