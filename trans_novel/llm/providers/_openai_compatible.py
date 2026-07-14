@@ -74,7 +74,7 @@ def base_request_kwargs(
         for message in request_messages:
             if message.get("role") == "system":
                 message["content"] = (
-                    f'{message.get("content", "")}\n\n{_JSON_MODE_INSTRUCTION}'
+                    f"{message.get('content', '')}\n\n{_JSON_MODE_INSTRUCTION}"
                 )
                 break
         else:
@@ -82,6 +82,15 @@ def base_request_kwargs(
                 0,
                 {"role": "system", "content": _JSON_MODE_INSTRUCTION},
             )
+        # 有些中转/网关只校验 user 角色内容（例如转发到 Responses API 的
+        # text.format 校验只看 input 里的用户内容），只在 system 里提到
+        # "json" 未必够，所以也在最后一条 user 消息里补一份，双重保证。
+        for message in reversed(request_messages):
+            if message.get("role") == "user":
+                content = str(message.get("content", ""))
+                if "json" not in content.lower():
+                    message["content"] = f"{content}\n\n{_JSON_MODE_INSTRUCTION}"
+                break
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": request_messages,

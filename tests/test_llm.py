@@ -61,7 +61,9 @@ class TestFakeClient(unittest.TestCase):
 
         c = FakeClient(handler=handler)
         self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "hello")
-        self.assertEqual(c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"])
+        self.assertEqual(
+            c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"]
+        )
         self.assertEqual(len(c.calls), 2)
 
 
@@ -70,7 +72,9 @@ class TestParseJsonLooseRepairs(unittest.TestCase):
         # 真实案例：claude-opus-4.6 经 OpenRouter 输出的译文含未转义英文引号
         raw = '{"translations":["磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。"]}'
         got = parse_json_loose(raw)
-        self.assertEqual(got["translations"][0], '磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。')
+        self.assertEqual(
+            got["translations"][0], '磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。'
+        )
 
     def test_trailing_extra_brace(self):
         # 真实案例：gemini-3.1-pro 输出末尾多一个 }
@@ -87,7 +91,9 @@ class TestParseJsonLooseRepairs(unittest.TestCase):
         self.assertEqual(parse_json_loose('{"a": "b, c: d"}'), {"a": "b, c: d"})
 
     def test_escaped_quotes_still_work(self):
-        self.assertEqual(parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'})
+        self.assertEqual(
+            parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'}
+        )
 
 
 class TestProviderRequestKwargs(unittest.TestCase):
@@ -107,6 +113,35 @@ class TestProviderRequestKwargs(unittest.TestCase):
         self.assertEqual(kwargs["response_format"], {"type": "json_object"})
         self.assertIn("json", kwargs["messages"][0]["content"])
         self.assertEqual(messages[0]["content"], "仅输出指定对象。")
+
+    def test_json_mode_also_mentions_json_in_user_message(self):
+        # 部分中转网关只校验 user/input 内容里是否含 "json"（比如转发到
+        # Responses API 的 text.format 校验），所以 user 消息也要兜底补一份。
+        from trans_novel.llm.providers._openai_compatible import (
+            base_request_kwargs,
+        )
+
+        messages = [
+            {"role": "system", "content": "仅输出指定对象。"},
+            {"role": "user", "content": "翻译这句话。"},
+        ]
+        kwargs = base_request_kwargs("m", messages, json_mode=True)
+
+        self.assertIn("json", kwargs["messages"][-1]["content"].lower())
+        self.assertEqual(messages[-1]["content"], "翻译这句话。")
+
+    def test_json_mode_skips_user_message_already_mentioning_json(self):
+        from trans_novel.llm.providers._openai_compatible import (
+            base_request_kwargs,
+        )
+
+        messages = [
+            {"role": "system", "content": "仅输出指定对象。"},
+            {"role": "user", "content": "请输出 JSON 数组。"},
+        ]
+        kwargs = base_request_kwargs("m", messages, json_mode=True)
+
+        self.assertEqual(kwargs["messages"][-1]["content"], "请输出 JSON 数组。")
 
     def test_deepseek_dialect_and_recursive_extra_body(self):
         from trans_novel.llm.providers._openai_compatible import ResolvedTier
