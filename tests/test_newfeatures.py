@@ -9,6 +9,7 @@ import unittest
 import zipfile
 
 from trans_novel.config import Config
+from trans_novel.agents.langprofile import honorific_rule
 from trans_novel.postprocess.punct import normalize_zh, normalize_zh_segments
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
@@ -92,6 +93,14 @@ class TestPunct(unittest.TestCase):
             orchestrator = Orchestrator(cfg, client=FakeClient())
 
         self.assertFalse(orchestrator._punctuation_enabled())
+
+
+class TestLanguageProfile(unittest.TestCase):
+    def test_keep_style_requires_stable_honorific_choice(self):
+        rule = honorific_rule("keep_style")
+
+        self.assertIn("确定后同一关系全书沿用", rule)
+        self.assertNotIn("可酌情保留", rule)
 
 
 class TestRunAll(unittest.TestCase):
