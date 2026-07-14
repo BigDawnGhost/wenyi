@@ -402,6 +402,56 @@ class TestReviewReporting(unittest.TestCase):
             # 每块报 index 0 → 映射后应为各块首段的章内段号（0,1,2,...互不相同）
             self.assertEqual(idxs, list(range(len(ch.text_segments))))
 
+    def test_review_accepts_numeric_string_index(self):
+        def handler(messages, tier, json_mode):
+            if "译文审校" in messages[0]["content"]:
+                return json.dumps(
+                    {"issues": [
+                        {"index": "0", "type": "missing",
+                         "detail": "x", "suggestion": ""}
+                    ]},
+                    ensure_ascii=False,
+                )
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.autofix_severe = False
+
+            store = Orchestrator(
+                cfg, client=FakeClient(handler=handler)
+            ).run(txt, only_chapter=0)
+
+            issues = store.load_chapter(0).meta["review_issues"]
+            self.assertTrue(issues)
+            self.assertEqual(issues[0]["index"], 0)
+
+    def test_review_warns_when_index_is_invalid(self):
+        def handler(messages, tier, json_mode):
+            if "译文审校" in messages[0]["content"]:
+                return json.dumps(
+                    {"issues": [
+                        {"index": "unknown", "type": "missing",
+                         "detail": "x", "suggestion": ""}
+                    ]}
+                )
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.autofix_severe = False
+
+            with self.assertWarnsRegex(RuntimeWarning, "无效审校索引"):
+                store = Orchestrator(
+                    cfg, client=FakeClient(handler=handler)
+                ).run(txt, only_chapter=0)
+
+            self.assertEqual(store.load_chapter(0).meta["review_issues"], [])
+
 
 class TestStyleAnalysis(unittest.TestCase):
     def _long_doc(self, d):

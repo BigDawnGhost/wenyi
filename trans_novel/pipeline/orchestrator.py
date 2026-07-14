@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -745,9 +746,21 @@ class Orchestrator:
             chunk_issues: list[dict] = []
             for it in self.reviewer.review(srcs, tgts, terms):
                 idx = it.get("index")
+                if isinstance(idx, str):
+                    try:
+                        idx = int(idx.strip())
+                    except ValueError:
+                        idx = None
                 if isinstance(idx, int) and 0 <= idx < len(chunk):
                     it["index"] = chunk_base + idx
                     chunk_issues.append(it)
+                else:
+                    warnings.warn(
+                        f"忽略无效审校索引 {it.get('index')!r}；"
+                        f"当前审校块长度为 {len(chunk)}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
             return chunk_issues
 
         workers = min(
