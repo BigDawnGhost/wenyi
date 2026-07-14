@@ -57,6 +57,28 @@ class TestTranslatorAlignment(unittest.TestCase):
                         if _count_segments(c["messages"][-1]["content"]) == 1]
         self.assertGreaterEqual(len(single_calls), 3)
 
+    def test_empty_per_segment_fallback_is_rejected(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {"translations": []}
+            )
+        )
+        translator = Translator(client, self._config())
+
+        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+            translator.translate_batch(["あ", "い"])
+
+    def test_non_string_translation_is_rejected(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {"translations": [None]}
+            )
+        )
+        translator = Translator(client, self._config())
+
+        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+            translator.translate_batch(["あ"])
+
 
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_chapter_digest_precedes_dynamic_glossary(self):

@@ -48,13 +48,17 @@ class Translator(Agent):
         items = self._ask_json(system, user, tier="strong", key="translations")
         if not isinstance(items, list):
             raise AlignmentError("模型未返回译文数组")
-        return [str(x) for x in items]
+        if len(items) != n:
+            raise AlignmentError(f"译文数量不匹配：期望 {n} 段，实际 {len(items)} 段")
+        if any(not isinstance(item, str) or not item.strip() for item in items):
+            raise AlignmentError("模型返回了空译文或非字符串译文")
+        return items
 
     def _translate_one(self, source, glossary_terms, style, context,
                        book_synopsis, chapter_digest) -> str:
         out = self._call_batch([source], glossary_terms, style, context,
                                book_synopsis, chapter_digest)
-        return out[0] if out else ""
+        return out[0]
 
     def retranslate_with_feedback(
         self,
@@ -114,12 +118,32 @@ class Translator(Agent):
         attempts = self.config.pipeline.align_retry_limit + 1
         for _ in range(attempts):
             try:
-                out = self._call_batch(sources, glossary_terms, style, context,
-                                       book_synopsis, chapter_digest)
+                return self._call_batch(
+                    sources,
+                    glossary_terms,
+                    style,
+                    context,
+                    book_synopsis,
+                    chapter_digest,
+                )
             except Exception:
-                out = []
-            if len(out) == n:
-                return out
-        # 兜底：逐段翻译，保证 1:1
-        return [self._translate_one(s, glossary_terms, style, context,
-                                    book_synopsis, chapter_digest) for s in sources]
+                pass
+
+        # 兜底：逐段翻译。任一段仍失败时显式中断，保留已落盘
+        # 批次供续跑；不能用空字符串占位，否则章节会被错误标记为已完成。
+        targets: list[str] = []
+        for index, source in enumerate(sources):
+            try:
+                targets.append(
+                    self._translate_one(
+                        source,
+                        glossary_terms,
+                        style,
+                        context,
+                        book_synopsis,
+                        chapter_digest,
+                    )
+                )
+            except Exception as error:
+                raise AlignmentError(f"逐段兜底翻译在第 {index} 段失败") from error
+        return targets
