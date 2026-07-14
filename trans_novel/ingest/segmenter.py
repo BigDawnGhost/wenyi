@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 import re
 
@@ -78,7 +79,8 @@ def split_long_segments(chapters: list[Chapter], max_chars: int) -> None:
             for k, piece in enumerate(_split_text(s.source, max_chars)):
                 if k == 0:
                     new_segs.append(Segment(index=idx, source=piece, kind=s.kind,
-                                            anchor=s.anchor, cont=False))
+                                            anchor=s.anchor, cont=False,
+                                            meta=deepcopy(s.meta)))
                 else:  # 续段：并回首段，无独立 anchor
                     new_segs.append(Segment(index=idx, source=piece, kind=KIND_TEXT,
                                             anchor=None, cont=True))

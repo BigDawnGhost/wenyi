@@ -13,6 +13,7 @@ import re
 import zipfile
 
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from ..ingest.models import KIND_HEADING, Chapter
 from ..pipeline.runstore import RunStore
@@ -30,6 +31,8 @@ _VERTICAL_MARKERS = (
 )
 _HORIZONTAL_OVERRIDE_ID = "trans-novel-horizontal-override"
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
+_INLINE_META_KEY = "epub_inline"
+_INLINE_ID_ATTR = "data-tn-inline-id"
 _BILINGUAL_CSS = """\
 .tn-source {
   font-size: 0.88em;
@@ -124,6 +127,49 @@ def _bilingual_source(source: str, target: str) -> str:
     return source if (source.strip() and source != target) else ""
 
 
+def _replace_block_content(el: Tag, text: str, meta: dict[str, object]) -> None:
+    """替换块内文字，同时按解析阶段记录的位置恢复图片等非文本节点。"""
+    raw_inline = meta.get(_INLINE_META_KEY)
+    inline = raw_inline if isinstance(raw_inline, dict) else {}
+    raw_nodes = inline.get("nodes")
+    nodes = raw_nodes if isinstance(raw_nodes, list) else []
+    source_length = inline.get("source_length")
+    if not isinstance(source_length, int) or source_length < 0:
+        source_length = 0
+
+    restored: list[tuple[int, int, Tag]] = []
+    for order, record in enumerate(nodes):
+        if not isinstance(record, dict):
+            continue
+        inline_id = record.get("id")
+        offset = record.get("offset")
+        if not isinstance(inline_id, str) or not isinstance(offset, int):
+            continue
+        node = el.find(True, attrs={_INLINE_ID_ATTR: inline_id})
+        if not isinstance(node, Tag):
+            continue
+        node.extract()
+        node.attrs.pop(_INLINE_ID_ATTR, None)
+        if offset <= 0:
+            target_offset = 0
+        elif source_length <= 0 or offset >= source_length:
+            target_offset = len(text)
+        else:
+            target_offset = round(offset * len(text) / source_length)
+        restored.append((target_offset, order, node))
+
+    el.clear()
+    cursor = 0
+    for target_offset, _order, node in sorted(restored):
+        target_offset = min(max(target_offset, cursor), len(text))
+        if target_offset > cursor:
+            el.append(text[cursor:target_offset])
+        el.append(node)
+        cursor = target_offset
+    if cursor < len(text):
+        el.append(text[cursor:])
+
+
 # ── 纯文本 ──────────────────────────────────────────────────────────────────
 def _assemble_text(
     store: RunStore,
@@ -167,6 +213,7 @@ def _render_chapter_html(
     by_anchor: dict[str, str] = {}
     src_by_anchor: dict[str, str] = {}
     kind_by_anchor: dict[str, str] = {}
+    meta_by_anchor: dict[str, dict[str, object]] = {}
     cur_anchor: str | None = None
     for s in chapter.segments:
         if s.cont and cur_anchor is not None:
@@ -177,12 +224,12 @@ def _render_chapter_html(
             by_anchor[cur_anchor] = _seg_text(s)
             src_by_anchor[cur_anchor] = s.source
             kind_by_anchor[cur_anchor] = s.kind
+            meta_by_anchor[cur_anchor] = s.meta
     for anchor, text in by_anchor.items():
         el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
             continue
-        el.clear()
-        el.append(text)
+        _replace_block_content(el, text, meta_by_anchor.get(anchor, {}))
         del el["data-tn-id"]
         if not bilingual or kind_by_anchor.get(anchor) == KIND_HEADING:
             continue

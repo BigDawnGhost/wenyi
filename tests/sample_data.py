@@ -77,3 +77,36 @@ def write_sample_epub(path: str) -> None:
         zf.writestr("OEBPS/content.opf", _OPF)
         zf.writestr("OEBPS/ch1.xhtml", _CH1)
         zf.writestr("OEBPS/ch2.xhtml", _CH2)
+
+
+_INLINE_OPF = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>内联插图样本</dc:title>
+    <dc:language>fr</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="image" href="image.jpg" media-type="image/jpeg"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>
+"""
+
+_INLINE_CH1 = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapitre I</title></head>
+<body>
+<h1>Chapitre I</h1>
+<p class="Textbody"><img src="image.jpg"/>Je suis là, sous le pommier.</p>
+</body></html>
+"""
+
+
+def write_inline_sample_epub(path: str) -> None:
+    """生成与《小王子》相同的“段首图片 + 句子”结构。"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _CONTAINER)
+        zf.writestr("OEBPS/content.opf", _INLINE_OPF)
+        zf.writestr("OEBPS/ch1.xhtml", _INLINE_CH1)
+        zf.writestr("OEBPS/image.jpg", b"inline-image")

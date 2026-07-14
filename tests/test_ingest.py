@@ -10,6 +10,7 @@ import zipfile
 from trans_novel.ingest.segmenter import (
     load_document, chapter_batches, split_long_segments, _split_text)
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
+from trans_novel.ingest.epub_reader import _extract_chapter
 from tests.sample_data import write_sample_txt, write_sample_epub
 
 
@@ -207,6 +208,29 @@ class TestSplitLongSegments(unittest.TestCase):
         joined = "".join(s.source for s in ch.segments if s.anchor == "a1" or s.cont)
         self.assertEqual(joined, long_src)
 
+    def test_split_keeps_meta_only_on_anchored_first_part(self):
+        original = Segment(
+            index=0,
+            source="第一句。" * 10,
+            kind=KIND_TEXT,
+            anchor="a0",
+            meta={
+                "epub_inline": {
+                    "version": 1,
+                    "source_length": 40,
+                    "nodes": [{"id": "a0_inline_0", "offset": 0}],
+                }
+            },
+        )
+        ch = Chapter(index=0, segments=[original])
+
+        split_long_segments([ch], max_chars=20)
+
+        self.assertGreater(len(ch.segments), 1)
+        self.assertEqual(ch.segments[0].meta, original.meta)
+        self.assertIsNot(ch.segments[0].meta, original.meta)
+        self.assertTrue(all(not segment.meta for segment in ch.segments[1:]))
+
     def test_no_split_when_short(self):
         ch = Chapter(index=0, title="章", segments=[
             Segment(index=0, source="短句。", kind=KIND_TEXT, anchor="a0")])
@@ -235,6 +259,34 @@ class TestSplitLongSegments(unittest.TestCase):
 
 
 class TestEpubIngest(unittest.TestCase):
+    def test_epub_records_inline_nodes_in_segment_meta(self):
+        html = """<html><body>
+<p class="Textbody"><img src="before.jpg"/>Avant<br/>Après<img src="after.jpg"/></p>
+<p class="illustration"><img src="standalone.jpg"/></p>
+</body></html>"""
+
+        _title, segments, template = _extract_chapter(
+            html,
+            2,
+            "chapter.xhtml",
+        )
+
+        self.assertEqual(len(segments), 1)
+        segment = segments[0]
+        self.assertEqual(segment.source, "AvantAprès")
+        inline = segment.meta["epub_inline"]
+        self.assertEqual(inline["source_length"], len(segment.source))
+        self.assertEqual(
+            [node["placement"] for node in inline["nodes"]],
+            ["before", "inline", "after"],
+        )
+        self.assertEqual(
+            [node["offset"] for node in inline["nodes"]],
+            [0, len("Avant"), len(segment.source)],
+        )
+        self.assertEqual(template.count("data-tn-inline-id"), 3)
+        self.assertIn('<img src="standalone.jpg"/>', template)
+
     def test_epub_chapters_and_anchors(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "novel.epub")
