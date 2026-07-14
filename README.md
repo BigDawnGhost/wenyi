@@ -1,6 +1,6 @@
 # Wenyi
 
-**English** | [简体中文](docs/README.zh.md)
+**English** | [简体中文](docs/zh/README.md)
 
 ![Wenyi bilingual EPUB preview](docs/images/bilingual-preview.png)
 
@@ -44,7 +44,7 @@ The bilingual edition places the translation before the source text by default. 
 - [Usage guide](docs/usage.md): installation, Windows setup, input and output, resuming, and utility commands.
 - [Configuration](docs/configuration.md): providers, languages, pipeline switches, segmentation, and paths.
 - [Translation pipeline](docs/pipeline.md): whole-book analysis, terminology, context, polishing, review, and resumability.
-- [Contributing](CONTRIBUTING.md): development, testing, and contribution guidelines. The contribution guide is currently available in Chinese.
+- [Contributing](CONTRIBUTING.md): development, testing, and contribution guidelines.
 
 Translated state directories for public-domain books may be shared through [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase). Do not publish copyrighted text, private books, or `state/` directories containing sensitive information without permission.
 
