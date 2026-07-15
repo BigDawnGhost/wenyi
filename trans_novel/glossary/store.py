@@ -1,8 +1,8 @@
 """SQLite 术语库 + 翻译记忆库。
 
 三张表：
-- glossary：专有名词对照表（source 唯一）。冲突检测：同 source 出现不同 target 时，
-  若现有条目已锁定/高置信度则保留并记入 term_conflicts，否则更新。
+- glossary：专有名词对照表（source 唯一）。同 source 出现不同 target 时保留当前
+  译法，并把候选译法记入 term_conflicts，等待人工裁决。
 - term_conflicts：待裁决的译法冲突日志，供人工复核。
 - translation_memory：句群级译文对，供一致性参考与重译复用。
 """
@@ -30,9 +30,6 @@ TYPE_ONOMATOPOEIA = "拟声词"
 
 _SOURCE_ONLY_TYPES = {TYPE_APPELLATION, TYPE_HONORIFIC, TYPE_SPEECH, TYPE_FIXED_EXPR}
 
-CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
-
-
 @dataclass
 class GlossaryTerm:
     source: str
@@ -43,8 +40,6 @@ class GlossaryTerm:
     aliases: list[str] = field(default_factory=list)
     first_chapter: Optional[int] = None
     note: str = ""
-    confidence: str = "medium"
-    locked: bool = False
     status: str = "ok"
 
     @classmethod
@@ -58,13 +53,11 @@ class GlossaryTerm:
             aliases=json.loads(row["aliases"] or "[]"),
             first_chapter=row["first_chapter"],
             note=row["note"] or "",
-            confidence=row["confidence"] or "medium",
-            locked=bool(row["locked"]),
             status=row["status"] or "ok",
         )
 
 
-_SCHEMA = """
+_CREATE_GLOSSARY_TABLE = """
 CREATE TABLE IF NOT EXISTS glossary (
     source        TEXT PRIMARY KEY,
     target        TEXT NOT NULL,
@@ -74,11 +67,12 @@ CREATE TABLE IF NOT EXISTS glossary (
     aliases       TEXT,
     first_chapter INTEGER,
     note          TEXT,
-    confidence    TEXT DEFAULT 'medium',
-    locked        INTEGER DEFAULT 0,
     status        TEXT DEFAULT 'ok',
     updated_at    REAL
-);
+)
+"""
+
+_SCHEMA = _CREATE_GLOSSARY_TABLE + ";" + """
 CREATE TABLE IF NOT EXISTS term_conflicts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     source          TEXT NOT NULL,
@@ -112,10 +106,44 @@ class GlossaryStore:
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(_SCHEMA)
+        self._migrate_legacy_glossary_schema()
         self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _migrate_legacy_glossary_schema(self) -> None:
+        """从旧库移除 confidence/locked 字段，同时保留全部术语数据。"""
+        columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(glossary)").fetchall()
+        }
+        if not {"confidence", "locked"} & columns:
+            return
+
+        legacy_table = "glossary_legacy_priority"
+        if self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (legacy_table,),
+        ).fetchone():
+            raise RuntimeError(f"术语库迁移失败：临时表 {legacy_table} 已存在")
+
+        preserved = (
+            "source,target,reading,type,gender,aliases,first_chapter,note,status,updated_at"
+        )
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute(f"ALTER TABLE glossary RENAME TO {legacy_table}")
+            self.conn.execute(_CREATE_GLOSSARY_TABLE)
+            self.conn.execute(
+                f"INSERT INTO glossary ({preserved}) "
+                f"SELECT {preserved} FROM {legacy_table}"
+            )
+            self.conn.execute(f"DROP TABLE {legacy_table}")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     # ── 术语 ──────────────────────────────────────────────────────────────
     def get_term(self, source: str) -> Optional[GlossaryTerm]:
@@ -125,11 +153,10 @@ class GlossaryStore:
         return GlossaryTerm.from_row(row) if row else None
 
     def upsert_term(self, term: GlossaryTerm, chapter: Optional[int] = None) -> str:
-        """插入或更新术语，返回 'inserted'|'updated'|'unchanged'|'conflict'。
+        """插入或更新术语，返回 'inserted'|'unchanged'|'conflict'。
 
-        冲突规则：同 source 已存在且 target 不同时——
-          现有条目 locked 或置信度更高 → 保留现有，记冲突，返回 'conflict'；
-          否则用新条目覆盖，返回 'updated'。
+        同 source 已存在且 target 不同时保留当前译法，把新译法作为候选记录，
+        避免自动提取结果在无人确认时改写术语表。
         """
         existing = self.get_term(term.source)
         now = time.time()
@@ -137,13 +164,13 @@ class GlossaryStore:
             self.conn.execute(
                 """INSERT INTO glossary
                    (source,target,reading,type,gender,aliases,first_chapter,note,
-                    confidence,locked,status,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    status,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
                     term.source, term.target, term.reading, term.type, term.gender,
                     json.dumps(term.aliases, ensure_ascii=False),
                     term.first_chapter if term.first_chapter is not None else chapter,
-                    term.note, term.confidence, int(term.locked), term.status, now,
+                    term.note, term.status, now,
                 ),
             )
             self.conn.commit()
@@ -162,26 +189,14 @@ class GlossaryStore:
             self.conn.commit()
             return "unchanged"
 
-        # target 不同 → 冲突判定
-        existing_priority = (existing.locked, CONFIDENCE_ORDER.get(existing.confidence, 1))
-        new_priority = (term.locked, CONFIDENCE_ORDER.get(term.confidence, 1))
+        # target 不同：保留当前译法，记录候选译法等待人工裁决。
         self._log_conflict(term.source, existing.target, term.target, chapter)
-        if existing_priority >= new_priority:
-            self.conn.execute(
-                "UPDATE glossary SET status='conflict', updated_at=? WHERE source=?",
-                (now, term.source),
-            )
-            self.conn.commit()
-            return "conflict"
-        else:
-            self.conn.execute(
-                """UPDATE glossary SET target=?, reading=COALESCE(NULLIF(?,''),reading),
-                   gender=COALESCE(NULLIF(?,''),gender), confidence=?, status='conflict',
-                   updated_at=? WHERE source=?""",
-                (term.target, term.reading, term.gender, term.confidence, now, term.source),
-            )
-            self.conn.commit()
-            return "updated"
+        self.conn.execute(
+            "UPDATE glossary SET status='conflict', updated_at=? WHERE source=?",
+            (now, term.source),
+        )
+        self.conn.commit()
+        return "conflict"
 
     def _log_conflict(self, source, existing_target, proposed_target, chapter):
         self.conn.execute(
@@ -197,18 +212,14 @@ class GlossaryStore:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def lock_term(self, source: str, target: Optional[str] = None) -> None:
-        if target is not None:
-            self.conn.execute(
-                "UPDATE glossary SET target=?, locked=1, confidence='high', status='ok' WHERE source=?",
-                (target, source),
-            )
-        else:
-            self.conn.execute(
-                "UPDATE glossary SET locked=1, confidence='high', status='ok' WHERE source=?",
-                (source,),
-            )
+    def resolve_term(self, source: str, target: str) -> bool:
+        """人工裁定最终译法并恢复正常状态，返回术语是否存在。"""
+        cur = self.conn.execute(
+            "UPDATE glossary SET target=?, status='ok', updated_at=? WHERE source=?",
+            (target, time.time(), source),
+        )
         self.conn.commit()
+        return cur.rowcount > 0
 
     def all_terms(self) -> list[GlossaryTerm]:
         rows = self.conn.execute(
@@ -250,12 +261,6 @@ class GlossaryStore:
             "SELECT * FROM term_conflicts WHERE resolved=0 ORDER BY created_at"
         ).fetchall()
         return [dict(r) for r in rows]
-
-    def low_confidence_terms(self) -> list[GlossaryTerm]:
-        rows = self.conn.execute(
-            "SELECT * FROM glossary WHERE confidence='low' OR status='conflict' ORDER BY source"
-        ).fetchall()
-        return [GlossaryTerm.from_row(r) for r in rows]
 
     # ── 翻译记忆库 ──────────────────────────────────────────────────────
     def add_tm(self, source_text: str, target_text: str, chapter: Optional[int] = None) -> None:

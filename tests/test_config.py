@@ -70,6 +70,18 @@ class TestConfigFileCreation(unittest.TestCase):
 
         self.assertFalse(cfg.output.about_page)
 
+    def test_compatible_reasoning_style_is_loaded(self):
+        cfg = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "openai-compatible",
+                    "reasoning_style": "deepseek",
+                }
+            }
+        )
+
+        self.assertEqual(cfg.llm.reasoning_style, "deepseek")
+
 
 if __name__ == "__main__":
     unittest.main()

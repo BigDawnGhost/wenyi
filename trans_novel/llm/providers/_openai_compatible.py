@@ -27,6 +27,7 @@ from ..usage import (
 )
 
 OptionsT = TypeVar("OptionsT", bound=BaseModel)
+_JSON_MODE_INSTRUCTION = "Output must be valid json."
 
 
 @dataclass(frozen=True)
@@ -67,9 +68,23 @@ def base_request_kwargs(
     *,
     json_mode: bool,
 ) -> dict[str, Any]:
+    request_messages = messages
+    if json_mode:
+        request_messages = [dict(message) for message in messages]
+        for message in request_messages:
+            if message.get("role") == "system":
+                message["content"] = (
+                    f'{message.get("content", "")}\n\n{_JSON_MODE_INSTRUCTION}'
+                )
+                break
+        else:
+            request_messages.insert(
+                0,
+                {"role": "system", "content": _JSON_MODE_INSTRUCTION},
+            )
     kwargs: dict[str, Any] = {
         "model": model,
-        "messages": messages,
+        "messages": request_messages,
         "stream": False,
     }
     if json_mode:

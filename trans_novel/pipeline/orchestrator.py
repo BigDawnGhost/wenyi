@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional
 
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor
-from ..glossary.store import GlossaryStore, TYPE_PERSON
+from ..glossary.store import GlossaryStore
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
@@ -235,11 +235,14 @@ class Orchestrator:
 
         if only_chapter is not None:
             targets = [only_chapter]
+            progress_chapters = targets
         else:
             targets = store.pending_chapters()
+            progress_chapters = [
+                chapter["index"] for chapter in manifest.get("chapters", [])
+            ]
 
-        total = self._count_segments(store, targets)
-        done = 0
+        total, done = self._progress_counts(store, progress_chapters)
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
@@ -264,12 +267,25 @@ class Orchestrator:
         store.log_event("translate_run_finished", total_segments=total)
         return store
 
-    @staticmethod
-    def _count_segments(store: RunStore, chapter_indices: list[int]) -> int:
+    def _progress_counts(self, store: RunStore,
+                         chapter_indices: list[int]) -> tuple[int, int]:
+        """按全书批次检查点计算进度，续跑从已有译文数量开始显示。
+
+        只有整批译文齐全时才计入 done；不完整批次会整体重跑，提前计入其中
+        个别已有段会导致完成数重复累加。
+        """
         total = 0
+        done = 0
         for ci in chapter_indices:
-            total += len(store.load_chapter(ci).text_segments)
-        return total
+            segments = store.load_chapter(ci).text_segments
+            total += len(segments)
+            for batch in batch_segments(
+                segments, self.config.segment.max_chars_per_batch
+            ):
+                if all(segment.target and segment.target.strip()
+                       for segment in batch):
+                    done += len(batch)
+        return total, done
 
     # ── 全书理解预扫（源文逐章梗概 + 全书概览）────────────────────────────────
     def _build_understanding(self, store: RunStore,
@@ -428,6 +444,11 @@ class Orchestrator:
 
         batches = batch_segments(text_segs, self.config.segment.max_chars_per_batch)
         label = self._chapter_progress_label(chapter.title, ci)
+        # prepare() 的最后一个标签通常是“解析文档…”。续跑首批可能先恢复术语，
+        # 若不在章首刷新，整个模型请求期间都会错误地显示成仍在解析源文件。
+        if progress:
+            progress(done, total, label)
+        glossary_checkpoints = store.completed_batch_glossary_keys(ci)
         # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
         # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
         term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
@@ -442,16 +463,25 @@ class Orchestrator:
         bt_samples: list[tuple[str, str]] = []
         seg_base = 0   # 当前批首段的章内段号（issue 批内下标 → 章内段号）
         for b in batches:
+            batch_start = seg_base
+            glossary_key = store.batch_glossary_key(batch_start, len(b))
             existing_targets = [s.target for s in b if s.target and s.target.strip()]
             if len(existing_targets) == len(b):
                 # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
                 context.add_targets(existing_targets)
-                summary = self._extract_batch_glossary(glossary, store, ci, seg_base, b)
+                if glossary_key in glossary_checkpoints:
+                    summary = {"inserted": 0, "conflict": 0, "unchanged": 0,
+                               "updated": 0, "skipped": 1}
+                else:
+                    summary = self._extract_batch_glossary(
+                        glossary, store, ci, batch_start, b
+                    )
+                    glossary_checkpoints.add(glossary_key)
                 term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
                 store.log_event(
                     "batch_skipped",
                     chapter=ci,
-                    start_index=seg_base,
+                    start_index=batch_start,
                     count=len(b),
                     reason="already_translated",
                     glossary_extraction=summary,
@@ -460,7 +490,6 @@ class Orchestrator:
                         for i, s in enumerate(b)
                     ],
                 )
-                done += len(b)
                 seg_base += len(b)
                 if progress:
                     progress(done, total, label)
@@ -471,7 +500,6 @@ class Orchestrator:
                                       book_synopsis, chapter_digest)
             for s, t in zip(b, res.targets):
                 s.target = t
-            batch_start = seg_base
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -501,6 +529,7 @@ class Orchestrator:
             store.save_chapter(chapter)
             # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
             self._extract_batch_glossary(glossary, store, ci, batch_start, b)
+            glossary_checkpoints.add(glossary_key)
             term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
 
         # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
@@ -574,8 +603,7 @@ class Orchestrator:
             return terms
         src_text = "\n".join(s.source for s in text_segs)
         hit = {t.source for t in GlossaryStore.terms_in(terms, src_text)}
-        return [t for t in terms
-                if t.source in hit or (t.type == TYPE_PERSON and t.locked)]
+        return [t for t in terms if t.source in hit]
 
     @staticmethod
     def _chapter_progress_label(title: str, index: int) -> str:

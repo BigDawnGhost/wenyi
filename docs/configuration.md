@@ -96,21 +96,55 @@ llm:
   provider: openai-compatible
   base_url: https://api.example.com/v1
   api_key_env: EXAMPLE_API_KEY
+  # deepseek | openai | openrouter | none
+  reasoning_style: deepseek
   tiers:
     strong:
       model: provider-model-name
       options:
         thinking: true
-        extra_body:
+        reasoning_effort: high
+        request_overrides:
+          thinking:
+            budget: 8192
+```
+
+`reasoning_style` 把统一的 `thinking`、`reasoning_effort` 转换为中转站实际
+接受的请求格式：
+
+- `deepseek`：`thinking.type` 与 `reasoning_effort`；
+- `openai`：`reasoning_effort`，关闭时发送 `none`；
+- `openrouter`：`reasoning.effort`，关闭时发送 `reasoning.enabled: false`；
+- `none`：不转换，适合依赖模型默认行为或使用自定义请求字段。
+
+`request_overrides` 是未知中转协议的兜底入口，其内容会作为原始顶层请求体
+字段发送，并在方言生成的字段之后递归合并。例如中转站使用
+`enable_thinking: true` 时可以这样配置：
+
+```yaml
+llm:
+  provider: openai-compatible
+  base_url: https://api.example.com/v1
+  reasoning_style: none
+  tiers:
+    strong:
+      model: provider-model-name
+      options:
+        thinking: true
+        request_overrides:
           enable_thinking: true
 ```
 
-通用兼容 provider 不猜测厂商的思考参数方言。私有请求字段统一放入
-`options.extra_body`；它会在 provider 默认请求体之后递归合并。
+方言由中转站协议决定，而不是由实际模型名称决定。例如，中转站即使代理
+DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应选择
+`reasoning_style: openai`。
 
 本地 Ollama 和 vLLM 还可以分别使用 `ollama`、`vllm`，默认地址为
 `http://localhost:11434/v1` 和 `http://localhost:8000/v1`，默认不要求 API Key。
-两者同样需要配置实际部署的模型档位。
+两者同样需要配置实际部署的模型档位。Ollama 的 OpenAI 兼容接口可使用
+`reasoning_style: openai`；vLLM 是否支持思考开关取决于模型模板和服务端启动
+参数，必要时可通过 `request_overrides.chat_template_kwargs` 传入
+`enable_thinking`。
 
 ## 流水线
 
@@ -137,7 +171,7 @@ pipeline:
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
 - `review_concurrency`：章末审校分块的并发数；设为 `1` 时串行审校。
-- `glossary_scope`：`chapter` 仅带本章相关术语和锁定人物，`full` 带全量术语表。
+- `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
 命令行的 `--polish`、`--no-polish`、`--qa`、`--no-qa` 会覆盖对应配置。
 

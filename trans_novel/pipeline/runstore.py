@@ -34,6 +34,7 @@ class RunStore:
     def __init__(self, run_dir: str, *, create: bool = True):
         self.run_dir = run_dir
         self.chapters_dir = os.path.join(run_dir, "chapters")
+        self._batch_glossary_event_cache: dict[int, set[str]] | None = None
         if create:
             self.ensure_dirs()
 
@@ -156,6 +157,40 @@ class RunStore:
     def load_usage(self) -> dict | None:
         return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
 
+    # ── 批次恢复检查点 ────────────────────────────────────────────────────
+    @staticmethod
+    def batch_glossary_key(start_index: int, count: int) -> str:
+        """返回批次术语抽取检查点键；批次边界变化时不会误命中旧键。"""
+        return f"{start_index}:{count}"
+
+    def completed_batch_glossary_keys(self, chapter: int) -> set[str]:
+        """从事件日志恢复已完成的批次术语抽取；每个实例最多扫描一次。"""
+        if self._batch_glossary_event_cache is None:
+            completed: dict[int, set[str]] = {}
+            if os.path.isfile(self.event_log_path):
+                with open(self.event_log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            row = json.loads(line)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        if row.get("event") != "batch_glossary_extracted":
+                            continue
+                        ci = row.get("chapter")
+                        start = row.get("start_index")
+                        count = row.get("count")
+                        if not (
+                            isinstance(ci, int)
+                            and isinstance(start, int)
+                            and isinstance(count, int)
+                        ):
+                            continue
+                        completed.setdefault(ci, set()).add(
+                            self.batch_glossary_key(start, count)
+                        )
+            self._batch_glossary_event_cache = completed
+        return set(self._batch_glossary_event_cache.get(chapter, set()))
+
     # ── 追加式事件日志 ────────────────────────────────────────────────────
     def log_event(self, event: str, **data: Any) -> None:
         """追加一条 JSONL 事件，用于翻译行为、改写前后和产物对账。"""
@@ -167,3 +202,15 @@ class RunStore:
         }
         with open(self.event_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        if event == "batch_glossary_extracted" and self._batch_glossary_event_cache is not None:
+            chapter = data.get("chapter")
+            start = data.get("start_index")
+            count = data.get("count")
+            if (
+                isinstance(chapter, int)
+                and isinstance(start, int)
+                and isinstance(count, int)
+            ):
+                self._batch_glossary_event_cache.setdefault(chapter, set()).add(
+                    self.batch_glossary_key(start, count)
+                )

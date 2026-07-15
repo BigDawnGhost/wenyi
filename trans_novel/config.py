@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -93,10 +93,14 @@ class TierConfig(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
+
+
 class LLMConfig(BaseModel):
     provider: str = "deepseek"
     base_url: str | None = None
     api_key_env: str | None = None
+    reasoning_style: ReasoningStyle = "none"
     timeout: int = 600
     max_retries: int = 4
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
@@ -120,7 +124,7 @@ class PipelineConfig(BaseModel):
     book_understanding: bool = True
     prescan_concurrency: int = 4     # 预扫逐章梗概的并发线程数（各章独立，1=串行）
     review_concurrency: int = 4      # 章末审校分块并发数（结果按原块序合并，1=串行）
-    glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条+锁定人物（省 token）；full=全量表
+    glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
 
 
 class OutputConfig(BaseModel):
@@ -174,6 +178,7 @@ class Config(BaseModel):
             provider=llm_raw.get("provider", "deepseek"),
             base_url=llm_raw.get("base_url"),
             api_key_env=llm_raw.get("api_key_env"),
+            reasoning_style=llm_raw.get("reasoning_style", "none"),
             timeout=llm_raw.get("timeout", 600),
             max_retries=llm_raw.get("max_retries", 4),
             tiers=tiers,

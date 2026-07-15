@@ -42,7 +42,7 @@ class Analyzer(Agent):
                     source=ch["source"], target=ch["target"],
                     reading=ch.get("reading", ""), type=TYPE_PERSON,
                     gender=ch.get("gender", ""), note=ch.get("note", ""),
-                    confidence="medium", first_chapter=0,
+                    first_chapter=0,
                 ),
                 chapter=0,
             )
@@ -54,7 +54,7 @@ class Analyzer(Agent):
                 GlossaryTerm(
                     source=tm["source"], target=tm["target"],
                     reading=tm.get("reading", ""), type=tm.get("type", "术语"),
-                    note=tm.get("note", ""), confidence="medium", first_chapter=0,
+                    note=tm.get("note", ""), first_chapter=0,
                 ),
                 chapter=0,
             )

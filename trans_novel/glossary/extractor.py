@@ -1,7 +1,7 @@
-"""术语抽取 Agent（廉价档）+ 入库（含冲突裁决）。
+"""术语抽取 Agent（廉价档）+ 入库（含冲突记录）。
 
 每翻完一章，从"原文 + 译文"里抽取应进表的专有名词，
-依据实际译法入库；冲突裁决由 GlossaryStore.upsert_term 完成。
+依据实际译法入库；不同译法由 GlossaryStore.upsert_term 记录，等待人工裁决。
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ class GlossaryExtractor(Agent):
                 gender=d.get("gender", "") if d.get("gender") not in ("未知", None) else "",
                 aliases=[a for a in d.get("aliases", []) if a],
                 note=d.get("note", ""),
-                confidence="medium",
             ))
         return terms
 
@@ -41,7 +40,7 @@ class GlossaryExtractor(Agent):
                           target_text: str, chapter: int) -> dict[str, int]:
         existing = store.all_terms()
         terms = self.extract(source_text, target_text, existing)
-        summary = {"inserted": 0, "updated": 0, "conflict": 0, "unchanged": 0}
+        summary = {"inserted": 0, "conflict": 0, "unchanged": 0}
         for t in terms:
             t.first_chapter = chapter
             result = store.upsert_term(t, chapter=chapter)

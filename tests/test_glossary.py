@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -57,14 +58,13 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].source, "夏帆ちゃん")
 
-    def test_conflict_keeps_locked(self):
+    def test_conflict_keeps_current_until_resolved(self):
         self.store.upsert_term(
-            GlossaryTerm(source="堀北", target="堀北", confidence="high"), chapter=0
+            GlossaryTerm(source="堀北", target="堀北"), chapter=0
         )
-        self.store.lock_term("堀北")
-        # 提出不同译法 → 应保留锁定译法并记冲突
+        # 提交不同译法：保留当前译法并记录候选项。
         r = self.store.upsert_term(
-            GlossaryTerm(source="堀北", target="掘北", confidence="medium"), chapter=1
+            GlossaryTerm(source="堀北", target="掘北"), chapter=1
         )
         self.assertEqual(r, "conflict")
         term = self.store.get_term("堀北")
@@ -72,17 +72,45 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(term.target, "堀北")
         self.assertEqual(len(self.store.open_conflicts()), 1)
 
-    def test_conflict_overrides_low_confidence(self):
-        self.store.upsert_term(
-            GlossaryTerm(source="X", target="旧译", confidence="low"), chapter=0
-        )
-        r = self.store.upsert_term(
-            GlossaryTerm(source="X", target="新译", confidence="high"), chapter=1
-        )
-        self.assertEqual(r, "updated")
-        term = self.store.get_term("X")
+        self.assertTrue(self.store.resolve_term("堀北", "掘北"))
+        self.store.mark_conflicts_resolved("堀北")
+        term = self.store.get_term("堀北")
         assert term is not None
-        self.assertEqual(term.target, "新译")
+        self.assertEqual(term.target, "掘北")
+        self.assertEqual(term.status, "ok")
+        self.assertEqual(self.store.open_conflicts(), [])
+
+    def test_legacy_confidence_and_locked_columns_are_migrated(self):
+        path = os.path.join(self.tmp.name, "legacy.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            CREATE TABLE glossary (
+                source TEXT PRIMARY KEY, target TEXT NOT NULL, reading TEXT,
+                type TEXT, gender TEXT, aliases TEXT, first_chapter INTEGER,
+                note TEXT, confidence TEXT DEFAULT 'medium',
+                locked INTEGER DEFAULT 0, status TEXT DEFAULT 'ok', updated_at REAL
+            );
+            INSERT INTO glossary
+                (source,target,aliases,confidence,locked,status)
+            VALUES ('X','旧译','[]','high',1,'ok');
+            """
+        )
+        conn.close()
+
+        migrated = GlossaryStore(path)
+        try:
+            columns = {
+                row["name"]
+                for row in migrated.conn.execute("PRAGMA table_info(glossary)")
+            }
+            self.assertNotIn("confidence", columns)
+            self.assertNotIn("locked", columns)
+            term = migrated.get_term("X")
+            assert term is not None
+            self.assertEqual(term.target, "旧译")
+        finally:
+            migrated.close()
 
     def test_translation_memory(self):
         self.store.add_tm("風が強かった。", "风很大。", chapter=1)

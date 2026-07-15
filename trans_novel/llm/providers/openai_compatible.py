@@ -1,4 +1,4 @@
-"""任意 OpenAI Chat Completions 兼容端点。"""
+"""任意 OpenAI Chat Completions 兼容端点及其思考参数方言。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...config import LLMConfig
+from ...config import LLMConfig, ReasoningStyle
 from ..base import Messages
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
@@ -18,12 +18,39 @@ from ._openai_compatible import (
 
 
 class OpenAICompatibleTierOptions(BaseModel):
-    """通用兼容端点选项；私有请求字段放在 extra_body。"""
+    """通用兼容端点选项；未知字段通过 request_overrides 透传。"""
 
     model_config = ConfigDict(extra="forbid")
 
     thinking: bool = False
-    extra_body: dict[str, Any] = Field(default_factory=dict)
+    reasoning_effort: str = "high"
+    request_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+def _reasoning_body(
+    options: OpenAICompatibleTierOptions,
+    reasoning_style: ReasoningStyle,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """返回 SDK 参数和需要作为原始请求体透传的方言字段。"""
+    kwargs: dict[str, Any] = {}
+    extra_body: dict[str, Any] = {}
+    if reasoning_style == "deepseek":
+        extra_body["thinking"] = {
+            "type": "enabled" if options.thinking else "disabled"
+        }
+        if options.thinking:
+            kwargs["reasoning_effort"] = options.reasoning_effort
+    elif reasoning_style == "openai":
+        kwargs["reasoning_effort"] = (
+            options.reasoning_effort if options.thinking else "none"
+        )
+    elif reasoning_style == "openrouter":
+        extra_body["reasoning"] = (
+            {"effort": options.reasoning_effort}
+            if options.thinking
+            else {"enabled": False}
+        )
+    return kwargs, extra_body
 
 
 def build_request_kwargs(
@@ -32,10 +59,21 @@ def build_request_kwargs(
     *,
     json_mode: bool = False,
     max_tokens: Optional[int] = None,
+    reasoning_style: ReasoningStyle = "none",
 ) -> dict[str, Any]:
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
-    if tier_config.options.extra_body:
-        kwargs["extra_body"] = deep_merge({}, tier_config.options.extra_body)
+    reasoning_kwargs, extra_body = _reasoning_body(
+        tier_config.options,
+        reasoning_style,
+    )
+    kwargs.update(reasoning_kwargs)
+    if tier_config.options.request_overrides:
+        extra_body = deep_merge(
+            extra_body,
+            tier_config.options.request_overrides,
+        )
+    if extra_body:
+        kwargs["extra_body"] = extra_body
     if max_tokens is not None:
         kwargs["max_tokens"] = (
             max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
@@ -59,6 +97,7 @@ class OpenAICompatibleClient(
             cfg.tiers,
             options_type=OpenAICompatibleTierOptions,
         )
+        self.reasoning_style: ReasoningStyle = cfg.reasoning_style
         super().__init__(
             cfg,
             provider_name=provider_name,
@@ -81,4 +120,5 @@ class OpenAICompatibleClient(
             messages,
             json_mode=json_mode,
             max_tokens=max_tokens,
+            reasoning_style=self.reasoning_style,
         )

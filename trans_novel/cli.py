@@ -262,7 +262,7 @@ def status(input: str = typer.Argument(..., help="输入文件")):
 def glossary(
     input: str = typer.Argument(..., help="输入文件"),
     action: str = typer.Argument(
-        "list", help="list | conflicts | lock | resolve"
+        "list", help="list | conflicts | resolve"
     ),
     arg1: Optional[str] = typer.Argument(None),
     arg2: Optional[str] = typer.Argument(None),
@@ -279,14 +279,13 @@ def glossary(
     g = GlossaryStore(store.glossary_path)
     try:
         if action == "list":
-            table = Table("原文", "译文", "类型", "置信/状态", "锁")
+            table = Table("原文", "译文", "类型", "状态")
             for t in g.all_terms():
                 table.add_row(
                     t.source,
                     t.target,
                     f"{t.type}{'/' + t.gender if t.gender else ''}",
-                    f"{t.confidence}{'/' + t.status if t.status != 'ok' else ''}",
-                    "🔒" if t.locked else "",
+                    t.status,
                 )
             console.print(table)
         elif action == "conflicts":
@@ -295,22 +294,14 @@ def glossary(
                     f"  {c['source']}: 现有「{c['existing_target']}」 vs "
                     f"提议「{c['proposed_target']}」（第{c['chapter']}章）"
                 )
-        elif action == "lock":
-            if arg1 is None:
-                console.print("[red]lock 需要提供原文术语。[/]")
-                raise typer.Exit(1)
-            resolver.lock(g, arg1)
-            term = g.get_term(arg1)
-            if term is None:
-                console.print(f"[red]术语不存在：{arg1}[/]")
-                raise typer.Exit(1)
-            console.print(f"已锁定 {arg1} → {term.target}")
         elif action == "resolve":
             if arg1 is None or arg2 is None:
                 console.print("[red]resolve 需要提供原文术语和目标译名。[/]")
                 raise typer.Exit(1)
-            resolver.resolve(g, arg1, arg2)
-            console.print(f"已裁定并锁定 {arg1} → {arg2}")
+            if not resolver.resolve(g, arg1, arg2):
+                console.print(f"[red]术语不存在：{arg1}[/]")
+                raise typer.Exit(1)
+            console.print(f"已裁定 {arg1} → {arg2}")
         else:
             console.print(f"[red]未知 glossary 子命令：{action}[/]")
             raise typer.Exit(1)
@@ -400,7 +391,7 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
 
 @tools_app.command()
 def report(input: str = typer.Argument(..., help="输入文件")):
-    """生成 QA 报告（漏译/冲突/低置信度汇总）。"""
+    """生成 QA 报告（漏译与术语冲突汇总）。"""
     from .assemble.report import build_report
     from .glossary.store import GlossaryStore
 

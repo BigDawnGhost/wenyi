@@ -32,11 +32,6 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
                                       "source": s.source[:60]})
 
     conflicts = glossary.open_conflicts()
-    low_conf = [
-        {"source": t.source, "target": t.target, "type": t.type,
-         "confidence": t.confidence, "status": t.status}
-        for t in glossary.low_confidence_terms()
-    ]
     gstats = glossary.stats()
 
     return {
@@ -50,7 +45,6 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
             "empty_targets": len(empty_targets),
         },
         "open_conflicts": conflicts,
-        "low_confidence_terms": low_conf,
         "review_issues": review_issues,
         "backtranslation_issues": bt_issues,
         "empty_targets": empty_targets,
