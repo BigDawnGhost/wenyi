@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from trans_novel.cli import _apply_store_languages, _configure_windows_console, app
 from trans_novel.config import Config
+from trans_novel.ingest.errors import MinerUError
 
 
 class FakeStore:
@@ -192,6 +193,37 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("输入文件不存在", result.output)
+
+    def test_translate_expected_errors_are_printed_without_traceback(self):
+        cfg = Config.from_dict(
+            {"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}}
+        )
+
+        for error in (
+            MinerUError("未设置 MINERU_API_KEY"),
+            ValueError("不支持的输出格式：xml"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                class FakeOrchestrator:
+                    def __init__(self, config):
+                        pass
+
+                    def run_all(self, input_path, **kwargs):
+                        raise error
+
+                with (
+                    patch("trans_novel.cli._load_config", return_value=cfg),
+                    patch(
+                        "trans_novel.pipeline.orchestrator.Orchestrator",
+                        FakeOrchestrator,
+                    ),
+                    patch("trans_novel.cli.os.path.isfile", return_value=True),
+                ):
+                    result = CliRunner().invoke(app, ["translate", "input.pdf"])
+
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn(str(error), result.output)
+                self.assertNotIn("Traceback", result.output)
 
     def test_translate_rejects_unknown_output_format_before_loading_config(self):
         with (

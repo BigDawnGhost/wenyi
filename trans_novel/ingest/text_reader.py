@@ -27,13 +27,13 @@ _JA_CHAPTER = re.compile(
 )
 
 
-def _is_chapter_heading(line: str) -> str | None:
-    """返回标题文本（去掉 Markdown 井号），否则 None。"""
+def _is_chapter_heading(line: str) -> tuple[str, int] | None:
+    """返回标题文本与 Markdown 级别；日文章节标记视为一级标题。"""
     m = _MD_HEADING.match(line)
     if m:
-        return m.group(2).strip()
+        return m.group(2).strip(), len(m.group(1))
     if _JA_CHAPTER.match(line):
-        return line.strip()
+        return line.strip(), 1
     return None
 
 
@@ -51,24 +51,26 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
     lines = content.splitlines()
     book_title = os.path.splitext(os.path.basename(path))[0]
 
-    # 先按章节标题切块
-    chapters_raw: list[tuple[str | None, list[str]]] = []  # (explicit_title, body_lines)
+    # explicit_title 用于区分“真实标题”与首个标题前的无标题前言块；
+    # level 保留 Markdown 标题层级，供 HTML / Markdown 输出使用。
+    chapters_raw: list[tuple[str | None, int, list[str]]] = []
     current_title: str | None = None
+    current_level = 1
     current_body: list[str] = []
     for line in lines:
-        heading = _is_chapter_heading(line)
-        if heading is not None:
+        heading_info = _is_chapter_heading(line)
+        if heading_info is not None:
             if current_title is not None or current_body:
-                chapters_raw.append((current_title, current_body))
-            current_title = heading
+                chapters_raw.append((current_title, current_level, current_body))
+            current_title, current_level = heading_info
             current_body = []
         else:
             current_body.append(line)
     if current_title is not None or current_body:
-        chapters_raw.append((current_title, current_body))
+        chapters_raw.append((current_title, current_level, current_body))
 
     chapters: list[Chapter] = []
-    for ci, (explicit_title, body_lines) in enumerate(chapters_raw):
+    for ci, (explicit_title, level, body_lines) in enumerate(chapters_raw):
         title = explicit_title or book_title
         segments: list[Segment] = []
         idx = 0
@@ -82,7 +84,14 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
         for para in _split_paragraphs(body):
             segments.append(Segment(index=idx, source=para, kind=KIND_TEXT))
             idx += 1
-        chapters.append(Chapter(index=ci, title=title, segments=segments))
+        chapters.append(
+            Chapter(
+                index=ci,
+                title=title,
+                segments=segments,
+                meta={"heading_level": level},
+            )
+        )
 
     return Document(
         title=book_title,

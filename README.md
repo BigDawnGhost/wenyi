@@ -4,7 +4,7 @@
 
 ![Wenyi bilingual EPUB preview](docs/images/bilingual-preview.png)
 
-Wenyi is a command-line tool for translating EPUB, FB2, and TXT novels from multiple languages into Chinese. It focuses on long-form translation quality through whole-book analysis, rolling context, an evolving glossary, polishing, and review stages.
+Wenyi is a command-line tool for translating EPUB, FB2, TXT, Markdown, HTML, and PDF novels from multiple languages into Chinese. It focuses on long-form translation quality through whole-book analysis, rolling context, an evolving glossary, polishing, and review stages.
 
 ## Quick start
 
@@ -25,8 +25,9 @@ uv run trans-novel status book.epub
 
 ## Supported formats and output
 
-- Input: EPUB, FB2, and TXT.
-- Output: monolingual EPUB by default, optional bilingual EPUB, or plain text with `--format txt`.
+- Input: EPUB, FB2, TXT, Markdown, HTML, and PDF.
+- Output: monolingual EPUB by default, optional bilingual EPUB, or TXT, HTML, and Markdown exports.
+- PDF import: the first run uses MinerU and requires `MINERU_API_KEY`. The converted HTML is cached at `state/<book>/source/converted.html` and reused by later runs.
 - EPUB preservation: Wenyi attempts to retain the original styles, images, table of contents, and anchors while converting translated content to horizontal layout.
 - Language detection: the source language is detected automatically by default, or it can be fixed to an ISO language code in `config.yaml`.
 

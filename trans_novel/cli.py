@@ -26,6 +26,7 @@ from rich.table import Table
 from typer.core import TyperGroup
 
 from .config import Config
+from .ingest.errors import IngestError
 from .ingest.segmenter import load_document
 from .pipeline.runstore import STATUS_DONE, RunStore, slugify
 
@@ -124,10 +125,14 @@ def _require_input_file(input_path: str) -> None:
 
 
 def _validate_output_format(fmt: str) -> str:
-    """规范化并校验输出格式，只接受 epub 或 txt。"""
+    """规范化并校验用户可选择的输出格式。"""
     normalized = fmt.strip().lower()
-    if normalized not in {"epub", "txt"}:
-        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt）[/]")
+    allowed = {"epub", "txt", "html", "markdown"}
+    if normalized not in allowed:
+        console.print(
+            "[red]不支持的输出格式："
+            f"{fmt}（可选 epub / txt / html / markdown）[/]"
+        )
         raise typer.Exit(2)
     return normalized
 
@@ -135,6 +140,10 @@ def _validate_output_format(fmt: str) -> str:
 def _runstore_for(config: Config, input_path: str) -> RunStore:
     """解析输入书名并定位其已有状态目录，不主动创建目录。"""
     _require_input_file(input_path)
+    if os.path.splitext(input_path)[1].lower() == ".pdf":
+        title = os.path.splitext(os.path.basename(input_path))[0]
+        run_dir = os.path.join(config.state_dir, slugify(title))
+        return RunStore(run_dir, create=False)
     doc = load_document(input_path, config.source_lang, config.target_lang)
     run_dir = os.path.join(config.state_dir, slugify(doc.title))
     return RunStore(run_dir, create=False)
@@ -163,6 +172,34 @@ def _translate_impl(
     bilingual: Optional[bool] = None,
 ) -> None:
     """translate/resume 共享实现，避免 CLI 参数转发漂移。"""
+    try:
+        _translate_impl_or_raise(
+            input_path,
+            chapter=chapter,
+            fmt=fmt,
+            out=out,
+            polish=polish,
+            qa=qa,
+            mono=mono,
+            bilingual=bilingual,
+        )
+    except (IngestError, ImportError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
+
+
+def _translate_impl_or_raise(
+    input_path: str,
+    *,
+    chapter: Optional[int] = None,
+    fmt: str = "epub",
+    out: Optional[str] = None,
+    polish: Optional[bool] = None,
+    qa: Optional[bool] = None,
+    mono: Optional[bool] = None,
+    bilingual: Optional[bool] = None,
+) -> None:
+    """执行翻译并保留原异常，由 ``_translate_impl`` 转为 CLI 错误。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input_path)
@@ -256,11 +293,11 @@ def _print_usage(report: dict) -> None:
 # ── translate / resume：连续全流程 ──────────────────────────────────────────
 @app.command()
 def translate(
-    input: str = typer.Argument(..., help="输入文件（.epub / .fb2 / .txt / .md）"),
+    input: str = typer.Argument(..., help="输入文件（.epub / .txt / .md / .html / .fb2 / .pdf）"),
     chapter: Optional[int] = typer.Option(
         None, "--chapter", min=0, help="只翻指定章（从 0 起；调试用，不做收尾）"
     ),
-    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt"),
+    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt | html | markdown"),
     out: Optional[str] = typer.Option(
         None, "--out", help="输出路径（默认 <源文件目录>/output/<源文件名>.zh.<ext>）"
     ),
@@ -301,7 +338,7 @@ def translate(
 @app.command()
 def resume(
     input: str = typer.Argument(..., help="输入文件"),
-    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt"),
+    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt | html | markdown"),
 ):
     """断点续跑（等价于再次 translate）。"""
     _translate_impl(input, fmt=fmt)
@@ -387,7 +424,7 @@ def glossary(
 def assemble(
     input: str = typer.Argument(..., help="输入文件"),
     out: Optional[str] = typer.Option(None, "--out"),
-    fmt: str = typer.Option("epub", "--format", help="epub | txt"),
+    fmt: str = typer.Option("epub", "--format", help="epub | txt | html | markdown"),
     mono: Optional[bool] = typer.Option(
         None,
         "--mono/--no-mono",

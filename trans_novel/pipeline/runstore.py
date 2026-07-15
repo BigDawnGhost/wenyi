@@ -3,6 +3,7 @@
 目录结构（state_dir/<book-slug>/）：
   manifest.json     书籍元信息 + 各章状态
   chapters/ch{n}.json  各章（含 source/target 的 Segment）
+  source/           输入预处理缓存（例如 PDF 转换后的 HTML）
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
@@ -113,6 +114,11 @@ class RunStore:
     def chapter_path(self, ci: int) -> str:
         """返回指定章节索引对应的状态文件路径。"""
         return os.path.join(self.chapters_dir, f"ch{ci}.json")
+
+    @property
+    def source_dir(self) -> str:
+        """返回输入预处理缓存目录；由具体读取器按需创建。"""
+        return os.path.join(self.run_dir, "source")
 
     # ── 通用 JSON ─────────────────────────────────────────────────────────
     @staticmethod

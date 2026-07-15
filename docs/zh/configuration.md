@@ -30,6 +30,9 @@ llm:
 
 API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
 
+PDF 输入的首次解析另外读取 `MINERU_API_KEY`，用于调用 MinerU
+转换服务。该密钥与 LLM provider 配置无关，也不写入 `config.yaml`。
+
 需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
 
 ```yaml

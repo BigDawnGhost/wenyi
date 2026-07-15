@@ -149,12 +149,44 @@ class Orchestrator:
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
     def prepare(self, input_path: str, *,
                 progress: Optional[ProgressFn] = None) -> RunStore:
-        """解析输入并定位状态目录；首次运行时在书级锁内完成初始化。"""
+        """解析输入并定位状态目录；首次运行时在书级锁内完成初始化。
+
+        PDF 的状态目录可直接由文件名确定，因此续跑时先检查 manifest，
+        避免重新调用外部转换服务；首次转换产生的 HTML 缓存在该状态目录中。
+        """
+        if os.path.splitext(input_path)[1].lower() == ".pdf":
+            # PDF 的书名固定取文件名，首次解析前即可确定状态目录。
+            pdf_title = os.path.splitext(os.path.basename(input_path))[0]
+            run_dir = os.path.join(self.config.state_dir, slugify(pdf_title))
+            store = RunStore(run_dir)
+            with store.lock():
+                if store.exists():
+                    store.log_event(
+                        "run_resumed",
+                        input_path=input_path,
+                        run_dir=store.run_dir,
+                    )
+                    return store
+                if progress:
+                    progress(0, 0, "解析文档…")
+                doc = load_document(
+                    input_path,
+                    self.config.source_lang,
+                    self.config.target_lang,
+                    split_segments=self.config.segment.max_chars_per_segment,
+                    cache_dir=store.source_dir,
+                )
+                return self._prepare_locked(doc, store, input_path, progress)
+
         if progress:
             progress(0, 0, "解析文档…")
         # 超长段按句拆分（max_chars_per_segment），续段标 cont 供回填并回
-        doc = load_document(input_path, self.config.source_lang, self.config.target_lang,
-                            split_segments=self.config.segment.max_chars_per_segment)
+        doc = load_document(
+            input_path,
+            self.config.source_lang,
+            self.config.target_lang,
+            split_segments=self.config.segment.max_chars_per_segment,
+        )
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
         with store.lock():

@@ -30,6 +30,8 @@ Selecting `deepseek` is enough for the built-in defaults:
 
 API keys are always read from environment variables so they are not accidentally committed with the configuration. Use `provider: fake` for offline tests that must not make network requests.
 
+The first PDF import also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`.
+
 Add the advanced fields only when you need a proxy, custom environment variable, timeout, retry policy, or model override:
 
 ```yaml

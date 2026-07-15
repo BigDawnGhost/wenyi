@@ -4,7 +4,7 @@
 
 ![文译双语对照版阅读效果](../images/bilingual-preview.png)
 
-将多语言 EPUB、FB2、TXT 小说翻译为中文的命令行工具。它以长篇小说的翻译质量为重点：全书预扫、滚动上下文、实时术语库、润色和审校均可按需启用。
+将多语言 EPUB、FB2、TXT、Markdown、HTML 和 PDF 小说翻译为中文的命令行工具。它以长篇小说的翻译质量为重点：全书预扫、滚动上下文、实时术语库、润色和审校均可按需启用。
 
 ## 快速开始
 
@@ -25,8 +25,9 @@ uv run trans-novel status book.epub
 
 ## 支持范围
 
-- 输入：EPUB、FB2、TXT。
-- 输出：默认生成单语 EPUB，可选双语对照版；可通过 `--format txt` 导出纯文本。
+- 输入：EPUB、FB2、TXT、Markdown、HTML、PDF。
+- 输出：默认生成单语 EPUB，可选双语对照版；也可导出 TXT、HTML 或 Markdown。
+- PDF：首次读取通过 MinerU 转换为 `state/<书名>/source/converted.html`，需设置 `MINERU_API_KEY`；后续运行直接复用该缓存。
 - EPUB：尽量保留原书样式、图片、目录与锚点；译文元数据默认设为简体中文，并将竖排样式转为横排。
 - 语言：默认由模型识别源语言，也可在 `config.yaml` 固定为语言代码。
 

@@ -50,6 +50,25 @@ class TestTextIngest(unittest.TestCase):
         self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
         self.assertEqual(len(ch1.text_segments), 4)
 
+    def test_preamble_before_first_heading_does_not_gain_book_title(self):
+        content = "这是前言。\n\n# 第一章\n\n这是正文。\n"
+        for suffix in (".txt", ".md"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "novel" + suffix)
+                with open(path, "w", encoding="utf-8") as file:
+                    file.write(content)
+
+                document = load_document(path, "zh", "en")
+
+                self.assertEqual(len(document.chapters), 2)
+                self.assertEqual(
+                    [segment.kind for segment in document.chapters[0].segments],
+                    [KIND_TEXT],
+                )
+                self.assertEqual(document.chapters[0].segments[0].source, "这是前言。")
+                self.assertEqual(document.chapters[1].segments[0].kind, KIND_HEADING)
+                self.assertEqual(document.chapters[1].segments[0].source, "第一章")
+
     def test_batching(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "novel.txt")
