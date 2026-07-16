@@ -1,8 +1,8 @@
 """命令行入口（typer + rich）。
 
-日常只需 `translate` 一个命令：连续全流程（分析→翻译→审校→一致性 QA→报告→回填 EPUB），
+日常只需 `translate` 一个命令：连续全流程（分析→翻译→最终审校→一致性 QA→报告→回填），
 中断后再次运行自动续跑。其余 `resume` / `status` 为常用辅助；
-细粒度/调试工具收敛到 `tools`：glossary / assemble / qa / report。
+最终审校也可通过独立的 `review` 命令重跑；细粒度/调试工具收敛到 `tools`。
 """
 
 from __future__ import annotations
@@ -255,6 +255,7 @@ def _translate_impl_or_raise(
     s = result["report"]["summary"]
     console.print(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
+        f"审校 {s.get('chapters_reviewed', 0)}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
     _print_usage({"usage": result["store"].load_usage() or {}})
@@ -344,6 +345,70 @@ def resume(
     _translate_impl(input, fmt=fmt)
 
 
+@app.command()
+def review(
+    input: str = typer.Argument(..., help="已完成翻译的输入文件"),
+    force: bool = typer.Option(
+        False, "--force", help="忽略审校摘要，强制重新审校全部章节"
+    ),
+    fix: Optional[bool] = typer.Option(
+        None,
+        "--fix/--no-fix",
+        help="覆盖 autofix_severe；开启后串行修复漏译和误译",
+    ),
+):
+    """使用最终术语库单独执行全书审校。"""
+    from .pipeline.orchestrator import Orchestrator
+
+    _require_input_file(input)
+    config = _load_config()
+    autofix = config.pipeline.autofix_severe if fix is None else fix
+    orch = Orchestrator(config)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as prog:
+            task = prog.add_task("准备全书审校…", total=None)
+
+            def cb(done: int, total: int, label: str) -> None:
+                """把全书审校进度同步到 Rich 任务。"""
+                nonlocal task
+                if total > 0:
+                    prog.update(
+                        task,
+                        completed=done,
+                        total=total,
+                        description=label,
+                    )
+                    return
+                prog.remove_task(task)
+                task = prog.add_task(label, total=None)
+
+            result = orch.run_review(
+                input,
+                progress=cb,
+                force=force,
+                autofix=autofix,
+            )
+    except (IngestError, ImportError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
+
+    issues = result["review_issues"]
+    console.print(
+        f"[bold green]全书审校完成[/]：发现 {len(issues)} 项问题"
+        f"{'，已按配置尝试修复严重项' if autofix else ''}。"
+    )
+    console.print(f"状态目录：{result['store'].run_dir}")
+    _print_usage({"usage": result["store"].load_usage() or {}})
+
+
 # ── 查询 / 细粒度命令 ──────────────────────────────────────────────────────
 @app.command()
 def status(input: str = typer.Argument(..., help="输入文件")):
@@ -359,10 +424,16 @@ def status(input: str = typer.Argument(..., help="输入文件")):
     console.print(
         f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}"
     )
-    table = Table("", "#", "章节", "状态")
+    table = Table("", "#", "章节", "翻译", "审校")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
-        table.add_row(mark, str(c["index"]), c["title"], c["status"])
+        table.add_row(
+            mark,
+            str(c["index"]),
+            c["title"],
+            c["status"],
+            str(c.get("review_status", "pending")),
+        )
     console.print(table)
     g = GlossaryStore(store.glossary_path)
     console.print("术语库：", g.stats())

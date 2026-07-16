@@ -167,18 +167,21 @@ pipeline:
   glossary_scope: chapter
 ```
 
-- `review`：每章翻译结束后检查漏译、误译、术语和人称问题。
-- `autofix_severe`：自动重译并采纳通过校验的漏译、误译等严重问题。
+- `review`：全书翻译完成后自动执行独立的最终审校阶段；关闭后仍可显式调用 `trans-novel review`。
+- `autofix_severe`：最终审校时自动重译并采纳通过校验的漏译、误译等严重问题。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `backtranslate_sample`：回译抽检比例，`0` 为关闭。
 - `consistency_qa`：全书完成后进行跨章术语、人称、语气和标点检查。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
-- `review_concurrency`：章末审校分块的并发数；设为 `1` 时串行审校。
+- `review_concurrency`：使用最终术语库审校连续分块的并发数；设为 `1` 时串行审校。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
 命令行的 `--polish`、`--no-polish`、`--qa`、`--no-qa` 会覆盖对应配置。
+
+可使用 `trans-novel review INPUT` 独立执行最终审校。`--force` 会重新审校已检查的
+译文，`--fix` 或 `--no-fix` 会在当次运行中覆盖 `autofix_severe`。
 
 ## 输出
 

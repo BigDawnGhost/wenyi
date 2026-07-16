@@ -25,6 +25,10 @@ from ..ingest.models import Chapter, Document
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
+REVIEW_PENDING = "pending"
+REVIEW_RUNNING = "running"
+REVIEW_DONE = "done"
+REVIEW_FAILED = "failed"
 
 
 def slugify(name: str) -> str:
@@ -156,7 +160,8 @@ class RunStore:
             "meta": doc.meta,
             "chapters": [
                 {"index": c.index, "title": c.title,
-                 "href": c.href, "status": STATUS_PENDING}
+                 "href": c.href, "status": STATUS_PENDING,
+                 "review_status": REVIEW_PENDING}
                 for c in doc.chapters
             ],
         }
@@ -178,6 +183,15 @@ class RunStore:
         for c in manifest["chapters"]:
             if c["index"] == ci:
                 c["status"] = status
+                break
+        self.save_manifest(manifest)
+
+    def set_chapter_review_status(self, ci: int, status: str) -> None:
+        """更新指定章节的独立审校状态并原子保存 manifest。"""
+        manifest = self.load_manifest()
+        for chapter in manifest["chapters"]:
+            if chapter["index"] == ci:
+                chapter["review_status"] = status
                 break
         self.save_manifest(manifest)
 

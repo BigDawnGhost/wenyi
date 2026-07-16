@@ -70,11 +70,12 @@ uv run trans-novel resume book.epub
 uv run trans-novel status book.epub
 ```
 
-Changing polishing or review settings does not automatically rerun batches that are already complete. Use a new state directory or remove the corresponding state when you intentionally want a fresh translation.
+Changing polishing settings does not automatically rerun translation batches that are already complete. Final review has its own persisted state and can be repeated independently with `review --force`; use a new state directory or remove the corresponding state only when you intentionally want a fresh translation.
 
 ## Utility commands
 
 ```bash
+uv run trans-novel review book.epub
 uv run trans-novel tools glossary book.epub list
 uv run trans-novel tools glossary book.epub conflicts
 uv run trans-novel tools qa book.epub
@@ -82,4 +83,4 @@ uv run trans-novel tools report book.epub
 uv run trans-novel tools assemble book.epub
 ```
 
-`qa` and `report` collect problems without modifying translated text. `assemble` rebuilds output from existing state without calling the model again.
+`review` checks the complete translated book using the final glossary; add `--force` to recheck unchanged chapters or `--fix` to apply validated severe fixes. `qa` and `report` collect problems without modifying translated text. `assemble` rebuilds output from existing state without calling the model again.

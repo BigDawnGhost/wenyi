@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..glossary.store import GlossaryStore
-from ..pipeline.runstore import RunStore, STATUS_DONE
+from ..pipeline.runstore import REVIEW_DONE, RunStore, STATUS_DONE
 
 
 def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
@@ -16,6 +16,11 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
     m = store.load_manifest()
     chapters_total = len(m["chapters"])
     chapters_done = sum(1 for c in m["chapters"] if c["status"] == STATUS_DONE)
+    chapters_reviewed = sum(
+        1
+        for chapter in m["chapters"]
+        if chapter.get("review_status") == REVIEW_DONE
+    )
 
     review_issues: list[dict] = []
     bt_issues: list[dict] = []
@@ -25,7 +30,8 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
         if c["status"] != STATUS_DONE:
             continue
         ch = store.load_chapter(c["index"])
-        review_issues.extend(ch.meta.get("review_issues", []))
+        if c.get("review_status") == REVIEW_DONE:
+            review_issues.extend(ch.meta.get("review_issues", []))
         bt_issues.extend(ch.meta.get("backtranslation_issues", []))
         for s in ch.text_segments:
             if not (s.target and s.target.strip()):
@@ -39,6 +45,7 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
         "summary": {
             "chapters_total": chapters_total,
             "chapters_done": chapters_done,
+            "chapters_reviewed": chapters_reviewed,
             "terms": gstats["terms"],
             "open_conflicts": len(conflicts),
             "review_issues": len(review_issues),

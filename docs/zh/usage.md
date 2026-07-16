@@ -70,11 +70,12 @@ uv run trans-novel resume book.epub
 uv run trans-novel status book.epub
 ```
 
-更改润色或审校开关不会自动重跑已经完成的批次；需要重新翻译时请使用新的状态目录或清理对应状态。
+更改润色设置不会自动重跑已经完成的翻译批次。最终审校拥有独立的持久化状态，可通过 `review --force` 单独重跑；只有需要从头翻译时才应使用新的状态目录或清理对应状态。
 
 ## 常用工具
 
 ```bash
+uv run trans-novel review book.epub
 uv run trans-novel tools glossary book.epub list
 uv run trans-novel tools glossary book.epub conflicts
 uv run trans-novel tools qa book.epub
@@ -82,4 +83,4 @@ uv run trans-novel tools report book.epub
 uv run trans-novel tools assemble book.epub
 ```
 
-`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型的情况下重新导出已有译文。
+`review` 会使用最终术语库检查完整译文；`--force` 可重审未变化章节，`--fix` 可采纳通过校验的严重项修复。`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型的情况下重新导出已有译文。
