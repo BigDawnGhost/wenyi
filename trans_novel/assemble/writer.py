@@ -485,6 +485,9 @@ def _assemble_html(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
+    # 始终确保 charset 声明，否则浏览器无法正确识别编码导致中文乱码
+    if 'charset' not in head_html.replace(' ', '').lower():
+        head_html = '<meta charset="utf-8"/>\n' + head_html
     if bilingual and _BILINGUAL_STYLE_ID not in head_html:
         head_html += f'<style id="{_BILINGUAL_STYLE_ID}">\n{_BILINGUAL_CSS}</style>'
 
