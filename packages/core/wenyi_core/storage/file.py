@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
@@ -37,6 +38,10 @@ class FileStorage:
         return self._run.run_dir
 
     @property
+    def source_dir(self) -> str:
+        return self._run.source_dir
+
+    @property
     def glossary_path(self) -> str:
         return self._run.glossary_path
 
@@ -60,13 +65,35 @@ class FileStorage:
     def exists(self) -> bool:
         return self._run.exists()
 
+    def stage_document(self, doc: Document) -> dict:
+        """写入章节文件并返回 manifest，但不提前落盘 manifest。"""
+        return self._run.stage_document(doc)
+
     def init_from_document(self, doc: Document) -> dict:
-        return self._run.init_from_document(doc)
+        """兼容入口：stage + 立即保存 manifest（原子初始化完成标志）。"""
+        manifest = self._run.stage_document(doc)
+        manifest["initialized"] = True
+        self._run.save_manifest(manifest)
+        return manifest
+
+    @contextmanager
+    def lock(self) -> Iterator[None]:
+        """书级文件锁（委托 RunStore.lock）。"""
+        with self._run.lock():
+            yield
 
     def close(self) -> None:
         if self._glossary is not None:
             self._glossary.close()
             self._glossary = None
+
+    # ── 批次术语检查点（断点续跑）────────────────────────────────────────
+    @staticmethod
+    def batch_glossary_key(start_index: int, count: int) -> str:
+        return RunStore.batch_glossary_key(start_index, count)
+
+    def completed_batch_glossary_keys(self, chapter: int) -> set[str]:
+        return self._run.completed_batch_glossary_keys(chapter)
 
     # ── manifest ─────────────────────────────────────────────────────────
     def save_manifest(self, manifest: dict) -> None:

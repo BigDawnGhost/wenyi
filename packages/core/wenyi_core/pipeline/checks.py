@@ -15,11 +15,6 @@ class LengthFlag:
     reason: str  # "too_short" | "too_long" | "empty"
 
 
-def count_aligned(sources: list[str], targets: list[str]) -> bool:
-    """段数是否一致（防整段漏译最硬的校验）。"""
-    return len(sources) == len(targets)
-
-
 def length_flags(
     sources: list[str],
     targets: list[str],

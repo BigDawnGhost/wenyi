@@ -5,20 +5,32 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config, LLMConfig, TierConfig
-from wenyi_core.llm.base import (
+from wenyi_core.llm.factory import build_client
+from wenyi_core.llm.providers._openai_compatible import normalize_openai_usage
+from wenyi_core.llm.providers.deepseek import (
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_BASE_URL,
     DeepSeekClient,
-    FakeClient,
+)
+from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.llm.providers.openai import OpenAIClient
+from wenyi_core.llm.usage import (
+    UsageSample,
     UsageTracker,
+    make_usage_sample,
     merge_usage_summaries,
     usage_delta,
 )
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.storage import FileStorage
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
@@ -89,6 +101,65 @@ def _minimal_deepseek_cfg() -> LLMConfig:
     )
 
 
+class TestDeepSeekProviderDefaults(unittest.TestCase):
+    def test_provider_only_config_uses_deepseek_defaults(self):
+        client = build_client(Config.from_dict({"llm": {"provider": "deepseek"}}))
+        self.assertIsInstance(client, DeepSeekClient)
+        assert isinstance(client, DeepSeekClient)
+
+        self.assertEqual(client.base_url, DEFAULT_BASE_URL)
+        self.assertEqual(client.api_key_env, DEFAULT_API_KEY_ENV)
+        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
+        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
+        self.assertTrue(client.tiers["strong"].options.thinking)
+        self.assertFalse(client.tiers["fast"].options.thinking)
+
+    def test_explicit_config_overrides_provider_defaults(self):
+        client = DeepSeekClient(_minimal_deepseek_cfg())
+
+        self.assertEqual(client.base_url, "x")
+        self.assertEqual(client.api_key_env, "X")
+        self.assertEqual(client.tiers["strong"].model, "m1")
+
+    def test_partial_tier_override_keeps_other_provider_defaults(self):
+        client = DeepSeekClient(
+            LLMConfig(
+                tiers={
+                    "fast": TierConfig(
+                        model="custom-fast",
+                        options={"thinking": False},
+                    ),
+                }
+            )
+        )
+
+        self.assertEqual(client.tiers["fast"].model, "custom-fast")
+        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
+        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
+
+    def test_provider_option_can_be_overridden_without_repeating_model(self):
+        client = DeepSeekClient(
+            LLMConfig(
+                tiers={
+                    "fast": TierConfig(options={"thinking": True}),
+                }
+            )
+        )
+
+        self.assertEqual(client.tiers["fast"].model, "deepseek-v4-flash")
+        self.assertTrue(client.tiers["fast"].options.thinking)
+
+    def test_unknown_provider_option_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unknown_option"):
+            DeepSeekClient(
+                LLMConfig(
+                    tiers={
+                        "strong": TierConfig(options={"unknown_option": True}),
+                    }
+                )
+            )
+
+
 class TestDeepSeekUsageByTier(unittest.TestCase):
     def test_records_usage_and_splits_by_tier(self):
         cfg = _minimal_deepseek_cfg()
@@ -117,7 +188,9 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         ]
         msgs = [{"role": "user", "content": "hi"}]
         with patch.object(c, "_ensure_client", return_value=_ClientStub(responses)):
-            self.assertEqual(c.complete(msgs, tier="strong"), "strong-out")
+            self.assertEqual(
+                c.complete(msgs, tier="strong", stage="Translator"), "strong-out"
+            )
             self.assertEqual(c.complete(msgs, tier="cheap"), "cheap-out")
 
         summary = c.usage_summary()
@@ -137,6 +210,65 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         self.assertEqual(by_tier["cheap"]["calls"], 1)
         self.assertEqual(by_tier["strong"]["prompt_tokens"], 1000)
         self.assertEqual(by_tier["cheap"]["prompt_tokens"], 500)
+        self.assertEqual(list(summary["by_stage"]), ["Translator"])
+        self.assertEqual(summary["by_stage"]["Translator"]["total_tokens"], 1200)
+        self.assertEqual(summary["by_stage"]["Translator"]["cache_hit_rate"], 0.8)
+
+
+class TestOpenAIUsageNormalization(unittest.TestCase):
+    def test_nested_cached_tokens_are_normalized(self):
+        cfg = LLMConfig(
+            provider="openai",
+            base_url="x",
+            api_key_env="X",
+            timeout=1,
+            max_retries=0,
+            tiers={"strong": TierConfig(model="m")},
+        )
+        client = OpenAIClient(cfg)
+        usage = SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=40),
+        )
+        response = _make_response("ok", usage)
+
+        with patch.object(
+            client,
+            "_ensure_client",
+            return_value=_ClientStub([response]),
+        ):
+            self.assertEqual(
+                client.complete(
+                    [{"role": "user", "content": "x"}],
+                    stage="Translator",
+                ),
+                "ok",
+            )
+
+        summary = client.usage_summary()
+        self.assertEqual(summary["totals"]["cache_hit_tokens"], 40)
+        self.assertEqual(summary["totals"]["cache_miss_tokens"], 60)
+        self.assertEqual(summary["totals"]["cache_hit_rate"], 0.4)
+        self.assertEqual(
+            summary["by_stage"]["Translator"]["cache_hit_rate"],
+            0.4,
+        )
+
+    def test_missing_cache_details_remain_unknown(self):
+        sample = normalize_openai_usage(
+            SimpleNamespace(
+                prompt_tokens=100,
+                completion_tokens=20,
+                total_tokens=120,
+            )
+        )
+        tracker = UsageTracker()
+        tracker.record("strong", sample)
+        totals = tracker.summary()["totals"]
+        self.assertEqual(totals["cache_hit_tokens"], 0)
+        self.assertEqual(totals["cache_miss_tokens"], 0)
 
 
 class TestMissingUsage(unittest.TestCase):
@@ -147,6 +279,7 @@ class TestMissingUsage(unittest.TestCase):
         self.assertEqual(summary["totals"]["calls"], 0)
         self.assertEqual(summary["totals"]["total_tokens"], 0)
         self.assertEqual(summary["by_tier"], {})
+        self.assertEqual(summary["by_stage"], {})
 
     def test_complete_with_none_usage_does_not_count(self):
         cfg = _minimal_deepseek_cfg()
@@ -161,6 +294,7 @@ class TestMissingUsage(unittest.TestCase):
         self.assertEqual(summary["totals"]["calls"], 0)
         self.assertEqual(summary["totals"]["total_tokens"], 0)
         self.assertEqual(summary["by_tier"], {})
+        self.assertEqual(summary["by_stage"], {})
 
     def test_complete_with_missing_usage_attr_does_not_count(self):
         cfg = _minimal_deepseek_cfg()
@@ -180,7 +314,7 @@ class TestMissingUsage(unittest.TestCase):
         usage = _make_usage(prompt_tokens=40, completion_tokens=10)
         # 确认未设置 total_tokens
         self.assertFalse(hasattr(usage, "total_tokens"))
-        tracker.record("cheap", usage)
+        tracker.record("cheap", make_usage_sample(usage))
         slot = tracker.summary()["by_tier"]["cheap"]
         self.assertEqual(slot["prompt_tokens"], 40)
         self.assertEqual(slot["completion_tokens"], 10)
@@ -210,6 +344,7 @@ class TestEmptyCacheHitRate(unittest.TestCase):
         self.assertEqual(totals["cache_hit_tokens"], 0)
         self.assertEqual(totals["cache_miss_tokens"], 0)
         self.assertEqual(c.usage_summary()["by_tier"], {})
+        self.assertEqual(c.usage_summary()["by_stage"], {})
 
 
 class TestUsageThreadSafety(unittest.TestCase):
@@ -217,12 +352,12 @@ class TestUsageThreadSafety(unittest.TestCase):
         client = FakeClient()
         n_workers = 8
         per_worker = 25  # 8 * 25 = 200
-        usage = _make_usage(
+        usage = UsageSample(
             prompt_tokens=10,
             completion_tokens=5,
             total_tokens=15,
-            prompt_cache_hit_tokens=3,
-            prompt_cache_miss_tokens=7,
+            cache_hit_tokens=3,
+            cache_miss_tokens=7,
         )
 
         def _worker() -> None:
@@ -247,30 +382,55 @@ class TestUsageThreadSafety(unittest.TestCase):
         self.assertEqual(summary["by_tier"]["strong"]["calls"], total_calls)
 
 
+class TestAgentStageAttribution(unittest.TestCase):
+    def test_agent_helpers_pass_class_name_as_stage(self):
+        client = FakeClient()
+        agent = Agent(client, Config.from_dict({"llm": {"provider": "fake"}}))
+
+        agent._ask_text("system", "user", tier="strong")
+        agent._ask_json("system", "user", tier="cheap", default=[])
+
+        self.assertEqual([call["stage"] for call in client.calls], ["Agent", "Agent"])
+
+
 class TestUsageIncrementalPersistence(unittest.TestCase):
     @staticmethod
-    def _record(client: FakeClient, tier: str, *, prompt: int, completion: int) -> None:
+    def _record(
+        client: FakeClient,
+        tier: str,
+        *,
+        prompt: int,
+        completion: int,
+        stage: str | None = None,
+    ) -> None:
         client.usage.record(
             tier,
-            _make_usage(
+            UsageSample(
                 prompt_tokens=prompt,
                 completion_tokens=completion,
                 total_tokens=prompt + completion,
-                prompt_cache_hit_tokens=prompt // 2,
-                prompt_cache_miss_tokens=prompt - prompt // 2,
+                cache_hit_tokens=prompt // 2,
+                cache_miss_tokens=prompt - prompt // 2,
             ),
+            stage,
         )
 
     def test_delta_and_merge_do_not_double_count(self):
         client = FakeClient()
-        self._record(client, "strong", prompt=100, completion=20)
+        self._record(
+            client, "strong", prompt=100, completion=20, stage="Translator"
+        )
         first = client.usage_summary()
-        self._record(client, "strong", prompt=50, completion=10)
-        self._record(client, "fast", prompt=30, completion=5)
+        self._record(
+            client, "strong", prompt=50, completion=10, stage="Translator"
+        )
+        self._record(client, "fast", prompt=30, completion=5, stage="Synopsizer")
         second = client.usage_summary()
 
         increment = usage_delta(second, first)
         self.assertEqual(increment["totals"]["total_tokens"], 95)
+        self.assertEqual(increment["by_stage"]["Translator"]["total_tokens"], 60)
+        self.assertEqual(increment["by_stage"]["Synopsizer"]["total_tokens"], 35)
         merged = merge_usage_summaries(first, increment)
         self.assertEqual(merged, second)
 
@@ -282,7 +442,13 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             first_client = FakeClient()
             first = Orchestrator(config, client=first_client)
             first.storage = store
-            self._record(first_client, "strong", prompt=100, completion=20)
+            self._record(
+                first_client,
+                "strong",
+                prompt=100,
+                completion=20,
+                stage="Translator",
+            )
             cumulative = first._flush_usage(scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
 
@@ -294,13 +460,21 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             resumed_client = FakeClient()
             resumed = Orchestrator(config, client=resumed_client)
             resumed.storage = store
-            self._record(resumed_client, "cheap", prompt=40, completion=10)
+            self._record(
+                resumed_client,
+                "cheap",
+                prompt=40,
+                completion=10,
+                stage="Reviewer",
+            )
             cumulative = resumed._flush_usage(scope="translate")
 
             self.assertEqual(cumulative["totals"]["total_tokens"], 170)
             self.assertEqual(cumulative["totals"]["calls"], 2)
             self.assertEqual(cumulative["by_tier"]["strong"]["total_tokens"], 120)
             self.assertEqual(cumulative["by_tier"]["cheap"]["total_tokens"], 50)
+            self.assertEqual(cumulative["by_stage"]["Translator"]["total_tokens"], 120)
+            self.assertEqual(cumulative["by_stage"]["Reviewer"]["total_tokens"], 50)
             self.assertEqual(store.load_usage(), cumulative)
             self.assertTrue(os.path.isfile(store.usage_path))
 
@@ -335,6 +509,28 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(usage["totals"]["total_tokens"], 170)
             self.assertEqual(usage["totals"]["calls"], 2)
             self.assertEqual(result["storage"].load_usage(), usage)
+
+
+class TestRunStoreLock(unittest.TestCase):
+    def test_second_store_waits_for_first_store_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = os.path.join(directory, "state", "book")
+            first = RunStore(run_dir)
+            second = RunStore(run_dir)
+            entered = threading.Event()
+
+            def acquire_second() -> None:
+                with second.lock():
+                    entered.set()
+
+            with first.lock():
+                worker = threading.Thread(target=acquire_second)
+                worker.start()
+                self.assertFalse(entered.wait(0.1))
+
+            self.assertTrue(entered.wait(1))
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
 
 
 if __name__ == "__main__":

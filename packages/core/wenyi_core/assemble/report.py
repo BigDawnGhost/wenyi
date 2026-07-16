@@ -11,6 +11,7 @@ from ..storage import STATUS_DONE, Storage
 
 
 def build_report(storage: Storage) -> dict[str, Any]:
+    """汇总完成进度、空译文、术语冲突、审校和回译问题。"""
     m = storage.load_manifest()
     chapters_total = len(m["chapters"])
     chapters_done = sum(1 for c in m["chapters"] if c["status"] == STATUS_DONE)

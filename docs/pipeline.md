@@ -1,41 +1,43 @@
-# 翻译流程
+# Translation pipeline
 
-文译以“先建立全书理解，再按章稳定翻译”为默认策略。可以通过 `config.yaml` 关闭不需要的阶段，以降低成本或缩短时间。
+[简体中文](zh/pipeline.md)
+
+Wenyi first builds a whole-book understanding and then translates chapters in order. Optional stages can be disabled in `config.yaml` to reduce cost or runtime.
 
 ```text
-读取输入
--> 解析章节、正文段落和 EPUB 目录
--> 识别源语言或使用指定语言
--> 预扫整书，生成章节梗概和全书概览
--> 分析样章，建立初始术语表和风格指南
--> 按章、按批翻译
--> 实时抽取和更新术语
--> 可选润色与标点规范化
--> 章末审校，可选严重项自动重译
--> 可选全书一致性 QA
--> 回填并导出 EPUB 或 TXT
+Read input
+-> Parse chapters, text segments, and the EPUB table of contents
+-> Detect the source language or use the configured language
+-> Scan the book and create chapter digests and a whole-book synopsis
+-> Analyze representative passages and build an initial glossary and style guide
+-> Translate chapter by chapter and batch by batch
+-> Extract and update terminology as translation progresses
+-> Optionally polish and normalize punctuation
+-> Review each chapter and optionally retranslate severe issues
+-> Optionally run whole-book consistency QA
+-> Write translated content back and export EPUB or TXT
 ```
 
-## 全书理解与上下文
+## Whole-book understanding and context
 
-预扫会生成逐章梗概和全书概览。翻译每个批次时，提示词会按稳定信息优先的顺序提供角色风格、全书概览、章节梗概、相关术语表、最近译文和待译原文。
+The prescan creates a digest for each chapter and a synopsis of the complete book. For every translation batch, the prompt presents stable information first: style guidance, the whole-book synopsis, the current chapter digest, relevant glossary terms, recent translated context, and finally the source text to translate.
 
-这使早期章节可以参考后续剧情，同时让同章相邻批次在代词、称谓、语气和跨段句意上保持衔接。
+This lets early chapters benefit from knowledge of later events while helping adjacent batches preserve pronouns, forms of address, tone, and sentences that span multiple source segments.
 
-## 术语库
+## Glossary
 
-样章分析会建立初始术语库；翻译过程中会从已完成的源文和译文中抽取并更新人物、地名、组织、术语、招式和称谓。后续批次只注入当前章节匹配到的词条与锁定人物，避免无关术语占用上下文。
+The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. By default, later batches receive only terms that appear in the current chapter, keeping unrelated entries out of the prompt.
 
-术语表用于约束后续翻译和章末审校，但它不能自动保证已经完成的历史译文全部回写一致。可通过 `tools glossary` 检查条目和冲突，再结合 QA、报告或人工调整。
+The glossary constrains later translation and chapter review, but it does not automatically rewrite every previously translated occurrence. Use `tools glossary` to inspect entries and conflicts, then combine QA, reports, and manual decisions when necessary.
 
-## 质量控制
+## Quality controls
 
-- **段数对齐**：模型必须返回与输入等长的 JSON 数组；失败会重试，仍失败时逐段兜底。
-- **润色**：不改变原意和段落数量的前提下提升中文流畅度。
-- **标点规范化**：统一为简体中文大陆常用全角标点。
-- **章末审校**：检查漏译、增译、误译、术语和人称；连续分块使用固定译文和术语快照并行检查，结果按原顺序合并。只有开启 `autofix_severe` 才会串行重译严重问题。
-- **全书一致性 QA**：在收尾阶段检查术语、人称、语气和标点的一致性，默认只报告问题。
+- **Segment alignment:** the model must return a JSON array with the same number of items as the input. Wenyi retries mismatched batches and falls back to translating one segment at a time.
+- **Polishing:** improves Chinese fluency while preserving meaning and segment count.
+- **Punctuation normalization:** converts punctuation to common Simplified Chinese full-width conventions.
+- **Chapter review:** checks for omissions, additions, mistranslations, terminology violations, and incorrect references. Contiguous chunks are reviewed in parallel against a fixed translation and glossary snapshot; severe issues are only retranslated when `autofix_severe` is enabled.
+- **Whole-book consistency QA:** checks terminology, references, voice, and punctuation after translation. It reports issues by default without rewriting the text.
 
-## 断点续跑
+## Resumability
 
-每个完成批次都会立即写入状态目录。`resume` 会跳过已有译文，仅补齐未完成部分；`tools assemble` 可以直接从状态目录重新导出成品。
+Each completed translation batch is persisted immediately. `resume` skips batches whose translations are already complete and fills only missing work. `tools assemble` can regenerate output directly from stored state.

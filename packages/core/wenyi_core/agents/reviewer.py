@@ -13,6 +13,7 @@ from .base import Agent
 
 
 def _backtrans_compare_system(src: str) -> str:
+    """生成回译语义比对所需的系统提示词。"""
     lbl = langprofile.label(src)
     return (
         f"你是翻译保真度核查员。给定原文（{lbl}）与由译文回译得到的{lbl}，"
@@ -42,6 +43,7 @@ class BackTranslator(Agent):
     """回译抽检（廉价档）。两步：译文→源语言，再与原文比对。"""
 
     def backtranslate(self, targets: list[str]) -> list[str]:
+        """把目标语言段落批量回译成源语言；失败时返回空列表。"""
         if not targets:
             return []
         system = prompts.render("backtranslate_system", src=self.src, tgt=self.tgt)

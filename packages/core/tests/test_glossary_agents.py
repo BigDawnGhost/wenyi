@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from wenyi_core.config import Config
-from wenyi_core.llm.base import FakeClient
+from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.glossary.extractor import GlossaryExtractor
 from wenyi_core.agents.analyzer import Analyzer
@@ -41,12 +41,42 @@ class TestAnalyzer(unittest.TestCase):
             store = GlossaryStore(os.path.join(d, "g.db"))
             n = a.seed_glossary(store, result)
             self.assertEqual(n, 2)
-            self.assertEqual(store.get_term("綾小路").gender, "男")
-            self.assertEqual(store.get_term("高度育成高校").type, "组织")
+            character = store.get_term("綾小路")
+            organization = store.get_term("高度育成高校")
+            self.assertIsNotNone(character)
+            self.assertIsNotNone(organization)
+            assert character is not None
+            assert organization is not None
+            self.assertEqual(character.gender, "男")
+            self.assertEqual(organization.type, "组织")
             store.close()
 
         brief = a.style_brief(result)
         self.assertIn("绫小路", brief)
+
+    def test_malformed_collection_items_are_filtered(self):
+        analysis = {
+            "genre": {"unexpected": True},
+            "characters": ["bad", {"source": "綾小路", "target": "绫小路"}],
+            "terms": [1, {"source": "学校", "target": "学校", "type": {"bad": 1}}],
+        }
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps(analysis, ensure_ascii=False)
+        )
+        analyzer = Analyzer(client, _cfg())
+        result = analyzer.analyze("……样章……")
+
+        self.assertEqual(result["genre"], "")
+        self.assertEqual(len(result["characters"]), 1)
+        self.assertEqual(len(result["terms"]), 1)
+        with tempfile.TemporaryDirectory() as d:
+            store = GlossaryStore(os.path.join(d, "g.db"))
+            self.assertEqual(analyzer.seed_glossary(store, result), 2)
+            school = store.get_term("学校")
+            self.assertIsNotNone(school)
+            assert school is not None
+            self.assertEqual(school.type, "术语")
+            store.close()
 
 
 class TestExtractor(unittest.TestCase):
@@ -63,12 +93,42 @@ class TestExtractor(unittest.TestCase):
             summary = ext.extract_and_store(store, "原文", "译文", chapter=1)
             self.assertEqual(summary["inserted"], 2)
             horikita = store.get_term("堀北")
+            self.assertIsNotNone(horikita)
+            assert horikita is not None
             self.assertEqual(horikita.gender, "女")
             self.assertEqual(horikita.aliases, ["堀北さん"])
             self.assertEqual(horikita.first_chapter, 1)
             # "未知" 应被规整为空
-            self.assertEqual(store.get_term("屋上").gender, "")
+            rooftop = store.get_term("屋上")
+            self.assertIsNotNone(rooftop)
+            assert rooftop is not None
+            self.assertEqual(rooftop.gender, "")
             store.close()
+
+    def test_malformed_optional_fields_fall_back_safely(self):
+        terms = {
+            "terms": [
+                {
+                    "source": "term",
+                    "target": "术语",
+                    "type": {"bad": 1},
+                    "gender": ["bad"],
+                    "aliases": 1,
+                    "note": {"bad": 1},
+                }
+            ]
+        }
+        extractor = GlossaryExtractor(
+            FakeClient(handler=lambda m, t, j: json.dumps(terms)), _cfg()
+        )
+
+        result = extractor.extract("term", "术语", [])
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].type, "术语")
+        self.assertEqual(result[0].gender, "")
+        self.assertEqual(result[0].aliases, [])
+        self.assertEqual(result[0].note, "")
 
 
 class TestRollingContext(unittest.TestCase):
@@ -82,9 +142,17 @@ class TestRollingContext(unittest.TestCase):
         self.assertNotIn("c", rendered)
 
     def test_roundtrip(self):
-        ctx = RollingContext(recent_targets=["x", "y"])
+        ctx = RollingContext(recent_targets=["x", "y"], max_recent_keep=75)
         ctx2 = RollingContext.from_dict(ctx.to_dict())
         self.assertEqual(ctx2.recent_targets, ["x", "y"])
+        self.assertEqual(ctx2.max_recent_keep, 75)
+
+    def test_configured_minimum_expands_legacy_context_limit(self):
+        ctx = RollingContext.from_dict(
+            {"recent_targets": [str(i) for i in range(40)]},
+            min_recent_keep=100,
+        )
+        self.assertEqual(ctx.max_recent_keep, 100)
 
 
 if __name__ == "__main__":

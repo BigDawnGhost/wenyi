@@ -1,31 +1,33 @@
 # trans-novel 配置（多语言小说 → 中文）
-# 修改后无需改代码；模型 ID、档位、流水线开关都在这里。
+# 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
 
 language:
   source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
   target: zh # 译文语言
 
-# ── LLM：DeepSeek 三档（经 OpenAI SDK 调 https://api.deepseek.com）─────────
-# strong/cheap 开 thinking（求质量的判断类任务）；fast 关 thinking（机械任务，
-# thinking 推理 token 按输出计费，关掉大幅省钱提速）。缺档按 fast→cheap→strong 回退。
+# ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  provider: deepseek # deepseek | fake（fake 用于离线测试，不发网络请求）
+  # deepseek | openai | openrouter | openai-compatible | ollama | vllm | fake
+  provider: deepseek
   base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY # 从该环境变量读取 key
-  timeout: 600 # 单次请求超时（秒），思考模式耗时较长
-  max_retries: 4 # 失败重试次数（指数退避）
+  api_key_env: DEEPSEEK_API_KEY
+  timeout: 600
+  max_retries: 4
   tiers:
     strong:
-      model: deepseek-v4-pro # 翻译 / 润色 / 全局分析 / 标题
-      reasoning_effort: high
-      thinking: true
+      model: deepseek-v4-pro
+      options:
+        thinking: true
+        reasoning_effort: high
     cheap:
-      model: deepseek-v4-flash # 审校 / 一致性 QA / 回译比对（判断类，保留思考）
-      reasoning_effort: high
-      thinking: true
+      model: deepseek-v4-flash
+      options:
+        thinking: true
+        reasoning_effort: high
     fast:
-      model: deepseek-v4-flash # 梗概 / 全书概览 / 术语抽取 / 回译（机械任务，免思考）
-      thinking: false
+      model: deepseek-v4-flash
+      options:
+        thinking: true
 
 # ── 切分 ─────────────────────────────────────────────────────────────────
 segment:
@@ -48,7 +50,7 @@ pipeline:
     # fast 档免思考，全书概览为恒定前缀可命中缓存复用；关掉省去预扫成本
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
   review_concurrency: 4 # 章末审校分块的并发线程数（只读固定译文/术语，1=串行）
-  glossary_scope: chapter # chapter=只注入本章出现的词条+锁定人物（长书省 token）；full=全量表
+  glossary_scope: chapter # chapter=只注入本章出现的词条（长书省 token）；full=全量表
 
 # ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────
 honorific:

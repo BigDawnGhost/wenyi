@@ -14,6 +14,7 @@ from .base import Agent
 class Polisher(Agent):
     def polish(self, targets: list[str], *, glossary_terms: list[GlossaryTerm] | None = None,
                style: str = "") -> list[str]:
+        """润色等长译文列表；调用失败或数量不符时原样返回输入。"""
         if not targets:
             return []
         n = len(targets)

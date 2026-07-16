@@ -78,14 +78,14 @@ def unique_about_entry(existing_names: set[str], opf_path: str) -> tuple[str, st
         suffix += 1
 
 
-def append_about_to_opf(data: bytes, href: str) -> bytes:
-    """把说明页加入 OPF manifest，并作为 spine 最后一项。"""
+def append_about_to_opf(data: bytes, href: str) -> tuple[bytes, bool]:
+    """把说明页加入 OPF manifest/spine，并返回是否成功挂载。"""
     try:
         soup = BeautifulSoup(data, "xml")
         manifest = soup.find("manifest")
         spine = soup.find("spine")
         if manifest is None or spine is None:
-            return data
+            return data, False
 
         existing_ids: set[str] = set()
         for existing_item in manifest.find_all("item"):
@@ -107,9 +107,9 @@ def append_about_to_opf(data: bytes, href: str) -> bytes:
         itemref = soup.new_tag("itemref")
         itemref["idref"] = item_id
         spine.append(itemref)
-        return soup.encode()
+        return soup.encode(), True
     except Exception:
-        return data
+        return data, False
 
 
 def append_about_page(epub_path: str, lang: str) -> bool:
@@ -125,7 +125,10 @@ def append_about_page(epub_path: str, lang: str) -> bool:
         infos = zin.infolist()
         entries = {info.filename: zin.read(info.filename) for info in infos}
         about_entry, about_href = unique_about_entry(set(entries), opf_path)
-        entries[opf_path] = append_about_to_opf(entries[opf_path], about_href)
+        opf_data, attached = append_about_to_opf(entries[opf_path], about_href)
+        if not attached:
+            return False
+        entries[opf_path] = opf_data
 
     tmp_path = epub_path + ".about.tmp"
     try:

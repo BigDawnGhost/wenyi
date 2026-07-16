@@ -13,10 +13,14 @@ state/
 *.txt
 
 # 输入书籍 / 生成产物（勿入库）
+output/
+explore/
 *.epub
 *.fb2
 *.mobi
 *.azw3
+*.pdf
+*.html
 
 # ── Web 升级（monorepo）─────────────────────────────────────────
 node_modules/
@@ -25,7 +29,6 @@ node_modules/
 .env
 .env.local
 data/
-output/
 *.zh-bi.epub
 
 # pytest / coverage

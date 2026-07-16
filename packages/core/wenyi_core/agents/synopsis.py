@@ -62,6 +62,7 @@ class Synopsizer(Agent):
         return groups
 
     def _synth(self, digests: list[str], analysis_brief: str) -> str:
+        """把一组章节梗概与风格分析归并成更高层概览。"""
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
         system = prompts.render("book_synopsis_system", src=self.src, tgt=self.tgt)
         user = prompts.render("book_synopsis_user", src=self.src, tgt=self.tgt,

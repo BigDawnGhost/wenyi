@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from wenyi_core.cli import app
 from wenyi_core.config import Config
-from wenyi_core.llm.base import FakeClient
+from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.assemble.writer import (
     _default_out,

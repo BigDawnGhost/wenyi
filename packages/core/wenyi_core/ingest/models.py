@@ -31,10 +31,12 @@ class Segment(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化为可写入章节状态文件的普通字典。"""
         return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Segment":
+        """校验普通字典并恢复一个 Segment。"""
         return cls.model_validate(d)
 
 
@@ -55,10 +57,12 @@ class Chapter(BaseModel):
         return [s for s in self.segments if s.source.strip()]
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化章节及其全部段落为普通字典。"""
         return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Chapter":
+        """校验普通字典并恢复一个 Chapter。"""
         return cls.model_validate(d)
 
 
@@ -74,8 +78,10 @@ class Document(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化整本文档及章节数据为普通字典。"""
         return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Document":
+        """校验普通字典并恢复一个 Document。"""
         return cls.model_validate(d)

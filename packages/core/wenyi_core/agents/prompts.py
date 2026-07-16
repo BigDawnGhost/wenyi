@@ -20,7 +20,11 @@ from . import langprofile
 
 # 译文标点统一规范（简体中文大陆通用），翻译/润色提示词共用。
 PUNCT_RULE = (
-    "标点务必使用简体中文大陆通用全角标点：句读用 ，。！？：；、，"
+    "在不违反当前任务其它明确格式要求的前提下，保留输入文本中标点与符号的结构作用；"
+    "除句号、逗号等普通句读可按中文语序调整外，引号、括号、问号、叹号、冒号、分号、"
+    "破折号、省略号、间隔号、波浪号、斜杠、星号、音符及其他特殊符号均不得遗漏，"
+    "并保持其位置、层级、数量、重复形式和配对关系。"
+    "标点务必转换为简体中文大陆通用全角形式：句读用 ，。！？：；、，"
     "引号用 “”‘’，省略号用 ……，破折号用 ——；"
     "不得使用半角标点，也不要保留日式「」『』或英式直引号。"
 )
@@ -305,6 +309,7 @@ def honorific_rule(strategy: str) -> str:
 
 
 def render_glossary(terms: list[GlossaryTerm]) -> str:
+    """把术语对象渲染为适合注入模型提示词的逐行对照表。"""
     if not terms:
         return "（暂无）"
     lines = []
@@ -321,10 +326,12 @@ def render_glossary(terms: list[GlossaryTerm]) -> str:
 
 
 def numbered(texts: list[str]) -> str:
+    """把文本列表渲染成以零为起点的方括号编号格式。"""
     return "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
 
 
 def numbered_pairs(sources: list[str], targets: list[str]) -> str:
+    """按相同下标并排渲染原文和译文，供审校提示词使用。"""
     out = []
     for i, (s, t) in enumerate(zip(sources, targets)):
         out.append(f"[{i}] 原文：{s}\n    译文：{t}")

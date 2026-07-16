@@ -1,5 +1,14 @@
-"""LLM 调用层：抽象接口 + DeepSeek provider + 离线 FakeClient。"""
+"""LLM 调用层的稳定公共接口。"""
 
-from .base import FakeClient, LLMClient, build_client, parse_json_loose
+from .base import LLMClient, Messages
+from .factory import build_client
+from .json_parser import parse_json_loose
+from .providers.fake import FakeClient
 
-__all__ = ["LLMClient", "FakeClient", "build_client", "parse_json_loose"]
+__all__ = [
+    "FakeClient",
+    "LLMClient",
+    "Messages",
+    "build_client",
+    "parse_json_loose",
+]

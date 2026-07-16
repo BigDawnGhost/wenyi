@@ -9,8 +9,9 @@ import unittest
 import zipfile
 
 from wenyi_core.config import Config
-from wenyi_core.postprocess.punct import normalize_zh
-from wenyi_core.llm.base import FakeClient
+from wenyi_core.agents.langprofile import honorific_rule
+from wenyi_core.postprocess.punct import normalize_zh, normalize_zh_segments
+from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from tests.sample_data import write_sample_txt
 from tests.fake_llm import routing_handler
@@ -66,9 +67,56 @@ class TestPunct(unittest.TestCase):
 
     def test_no_harm_to_english_numbers(self):
         self.assertEqual(normalize_zh("9.11 vs 9.8"), "9.11 vs 9.8")
+        self.assertEqual(normalize_zh("Mr.王"), "Mr.王")
 
     def test_ellipsis_and_dash(self):
         self.assertEqual(normalize_zh("等等...走了--他笑了"), "等等……走了——他笑了")
+
+    def test_word_final_apostrophe_is_a_right_apostrophe(self):
+        self.assertEqual(normalize_zh("James' book"), "James’ book")
+
+    def test_quotes_are_paired_across_split_continuations(self):
+        self.assertEqual(
+            normalize_zh_segments(
+                ['"第一段', '第二段"', '"下一句"'],
+                [False, True, False],
+            ),
+            ["“第一段", "第二段”", "“下一句”"],
+        )
+
+    def test_unmatched_quote_does_not_leak_into_next_paragraph(self):
+        self.assertEqual(
+            normalize_zh_segments(
+                ['"缺少右引号', '"新的完整对话"'],
+                [False, False],
+            ),
+            ["“缺少右引号", "“新的完整对话”"],
+        )
+
+    def test_continuation_flags_must_align_with_texts(self):
+        with self.assertRaisesRegex(ValueError, "数量必须一致"):
+            normalize_zh_segments(["第一段"], [])
+
+    def test_non_chinese_target_does_not_enable_chinese_normalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "zh", "target": "en"},
+                    "llm": {"provider": "fake"},
+                    "paths": {"state_dir": os.path.join(directory, "state")},
+                }
+            )
+            orchestrator = Orchestrator(cfg, client=FakeClient())
+
+        self.assertFalse(orchestrator._punctuation_enabled())
+
+
+class TestLanguageProfile(unittest.TestCase):
+    def test_keep_style_requires_stable_honorific_choice(self):
+        rule = honorific_rule("keep_style")
+
+        self.assertIn("确定后同一关系全书沿用", rule)
+        self.assertNotIn("可酌情保留", rule)
 
 
 class TestRunAll(unittest.TestCase):

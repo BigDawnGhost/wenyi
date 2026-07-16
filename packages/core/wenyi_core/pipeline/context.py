@@ -21,13 +21,31 @@ class RollingContext:
         return "\n".join(tail)
 
     def add_targets(self, targets: list[str]) -> None:
+        """追加非空译文，并只保留配置允许的最近尾段。"""
         self.recent_targets.extend(t for t in targets if t and t.strip())
         if len(self.recent_targets) > self.max_recent_keep:
             self.recent_targets = self.recent_targets[-self.max_recent_keep:]
 
     def to_dict(self) -> dict:
-        return {"recent_targets": self.recent_targets}
+        """序列化滚动上下文及其保留上限。"""
+        return {
+            "recent_targets": self.recent_targets,
+            "max_recent_keep": self.max_recent_keep,
+        }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "RollingContext":
-        return cls(recent_targets=d.get("recent_targets", []) or [])
+    def from_dict(
+        cls,
+        d: dict,
+        *,
+        min_recent_keep: int = 0,
+    ) -> "RollingContext":
+        """从持久化字典恢复上下文，并保证至少满足当前配置容量。"""
+        persisted = d.get("max_recent_keep", 40)
+        max_recent_keep = persisted if isinstance(persisted, int) else 40
+        max_recent_keep = max(max_recent_keep, min_recent_keep)
+        recent_targets = d.get("recent_targets", []) or []
+        return cls(
+            recent_targets=recent_targets[-max_recent_keep:],
+            max_recent_keep=max_recent_keep,
+        )

@@ -8,9 +8,9 @@ import unittest
 
 from wenyi_core.config import Config
 from wenyi_core.agents import prompts
-from wenyi_core.llm.base import FakeClient
+from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.agents.translator import Translator
-from wenyi_core.pipeline.checks import count_aligned, length_flags
+from wenyi_core.pipeline.checks import length_flags
 
 
 def _count_segments(user_content: str) -> int:
@@ -57,6 +57,28 @@ class TestTranslatorAlignment(unittest.TestCase):
                         if _count_segments(c["messages"][-1]["content"]) == 1]
         self.assertGreaterEqual(len(single_calls), 3)
 
+    def test_empty_per_segment_fallback_is_rejected(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {"translations": []}
+            )
+        )
+        translator = Translator(client, self._config())
+
+        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+            translator.translate_batch(["あ", "い"])
+
+    def test_non_string_translation_is_rejected(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {"translations": [None]}
+            )
+        )
+        translator = Translator(client, self._config())
+
+        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+            translator.translate_batch(["あ"])
+
 
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_chapter_digest_precedes_dynamic_glossary(self):
@@ -68,10 +90,6 @@ class TestTranslatorPromptOrder(unittest.TestCase):
 
 
 class TestChecks(unittest.TestCase):
-    def test_count_aligned(self):
-        self.assertTrue(count_aligned(["a", "b"], ["甲", "乙"]))
-        self.assertFalse(count_aligned(["a", "b"], ["甲"]))
-
     def test_length_flags(self):
         sources = ["これは長い日本語の文章です。" * 3, "短い", "x" * 10]
         targets = ["", "短い但正常的中文译文内容", "x" * 40]

@@ -2,42 +2,43 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 _DEFAULT_CONFIG_YAML = """\
 # trans-novel 配置（多语言小说 → 中文）
-# 修改后无需改代码；模型 ID、档位、流水线开关都在这里。
+# 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
 
 language:
   source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
   target: zh # 译文语言
 
-# ── LLM：DeepSeek 三档（经 OpenAI SDK 调 https://api.deepseek.com）─────────
-# strong/cheap 开 thinking（求质量的判断类任务）；fast 关 thinking（机械任务，
-# thinking 推理 token 按输出计费，关掉大幅省钱提速）。缺档按 fast→cheap→strong 回退。
+# ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  provider: deepseek # deepseek | fake（fake 用于离线测试，不发网络请求）
+  # deepseek | openai | openrouter | openai-compatible | ollama | vllm | fake
+  provider: deepseek
   base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY # 从该环境变量读取 key
-  timeout: 600 # 单次请求超时（秒），思考模式耗时较长
-  max_retries: 4 # 失败重试次数（指数退避）
+  api_key_env: DEEPSEEK_API_KEY
+  timeout: 600
+  max_retries: 4
   tiers:
     strong:
-      model: deepseek-v4-pro # 翻译 / 润色 / 全局分析 / 标题
-      reasoning_effort: high
-      thinking: true
+      model: deepseek-v4-pro
+      options:
+        thinking: true
+        reasoning_effort: high
     cheap:
-      model: deepseek-v4-flash # 审校 / 一致性 QA / 回译比对（判断类，保留思考）
-      reasoning_effort: high
-      thinking: true
+      model: deepseek-v4-flash
+      options:
+        thinking: true
+        reasoning_effort: high
     fast:
-      model: deepseek-v4-flash # 梗概 / 全书概览 / 术语抽取 / 回译（机械任务，免思考）
-      thinking: false
+      model: deepseek-v4-flash
+      options:
+        thinking: false
 
 # ── 切分 ─────────────────────────────────────────────────────────────────
 segment:
@@ -83,22 +84,25 @@ output:
 
 
 class TierConfig(BaseModel):
-    model: str
-    reasoning_effort: str = "high"
-    thinking: bool = True
+    """跨 provider 通用的档位覆盖；专属参数由 provider 解析 options。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
 
 
 class LLMConfig(BaseModel):
     provider: str = "deepseek"
-    base_url: str = "https://api.deepseek.com"
-    api_key_env: str = "DEEPSEEK_API_KEY"
+    base_url: str | None = None
+    api_key_env: str | None = None
+    reasoning_style: ReasoningStyle = "none"
     timeout: int = 600
     max_retries: int = 4
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
-
-    @property
-    def api_key(self) -> str | None:
-        return os.environ.get(self.api_key_env)
 
 
 class SegmentConfig(BaseModel):
@@ -119,7 +123,7 @@ class PipelineConfig(BaseModel):
     book_understanding: bool = True
     prescan_concurrency: int = 4     # 预扫逐章梗概的并发线程数（各章独立，1=串行）
     review_concurrency: int = 4      # 章末审校分块并发数（结果按原块序合并，1=串行）
-    glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条+锁定人物（省 token）；full=全量表
+    glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
 
 
 class OutputConfig(BaseModel):
@@ -156,13 +160,14 @@ class Config(BaseModel):
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "Config":
-        cls.create_default_file(path)
+        """从 YAML 文件加载配置，并应用缺失字段的类型化默认值。"""
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         return cls.from_dict(raw)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
+        """把 YAML 对应的嵌套字典转换为运行时配置模型。"""
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})
         tiers = {
@@ -171,8 +176,9 @@ class Config(BaseModel):
         }
         llm = LLMConfig(
             provider=llm_raw.get("provider", "deepseek"),
-            base_url=llm_raw.get("base_url", "https://api.deepseek.com"),
-            api_key_env=llm_raw.get("api_key_env", "DEEPSEEK_API_KEY"),
+            base_url=llm_raw.get("base_url"),
+            api_key_env=llm_raw.get("api_key_env"),
+            reasoning_style=llm_raw.get("reasoning_style", "none"),
             timeout=llm_raw.get("timeout", 600),
             max_retries=llm_raw.get("max_retries", 4),
             tiers=tiers,

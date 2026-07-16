@@ -8,7 +8,7 @@ import unittest
 
 from wenyi_core.config import Config
 from wenyi_core.ingest.models import Segment
-from wenyi_core.llm.base import FakeClient
+from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.agents.reviewer import Reviewer, BackTranslator
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.pipeline.orchestrator import Orchestrator

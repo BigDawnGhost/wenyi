@@ -10,16 +10,28 @@ from wenyi_core.config import Config
 
 
 class TestConfigFileCreation(unittest.TestCase):
-    def test_load_creates_missing_default_config(self):
+    def test_create_default_file_can_be_loaded(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "nested" / "config.yaml"
+            created = Config.create_default_file(str(path))
             cfg = Config.load(str(path))
 
+            self.assertTrue(created)
             self.assertTrue(path.is_file())
             self.assertEqual(cfg.llm.provider, "deepseek")
-            self.assertIn("strong", cfg.llm.tiers)
+            self.assertEqual(cfg.llm.base_url, "https://api.deepseek.com")
+            self.assertEqual(cfg.llm.api_key_env, "DEEPSEEK_API_KEY")
+            self.assertEqual(set(cfg.llm.tiers), {"strong", "cheap", "fast"})
+            self.assertEqual(cfg.llm.tiers["strong"].model, "deepseek-v4-pro")
+            self.assertEqual(cfg.llm.tiers["cheap"].model, "deepseek-v4-flash")
+            self.assertEqual(cfg.llm.tiers["fast"].model, "deepseek-v4-flash")
+            self.assertFalse(cfg.llm.tiers["fast"].options["thinking"])
+            self.assertFalse(hasattr(cfg.llm, "api_key"))
             generated = path.read_text(encoding="utf-8")
             self.assertIn("# trans-novel 配置", generated)
+            self.assertIn("  base_url: https://api.deepseek.com", generated)
+            self.assertIn("  api_key_env: DEEPSEEK_API_KEY", generated)
+            self.assertIn("  tiers:\n", generated)
             self.assertIn("output:\n", generated)
             self.assertTrue(cfg.output.mono)
             self.assertFalse(cfg.output.bilingual)
@@ -59,6 +71,18 @@ class TestConfigFileCreation(unittest.TestCase):
         cfg = Config.from_dict({"output": {"about_page": False}})
 
         self.assertFalse(cfg.output.about_page)
+
+    def test_compatible_reasoning_style_is_loaded(self):
+        cfg = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "openai-compatible",
+                    "reasoning_style": "deepseek",
+                }
+            }
+        )
+
+        self.assertEqual(cfg.llm.reasoning_style, "deepseek")
 
 
 if __name__ == "__main__":

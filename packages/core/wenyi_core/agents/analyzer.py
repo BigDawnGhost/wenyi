@@ -14,8 +14,18 @@ from . import prompts
 from .base import Agent
 
 
+def _text(value: Any, default: str = "") -> str:
+    """把模型字段规整为文本；嵌套对象等非标量值直接回退。"""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return default
+
+
 class Analyzer(Agent):
     def analyze(self, sample_text: str) -> dict[str, Any]:
+        """分析样本文本，并返回经过类型清洗的风格、角色和术语信息。"""
         system = prompts.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = prompts.render("analyzer_user", src=self.src, tgt=self.tgt,
                               sample=sample_text)
@@ -23,39 +33,55 @@ class Analyzer(Agent):
         data = self._ask_json(system, user, tier="strong")
         if not isinstance(data, dict):
             data = {}
-        data.setdefault("genre", "")
-        data.setdefault("tone", "")
-        data.setdefault("style_guide", "")
-        for key in ("narration", "pacing", "register", "dialogue_style", "rhetoric"):
-            data.setdefault(key, "")
-        data.setdefault("characters", [])
-        data.setdefault("terms", [])
+        for key in (
+            "genre",
+            "tone",
+            "style_guide",
+            "narration",
+            "pacing",
+            "register",
+            "dialogue_style",
+            "rhetoric",
+        ):
+            data[key] = _text(data.get(key))
+        data["characters"] = self.dict_items(data.get("characters"))
+        data["terms"] = self.dict_items(data.get("terms"))
         return data
 
     def seed_glossary(self, storage: Storage, analysis: dict[str, Any]) -> int:
         """把分析得到的角色/术语种入术语库，返回写入条目数。"""
         count = 0
-        for ch in analysis.get("characters", []):
-            if not ch.get("source") or not ch.get("target"):
+        for ch in self.dict_items(analysis.get("characters")):
+            source = _text(ch.get("source"))
+            target = _text(ch.get("target"))
+            if not source or not target:
                 continue
             storage.upsert_term(
                 GlossaryTerm(
-                    source=ch["source"], target=ch["target"],
-                    reading=ch.get("reading", ""), type=TYPE_PERSON,
-                    gender=ch.get("gender", ""), note=ch.get("note", ""),
-                    confidence="medium", first_chapter=0,
+                    source=source,
+                    target=target,
+                    reading=_text(ch.get("reading")),
+                    type=TYPE_PERSON,
+                    gender=_text(ch.get("gender")),
+                    note=_text(ch.get("note")),
+                    first_chapter=0,
                 ),
                 chapter=0,
             )
             count += 1
-        for tm in analysis.get("terms", []):
-            if not tm.get("source") or not tm.get("target"):
+        for tm in self.dict_items(analysis.get("terms")):
+            source = _text(tm.get("source"))
+            target = _text(tm.get("target"))
+            if not source or not target:
                 continue
             storage.upsert_term(
                 GlossaryTerm(
-                    source=tm["source"], target=tm["target"],
-                    reading=tm.get("reading", ""), type=tm.get("type", "术语"),
-                    note=tm.get("note", ""), confidence="medium", first_chapter=0,
+                    source=source,
+                    target=target,
+                    reading=_text(tm.get("reading")),
+                    type=_text(tm.get("type"), "术语"),
+                    note=_text(tm.get("note")),
+                    first_chapter=0,
                 ),
                 chapter=0,
             )
@@ -77,7 +103,7 @@ class Analyzer(Agent):
                          ("rhetoric", "修辞")):
             if analysis.get(key):
                 lines.append(f"{tag}：{analysis[key]}")
-        chars = analysis.get("characters", [])
+        chars = self.dict_items(analysis.get("characters"))
         if chars:
             lines.append("角色：")
             for c in chars:
