@@ -29,7 +29,7 @@ This lets early chapters benefit from knowledge of later events while helping ad
 
 The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. By default, later batches receive only terms that appear in the current chapter, keeping unrelated entries out of the prompt.
 
-The glossary constrains later translation and the final review, but it does not automatically rewrite every previously translated occurrence. Use `tools glossary` to inspect entries and conflicts, then combine review, QA, reports, and manual decisions when necessary.
+The glossary constrains later translation and the final review, but it does not automatically rewrite every previously translated occurrence. Use `glossary list` and `glossary conflicts` to inspect entries, then combine review, QA, reports, and manual decisions when necessary.
 
 ## Quality controls
 
@@ -55,4 +55,4 @@ rechecks chapters whose current translations have already been reviewed;
 
 ## Resumability
 
-Each completed translation batch is persisted immediately. `resume` skips batches whose translations are already complete and fills only missing work. `tools assemble` can regenerate output directly from stored state.
+Each completed translation batch is persisted immediately. Running `translate` again skips completed batches and fills only missing work. `assemble` can regenerate output directly from stored state.

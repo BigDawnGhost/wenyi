@@ -46,44 +46,45 @@ setx DEEPSEEK_API_KEY "sk-..."
 ## 常用命令
 
 ```bash
-# 翻译、只翻指定章节、导出 TXT
+# 一键完整翻译、只翻指定章节，或只准备而不翻译
 uv run trans-novel translate book.epub
 uv run trans-novel translate book.epub --chapter 3
 uv run trans-novel translate book.epub --format txt
-uv run trans-novel translate book.epub --prepare  # 仅准备和预扫，不翻译
+uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# 覆盖配置中的润色与审校开关
-uv run trans-novel translate book.epub --polish --qa
-uv run trans-novel translate book.epub --no-polish --no-qa
+# 覆盖配置中的润色、最终审校与一致性 QA 开关
+uv run trans-novel translate book.epub --polish --review --qa
+uv run trans-novel translate book.epub --no-polish --no-review --no-qa
 
 # 同时生成单语和双语版 / 仅生成双语版
 uv run trans-novel translate book.epub --bilingual
 uv run trans-novel translate book.epub --no-mono --bilingual
 ```
 
-`--prepare` 会解析书籍、识别语言、生成风格指南和初始术语表，并完成配置中启用的全书预扫，但不翻译任何正文。之后不带 `--prepare` 再次运行同一命令，即可复用状态继续翻译。
+`prepare` 会解析书籍、识别语言、生成风格指南和初始术语表，并完成配置中启用的全书预扫，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 
 ## 中断与续跑
 
 已完成的批次会写入状态目录。中断后使用同一个源文件执行：
 
 ```bash
-uv run trans-novel resume book.epub
+uv run trans-novel translate book.epub
 uv run trans-novel status book.epub
 ```
 
 更改润色设置不会自动重跑已经完成的翻译批次。最终审校拥有独立的持久化状态，可通过 `review --force` 单独重跑；只有需要从头翻译时才应使用新的状态目录或清理对应状态。
 
-## 常用工具
+## 独立阶段与术语管理
 
 ```bash
 uv run trans-novel review book.epub
-uv run trans-novel tools glossary book.epub list
-uv run trans-novel tools glossary book.epub conflicts
-uv run trans-novel tools qa book.epub
-uv run trans-novel tools report book.epub
-uv run trans-novel tools assemble book.epub
+uv run trans-novel glossary list book.epub
+uv run trans-novel glossary conflicts book.epub
+uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
+uv run trans-novel qa book.epub
+uv run trans-novel report book.epub
+uv run trans-novel assemble book.epub
 ```
 
 `review` 会使用最终术语库检查完整译文；`--force` 可重审未变化章节，`--fix` 可采纳通过校验的严重项修复。`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型的情况下重新导出已有译文。

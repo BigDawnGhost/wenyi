@@ -465,7 +465,7 @@ class TestCliBilingualFlags(unittest.TestCase):
             _, cfg = _run(txt, state_dir)
             with patch("trans_novel.cli._load_config", return_value=cfg):
                 result = CliRunner().invoke(
-                    app, ["tools", "assemble", txt, "--mono", "--bilingual"]
+                    app, ["assemble", txt, "--mono", "--bilingual"]
                 )
             self.assertEqual(result.exit_code, 0, result.output)
             flat = result.output.replace("\n", "")

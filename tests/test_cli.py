@@ -68,6 +68,7 @@ class TestCliConfig(unittest.TestCase):
         class FakeOrchestrator:
             def __init__(self, config):
                 captured["polish"] = config.pipeline.polish
+                captured["review"] = config.pipeline.review
 
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
@@ -94,6 +95,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["polish"])
+        self.assertFalse(captured["review"])
         self.assertIsNone(captured["run_all"]["do_qa"])
 
     def test_translate_flags_override_config_switches(self):
@@ -108,6 +110,7 @@ class TestCliConfig(unittest.TestCase):
         class FakeOrchestrator:
             def __init__(self, config):
                 captured["polish"] = config.pipeline.polish
+                captured["review"] = config.pipeline.review
 
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
@@ -132,14 +135,21 @@ class TestCliConfig(unittest.TestCase):
         ):
             result = CliRunner().invoke(
                 app,
-                ["translate", "input.txt", "--no-polish", "--qa"],
+                [
+                    "translate",
+                    "input.txt",
+                    "--no-polish",
+                    "--review",
+                    "--qa",
+                ],
             )
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertFalse(captured["polish"])
+        self.assertTrue(captured["review"])
         self.assertTrue(captured["run_all"]["do_qa"])
 
-    def test_translate_prepare_stops_before_translation(self):
+    def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
@@ -172,9 +182,6 @@ class TestCliConfig(unittest.TestCase):
                 captured["prepare"] = kwargs
                 return PreparedStore()
 
-            def run_all(self, input_path, **kwargs):
-                raise AssertionError("--prepare 不应进入翻译流程")
-
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
@@ -182,7 +189,7 @@ class TestCliConfig(unittest.TestCase):
         ):
             result = CliRunner().invoke(
                 app,
-                ["translate", "input.txt", "--prepare"],
+                ["prepare", "input.txt"],
             )
 
         self.assertEqual(result.exit_code, 0, result.output)
@@ -190,7 +197,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("准备完成", result.output)
         self.assertIn("预扫 2/2 章", result.output)
 
-    def test_translate_prepare_rejects_chapter(self):
+    def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
@@ -202,57 +209,38 @@ class TestCliConfig(unittest.TestCase):
         ):
             result = CliRunner().invoke(
                 app,
-                ["translate", "input.txt", "--prepare", "--chapter", "0"],
+                ["translate", "input.txt", "--chapter", "0", "--qa"],
             )
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("--prepare 不能与 --chapter", result.output)
+        self.assertIn("--chapter 只翻译并保存指定章节", result.output)
+        self.assertIn("--qa/--no-qa", result.output)
 
-    def test_resume_delegates_to_translate_without_audit_argument(self):
-        cfg = Config.from_dict(
-            {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"polish": True, "consistency_qa": False},
-            }
-        )
-        captured = {}
-
-        class FakeOrchestrator:
-            def __init__(self, config):
-                captured["polish"] = config.pipeline.polish
-
-            def run_all(self, input_path, **kwargs):
-                captured["input_path"] = input_path
-                captured["run_all"] = kwargs
-                return {
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
-                    "qa_issues": [],
-                    "output": "out.txt",
-                    "store": FakeStore(),
-                }
-
-        with (
-            patch("trans_novel.cli._load_config", return_value=cfg),
-            patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
-            patch("trans_novel.cli.os.path.isfile", return_value=True),
-        ):
-            result = CliRunner().invoke(
-                app,
-                ["resume", "input.txt", "--format", "txt"],
-            )
+    def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
+        result = CliRunner().invoke(app, ["--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(captured["input_path"], "input.txt")
-        self.assertEqual(captured["run_all"]["out_format"], "txt")
-        self.assertIsNone(captured["run_all"]["out_path"])
-        self.assertIsNone(captured["run_all"]["do_qa"])
-        self.assertTrue(captured["polish"])
+        for command in (
+            "translate",
+            "prepare",
+            "review",
+            "qa",
+            "report",
+            "assemble",
+            "status",
+            "glossary",
+        ):
+            self.assertIn(command, result.output)
+        self.assertNotIn("resume", result.output)
+        self.assertNotIn("tools", result.output)
+
+    def test_glossary_help_exposes_action_subcommands(self):
+        result = CliRunner().invoke(app, ["glossary", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("list", result.output)
+        self.assertIn("conflicts", result.output)
+        self.assertIn("resolve", result.output)
 
     def test_review_command_runs_final_review_with_overrides(self):
         cfg = Config.from_dict(
