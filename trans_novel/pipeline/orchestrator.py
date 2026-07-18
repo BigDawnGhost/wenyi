@@ -151,6 +151,13 @@ class Orchestrator:
     def _apply_language(self, lang: str) -> None:
         """把解析出的源语言应用到 config 与各 agent（auto 检测后调用）。"""
         resolved = lang or self.config.source_lang
+        source = _normalize_lang(resolved)
+        target = _normalize_lang(self.config.target_lang)
+        if source and target and source == target:
+            raise ValueError(
+                f"源语言与目标语言相同（{source}），无需翻译；"
+                "请修改 config.yaml 中的 language.source 或 language.target。"
+            )
         self.config.source_lang = resolved
         for ag in (self.analyzer, self.synopsizer, self.translator, self.reviewer,
                    self.backtrans, self.polisher, self.extractor):
