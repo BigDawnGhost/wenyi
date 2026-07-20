@@ -60,6 +60,30 @@ class TestGlossary(unittest.TestCase):
             {"OpenAI", "ＡＢＣ"},
         )
 
+    def test_short_japanese_names_do_not_match_inside_common_words(self):
+        self.store.upsert_term(GlossaryTerm(source="あんな", target="安奈"))
+        self.store.upsert_term(GlossaryTerm(source="メイ", target="MEI"))
+        self.store.upsert_term(GlossaryTerm(source="しょう", target="小翔"))
+
+        self.assertEqual(
+            self.store.terms_in_text("あんなに明るいメイン曲ならしょうがない。"),
+            [],
+        )
+        hits = self.store.terms_in_text("「あんな」とメイたちがしょうを呼んだ。")
+        self.assertEqual({term.source for term in hits}, {"あんな", "メイ", "しょう"})
+
+    def test_single_kanji_name_requires_a_plausible_boundary(self):
+        self.store.upsert_term(GlossaryTerm(source="明", target="明"))
+        self.store.upsert_term(GlossaryTerm(source="光", target="光"))
+        self.store.upsert_term(GlossaryTerm(source="母", target="母亲"))
+
+        self.assertEqual(
+            self.store.terms_in_text("明るい夜明けに左耳が光っていて、お母さんが来た。"),
+            [],
+        )
+        hits = self.store.terms_in_text("「明さん、光は母と来る？」")
+        self.assertEqual({term.source for term in hits}, {"明", "光", "母"})
+
     def test_appellation_does_not_match_bare_name_alias(self):
         self.store.upsert_term(
             GlossaryTerm(

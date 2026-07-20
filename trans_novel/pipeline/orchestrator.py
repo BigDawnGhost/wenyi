@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -101,6 +102,7 @@ def _resume_batches(segments, max_chars: int) -> list[list]:
 class _BatchResult:
     targets: list[str]
     bt_samples: list[tuple[str, str]] = field(default_factory=list)
+    refinement_failed_indexes: list[int] = field(default_factory=list)
 
 
 class Orchestrator:
@@ -338,8 +340,22 @@ class Orchestrator:
     def _sample_text(doc, *, labeled: bool = True) -> str:
         """取风格分析样章。labeled=True 时多点采样（开头/中部/结尾各一段，带中文标注），
         让分析覆盖全书风格全貌；labeled=False 返回单段纯源文（语言检测用，不能混入中文标签）。"""
-        texts = ["\n".join(s.source for s in ch.text_segments) for ch in doc.chapters]
-        texts = [t for t in texts if len(t) > 200]
+        candidates: list[tuple[str, int]] = []
+        for chapter in doc.chapters:
+            sources = [segment.source for segment in chapter.text_segments]
+            text = "\n".join(sources)
+            if len(text) <= 200:
+                continue
+            # A long EPUB metadata/TOC page contains few narrative sentences.
+            # Prefer chapters with several prose/dialogue segments so character
+            # analysis is based on real story evidence.
+            narrative_segments = sum(
+                bool(re.search(r"[。！？!?」』]", source)) and len(source) >= 20
+                for source in sources
+            )
+            candidates.append((text, narrative_segments))
+        narrative_texts = [text for text, score in candidates if score >= 4]
+        texts = narrative_texts if narrative_texts else [text for text, _ in candidates]
         if not texts:  # 兜底：全书都是短章
             joined = "\n".join(
                 s.source for ch in doc.chapters[:2] for s in ch.text_segments)
@@ -856,7 +872,12 @@ class Orchestrator:
                 chapter=ci,
                 start_index=batch_start,
                 count=len(b),
-                polished=self.config.pipeline.polish,
+                polish_requested=self.config.pipeline.polish,
+                polished=(
+                    self.config.pipeline.polish
+                    and not res.refinement_failed_indexes
+                ),
+                polish_failed_indexes=res.refinement_failed_indexes,
                 punctuation_normalized=self._punctuation_enabled(),
                 backtranslate_sample_count=len(res.bt_samples),
                 segments=[
@@ -1285,10 +1306,12 @@ class Orchestrator:
             sources, glossary_terms=terms, style=style, context=ctx_text,
             book_synopsis=book_synopsis, chapter_digest=chapter_digest)
 
+        refinement_failed_indexes: list[int] = []
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
             if len(polished) == len(targets):
                 targets = polished
+            refinement_failed_indexes = list(self.polisher.last_failed_indexes)
 
         bt_samples: list[tuple[str, str]] = []
         rate = self.config.pipeline.backtranslate_sample
@@ -1297,7 +1320,11 @@ class Orchestrator:
                 if random.random() < rate:
                     bt_samples.append((s, t or ""))
 
-        return _BatchResult(targets=targets, bt_samples=bt_samples)
+        return _BatchResult(
+            targets=targets,
+            bt_samples=bt_samples,
+            refinement_failed_indexes=refinement_failed_indexes,
+        )
 
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
     ALL_STEPS = ("translate", "review", "qa", "report", "assemble")

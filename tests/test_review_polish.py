@@ -77,6 +77,7 @@ class TestPolisher(unittest.TestCase):
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(out, ["甲", "乙"])  # 段数不符 → 保守保留原译
+        self.assertEqual(p.last_failed_indexes, [0, 1])
 
 
 class TestBackTranslator(unittest.TestCase):

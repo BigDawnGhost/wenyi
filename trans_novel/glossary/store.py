@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 import unicodedata
@@ -29,6 +30,74 @@ TYPE_SPEECH = "口癖"
 TYPE_FIXED_EXPR = "固定表达"
 
 _SOURCE_ONLY_TYPES = {TYPE_APPELLATION, TYPE_HONORIFIC, TYPE_SPEECH, TYPE_FIXED_EXPR}
+
+_HIRAGANA_TERM_RE = re.compile(r"^[\u3040-\u309f]+$")
+_KATAKANA_TERM_RE = re.compile(r"^[\u30a0-\u30ffー]+$")
+_SINGLE_CJK_TERM_RE = re.compile(r"^[\u3400-\u9fff]$")
+_SINGLE_CJK_ALLOWED_SUFFIXES = (
+    "さん", "ちゃん", "くん", "君", "氏", "先輩", "先生", "様",
+)
+_SINGLE_CJK_PARTICLES = set("はがをにへともでの、。！？!?「」『』（）()…\n\r\t ")
+_SHORT_KANA_ALLOWED_PARTICLES = set("はをへともで")
+_SHORT_KANA_ALLOWED_PREFIX_PARTICLES = set("はがをにへともで")
+
+
+def _term_occurs(text: str, key: str) -> bool:
+    """Return whether a glossary key occurs as a plausible Japanese token.
+
+    Short kana and one-kanji names otherwise produce common substring false
+    positives, such as ``あんな`` in ``あんなに`` or ``明`` in ``明るい``.
+    Longer and mixed keys keep substring matching because Japanese compounds
+    and attached particles do not have universal whitespace boundaries.
+    """
+    if not key:
+        return False
+    start = 0
+    while True:
+        index = text.find(key, start)
+        if index < 0:
+            return False
+        before = text[index - 1] if index > 0 else ""
+        after_index = index + len(key)
+        after = text[after_index] if after_index < len(text) else ""
+
+        if _HIRAGANA_TERM_RE.fullmatch(key) and len(key) <= 4:
+            before_same = bool(before and "\u3040" <= before <= "\u309f")
+            after_same = bool(after and "\u3040" <= after <= "\u309f")
+            before_is_allowed = (
+                not before_same or before in _SHORT_KANA_ALLOWED_PREFIX_PARTICLES
+            )
+            valid = before_is_allowed and (
+                not after_same or after in _SHORT_KANA_ALLOWED_PARTICLES
+            )
+        elif _KATAKANA_TERM_RE.fullmatch(key) and len(key) <= 4:
+            before_same = bool(before and ("\u30a0" <= before <= "\u30ff" or before == "ー"))
+            after_same = bool(after and ("\u30a0" <= after <= "\u30ff" or after == "ー"))
+            valid = not before_same and not after_same
+        elif _SINGLE_CJK_TERM_RE.fullmatch(key):
+            before_is_japanese = bool(
+                before
+                and (
+                    "\u3040" <= before <= "\u30ff"
+                    or "\u3400" <= before <= "\u9fff"
+                )
+            )
+            suffix = text[after_index:]
+            before_is_allowed = (
+                not before_is_japanese or before in _SINGLE_CJK_PARTICLES
+            )
+            after_is_allowed = (
+                not after
+                or after in _SINGLE_CJK_PARTICLES
+                or any(suffix.startswith(item) for item in _SINGLE_CJK_ALLOWED_SUFFIXES)
+            )
+            valid = before_is_allowed and after_is_allowed
+        else:
+            valid = True
+
+        if valid:
+            return True
+        start = index + 1
 
 @dataclass
 class GlossaryTerm:
@@ -233,7 +302,10 @@ class GlossaryStore:
                 if term.type in _SOURCE_ONLY_TYPES
                 else [term.source] + term.aliases
             )
-            if any(k and _match_text(k) in normalized_text for k in keys):
+            if any(
+                k and _term_occurs(normalized_text, _match_text(k))
+                for k in keys
+            ):
                 out.append(term)
         return out
 

@@ -681,6 +681,48 @@ class TestStyleAnalysis(unittest.TestCase):
             self.assertNotIn("【中部样章】", sample)
             self.assertNotIn("【结尾样章】", sample)
 
+    def test_sample_text_skips_long_epub_front_matter(self):
+        """作品信息/目录再长也不应占用开头样章。"""
+        from trans_novel.ingest.models import Chapter, Document, Segment
+
+        front = Chapter(
+            index=0,
+            segments=[
+                Segment(index=0, source="作品情報"),
+                Segment(index=1, source="あらすじ" + "あ" * 1200),
+                *[
+                    Segment(index=i + 2, source=f"00{i:02d} 第{i}話 タイトル (2026-01-01)")
+                    for i in range(20)
+                ],
+            ],
+        )
+        chapters = [front]
+        for chapter_index in range(1, 4):
+            chapters.append(
+                Chapter(
+                    index=chapter_index,
+                    segments=[
+                        Segment(
+                            index=i,
+                            source=f"正文{chapter_index}-{i}。人物が会話を続けている。" + "あ" * 30,
+                        )
+                        for i in range(8)
+                    ],
+                )
+            )
+        doc = Document(
+            title="test",
+            source_lang="ja",
+            target_lang="zh",
+            fmt="epub",
+            chapters=chapters,
+        )
+
+        sample = Orchestrator._sample_text(doc)
+
+        self.assertNotIn("作品情報", sample)
+        self.assertIn("正文1-0", sample)
+
     def test_style_brief_new_fields(self):
         """style_brief 渲染新风格维度；旧 analysis（缺新字段）不报错不输出。"""
         from trans_novel.agents.analyzer import Analyzer

@@ -12,11 +12,16 @@ from .base import Agent
 
 
 class Polisher(Agent):
+    def __init__(self, client, config) -> None:
+        super().__init__(client, config)
+        self.last_failed_indexes: list[int] = []
+
     def polish(self, targets: list[str], *, glossary_terms: list[GlossaryTerm] | None = None,
                style: str = "") -> list[str]:
         """润色等长译文列表；调用失败或数量不符时原样返回输入。"""
         if not targets:
             return []
+        self.last_failed_indexes = []
         n = len(targets)
         system = prompts.render("polisher_system", src=self.src, tgt=self.tgt, n=n)
         user = prompts.render(
@@ -28,4 +33,5 @@ class Polisher(Agent):
         items = self._ask_json(system, user, tier="strong", key="polished", default=None)
         if isinstance(items, list) and len(items) == n:
             return [str(x) for x in items]
+        self.last_failed_indexes = list(range(n))
         return list(targets)  # 失败/段数不符 → 保守保留原译
