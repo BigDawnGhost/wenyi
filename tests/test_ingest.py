@@ -586,13 +586,14 @@ class TestEpubIngest(unittest.TestCase):
 
     def test_ruby_reading_is_not_included_in_translatable_source(self):
         html = """<html><body>
-<p><ruby>漢字<rt>かんじ</rt></ruby>です</p>
+<p><ruby>漢字<rp>（</rp><rt>かんじ</rt><rp>）</rp></ruby>です</p>
 </body></html>"""
 
         _title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
 
         self.assertEqual([segment.source for segment in segments], ["漢字です"])
         self.assertIn("<rt>かんじ</rt>", template)
+        self.assertIn("<rp>（</rp>", template)
 
     def test_table_and_definition_list_cells_are_extracted(self):
         html = """<html><body>
