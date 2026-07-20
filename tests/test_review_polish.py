@@ -79,6 +79,17 @@ class TestPolisher(unittest.TestCase):
         self.assertEqual(out, ["甲", "乙"])  # 段数不符 → 保守保留原译
         self.assertEqual(p.last_failed_indexes, [0, 1])
 
+    def test_empty_polish_clears_previous_failure_state(self):
+        client = FakeClient(handler=lambda m, t, j: json.dumps(
+            {"polished": ["只有一段"]}, ensure_ascii=False))
+        p = Polisher(client, _cfg())
+        p.polish(["甲", "乙"])
+
+        out = p.polish([])
+
+        self.assertEqual(out, [])
+        self.assertEqual(p.last_failed_indexes, [])
+
 
 class TestBackTranslator(unittest.TestCase):
     def test_check(self):

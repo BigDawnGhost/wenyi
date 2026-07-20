@@ -19,9 +19,9 @@ class Polisher(Agent):
     def polish(self, targets: list[str], *, glossary_terms: list[GlossaryTerm] | None = None,
                style: str = "") -> list[str]:
         """润色等长译文列表；调用失败或数量不符时原样返回输入。"""
+        self.last_failed_indexes = []
         if not targets:
             return []
-        self.last_failed_indexes = []
         n = len(targets)
         system = prompts.render("polisher_system", src=self.src, tgt=self.tgt, n=n)
         user = prompts.render(
