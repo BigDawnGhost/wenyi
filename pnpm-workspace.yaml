@@ -1,0 +1,5 @@
+packages:
+  - "apps/web"
+  - "packages/shared-schema"
+allowBuilds:
+  esbuild: true

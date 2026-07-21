@@ -1,0 +1,16 @@
+{
+  "name": "wenyi-monorepo",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "dev:web": "pnpm -C apps/web dev",
+    "build:web": "pnpm -C apps/web build",
+    "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
+    "dev:worker": "uv run arq wenyi_api.workers.WorkerSettings",
+    "gen:schema": "openapi-typescript http://localhost:8000/openapi.json -o packages/shared-schema/src/api.d.ts",
+    "build": "pnpm build:web"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.4"
+  }
+}

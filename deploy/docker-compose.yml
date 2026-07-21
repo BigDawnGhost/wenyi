@@ -1,0 +1,82 @@
+# 文译全栈一键部署（docker compose）
+# 用法：
+#   cp .env.example .env  （填入 DEEPSEEK_API_KEY 等）
+#   docker compose --profile full up --build
+#
+# profiles:
+#   full   = web + api + worker + postgres + redis（完整 SaaS）
+#   server = api + worker + postgres + redis（无前端，远程 CLI 场景）
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wenyi
+      POSTGRES_PASSWORD: wenyi
+      POSTGRES_DB: wenyi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wenyi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: ["full", "server"]
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["full", "server"]
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://wenyi:wenyi@postgres:5432/wenyi
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      WENYI_API_TOKEN: ${WENYI_API_TOKEN:-}
+      WENYI_CORS_ORIGINS: "*"
+    volumes:
+      - data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    profiles: ["full", "server"]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      DATABASE_URL: postgresql://wenyi:wenyi@postgres:5432/wenyi
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes:
+      - data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    profiles: ["full", "server"]
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    profiles: ["full"]
+
+volumes:
+  pgdata:
+  data:
