@@ -88,6 +88,7 @@ def split_long_segments(chapters: list[Chapter], max_chars: int) -> None:
                             source=piece,
                             kind=s.kind,
                             anchor=s.anchor,
+                            resource_href=s.resource_href,
                             cont=False,
                             meta=deepcopy(s.meta),
                         )
@@ -99,6 +100,7 @@ def split_long_segments(chapters: list[Chapter], max_chars: int) -> None:
                             source=piece,
                             kind=KIND_TEXT,
                             anchor=None,
+                            resource_href=s.resource_href,
                             cont=True,
                         )
                     )

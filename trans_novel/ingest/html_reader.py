@@ -43,7 +43,7 @@ def _extract_chapter(
 ) -> tuple[str, list[Segment], str]:
     """解析章节 HTML 片段，返回 (标题, segments, 带标记的模板 HTML)。
 
-    与 epub_reader._extract_chapter 逻辑一致：
+    与 epub_reader.annotate_epub_resource 的块级提取逻辑一致：
     1. 遍历所有块级元素，跳过嵌套子块
     2. 为每个有效块打 data-tn-id 标记
     3. 标题优先用显式传入的 chapter_title，其次用首个 heading segment

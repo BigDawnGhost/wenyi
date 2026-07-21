@@ -8,17 +8,27 @@ import tempfile
 import unittest
 import zipfile
 
+from bs4 import BeautifulSoup
+from bs4.element import Tag
+
 from trans_novel.ingest.segmenter import (
     load_document, chapter_batches, split_long_segments, _split_text)
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from trans_novel.ingest.epub_reader import (
     _decode_markup,
-    _extract_chapter,
     _find_opf_path,
     _parse_opf,
+    annotate_epub_resource,
 )
+from trans_novel.ingest.epub_toc import parse_toc_entries, resolve_epub_href
 from trans_novel.ingest.fb2_reader import read_fb2_binaries
-from tests.sample_data import write_sample_txt, write_sample_epub
+from tests.sample_data import (
+    write_cross_resource_toc_epub,
+    write_grouped_nav_epub,
+    write_nested_toc_epub,
+    write_sample_epub,
+    write_sample_txt,
+)
 
 
 class TestTextIngest(unittest.TestCase):
@@ -359,12 +369,227 @@ class TestSplitLongSegments(unittest.TestCase):
 
 
 class TestEpubIngest(unittest.TestCase):
+    def test_nav_without_epub_type_uses_first_navigation_list(self):
+        nav = """<html><body><nav><h1>Contents</h1><ol>
+        <li><a href="body.xhtml#one">One</a></li>
+        </ol></nav></body></html>"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc.zip")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("OEBPS/nav.xhtml", nav)
+            with zipfile.ZipFile(path) as archive:
+                entries = parse_toc_entries(archive, ["OEBPS/nav.xhtml"])
+
+        self.assertEqual([entry["title"] for entry in entries], ["One"])
+        self.assertEqual(entries[0]["resource_href"], "OEBPS/body.xhtml")
+
+    def test_broken_secondary_toc_does_not_block_valid_primary_nav(self):
+        nav = """<html><body><nav epub:type="toc"><ol>
+        <li><a href="body.xhtml#one">One</a></li>
+        </ol></nav></body></html>"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc.zip")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("OEBPS/nav.xhtml", nav)
+                archive.writestr("OEBPS/toc.ncx", "<ncx><navMap>")
+            with zipfile.ZipFile(path) as archive:
+                entries = parse_toc_entries(
+                    archive,
+                    ["OEBPS/nav.xhtml", "OEBPS/toc.ncx"],
+                )
+
+        self.assertEqual([entry["title"] for entry in entries], ["One"])
+
+    def test_ncx_with_xml_extension_is_detected_from_document_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc-xml.epub")
+            write_nested_toc_epub(path, ncx_filename="toc.xml")
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in document.chapters],
+            ["PART I", "PART II"],
+        )
+        self.assertEqual(document.meta["toc_paths"], ["OEBPS/toc.xml"])
+        self.assertTrue(
+            all(entry["kind"] == "ncx" for entry in document.meta["toc_entries"])
+        )
+
+    def test_real_boundary_wins_when_empty_title_page_has_same_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "empty-title.epub")
+            write_nested_toc_epub(path, empty_title_page=True)
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in document.chapters],
+            ["PART I", "PART II"],
+        )
+        title_page, first_part = document.meta["toc_entries"][:2]
+        self.assertEqual(title_page["boundary_position"], 0)
+        self.assertNotIn("segment_anchor", title_page)
+        self.assertEqual(first_part["boundary_position"], 0)
+        self.assertTrue(first_part.get("segment_anchor"))
+
+    def test_spine_nav_preserves_toc_list_but_translates_visible_heading(self):
+        html = """<html><body><nav epub:type="toc">
+        <h1>Contents</h1>
+        <ol><li><a href="body.xhtml#one">Chapter One</a></li></ol>
+        </nav></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(
+            html,
+            0,
+            "nav.xhtml",
+            skip_navigation=True,
+        )
+
+        self.assertEqual([segment.source for segment in segments], ["Contents"])
+        self.assertIn('href="body.xhtml#one"', template)
+        list_item = BeautifulSoup(template, "html.parser").find("li")
+        self.assertIsInstance(list_item, Tag)
+        assert isinstance(list_item, Tag)
+        self.assertNotIn("data-tn-id", list_item.attrs)
+
+    def test_unlinked_top_level_nav_groups_inherit_first_child_boundary(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "grouped.epub")
+            write_grouped_nav_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[0].segments],
+            ["Section 1", "One."],
+        )
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[1].segments],
+            ["Section 2", "Two."],
+        )
+        group_entries = [
+            entry for entry in doc.meta["toc_entries"] if entry["depth"] == 0
+        ]
+        self.assertTrue(
+            all("inherited_boundary_from" in entry for entry in group_entries)
+        )
+
+    def test_nav_is_canonical_when_epub_also_contains_legacy_ncx(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "dual-toc.epub")
+            write_nested_toc_epub(path, toc_kind="both")
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+        self.assertEqual(len(doc.meta["toc_entries"]), 8)
+        self.assertEqual(doc.meta["epub_split_toc_path"], "OEBPS/nav.xhtml")
+
+    def test_unresolved_fragment_is_not_used_as_a_chapter_boundary(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "broken-fragment.epub")
+            write_nested_toc_epub(path, broken_part2_fragment=True)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I"])
+        broken = next(
+            entry for entry in doc.meta["toc_entries"] if entry["title"] == "PART II"
+        )
+        self.assertNotIn("segment_anchor", broken)
+        self.assertNotIn("boundary_position", broken)
+
+    def test_logical_chapter_can_span_multiple_spine_resources(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cross.epub")
+            write_cross_resource_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[0].segments],
+            ["PART I", "One.", "Section 1", "Two."],
+        )
+        self.assertEqual(
+            {segment.resource_href for segment in doc.chapters[0].segments},
+            {"OEBPS/one.xhtml", "OEBPS/two.xhtml"},
+        )
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[1].segments],
+            ["PART II", "Three."],
+        )
+
+    def test_nested_fragment_anchor_survives_template_flattening(self):
+        html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
+
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Section")
+        self.assertIn('id="inside"', template)
+        self.assertIn("epub_inline", segments[0].meta)
+
+    def test_nested_toc_splits_only_top_level_and_keeps_all_anchors(self):
+        expected = [
+            ("PART I", 0, "part-1"),
+            ("Section 1", 1, "section-1"),
+            ("PART II", 0, "part-2"),
+            ("Section 2", 1, "section-2"),
+        ]
+        for toc_kind in ("ncx", "nav"):
+            with self.subTest(toc_kind=toc_kind), tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "nested.epub")
+                write_nested_toc_epub(path, toc_kind=toc_kind)
+
+                doc = load_document(path, "en", "zh")
+
+                self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+                self.assertEqual(
+                    [segment.source for segment in doc.chapters[0].segments],
+                    ["PART I", "Part I intro.", "Section 1", "Section 1 body."],
+                )
+                self.assertEqual(
+                    [segment.source for segment in doc.chapters[1].segments],
+                    ["PART II", "Part II intro.", "Section 2", "Section 2 body."],
+                )
+                self.assertEqual(
+                    [
+                        (entry["title"], entry["depth"], entry["fragment"])
+                        for entry in doc.meta["toc_entries"]
+                    ],
+                    expected,
+                )
+                self.assertEqual(
+                    {entry["resource_href"] for entry in doc.meta["toc_entries"]},
+                    {"OEBPS/body.xhtml"},
+                )
+                self.assertTrue(
+                    all(
+                        segment.resource_href == "OEBPS/body.xhtml"
+                        for chapter in doc.chapters
+                        for segment in chapter.segments
+                    )
+                )
+
+    def test_epub_href_resolution_preserves_raw_href_and_plus(self):
+        resolved = resolve_epub_href(
+            "OEBPS/nav/toc.xhtml",
+            "../text/A+B%20C.xhtml#section%201",
+        )
+
+        self.assertEqual(resolved.raw_href, "../text/A+B%20C.xhtml#section%201")
+        self.assertEqual(resolved.resource_href, "OEBPS/text/A+B C.xhtml")
+        self.assertEqual(resolved.fragment, "section 1")
+        self.assertEqual(resolved.target_key, "OEBPS/text/A+B C.xhtml#section 1")
+
     def test_ruby_reading_is_not_included_in_translatable_source(self):
         html = """<html><body>
 <p><ruby>漢字<rt>かんじ</rt></ruby>です</p>
 </body></html>"""
 
-        _title, segments, template = _extract_chapter(html, 0, "chapter.xhtml")
+        _title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
 
         self.assertEqual([segment.source for segment in segments], ["漢字です"])
         self.assertIn("<rt>かんじ</rt>", template)
@@ -375,7 +600,7 @@ class TestEpubIngest(unittest.TestCase):
 <dl><dt>Term</dt><dd>Definition</dd></dl>
 </body></html>"""
 
-        _title, segments, _template = _extract_chapter(html, 0, "chapter.xhtml")
+        _title, segments, _template = annotate_epub_resource(html, 0, "chapter.xhtml")
 
         self.assertEqual(
             [segment.source for segment in segments],
@@ -424,7 +649,7 @@ class TestEpubIngest(unittest.TestCase):
 <p class="illustration"><img src="standalone.jpg"/></p>
 </body></html>"""
 
-        _title, segments, template = _extract_chapter(
+        _title, segments, template = annotate_epub_resource(
             html,
             2,
             "chapter.xhtml",
@@ -457,15 +682,12 @@ class TestEpubIngest(unittest.TestCase):
         ch1 = doc.chapters[0]
         self.assertEqual(ch1.title, "第一章　出会い")
         self.assertEqual(len(ch1.text_segments), 3)  # h1 + 2 p
-        # 每个 segment 都有回填锚点，且模板里含该锚点
-        template = ch1.template
-        self.assertIsNotNone(template)
-        assert template is not None
+        # 状态只保留稳定定位信息；模板和内联布局在导出时从原 EPUB 重建。
+        self.assertIsNone(ch1.template)
         for s in ch1.text_segments:
-            anchor = s.anchor
-            self.assertIsNotNone(anchor)
-            assert anchor is not None
-            self.assertIn(anchor, template)
+            self.assertIsNotNone(s.anchor)
+            self.assertIsNotNone(s.resource_href)
+            self.assertNotIn("epub_inline", s.meta)
         self.assertIsNotNone(ch1.href)
 
     def test_epub_ignores_internal_file_title_when_no_heading(self):
@@ -594,8 +816,14 @@ class TestEpubIngest(unittest.TestCase):
 
         self.assertEqual(len(doc.chapters), 1)
         self.assertEqual(doc.chapters[0].href, "body.xhtml")
-        self.assertEqual(doc.chapters[0].title, "")
-        self.assertIn({"href": "title.xhtml", "title": "第一章"}, doc.meta["toc_entries"])
+        self.assertEqual(doc.chapters[0].title, "第一章")
+        self.assertTrue(
+            any(
+                entry.get("resource_href") == "title.xhtml"
+                and entry.get("title") == "第一章"
+                for entry in doc.meta["toc_entries"]
+            )
+        )
 
 
 if __name__ == "__main__":

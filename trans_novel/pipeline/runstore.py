@@ -174,7 +174,9 @@ class RunStore:
             "meta": doc.meta,
             "chapters": [
                 {"index": c.index, "title": c.title,
-                 "href": c.href, "status": STATUS_PENDING,
+                 "href": c.href,
+                 "toc_entry_id": c.meta.get("toc_entry_id"),
+                 "status": STATUS_PENDING,
                  "review_status": REVIEW_PENDING}
                 for c in doc.chapters
             ],

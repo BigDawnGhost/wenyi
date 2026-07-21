@@ -92,6 +92,10 @@ MESSAGES: dict[str, str] = {
     "error.state_target_language_missing": (
         "The run state does not contain an explicit target language."
     ),
+    "error.identical_source_target": (
+        "Source and target languages are the same ({language}); nothing to translate. "
+        "Change language.source or language.target in config.yaml."
+    ),
     "error.translation_state_missing": (
         "No translation state found. Run translate first."
     ),
@@ -199,9 +203,7 @@ MESSAGES: dict[str, str] = {
         "  Chapters {done}/{total}  Terms {terms}  Unresolved conflicts {conflicts}  "
         "Review issues {review}  Back-translation concerns {backtranslation}"
     ),
-    "error.pdf_cache_dir_required": (
-        "PDF input requires a run-state cache directory."
-    ),
+    "error.pdf_cache_dir_required": ("PDF input requires a run-state cache directory."),
     "error.input_format_unsupported": (
         "Unsupported input format: {format} (supported: {supported})"
     ),
@@ -215,9 +217,7 @@ MESSAGES: dict[str, str] = {
         "in this book's state directory, and run again."
     ),
     "error.pdf_conversion_failed": "PDF conversion failed: {error}",
-    "error.provider_unknown": (
-        "Unknown provider: {provider} (supported: {supported})"
-    ),
+    "error.provider_unknown": ("Unknown provider: {provider} (supported: {supported})"),
     "error.json_parse_failed": "Unable to parse JSON: {preview}",
     "error.llm_tier_model_missing": "llm.tiers.{tier}.model must not be empty.",
     "error.llm_strong_model_missing": (
@@ -233,13 +233,9 @@ MESSAGES: dict[str, str] = {
     "error.api_key_missing": (
         "Environment variable {env} is not set ({provider} API key)."
     ),
-    "error.mineru_extraction_failed": (
-        "MinerU extraction failed for {file}: {error}"
-    ),
+    "error.mineru_extraction_failed": ("MinerU extraction failed for {file}: {error}"),
     "error.mineru_timeout": "MinerU batch {batch} timed out.",
-    "error.mineru_html_missing": (
-        "The MinerU result ZIP contains no HTML file."
-    ),
+    "error.mineru_html_missing": ("The MinerU result ZIP contains no HTML file."),
     "error.mineru_api": "MinerU API error: code={code}, message={error}",
     "error.mineru_token_missing": (
         "No MinerU API token was provided and {env} is not set."
@@ -251,9 +247,7 @@ MESSAGES: dict[str, str] = {
         "{count} segments."
     ),
     "progress.pdf_pages": "PDF: {pages} page(s)",
-    "progress.pdf_splitting": (
-        "Splitting into chunks of at most {max_pages} pages…"
-    ),
+    "progress.pdf_splitting": ("Splitting into chunks of at most {max_pages} pages…"),
     "progress.pdf_chunk": "  Chunk {current}/{total}: {pages} page(s)",
     "progress.pdf_uploading": "Uploading and extracting {chunks} chunk(s)…",
     "progress.pdf_chunk_done": (

@@ -56,6 +56,10 @@ MESSAGES: dict[str, str] = {
     ),
     "error.state_source_language_missing": "运行状态缺少已解析的源语言。",
     "error.state_target_language_missing": "运行状态缺少明确的目标语言。",
+    "error.identical_source_target": (
+        "源语言与目标语言相同（{language}），无需翻译；"
+        "请修改 config.yaml 中的 language.source 或 language.target。"
+    ),
     "error.translation_state_missing": "尚无翻译进度。请先运行 translate。",
     "error.language_detection_failed": (
         "自动识别源语言失败：请检查模型配置，或在 config.yaml 的 language.source "
@@ -71,9 +75,7 @@ MESSAGES: dict[str, str] = {
     ),
     "error.translation_item_invalid": "模型返回了空译文或非字符串译文",
     "error.translation_fallback_failed": "逐段兜底翻译在第 {index} 段失败",
-    "error.punctuation_segment_count_mismatch": (
-        "texts 与 continuations 数量必须一致"
-    ),
+    "error.punctuation_segment_count_mismatch": ("texts 与 continuations 数量必须一致"),
     "error.prefix": "错误：{error}",
     "error.chapter_finish_options": (
         "--chapter 只翻译并保存指定章节，不能同时使用收尾选项：{options}"
@@ -111,9 +113,7 @@ MESSAGES: dict[str, str] = {
         "用量（本书累计）：{total:,} tok（提示 {prompt:,} / 生成 {completion:,}），"
         "缓存命中率 {rate:.1%}（命中 {hit:,} / 未命中 {miss:,} tok）"
     ),
-    "usage.tier": (
-        "  · {tier}：{total:,} tok，{calls} 次调用，缓存命中率 {rate:.1%}"
-    ),
+    "usage.tier": ("  · {tier}：{total:,} tok，{calls} 次调用，缓存命中率 {rate:.1%}"),
     "usage.stage": (
         "  · 阶段 {stage}：{total:,} tok（提示 {prompt:,} / 生成 {completion:,}），"
         "{calls} 次调用，缓存命中率 {rate:.1%}"
@@ -157,15 +157,11 @@ MESSAGES: dict[str, str] = {
         "{cache_path}，再重新运行。"
     ),
     "error.pdf_conversion_failed": "PDF 转换失败：{error}",
-    "error.provider_unknown": (
-        "未知模型提供商：{provider}（支持：{supported}）"
-    ),
+    "error.provider_unknown": ("未知模型提供商：{provider}（支持：{supported}）"),
     "error.json_parse_failed": "无法解析为 JSON：{preview}",
     "error.llm_tier_model_missing": "llm.tiers.{tier}.model 不能为空。",
     "error.llm_strong_model_missing": "配置缺少 llm.tiers.strong.model。",
-    "error.provider_base_url_required": (
-        "{provider} 提供商需要配置 llm.base_url。"
-    ),
+    "error.provider_base_url_required": ("{provider} 提供商需要配置 llm.base_url。"),
     "error.openai_sdk_missing": (
         "需要 OpenAI SDK：请运行 `pip install openai`，或将 llm.provider "
         "设为 fake 进行离线测试。"
@@ -187,9 +183,7 @@ MESSAGES: dict[str, str] = {
     "progress.pdf_splitting": "正在拆分为每份最多 {max_pages} 页的文件…",
     "progress.pdf_chunk": "  分块 {current}/{total}：{pages} 页",
     "progress.pdf_uploading": "正在上传并提取 {chunks} 个分块…",
-    "progress.pdf_chunk_done": (
-        "  分块 {current}/{total} 完成（{chars:,} 字符）"
-    ),
+    "progress.pdf_chunk_done": ("  分块 {current}/{total} 完成（{chars:,} 字符）"),
     "progress.pdf_done": "完成 → {path}（{chars:,} 字符）",
     "pdf.cli_usage": "用法：uv run python pdf_to_html.py <PDF 路径> [输出 HTML 路径]",
     "result.cancelled": "已取消。",
