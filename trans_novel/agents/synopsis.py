@@ -1,7 +1,7 @@
 """全书理解预扫 Agent（廉价档）。
 
 翻译开始前通读**源文**，产出：
-- 逐章梗概（chapter digest）：每章一段中文梗概，存入 chapter.meta["source_digest"]；
+- 逐章梗概（chapter digest）：每章一段目标语言梗概，存入 chapter.meta["source_digest"]；
 - 全书概览（book synopsis）：把各章梗概 + 前期分析归并成一份全局概览。
 
 二者作为**恒定前缀**注入翻译 prompt（见 prompts.py），让译者翻任意章节前都"对全书有理解"：
@@ -20,13 +20,13 @@ _REDUCE_BUDGET = 12000
 
 class Synopsizer(Agent):
     def digest_chapter(self, source_text: str) -> str:
-        """把单章源文压成一段中文梗概；空文本或失败返回空串。"""
+        """把单章源文压成一段目标语言梗概；空文本或失败返回空串。"""
         if not source_text.strip():
             return ""
         system = prompts.render("chapter_digest_system", src=self.src, tgt=self.tgt)
         user = prompts.render("chapter_digest_user", src=self.src, tgt=self.tgt,
                               source=source_text[:8000])
-        # 机械任务走 fast 档（免思考）；梗概 ≤200 字，上限留足裕量防输出失控
+        # 机械任务走 fast 档（免思考）；上限对中英文目标均留足裕量。
         return self._ask_text(system, user, tier="fast", max_tokens=600)
 
     def book_synopsis(self, digests: list[str], analysis_brief: str) -> str:
@@ -66,6 +66,7 @@ class Synopsizer(Agent):
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
         system = prompts.render("book_synopsis_system", src=self.src, tgt=self.tgt)
         user = prompts.render("book_synopsis_user", src=self.src, tgt=self.tgt,
-                              analysis=analysis_brief or "（无）", digests=numbered)
-        # 概览 ≤500 字，fast 档 + 上限
+                              analysis=analysis_brief or prompts.empty(tgt=self.tgt),
+                              digests=numbered)
+        # 概览长度由提示词中的目标语言 profile 控制；这里仅设安全输出上限。
         return self._ask_text(system, user, tier="fast", max_tokens=1200)

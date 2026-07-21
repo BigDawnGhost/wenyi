@@ -12,7 +12,15 @@ language:
   target: zh
 ```
 
-`source: auto` asks the model to identify the source language. You may instead use an ISO 639-1 code such as `ja`, `en`, `ko`, `ru`, `fr`, `de`, or `es`. The current translation pipeline is primarily designed for Simplified Chinese output.
+`source: auto` asks the model to identify the source language. You may instead use an ISO 639-1 code such as `ja`, `en`, `ko`, `ru`, `fr`, `de`, or `es`. This first multilingual version officially supports `zh` (Simplified Chinese, the default) and `en` (English) as target languages:
+
+```yaml
+language:
+  source: auto
+  target: en
+```
+
+Use a separate run for each target language. Wenyi isolates non-Simplified-Chinese state as `state/<book-name>@<target>` so an English run cannot overwrite an existing Chinese translation.
 
 ## Model provider
 
@@ -181,8 +189,8 @@ output:
   about_page: true
 ```
 
-- `mono`: produce the monolingual Chinese edition as `<book-name>.zh.epub`.
-- `bilingual`: produce a source-and-translation edition as `<book-name>.zh-bi.epub`.
+- `mono`: produce the monolingual target-language edition as `<book-name>.<target>.epub`, for example `<book-name>.zh.epub` or `<book-name>.en.epub`.
+- `bilingual`: produce a source-and-translation edition as `<book-name>.<target>-bi.epub`, for example `<book-name>.zh-bi.epub` or `<book-name>.en-bi.epub`.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
@@ -209,5 +217,5 @@ paths:
 - `max_chars_per_batch`: approximate source-character budget for one model translation request.
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
-- `punctuation.normalize`: normalize output to common full-width Simplified Chinese punctuation.
+- `punctuation.normalize`: enable deterministic punctuation post-processing. Chinese targets use the existing Chinese-punctuation normalization; English targets normalize only quotation marks and apostrophes to half-width ASCII, leaving all other punctuation under prompt control.
 - `state_dir`: location of checkpoints, chapter files, the glossary database, usage data, and reports.

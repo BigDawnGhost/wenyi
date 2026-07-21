@@ -1,6 +1,6 @@
 """运行态持久化：支持断点续跑。
 
-目录结构（state_dir/<book-slug>/）：
+目录结构（简体中文目标为 state_dir/<book-slug>/，其它目标追加 @<target>/）：
   manifest.json     书籍元信息 + 各章状态
   chapters/ch{n}.json  各章（含 source/target 的 Segment）
   source/           输入预处理缓存（例如 PDF 转换后的 HTML）
@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator
 
+from .. import languages
 from ..ingest.models import Chapter, Document
 
 STATUS_PENDING = "pending"
@@ -35,6 +36,19 @@ def slugify(name: str) -> str:
     """把书名转换为适合作为状态目录名的稳定短名。"""
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     return s or "book"
+
+
+def run_slug(name: str, target_lang: str) -> str:
+    """返回按书名和目标语言隔离的状态目录名。
+
+    简体中文目标沿用 0.2/0.3 系列的 ``<book-slug>`` 路径，已有任务无需迁移；
+    非中文目标追加规范化语言标签，避免同一本书的不同译文互相覆盖。
+    ``@`` 不会由 :func:`slugify` 产生，因此书名本身不会与目标后缀歧义。
+    """
+    book_slug = slugify(name)
+    if languages.is_simplified_chinese(target_lang):
+        return book_slug
+    return f"{book_slug}@{languages.filename_language_tag(target_lang)}"
 
 
 class RunStore:

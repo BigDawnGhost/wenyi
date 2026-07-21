@@ -32,16 +32,40 @@ setx DEEPSEEK_API_KEY "sk-..."
 
 也可把 `language.source` 设为已知的语言代码，避免调用模型自动识别源语言。
 
+## 界面语言与提示词语言
+
+命令行界面默认使用英语；当前生效的系统 locale 以 `zh` 开头时（例如 `zh_CN.UTF-8`），会自动切换为中文。也可以通过 `WENYI_LANG` 覆盖自动检测：
+
+```bash
+WENYI_LANG=en uv run trans-novel --help
+WENYI_LANG=zh uv run trans-novel --help
+```
+
+`WENYI_LANG` 只控制命令帮助、进度提示和错误信息，与 `language.source`、`language.target` 完全独立，不会改变翻译的源语言或目标语言。
+
+提供给模型的指令会另行根据 `language.target` 选择。完整的目标语言提示词包统一存放在 `trans_novel/languages/`；目前简体中文和英语拥有原生语言包。其它目标语言在拥有专属语言包之前，会暂时使用英语通用提示词包，但仍要求模型输出配置中指定的目标语言。
+
 ## 输入与输出
 
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
-- 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
+- 首版多目标语言支持正式覆盖简体中文（`zh`，默认）与英语（`en`）。在 `config.yaml` 中设置 `language.target: en` 即可生成英文译本。
+- 默认命名：源文件所在目录 `output/` 中的单语版 `<书名>.<目标语言>.epub`；双语版为 `<书名>.<目标语言>-bi.epub`。例如英文输出是 `<书名>.en.epub` 与 `<书名>.en-bi.epub`。
 - `--format txt|html|markdown`：改为导出指定格式；所有输入默认仍生成 EPUB。
-- PDF 首次读取需设置 `MINERU_API_KEY`。转换结果保存为 `state/<书名>/source/converted.html`，后续运行会直接复用，也可人工修正后再续跑。
+- PDF 首次读取需设置 `MINERU_API_KEY`。转换结果保存在目标语言对应的状态目录，例如简体中文为 `state/<书名>/source/converted.html`、英文为 `state/<书名>@en/source/converted.html`；后续运行会直接复用，也可人工修正后再续跑。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
 - 状态文件位于 `state/`，包含章节中间结果、术语 SQLite 库和报告。
+
+英文目标配置示例：
+
+```yaml
+language:
+  source: auto
+  target: en
+```
+
+简体中文任务继续使用 `state/<书名>` 以兼容已有进度；其它目标语言使用 `state/<书名>@<目标语言>`，同一本书的不同语言译本不会混用断点。
 
 ## 常用命令
 

@@ -14,6 +14,7 @@ from copy import deepcopy
 import os
 import re
 
+from ..locales import message
 from .epub_reader import read_epub
 from .fb2_reader import read_fb2
 from .html_reader import read_html
@@ -127,7 +128,7 @@ def load_document(
         doc = read_html(path, source_lang, target_lang)
     elif ext == ".pdf":
         if cache_dir is None:
-            raise ValueError("PDF 读取需要指定运行状态缓存目录")
+            raise ValueError(message("error.pdf_cache_dir_required"))
         doc = read_pdf(
             path,
             source_lang,
@@ -136,7 +137,11 @@ def load_document(
         )
     else:
         raise ValueError(
-            f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .pdf）"
+            message(
+                "error.input_format_unsupported",
+                format=ext,
+                supported=".epub / .txt / .md / .fb2 / .html / .pdf",
+            )
         )
 
     if split_segments and split_segments > 0:

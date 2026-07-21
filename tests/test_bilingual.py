@@ -96,6 +96,19 @@ class TestRenderChapterHtmlBilingual(unittest.TestCase):
         )
         self.assertEqual(ps[1].get("class"), None)
 
+    def test_source_paragraph_has_its_own_language_metadata(self):
+        html = _render_chapter_html(
+            _chapter_with_template(),
+            bilingual=True,
+            source_lang="ja",
+        )
+        source = _required_tag(
+            BeautifulSoup(html, "html.parser").find("p", class_="tn-source")
+        )
+
+        self.assertEqual(source.get("lang"), "ja")
+        self.assertEqual(source.get("xml:lang"), "ja")
+
     def test_mono_render_has_no_source_paragraphs(self):
         ch = _chapter_with_template()
         html = _render_chapter_html(ch)  # 默认单语，不应引入 tn-source
@@ -326,6 +339,27 @@ class TestDefaultOutBilingual(unittest.TestCase):
         out = _default_out("/tmp/novel.txt", "epub", "")
         self.assertEqual(os.path.basename(out), "novel.zh.epub")
         self.assertEqual(os.path.dirname(out), "/tmp/output")
+
+    def test_english_target_suffixes(self):
+        mono = _default_out(
+            "/tmp/novel.txt", "epub", "", target_lang="en"
+        )
+        bilingual = _default_out(
+            "/tmp/novel.txt",
+            "epub",
+            "",
+            bilingual=True,
+            target_lang="en",
+        )
+
+        self.assertEqual(os.path.basename(mono), "novel.en.epub")
+        self.assertEqual(os.path.basename(bilingual), "novel.en-bi.epub")
+
+    def test_chinese_region_tag_keeps_historical_suffix(self):
+        out = _default_out(
+            "/tmp/novel.txt", "epub", "", target_lang="zh-Hans"
+        )
+        self.assertEqual(os.path.basename(out), "novel.zh.epub")
 
 
 class TestOutputConfigParsing(unittest.TestCase):

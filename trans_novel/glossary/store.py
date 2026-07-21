@@ -17,7 +17,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# 术语类型
+# 术语类型是目标语言文本；以下默认值用于简体中文目标。
 TYPE_PERSON = "人物"
 TYPE_PLACE = "地名"
 TYPE_ORG = "组织"
@@ -28,7 +28,17 @@ TYPE_HONORIFIC = "敬称"
 TYPE_SPEECH = "口癖"
 TYPE_FIXED_EXPR = "固定表达"
 
-_SOURCE_ONLY_TYPES = {TYPE_APPELLATION, TYPE_HONORIFIC, TYPE_SPEECH, TYPE_FIXED_EXPR}
+_SOURCE_ONLY_TYPES = {
+    TYPE_APPELLATION,
+    TYPE_HONORIFIC,
+    TYPE_SPEECH,
+    TYPE_FIXED_EXPR,
+    "appellation",
+    "honorific",
+    "speech pattern",
+    "fixed expression",
+}
+
 
 @dataclass
 class GlossaryTerm:
@@ -230,7 +240,7 @@ class GlossaryStore:
             # 命中裸名就把派生译法注入到普通称呼处。
             keys = (
                 [term.source]
-                if term.type in _SOURCE_ONLY_TYPES
+                if term.type.strip().casefold() in _SOURCE_ONLY_TYPES
                 else [term.source] + term.aliases
             )
             if any(k and _match_text(k) in normalized_text for k in keys):

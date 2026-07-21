@@ -26,6 +26,7 @@ import httpx
 from pypdf import PdfReader, PdfWriter
 
 from trans_novel.ingest.errors import MinerUError, MinerUTimeoutError
+from trans_novel.locales import message
 
 API_BASE = "https://mineru.net/api/v4"
 MAX_PAGES = 200
@@ -94,12 +95,18 @@ class MinerUApi:
                 for r in results:
                     if r["state"] == "failed":
                         raise MinerUError(
-                            f"Extraction failed for {r['file_name']}: {r.get('err_msg', 'unknown')}"
+                            message(
+                                "error.mineru_extraction_failed",
+                                file=r["file_name"],
+                                error=r.get("err_msg", message("value.unknown")),
+                            )
                         )
                     zips.append(self._download_zip(r["full_zip_url"]))
                 return zips
             if time.monotonic() > deadline:
-                raise MinerUTimeoutError(f"Batch {batch_id} timed out")
+                raise MinerUTimeoutError(
+                    message("error.mineru_timeout", batch=batch_id)
+                )
             time.sleep(min(interval, max(0, deadline - time.monotonic())))
             interval = min(interval * 1.5, 30.0)
 
@@ -142,7 +149,7 @@ def _html_from_zip(zip_bytes: bytes) -> str:
         for name in zf.namelist():
             if name.endswith((".html", ".htm")):
                 return zf.read(name).decode("utf-8")
-    raise MinerUError("No HTML file in result ZIP")
+    raise MinerUError(message("error.mineru_html_missing"))
 
 
 def _assemble_html(parts: list[str], title: str) -> str:
@@ -181,7 +188,13 @@ def _clean_head(html: str) -> str:
 
 def _check(body: dict) -> dict:
     if body.get("code") != 0:
-        raise MinerUError(f"API error: code={body.get('code')} msg={body.get('msg')}")
+        raise MinerUError(
+            message(
+                "error.mineru_api",
+                code=body.get("code"),
+                error=body.get("msg"),
+            )
+        )
     return body
 
 
@@ -228,30 +241,46 @@ def convert_pdf_to_html(
     if api_token is None:
         api_token = os.getenv("MINERU_API_KEY")
     if not api_token:
-        raise MinerUError("API token not provided and MINERU_API_KEY not set")
+        raise MinerUError(
+            message("error.mineru_token_missing", env="MINERU_API_KEY")
+        )
 
     total_pages = _page_count(pdf_path)
-    msg(f"PDF: {total_pages} pages")
+    msg(message("progress.pdf_pages", pages=total_pages))
 
     # Prepare chunks
     if total_pages <= MAX_PAGES:
         chunk_paths = [Path(pdf_path)]
         owned: list[Path] = []
     else:
-        msg(f"Splitting into ≤{MAX_PAGES}-page chunks…")
+        msg(message("progress.pdf_splitting", max_pages=MAX_PAGES))
         chunk_paths = _split_pdf(pdf_path, MAX_PAGES)
         owned = chunk_paths
         for i, cp in enumerate(chunk_paths):
-            msg(f"  Chunk {i + 1}/{len(chunk_paths)}: {_page_count(str(cp))} pages")
+            msg(
+                message(
+                    "progress.pdf_chunk",
+                    current=i + 1,
+                    total=len(chunk_paths),
+                    pages=_page_count(str(cp)),
+                )
+            )
 
     api = MinerUApi(api_token)
     try:
-        msg(f"Uploading and extracting {len(chunk_paths)} chunk(s)…")
+        msg(message("progress.pdf_uploading", chunks=len(chunk_paths)))
         zip_bytes_list = api.submit_batch([str(cp) for cp in chunk_paths])
 
         html_parts = [_html_from_zip(zb) for zb in zip_bytes_list]
         for i in range(len(html_parts)):
-            msg(f"  Chunk {i + 1} done ({len(html_parts[i]):,} chars)")
+            msg(
+                message(
+                    "progress.pdf_chunk_done",
+                    current=i + 1,
+                    total=len(html_parts),
+                    chars=len(html_parts[i]),
+                )
+            )
     finally:
         api.close()
         for cp in owned:
@@ -263,7 +292,7 @@ def convert_pdf_to_html(
         else _assemble_html(html_parts, Path(pdf_path).name)
     )
     Path(output_path).write_text(html, encoding="utf-8")
-    msg(f"Done → {output_path} ({len(html):,} chars)")
+    msg(message("progress.pdf_done", path=output_path, chars=len(html)))
     return output_path
 
 
@@ -272,7 +301,7 @@ def convert_pdf_to_html(
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: uv run python pdf_to_html.py <pdf_path> [output_html_path]")
+        print(message("pdf.cli_usage"))
         sys.exit(1)
 
     try:
@@ -282,10 +311,10 @@ def main() -> None:
             on_progress=print,
         )
     except (MinerUError, FileNotFoundError) as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(message("error.prefix", error=e), file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\nCancelled.", file=sys.stderr)
+        print(f"\n{message('result.cancelled')}", file=sys.stderr)
         sys.exit(130)
 
 

@@ -8,17 +8,53 @@ import zipfile
 
 from bs4 import BeautifulSoup
 
-ABOUT_TITLE = "关于此翻译"
+from .. import languages
+
 ABOUT_FILENAME = "trans-novel-about.xhtml"
 ABOUT_REPOSITORY = "https://github.com/BigDawnGhost/wenyi"
 
+
+def _about_body(lang: str) -> tuple[str, str]:
+    """Return the localized page title and body markup for a target language."""
+    if languages.base_language(lang) == "zh":
+        return "关于此翻译", f"""\
+    <h1>关于此翻译</h1>
+    <p class="tn-about-lead">本书由 <strong>文译（Wenyi）</strong> 项目生成。</p>
+    <p>文译是一个开源的命令行工具，致力于翻译多语言 EPUB、FB2、TXT 小说。它以长篇小说的翻译质量为重点，支持全书预扫、滚动上下文、实时术语库、润色和审校等功能，力求在准确的前提下让译文从可读向好读迈进。</p>
+    <p>项目目前仍在初期阶段，翻译质量尚有提升空间。如果您发现译文中的问题（如专有名词翻译不一致、口头禅前后不统一等），或对翻译质量有任何建议，欢迎通过以下方式反馈：</p>
+    <div class="tn-about-feedback">
+      <p><strong>GitHub 仓库：</strong>
+        <a href="{ABOUT_REPOSITORY}">github.com/BigDawnGhost/wenyi</a><br/>
+        提交 Issue，或在讨论区提出您的想法<br/>
+        如果您具备编程能力，欢迎提交 Pull Request，共同改进这个项目<br/>
+        项目交流 QQ 群：1055065098
+      </p>
+    </div>
+    <p class="tn-about-closing">本项目为个人兴趣所开发，仅在于针对长文本书籍的译介做出一份微薄的努力。每一份反馈和建议，都会让这个工具变得更好。感谢您的阅读。</p>"""
+    return "About This Translation", f"""\
+    <h1>About This Translation</h1>
+    <p class="tn-about-lead">This book was generated with <strong>Wenyi</strong>.</p>
+    <p>Wenyi is an open-source command-line tool for translating multilingual novels in formats such as EPUB, FB2, and TXT. It is designed for long-form literary translation and supports whole-book analysis, rolling context, a live glossary, polishing, and review.</p>
+    <p>Wenyi is still evolving, and its translations may contain mistakes or inconsistencies. If you find an issue or have ideas for improving translation quality, you are welcome to share your feedback:</p>
+    <div class="tn-about-feedback">
+      <p><strong>GitHub repository:</strong>
+        <a href="{ABOUT_REPOSITORY}">github.com/BigDawnGhost/wenyi</a><br/>
+        Open an Issue or start a Discussion<br/>
+        Pull Requests are welcome<br/>
+        QQ community group: 1055065098
+      </p>
+    </div>
+    <p class="tn-about-closing">Wenyi is a personal, open-source effort to make long-form literary translation more accessible. Every report and suggestion helps make the project better. Thank you for reading.</p>"""
+
+
 def about_xhtml(lang: str) -> bytes:
     """返回可独立加入 EPUB spine 的 XHTML 页面。"""
+    title, body = _about_body(lang)
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}">
 <head>
-  <title>{ABOUT_TITLE}</title>
+  <title>{title}</title>
   <style>
     html, body {{ writing-mode: horizontal-tb; direction: ltr; }}
     body {{ margin: 8% 8%; font-family: serif; line-height: 1.65; }}
@@ -33,19 +69,7 @@ def about_xhtml(lang: str) -> bytes:
 </head>
 <body>
   <section class="tn-about">
-    <h1>{ABOUT_TITLE}</h1>
-    <p class="tn-about-lead">本书由 <strong>文译（Wenyi）</strong> 项目生成。</p>
-    <p>文译是一个开源的命令行工具，致力于将多语言 EPUB、FB2、TXT 小说翻译为中文。它以长篇小说的翻译质量为重点，支持全书预扫、滚动上下文、实时术语库、润色和审校等功能，力求在准确的前提下让译文从可读向好读迈进。</p>
-    <p>项目目前仍在初期阶段，翻译质量尚有提升空间。如果您发现译文中的问题（如专有名词翻译不一致、口头禅前后不统一等），或对翻译质量有任何建议，欢迎通过以下方式反馈：</p>
-    <div class="tn-about-feedback">
-      <p><strong>GitHub 仓库：</strong>
-        <a href="{ABOUT_REPOSITORY}">github.com/BigDawnGhost/wenyi</a><br/>
-        提交 Issue，或在讨论区提出您的想法<br/>
-        如果您具备编程能力，欢迎提交 Pull Request，共同改进这个项目<br/>
-        项目交流 QQ 群：1055065098
-      </p>
-    </div>
-    <p class="tn-about-closing">本项目为个人兴趣所开发，仅在于针对长文本书籍的译介做出一份微薄的努力。每一份反馈和建议，都会让这个工具变得更好。感谢您的阅读。</p>
+{body}
   </section>
 </body>
 </html>

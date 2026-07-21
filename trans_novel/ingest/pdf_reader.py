@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..locales import message
 from .errors import MinerUError
 from .html_reader import read_html
 from .models import Document
@@ -30,10 +31,11 @@ def _check_deps() -> None:
             missing.append(pkg)
     if missing:
         raise ImportError(
-            f"PDF 转换需要额外依赖，请运行：\n"
-            f"  uv pip install {' '.join(missing)}\n"
-            f"或先手动将 PDF 转为 HTML，保存到本书状态目录的 "
-            f"source/converted.html，再重跑。"
+            message(
+                "error.pdf_dependencies_missing",
+                packages=" ".join(missing),
+                cache_path="source/converted.html",
+            )
         )
 
 
@@ -84,7 +86,9 @@ def read_pdf(
         except Exception as error:
             # HTTP、PDF 解析、ZIP 解包和写盘失败统一为输入层异常；
             # 原异常作为 cause 保留，便于调试时追踪。
-            raise MinerUError(f"PDF 转换失败：{error}") from error
+            raise MinerUError(
+                message("error.pdf_conversion_failed", error=error)
+            ) from error
 
     # 用 html_reader 解析中间 HTML
     doc = read_html(html_path, source_lang, target_lang)

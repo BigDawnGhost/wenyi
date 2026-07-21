@@ -17,6 +17,7 @@ from tenacity import (
 )
 
 from ...config import LLMConfig, TierConfig
+from ...locales import message
 from ..base import LLMClient, Messages
 from ..tiers import resolve_tier
 from ..usage import (
@@ -50,7 +51,7 @@ def resolve_provider_tiers(
         current = tiers.get(name)
         model = override.model or (current.model if current else None)
         if not model:
-            raise ValueError(f"llm.tiers.{name}.model 不能为空")
+            raise ValueError(message("error.llm_tier_model_missing", tier=name))
         option_values = current.options.model_dump() if current else {}
         option_values.update(override.options)
         tiers[name] = ResolvedTier(
@@ -58,7 +59,7 @@ def resolve_provider_tiers(
             options=options_type.model_validate(option_values),
         )
     if "strong" not in tiers:
-        raise ValueError("配置缺少 llm.tiers.strong.model")
+        raise ValueError(message("error.llm_strong_model_missing"))
     return tiers
 
 
@@ -158,7 +159,9 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         self.tiers = tiers
         self.requires_api_key = requires_api_key
         if not self.base_url:
-            raise ValueError(f"{provider_name} provider 需要配置 llm.base_url")
+            raise ValueError(
+                message("error.provider_base_url_required", provider=provider_name)
+            )
         self._client: Any = None
         self._client_lock = threading.Lock()
 
@@ -169,14 +172,15 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
                 try:
                     from openai import OpenAI
                 except ImportError as error:  # pragma: no cover
-                    raise RuntimeError(
-                        "需要 openai SDK：pip install openai"
-                        "（或把 llm.provider 设为 fake 做离线测试）"
-                    ) from error
+                    raise RuntimeError(message("error.openai_sdk_missing")) from error
                 api_key = os.environ.get(self.api_key_env) if self.api_key_env else None
                 if (self.requires_api_key or self.api_key_env) and not api_key:
                     raise RuntimeError(
-                        f"未设置环境变量 {self.api_key_env}（{self.provider_name} API key）"
+                        message(
+                            "error.api_key_missing",
+                            env=self.api_key_env,
+                            provider=self.provider_name,
+                        )
                     )
                 self._client = OpenAI(
                     api_key=api_key or "no-key",

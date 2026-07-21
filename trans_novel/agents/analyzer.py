@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import GlossaryStore, GlossaryTerm, TYPE_PERSON
+from .. import languages
+from ..glossary.store import GlossaryStore, GlossaryTerm
 from . import prompts
 from .base import Agent
 
@@ -25,7 +26,12 @@ def _text(value: Any, default: str = "") -> str:
 class Analyzer(Agent):
     def analyze(self, sample_text: str) -> dict[str, Any]:
         """分析样本文本，并返回经过类型清洗的风格、角色和术语信息。"""
-        system = prompts.render("analyzer_system", src=self.src, tgt=self.tgt)
+        system = prompts.render(
+            "analyzer_system",
+            src=self.src,
+            tgt=self.tgt,
+            honorific_strategy=self.config.honorific_strategy,
+        )
         user = prompts.render("analyzer_user", src=self.src, tgt=self.tgt,
                               sample=sample_text)
         # 不传 default：分析失败照常抛出，由调用方决定（prepare 阶段失败应显式暴露）
@@ -43,8 +49,21 @@ class Analyzer(Agent):
             "rhetoric",
         ):
             data[key] = _text(data.get(key))
-        data["characters"] = self.dict_items(data.get("characters"))
-        data["terms"] = self.dict_items(data.get("terms"))
+        characters = self.dict_items(data.get("characters"))
+        for character in characters:
+            character["type"] = _text(
+                character.get("type"), languages.default_person_type(self.tgt)
+            )
+            character["gender"] = _text(character.get("gender"))
+            character["note"] = _text(character.get("note"))
+        terms = self.dict_items(data.get("terms"))
+        for term in terms:
+            term["type"] = _text(
+                term.get("type"), languages.default_term_type(self.tgt)
+            )
+            term["note"] = _text(term.get("note"))
+        data["characters"] = characters
+        data["terms"] = terms
         return data
 
     def seed_glossary(self, store: GlossaryStore, analysis: dict[str, Any]) -> int:
@@ -60,7 +79,9 @@ class Analyzer(Agent):
                     source=source,
                     target=target,
                     reading=_text(ch.get("reading")),
-                    type=TYPE_PERSON,
+                    type=_text(
+                        ch.get("type"), languages.default_person_type(self.tgt)
+                    ),
                     gender=_text(ch.get("gender")),
                     note=_text(ch.get("note")),
                     first_chapter=0,
@@ -78,7 +99,9 @@ class Analyzer(Agent):
                     source=source,
                     target=target,
                     reading=_text(tm.get("reading")),
-                    type=_text(tm.get("type"), "术语"),
+                    type=_text(
+                        tm.get("type"), languages.default_term_type(self.tgt)
+                    ),
                     note=_text(tm.get("note")),
                     first_chapter=0,
                 ),
@@ -89,24 +112,5 @@ class Analyzer(Agent):
 
     def style_brief(self, analysis: dict[str, Any]) -> str:
         """把分析结果浓缩成给译者注入的风格/角色简报。"""
-        lines = []
-        if analysis.get("genre"):
-            lines.append(f"体裁：{analysis['genre']}")
-        if analysis.get("tone"):
-            lines.append(f"语气文体：{analysis['tone']}")
-        if analysis.get("style_guide"):
-            lines.append(f"风格指南：{analysis['style_guide']}")
-        # 细粒度风格维度（旧 analysis.json 缺字段时自动跳过，向后兼容）
-        for key, tag in (("narration", "叙事"), ("pacing", "句式节奏"),
-                         ("register", "语域"), ("dialogue_style", "对话风格"),
-                         ("rhetoric", "修辞")):
-            if analysis.get(key):
-                lines.append(f"{tag}：{analysis[key]}")
         chars = self.dict_items(analysis.get("characters"))
-        if chars:
-            lines.append("角色：")
-            for c in chars:
-                g = f"，{c.get('gender')}" if c.get("gender") else ""
-                note = f"，{c.get('note')}" if c.get("note") else ""
-                lines.append(f"  - {c.get('target', c.get('source',''))}({c.get('source','')}{g}{note})")
-        return "\n".join(lines)
+        return languages.style_brief(analysis, chars, target=self.tgt)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from .. import languages
 from ..agents import prompts
 from ..agents.base import Agent
 from .store import GlossaryStore, GlossaryTerm
@@ -27,7 +28,7 @@ class GlossaryExtractor(Agent):
         system = prompts.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "glossary_extractor_user", src=self.src, tgt=self.tgt,
-            glossary=prompts.render_glossary(existing),
+            glossary=prompts.render_glossary(existing, tgt=self.tgt),
             source=source_text, target=target_text,
         )
         raw = self._ask_json(system, user, tier="fast", key="terms", default=[])
@@ -40,12 +41,14 @@ class GlossaryExtractor(Agent):
             raw_aliases = d.get("aliases")
             aliases = raw_aliases if isinstance(raw_aliases, list) else []
             gender = _text(d.get("gender"))
+            if gender.casefold() in {"unknown", "未知", "不明"}:
+                gender = ""
             terms.append(GlossaryTerm(
                 source=source,
                 target=target,
                 reading=_text(d.get("reading")),
-                type=_text(d.get("type"), "术语"),
-                gender="" if gender == "未知" else gender,
+                type=_text(d.get("type"), languages.default_term_type(self.tgt)),
+                gender=gender,
                 aliases=[alias for a in aliases if (alias := _text(a))],
                 note=_text(d.get("note")),
             ))

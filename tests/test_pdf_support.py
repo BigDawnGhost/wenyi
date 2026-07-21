@@ -16,6 +16,7 @@ from trans_novel.ingest.errors import MinerUError
 from trans_novel.ingest.models import Document
 from trans_novel.ingest.segmenter import load_document
 from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.locales import message as ui_message
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
@@ -91,7 +92,7 @@ class TestPdfIngest(unittest.TestCase):
                 "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
                 side_effect=RuntimeError("connection reset"),
             ):
-                with self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised:
+                with self.assertRaises(MinerUError) as raised:
                     load_document(
                         pdf_path,
                         "en",
@@ -99,6 +100,10 @@ class TestPdfIngest(unittest.TestCase):
                         cache_dir=cache_dir,
                     )
 
+        self.assertEqual(
+            str(raised.exception),
+            ui_message("error.pdf_conversion_failed", error="connection reset"),
+        )
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
     def test_orchestrator_uses_state_cache_and_resume_skips_pdf_parse(self):

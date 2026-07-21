@@ -4,7 +4,7 @@
 
 ![文译双语对照版阅读效果](../images/bilingual-preview.png)
 
-将多语言 EPUB、FB2、TXT、Markdown、HTML 和 PDF 小说翻译为中文的命令行工具。它以长篇小说的翻译质量为重点：全书预扫、滚动上下文、实时术语库、润色和审校均可按需启用。
+用于多语言 EPUB、FB2、TXT、Markdown、HTML 和 PDF 小说互译的命令行工具。首版多目标语言支持正式覆盖简体中文（`zh`）与英语（`en`），默认仍译为中文。它以长篇小说的翻译质量为重点：全书预扫、滚动上下文、实时术语库、润色和审校均可按需启用。
 
 ## 快速开始
 
@@ -16,7 +16,7 @@ export DEEPSEEK_API_KEY=sk-...
 uv run trans-novel translate book.epub
 ```
 
-翻译完成后，默认在源文件所在目录的 `output/` 中生成单语中文版 `book.zh.epub`；也可按需生成原文对照版 `book.zh-bi.epub`。运行状态、章节 JSON、术语库和报告写入 `state/`。中断后重新执行同一条 `translate` 命令即可续跑：
+翻译完成后，默认在源文件所在目录的 `output/` 中生成中文单语版 `book.zh.epub`。将 `language.target` 改为 `en` 后生成 `book.en.epub`；对应双语版分别命名为 `book.zh-bi.epub` 与 `book.en-bi.epub`。运行状态、章节 JSON、术语库和报告写入 `state/`。中断后重新执行同一条 `translate` 命令即可续跑：
 
 ```bash
 uv run trans-novel translate book.epub
@@ -42,8 +42,8 @@ uv run trans-novel review book.epub --force --fix
 
 - 输入：EPUB、FB2、TXT、Markdown、HTML、PDF。
 - 输出：默认生成单语 EPUB，可选双语对照版；也可导出 TXT、HTML 或 Markdown。
-- PDF：首次读取通过 MinerU 转换为 `state/<书名>/source/converted.html`，需设置 `MINERU_API_KEY`；后续运行直接复用该缓存。
-- EPUB：尽量保留原书样式、图片、目录与锚点；译文元数据默认设为简体中文，并将竖排样式转为横排。
+- PDF：首次读取通过 MinerU 转换到目标语言对应的状态目录，例如简体中文为 `state/<书名>/source/converted.html`、英文为 `state/<书名>@en/source/converted.html`；需设置 `MINERU_API_KEY`，后续运行直接复用该缓存。
+- EPUB：尽量保留原书样式、图片、目录与锚点；译文元数据按目标语言写入，并将竖排样式转为横排。
 - 语言：默认由模型识别源语言，也可在 `config.yaml` 固定为语言代码。
 
 可通过命令行临时选择产物：

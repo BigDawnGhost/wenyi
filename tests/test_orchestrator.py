@@ -12,13 +12,16 @@ from unittest.mock import patch
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
+from trans_novel.languages import normalize_detected_language
+from trans_novel.locales import message as ui_message
+from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import (
     REVIEW_DONE,
     REVIEW_FAILED,
     REVIEW_PENDING,
     STATUS_DONE,
     STATUS_PENDING,
+    run_slug,
 )
 from tests.sample_data import write_sample_txt
 from tests.fake_llm import routing_handler
@@ -46,6 +49,82 @@ def _config(state_dir: str):
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_state_slug_keeps_zh_path_and_isolates_english(self):
+        self.assertEqual(run_slug("A Book", "zh"), "A_Book")
+        self.assertEqual(run_slug("A Book", "zh-Hans"), "A_Book")
+        self.assertEqual(run_slug("A Book", "en"), "A_Book@en")
+        self.assertEqual(run_slug("A Book", "en-us"), "A_Book@en-US")
+        self.assertEqual(run_slug("A Book", "zh-Hant"), "A_Book@zh-Hant")
+        self.assertNotEqual(run_slug("A Book__en", "zh"), run_slug("A Book", "en"))
+
+    def test_manifest_restores_language_pair_for_every_agent(self):
+        cfg = _config("state")
+        cfg.source_lang = "auto"
+        cfg.target_lang = "en"
+        orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+
+        orch._restore_manifest_languages(
+            {"source_lang": "ru", "target_lang": "en"}
+        )
+
+        self.assertEqual(cfg.source_lang, "ru")
+        self.assertEqual(cfg.target_lang, "en")
+        for agent in (
+            orch.analyzer,
+            orch.synopsizer,
+            orch.translator,
+            orch.reviewer,
+            orch.backtrans,
+            orch.polisher,
+            orch.extractor,
+        ):
+            self.assertEqual(agent.src, "ru")
+            self.assertEqual(agent.tgt, "en")
+
+    def test_manifest_rejects_explicit_source_mismatch(self):
+        cfg = _config("state")
+        cfg.source_lang = "ja"
+        cfg.target_lang = "en"
+        orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+
+        with self.assertRaises(ValueError) as raised:
+            orch._restore_manifest_languages(
+                {"source_lang": "ru", "target_lang": "en"}
+            )
+        self.assertEqual(
+            str(raised.exception),
+            ui_message(
+                "error.source_mismatch",
+                configured="ja",
+                stored="ru",
+            ),
+        )
+
+    def test_manifest_accepts_equivalent_simplified_chinese_target(self):
+        cfg = _config("state")
+        cfg.target_lang = "zh-Hans"
+        orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+
+        orch._restore_manifest_languages(
+            {"source_lang": "ja", "target_lang": "zh"}
+        )
+
+        self.assertEqual(cfg.target_lang, "zh")
+
+    def test_english_prepare_uses_separate_state_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.target_lang = "en"
+
+            store = Orchestrator(
+                cfg, client=FakeClient(handler=routing_handler)
+            ).prepare(txt)
+
+            self.assertTrue(os.path.basename(store.run_dir).endswith("@en"))
+            self.assertEqual(store.load_manifest()["target_lang"], "en")
+
     def test_prepare_retries_after_analysis_failure(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
@@ -522,10 +601,19 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             cfg.pipeline.autofix_severe = False
 
-            with self.assertWarnsRegex(RuntimeWarning, "无效审校索引"):
+            with self.assertWarns(RuntimeWarning) as caught:
                 orch = Orchestrator(cfg, client=FakeClient(handler=handler))
                 orch.run(txt)
                 store = orch.run_review(txt, autofix=False)["store"]
+
+            self.assertEqual(
+                str(caught.warning),
+                ui_message(
+                    "warning.review_index_invalid",
+                    index="'unknown'",
+                    count=4,
+                ),
+            )
 
             self.assertEqual(store.load_chapter(0).meta["review_issues"], [])
 
@@ -578,8 +666,13 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             store = orch.run(txt, only_chapter=0)
 
-            with self.assertRaisesRegex(ValueError, "所有章节先完成翻译"):
+            with self.assertRaises(ValueError) as raised:
                 orch.run_review(txt)
+
+            self.assertEqual(
+                str(raised.exception),
+                ui_message("error.review_incomplete", chapters="1"),
+            )
 
             self.assertEqual(
                 store.load_manifest()["chapters"][0]["review_status"],
@@ -598,9 +691,14 @@ class TestReviewReporting(unittest.TestCase):
 
             with (
                 patch("trans_novel.pipeline.orchestrator.load_document") as loader,
-                self.assertRaisesRegex(ValueError, "尚无翻译进度"),
+                self.assertRaises(ValueError) as raised,
             ):
                 orch.run_review(pdf)
+
+            self.assertEqual(
+                str(raised.exception),
+                ui_message("error.translation_state_missing"),
+            )
 
             loader.assert_not_called()
             self.assertEqual(client.calls, [])
@@ -614,8 +712,13 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = FakeClient(handler=routing_handler)
 
-            with self.assertRaisesRegex(ValueError, "尚无翻译进度"):
+            with self.assertRaises(ValueError) as raised:
                 Orchestrator(cfg, client=client).run_review(txt)
+
+            self.assertEqual(
+                str(raised.exception),
+                ui_message("error.translation_state_missing"),
+            )
 
             self.assertEqual(client.calls, [])
             self.assertFalse(os.path.exists(cfg.state_dir))
@@ -911,20 +1014,23 @@ class TestTierRouting(unittest.TestCase):
 
 class TestLangNormalize(unittest.TestCase):
     def test_normalize_lang(self):
-        self.assertEqual(_normalize_lang("Japanese"), "ja")
-        self.assertEqual(_normalize_lang("日语"), "ja")
-        self.assertEqual(_normalize_lang("RU"), "ru")
-        self.assertEqual(_normalize_lang("russian"), "ru")
-        self.assertEqual(_normalize_lang("fr"), "fr")
-        self.assertEqual(_normalize_lang("unknown"), "")
-        self.assertEqual(_normalize_lang(""), "")
+        self.assertEqual(normalize_detected_language("Japanese"), "ja")
+        self.assertEqual(normalize_detected_language("日语"), "ja")
+        self.assertEqual(normalize_detected_language("RU"), "ru")
+        self.assertEqual(normalize_detected_language("russian"), "ru")
+        self.assertEqual(normalize_detected_language("fr"), "fr")
+        self.assertEqual(normalize_detected_language("unknown"), "")
+        self.assertEqual(normalize_detected_language(""), "")
 
 
 class TestProgressLabels(unittest.TestCase):
     def test_progress_label_prefers_real_title(self):
         self.assertEqual(Orchestrator._chapter_progress_label("引言", 0), "引言")
         self.assertEqual(Orchestrator._chapter_progress_label("第一章", 1), "第一章")
-        self.assertEqual(Orchestrator._chapter_progress_label("", 1), "章节 2")
+        self.assertEqual(
+            Orchestrator._chapter_progress_label("", 1),
+            ui_message("progress.chapter_fallback", chapter=2),
+        )
 
     def test_consistency_label_prefers_real_title(self):
         from trans_novel.agents.consistency import ConsistencyChecker
@@ -948,19 +1054,22 @@ class TestProgressLabels(unittest.TestCase):
 
             labels = [label for _, _, label in events]
             expected = [
-                "解析文档…",
-                "分析全书风格…",
-                "预扫章节梗概",
-                "生成全书概览…",
-                "翻译章节标题…",
-                "翻译完成",
-                "一致性 QA…",
-                "生成报告…",
-                "回填译文…",
+                ui_message("progress.parsing_document"),
+                ui_message("progress.analyzing_style"),
+                ui_message("progress.prescan_chapters"),
+                ui_message("progress.generating_overview"),
+                ui_message("progress.translating_titles"),
+                ui_message("progress.translation_complete"),
+                ui_message("progress.consistency_qa"),
+                ui_message("progress.generating_report"),
+                ui_message("progress.assembling_translation"),
             ]
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
-            self.assertIn((0, 0, "生成全书概览…"), events)
+            self.assertIn(
+                (0, 0, ui_message("progress.generating_overview")),
+                events,
+            )
 
 
 if __name__ == "__main__":

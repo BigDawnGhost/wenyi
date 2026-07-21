@@ -4,7 +4,7 @@
 
 ![Wenyi bilingual EPUB preview](docs/images/bilingual-preview.png)
 
-Wenyi is a command-line tool for translating EPUB, FB2, TXT, Markdown, HTML, and PDF novels from multiple languages into Chinese. It focuses on long-form translation quality through whole-book analysis, rolling context, an evolving glossary, polishing, and review stages.
+Wenyi is a command-line tool for translating EPUB, FB2, TXT, Markdown, HTML, and PDF novels across languages. This first multilingual release officially supports Simplified Chinese (`zh`) and English (`en`) as target languages. It focuses on long-form translation quality through whole-book analysis, rolling context, an evolving glossary, polishing, and review stages.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ export DEEPSEEK_API_KEY=sk-...
 uv run trans-novel translate book.epub
 ```
 
-By default, Wenyi writes a monolingual Chinese EPUB to the source file's `output/` directory as `book.zh.epub`. A bilingual source-and-translation edition can be enabled when needed. Runtime state, chapter JSON files, the glossary database, and reports are stored under `state/`. To continue an interrupted run, execute the same `translate` command again:
+By default, Wenyi translates into Simplified Chinese and writes `book.zh.epub` to the source file's `output/` directory. Set `language.target: en` in `config.yaml` to produce an English translation named `book.en.epub`. Optional bilingual editions use `book.zh-bi.epub` or `book.en-bi.epub`. Runtime state, chapter JSON files, the glossary database, and reports are stored under `state/`. To continue an interrupted run, execute the same `translate` command again:
 
 ```bash
 uv run trans-novel translate book.epub
@@ -43,9 +43,10 @@ uv run trans-novel review book.epub --force --fix
 
 - Input: EPUB, FB2, TXT, Markdown, HTML, and PDF.
 - Output: monolingual EPUB by default, optional bilingual EPUB, or TXT, HTML, and Markdown exports.
-- PDF import: the first run uses MinerU and requires `MINERU_API_KEY`. The converted HTML is cached at `state/<book>/source/converted.html` and reused by later runs.
+- PDF import: the first run uses MinerU and requires `MINERU_API_KEY`. The converted HTML is cached inside the target-specific run directory (for example `state/<book>/source/converted.html` for Simplified Chinese or `state/<book>@en/source/converted.html` for English) and reused by later runs.
 - EPUB preservation: Wenyi attempts to retain the original styles, images, table of contents, and anchors while converting translated content to horizontal layout.
 - Language detection: the source language is detected automatically by default, or it can be fixed to an ISO language code in `config.yaml`.
+- Target language: `zh` and `en` are officially supported in this first version; `zh` remains the default.
 
 Select output editions from the command line:
 

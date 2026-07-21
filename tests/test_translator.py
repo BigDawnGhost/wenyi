@@ -7,9 +7,10 @@ import re
 import unittest
 
 from trans_novel.config import Config
-from trans_novel.agents import prompts
+from trans_novel.languages import get_bundle
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.agents.translator import Translator
+from trans_novel.locales import message as ui_message
+from trans_novel.assemble.translator import Translator
 from trans_novel.pipeline.checks import length_flags
 
 
@@ -65,8 +66,12 @@ class TestTranslatorAlignment(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+        with self.assertRaises(Exception) as raised:
             translator.translate_batch(["あ", "い"])
+        self.assertEqual(
+            str(raised.exception),
+            ui_message("error.translation_fallback_failed", index=0),
+        )
 
     def test_non_string_translation_is_rejected(self):
         client = FakeClient(
@@ -76,17 +81,25 @@ class TestTranslatorAlignment(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+        with self.assertRaises(Exception) as raised:
             translator.translate_batch(["あ"])
+        self.assertEqual(
+            str(raised.exception),
+            ui_message("error.translation_fallback_failed", index=0),
+        )
 
 
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_chapter_digest_precedes_dynamic_glossary(self):
-        for template in (prompts.TRANSLATOR_USER, prompts.TRANSLATOR_FIX_USER):
-            self.assertLess(
-                template.template.index("【本章梗概】"),
-                template.template.index("【专有名词对照表】"),
-            )
+        for target, digest, glossary in (
+            ("zh", "【本章梗概】", "【专有名词对照表】"),
+            ("en", "[Chapter digest]", "[Proper-noun glossary"),
+        ):
+            with self.subTest(target=target):
+                bundle = get_bundle(target)
+                for name in ("translator_user", "translator_fix_user"):
+                    template = bundle.templates[name].template
+                    self.assertLess(template.index(digest), template.index(glossary))
 
 
 class TestChecks(unittest.TestCase):
@@ -97,6 +110,16 @@ class TestChecks(unittest.TestCase):
         kinds = {f.index: f.reason for f in flags}
         self.assertEqual(kinds.get(0), "empty")     # 译文为空
         self.assertEqual(kinds.get(2), "too_long")  # 比值过大
+
+    def test_cjk_to_english_uses_language_aware_length_limit(self):
+        flags = length_flags(
+            ["先生。", "雪国"],
+            ["Professor.", "Snow Country"],
+            source_lang="ja",
+            target_lang="en",
+        )
+
+        self.assertEqual(flags, [])
 
 
 if __name__ == "__main__":

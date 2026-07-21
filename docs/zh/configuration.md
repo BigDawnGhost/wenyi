@@ -12,7 +12,15 @@ language:
   target: zh
 ```
 
-`source: auto` 会调用模型识别源语言；也可以写死 ISO 639-1 代码，例如 `ja`、`en`、`ko`、`ru`、`fr`、`de`、`es`。目标语言目前为简体中文。
+`source: auto` 会调用模型识别源语言；也可以写死 ISO 639-1 代码，例如 `ja`、`en`、`ko`、`ru`、`fr`、`de`、`es`。首版多目标语言支持正式覆盖简体中文（`zh`，默认）与英语（`en`）。要生成英文译本，只需改为：
+
+```yaml
+language:
+  source: auto
+  target: en
+```
+
+每种目标语言应单独运行。简体中文继续使用 `state/<书名>` 以兼容已有进度；其它目标使用 `state/<书名>@<目标语言>`，因此英文翻译不会覆盖中文翻译状态。
 
 ## 模型
 
@@ -194,8 +202,8 @@ output:
   about_page: true
 ```
 
-- `mono`：生成单语中文版，文件名为 `<书名>.zh.epub`。
-- `bilingual`：生成原文与译文对照版，文件名为 `<书名>.zh-bi.epub`。
+- `mono`：生成目标语言单语版，命名为 `<书名>.<目标语言>.epub`，例如 `<书名>.zh.epub` 或 `<书名>.en.epub`。
+- `bilingual`：生成原文与译文对照版，命名为 `<书名>.<目标语言>-bi.epub`，例如 `<书名>.zh-bi.epub` 或 `<书名>.en-bi.epub`。
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
 - `bilingual_preserve_source_style`：设为 `true` 时，原文继承书籍正文样式，不使用灰色淡化背景；仅影响 EPUB 和 HTML。
 - `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
@@ -222,5 +230,5 @@ paths:
 - `max_chars_per_batch`：单个模型翻译批次的目标字符数。
 - `max_chars_per_segment`：超长段落的拆分阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
-- `punctuation.normalize`：统一简体中文大陆常用全角标点。
+- `punctuation.normalize`：启用确定性标点后处理。中文目标执行既有的中文标点规范化；英文目标仅将引号和撇号规范为 ASCII 半角形式，其他标点由提示词约束。
 - `state_dir`：断点、章节产物、术语库和报告的位置。

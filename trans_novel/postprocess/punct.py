@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 
+from ..locales import message as ui_message
+
 _CJK = (
     "一-鿿"      # CJK 统一汉字
     "぀-ヿ"      # 假名（保险）
@@ -145,7 +147,7 @@ def normalize_zh_segments(
     if continuations is None:
         continuations = [False] * len(texts)
     if len(continuations) != len(texts):
-        raise ValueError("texts 与 continuations 数量必须一致")
+        raise ValueError(ui_message("error.punctuation_segment_count_mismatch"))
 
     normalized: list[str] = []
     double_open = True

@@ -20,9 +20,10 @@ from trans_novel.assemble.writer import (
     _inject_bilingual_style,
     _render_chapter_html,
     _rewrite_html_document,
+    _rewrite_opf_metadata,
     assemble,
 )
-from trans_novel.assemble.about import append_about_page
+from trans_novel.assemble.about import about_xhtml, append_about_page
 from trans_novel.assemble.report import build_report
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest.segmenter import load_document
@@ -225,8 +226,76 @@ class TestAssembleText(unittest.TestCase):
             alltext = "".join(s.source for c in doc.chapters for s in c.text_segments)
             self.assertIn("润", alltext)
 
+    def test_english_target_controls_epub_name_metadata_and_about_page(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            store, _ = _run(txt, os.path.join(d, "state"))
+            manifest = store.load_manifest()
+            manifest["target_lang"] = "en"
+            store.save_manifest(manifest)
+
+            out = assemble(store, txt, out_format="epub")
+
+            self.assertEqual(os.path.basename(out), "novel.en.epub")
+            with zipfile.ZipFile(out) as archive:
+                opf_name = next(
+                    name for name in archive.namelist() if name.endswith(".opf")
+                )
+                opf = BeautifulSoup(archive.read(opf_name), "xml")
+                language_element = opf.find("language")
+                self.assertIsNotNone(language_element)
+                assert language_element is not None
+                self.assertEqual(language_element.get_text(strip=True), "en")
+
+                chapter_name = next(
+                    name for name in archive.namelist() if name.endswith("/ch0.xhtml")
+                )
+                chapter = archive.read(chapter_name).decode("utf-8")
+                self.assertIn('xml:lang="en"', chapter)
+
+                about_name = next(
+                    name
+                    for name in archive.namelist()
+                    if name.endswith("trans-novel-about.xhtml")
+                )
+                about = archive.read(about_name).decode("utf-8")
+                self.assertIn("About This Translation", about)
+                self.assertIn('xml:lang="en"', about)
+                self.assertNotIn("关于此翻译", about)
+
+    def test_about_page_is_localized_by_target_language(self):
+        chinese = about_xhtml("zh-Hans").decode("utf-8")
+        english = about_xhtml("en").decode("utf-8")
+
+        self.assertIn("关于此翻译", chinese)
+        self.assertIn("About This Translation", english)
+        self.assertNotIn("翻译为中文", english)
+
 
 class TestAssembleEpub(unittest.TestCase):
+    def test_opf_export_keeps_only_the_target_language(self):
+        opf = b"""<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <metadata>
+    <dc:title>Book</dc:title>
+    <dc:language>ja</dc:language>
+    <dc:language>fr</dc:language>
+  </metadata>
+</package>"""
+
+        rewritten = _rewrite_opf_metadata(
+            opf,
+            book_title="",
+            lang="en",
+            force_horizontal=False,
+        )
+        soup = BeautifulSoup(rewritten, "xml")
+        languages = soup.find_all(["dc:language", "language"])
+
+        self.assertEqual([item.get_text() for item in languages], ["en"])
+
     def test_nested_fragment_id_survives_textual_markup_flattening(self):
         html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
         title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")

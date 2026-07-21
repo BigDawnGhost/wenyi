@@ -9,9 +9,15 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from trans_novel.cli import _apply_store_languages, _configure_windows_console, app
+from trans_novel.cli import (
+    _apply_store_languages,
+    _configure_windows_console,
+    _runstore_for,
+    app,
+)
 from trans_novel.config import Config
 from trans_novel.ingest.errors import MinerUError
+from trans_novel.pipeline.runstore import RunStore
 
 
 class FakeStore:
@@ -24,7 +30,7 @@ class FakeStore:
 class TestCliConfig(unittest.TestCase):
     def test_standalone_tools_restore_manifest_languages(self):
         cfg = Config.from_dict(
-            {"language": {"source": "auto", "target": "zh"}}
+            {"language": {"source": "auto", "target": "en"}}
         )
 
         class Store:
@@ -36,6 +42,66 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(cfg.source_lang, "ru")
         self.assertEqual(cfg.target_lang, "en")
+
+    def test_standalone_tools_reject_manifest_target_mismatch(self):
+        cfg = Config.from_dict(
+            {"language": {"source": "auto", "target": "en"}}
+        )
+
+        class Store:
+            @staticmethod
+            def load_manifest():
+                return {"source_lang": "ru", "target_lang": "zh"}
+
+        with self.assertRaises(ValueError):
+            _apply_store_languages(cfg, Store())
+
+    def test_runstore_lookup_is_isolated_by_target_language(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = os.path.join(directory, "sample.pdf")
+            with open(pdf, "wb"):
+                pass
+            state_dir = os.path.join(directory, "state")
+
+            zh = Config.from_dict(
+                {
+                    "language": {"source": "auto", "target": "zh"},
+                    "paths": {"state_dir": state_dir},
+                }
+            )
+            en = Config.from_dict(
+                {
+                    "language": {"source": "auto", "target": "en"},
+                    "paths": {"state_dir": state_dir},
+                }
+            )
+
+            self.assertEqual(
+                _runstore_for(zh, pdf).run_dir,
+                os.path.join(state_dir, "sample"),
+            )
+            self.assertEqual(
+                _runstore_for(en, pdf).run_dir,
+                os.path.join(state_dir, "sample@en"),
+            )
+
+    def test_runstore_lookup_validates_existing_manifest_language(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = os.path.join(directory, "sample.pdf")
+            with open(pdf, "wb"):
+                pass
+            state_dir = os.path.join(directory, "state")
+            store = RunStore(os.path.join(state_dir, "sample@en"))
+            store.save_manifest({"source_lang": "ru", "target_lang": "zh"})
+            config = Config.from_dict(
+                {
+                    "language": {"source": "auto", "target": "en"},
+                    "paths": {"state_dir": state_dir},
+                }
+            )
+
+            with self.assertRaises(ValueError):
+                _runstore_for(config, pdf)
 
     def test_every_cli_start_checks_default_config(self):
         runner = CliRunner()
@@ -194,8 +260,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertIn("准备完成", result.output)
-        self.assertIn("预扫 2/2 章", result.output)
+        self.assertIn("2/2", result.output)
 
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
@@ -213,7 +278,7 @@ class TestCliConfig(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("--chapter 只翻译并保存指定章节", result.output)
+        self.assertIn("--chapter", result.output)
         self.assertIn("--qa/--no-qa", result.output)
 
     def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
@@ -277,7 +342,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(captured["input_path"], "input.txt")
         self.assertTrue(captured["kwargs"]["force"])
         self.assertTrue(captured["kwargs"]["autofix"])
-        self.assertIn("发现 1 项问题", result.output)
+        self.assertIn("1", result.output)
 
     def test_translate_missing_input_exits_before_loading_config(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
@@ -288,7 +353,7 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("输入文件不存在", result.output)
+        self.assertIn(missing, result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
         cfg = Config.from_dict(
@@ -334,7 +399,7 @@ class TestCliConfig(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 2, result.output)
-        self.assertIn("不支持的输出格式", result.output)
+        self.assertIn("pdf", result.output)
 
     def test_translate_reports_out_of_range_chapter_without_traceback(self):
         cfg = Config.from_dict({"llm": {"provider": "fake"}})
@@ -376,7 +441,6 @@ class TestCliConfig(unittest.TestCase):
                 result = CliRunner().invoke(app, ["status", src])
 
             self.assertEqual(result.exit_code, 1, result.output)
-            self.assertIn("尚无进度", result.output)
             self.assertFalse(os.path.exists(state_dir))
 
 

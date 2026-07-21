@@ -8,24 +8,29 @@ import tempfile
 import unittest
 import zipfile
 
-from trans_novel.config import Config
-from trans_novel.agents.langprofile import honorific_rule
-from trans_novel.postprocess.punct import normalize_zh, normalize_zh_segments
-from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.orchestrator import Orchestrator
-from tests.sample_data import write_sample_txt
 from tests.fake_llm import routing_handler
+from tests.sample_data import write_sample_txt
+from trans_novel.config import Config
+from trans_novel.languages import pair_guidance
+from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.locales import message as ui_message
+from trans_novel.pipeline.orchestrator import Orchestrator
+from trans_novel.postprocess.punct import normalize_zh, normalize_zh_segments
 
 
 class TestModelLanguageDetection(unittest.TestCase):
     def _cfg(self, state: str) -> Config:
-        return Config.from_dict({
-            "language": {"source": "auto", "target": "zh"},
-            "llm": {"provider": "fake", "tiers": {
-                "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-            "pipeline": {"book_understanding": False},
-            "paths": {"state_dir": state},
-        })
+        return Config.from_dict(
+            {
+                "language": {"source": "auto", "target": "zh"},
+                "llm": {
+                    "provider": "fake",
+                    "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                },
+                "pipeline": {"book_understanding": False},
+                "paths": {"state_dir": state},
+            }
+        )
 
     def test_auto_uses_model_detection(self):
         with tempfile.TemporaryDirectory() as d:
@@ -34,7 +39,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = self._cfg(os.path.join(d, "state"))
 
             def handler(messages, tier, json_mode):
-                if "语言识别器" in messages[0]["content"]:
+                if "Identify the main natural language" in messages[0]["content"]:
                     return json.dumps({"language": "russian"}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
@@ -49,7 +54,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = self._cfg(os.path.join(d, "state"))
 
             def handler(messages, tier, json_mode):
-                if "语言识别器" in messages[0]["content"]:
+                if "Identify the main natural language" in messages[0]["content"]:
                     return json.dumps({"language": ""}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
@@ -60,11 +65,13 @@ class TestModelLanguageDetection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
-            cfg = Config.from_dict({
-                "language": {"source": "ja", "target": "ja-JP"},
-                "llm": {"provider": "fake"},
-                "paths": {"state_dir": os.path.join(d, "state")},
-            })
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "ja", "target": "ja-JP"},
+                    "llm": {"provider": "fake"},
+                    "paths": {"state_dir": os.path.join(d, "state")},
+                }
+            )
             client = FakeClient(handler=routing_handler)
 
             with self.assertRaisesRegex(ValueError, "源语言与目标语言相同（ja）"):
@@ -79,7 +86,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = self._cfg(os.path.join(d, "state"))
 
             def handler(messages, tier, json_mode):
-                if "语言识别器" in messages[0]["content"]:
+                if "Identify the main natural language" in messages[0]["content"]:
                     return json.dumps({"language": "chinese"}, ensure_ascii=False)
                 raise AssertionError("相同语言不应继续进入分析或翻译")
 
@@ -124,10 +131,14 @@ class TestPunct(unittest.TestCase):
         )
 
     def test_continuation_flags_must_align_with_texts(self):
-        with self.assertRaisesRegex(ValueError, "数量必须一致"):
+        with self.assertRaises(ValueError) as raised:
             normalize_zh_segments(["第一段"], [])
+        self.assertEqual(
+            str(raised.exception),
+            ui_message("error.punctuation_segment_count_mismatch"),
+        )
 
-    def test_non_chinese_target_does_not_enable_chinese_normalization(self):
+    def test_english_target_enables_target_specific_quote_normalization(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg = Config.from_dict(
                 {
@@ -138,12 +149,12 @@ class TestPunct(unittest.TestCase):
             )
             orchestrator = Orchestrator(cfg, client=FakeClient())
 
-        self.assertFalse(orchestrator._punctuation_enabled())
+        self.assertTrue(orchestrator._punctuation_enabled())
 
 
 class TestLanguageProfile(unittest.TestCase):
     def test_keep_style_requires_stable_honorific_choice(self):
-        rule = honorific_rule("keep_style")
+        rule = pair_guidance("ja", "zh", "keep_style")
 
         self.assertIn("确定后同一关系全书沿用", rule)
         self.assertNotIn("可酌情保留", rule)
@@ -155,18 +166,27 @@ class TestRunAll(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             state = os.path.join(d, "state")
-            cfg = Config.from_dict({
-                "language": {"source": "auto", "target": "zh"},
-                "llm": {"provider": "fake", "tiers": {
-                    "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-                "pipeline": {"review": True, "polish": True,
-                             "backtranslate_sample": 0.0, "consistency_qa": True},
-                "paths": {"state_dir": state},
-            })
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "auto", "target": "zh"},
+                    "llm": {
+                        "provider": "fake",
+                        "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                    },
+                    "pipeline": {
+                        "review": True,
+                        "polish": True,
+                        "backtranslate_sample": 0.0,
+                        "consistency_qa": True,
+                    },
+                    "paths": {"state_dir": state},
+                }
+            )
             seen = []
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             result = orch.run_all(
-                txt, progress=lambda done, total, label: seen.append((done, total)),
+                txt,
+                progress=lambda done, total, label: seen.append((done, total)),
                 out_format="epub",
             )
             self.assertTrue(result["output"].endswith(".epub"))

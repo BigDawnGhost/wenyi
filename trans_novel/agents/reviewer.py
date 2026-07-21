@@ -8,18 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import langprofile, prompts
+from . import prompts
 from .base import Agent
-
-
-def _backtrans_compare_system(src: str) -> str:
-    """生成回译语义比对所需的系统提示词。"""
-    lbl = langprofile.label(src)
-    return (
-        f"你是翻译保真度核查员。给定原文（{lbl}）与由译文回译得到的{lbl}，"
-        "判断两者语义是否一致。只报实质性偏离（信息缺失、含义改变），忽略措辞差异。"
-        '仅输出 JSON：{"issues":[{"index":整数,"detail":"偏离描述"}]}，无偏离则 {"issues":[]}。'
-    )
 
 
 class Reviewer(Agent):
@@ -31,9 +21,9 @@ class Reviewer(Agent):
         system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "reviewer_user", src=self.src, tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(glossary_terms or [], tgt=self.tgt),
             n=len(sources),
-            pairs=prompts.numbered_pairs(sources, targets),
+            pairs=prompts.numbered_pairs(sources, targets, tgt=self.tgt),
         )
         return self.dict_items(
             self._ask_json(system, user, tier="cheap", key="issues"))
@@ -58,9 +48,16 @@ class BackTranslator(Agent):
         back = self.backtranslate(targets)
         if len(back) != len(sources):
             return []  # 回译对齐失败则跳过，不阻塞
-        pairs = "\n".join(
-            f"[{i}] 原文：{s}\n    回译：{b}" for i, (s, b) in enumerate(zip(sources, back))
+        pairs = prompts.backtranslation_pairs(
+            sources,
+            back,
+            tgt=self.tgt,
+        )
+        system = prompts.render(
+            "backtranslation_compare_system",
+            src=self.src,
+            tgt=self.tgt,
         )
         return self.dict_items(
-            self._ask_json(_backtrans_compare_system(self.src), pairs,
+            self._ask_json(system, pairs,
                            tier="cheap", key="issues", default=[]))

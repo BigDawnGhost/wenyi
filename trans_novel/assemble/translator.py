@@ -9,9 +9,10 @@
 
 from __future__ import annotations
 
-from ..agents import langprofile, prompts
+from ..agents import prompts
 from ..agents.base import Agent
 from ..glossary.store import GlossaryTerm
+from ..locales import message as ui_message
 
 
 class AlignmentError(Exception):
@@ -32,27 +33,33 @@ class Translator(Agent):
         n = len(sources)
         system = prompts.render(
             "translator_system", src=self.src, tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(
-                self.src, self.config.honorific_strategy),
+            honorific_strategy=self.config.honorific_strategy,
         )
+        empty = prompts.empty(tgt=self.tgt)
         user = prompts.render(
             "translator_user", src=self.src, tgt=self.tgt,
-            style=style or "（无）",
-            book_synopsis=book_synopsis or "（无）",
-            glossary=prompts.render_glossary(glossary_terms),
-            chapter_digest=chapter_digest or "（无）",
-            context=context or "（无）",
+            style=style or empty,
+            book_synopsis=book_synopsis or empty,
+            glossary=prompts.render_glossary(glossary_terms, tgt=self.tgt),
+            chapter_digest=chapter_digest or empty,
+            context=context or empty,
             n=n, n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
         )
         # 不传 default：调用失败照常抛出，由 translate_batch 的重试/兜底逻辑处理
         items = self._ask_json(system, user, tier="strong", key="translations")
         if not isinstance(items, list):
-            raise AlignmentError("模型未返回译文数组")
+            raise AlignmentError(ui_message("error.translation_array_missing"))
         if len(items) != n:
-            raise AlignmentError(f"译文数量不匹配：期望 {n} 段，实际 {len(items)} 段")
+            raise AlignmentError(
+                ui_message(
+                    "error.translation_count_mismatch",
+                    expected=n,
+                    actual=len(items),
+                )
+            )
         if any(not isinstance(item, str) or not item.strip() for item in items):
-            raise AlignmentError("模型返回了空译文或非字符串译文")
+            raise AlignmentError(ui_message("error.translation_item_invalid"))
         return items
 
     def _translate_one(self, source, glossary_terms, style, context,
@@ -81,18 +88,18 @@ class Translator(Agent):
         """
         system = prompts.render(
             "translator_system", src=self.src, tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(
-                self.src, self.config.honorific_strategy),
+            honorific_strategy=self.config.honorific_strategy,
         )
+        empty = prompts.empty(tgt=self.tgt)
         user = prompts.render(
             "translator_fix_user", src=self.src, tgt=self.tgt,
-            style=style or "（无）",
-            book_synopsis=book_synopsis or "（无）",
-            glossary=prompts.render_glossary(glossary_terms or []),
-            chapter_digest=chapter_digest or "（无）",
-            context_before=context_before or "（无）",
-            context_after=context_after or "（无）",
-            feedback=feedback or "（无）",
+            style=style or empty,
+            book_synopsis=book_synopsis or empty,
+            glossary=prompts.render_glossary(glossary_terms or [], tgt=self.tgt),
+            chapter_digest=chapter_digest or empty,
+            context_before=context_before or empty,
+            context_after=context_after or empty,
+            feedback=feedback or empty,
             source=source,
         )
         items = self._ask_json(system, user, tier="strong",
@@ -147,5 +154,7 @@ class Translator(Agent):
                     )
                 )
             except Exception as error:
-                raise AlignmentError(f"逐段兜底翻译在第 {index} 段失败") from error
+                raise AlignmentError(
+                    ui_message("error.translation_fallback_failed", index=index)
+                ) from error
         return targets

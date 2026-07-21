@@ -35,6 +35,7 @@ class TestGlossary(unittest.TestCase):
         t = self.store.get_term("綾小路")
         assert t is not None
         self.assertEqual(t.target, "绫小路")
+        self.assertEqual(t.type, "人物")
         self.assertEqual(t.gender, "男")
 
     def test_terms_in_text_matches_alias(self):
@@ -73,6 +74,19 @@ class TestGlossary(unittest.TestCase):
         hits = self.store.terms_in_text("「夏帆ちゃん」と母親が言った。")
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].source, "夏帆ちゃん")
+
+    def test_english_appellation_does_not_match_bare_name_alias(self):
+        self.store.upsert_term(
+            GlossaryTerm(
+                source="夏帆ちゃん",
+                target="Kaho-chan",
+                type="appellation",
+                aliases=["夏帆"],
+            )
+        )
+        self.assertEqual(self.store.terms_in_text("夏帆は窓の外を見た。"), [])
+        hits = self.store.terms_in_text("夏帆ちゃんが振り向いた。")
+        self.assertEqual([term.source for term in hits], ["夏帆ちゃん"])
 
     def test_conflict_keeps_current_until_resolved(self):
         self.store.upsert_term(

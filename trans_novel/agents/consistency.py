@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import languages
 from ..glossary.store import GlossaryStore
 from ..pipeline.runstore import RunStore, STATUS_DONE
 from . import prompts
@@ -16,10 +17,9 @@ from .base import Agent
 
 class ConsistencyChecker(Agent):
     @staticmethod
-    def _chapter_label(title: str, index: int) -> str:
+    def _chapter_label(title: str, index: int, *, target: str = "zh") -> str:
         """返回适合报告展示的章节名，无标题时按序号生成。"""
-        title = (title or "").strip()
-        return title or f"章节 {index + 1}"
+        return languages.chapter_label(title or "", index, target=target)
 
     def _chapter_digests(self, store: RunStore, max_chars_each: int = 600) -> str:
         """提取已完成章节的首尾译文，拼成受字符预算限制的检查摘要。"""
@@ -32,9 +32,17 @@ class ConsistencyChecker(Agent):
             targets = [s.target or "" for s in ch.text_segments]
             head = targets[:3]
             tail = targets[-2:] if len(targets) > 3 else []
-            snippet = "……".join([t for t in head + tail if t])[:max_chars_each]
+            snippet = languages.join_digest_segments(
+                [text for text in head + tail if text],
+                target=self.tgt,
+            )[:max_chars_each]
+            label = self._chapter_label(
+                str(c.get("title", "")),
+                int(c["index"]),
+                target=self.tgt,
+            )
             parts.append(
-                f"[{self._chapter_label(str(c.get('title', '')), int(c['index']))}]\n{snippet}"
+                languages.chapter_digest(label, snippet, target=self.tgt)
             )
         return "\n\n".join(parts)
 
@@ -44,12 +52,15 @@ class ConsistencyChecker(Agent):
         if not digests.strip():
             return []
         system = prompts.render("consistency_system", src=self.src, tgt=self.tgt)
-        user = (
-            "【专有名词对照表】\n"
-            + prompts.render_glossary(glossary.all_terms())
-            + "\n\n【各章译文摘要】\n"
-            + digests
-            + '\n\n请输出 JSON：{"issues":[...]}。'
+        user = prompts.render(
+            "consistency_user",
+            src=self.src,
+            tgt=self.tgt,
+            glossary=prompts.render_glossary(
+                glossary.all_terms(),
+                tgt=self.tgt,
+            ),
+            digests=digests,
         )
         return self.dict_items(
             self._ask_json(system, user, tier="cheap", key="issues", default=[]))

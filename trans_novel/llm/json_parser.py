@@ -6,13 +6,15 @@ import json
 import re
 from typing import Any
 
+from ..locales import message
+
 
 def _repair_unescaped_quotes(text: str) -> str:
     """转义 JSON 字符串值内部未转义的 ASCII 双引号。
 
     部分模型（尤其无原生 JSON 模式的 provider）会在译文里原样输出英文引号。
     启发式：字符串内的 `"` 后面（跳过空白）若不是 `,:]}`，视为内容引号转义之。
-    中文译文以全角标点为主，误判面极小；仅作为常规解析失败后的兜底。
+    该修复只在常规 JSON 解析失败后启用，并通过后续结构解析验证结果。
     """
     out: list[str] = []
     in_str = False
@@ -103,4 +105,4 @@ def parse_json_loose(text: str) -> Any:
             return json.loads(_repair_unescaped_quotes(candidate))
         except Exception:
             continue
-    raise ValueError(f"无法解析为 JSON：{text[:200]!r}")
+    raise ValueError(message("error.json_parse_failed", preview=repr(text[:200])))

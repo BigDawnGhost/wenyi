@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..config import Config
+from ..locales import message
 from .base import LLMClient
 
 
@@ -38,7 +39,12 @@ def build_client(config: Config) -> LLMClient:
 
         return FakeClient()
     raise ValueError(
-        f"未知 provider：{provider}"
-        "（支持 deepseek / openai / openrouter / openai-compatible / "
-        "ollama / vllm / fake）"
+        message(
+            "error.provider_unknown",
+            provider=provider,
+            supported=(
+                "deepseek / openai / openrouter / openai-compatible / "
+                "ollama / vllm / fake"
+            ),
+        )
     )

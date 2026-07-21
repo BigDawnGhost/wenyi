@@ -2,7 +2,7 @@
 
 各 agent 的"渲染 system/user → complete_json → 失败回退默认值"模式收敛到这里；
 默认值语义留在 agent 层（传输层 llm/base.py 不掺业务回退）。
-orchestrator._apply_language 依赖每个 agent 都有 .src 属性——基类把该契约显式化。
+orchestrator._apply_languages 依赖每个 agent 都有 .src/.tgt 属性——基类把该契约显式化。
 """
 
 from __future__ import annotations

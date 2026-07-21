@@ -10,12 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 _DEFAULT_CONFIG_YAML = """\
-# trans-novel 配置（多语言小说 → 中文）
+# trans-novel 配置（多语言小说互译；默认译为中文）
 # 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
 
 language:
   source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
-  target: zh # 译文语言
+  target: zh # 译文语言；首版正式支持 zh / en，改为 en 即输出英文译本
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
@@ -67,7 +67,7 @@ honorific:
   # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
+# ── 标点规范化（中文标点；英文引号/撇号转 ASCII 半角）──────────────────
 punctuation:
   normalize: true
 
@@ -77,8 +77,8 @@ paths:
 
 # ── 双语输出 ───────────────────────────────────────────────────────────────
 output:
-  mono: true # 产出单语中文版（<书名>.zh.epub）
-  bilingual: false # 产出原文与译文对照版（<书名>.zh-bi.epub）
+  mono: true # 产出目标语言单语版（如 <书名>.zh.epub / <书名>.en.epub）
+  bilingual: false # 产出原文与译文对照版（如 <书名>.zh-bi.epub / <书名>.en-bi.epub）
   bilingual_order: target_first # target_first=译文在上；source_first=原文在上
   bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示
   about_page: true # 在书末附加“关于此翻译”说明页
@@ -146,7 +146,7 @@ class Config(BaseModel):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     honorific_strategy: str = "keep_style"
-    punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
+    punctuation_normalize: bool = True  # 中文标点规范化；英文引号/撇号转 ASCII 半角
     state_dir: str = "state"
 
     @staticmethod

@@ -47,6 +47,7 @@ class TestAnalyzer(unittest.TestCase):
             self.assertIsNotNone(organization)
             assert character is not None
             assert organization is not None
+            self.assertEqual(character.type, "人物")
             self.assertEqual(character.gender, "男")
             self.assertEqual(organization.type, "组织")
             store.close()
@@ -95,10 +96,11 @@ class TestExtractor(unittest.TestCase):
             horikita = store.get_term("堀北")
             self.assertIsNotNone(horikita)
             assert horikita is not None
+            self.assertEqual(horikita.type, "人物")
             self.assertEqual(horikita.gender, "女")
             self.assertEqual(horikita.aliases, ["堀北さん"])
             self.assertEqual(horikita.first_chapter, 1)
-            # "未知" 应被规整为空
+            # 未知性别不写入数据库。
             rooftop = store.get_term("屋上")
             self.assertIsNotNone(rooftop)
             assert rooftop is not None
