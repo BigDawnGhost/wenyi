@@ -141,7 +141,7 @@ Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` pr
 
 ```yaml
 pipeline:
-  review: true
+  review: false
   autofix_severe: false
   polish: true
   backtranslate_sample: 0
@@ -153,18 +153,22 @@ pipeline:
   glossary_scope: chapter
 ```
 
-- `review`: check each completed chapter for omissions, mistranslations, terminology, and incorrect references.
-- `autofix_severe`: retranslate severe omissions and mistranslations and adopt fixes that pass validation.
+- `review`: disabled by default; when enabled, automatically run the independent final-review stage after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
+- `autofix_severe`: during final review, retranslate severe omissions and mistranslations and adopt fixes that pass validation.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
 - `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `review_concurrency`: number of chapter-review chunks that may run concurrently; set it to `1` for sequential review.
+- `review_concurrency`: number of contiguous final-review chunks that may run concurrently against the completed glossary; set it to `1` for sequential review.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
 The command-line flags `--polish`, `--no-polish`, `--qa`, and `--no-qa` override the corresponding configuration values for that run.
+
+Run final review independently with `trans-novel review INPUT`. `--force`
+rechecks already reviewed translations, while `--fix` or `--no-fix` overrides
+`autofix_severe` for that invocation.
 
 ## Output
 
@@ -173,12 +177,14 @@ output:
   mono: true
   bilingual: false
   bilingual_order: target_first
+  bilingual_preserve_source_style: false
   about_page: true
 ```
 
 - `mono`: produce the monolingual Chinese edition as `<book-name>.zh.epub`.
 - `bilingual`: produce a source-and-translation edition as `<book-name>.zh-bi.epub`.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
+- `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
 
 Only the monolingual edition is enabled by default. `--bilingual` enables both editions, and configuration plus command-line switches can be combined to produce only the bilingual edition.

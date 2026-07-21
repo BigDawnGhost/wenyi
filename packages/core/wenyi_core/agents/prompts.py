@@ -99,7 +99,7 @@ $feedback
 """)
 
 REVIEWER_SYSTEM = Template("""\
-你是严格的译文审校，比对$src_label原文与中文译文，逐段找出**确凿**的问题。问题类型：
+你是严格的译文审校，比对$src_label原文与$tgt_label译文，逐段找出**确凿**的问题。问题类型：
 - missing：漏译（原文有的信息译文缺失）
 - added：增译（译文凭空增加原文没有的信息）
 - mistranslation：误译/误读原意
@@ -296,6 +296,7 @@ def render(name: str, *, src: str = "ja", tgt: str = "zh", **kwargs) -> str:
     tmpl = _DEFAULTS[name]
     # 语言相关默认值（调用方可用同名 kwarg 覆盖）
     kwargs.setdefault("src_label", langprofile.label(src))
+    kwargs.setdefault("tgt_label", langprofile.label(tgt))
     kwargs.setdefault("lang_guidance", langprofile.translate_guidance(src))
     kwargs.setdefault("term_guidance", langprofile.term_guidance(src))
     kwargs.setdefault("punct_rule", PUNCT_RULE)

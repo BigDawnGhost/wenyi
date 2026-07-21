@@ -56,6 +56,36 @@ class TestModelLanguageDetection(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "language.source"):
                 Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
 
+    def test_explicit_same_source_and_target_stops_before_model_calls(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = Config.from_dict({
+                "language": {"source": "ja", "target": "ja-JP"},
+                "llm": {"provider": "fake"},
+                "paths": {"state_dir": os.path.join(d, "state")},
+            })
+            client = FakeClient(handler=routing_handler)
+
+            with self.assertRaisesRegex(ValueError, "源语言与目标语言相同（ja）"):
+                Orchestrator(cfg, client=client).prepare(txt)
+
+            self.assertEqual(client.calls, [])
+
+    def test_auto_detected_source_matching_target_stops_before_analysis(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = self._cfg(os.path.join(d, "state"))
+
+            def handler(messages, tier, json_mode):
+                if "语言识别器" in messages[0]["content"]:
+                    return json.dumps({"language": "chinese"}, ensure_ascii=False)
+                raise AssertionError("相同语言不应继续进入分析或翻译")
+
+            with self.assertRaisesRegex(ValueError, "源语言与目标语言相同（zh）"):
+                Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
+
 
 class TestPunct(unittest.TestCase):
     def test_japanese_quotes(self):

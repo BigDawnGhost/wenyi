@@ -36,7 +36,7 @@ class Reviewer(Agent):
             pairs=prompts.numbered_pairs(sources, targets),
         )
         return self.dict_items(
-            self._ask_json(system, user, tier="cheap", key="issues", default=[]))
+            self._ask_json(system, user, tier="cheap", key="issues"))
 
 
 class BackTranslator(Agent):

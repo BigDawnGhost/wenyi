@@ -27,6 +27,7 @@ class Segment(BaseModel):
     kind: str = KIND_TEXT                   # text | heading
     target: Optional[str] = None            # 译文（翻译/润色后填入）
     anchor: Optional[str] = None            # 回填定位标记（EPUB 用占位符 id）
+    resource_href: Optional[str] = None     # EPUB: Segment 所属的物理 XHTML 路径
     cont: bool = False                      # 超长段被拆分后的续段：回填时并回上一段，不另起段落
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -47,8 +48,8 @@ class Chapter(BaseModel):
     title: str = ""
     title_translated: Optional[str] = None  # 译后标题（存于 manifest / chapters 表）
     segments: list[Segment] = Field(default_factory=list)
-    href: Optional[str] = None              # EPUB spine item 内部路径
-    template: Optional[str] = None          # EPUB: 带占位符的 HTML，用于回填
+    href: Optional[str] = None              # EPUB: 逻辑章起始物理资源路径（兼容展示）
+    template: Optional[str] = None          # HTML/旧 EPUB: 带占位符的回填模板
     meta: dict[str, Any] = Field(default_factory=dict)
 
     @property

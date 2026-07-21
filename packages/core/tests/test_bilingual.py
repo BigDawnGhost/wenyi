@@ -102,6 +102,27 @@ class TestRenderChapterHtmlBilingual(unittest.TestCase):
         self.assertNotIn("tn-source", html)
         self.assertNotIn("data-tn-id", html)
 
+    def test_preserve_source_style_reuses_block_style_without_dim_class(self):
+        ch = _chapter_with_template()
+        ch.template = (ch.template or "").replace(
+            '<p data-tn-id="p1">',
+            '<p class="original-body" style="font-family: serif" data-tn-id="p1">',
+        )
+
+        html = _render_chapter_html(
+            ch,
+            bilingual=True,
+            preserve_source_style=True,
+        )
+        soup = BeautifulSoup(html, "html.parser")
+        source = _required_tag(soup.find("p", class_="tn-source"))
+
+        self.assertIn("original-body", source.get("class") or [])
+        self.assertNotIn(
+            "ibooks-dark-theme-use-custom-text-color", source.get("class") or []
+        )
+        self.assertEqual(source.get("style"), "font-family: serif")
+
     def test_list_source_stays_inside_list_item(self):
         ch = Chapter(
             index=0,
@@ -229,6 +250,29 @@ class TestBuildEpubFromChaptersBilingual(unittest.TestCase):
             )
             self.assertTrue(some_head_has_style)
 
+    def test_preserve_source_style_omits_dim_css(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            store, _ = _run(txt, os.path.join(d, "state"))
+            out = assemble(
+                store,
+                txt,
+                out_format="epub",
+                bilingual=True,
+                preserve_source_style=True,
+            )
+            with zipfile.ZipFile(out) as z:
+                all_html = "\n".join(
+                    z.read(name).decode("utf-8")
+                    for name in z.namelist()
+                    if name.endswith(".xhtml") and name.startswith("EPUB/")
+                )
+
+            self.assertIn("tn-source", all_html)
+            self.assertNotIn("tn-bilingual-style", all_html)
+            self.assertNotIn("ibooks-dark-theme-use-custom-text-color", all_html)
+
 
 class TestAssembleTextBilingual(unittest.TestCase):
     def test_bilingual_txt_contains_target_and_source_target_first(self):
@@ -290,6 +334,7 @@ class TestOutputConfigParsing(unittest.TestCase):
         self.assertTrue(cfg.output.mono)
         self.assertFalse(cfg.output.bilingual)
         self.assertEqual(cfg.output.bilingual_order, "target_first")
+        self.assertFalse(cfg.output.bilingual_preserve_source_style)
 
     def test_bilingual_off_keeps_mono_default(self):
         cfg = Config.from_dict({"output": {"bilingual": False}})
@@ -323,6 +368,32 @@ class TestOrchestratorMultiOutput(unittest.TestCase):
             self.assertEqual(len(outputs), 2)
             basenames = sorted(os.path.basename(p) for p in outputs)
             self.assertEqual(basenames, ["novel.zh-bi.epub", "novel.zh.epub"])
+
+    def test_preserve_source_style_config_reaches_bilingual_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(
+                os.path.join(d, "state"),
+                output={
+                    "bilingual": True,
+                    "bilingual_preserve_source_style": True,
+                },
+            )
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            result = orch.run_all(txt, out_format="epub")
+            bilingual_output = next(
+                path for path in result["outputs"] if path.endswith(".zh-bi.epub")
+            )
+            with zipfile.ZipFile(bilingual_output) as z:
+                all_html = "\n".join(
+                    z.read(name).decode("utf-8")
+                    for name in z.namelist()
+                    if name.endswith(".xhtml") and name.startswith("EPUB/")
+                )
+
+            self.assertIn("tn-source", all_html)
+            self.assertNotIn("tn-bilingual-style", all_html)
 
 
 class TestAssembleEpubTemplateBilingual(unittest.TestCase):
@@ -394,7 +465,7 @@ class TestCliBilingualFlags(unittest.TestCase):
             _, cfg = _run(txt, state_dir)
             with patch("wenyi_core.cli._load_config", return_value=cfg):
                 result = CliRunner().invoke(
-                    app, ["tools", "assemble", txt, "--mono", "--bilingual"]
+                    app, ["assemble", txt, "--mono", "--bilingual"]
                 )
             self.assertEqual(result.exit_code, 0, result.output)
             flat = result.output.replace("\n", "")

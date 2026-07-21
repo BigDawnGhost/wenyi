@@ -39,47 +39,52 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 - `--format txt|html|markdown`: export the selected format. Every input format still produces EPUB by default.
 - The first PDF import requires `MINERU_API_KEY`. Converted HTML is saved at `state/<book>/source/converted.html`, reused on later runs, and may be corrected manually before resuming.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
-- The bilingual edition displays the translation and a visually subdued copy of the source text. Their order is controlled by `output.bilingual_order`.
+- The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
 - Runtime data is stored under `state/`, including chapter intermediates, the SQLite glossary, usage data, and reports.
 
 ## Common commands
 
 ```bash
-# Translate, translate one chapter, or export plain text
+# Run the complete workflow, translate one chapter, or prepare without translating
 uv run trans-novel translate book.epub
 uv run trans-novel translate book.epub --chapter 3
 uv run trans-novel translate book.epub --format txt
+uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# Override polishing and whole-book QA settings
-uv run trans-novel translate book.epub --polish --qa
-uv run trans-novel translate book.epub --no-polish --no-qa
+# Override polishing, final review, and whole-book QA settings
+uv run trans-novel translate book.epub --polish --review --qa
+uv run trans-novel translate book.epub --no-polish --no-review --no-qa
 
 # Produce both editions, or only the bilingual edition
 uv run trans-novel translate book.epub --bilingual
 uv run trans-novel translate book.epub --no-mono --bilingual
 ```
 
+`prepare` parses the book, detects its language, generates the style guide and initial glossary, and completes the configured whole-book prescan without translating any body text. Run `translate` with the same source file to continue from the saved state.
+
 ## Interrupting and resuming
 
 Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:
 
 ```bash
-uv run trans-novel resume book.epub
+uv run trans-novel translate book.epub
 uv run trans-novel status book.epub
 ```
 
-Changing polishing or review settings does not automatically rerun batches that are already complete. Use a new state directory or remove the corresponding state when you intentionally want a fresh translation.
+Changing polishing settings does not automatically rerun translation batches that are already complete. Final review has its own persisted state and can be repeated independently with `review --force`; use a new state directory or remove the corresponding state only when you intentionally want a fresh translation.
 
-## Utility commands
+## Independent stages and glossary management
 
 ```bash
-uv run trans-novel tools glossary book.epub list
-uv run trans-novel tools glossary book.epub conflicts
-uv run trans-novel tools qa book.epub
-uv run trans-novel tools report book.epub
-uv run trans-novel tools assemble book.epub
+uv run trans-novel review book.epub
+uv run trans-novel glossary list book.epub
+uv run trans-novel glossary conflicts book.epub
+uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
+uv run trans-novel qa book.epub
+uv run trans-novel report book.epub
+uv run trans-novel assemble book.epub
 ```
 
-`qa` and `report` collect problems without modifying translated text. `assemble` rebuilds output from existing state without calling the model again.
+`review` checks the complete translated book using the final glossary; add `--force` to recheck unchanged chapters or `--fix` to apply validated severe fixes. `qa` and `report` collect problems without modifying translated text. `assemble` rebuilds output from existing state without calling the model again.

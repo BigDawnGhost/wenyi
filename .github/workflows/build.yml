@@ -2,9 +2,8 @@ name: Build executables
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -21,10 +20,12 @@ jobs:
             runner: windows-latest
             artifact: wenyi-windows-x64
             binary: ./dist/wenyi.exe
+            archive: ./dist/wenyi-windows-x64.zip
           - name: Linux x64
             runner: ubuntu-latest
             artifact: wenyi-linux-x64
             binary: ./dist/wenyi
+            archive: ./dist/wenyi-linux-x64.tar.gz
 
     steps:
       - uses: actions/checkout@v4
@@ -49,10 +50,55 @@ jobs:
         shell: bash
         run: ${{ matrix.binary }} --help
 
-      - name: Upload executable
+      - name: Package Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >
+          Compress-Archive -LiteralPath dist/wenyi.exe
+          -DestinationPath dist/wenyi-windows-x64.zip -Force
+
+      - name: Package Linux executable
+        if: runner.os == 'Linux'
+        shell: bash
+        run: tar -C dist -czf dist/wenyi-linux-x64.tar.gz wenyi
+
+      - name: Upload packaged executable
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          path: ${{ matrix.archive }}
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Upload release assets
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packaged executables
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wenyi-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: release-assets
+        run: sha256sum wenyi-* > SHA256SUMS.txt
+
+      - name: Upload assets to published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release view "$TAG" --repo "$GH_REPO" >/dev/null
+          gh release upload "$TAG" release-assets/* \
+            --repo "$GH_REPO" \
+            --clobber

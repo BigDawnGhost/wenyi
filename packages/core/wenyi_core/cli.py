@@ -1,8 +1,7 @@
-"""命令行入口（typer + rich）。
+"""命令行入口（Typer + Rich）。
 
-日常只需 `translate` 一个命令：连续全流程（分析→翻译→审校→一致性 QA→报告→回填 EPUB），
-中断后再次运行自动续跑。其余 `resume` / `status` 为常用辅助；
-细粒度/调试工具收敛到 `tools`：glossary / assemble / qa / report。
+``translate`` 保持一键完整流程并天然支持断点续跑；``prepare``、``review``、
+``qa``、``report`` 与 ``assemble`` 提供可单独执行的阶段入口。
 """
 
 from __future__ import annotations
@@ -89,11 +88,13 @@ class _ConfigInitializingGroup(TyperGroup):
 app = typer.Typer(
     cls=_ConfigInitializingGroup,
     add_completion=False,
-    help="多 Agent 小说翻译系统（多语言 → 中文）",
+    no_args_is_help=True,
+    help="面向长篇小说的多语言翻译工作流。",
 )
-tools_app = typer.Typer(
+glossary_app = typer.Typer(
     add_completion=False,
-    help="高级/调试工具：glossary（术语表）/ assemble（回填）/ qa / report",
+    no_args_is_help=True,
+    help="查看术语、检查冲突并裁定固定译名。",
 )
 console = Console()
 
@@ -106,7 +107,12 @@ class _ManifestStore(Protocol):
 
 @app.callback()
 def _root(
-    config: str = typer.Option("config.yaml", "--config", "-c", help="配置文件路径"),
+    config: str = typer.Option(
+        "config.yaml",
+        "--config",
+        "-c",
+        help="配置文件路径；文件不存在时自动创建",
+    ),
 ):
     """记录本次 CLI 调用使用的全局配置文件路径。"""
     _CONFIG["path"] = config
@@ -150,7 +156,7 @@ def _runstore_for(config: Config, input_path: str) -> RunStore:
 
 
 def _apply_store_languages(config: Config, store: _ManifestStore) -> None:
-    """独立工具命令从运行 manifest 恢复实际语言。"""
+    """独立阶段命令从运行 manifest 恢复实际源语言和目标语言。"""
     manifest = store.load_manifest()
     source_lang = manifest.get("source_lang")
     target_lang = manifest.get("target_lang")
@@ -167,11 +173,12 @@ def _translate_impl(
     fmt: str = "epub",
     out: Optional[str] = None,
     polish: Optional[bool] = None,
+    review: Optional[bool] = None,
     qa: Optional[bool] = None,
     mono: Optional[bool] = None,
     bilingual: Optional[bool] = None,
 ) -> None:
-    """translate/resume 共享实现，避免 CLI 参数转发漂移。"""
+    """执行一键翻译流程，并把预期的输入/配置错误转成简洁 CLI 提示。"""
     try:
         _translate_impl_or_raise(
             input_path,
@@ -179,6 +186,7 @@ def _translate_impl(
             fmt=fmt,
             out=out,
             polish=polish,
+            review=review,
             qa=qa,
             mono=mono,
             bilingual=bilingual,
@@ -195,6 +203,7 @@ def _translate_impl_or_raise(
     fmt: str = "epub",
     out: Optional[str] = None,
     polish: Optional[bool] = None,
+    review: Optional[bool] = None,
     qa: Optional[bool] = None,
     mono: Optional[bool] = None,
     bilingual: Optional[bool] = None,
@@ -207,10 +216,32 @@ def _translate_impl_or_raise(
     config = _load_config()
     if polish is not None:
         config.pipeline.polish = polish
+    if review is not None:
+        config.pipeline.review = review
     if mono is not None:
         config.output.mono = mono
     if bilingual is not None:
         config.output.bilingual = bilingual
+    if chapter is not None:
+        ignored: list[str] = []
+        if fmt != "epub":
+            ignored.append("--format")
+        if out is not None:
+            ignored.append("--out")
+        if review is not None:
+            ignored.append("--review/--no-review")
+        if qa is not None:
+            ignored.append("--qa/--no-qa")
+        if mono is not None:
+            ignored.append("--mono/--no-mono")
+        if bilingual is not None:
+            ignored.append("--bilingual/--no-bilingual")
+        if ignored:
+            raise ValueError(
+                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项："
+                + "、".join(ignored)
+            )
+
     orch = Orchestrator(config)
 
     with Progress(
@@ -255,11 +286,61 @@ def _translate_impl_or_raise(
     s = result["report"]["summary"]
     console.print(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
+        f"审校 {s.get('chapters_reviewed', 0)}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
     _print_usage({"usage": result["storage"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
+
+
+def _prepare_impl(input_path: str) -> None:
+    """完成译前准备并停止，不生成正文译文或输出文件。"""
+    from .pipeline.orchestrator import Orchestrator
+
+    try:
+        _require_input_file(input_path)
+        config = _load_config()
+        orch = Orchestrator(config)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as prog:
+            task = prog.add_task("准备中…", total=None)
+
+            def cb(done: int, total: int, label: str) -> None:
+                """把译前准备进度同步到 Rich 任务。"""
+                nonlocal task
+                if total > 0:
+                    prog.update(task, completed=done, total=total, description=label)
+                    return
+                prog.remove_task(task)
+                task = prog.add_task(label, total=None)
+
+            store = orch.prepare_for_translation(input_path, progress=cb)
+    except (IngestError, ImportError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
+
+    manifest = store.load_manifest()
+    chapters = manifest.get("chapters", [])
+    analysis = store.load_analysis() or {}
+    digests = sum(
+        bool(store.load_chapter(item["index"]).meta.get("source_digest"))
+        for item in chapters
+    )
+    console.print(
+        f"[bold green]准备完成[/]：解析 {len(chapters)} 章，"
+        f"预扫 {digests}/{len(chapters)} 章，"
+        f"全书概览{' 已生成' if analysis.get('book_synopsis') else ' 未生成'}。"
+    )
+    console.print(f"状态目录：[bold]{store.run_dir}[/]")
+    console.print("运行 translate 并传入同一源文件即可继续完成全书翻译。")
+    _print_usage({"usage": store.load_usage() or {}})
 
 
 def _print_usage(report: dict) -> None:
@@ -290,153 +371,282 @@ def _print_usage(report: dict) -> None:
         )
 
 
-# ── translate / resume：连续全流程 ──────────────────────────────────────────
-@app.command()
+# ── 一键完整流程 / 译前准备 ────────────────────────────────────────────────
+@app.command(rich_help_panel="主要流程")
 def translate(
-    input: str = typer.Argument(..., help="输入文件（.epub / .txt / .md / .html / .fb2 / .pdf）"),
-    chapter: Optional[int] = typer.Option(
-        None, "--chapter", min=0, help="只翻指定章（从 0 起；调试用，不做收尾）"
+    input: str = typer.Argument(
+        ...,
+        help="待翻译书籍（EPUB / FB2 / TXT / Markdown / HTML / PDF）",
     ),
-    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt | html | markdown"),
+    chapter: Optional[int] = typer.Option(
+        None,
+        "--chapter",
+        min=0,
+        help="仅翻译并保存指定章节（从 0 起）；不执行审校、QA、报告和导出",
+    ),
+    fmt: str = typer.Option(
+        "epub",
+        "--format",
+        help="最终导出格式：epub / txt / html / markdown",
+    ),
     out: Optional[str] = typer.Option(
-        None, "--out", help="输出路径（默认 <源文件目录>/output/<源文件名>.zh.<ext>）"
+        None,
+        "--out",
+        help="单语版输出路径；默认写入源文件旁的 output 目录",
     ),
     polish: Optional[bool] = typer.Option(
         None,
         "--polish/--no-polish",
-        help="覆盖配置文件中的润色开关",
+        help="覆盖 pipeline.polish，控制翻译后是否润色",
+    ),
+    review: Optional[bool] = typer.Option(
+        None,
+        "--review/--no-review",
+        help="覆盖 pipeline.review，控制全书翻译后是否执行最终审校",
     ),
     qa: Optional[bool] = typer.Option(
         None,
         "--qa/--no-qa",
-        help="覆盖配置文件中的一致性 QA 开关",
+        help="覆盖 pipeline.consistency_qa，控制是否执行跨章一致性扫描",
     ),
     mono: Optional[bool] = typer.Option(
         None,
         "--mono/--no-mono",
-        help="覆盖配置文件中的单语版产出开关",
+        help="覆盖 output.mono，控制是否生成单语版",
     ),
     bilingual: Optional[bool] = typer.Option(
         None,
         "--bilingual/--no-bilingual",
-        help="覆盖配置文件中的双语版产出开关",
+        help="覆盖 output.bilingual，控制是否生成原文译文对照版",
     ),
 ):
-    """翻译（连续全流程；可断点续跑）。"""
+    """一键完成准备、翻译、可选审校/QA、报告和导出；中断后原命令续跑。"""
     _translate_impl(
         input,
         chapter=chapter,
         fmt=fmt,
         out=out,
         polish=polish,
+        review=review,
         qa=qa,
         mono=mono,
         bilingual=bilingual,
     )
 
 
-@app.command()
-def resume(
-    input: str = typer.Argument(..., help="输入文件"),
-    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt | html | markdown"),
+@app.command(rich_help_panel="主要流程")
+def prepare(
+    input: str = typer.Argument(
+        ...,
+        help="待准备书籍（EPUB / FB2 / TXT / Markdown / HTML / PDF）",
+    ),
+) -> None:
+    """只解析书籍、识别语言、分析风格和术语并预扫全书，不翻译正文。"""
+    _prepare_impl(input)
+
+
+@app.command(rich_help_panel="质量检查")
+def review(
+    input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
+    force: bool = typer.Option(
+        False, "--force", help="忽略审校摘要，强制重新审校全部章节"
+    ),
+    fix: Optional[bool] = typer.Option(
+        None,
+        "--fix/--no-fix",
+        help="覆盖 pipeline.autofix_severe；开启后串行修复漏译和误译",
+    ),
 ):
-    """断点续跑（等价于再次 translate）。"""
-    _translate_impl(input, fmt=fmt)
+    """使用最终术语库审校完整译文；结果按章保存，可断点续审。"""
+    from .pipeline.orchestrator import Orchestrator
+
+    _require_input_file(input)
+    config = _load_config()
+    autofix = config.pipeline.autofix_severe if fix is None else fix
+    orch = Orchestrator(config)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as prog:
+            task = prog.add_task("准备全书审校…", total=None)
+
+            def cb(done: int, total: int, label: str) -> None:
+                """把全书审校进度同步到 Rich 任务。"""
+                nonlocal task
+                if total > 0:
+                    prog.update(
+                        task,
+                        completed=done,
+                        total=total,
+                        description=label,
+                    )
+                    return
+                prog.remove_task(task)
+                task = prog.add_task(label, total=None)
+
+            result = orch.run_review(
+                input,
+                progress=cb,
+                force=force,
+                autofix=autofix,
+            )
+    except (IngestError, ImportError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
+
+    issues = result["review_issues"]
+    console.print(
+        f"[bold green]全书审校完成[/]：发现 {len(issues)} 项问题"
+        f"{'，已按配置尝试修复严重项' if autofix else ''}。"
+    )
+    console.print(f"状态目录：{result['store'].run_dir}")
+    _print_usage({"usage": result["store"].load_usage() or {}})
 
 
 # ── 查询 / 细粒度命令 ──────────────────────────────────────────────────────
-@app.command()
-def status(input: str = typer.Argument(..., help="输入文件")):
+@app.command(rich_help_panel="状态与输出")
+def status(
+    input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
+) -> None:
     """查看各章进度与术语库统计。"""
     from .glossary.store import GlossaryStore
 
     config = _load_config()
     store = _runstore_for(config, input)
     if not store.exists():
-        console.print("[yellow]尚无进度。先运行 translate。[/]")
+        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     m = store.load_manifest()
     console.print(
         f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}"
     )
-    table = Table("", "#", "章节", "状态")
+    table = Table("", "#", "章节", "翻译", "审校")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
-        table.add_row(mark, str(c["index"]), c["title"], c["status"])
+        table.add_row(
+            mark,
+            str(c["index"]),
+            c["title"],
+            c["status"],
+            str(c.get("review_status", "pending")),
+        )
     console.print(table)
     g = GlossaryStore(store.glossary_path)
     console.print("术语库：", g.stats())
     g.close()
 
 
-@tools_app.command()
-def glossary(
-    input: str = typer.Argument(..., help="输入文件"),
-    action: str = typer.Argument(
-        "list", help="list | conflicts | resolve"
-    ),
-    arg1: Optional[str] = typer.Argument(None),
-    arg2: Optional[str] = typer.Argument(None),
-):
-    """术语库管理。"""
+@glossary_app.command("list")
+def glossary_list(
+    input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
+) -> None:
+    """列出当前书籍术语库中的固定译名和状态。"""
+    from .glossary.store import GlossaryStore
+
+    config = _load_config()
+    store = _runstore_for(config, input)
+    if not store.exists():
+        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
+        raise typer.Exit(1)
+    g = GlossaryStore(store.glossary_path)
+    try:
+        table = Table("原文", "译文", "类型", "状态")
+        for term in g.all_terms():
+            table.add_row(
+                term.source,
+                term.target,
+                f"{term.type}{'/' + term.gender if term.gender else ''}",
+                term.status,
+            )
+        console.print(table)
+    finally:
+        g.close()
+
+
+@glossary_app.command("conflicts")
+def glossary_conflicts(
+    input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
+) -> None:
+    """列出模型抽取过程中发现的未裁定译名冲突。"""
+    from .glossary.store import GlossaryStore
+
+    config = _load_config()
+    store = _runstore_for(config, input)
+    if not store.exists():
+        console.print("[yellow]尚无进度。先运行 translate 或 prepare。[/]")
+        raise typer.Exit(1)
+    glossary = GlossaryStore(store.glossary_path)
+    try:
+        conflicts = glossary.open_conflicts()
+        if not conflicts:
+            console.print("没有待裁定的术语冲突。")
+            return
+        for conflict in conflicts:
+            console.print(
+                f"  {conflict['source']}: 现有「{conflict['existing_target']}」 vs "
+                f"提议「{conflict['proposed_target']}」"
+                f"（第 {conflict['chapter']} 章）"
+            )
+    finally:
+        glossary.close()
+
+
+@glossary_app.command("resolve")
+def glossary_resolve(
+    input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
+    source: str = typer.Argument(..., help="需要裁定的原文术语"),
+    target: str = typer.Argument(..., help="今后统一采用的目标语言译名"),
+) -> None:
+    """把一个已有术语裁定为指定译名，并关闭对应冲突。"""
     from .glossary import resolver
     from .glossary.store import GlossaryStore
 
     config = _load_config()
     store = _runstore_for(config, input)
     if not store.exists():
-        console.print("[yellow]尚无进度。先运行 translate。[/]")
+        console.print("[yellow]尚无进度。先运行 translate 或 prepare。[/]")
         raise typer.Exit(1)
-    g = GlossaryStore(store.glossary_path)
+    glossary = GlossaryStore(store.glossary_path)
     try:
-        if action == "list":
-            table = Table("原文", "译文", "类型", "状态")
-            for t in g.all_terms():
-                table.add_row(
-                    t.source,
-                    t.target,
-                    f"{t.type}{'/' + t.gender if t.gender else ''}",
-                    t.status,
-                )
-            console.print(table)
-        elif action == "conflicts":
-            for c in g.open_conflicts():
-                console.print(
-                    f"  {c['source']}: 现有「{c['existing_target']}」 vs "
-                    f"提议「{c['proposed_target']}」（第{c['chapter']}章）"
-                )
-        elif action == "resolve":
-            if arg1 is None or arg2 is None:
-                console.print("[red]resolve 需要提供原文术语和目标译名。[/]")
-                raise typer.Exit(1)
-            if not resolver.resolve(g, arg1, arg2):
-                console.print(f"[red]术语不存在：{arg1}[/]")
-                raise typer.Exit(1)
-            console.print(f"已裁定 {arg1} → {arg2}")
-        else:
-            console.print(f"[red]未知 glossary 子命令：{action}[/]")
+        if not resolver.resolve(glossary, source, target):
+            console.print(f"[red]术语不存在：{source}[/]")
             raise typer.Exit(1)
+        console.print(f"已裁定 {source} → {target}")
     finally:
-        g.close()
+        glossary.close()
 
 
-@tools_app.command()
+@app.command(rich_help_panel="状态与输出")
 def assemble(
-    input: str = typer.Argument(..., help="输入文件"),
-    out: Optional[str] = typer.Option(None, "--out"),
-    fmt: str = typer.Option("epub", "--format", help="epub | txt | html | markdown"),
+    input: str = typer.Argument(..., help="已完成或部分完成翻译的源文件"),
+    out: Optional[str] = typer.Option(
+        None,
+        "--out",
+        help="单语版输出路径；默认写入源文件旁的 output 目录",
+    ),
+    fmt: str = typer.Option(
+        "epub",
+        "--format",
+        help="导出格式：epub / txt / html / markdown",
+    ),
     mono: Optional[bool] = typer.Option(
         None,
         "--mono/--no-mono",
-        help="覆盖配置文件中的单语版产出开关",
+        help="覆盖 output.mono，控制是否生成单语版",
     ),
     bilingual: Optional[bool] = typer.Option(
         None,
         "--bilingual/--no-bilingual",
-        help="覆盖配置文件中的双语版产出开关",
+        help="覆盖 output.bilingual，控制是否生成原文译文对照版",
     ),
 ):
-    """回填生成译文文件（默认 EPUB）。"""
+    """从已有状态重新生成译文文件，不调用模型或重新翻译。"""
     from .assemble.writer import assemble as do_assemble
     from .assemble.writer import bilingual_out_path
 
@@ -444,7 +654,7 @@ def assemble(
     fmt = _validate_output_format(fmt)
     store = _runstore_for(config, input)
     if not store.exists():
-        console.print("[yellow]尚无进度。先运行 translate。[/]")
+        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     do_mono = config.output.mono if mono is None else mono
     do_bilingual = config.output.bilingual if bilingual is None else bilingual
@@ -472,6 +682,9 @@ def assemble(
                 out_format=fmt,
                 bilingual=True,
                 order=config.output.bilingual_order,
+                preserve_source_style=(
+                    config.output.bilingual_preserve_source_style
+                ),
                 about_page=config.output.about_page,
             )
         )
@@ -479,9 +692,11 @@ def assemble(
         console.print(f"已生成译文：[bold]{path}[/]")
 
 
-@tools_app.command()
-def qa(input: str = typer.Argument(..., help="输入文件")):
-    """全书跨章一致性扫描。"""
+@app.command(rich_help_panel="质量检查")
+def qa(
+    input: str = typer.Argument(..., help="已完成翻译的源文件"),
+) -> None:
+    """调用模型执行全书跨章一致性扫描，只报告问题而不修改正文。"""
     from .agents.consistency import ConsistencyChecker
     from .glossary.store import GlossaryStore
     from .llm.factory import build_client
@@ -489,7 +704,7 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
     config = _load_config()
     store = _runstore_for(config, input)
     if not store.exists():
-        console.print("[yellow]尚无进度。先运行 translate。[/]")
+        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     _apply_store_languages(config, store)
     g = GlossaryStore(store.glossary_path)
@@ -504,16 +719,18 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
         )
 
 
-@tools_app.command()
-def report(input: str = typer.Argument(..., help="输入文件")):
-    """生成 QA 报告（漏译与术语冲突汇总）。"""
+@app.command(rich_help_panel="状态与输出")
+def report(
+    input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
+) -> None:
+    """根据当前章节、审校和术语状态重新生成 report.json，不调用模型。"""
     from .assemble.report import build_report
     from .glossary.store import GlossaryStore
 
     config = _load_config()
     store = _runstore_for(config, input)
     if not store.exists():
-        console.print("[yellow]尚无进度。先运行 translate。[/]")
+        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     g = GlossaryStore(store.glossary_path)
     rep = build_report(store, g)
@@ -528,7 +745,7 @@ def report(input: str = typer.Argument(..., help="输入文件")):
     )
 
 
-app.add_typer(tools_app, name="tools")
+app.add_typer(glossary_app, name="glossary", rich_help_panel="术语库")
 
 
 def main() -> None:
