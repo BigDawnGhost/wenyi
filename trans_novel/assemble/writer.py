@@ -44,6 +44,7 @@ _IMAGE_EXTENSION_BY_TYPE = {
 }
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
+_LINE_WRAPPER_ATTR = "data-tn-line"
 _XML_ENCODING = re.compile(
     r"(<\?xml[^>]*\bencoding\s*=\s*)(['\"])[^'\"]+\2",
     re.IGNORECASE,
@@ -152,8 +153,23 @@ def _bilingual_source(source: str, target: str) -> str:
     return source if (source.strip() and source != target) else ""
 
 
-def _replace_block_content(el: Tag, text: str, meta: dict[str, object]) -> None:
-    """用纯译文替换块内容，并按解析元数据恢复图片等非文本节点。"""
+def _append_text_with_breaks(soup: BeautifulSoup, element: Tag, text: str) -> None:
+    """向元素追加文本，并把译文换行转换为 XHTML ``br``。"""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for index, line in enumerate(lines):
+        if line:
+            element.append(line)
+        if index + 1 < len(lines):
+            element.append(soup.new_tag("br"))
+
+
+def _replace_block_content(
+    soup: BeautifulSoup,
+    el: Tag,
+    text: str,
+    meta: dict[str, object],
+) -> None:
+    """用译文替换块内容，按元数据恢复图片，并按译文换行生成 ``br``。"""
     raw_inline = meta.get(_INLINE_META_KEY)
     inline = raw_inline if isinstance(raw_inline, dict) else {}
     raw_nodes = inline.get("nodes")
@@ -188,11 +204,11 @@ def _replace_block_content(el: Tag, text: str, meta: dict[str, object]) -> None:
     for target_offset, _order, node in sorted(restored):
         target_offset = min(max(target_offset, cursor), len(text))
         if target_offset > cursor:
-            el.append(text[cursor:target_offset])
+            _append_text_with_breaks(soup, el, text[cursor:target_offset])
         el.append(node)
         cursor = target_offset
     if cursor < len(text):
-        el.append(text[cursor:])
+        _append_text_with_breaks(soup, el, text[cursor:])
 
 
 # ── 纯文本 ──────────────────────────────────────────────────────────────────
@@ -303,12 +319,13 @@ def _render_segments_html(
         el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
             continue
+        line_wrapper = el.has_attr(_LINE_WRAPPER_ATTR)
         render_meta = (
             render_meta_by_anchor.get(anchor, {})
             if render_meta_by_anchor is not None
             else stored_meta_by_anchor.get(anchor, {})
         )
-        _replace_block_content(el, text, render_meta)
+        _replace_block_content(soup, el, text, render_meta)
         del el["data-tn-id"]
         if not bilingual or kind_by_anchor.get(anchor) == KIND_HEADING:
             continue
@@ -319,7 +336,9 @@ def _render_segments_html(
         # 避免生成 <ul><li>...</li><p>...</p></ul> 之类的非法列表结构，
         # 同时保留引用块的语义和样式。
         nested_source = el.name in {"li", "blockquote"}
-        src_el = soup.new_tag("div" if nested_source else "p")
+        src_el = soup.new_tag(
+            "span" if line_wrapper else "div" if nested_source else "p"
+        )
         source_classes = ["tn-source"]
         if preserve_source_style:
             original_classes = el.get("class")
@@ -334,7 +353,13 @@ def _render_segments_html(
             source_classes.append("ibooks-dark-theme-use-custom-text-color")
         src_el["class"] = " ".join(source_classes)
         src_el.append(src)
-        if nested_source and order == "source_first":
+        if line_wrapper and order == "source_first":
+            el.insert_before(src_el)
+            src_el.insert_after(soup.new_tag("br"))
+        elif line_wrapper:
+            el.insert_after(src_el)
+            el.insert_after(soup.new_tag("br"))
+        elif nested_source and order == "source_first":
             el.insert(0, src_el)
         elif nested_source:
             el.append(src_el)
@@ -342,6 +367,9 @@ def _render_segments_html(
             el.insert_before(src_el)
         else:
             el.insert_after(src_el)
+    # br 拆行包装只用于提供独立回填锚点；完成后去掉 span，恢复干净 DOM。
+    for wrapper in list(soup.find_all(True, attrs={_LINE_WRAPPER_ATTR: True})):
+        wrapper.unwrap()
     return str(soup)
 
 

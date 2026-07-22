@@ -346,7 +346,8 @@ class TestAssembleEpub(unittest.TestCase):
             0,
             "chapter.xhtml",
         )
-        segments[0].target = "甲乙丙丁"
+        segments[0].target = "甲乙"
+        segments[1].target = "丙丁"
         chapter = Chapter(
             index=0,
             title=title,
@@ -381,6 +382,108 @@ class TestAssembleEpub(unittest.TestCase):
         self.assertIsInstance(standalone_image, Tag)
         assert isinstance(standalone_image, Tag)
         self.assertEqual(standalone_image.get("src"), "standalone.jpg")
+
+    def test_epub_render_preserves_nested_list_links_and_blockquote_lines(self):
+        html = """<html><body>
+<ul><li><a href="#author">Author</a><ul>
+<li><a href="chapter.xhtml#one">Chapter One</a></li>
+<li><a href="chapter.xhtml#two">Chapter Two</a></li>
+</ul></li></ul>
+<blockquote><div>Dedication One</div><div>Dedication Two</div></blockquote>
+</body></html>"""
+        title, segments, template = annotate_epub_resource(html, 0, "contents.xhtml")
+        for segment, target in zip(
+            segments,
+            ["作者", "第一章", "第二章", "献词一", "献词二"],
+        ):
+            segment.target = target
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="contents.xhtml",
+            template=template,
+        )
+
+        rendered = BeautifulSoup(_render_chapter_html(chapter), "html.parser")
+
+        links = rendered.find_all("a")
+        self.assertEqual(
+            [link.get_text() for link in links],
+            ["作者", "第一章", "第二章"],
+        )
+        self.assertEqual(
+            [link.get("href") for link in links],
+            ["#author", "chapter.xhtml#one", "chapter.xhtml#two"],
+        )
+        self.assertEqual(len(rendered.find_all("li")), 3)
+        quote = rendered.find("blockquote")
+        self.assertIsInstance(quote, Tag)
+        assert isinstance(quote, Tag)
+        self.assertEqual(
+            [line.get_text() for line in quote.find_all("div", recursive=False)],
+            ["献词一", "献词二"],
+        )
+
+    def test_epub_render_rebuilds_heading_breaks_from_translated_lines(self):
+        html = """<html><body><h1>
+Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
+</h1></body></html>"""
+        title, segments, template = annotate_epub_resource(html, 0, "title.xhtml")
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["Isaac Asimov", "Tales of the Black Widowers"],
+        )
+        segments[0].target = "艾萨克·阿西莫夫"
+        segments[1].target = "《黑鳏夫俱乐部故事》"
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="title.xhtml",
+            template=template,
+        )
+
+        rendered = BeautifulSoup(_render_chapter_html(chapter), "html.parser")
+        heading = rendered.find("h1")
+        self.assertIsInstance(heading, Tag)
+        assert isinstance(heading, Tag)
+        self.assertEqual(len(heading.find_all("br")), 3)
+        self.assertIsNone(rendered.select_one("[data-tn-line]"))
+        self.assertEqual(
+            [
+                child.name if isinstance(child, Tag) else str(child)
+                for child in heading.children
+                if isinstance(child, Tag) or str(child).strip()
+            ],
+            ["艾萨克·阿西莫夫", "br", "br", "《黑鳏夫俱乐部故事》", "br"],
+        )
+
+    def test_bilingual_break_lines_keep_valid_paragraph_structure(self):
+        html = "<html><body><p>First<br/>Second</p></body></html>"
+        title, segments, template = annotate_epub_resource(html, 0, "lines.xhtml")
+        segments[0].target = "第一"
+        segments[1].target = "第二"
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="lines.xhtml",
+            template=template,
+        )
+
+        rendered = BeautifulSoup(
+            _render_chapter_html(chapter, bilingual=True),
+            "html.parser",
+        )
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertIsNone(paragraph.find("p"))
+        self.assertEqual(
+            [source.get_text() for source in paragraph.select("span.tn-source")],
+            ["First", "Second"],
+        )
 
     def test_bilingual_render_does_not_duplicate_inline_images(self):
         html = """<html><body>

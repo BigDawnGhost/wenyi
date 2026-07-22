@@ -9,7 +9,11 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from trans_novel.cli import _apply_store_languages, _configure_windows_console, app
+from trans_novel.cli import (
+    _apply_store_languages,
+    _configure_windows_console,
+    app,
+)
 from trans_novel.config import Config
 from trans_novel.ingest.errors import MinerUError
 
@@ -242,6 +246,45 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("conflicts", result.output)
         self.assertIn("resolve", result.output)
 
+    def test_api_preflight_covers_every_command_except_assemble(self):
+        for command in (
+            "translate",
+            "prepare",
+            "review",
+            "status",
+            "qa",
+            "report",
+            "glossary",
+        ):
+            with self.subTest(command=command):
+                with patch(
+                    "trans_novel.cli._validate_api_configuration",
+                    side_effect=RuntimeError("missing key"),
+                ) as validate:
+                    result = CliRunner().invoke(app, [command])
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("missing key", result.output)
+                validate.assert_called_once_with()
+
+        with patch(
+            "trans_novel.cli._validate_api_configuration",
+            side_effect=AssertionError("assemble must not validate credentials"),
+        ) as validate:
+            result = CliRunner().invoke(app, ["assemble"])
+        self.assertEqual(result.exit_code, 2, result.output)
+        validate.assert_not_called()
+
+    def test_api_preflight_skips_help_at_every_level(self):
+        for args in (["--help"], ["translate", "--help"], ["glossary", "--help"]):
+            with self.subTest(args=args):
+                with patch(
+                    "trans_novel.cli._validate_api_configuration",
+                    side_effect=AssertionError("help must not validate credentials"),
+                ) as validate:
+                    result = CliRunner().invoke(app, args)
+                self.assertEqual(result.exit_code, 0, result.output)
+                validate.assert_not_called()
+
     def test_review_command_runs_final_review_with_overrides(self):
         cfg = Config.from_dict(
             {
@@ -279,16 +322,34 @@ class TestCliConfig(unittest.TestCase):
         self.assertTrue(captured["kwargs"]["autofix"])
         self.assertIn("发现 1 项问题", result.output)
 
-    def test_translate_missing_input_exits_before_loading_config(self):
+    def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
-        with patch(
-            "trans_novel.cli._load_config",
-            side_effect=AssertionError("config should not load"),
+        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        with (
+            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.cli.os.path.isfile") as isfile,
+            patch.dict(os.environ, {}, clear=True),
         ):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("DEEPSEEK_API_KEY", result.output)
+        self.assertNotIn("输入文件不存在", result.output)
+        self.assertNotIn("Traceback", result.output)
+        isfile.assert_not_called()
+
+    def test_assemble_skips_api_preflight(self):
+        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        with (
+            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.cli.os.path.isfile", return_value=False),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            result = CliRunner().invoke(app, ["assemble", "missing.epub"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("输入文件不存在", result.output)
+        self.assertNotIn("DEEPSEEK_API_KEY", result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
         cfg = Config.from_dict(
@@ -321,13 +382,11 @@ class TestCliConfig(unittest.TestCase):
                 self.assertIn(str(error), result.output)
                 self.assertNotIn("Traceback", result.output)
 
-    def test_translate_rejects_unknown_output_format_before_loading_config(self):
+    def test_translate_rejects_unknown_output_format_after_api_preflight(self):
+        cfg = Config.from_dict({"llm": {"provider": "fake"}})
         with (
             patch("trans_novel.cli.os.path.isfile", return_value=True),
-            patch(
-                "trans_novel.cli._load_config",
-                side_effect=AssertionError("config should not load"),
-            ),
+            patch("trans_novel.cli._load_config", return_value=cfg),
         ):
             result = CliRunner().invoke(
                 app, ["translate", "input.txt", "--format", "pdf"]
@@ -368,6 +427,7 @@ class TestCliConfig(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
+                    "llm": {"provider": "fake"},
                     "paths": {"state_dir": state_dir},
                 }
             )

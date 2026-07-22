@@ -22,6 +22,9 @@ class LLMClient(ABC):
         """返回累计 token 用量快照（totals + by_tier + cache_hit_rate）。"""
         return self.usage.summary()
 
+    def validate_credentials(self) -> None:
+        """校验 provider 调用所需凭据；本地或测试 provider 默认免检。"""
+
     @abstractmethod
     def complete(
         self,

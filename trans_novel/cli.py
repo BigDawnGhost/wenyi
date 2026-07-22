@@ -51,7 +51,8 @@ def _configure_windows_console(
 
 _configure_windows_console()
 
-_CONFIG = {"path": "config.yaml"}
+_CONFIG: dict[str, Any] = {"path": "config.yaml", "skip_api_check": False}
+_API_CHECK_EXEMPT_COMMANDS = {"assemble"}
 
 
 def _config_path_from_args(args: Sequence[str]) -> str:
@@ -81,6 +82,9 @@ class _ConfigInitializingGroup(TyperGroup):
         cli_args = list(args) if args is not None else sys.argv[1:]
         config_path = _config_path_from_args(cli_args)
         _CONFIG["path"] = config_path
+        _CONFIG["skip_api_check"] = any(
+            arg in {"--help", "-h"} for arg in cli_args
+        )
         Config.create_default_file(config_path)
         return super().main(args=args, *main_args, **main_kwargs)
 
@@ -107,6 +111,7 @@ class _ManifestStore(Protocol):
 
 @app.callback()
 def _root(
+    ctx: typer.Context,
     config: str = typer.Option(
         "config.yaml",
         "--config",
@@ -114,13 +119,32 @@ def _root(
         help="配置文件路径；文件不存在时自动创建",
     ),
 ):
-    """记录本次 CLI 调用使用的全局配置文件路径。"""
+    """记录全局配置路径，并在子命令运行前校验模型凭据。"""
     _CONFIG["path"] = config
+    command = ctx.invoked_subcommand
+    should_validate = (
+        not _CONFIG.get("skip_api_check")
+        and command is not None
+        and command not in _API_CHECK_EXEMPT_COMMANDS
+    )
+    if should_validate:
+        try:
+            _validate_api_configuration()
+        except (OSError, RuntimeError, ValueError) as error:
+            console.print(f"[red]错误：{error}[/]")
+            raise typer.Exit(1) from None
 
 
 def _load_config() -> Config:
     """加载当前 CLI 调用选定的配置文件。"""
-    return Config.load(_CONFIG["path"])
+    return Config.load(str(_CONFIG["path"]))
+
+
+def _validate_api_configuration() -> None:
+    """构建当前 provider 并在任何命令逻辑前校验所需 API 凭据。"""
+    from .llm.factory import build_client
+
+    build_client(_load_config()).validate_credentials()
 
 
 def _require_input_file(input_path: str) -> None:
