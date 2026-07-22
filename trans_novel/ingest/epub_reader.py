@@ -39,6 +39,7 @@ _BLOCK_TAGS = {
     "dt",
     "dd",
 }
+_BLOCK_CANDIDATE_TAGS = _BLOCK_TAGS | {"div"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
@@ -269,7 +270,14 @@ def annotate_epub_resource(
     soup = BeautifulSoup(html, "html.parser")
     segments: list[Segment] = []
     idx = 0
-    for el in soup.find_all(_BLOCK_TAGS):
+    for el in soup.find_all(_BLOCK_CANDIDATE_TAGS):
+        if el.name == "div" and any(
+            descendant.get_text(strip=True)
+            for descendant in el.find_all(_BLOCK_CANDIDATE_TAGS)
+        ):
+            # Calibre 等工具有时直接用 div 表示段落。只把没有更细粒度
+            # 正文块的叶子 div 当作段落，避免布局 div 吞并内部多个 p/div。
+            continue
         if skip_navigation and _inside_navigation_list(el):
             # NAV 可以同时是 spine 中的可见目录页。目录 li 中嵌套着
             # a/ol，若当普通段落回填会清空整棵目录结构；nav 内独立的

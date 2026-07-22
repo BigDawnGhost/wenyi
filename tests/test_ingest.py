@@ -607,6 +607,25 @@ class TestEpubIngest(unittest.TestCase):
             ["Cell A", "Cell B", "Term", "Definition"],
         )
 
+    def test_leaf_div_paragraphs_are_extracted_without_layout_duplicates(self):
+        html = """<html><body>
+<div class="layout"><p>Nested paragraph.</p></div>
+<div class="calibre8">First <i>div</i> paragraph.</div>
+<div class="outer"><div class="calibre8">Second div paragraph.</div></div>
+</body></html>"""
+
+        _title, segments, template = annotate_epub_resource(
+            html,
+            0,
+            "chapter.xhtml",
+        )
+
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["Nested paragraph.", "First div paragraph.", "Second div paragraph."],
+        )
+        self.assertEqual(template.count("data-tn-id"), 3)
+
     def test_declared_legacy_xhtml_encoding_is_honored(self):
         markup = (
             '<?xml version="1.0" encoding="Shift_JIS"?>'
