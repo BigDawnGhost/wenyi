@@ -100,8 +100,10 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
         nonlocal raw_length
         for child in parent.children:
             if isinstance(child, Tag):
-                if child.name == "rt":
-                    # 振假名是注音而非正文；保留在模板中，不送给模型翻译。
+                if child.name in {"rt", "rp"}:
+                    # 振假名与不支持 ruby 时显示的备用括号都不是正文；
+                    # 保留在模板中，但不要把 ``漢字（かんじ）`` 拆成
+                    # 可翻译源文里的 ``漢字（）``。
                     continue
                 if id(child) in root_ids:
                     node_offsets.append((child, raw_length))
