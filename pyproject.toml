@@ -16,6 +16,7 @@ dependencies = [
     "typer>=0.12",         # CLI
     "rich>=13.7",          # 表格 / 进度条
     "pypdf>=6.14.2",
+    "google-genai>=2.13.0",
 ]
 
 [dependency-groups]

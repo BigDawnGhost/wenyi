@@ -89,8 +89,26 @@ llm:
         thinking: false
 ```
 
-`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取
-`OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+
+### Google Gemini
+
+通过官方 `google-genai` SDK 原生支持 Google Gemini 模型，设置 `provider: gemini`（或 `provider: google`）。默认读取 `GEMINI_API_KEY`（或兼容 `GOOGLE_API_KEY`）环境变量：
+
+```yaml
+llm:
+  provider: gemini
+  api_key_env: GEMINI_API_KEY
+  tiers:
+    strong:
+      model: gemini-3.6-flash
+    cheap:
+      model: gemini-3.6-flash
+    fast:
+      model: gemini-3.6-flash
+```
+
+Gemini 专属配置还支持针对思考模型的 `thinking_level`（如 `low` / `high`）与 `thinking_budget` 参数。
 
 ### 其他 OpenAI 兼容端点
 

@@ -88,6 +88,25 @@ llm:
 
 The OpenAI provider reads `OPENAI_API_KEY`; OpenRouter reads `OPENROUTER_API_KEY`. Both providers allow `base_url` and `api_key_env` to override their defaults.
 
+### Google Gemini
+
+Google Gemini is supported natively through the official `google-genai` SDK using `provider: gemini` (or `provider: google`). It reads `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) from environment variables:
+
+```yaml
+llm:
+  provider: gemini
+  api_key_env: GEMINI_API_KEY
+  tiers:
+    strong:
+      model: gemini-3.6-flash
+    cheap:
+      model: gemini-3.6-flash
+    fast:
+      model: gemini-3.6-flash
+```
+
+Gemini options also support `thinking_level` (e.g. `low`, `high`) or `thinking_budget` (in tokens) for Gemini reasoning models.
+
 ### Other OpenAI-compatible endpoints
 
 Use `openai-compatible` for any endpoint implementing OpenAI Chat Completions:
