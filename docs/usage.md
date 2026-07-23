@@ -117,6 +117,22 @@ Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
 
+## Per-run metrics
+
+`state/<book>/usage.json` remains the cumulative token total for the book. Each
+top-level command also writes an independent
+`state/<book>/run_metrics/<run-id>.json` record with:
+
+- input, configuration, package, and Git revision fingerprints;
+- requested stages, completion or failure status, and per-stage wall time;
+- only the LLM calls and tokens added by that invocation; and
+- ending chapter and segment completion counts.
+
+Every resume creates a new record, so clean runs from different branches can be
+compared without mixing their costs. Records omit the full source path and book
+text, redact sensitive option values, and store only an exception type on
+failure.
+
 ## Common commands
 
 ```bash

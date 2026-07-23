@@ -115,6 +115,20 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
 Windows。
 
+## 单次运行指标
+
+`state/<书名>/usage.json` 继续保存这本书跨续跑累计的 token 总账。每个顶层命令
+还会独立生成一份 `state/<书名>/run_metrics/<run-id>.json`，记录：
+
+- 输入、配置、程序包和 Git 提交的指纹；
+- 本次请求的阶段、成功或失败状态，以及各阶段墙钟耗时；
+- 仅由本次命令新增的模型调用数与 token；
+- 命令结束时已完成的章节数和正文段数。
+
+每次续跑都会新建一条记录，因此不同分支的全新运行可以公平比较，不会把历史
+成本混在一起。账本不保存完整源文件路径或书籍正文；敏感配置值会被遮蔽，失败
+时也只记录异常类型。
+
 ## 常用命令
 
 ```bash
