@@ -43,6 +43,22 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
 - Runtime data is stored under `state/`, including chapter intermediates, the SQLite glossary, usage data, and reports.
 
+## Per-run metrics
+
+`state/<book>/usage.json` remains the cumulative token total for the book. Each
+top-level command also writes an independent
+`state/<book>/run_metrics/<run-id>.json` record with:
+
+- input, configuration, package, and Git revision fingerprints;
+- requested stages, completion or failure status, and per-stage wall time;
+- only the LLM calls and tokens added by that invocation; and
+- ending chapter and segment completion counts.
+
+Every resume creates a new record, so clean runs from different branches can be
+compared without mixing their costs. Records omit the full source path and book
+text, redact sensitive option values, and store only an exception type on
+failure.
+
 ## Common commands
 
 ```bash
