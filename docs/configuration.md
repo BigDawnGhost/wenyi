@@ -169,6 +169,7 @@ pipeline:
   book_understanding: true
   prescan_concurrency: 4
   review_concurrency: 4
+  review_output_retries: 2
   glossary_scope: chapter
 ```
 
@@ -181,6 +182,7 @@ pipeline:
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
 - `review_concurrency`: number of contiguous final-review chunks that may run concurrently against the completed glossary; set it to `1` for sequential review.
+- `review_output_retries`: extra attempts for a single-segment review whose JSON output remains malformed after larger chunks have been split; `2` means at most three attempts including the first call.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
 The command-line flags `--polish`, `--no-polish`, `--qa`, and `--no-qa` override the corresponding configuration values for that run.

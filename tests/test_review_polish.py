@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import tempfile
 import threading
 import unittest
 
 from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.agents.reviewer import Reviewer, BackTranslator
+from trans_novel.agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
 from trans_novel.agents.polisher import Polisher
 from trans_novel.pipeline.orchestrator import Orchestrator
+from trans_novel.pipeline.runstore import RunStore
 
 
 def _cfg():
@@ -33,6 +37,108 @@ class TestReviewer(unittest.TestCase):
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
         self.assertEqual(client.calls[-1]["tier"], "cheap")  # 审校走廉价档
+
+    def test_reviewer_rejects_invalid_outer_schema(self):
+        reviewer = Reviewer(
+            FakeClient(handler=lambda m, t, j: json.dumps({"result": []})),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "issues_not_list"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_accepts_legacy_bare_issue_array(self):
+        reviewer = Reviewer(
+            FakeClient(handler=lambda m, t, j: json.dumps([{
+                "index": 0,
+                "type": "missing",
+                "detail": "漏译",
+            }], ensure_ascii=False)),
+            _cfg(),
+        )
+
+        issues = reviewer.review(["あ"], ["甲"])
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["type"], "missing")
+
+    def test_malformed_chunk_is_recursively_split_and_logged(self):
+        def handler(messages, tier, json_mode):
+            user = messages[-1]["content"]
+            count = len(re.findall(r"^\[(\d+)\]", user, re.M))
+            if count > 1:
+                return '{"issues":['
+            return json.dumps({"issues": [{
+                "index": 0,
+                "type": "missing",
+                "detail": "单段恢复成功",
+            }]}, ensure_ascii=False)
+
+        cfg = _cfg()
+        cfg.segment.max_chars_per_batch = 100_000
+        cfg.pipeline.review_concurrency = 1
+        client = FakeClient(handler=handler)
+        orch = Orchestrator(cfg, client=client)
+        segments = [
+            Segment(index=i, source=f"源文{i}", target=f"译文{i}")
+            for i in range(4)
+        ]
+
+        with tempfile.TemporaryDirectory() as d:
+            store = RunStore(os.path.join(d, "state"))
+            issues = orch._review_chapter(
+                segments,
+                [],
+                store=store,
+                chapter_index=7,
+            )
+            with open(store.event_log_path, "r", encoding="utf-8") as file:
+                events = [json.loads(line) for line in file]
+
+        self.assertEqual([item["index"] for item in issues], [0, 1, 2, 3])
+        self.assertEqual(len(client.calls), 7)  # 4 段二叉拆分：1 + 2 + 4
+        splits = [event for event in events if event["event"] == "review_chunk_split"]
+        self.assertEqual(len(splits), 3)
+        self.assertTrue(all(event["chapter"] == 7 for event in splits))
+        self.assertTrue(all(event["reason"] == "malformed_json" for event in splits))
+        self.assertTrue(
+            all("source" not in event and "target" not in event for event in events)
+        )
+
+    def test_singleton_retries_then_recovers(self):
+        attempts = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                return ""
+            return json.dumps({"issues": []})
+
+        cfg = _cfg()
+        cfg.pipeline.review_output_retries = 2
+        client = FakeClient(handler=handler)
+
+        issues = Orchestrator(cfg, client=client)._review_chapter(
+            [Segment(index=0, source="源文", target="译文")],
+            [],
+        )
+
+        self.assertEqual(issues, [])
+        self.assertEqual(len(client.calls), 3)
+
+    def test_singleton_retry_exhaustion_is_visible(self):
+        cfg = _cfg()
+        cfg.pipeline.review_output_retries = 2
+        client = FakeClient(handler=lambda m, t, j: "")
+
+        with self.assertRaisesRegex(ReviewOutputError, "malformed_json"):
+            Orchestrator(cfg, client=client)._review_chapter(
+                [Segment(index=0, source="源文", target="译文")],
+                [],
+            )
+
+        self.assertEqual(len(client.calls), 3)
 
     def test_chapter_review_chunks_run_concurrently_and_merge_in_order(self):
         barrier = threading.Barrier(2)

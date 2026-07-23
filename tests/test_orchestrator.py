@@ -632,12 +632,19 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             cfg.segment.max_chars_per_batch = 100_000
-            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            client = FakeClient(handler=handler)
+            orch = Orchestrator(cfg, client=client)
             store = orch.run(txt)
 
             with self.assertRaisesRegex(RuntimeError, "review service unavailable"):
                 orch.run_review(txt)
 
+            review_calls = [
+                call for call in client.calls
+                if "译文审校" in call["messages"][0]["content"]
+            ]
+            # 只恢复模型输出协议错误；服务故障不得因拆分逻辑被成倍重试。
+            self.assertEqual(len(review_calls), 1)
             self.assertEqual(
                 store.load_manifest()["chapters"][0]["review_status"],
                 REVIEW_FAILED,

@@ -12,6 +12,14 @@ from . import langprofile, prompts
 from .base import Agent
 
 
+class ReviewOutputError(ValueError):
+    """审校模型返回了可通过缩小输入重试的结构化输出错误。"""
+
+    def __init__(self, reason: str):
+        super().__init__(f"审校输出协议错误：{reason}")
+        self.reason = reason
+
+
 def _backtrans_compare_system(src: str) -> str:
     """生成回译语义比对所需的系统提示词。"""
     lbl = langprofile.label(src)
@@ -35,8 +43,25 @@ class Reviewer(Agent):
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
-        return self.dict_items(
-            self._ask_json(system, user, tier="cheap", key="issues"))
+        try:
+            data = self._ask_json(system, user, tier="cheap")
+        except ValueError as error:
+            # parse_json_loose 的异常包含模型原始输出片段；在这里转换成不携带
+            # 原译文内容的稳定原因，供编排器拆分恢复和安全记录。
+            raise ReviewOutputError("malformed_json") from error
+        if isinstance(data, dict):
+            issues = data.get("issues")
+        elif isinstance(data, list):
+            # 兼容旧行为：模型省略 {"issues": ...} 外壳但返回了完整数组时
+            # 可直接使用，不必为了纯包装差异增加恢复调用。
+            issues = data
+        else:
+            raise ReviewOutputError("response_not_object")
+        if not isinstance(issues, list):
+            raise ReviewOutputError("issues_not_list")
+        if any(not isinstance(item, dict) for item in issues):
+            raise ReviewOutputError("issue_not_object")
+        return list(issues)
 
 
 class BackTranslator(Agent):

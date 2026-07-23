@@ -20,6 +20,7 @@ import random
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Any, Callable, Optional
 
 from ..config import Config
@@ -33,7 +34,7 @@ from ..postprocess.punct import normalize_zh, normalize_zh_segments
 from ..agents.analyzer import Analyzer
 from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
-from ..agents.reviewer import Reviewer, BackTranslator
+from ..agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
 from ..agents.polisher import Polisher
 from . import checks
 from .context import RollingContext
@@ -307,6 +308,9 @@ class Orchestrator:
                     "consistency_qa": self.config.pipeline.consistency_qa,
                     "book_understanding": self.config.pipeline.book_understanding,
                     "review_concurrency": self.config.pipeline.review_concurrency,
+                    "review_output_retries": (
+                        self.config.pipeline.review_output_retries
+                    ),
                 },
             )
         finally:
@@ -1087,7 +1091,12 @@ class Orchestrator:
             if progress:
                 progress(done, total, label)
             try:
-                new_issues = self._review_chapter(text_segs, term_snapshot)
+                new_issues = self._review_chapter(
+                    text_segs,
+                    term_snapshot,
+                    store=store,
+                    chapter_index=ci,
+                )
                 for issue in new_issues:
                     issue["chapter"] = ci
                     issue.setdefault("fixed", False)
@@ -1144,13 +1153,21 @@ class Orchestrator:
         )
         return all_issues
 
-    def _review_chapter(self, text_segs, terms) -> list[dict]:
+    def _review_chapter(
+        self,
+        text_segs,
+        terms,
+        *,
+        store: RunStore | None = None,
+        chapter_index: int | None = None,
+    ) -> list[dict]:
         """把一章切成连续块并行审校，返回映射到章内段号的问题。
 
         块 = 连续段序列（约 3 倍翻译批大小，减少调用次数与重复注入的输入 token）；
         块内 reviewer 返回的 index 是块内下标，加块首段偏移映射回章内段号；
         越界 index 直接丢弃（模型幻觉防御）。各块只读固定译文和术语快照，
-        可并行调用；结果始终按原块顺序合并，保持确定性。
+        可并行调用；结构化输出畸形时递归拆半，单段按配置有限重试；
+        结果始终按原块顺序合并，保持确定性。
         """
         budget = self.config.segment.max_chars_per_batch * 3
         chunks = self._pack_contiguous(text_segs, budget)
@@ -1163,9 +1180,16 @@ class Orchestrator:
             jobs.append((base, chunk))
             base += len(chunk)
 
-        def review_one(job: tuple[int, list]) -> list[dict]:
-            """审校一个连续块，并把块内问题索引映射为章内索引。"""
-            chunk_base, chunk = job
+        recovery_events: list[dict[str, Any]] = []
+        recovery_lock = Lock()
+
+        def record_recovery(event: str, **data: Any) -> None:
+            """线程安全地暂存恢复事件，待并行任务结束后由主线程写日志。"""
+            with recovery_lock:
+                recovery_events.append({"event": event, **data})
+
+        def review_once(chunk_base: int, chunk: list) -> list[dict]:
+            """调用一次审校，并把合法块内索引映射为章内索引。"""
             srcs = [s.source for s in chunk]
             tgts = [s.target or "" for s in chunk]
             chunk_issues: list[dict] = []
@@ -1188,16 +1212,99 @@ class Orchestrator:
                     )
             return chunk_issues
 
+        def review_adaptive(chunk_base: int, chunk: list) -> list[dict]:
+            """畸形输出时缩小请求；单段仍失败才进行有限同输入重试。"""
+            try:
+                return review_once(chunk_base, chunk)
+            except ReviewOutputError as error:
+                if len(chunk) > 1:
+                    mid = len(chunk) // 2
+                    record_recovery(
+                        "review_chunk_split",
+                        start_index=chunk_base,
+                        count=len(chunk),
+                        left_count=mid,
+                        right_count=len(chunk) - mid,
+                        reason=error.reason,
+                    )
+                    return (
+                        review_adaptive(chunk_base, chunk[:mid])
+                        + review_adaptive(chunk_base + mid, chunk[mid:])
+                    )
+
+                last_error = error
+                retries = self.config.pipeline.review_output_retries
+                for attempt in range(1, retries + 1):
+                    record_recovery(
+                        "review_singleton_retry",
+                        start_index=chunk_base,
+                        count=1,
+                        attempt=attempt,
+                        max_retries=retries,
+                        reason=last_error.reason,
+                    )
+                    try:
+                        result = review_once(chunk_base, chunk)
+                    except ReviewOutputError as retry_error:
+                        last_error = retry_error
+                        continue
+                    record_recovery(
+                        "review_singleton_recovered",
+                        start_index=chunk_base,
+                        count=1,
+                        attempt=attempt,
+                    )
+                    return result
+                record_recovery(
+                    "review_singleton_failed",
+                    start_index=chunk_base,
+                    count=1,
+                    attempts=retries + 1,
+                    reason=last_error.reason,
+                )
+                raise last_error
+
+        def review_one(job: tuple[int, list]) -> list[dict]:
+            """审校一个初始连续块，并在必要时执行局部恢复。"""
+            chunk_base, chunk = job
+            return review_adaptive(chunk_base, chunk)
+
         workers = min(
             max(1, self.config.pipeline.review_concurrency),
             len(jobs),
         )
-        if workers == 1:
-            results = [review_one(job) for job in jobs]
-        else:
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                # executor.map 保持输入顺序；并发完成顺序不会改变 issue 顺序。
-                results = list(ex.map(review_one, jobs))
+        try:
+            if workers == 1:
+                results = [review_one(job) for job in jobs]
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    # executor.map 保持输入顺序；并发完成顺序不会改变 issue 顺序。
+                    results = list(ex.map(review_one, jobs))
+        finally:
+            if store is not None:
+                with recovery_lock:
+                    event_order = {
+                        "review_chunk_split": 0,
+                        "review_singleton_retry": 1,
+                        "review_singleton_recovered": 2,
+                        "review_singleton_failed": 2,
+                    }
+                    pending_events = sorted(
+                        recovery_events,
+                        key=lambda row: (
+                            row.get("start_index", -1),
+                            -row.get("count", 0),
+                            event_order.get(row.get("event", ""), 99),
+                            row.get("attempt", 0),
+                        ),
+                    )
+                for row in pending_events:
+                    event = row["event"]
+                    store.log_event(
+                        event,
+                        chapter=chapter_index,
+                        **{key: value for key, value in row.items() if key != "event"},
+                    )
         return [issue for chunk_issues in results for issue in chunk_issues]
 
     @staticmethod
