@@ -6,6 +6,7 @@ BackTranslator：把译文回译成源语言，再与原文比对，抽样发现
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from . import langprofile, prompts
@@ -35,8 +36,90 @@ class Reviewer(Agent):
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
-        return self.dict_items(
+        issues = self.dict_items(
             self._ask_json(system, user, tier="cheap", key="issues"))
+        return self._challenge_terminology_issues(
+            sources, targets, glossary_terms or [], issues)
+
+    def _challenge_terminology_issues(
+        self,
+        sources: list[str],
+        targets: list[str],
+        glossary_terms,
+        issues: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """二次复核术语候选，仅删除被明确判为误报的项目。
+
+        第二次调用只在首轮产生合法下标的 terminology 项时发生。模型调用失败、
+        返回缺项/重复项或协议不合法时保守保留首轮结果，避免复核故障造成漏报。
+        """
+        candidates = []
+        for candidate_id, issue in enumerate(issues):
+            if str(issue.get("type") or "").strip().lower() != "terminology":
+                continue
+            index = issue.get("index")
+            if isinstance(index, str):
+                try:
+                    index = int(index.strip())
+                except ValueError:
+                    continue
+            if type(index) is not int or not 0 <= index < len(sources):
+                continue
+            candidates.append({
+                "candidate_id": candidate_id,
+                "issue": issue,
+            })
+
+        if not candidates:
+            return issues
+
+        glossary = prompts.render_glossary(glossary_terms)
+        pairs = prompts.numbered_pairs(sources, targets)
+        system = prompts.render(
+            "terminology_challenger_system", src=self.src, tgt=self.tgt)
+        user = prompts.render(
+            "terminology_challenger_user",
+            src=self.src,
+            tgt=self.tgt,
+            glossary=glossary,
+            pairs=pairs,
+            candidates=json.dumps(candidates, ensure_ascii=False),
+        )
+        verdicts = self.dict_items(self._ask_json(
+            system, user, tier="cheap", key="verdicts", default=[]))
+
+        expected = {item["candidate_id"] for item in candidates}
+        resolved: dict[int, str] = {}
+        for item in verdicts:
+            candidate_id = item.get("candidate_id")
+            if isinstance(candidate_id, str):
+                try:
+                    candidate_id = int(candidate_id.strip())
+                except ValueError:
+                    return issues
+            verdict = str(item.get("verdict") or "").strip().lower()
+            rationale = str(item.get("rationale") or "").strip()
+            if (
+                type(candidate_id) is not int
+                or candidate_id not in expected
+                or candidate_id in resolved
+                or verdict not in {"confirm", "reject", "uncertain"}
+                or not rationale
+            ):
+                return issues
+            resolved[candidate_id] = verdict
+
+        if set(resolved) != expected:
+            return issues
+        rejected = {
+            candidate_id
+            for candidate_id, verdict in resolved.items()
+            if verdict == "reject"
+        }
+        return [
+            issue for candidate_id, issue in enumerate(issues)
+            if candidate_id not in rejected
+        ]
 
 
 class BackTranslator(Agent):

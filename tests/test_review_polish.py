@@ -7,6 +7,7 @@ import threading
 import unittest
 
 from trans_novel.config import Config
+from trans_novel.glossary.store import GlossaryTerm
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.agents.reviewer import Reviewer, BackTranslator
@@ -28,11 +29,76 @@ class TestReviewer(unittest.TestCase):
             {"index": 0, "type": "missing", "detail": "漏了后半句"},
             {"index": 1, "type": "terminology", "detail": "人名译法不符"},
         ]}
-        client = FakeClient(handler=lambda m, t, j: json.dumps(issues, ensure_ascii=False))
+
+        def handler(messages, tier, json_mode):
+            if "术语审查结果的误报复核员" in messages[0]["content"]:
+                return json.dumps({"verdicts": [{
+                    "candidate_id": 1,
+                    "verdict": "confirm",
+                    "rationale": "原文人名与对照表一致，译文用了另一人名",
+                }]}, ensure_ascii=False)
+            return json.dumps(issues, ensure_ascii=False)
+
+        client = FakeClient(handler=handler)
         r = Reviewer(client, _cfg())
-        out = r.review(["あ", "い"], ["甲", "乙"])
+        out = r.review(
+            ["あ", "綾小路"], ["甲", "另一人"],
+            [GlossaryTerm(source="綾小路", target="绫小路", type="人物")],
+        )
         self.assertEqual(len(out), 2)
         self.assertEqual(client.calls[-1]["tier"], "cheap")  # 审校走廉价档
+
+    def test_terminology_challenger_rejects_glossary_only_finding(self):
+        issues = {"issues": [
+            {"index": 0, "type": "missing", "detail": "漏了后半句"},
+            {"index": 1, "type": "terminology", "detail": "必须按术语表改名"},
+        ]}
+
+        def handler(messages, tier, json_mode):
+            if "术语审查结果的误报复核员" in messages[0]["content"]:
+                return json.dumps({"verdicts": [{
+                    "candidate_id": 1,
+                    "verdict": "reject",
+                    "rationale": "术语表把两个不同拼写的人名误并为同一人",
+                }]}, ensure_ascii=False)
+            return json.dumps(issues, ensure_ascii=False)
+
+        client = FakeClient(handler=handler)
+        out = Reviewer(client, _cfg()).review(
+            ["文A", "Carl entered."], ["译文A", "卡尔走了进来。"],
+            [GlossaryTerm(source="Carl", target="卡莱尔", type="人物")],
+        )
+
+        self.assertEqual([item["type"] for item in out], ["missing"])
+        self.assertEqual(len(client.calls), 2)
+        self.assertIn("可错的参考证据", client.calls[1]["messages"][0]["content"])
+
+    def test_invalid_challenger_response_keeps_first_pass_issues(self):
+        issues = {"issues": [
+            {"index": 0, "type": "terminology", "detail": "译名不一致"},
+        ]}
+
+        def handler(messages, tier, json_mode):
+            if "术语审查结果的误报复核员" in messages[0]["content"]:
+                return json.dumps({"verdicts": []}, ensure_ascii=False)
+            return json.dumps(issues, ensure_ascii=False)
+
+        out = Reviewer(FakeClient(handler=handler), _cfg()).review(
+            ["綾小路"], ["另一人"],
+            [GlossaryTerm(source="綾小路", target="绫小路", type="人物")],
+        )
+
+        self.assertEqual(out, issues["issues"])
+
+    def test_review_without_terminology_skips_challenger(self):
+        client = FakeClient(handler=lambda m, t, j: json.dumps(
+            {"issues": [{"index": 0, "type": "missing", "detail": "漏译"}]},
+            ensure_ascii=False))
+
+        out = Reviewer(client, _cfg()).review(["あ"], ["甲"])
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(len(client.calls), 1)
 
     def test_chapter_review_chunks_run_concurrently_and_merge_in_order(self):
         barrier = threading.Barrier(2)

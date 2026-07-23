@@ -966,7 +966,7 @@ class Orchestrator:
 
     # ── 全书最终审校 + 严重项定向重译 ────────────────────────────────────────
     _SEVERE_TYPES = ("missing", "mistranslation")
-    _REVIEW_SCHEMA_VERSION = 1
+    _REVIEW_SCHEMA_VERSION = 2
 
     def _review_digest(self, text_segs, terms, *, autofix: bool) -> str:
         """计算一章审校输入摘要，用于识别可安全跳过的重复审校。

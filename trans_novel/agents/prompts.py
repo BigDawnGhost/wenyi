@@ -122,6 +122,31 @@ $pairs
 请审校并输出 JSON：{"issues":[...]}。\
 """)
 
+TERMINOLOGY_CHALLENGER_SYSTEM = Template("""\
+你是术语审查结果的误报复核员。你的任务不是寻找新问题，而是尽力推翻每个候选，只保留证据充分的术语错误。
+专有名词对照表可能由模型自动抽取，是**可错的参考证据，不是裁决依据**。必须结合$src_label原文、$tgt_label译文
+和上下文独立判断：
+1. 只有当原文确实出现该词，且这里指向同一实体或同一语义，译文又实质违反了可靠的固定译法，才 confirm。
+2. 如果候选仅因译文与对照表字面不同、对照表自身可能抽取错误、两种译法均合理，或上下文不足以定论，
+   分别输出 reject 或 uncertain；不得为了迎合对照表强行判错。
+3. 不得发现新问题，不得改写译文。必须为每个 candidate_id 返回且只返回一个结论。
+verdict 语义固定：confirm=确有实质术语错误；reject=误报；uncertain=证据不足。仅输出 JSON：
+{"verdicts":[{"candidate_id":整数,"verdict":"confirm|reject|uncertain","rationale":"具体依据"}]}\
+""")
+
+TERMINOLOGY_CHALLENGER_USER = Template("""\
+【专有名词对照表（可错参考）】
+$glossary
+
+【完整逐段对照】
+$pairs
+
+【待复核的术语问题候选】
+$candidates
+
+逐一复核并输出 JSON：{"verdicts":[...]}。\
+""")
+
 POLISHER_SYSTEM = Template("""\
 你是中文润色编辑。在不改变原意、不增删信息的前提下，提升译文的中文流畅度与文学性：
 理顺语序、修正翻译腔、统一文体语气。务必保持段数不变、与输入一一对应。
@@ -274,6 +299,8 @@ _DEFAULTS = {
     "translator_fix_user": TRANSLATOR_FIX_USER,
     "reviewer_system": REVIEWER_SYSTEM,
     "reviewer_user": REVIEWER_USER,
+    "terminology_challenger_system": TERMINOLOGY_CHALLENGER_SYSTEM,
+    "terminology_challenger_user": TERMINOLOGY_CHALLENGER_USER,
     "polisher_system": POLISHER_SYSTEM,
     "polisher_user": POLISHER_USER,
     "title_translator_system": TITLE_TRANSLATOR_SYSTEM,
