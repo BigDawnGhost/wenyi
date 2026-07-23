@@ -1,10 +1,13 @@
 """术语抽取 Agent（廉价档）+ 入库（含冲突记录）。
 
-每翻完一章，从"原文 + 译文"里抽取应进表的专有名词，
-依据实际译法入库；不同译法由 GlossaryStore.upsert_term 记录，等待人工裁决。
+从已经完成的"原文 + 译文"证据窗口抽取应进表的专有名词；
+只有原文词和实际译法都能在窗口中定位时才入库。不同译法由
+GlossaryStore.upsert_term 记录，等待人工裁决。
 """
 
 from __future__ import annotations
+
+import unicodedata
 
 from ..agents import prompts
 from ..agents.base import Agent
@@ -18,6 +21,27 @@ def _text(value: object, default: str = "") -> str:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return str(value)
     return default
+
+
+def _evidence_text(value: str) -> str:
+    """规整证据文本，忽略兼容字符、大小写和排版空白。"""
+    return "".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _is_grounded(
+    term: GlossaryTerm,
+    source_evidence: str,
+    target_evidence: str,
+) -> bool:
+    """只接受能在已规整原译文中分别定位 source/target 的模型候选。"""
+    source = _evidence_text(term.source)
+    target = _evidence_text(term.target)
+    return bool(
+        source
+        and target
+        and source in source_evidence
+        and target in target_evidence
+    )
 
 
 class GlossaryExtractor(Agent):
@@ -53,11 +77,32 @@ class GlossaryExtractor(Agent):
 
     def extract_and_store(self, store: GlossaryStore, source_text: str,
                           target_text: str, chapter: int) -> dict[str, int]:
-        """抽取术语并写入数据库，返回新增、冲突和未变化数量。"""
-        existing = store.all_terms()
+        """抽取有原译文证据的术语并入库，返回各类处理数量。"""
+        # 只把当前窗口实际出现的旧词条发给模型。全量术语会随书长线性增长，
+        # 既浪费 token，也会诱导模型复述与本窗口无关的条目。
+        existing = store.terms_in_text(source_text)
         terms = self.extract(source_text, target_text, existing)
-        summary = {"inserted": 0, "conflict": 0, "unchanged": 0}
+        source_evidence = _evidence_text(source_text)
+        target_evidence = _evidence_text(target_text)
+        summary = {
+            "inserted": 0,
+            "conflict": 0,
+            "unchanged": 0,
+            "rejected": 0,
+            "aliases_rejected": 0,
+        }
         for t in terms:
+            if not _is_grounded(t, source_evidence, target_evidence):
+                summary["rejected"] += 1
+                continue
+            grounded_aliases = [
+                alias
+                for alias in t.aliases
+                if (normalized := _evidence_text(alias))
+                and normalized in source_evidence
+            ]
+            summary["aliases_rejected"] += len(t.aliases) - len(grounded_aliases)
+            t.aliases = grounded_aliases
             t.first_chapter = chapter
             result = store.upsert_term(t, chapter=chapter)
             summary[result] = summary.get(result, 0) + 1

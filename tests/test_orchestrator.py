@@ -79,7 +79,18 @@ class TestOrchestrator(unittest.TestCase):
             state = os.path.join(d, "state")
             cfg = _config(state)
 
-            client = FakeClient(handler=routing_handler)
+            def grounded_handler(messages, tier, json_mode):
+                system = messages[0]["content"]
+                user = messages[-1]["content"]
+                if "中文润色编辑" in system:
+                    n = len(re.findall(r"^\[(\d+)\]", user, re.M))
+                    return json.dumps(
+                        {"polished": [f"堀北润{i}" for i in range(n)]},
+                        ensure_ascii=False,
+                    )
+                return routing_handler(messages, tier, json_mode)
+
+            client = FakeClient(handler=grounded_handler)
             orch = Orchestrator(cfg, client=client)
             store = orch.run(txt)
 
@@ -777,6 +788,8 @@ class TestGlossaryScope(unittest.TestCase):
             cfg.pipeline.consistency_qa = False
             cfg.pipeline.book_understanding = False
             cfg.segment.max_chars_per_batch = 10
+            # 测试即时刷新语义时，让术语窗口与翻译批次同量级。
+            cfg.pipeline.glossary_window_chars = 10
 
             client = FakeClient(handler=handler)
             Orchestrator(cfg, client=client).run(txt)
@@ -789,6 +802,44 @@ class TestGlossaryScope(unittest.TestCase):
             self.assertGreaterEqual(len(translate_prompts), 3)
             self.assertIn("夏帆ちゃん → 小夏帆", translate_prompts[-1])
 
+    def test_glossary_windows_coalesce_multiple_translation_batches(self):
+        """术语使用较大证据窗口，避免每个小翻译批次都追加一次模型调用。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            with open(txt, "w", encoding="utf-8") as f:
+                f.write(
+                    "# 第一章\n\n"
+                    + "\n\n".join(f"第{i}段原文内容。" for i in range(8))
+                    + "\n"
+                )
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.polish = False
+            cfg.pipeline.review = False
+            cfg.pipeline.consistency_qa = False
+            cfg.pipeline.book_understanding = False
+            cfg.segment.max_chars_per_batch = 10
+            cfg.pipeline.glossary_window_chars = 40
+
+            client = FakeClient(handler=routing_handler)
+            store = Orchestrator(cfg, client=client).run(txt, only_chapter=0)
+            translate_calls = [
+                call for call in client.calls
+                if "文学翻译" in call["messages"][0]["content"]
+            ]
+            glossary_calls = [
+                call for call in client.calls
+                if "术语" in call["messages"][0]["content"]
+                and "抽取器" in call["messages"][0]["content"]
+            ]
+
+            self.assertGreater(len(translate_calls), 1)
+            self.assertGreater(len(glossary_calls), 0)
+            self.assertLess(len(glossary_calls), len(translate_calls))
+            self.assertEqual(
+                len(store.completed_batch_glossary_keys(0)),
+                len(glossary_calls),
+            )
+
     def test_resume_recovers_batch_glossary_checkpoints_from_events(self):
         """旧状态续跑时复用抽取事件，不为已完成批次重复调用模型。"""
         with tempfile.TemporaryDirectory() as d:
@@ -800,6 +851,7 @@ class TestGlossaryScope(unittest.TestCase):
             cfg.pipeline.consistency_qa = False
             cfg.pipeline.book_understanding = False
             cfg.segment.max_chars_per_batch = 8
+            cfg.pipeline.glossary_window_chars = 8
 
             store = Orchestrator(
                 cfg, client=FakeClient(handler=routing_handler)
@@ -831,10 +883,28 @@ class TestGlossaryScope(unittest.TestCase):
                 if "术语" in call["messages"][0]["content"]
                 and "抽取器" in call["messages"][0]["content"]
             ]
-            # 已译批次全部跳过，只保留章末一次兜底抽取。
-            self.assertEqual(len(glossary_calls), 1)
-            self.assertTrue(glossary_labels)
-            self.assertTrue(all(label != "解析文档…" for label in glossary_labels))
+            # 原译文与抽取协议均未变化：术语窗口全部复用，不再章末重复通读。
+            self.assertEqual(len(glossary_calls), 0)
+            self.assertFalse(glossary_labels)
+            self.assertTrue(labels)
+            self.assertNotEqual(labels[-1], "解析文档…")
+
+            # 同一边界内的译文发生实质变化时，内容摘要会使对应窗口重新抽取。
+            changed = store.load_chapter(0)
+            changed.text_segments[0].target = (
+                "校订后的译文" + (changed.text_segments[0].target or "")
+            )
+            store.save_chapter(changed)
+            store.set_chapter_status(0, STATUS_PENDING)
+
+            changed_client = FakeClient(handler=routing_handler)
+            Orchestrator(cfg, client=changed_client).run(txt, only_chapter=0)
+            changed_glossary_calls = [
+                call for call in changed_client.calls
+                if "术语" in call["messages"][0]["content"]
+                and "抽取器" in call["messages"][0]["content"]
+            ]
+            self.assertEqual(len(changed_glossary_calls), 1)
 
     def test_final_glossary_is_available_to_review_prompt(self):
         """后章才抽出的术语，也能用于从第一章开始的最终审校。"""
