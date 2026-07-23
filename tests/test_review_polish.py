@@ -100,6 +100,38 @@ class TestReviewer(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(len(client.calls), 1)
 
+    def test_review_only_sends_terms_found_in_current_source_chunk(self):
+        seen_users: list[str] = []
+
+        def handler(messages, tier, json_mode):
+            seen_users.append(messages[-1]["content"])
+            if "术语审查结果的误报复核员" in messages[0]["content"]:
+                return json.dumps({"verdicts": [{
+                    "candidate_id": 0,
+                    "verdict": "confirm",
+                    "rationale": "原文确实出现 Carl，译文违反固定人名译法",
+                }]}, ensure_ascii=False)
+            return json.dumps({"issues": [{
+                "index": 0,
+                "type": "terminology",
+                "detail": "人名译法不一致",
+            }]}, ensure_ascii=False)
+
+        client = FakeClient(handler=handler)
+        out = Reviewer(client, _cfg()).review(
+            ["Carl entered."],
+            ["卡尔走了进来。"],
+            [
+                GlossaryTerm(source="Carl", target="卡莱尔", type="人物"),
+                GlossaryTerm(source="Alice", target="爱丽丝", type="人物"),
+            ],
+        )
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(len(seen_users), 2)
+        self.assertTrue(all("Carl → 卡莱尔" in user for user in seen_users))
+        self.assertTrue(all("Alice" not in user for user in seen_users))
+
     def test_chapter_review_chunks_run_concurrently_and_merge_in_order(self):
         barrier = threading.Barrier(2)
 

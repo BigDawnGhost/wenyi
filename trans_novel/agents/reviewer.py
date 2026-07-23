@@ -11,6 +11,7 @@ from typing import Any
 
 from . import langprofile, prompts
 from .base import Agent
+from ..glossary.store import GlossaryStore
 
 
 def _backtrans_compare_system(src: str) -> str:
@@ -29,17 +30,21 @@ class Reviewer(Agent):
         """返回问题列表：[{index,type,detail,suggestion}]。"""
         if not sources:
             return []
+        relevant_terms = GlossaryStore.terms_in(
+            glossary_terms or [],
+            "\n".join(sources),
+        )
         system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "reviewer_user", src=self.src, tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(relevant_terms),
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
         issues = self.dict_items(
             self._ask_json(system, user, tier="cheap", key="issues"))
         return self._challenge_terminology_issues(
-            sources, targets, glossary_terms or [], issues)
+            sources, targets, relevant_terms, issues)
 
     def _challenge_terminology_issues(
         self,
