@@ -242,12 +242,12 @@ class RunStore:
 
     # ── 批次恢复检查点 ────────────────────────────────────────────────────
     @staticmethod
-    def batch_glossary_key(start_index: int, count: int) -> str:
-        """返回批次术语抽取检查点键；批次边界变化时不会误命中旧键。"""
-        return f"{start_index}:{count}"
+    def batch_glossary_key(start_index: int, count: int, input_digest: str) -> str:
+        """返回术语窗口检查点键；边界或原译文变化都会使旧键失效。"""
+        return f"{start_index}:{count}:{input_digest}"
 
     def completed_batch_glossary_keys(self, chapter: int) -> set[str]:
-        """从事件日志恢复已完成的批次术语抽取；每个实例最多扫描一次。"""
+        """从事件日志恢复已完成的术语窗口；每个实例最多扫描一次。"""
         if self._batch_glossary_event_cache is None:
             completed: dict[int, set[str]] = {}
             if os.path.isfile(self.event_log_path):
@@ -262,14 +262,17 @@ class RunStore:
                         ci = row.get("chapter")
                         start = row.get("start_index")
                         count = row.get("count")
+                        input_digest = row.get("input_digest")
                         if not (
                             isinstance(ci, int)
                             and isinstance(start, int)
                             and isinstance(count, int)
+                            and isinstance(input_digest, str)
+                            and input_digest
                         ):
                             continue
                         completed.setdefault(ci, set()).add(
-                            self.batch_glossary_key(start, count)
+                            self.batch_glossary_key(start, count, input_digest)
                         )
             self._batch_glossary_event_cache = completed
         return set(self._batch_glossary_event_cache.get(chapter, set()))
@@ -289,11 +292,14 @@ class RunStore:
             chapter = data.get("chapter")
             start = data.get("start_index")
             count = data.get("count")
+            input_digest = data.get("input_digest")
             if (
                 isinstance(chapter, int)
                 and isinstance(start, int)
                 and isinstance(count, int)
+                and isinstance(input_digest, str)
+                and input_digest
             ):
                 self._batch_glossary_event_cache.setdefault(chapter, set()).add(
-                    self.batch_glossary_key(start, count)
+                    self.batch_glossary_key(start, count, input_digest)
                 )

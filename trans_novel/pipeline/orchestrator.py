@@ -1,9 +1,9 @@
 """编排器：驱动全流程，章级状态机 + 断点续跑。
 
-单章翻译流水线（章内批次**串行**，逐批刷新滚动上下文与术语快照；跨章亦串行传递梗概）：
+单章翻译流水线（章内批次**串行**，逐批刷新滚动上下文；跨章亦串行传递梗概）：
   每批：渲染上下文（含前一批刚译出的译文）→ 翻译（对齐保证）→ 润色（可选）→
-        术语/称呼/固定表达实时抽取入库 → 立即供下一批参照。
-  章末：跨段标点规范化 → 全章术语兜底抽取 → 回译抽检 → 写 TM → 落盘标记 done。
+        累积原译文证据；达到术语窗口预算后抽取入库，供后续批次参照。
+  章末：刷新剩余术语窗口 → 跨段标点规范化 → 回译抽检 → 写 TM → 落盘标记 done。
 翻译前先预扫源文建立全书理解（逐章梗概+全书概览，fast 档并行），作恒定前缀注入每章翻译。
 
 全书翻译完成后，独立 Review 阶段使用最终术语库按章审校；章内连续块并行检测，
@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import random
+import unicodedata
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -104,6 +105,8 @@ class _BatchResult:
 
 
 class Orchestrator:
+    _GLOSSARY_SCHEMA_VERSION = 2
+
     def __init__(self, config: Config, client: LLMClient | None = None):
         """初始化共享 LLM 客户端、用量检查点和各流水线 Agent。"""
         self.config = config
@@ -792,14 +795,21 @@ class Orchestrator:
         batches = _resume_batches(
             text_segs, self.config.segment.max_chars_per_batch
         )
+        glossary_windows: list[tuple[int, list]] = []
+        glossary_start = 0
+        glossary_budget = max(1, self.config.pipeline.glossary_window_chars)
+        for window in batch_segments(text_segs, glossary_budget):
+            glossary_windows.append((glossary_start, window))
+            glossary_start += len(window)
+        glossary_cursor = 0
         label = self._chapter_progress_label(chapter.title, ci)
         # prepare() 的最后一个标签通常是“解析文档…”。续跑首批可能先恢复术语，
         # 若不在章首刷新，整个模型请求期间都会错误地显示成仍在解析源文件。
         if progress:
             progress(done, total, label)
         glossary_checkpoints = store.completed_batch_glossary_keys(ci)
-        # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
-        # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
+        # 术语快照在每个已就绪术语窗口后刷新。glossary_scope=chapter 时仍按
+        # 本章源文裁剪，避免全量表过大。
         term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
 
         # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
@@ -810,20 +820,21 @@ class Orchestrator:
         seg_base = 0   # 当前批首段的章内段号（issue 批内下标 → 章内段号）
         for b in batches:
             batch_start = seg_base
-            glossary_key = store.batch_glossary_key(batch_start, len(b))
             existing_targets = [s.target for s in b if s.target and s.target.strip()]
             if len(existing_targets) == len(b):
                 # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
                 context.add_targets(existing_targets)
-                if glossary_key in glossary_checkpoints:
-                    summary = {"inserted": 0, "conflict": 0, "unchanged": 0,
-                               "updated": 0, "skipped": 1}
-                else:
-                    summary = self._extract_batch_glossary(
-                        glossary, store, ci, batch_start, b
-                    )
-                    glossary_checkpoints.add(glossary_key)
-                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+                glossary_cursor, summary = self._extract_ready_glossary_windows(
+                    glossary,
+                    store,
+                    ci,
+                    glossary_windows,
+                    glossary_cursor,
+                    batch_start + len(b),
+                    glossary_checkpoints,
+                )
+                if summary["windows_extracted"]:
+                    term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
                 store.log_event(
                     "batch_skipped",
                     chapter=ci,
@@ -872,10 +883,18 @@ class Orchestrator:
                 progress(done, total, label)
             # 增量持久化译文，下次中断从此批之后续跑。
             store.save_chapter(chapter)
-            # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
-            self._extract_batch_glossary(glossary, store, ci, batch_start, b)
-            glossary_checkpoints.add(glossary_key)
-            term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+            # 译文落盘后再处理已就绪窗口，避免中断时术语库领先章节产物。
+            glossary_cursor, summary = self._extract_ready_glossary_windows(
+                glossary,
+                store,
+                ci,
+                glossary_windows,
+                glossary_cursor,
+                seg_base,
+                glossary_checkpoints,
+            )
+            if summary["windows_extracted"]:
+                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
 
         # 标点在章级统一处理，直引号状态才能跨批次、跨段保持连续。
         if self._punctuation_enabled():
@@ -891,13 +910,6 @@ class Orchestrator:
             retained = min(len(normalized_targets), len(context.recent_targets))
             if retained:
                 context.recent_targets[-retained:] = normalized_targets[-retained:]
-
-        # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
-        # 最终 Review 会在全书翻译完成后读取此时已经稳定的最终术语库。
-        src_text = "\n".join(s.source for s in text_segs)
-        tgt_text = "\n".join(s.target or "" for s in text_segs)
-        self.extractor.extract_and_store(glossary, src_text, tgt_text, ci)
-        store.log_event("chapter_glossary_extracted", chapter=ci)
 
         # 回译抽检
         bt_issues: list[dict] = []
@@ -944,14 +956,102 @@ class Orchestrator:
         return [t for t in terms if t.source in hit]
 
     @staticmethod
+    def _glossary_digest_text(value: str) -> str:
+        """生成忽略排版空白和标点差异的术语证据文本。"""
+        normalized = unicodedata.normalize("NFKC", value).casefold()
+        return "".join(
+            ch for ch in normalized
+            if not unicodedata.category(ch).startswith(("P", "Z"))
+        )
+
+    def _glossary_digest(self, batch) -> str:
+        """绑定术语检查点到协议版本及当前窗口的实际原译文。"""
+        payload = {
+            "version": self._GLOSSARY_SCHEMA_VERSION,
+            "source_lang": self.config.source_lang,
+            "target_lang": self.config.target_lang,
+            "segments": [
+                {
+                    "source": self._glossary_digest_text(segment.source),
+                    "target": self._glossary_digest_text(segment.target or ""),
+                }
+                for segment in batch
+            ],
+        }
+        raw = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _extract_ready_glossary_windows(
+        self,
+        glossary: GlossaryStore,
+        store: RunStore,
+        chapter: int,
+        windows: list[tuple[int, list]],
+        cursor: int,
+        completed_segments: int,
+        checkpoints: set[str],
+    ) -> tuple[int, dict[str, int]]:
+        """抽取所有已经完整落盘的术语窗口，并汇总本次处理结果。"""
+        totals = {
+            "inserted": 0,
+            "conflict": 0,
+            "unchanged": 0,
+            "rejected": 0,
+            "aliases_rejected": 0,
+            "windows_extracted": 0,
+            "windows_skipped": 0,
+        }
+        while cursor < len(windows):
+            start_index, window = windows[cursor]
+            if start_index + len(window) > completed_segments:
+                break
+            if any(not (segment.target and segment.target.strip()) for segment in window):
+                break
+
+            input_digest = self._glossary_digest(window)
+            key = store.batch_glossary_key(start_index, len(window), input_digest)
+            if key in checkpoints:
+                totals["windows_skipped"] += 1
+            else:
+                summary = self._extract_batch_glossary(
+                    glossary,
+                    store,
+                    chapter,
+                    start_index,
+                    window,
+                    input_digest,
+                )
+                for name in (
+                    "inserted",
+                    "conflict",
+                    "unchanged",
+                    "rejected",
+                    "aliases_rejected",
+                ):
+                    totals[name] += summary.get(name, 0)
+                totals["windows_extracted"] += 1
+                checkpoints.add(key)
+            cursor += 1
+        return cursor, totals
+
+    @staticmethod
     def _chapter_progress_label(title: str, index: int) -> str:
         """进度展示用章节名：优先用书内标题，避免内部序号与“第一章”等标题冲突。"""
         title = (title or "").strip()
         return title or f"章节 {index + 1}"
 
-    def _extract_batch_glossary(self, glossary: GlossaryStore, store: RunStore,
-                                chapter: int, start_index: int, batch) -> dict[str, int]:
-        """每批译完/续跑跳过后即时抽取术语，供同章后续批次使用。"""
+    def _extract_batch_glossary(
+        self,
+        glossary: GlossaryStore,
+        store: RunStore,
+        chapter: int,
+        start_index: int,
+        batch,
+        input_digest: str,
+    ) -> dict[str, int]:
+        """从一个已落盘证据窗口抽取术语，供后续翻译与最终审校使用。"""
         src_text = "\n".join(s.source for s in batch)
         tgt_text = "\n".join(s.target or "" for s in batch)
         summary = self.extractor.extract_and_store(glossary, src_text, tgt_text, chapter)
@@ -960,6 +1060,10 @@ class Orchestrator:
             chapter=chapter,
             start_index=start_index,
             count=len(batch),
+            input_digest=input_digest,
+            schema_version=self._GLOSSARY_SCHEMA_VERSION,
+            source_chars=len(src_text),
+            target_chars=len(tgt_text),
             summary=summary,
         )
         return summary

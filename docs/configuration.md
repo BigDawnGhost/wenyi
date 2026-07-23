@@ -169,6 +169,7 @@ pipeline:
   book_understanding: true
   prescan_concurrency: 4
   review_concurrency: 4
+  glossary_window_chars: 7200
   glossary_scope: chapter
 ```
 
@@ -181,6 +182,7 @@ pipeline:
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
 - `review_concurrency`: number of contiguous final-review chunks that may run concurrently against the completed glossary; set it to `1` for sequential review.
+- `glossary_window_chars`: approximate source-character budget accumulated before one terminology extraction call. Lower values feed new terms back sooner; higher values reduce calls and provide more evidence per extraction.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
 The command-line flags `--polish`, `--no-polish`, `--qa`, and `--no-qa` override the corresponding configuration values for that run.

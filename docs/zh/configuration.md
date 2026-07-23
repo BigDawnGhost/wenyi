@@ -182,6 +182,7 @@ pipeline:
   book_understanding: true
   prescan_concurrency: 4
   review_concurrency: 4
+  glossary_window_chars: 7200
   glossary_scope: chapter
 ```
 
@@ -194,6 +195,7 @@ pipeline:
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
 - `review_concurrency`：使用最终术语库审校连续分块的并发数；设为 `1` 时串行审校。
+- `glossary_window_chars`：累计多少原文字符后调用一次术语抽取。调小会更快把新术语反馈给后续批次；调大则减少调用并为判断提供更多上下文。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
 命令行的 `--polish`、`--no-polish`、`--qa`、`--no-qa` 会覆盖对应配置。

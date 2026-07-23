@@ -9,7 +9,7 @@ import unittest
 
 from trans_novel.config import Config
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.glossary.store import GlossaryStore
+from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.glossary.extractor import GlossaryExtractor
 from trans_novel.agents.analyzer import Analyzer
 from trans_novel.pipeline.context import RollingContext
@@ -90,8 +90,14 @@ class TestExtractor(unittest.TestCase):
         ext = GlossaryExtractor(client, _cfg())
         with tempfile.TemporaryDirectory() as d:
             store = GlossaryStore(os.path.join(d, "g.db"))
-            summary = ext.extract_and_store(store, "原文", "译文", chapter=1)
+            summary = ext.extract_and_store(
+                store,
+                "堀北さんは屋上へ向かった。",
+                "堀北去了天台。",
+                chapter=1,
+            )
             self.assertEqual(summary["inserted"], 2)
+            self.assertEqual(summary["rejected"], 0)
             horikita = store.get_term("堀北")
             self.assertIsNotNone(horikita)
             assert horikita is not None
@@ -103,6 +109,64 @@ class TestExtractor(unittest.TestCase):
             self.assertIsNotNone(rooftop)
             assert rooftop is not None
             self.assertEqual(rooftop.gender, "")
+            store.close()
+
+    def test_extract_and_store_rejects_candidates_without_paired_evidence(self):
+        terms = {"terms": [
+            {
+                "source": "堀北",
+                "target": "堀北",
+                "type": "人物",
+                "aliases": ["堀北さん", "模型臆造别名"],
+            },
+            {"source": "不存在", "target": "幽灵译名", "type": "人物"},
+            {"source": "屋上", "target": "楼顶", "type": "地名"},
+        ]}
+        client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
+        ext = GlossaryExtractor(client, _cfg())
+
+        with tempfile.TemporaryDirectory() as d:
+            store = GlossaryStore(os.path.join(d, "g.db"))
+            summary = ext.extract_and_store(
+                store,
+                "堀北さんは屋上にいる。",
+                "堀北在天台。",
+                chapter=1,
+            )
+
+            self.assertEqual(summary["inserted"], 1)
+            self.assertEqual(summary["rejected"], 2)
+            self.assertEqual(summary["aliases_rejected"], 1)
+            horikita = store.get_term("堀北")
+            self.assertIsNotNone(horikita)
+            assert horikita is not None
+            self.assertEqual(horikita.aliases, ["堀北さん"])
+            self.assertIsNone(store.get_term("不存在"))
+            self.assertIsNone(store.get_term("屋上"))
+            store.close()
+
+    def test_extractor_prompt_only_includes_existing_terms_found_in_source(self):
+        seen_users: list[str] = []
+
+        def handler(messages, tier, json_mode):
+            seen_users.append(messages[-1]["content"])
+            return json.dumps({"terms": []})
+
+        ext = GlossaryExtractor(FakeClient(handler=handler), _cfg())
+        with tempfile.TemporaryDirectory() as d:
+            store = GlossaryStore(os.path.join(d, "g.db"))
+            store.upsert_term(
+                GlossaryTerm(source="堀北", target="堀北", type="人物")
+            )
+            store.upsert_term(
+                GlossaryTerm(source="无关人物", target="无关译名", type="人物")
+            )
+
+            ext.extract_and_store(store, "堀北走进教室。", "堀北走进了教室。", chapter=1)
+
+            self.assertEqual(len(seen_users), 1)
+            self.assertIn("堀北 → 堀北", seen_users[0])
+            self.assertNotIn("无关人物", seen_users[0])
             store.close()
 
     def test_malformed_optional_fields_fall_back_safely(self):

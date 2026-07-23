@@ -44,6 +44,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
             self.assertFalse(cfg.pipeline.consistency_qa)
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
+            self.assertEqual(cfg.pipeline.glossary_window_chars, 7200)
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:
@@ -68,6 +69,7 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
         self.assertFalse(cfg.pipeline.consistency_qa)
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
+        self.assertEqual(cfg.pipeline.glossary_window_chars, 7200)
 
     def test_about_page_can_be_disabled(self):
         cfg = Config.from_dict({"output": {"about_page": False}})

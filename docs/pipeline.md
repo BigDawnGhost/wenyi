@@ -11,7 +11,7 @@ Read input
 -> Scan the book and create chapter digests and a whole-book synopsis
 -> Analyze representative passages and build an initial glossary and style guide
 -> Translate chapter by chapter and batch by batch
--> Extract and update terminology as translation progresses
+-> Extract and update terminology from accumulated evidence windows
 -> Optionally polish and normalize punctuation
 -> Run the final whole-book review against the completed glossary
 -> Optionally run whole-book consistency QA
@@ -27,7 +27,11 @@ This lets early chapters benefit from knowledge of later events while helping ad
 
 ## Glossary
 
-The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. By default, later batches receive only terms that appear in the current chapter, keeping unrelated entries out of the prompt.
+The initial analysis seeds the glossary. As translation proceeds, Wenyi accumulates completed source-and-target pairs into evidence windows, then extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address. One larger terminology window can cover several smaller translation batches, reducing repeated model calls while giving the extractor more context. Set `pipeline.glossary_window_chars` lower for faster same-chapter feedback or higher for lower cost.
+
+Each proposed term must be grounded on both sides: its source form must occur in the source window and its chosen Chinese form must occur in the corresponding translation. Proposed aliases that do not occur in the source window are discarded. Existing glossary context is also pruned to terms found in that window. Completed windows are checkpointed by a digest of their actual source and target text, so an unchanged resume makes no model call while edited translations invalidate only the affected window.
+
+By default, later translation batches receive only terms that appear in the current chapter, keeping unrelated entries out of the prompt.
 
 The glossary constrains later translation and the final review, but it does not automatically rewrite every previously translated occurrence. Use `glossary list` and `glossary conflicts` to inspect entries, then combine review, QA, reports, and manual decisions when necessary.
 
