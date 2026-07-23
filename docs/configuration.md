@@ -173,7 +173,7 @@ pipeline:
 ```
 
 - `review`: disabled by default; when enabled, automatically run the independent final-review stage after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
-- `autofix_severe`: during final review, retranslate severe omissions and mistranslations and adopt fixes that pass validation.
+- `autofix_severe`: during final review, retranslate severe omissions and mistranslations. A candidate is adopted only after deterministic safety checks and an explicit acceptance from an independent low-cost verifier; failures keep the current translation for manual review.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
 - `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
