@@ -195,7 +195,7 @@ pipeline:
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
 - `review_concurrency`：使用最终术语库审校连续分块的并发数；设为 `1` 时串行审校。
-- `review_output_retries`：较大审校块拆分后，单段 JSON 仍畸形时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
+- `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
 命令行的 `--polish`、`--no-polish`、`--qa`、`--no-qa` 会覆盖对应配置。

@@ -970,7 +970,7 @@ class Orchestrator:
 
     # ── 全书最终审校 + 严重项定向重译 ────────────────────────────────────────
     _SEVERE_TYPES = ("missing", "mistranslation")
-    _REVIEW_SCHEMA_VERSION = 1
+    _REVIEW_SCHEMA_VERSION = 2
 
     def _review_digest(self, text_segs, terms, *, autofix: bool) -> str:
         """计算一章审校输入摘要，用于识别可安全跳过的重复审校。
@@ -1193,7 +1193,14 @@ class Orchestrator:
             srcs = [s.source for s in chunk]
             tgts = [s.target or "" for s in chunk]
             chunk_issues: list[dict] = []
-            for it in self.reviewer.review(srcs, tgts, terms):
+            review_result = self.reviewer.review_result(srcs, tgts, terms)
+            if review_result.repaired:
+                record_recovery(
+                    "review_json_repaired",
+                    start_index=chunk_base,
+                    count=len(chunk),
+                )
+            for it in review_result.issues:
                 idx = it.get("index")
                 if isinstance(idx, str):
                     try:
@@ -1284,6 +1291,7 @@ class Orchestrator:
             if store is not None:
                 with recovery_lock:
                     event_order = {
+                        "review_json_repaired": 0,
                         "review_chunk_split": 0,
                         "review_singleton_retry": 1,
                         "review_singleton_recovered": 2,

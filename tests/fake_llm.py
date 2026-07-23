@@ -37,7 +37,12 @@ def routing_handler(messages, tier, json_mode):
         return json.dumps({"polished": [f"润{i}" for i in range(n)]}, ensure_ascii=False)
 
     if "译文审校" in system:
-        return json.dumps({"issues": []}, ensure_ascii=False)
+        n = _count_numbered(user)
+        return json.dumps({
+            "issues": [],
+            "reviewed_segments": n,
+            "complete": True,
+        }, ensure_ascii=False)
 
     if "术语" in system and "抽取器" in system:
         return json.dumps({"terms": [

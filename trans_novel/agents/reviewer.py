@@ -6,10 +6,14 @@ BackTranslator：把译文回译成源语言，再与原文比对，抽样发现
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+
+from json_repair import repair_json
 
 from . import langprofile, prompts
 from .base import Agent
+from ..llm.json_parser import parse_json_loose
 
 
 class ReviewOutputError(ValueError):
@@ -18,6 +22,14 @@ class ReviewOutputError(ValueError):
     def __init__(self, reason: str):
         super().__init__(f"审校输出协议错误：{reason}")
         self.reason = reason
+
+
+@dataclass(frozen=True)
+class ReviewResult:
+    """一次审校调用的结构化结果，以及是否经过本地 JSON 修复。"""
+
+    issues: list[dict[str, Any]]
+    repaired: bool = False
 
 
 def _backtrans_compare_system(src: str) -> str:
@@ -34,8 +46,13 @@ class Reviewer(Agent):
     def review(self, sources: list[str], targets: list[str],
                glossary_terms=None) -> list[dict[str, Any]]:
         """返回问题列表：[{index,type,detail,suggestion}]。"""
+        return self.review_result(sources, targets, glossary_terms).issues
+
+    def review_result(self, sources: list[str], targets: list[str],
+                      glossary_terms=None) -> ReviewResult:
+        """返回带恢复元数据的问题列表；服务异常仍由调用方直接处理。"""
         if not sources:
-            return []
+            return ReviewResult([])
         system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "reviewer_user", src=self.src, tgt=self.tgt,
@@ -43,25 +60,93 @@ class Reviewer(Agent):
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
+        text = self.client.complete(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            tier="cheap",
+            json_mode=True,
+            stage=type(self).__name__,
+        )
+        repaired = False
         try:
-            data = self._ask_json(system, user, tier="cheap")
-        except ValueError as error:
-            # parse_json_loose 的异常包含模型原始输出片段；在这里转换成不携带
-            # 原译文内容的稳定原因，供编排器拆分恢复和安全记录。
-            raise ReviewOutputError("malformed_json") from error
-        if isinstance(data, dict):
-            issues = data.get("issues")
-        elif isinstance(data, list):
-            # 兼容旧行为：模型省略 {"issues": ...} 外壳但返回了完整数组时
-            # 可直接使用，不必为了纯包装差异增加恢复调用。
-            issues = data
-        else:
+            data = parse_json_loose(text)
+        except ValueError:
+            data = None
+
+        # 旧的宽松解析器可能会从一个被截断的外层对象里只捞出内部 issues
+        # 数组。完整性回执不在时，必须回到原始文本交给 json-repair，不能把
+        # 这个局部数组误当成完整审校结果。
+        footer_present = (
+            isinstance(data, dict)
+            and list(data)[-2:] == ["reviewed_segments", "complete"]
+        )
+        if not footer_present:
+            try:
+                data = repair_json(
+                    text or "",
+                    return_objects=True,
+                    skip_json_loads=True,
+                )
+            except Exception:
+                # 两类解析错误都可能包含模型原始输出；统一转换为不携带正文
+                # 的稳定原因，供编排器安全记录和拆分恢复。
+                raise ReviewOutputError("malformed_json") from None
+            repaired = True
+
+        if not isinstance(data, dict):
             raise ReviewOutputError("response_not_object")
+        if list(data)[-2:] != ["reviewed_segments", "complete"]:
+            raise ReviewOutputError("completion_footer_not_last")
+        reviewed_segments = data.get("reviewed_segments")
+        if (
+            isinstance(reviewed_segments, bool)
+            or not isinstance(reviewed_segments, int)
+            or reviewed_segments != len(sources)
+        ):
+            raise ReviewOutputError("reviewed_segments_mismatch")
+        if data.get("complete") is not True:
+            raise ReviewOutputError("completion_marker_missing")
+
+        issues = data.get("issues")
         if not isinstance(issues, list):
             raise ReviewOutputError("issues_not_list")
         if any(not isinstance(item, dict) for item in issues):
             raise ReviewOutputError("issue_not_object")
-        return list(issues)
+        if repaired:
+            self._validate_repaired_issues(issues, len(sources))
+        return ReviewResult(list(issues), repaired=repaired)
+
+    @staticmethod
+    def _validate_repaired_issues(issues: list[dict], segment_count: int) -> None:
+        """修复后的内容须通过更严格的语义结构门禁，防止“修出”假结果。"""
+        allowed_types = {
+            "missing",
+            "added",
+            "mistranslation",
+            "terminology",
+            "pronoun",
+        }
+        for item in issues:
+            index = item.get("index")
+            if isinstance(index, str):
+                try:
+                    index = int(index.strip())
+                except ValueError:
+                    index = None
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 0 <= index < segment_count
+            ):
+                raise ReviewOutputError("invalid_issue_index")
+            if item.get("type") not in allowed_types:
+                raise ReviewOutputError("invalid_issue_type")
+            for field in ("detail", "suggestion"):
+                value = item.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ReviewOutputError(f"invalid_issue_{field}")
 
 
 class BackTranslator(Agent):
