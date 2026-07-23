@@ -246,15 +246,12 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("conflicts", result.output)
         self.assertIn("resolve", result.output)
 
-    def test_api_preflight_covers_every_command_except_assemble(self):
+    def test_api_preflight_covers_model_commands(self):
         for command in (
             "translate",
             "prepare",
             "review",
-            "status",
             "qa",
-            "report",
-            "glossary",
         ):
             with self.subTest(command=command):
                 with patch(
@@ -266,13 +263,32 @@ class TestCliConfig(unittest.TestCase):
                 self.assertIn("missing key", result.output)
                 validate.assert_called_once_with()
 
-        with patch(
-            "trans_novel.cli._validate_api_configuration",
-            side_effect=AssertionError("assemble must not validate credentials"),
-        ) as validate:
-            result = CliRunner().invoke(app, ["assemble"])
-        self.assertEqual(result.exit_code, 2, result.output)
-        validate.assert_not_called()
+    def test_api_preflight_skips_local_commands(self):
+        for args in (
+            ["status", "missing.txt"],
+            ["report", "missing.txt"],
+            ["glossary", "list", "missing.txt"],
+            ["glossary", "conflicts", "missing.txt"],
+            [
+                "glossary",
+                "resolve",
+                "missing.txt",
+                "source",
+                "target",
+            ],
+            ["assemble", "missing.txt"],
+        ):
+            with self.subTest(args=args):
+                with patch(
+                    "trans_novel.cli._validate_api_configuration",
+                    side_effect=AssertionError(
+                        f"{args} must not validate credentials"
+                    ),
+                ) as validate:
+                    result = CliRunner().invoke(app, args)
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("输入文件不存在", result.output)
+                validate.assert_not_called()
 
     def test_api_preflight_skips_help_at_every_level(self):
         for args in (["--help"], ["translate", "--help"], ["glossary", "--help"]):
