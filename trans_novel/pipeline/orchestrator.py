@@ -19,8 +19,10 @@ import os
 import random
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from functools import wraps
+from typing import Any, Callable, Iterator, Optional
 
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor
@@ -37,6 +39,7 @@ from ..agents.reviewer import Reviewer, BackTranslator
 from ..agents.polisher import Polisher
 from . import checks
 from .context import RollingContext
+from .metrics import RunMetricsRecorder
 from .runstore import (
     REVIEW_DONE,
     REVIEW_FAILED,
@@ -48,6 +51,58 @@ from .runstore import (
 )
 
 ProgressFn = Callable[[int, int, str], None]
+
+
+def _record_run_metrics(
+    operation: str,
+    requested_steps: list[str],
+) -> Callable:
+    """为固定入口添加单次运行账本，同时允许入口之间安全嵌套。"""
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapped(
+            self: Orchestrator,
+            input_path: str,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            with self._run_metrics_session(
+                input_path,
+                operation=operation,
+                requested_steps=requested_steps,
+            ):
+                return func(self, input_path, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
+
+
+def _record_pipeline_metrics(func: Callable) -> Callable:
+    """为动态步骤集合建立单条顶层流水线账本。"""
+    @wraps(func)
+    def wrapped(
+        self: Orchestrator,
+        input_path: str,
+        steps,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        normalized_steps = set(steps)
+        with self._run_metrics_session(
+            input_path,
+            operation="pipeline",
+            requested_steps=sorted(normalized_steps),
+        ):
+            return func(
+                self,
+                input_path,
+                normalized_steps,
+                *args,
+                **kwargs,
+            )
+
+    return wrapped
 
 
 # 语言名/代码 → ISO 639-1 两字母代码（模型检测结果归一化）
@@ -117,6 +172,8 @@ class Orchestrator:
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
+        self._active_run_metrics: RunMetricsRecorder | None = None
+        self._run_metrics_suppressed = False
 
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
@@ -146,6 +203,99 @@ class Orchestrator:
             cumulative=cumulative,
         )
         return cumulative
+
+    @contextmanager
+    def _run_metrics_session(
+        self,
+        input_path: str,
+        *,
+        operation: str,
+        requested_steps: list[str],
+    ) -> Iterator[RunMetricsRecorder | None]:
+        """为一次顶层操作建立账本；嵌套入口复用同一记录。"""
+        active = self._active_run_metrics
+        if active is not None:
+            yield active
+            return
+        if self._run_metrics_suppressed:
+            yield None
+            return
+
+        try:
+            recorder = RunMetricsRecorder.start(
+                operation=operation,
+                requested_steps=requested_steps,
+                input_path=input_path,
+                config=self.config,
+                client=self.client,
+            )
+        except Exception as metrics_error:
+            warnings.warn(
+                "无法启动单次运行指标："
+                f"{type(metrics_error).__name__}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._run_metrics_suppressed = True
+            try:
+                yield None
+            finally:
+                self._run_metrics_suppressed = False
+            return
+
+        self._active_run_metrics = recorder
+        status = "failed"
+        error: BaseException | None = None
+        try:
+            yield recorder
+            status = "completed"
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            try:
+                recorder.finish(self.client, status=status, error=error)
+            except Exception as metrics_error:
+                warnings.warn(
+                    "无法保存单次运行指标："
+                    f"{type(metrics_error).__name__}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            self._active_run_metrics = None
+
+    @contextmanager
+    def _metric_stage(self, name: str) -> Iterator[None]:
+        """在已有运行账本中统计阶段耗时；无账本时保持原行为。"""
+        if self._active_run_metrics is None:
+            yield
+            return
+        with self._active_run_metrics.stage(name):
+            yield
+
+    def _measure_stage_call(
+        self,
+        name: str,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """统计一次函数调用所属阶段，并原样返回结果或抛出异常。"""
+        with self._metric_stage(name):
+            return func(*args, **kwargs)
+
+    def _attach_metrics_store(self, store: RunStore) -> None:
+        """让顶层运行账本随当前书籍状态一起落盘。"""
+        if self._active_run_metrics is not None:
+            try:
+                self._active_run_metrics.attach_store(store)
+            except Exception as metrics_error:
+                warnings.warn(
+                    "无法绑定单次运行指标："
+                    f"{type(metrics_error).__name__}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     # ── 语言解析 ────────────────────────────────────────────────────────────
     def _apply_language(self, lang: str) -> None:
@@ -194,6 +344,7 @@ class Orchestrator:
         )
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
+        self._attach_metrics_store(store)
         return store
 
     def prepare(self, input_path: str, *,
@@ -208,6 +359,7 @@ class Orchestrator:
             pdf_title = os.path.splitext(os.path.basename(input_path))[0]
             run_dir = os.path.join(self.config.state_dir, slugify(pdf_title))
             store = RunStore(run_dir)
+            self._attach_metrics_store(store)
             with store.lock():
                 if store.exists():
                     store.log_event(
@@ -238,6 +390,7 @@ class Orchestrator:
         )
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
+        self._attach_metrics_store(store)
         with store.lock():
             return self._prepare_locked(doc, store, input_path, progress)
 
@@ -358,13 +511,24 @@ class Orchestrator:
             parts.append(f"【{tag}】\n{chunk}")
         return "\n\n".join(parts)
 
+    @_record_run_metrics("translate", ["translate"])
     def run(self, input_path: str, *, only_chapter: int | None = None,
             progress: Optional[ProgressFn] = None) -> RunStore:
         """准备运行状态并在书级锁内翻译待处理章节。"""
-        store = self.prepare(input_path, progress=progress)
+        store = self._measure_stage_call(
+            "prepare",
+            self.prepare,
+            input_path,
+            progress=progress,
+        )
         with store.lock():
-            return self._run_locked(store, only_chapter=only_chapter, progress=progress)
+            return self._run_locked(
+                store,
+                only_chapter=only_chapter,
+                progress=progress,
+            )
 
+    @_record_run_metrics("prepare", ["prepare", "understanding"])
     def prepare_for_translation(
         self,
         input_path: str,
@@ -376,14 +540,24 @@ class Orchestrator:
         包括文档解析、语言识别、风格/初始术语分析，以及配置开启时的
         逐章预扫和全书概览。所有阶段均可续跑，再次调用会复用已落盘结果。
         """
-        store = self.prepare(input_path, progress=progress)
+        store = self._measure_stage_call(
+            "prepare",
+            self.prepare,
+            input_path,
+            progress=progress,
+        )
         with store.lock():
             manifest = store.load_manifest()
             self._apply_language(
                 manifest.get("source_lang") or self.config.source_lang
             )
             try:
-                self._build_understanding(store, progress=progress)
+                self._measure_stage_call(
+                    "understanding",
+                    self._build_understanding,
+                    store,
+                    progress=progress,
+                )
                 store.log_event(
                     "translation_prepared",
                     input_path=input_path,
@@ -423,7 +597,8 @@ class Orchestrator:
         )
         style = self.analyzer.style_brief(store.load_analysis() or {})
         # 翻译前预扫源文，建立全书理解（幂等、可续跑）；全书概览注入每章翻译
-        book_synopsis = self._build_understanding(store, progress=progress)
+        with self._metric_stage("understanding"):
+            book_synopsis = self._build_understanding(store, progress=progress)
 
         if only_chapter is not None:
             targets = [only_chapter]
@@ -442,15 +617,16 @@ class Orchestrator:
             total_segments=total,
         )
         try:
-            for ci in targets:
-                done = self._translate_chapter(
-                    ci, store, glossary, context, style, book_synopsis,
-                    progress=progress, done=done, total=total)
-                store.save_context(context.to_dict())
-                self._flush_usage(store, scope="chapter")
-            # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
-            if not store.pending_chapters():
-                self._translate_titles(store, glossary, progress=progress)
+            with self._metric_stage("translate"):
+                for ci in targets:
+                    done = self._translate_chapter(
+                        ci, store, glossary, context, style, book_synopsis,
+                        progress=progress, done=done, total=total)
+                    store.save_context(context.to_dict())
+                    self._flush_usage(store, scope="chapter")
+                # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
+                if not store.pending_chapters():
+                    self._translate_titles(store, glossary, progress=progress)
         finally:
             glossary.close()
             self._flush_usage(store, scope="translate")
@@ -1302,6 +1478,7 @@ class Orchestrator:
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
     ALL_STEPS = ("translate", "review", "qa", "report", "assemble")
 
+    @_record_run_metrics("review", ["review"])
     def run_review(
         self,
         input_path: str,
@@ -1311,7 +1488,12 @@ class Orchestrator:
         autofix: bool | None = None,
     ) -> dict[str, Any]:
         """单独执行最终全书审校，返回状态目录和按书序汇总的问题。"""
-        store = self._locate_existing_store(input_path, progress=progress)
+        store = self._measure_stage_call(
+            "prepare",
+            self._locate_existing_store,
+            input_path,
+            progress=progress,
+        )
         with store.lock():
             manifest = store.load_manifest()
             self._apply_language(
@@ -1319,7 +1501,9 @@ class Orchestrator:
             )
             glossary = GlossaryStore(store.glossary_path)
             try:
-                issues = self._review_book(
+                issues = self._measure_stage_call(
+                    "review",
+                    self._review_book,
                     store,
                     glossary,
                     progress=progress,
@@ -1331,6 +1515,7 @@ class Orchestrator:
                 self._flush_usage(store, scope="review")
         return {"store": store, "review_issues": issues}
 
+    @_record_pipeline_metrics
     def run_steps(self, input_path: str, steps, *,
                   progress: Optional[ProgressFn] = None,
                   out_format: str = "epub", out_path: str | None = None) -> dict[str, Any]:
@@ -1341,7 +1526,12 @@ class Orchestrator:
         if "translate" in steps:
             store = self.run(input_path, progress=progress)
         else:
-            store = self.prepare(input_path, progress=progress)
+            store = self._measure_stage_call(
+                "prepare",
+                self.prepare,
+                input_path,
+                progress=progress,
+            )
             m = store.load_manifest()
             self._apply_language(m.get("source_lang") or self.config.source_lang)
         with store.lock():
@@ -1379,7 +1569,9 @@ class Orchestrator:
         report: dict[str, Any] | None = None
         try:
             if "review" in steps:
-                review_issues = self._review_book(
+                review_issues = self._measure_stage_call(
+                    "review",
+                    self._review_book,
                     store,
                     glossary,
                     progress=progress,
@@ -1388,7 +1580,12 @@ class Orchestrator:
             if "qa" in steps:
                 if progress:
                     progress(0, 0, "一致性 QA…")
-                qa_issues = ConsistencyChecker(self.client, self.config).check(store, glossary)
+                qa_issues = self._measure_stage_call(
+                    "qa",
+                    ConsistencyChecker(self.client, self.config).check,
+                    store,
+                    glossary,
+                )
                 store.log_event(
                     "consistency_qa_finished",
                     issue_count=len(qa_issues),
@@ -1399,7 +1596,12 @@ class Orchestrator:
             if "report" in steps:
                 if progress:
                     progress(0, 0, "生成报告…")
-                report = build_report(store, glossary)
+                report = self._measure_stage_call(
+                    "report",
+                    build_report,
+                    store,
+                    glossary,
+                )
                 report["consistency_issues"] = qa_issues
                 store.save_report(report)
                 store.log_event("report_saved", path=store.report_path)
@@ -1417,7 +1619,9 @@ class Orchestrator:
                 do_mono = True  # 兜底：mono/bilingual 都关时至少产一个单语产物
             if do_mono:
                 outputs.append(
-                    assemble(
+                    self._measure_stage_call(
+                        "assemble",
+                        assemble,
                         store,
                         input_path,
                         out_path=out_path,
@@ -1429,7 +1633,9 @@ class Orchestrator:
             if do_bilingual:
                 bi_out_path = bilingual_out_path(out_path) if out_path else None
                 outputs.append(
-                    assemble(
+                    self._measure_stage_call(
+                        "assemble",
+                        assemble,
                         store,
                         input_path,
                         out_path=bi_out_path,

@@ -7,6 +7,7 @@
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
+  run_metrics/      每次顶层运行独立的耗时、用量和版本账本
   glossary.db       术语库 + 翻译记忆库
   report.json       QA 报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
@@ -109,6 +110,11 @@ class RunStore:
     def usage_path(self) -> str:
         """返回本书累计 token 用量文件路径。"""
         return os.path.join(self.run_dir, "usage.json")
+
+    @property
+    def run_metrics_dir(self) -> str:
+        """返回每次运行独立指标账本的目录。"""
+        return os.path.join(self.run_dir, "run_metrics")
 
     @property
     def event_log_path(self) -> str:
@@ -239,6 +245,27 @@ class RunStore:
     def load_usage(self) -> dict | None:
         """读取累计 token 用量；文件尚不存在时返回 None。"""
         return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
+
+    def save_run_metric(self, record: dict[str, Any]) -> str:
+        """按 run_id 原子保存一次运行指标并返回文件路径。"""
+        run_id = record.get("run_id")
+        if not isinstance(run_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", run_id
+        ):
+            raise ValueError("run_id 只能包含字母、数字、点、下划线、加号和连字符")
+        path = os.path.join(self.run_metrics_dir, f"{run_id}.json")
+        self._write_json(path, record)
+        return path
+
+    def load_run_metrics(self) -> list[dict[str, Any]]:
+        """按文件名顺序读取全部单次运行账本。"""
+        if not os.path.isdir(self.run_metrics_dir):
+            return []
+        return [
+            self._read_json(os.path.join(self.run_metrics_dir, name))
+            for name in sorted(os.listdir(self.run_metrics_dir))
+            if name.endswith(".json")
+        ]
 
     # ── 批次恢复检查点 ────────────────────────────────────────────────────
     @staticmethod

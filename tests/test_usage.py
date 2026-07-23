@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import tempfile
 import threading
@@ -84,6 +85,39 @@ class _ClientStub:
 
     def __init__(self, responses: list[Any]) -> None:
         self.chat = _ChatStub(responses)
+
+
+class _MeteredFakeClient(FakeClient):
+    """每次离线调用都写入固定 token，供单次运行账本断言。"""
+
+    def complete(
+        self,
+        messages,
+        *,
+        tier: str = "strong",
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+        stage: str | None = None,
+    ) -> str:
+        result = super().complete(
+            messages,
+            tier=tier,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+            stage=stage,
+        )
+        self.usage.record(
+            tier,
+            UsageSample(
+                prompt_tokens=7,
+                completion_tokens=3,
+                total_tokens=10,
+                cache_hit_tokens=2,
+                cache_miss_tokens=5,
+            ),
+            stage,
+        )
+        return result
 
 
 def _minimal_deepseek_cfg() -> LLMConfig:
@@ -506,6 +540,159 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(usage["totals"]["total_tokens"], 170)
             self.assertEqual(usage["totals"]["calls"], 2)
             self.assertEqual(result["store"].load_usage(), usage)
+
+
+class TestPerRunMetrics(unittest.TestCase):
+    @staticmethod
+    def _config(directory: str) -> Config:
+        return Config.from_dict(
+            {
+                "language": {"source": "ja", "target": "zh"},
+                "llm": {
+                    "provider": "fake",
+                    "tiers": {
+                        "strong": {
+                            "model": "fake-strong",
+                            "options": {
+                                "api_token": "must-not-be-stored",
+                                "max_tokens": 1024,
+                                "temperature": 0.2,
+                            },
+                        }
+                    },
+                },
+                "pipeline": {
+                    "book_understanding": False,
+                    "review": False,
+                    "polish": False,
+                },
+                "paths": {"state_dir": os.path.join(directory, "state")},
+            }
+        )
+
+    def test_nested_pipeline_entry_creates_one_complete_metric(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            write_sample_txt(source)
+            client = _MeteredFakeClient(handler=routing_handler)
+            orchestrator = Orchestrator(
+                self._config(directory),
+                client=client,
+            )
+
+            store = orchestrator.run_steps(source, {"translate"})["store"]
+
+            metrics = store.load_run_metrics()
+            self.assertEqual(len(metrics), 1)
+            metric = metrics[0]
+            self.assertEqual(metric["operation"], "pipeline")
+            self.assertEqual(metric["requested_steps"], ["translate"])
+            self.assertEqual(metric["status"], "completed")
+            self.assertEqual(
+                metric["usage"]["totals"]["calls"],
+                len(client.calls),
+            )
+            self.assertEqual(
+                metric["usage"]["totals"]["total_tokens"],
+                len(client.calls) * 10,
+            )
+            self.assertEqual(len(metric["input"]["sha256"]), 64)
+            self.assertEqual(len(metric["config"]["fingerprint"]), 64)
+            self.assertEqual(
+                metric["config"]["summary"]["llm"]["tiers"]["strong"][
+                    "options"
+                ]["api_token"],
+                "<redacted>",
+            )
+            self.assertEqual(
+                metric["config"]["summary"]["llm"]["tiers"]["strong"][
+                    "options"
+                ]["max_tokens"],
+                1024,
+            )
+            self.assertNotIn("must-not-be-stored", json.dumps(metric))
+            self.assertIn("prepare", metric["stage_seconds"])
+            self.assertIn("understanding", metric["stage_seconds"])
+            self.assertIn("translate", metric["stage_seconds"])
+            self.assertGreater(metric["state"]["segments_total"], 0)
+            self.assertEqual(
+                metric["state"]["segments_translated"],
+                metric["state"]["segments_total"],
+            )
+
+    def test_resume_gets_a_new_zero_call_metric(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            write_sample_txt(source)
+            client = _MeteredFakeClient(handler=routing_handler)
+            orchestrator = Orchestrator(
+                self._config(directory),
+                client=client,
+            )
+            store = orchestrator.run_steps(source, {"translate"})["store"]
+
+            orchestrator.run_steps(source, {"report"})
+
+            metrics = store.load_run_metrics()
+            self.assertEqual(len(metrics), 2)
+            self.assertEqual(metrics[1]["requested_steps"], ["report"])
+            self.assertEqual(metrics[1]["usage"]["totals"]["calls"], 0)
+            self.assertIn("report", metrics[1]["stage_seconds"])
+
+    def test_failure_records_only_exception_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            write_sample_txt(source)
+            config = self._config(directory)
+            initial = Orchestrator(
+                config,
+                client=_MeteredFakeClient(handler=routing_handler),
+            )
+            store = initial.run_steps(source, {"translate"})["store"]
+            failing = Orchestrator(
+                config,
+                client=_MeteredFakeClient(handler=routing_handler),
+            )
+
+            with patch.object(
+                failing,
+                "_review_book",
+                side_effect=RuntimeError("private failure detail"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "private failure"):
+                    failing.run_review(source)
+
+            metric = store.load_run_metrics()[-1]
+            self.assertEqual(metric["status"], "failed")
+            self.assertEqual(metric["error"], {"type": "RuntimeError"})
+            self.assertNotIn("private failure detail", json.dumps(metric))
+
+    def test_runstore_rejects_unsafe_run_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(os.path.join(directory, "state", "book"))
+            with self.assertRaisesRegex(ValueError, "run_id"):
+                store.save_run_metric({"run_id": "../outside"})
+
+    def test_metric_write_failure_does_not_fail_translation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            write_sample_txt(source)
+            orchestrator = Orchestrator(
+                self._config(directory),
+                client=_MeteredFakeClient(handler=routing_handler),
+            )
+
+            with patch.object(
+                RunStore,
+                "save_run_metric",
+                side_effect=OSError("disk full"),
+            ):
+                with self.assertWarnsRegex(RuntimeWarning, "无法保存"):
+                    result = orchestrator.run_steps(source, {"translate"})
+
+            store = result["store"]
+            self.assertEqual(store.pending_chapters(), [])
+            self.assertEqual(store.load_run_metrics(), [])
 
 
 class TestRunStoreLock(unittest.TestCase):
