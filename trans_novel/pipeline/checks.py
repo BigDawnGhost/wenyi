@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 
 
@@ -42,3 +45,47 @@ def length_flags(
         elif ratio > too_long:
             flags.append(LengthFlag(i, ratio, "too_long"))
     return flags
+
+
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _comparable_text(text: str) -> str:
+    """规整不影响语义的空白和兼容字符，用于识别实际未改写的候选。"""
+    normalized = unicodedata.normalize("NFKC", text or "")
+    return "".join(normalized.split())
+
+
+def _number_tokens(text: str) -> Counter[str]:
+    """提取可安全做确定性比对的阿拉伯数字记号及其出现次数。"""
+    normalized = unicodedata.normalize("NFKC", text or "")
+    return Counter(_NUMBER_RE.findall(normalized))
+
+
+def repair_rejection_reason(
+    source: str,
+    current_target: str,
+    proposed_target: str,
+) -> str | None:
+    """返回自动修复候选的确定性拒绝原因；通过则返回 ``None``。
+
+    这里只检查不需要模型判断的硬条件。语义是否更忠实、是否真的修正审校
+    意见等开放问题，留给独立修复验证员。数字规则仅要求保留原文和旧译文
+    都明确包含的数字，避免把旧译文已经稳定传达的信息意外删掉。
+    """
+    current = _comparable_text(current_target)
+    proposed = _comparable_text(proposed_target)
+    if not proposed:
+        return "empty"
+    if proposed == current:
+        return "unchanged"
+
+    flags = length_flags([source], [proposed_target])
+    if flags:
+        return flags[0].reason
+
+    required_numbers = _number_tokens(source) & _number_tokens(current_target)
+    missing_numbers = required_numbers - _number_tokens(proposed_target)
+    if missing_numbers:
+        return "dropped_number"
+    return None

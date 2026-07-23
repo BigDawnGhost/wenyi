@@ -33,7 +33,7 @@ from ..postprocess.punct import normalize_zh, normalize_zh_segments
 from ..agents.analyzer import Analyzer
 from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
-from ..agents.reviewer import Reviewer, BackTranslator
+from ..agents.reviewer import BackTranslator, RepairVerifier, Reviewer
 from ..agents.polisher import Polisher
 from . import checks
 from .context import RollingContext
@@ -114,6 +114,7 @@ class Orchestrator:
         self.synopsizer = Synopsizer(self.client, config)
         self.translator = Translator(self.client, config)
         self.reviewer = Reviewer(self.client, config)
+        self.repair_verifier = RepairVerifier(self.client, config)
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
@@ -159,8 +160,16 @@ class Orchestrator:
                 "请修改 config.yaml 中的 language.source 或 language.target。"
             )
         self.config.source_lang = resolved
-        for ag in (self.analyzer, self.synopsizer, self.translator, self.reviewer,
-                   self.backtrans, self.polisher, self.extractor):
+        for ag in (
+            self.analyzer,
+            self.synopsizer,
+            self.translator,
+            self.reviewer,
+            self.repair_verifier,
+            self.backtrans,
+            self.polisher,
+            self.extractor,
+        ):
             ag.src = resolved
 
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
@@ -966,7 +975,7 @@ class Orchestrator:
 
     # ── 全书最终审校 + 严重项定向重译 ────────────────────────────────────────
     _SEVERE_TYPES = ("missing", "mistranslation")
-    _REVIEW_SCHEMA_VERSION = 1
+    _REVIEW_SCHEMA_VERSION = 2
 
     def _review_digest(self, text_segs, terms, *, autofix: bool) -> str:
         """计算一章审校输入摘要，用于识别可安全跳过的重复审校。
@@ -1222,9 +1231,10 @@ class Orchestrator:
                         chapter_index: int | None = None) -> None:
         """对审校严重项（漏译/误译）带审校意见定向重译，每段最多一次。
 
-        采纳条件 = 重译非空且过长度校验：采纳则标点规范化后更新 seg.target 并标 fixed=True；
-        不采纳保持 fixed=False 留人工。最终审校重译时原滚动上下文已失效，
-        用该段前后各 2 段译文做局部上下文。
+        候选先过非空、实质变化、长度和数字保留等确定性门禁，再交给独立
+        修复验证员比较原文、旧译文、候选和上下文。只有明确 accept 才写回；
+        任何调用、格式或判断异常均保留旧译文并留人工。最终审校重译时原
+        滚动上下文已失效，用该段前后各 2 段译文做局部上下文。
         """
         by_seg: dict[int, list[dict]] = {}
         for it in issues:
@@ -1239,14 +1249,43 @@ class Orchestrator:
             feedback = "；".join(
                 f"{it.get('detail', '')}（建议：{it.get('suggestion', '')}）"
                 for it in seg_issues)
+            repair_terms = GlossaryStore.terms_in(terms, seg.source)
             new_t = self.translator.retranslate_with_feedback(
-                seg.source, feedback=feedback, glossary_terms=terms, style=style,
+                seg.source, feedback=feedback, glossary_terms=repair_terms, style=style,
                 context_before=before, context_after=after,
                 book_synopsis=book_synopsis, chapter_digest=chapter_digest)
-            if new_t and not checks.length_flags([seg.source], [new_t]):
-                if self._punctuation_enabled():
-                    new_t = normalize_zh(new_t)
-                old_t = seg.target
+            old_t = seg.target or ""
+            if self._punctuation_enabled() and new_t:
+                new_t = normalize_zh(new_t)
+
+            deterministic_reason = checks.repair_rejection_reason(
+                seg.source, old_t, new_t
+            )
+            if deterministic_reason is not None:
+                verification = {
+                    "stage": "deterministic",
+                    "verdict": "reject",
+                    "code": deterministic_reason,
+                    "rationale": "候选未通过写回前硬规则",
+                }
+            else:
+                verification = {
+                    "stage": "independent",
+                    **self.repair_verifier.verify(
+                        seg.source,
+                        old_t,
+                        new_t,
+                        feedback=feedback,
+                        glossary_terms=repair_terms,
+                        context_before=before,
+                        context_after=after,
+                    ),
+                }
+
+            for it in seg_issues:
+                it["repair_verification"] = dict(verification)
+
+            if verification["verdict"] == "accept":
                 seg.target = new_t
                 for it in seg_issues:
                     it["fixed"] = True
@@ -1258,18 +1297,25 @@ class Orchestrator:
                         source=seg.source,
                         before=old_t,
                         after=new_t,
+                        reason="verified",
+                        verification=verification,
                         issues=seg_issues,
                     )
-            elif store is not None:
-                store.log_event(
-                    "autofix_rejected",
-                    chapter=chapter_index,
-                    index=idx,
-                    source=seg.source,
-                    before=seg.target,
-                    proposed=new_t,
-                    issues=seg_issues,
-                )
+            else:
+                for it in seg_issues:
+                    it["fixed"] = False
+                if store is not None:
+                    store.log_event(
+                        "autofix_rejected",
+                        chapter=chapter_index,
+                        index=idx,
+                        source=seg.source,
+                        before=old_t,
+                        proposed=new_t,
+                        reason=verification["code"],
+                        verification=verification,
+                        issues=seg_issues,
+                    )
 
     def _process_batch(self, batch, terms, ctx_text: str, style: str,
                        book_synopsis: str = "", chapter_digest: str = "") -> _BatchResult:

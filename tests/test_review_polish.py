@@ -9,7 +9,7 @@ import unittest
 from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.agents.reviewer import Reviewer, BackTranslator
+from trans_novel.agents.reviewer import BackTranslator, RepairVerifier, Reviewer
 from trans_novel.agents.polisher import Polisher
 from trans_novel.pipeline.orchestrator import Orchestrator
 
@@ -60,6 +60,48 @@ class TestReviewer(unittest.TestCase):
 
         self.assertEqual([it["index"] for it in issues], [0, 1])
         self.assertEqual([it["detail"] for it in issues], ["甲", "乙"])
+
+
+class TestRepairVerifier(unittest.TestCase):
+    def test_accepts_only_explicit_verdict_with_rationale(self):
+        client = FakeClient(handler=lambda m, t, j: json.dumps({
+            "verdict": "accept",
+            "rationale": "候选补齐了原文信息且没有新增偏差",
+        }, ensure_ascii=False))
+        result = RepairVerifier(client, _cfg()).verify(
+            "原文",
+            "旧译文",
+            "补齐后的新译文",
+            feedback="漏译",
+        )
+        self.assertEqual(result["verdict"], "accept")
+        self.assertEqual(result["code"], "accepted")
+        self.assertEqual(client.calls[-1]["tier"], "cheap")
+
+    def test_malformed_output_fails_closed(self):
+        client = FakeClient(handler=lambda m, t, j: "not json")
+        result = RepairVerifier(client, _cfg()).verify(
+            "原文",
+            "旧译文",
+            "候选译文",
+            feedback="误译",
+        )
+        self.assertEqual(result["verdict"], "reject")
+        self.assertEqual(result["code"], "invalid_response")
+
+    def test_missing_rationale_fails_closed(self):
+        client = FakeClient(handler=lambda m, t, j: json.dumps({
+            "verdict": "accept",
+            "rationale": "",
+        }))
+        result = RepairVerifier(client, _cfg()).verify(
+            "原文",
+            "旧译文",
+            "候选译文",
+            feedback="误译",
+        )
+        self.assertEqual(result["verdict"], "reject")
+        self.assertEqual(result["code"], "missing_rationale")
 
 
 class TestPolisher(unittest.TestCase):

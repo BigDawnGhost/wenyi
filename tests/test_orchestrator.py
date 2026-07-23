@@ -368,7 +368,7 @@ class TestReviewReporting(unittest.TestCase):
     # 样例首段「第一章　出会い」7 字；fix 需在 3-21 字间（比值 0.3-3.0）方可通过长度校验
     FIX_TEXT = "第一章 邂逅"   # 7 字，比值 1.0
 
-    def _handler(self, fix_text):
+    def _handler(self, fix_text, verifier_response=None):
         """审校每块报 index 0 漏译；带【审校意见】的翻译调用返回定向重译文。"""
         def handler(messages, tier, json_mode):
             sys = messages[0]["content"]
@@ -379,18 +379,28 @@ class TestReviewReporting(unittest.TestCase):
                 ]}, ensure_ascii=False)
             if "文学翻译" in sys and "【审校意见】" in user:
                 return json.dumps({"translations": [fix_text]}, ensure_ascii=False)
+            if "修复验证员" in sys and verifier_response is not None:
+                if isinstance(verifier_response, Exception):
+                    raise verifier_response
+                if isinstance(verifier_response, str):
+                    return verifier_response
+                return json.dumps(verifier_response, ensure_ascii=False)
             return routing_handler(messages, tier, json_mode)
         return handler
 
-    def _run(self, d, *, autofix, fix_text=None):
+    def _run(self, d, *, autofix, fix_text=None, verifier_response=None):
         txt = os.path.join(d, "novel.txt")
         write_sample_txt(txt)
         cfg = _config(os.path.join(d, "state"))
         cfg.pipeline.autofix_severe = autofix
-        handler = self._handler(fix_text or self.FIX_TEXT)
-        orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+        handler = self._handler(
+            fix_text or self.FIX_TEXT,
+            verifier_response=verifier_response,
+        )
+        client = FakeClient(handler=handler)
+        orch = Orchestrator(cfg, client=client)
         orch.run(txt)
-        return orch.run_review(txt, autofix=autofix)["store"]
+        return orch.run_review(txt, autofix=autofix)["store"], client
 
     def test_run_does_not_call_reviewer_even_for_only_chapter(self):
         """翻译主流程和 only_chapter 都不再隐式触发最终审校。"""
@@ -418,14 +428,24 @@ class TestReviewReporting(unittest.TestCase):
     def test_autofix_adopts_retranslation(self):
         """autofix 开：严重项定向重译被采纳 → target 更新、fixed=True。"""
         with tempfile.TemporaryDirectory() as d:
-            store = self._run(d, autofix=True)
+            store, _ = self._run(d, autofix=True)
             ch = store.load_chapter(0)
             flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
             self.assertTrue(flagged)
             self.assertTrue(all(i.get("fixed") is True for i in flagged))
             self.assertTrue(all(i.get("stage") == "review" for i in flagged))
             self.assertTrue(all("chapter" in i for i in flagged))
+            self.assertTrue(all(
+                i["repair_verification"]["verdict"] == "accept"
+                and i["repair_verification"]["stage"] == "independent"
+                for i in flagged
+            ))
             self.assertEqual(ch.text_segments[0].target, self.FIX_TEXT)
+            with open(store.event_log_path, encoding="utf-8") as file:
+                events = [json.loads(line) for line in file]
+            applied = [e for e in events if e.get("event") == "autofix_applied"]
+            self.assertTrue(applied)
+            self.assertEqual(applied[0]["reason"], "verified")
             glossary = GlossaryStore(store.glossary_path)
             try:
                 self.assertEqual(
@@ -438,7 +458,7 @@ class TestReviewReporting(unittest.TestCase):
     def test_autofix_off_reports_only(self):
         """autofix 关：仅上报 fixed=False，正文不动。"""
         with tempfile.TemporaryDirectory() as d:
-            store = self._run(d, autofix=False)
+            store, _ = self._run(d, autofix=False)
             ch = store.load_chapter(0)
             flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
             self.assertTrue(flagged)
@@ -448,12 +468,66 @@ class TestReviewReporting(unittest.TestCase):
     def test_autofix_rejects_short_retranslation(self):
         """重译结果过短（疑漏译）→ 不采纳，fixed=False，保留原译。"""
         with tempfile.TemporaryDirectory() as d:
-            store = self._run(d, autofix=True, fix_text="短")
+            store, client = self._run(d, autofix=True, fix_text="短")
             ch = store.load_chapter(0)
             flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
             self.assertTrue(flagged)
             self.assertTrue(all(i.get("fixed") is False for i in flagged))
+            self.assertTrue(all(
+                i["repair_verification"]["code"] == "too_short"
+                and i["repair_verification"]["stage"] == "deterministic"
+                for i in flagged
+            ))
             self.assertNotEqual(ch.text_segments[0].target, "短")
+            verifier_calls = [
+                call for call in client.calls
+                if "修复验证员" in call["messages"][0]["content"]
+            ]
+            self.assertEqual(verifier_calls, [])
+
+    def test_autofix_verifier_rejects_candidate_and_records_reason(self):
+        """独立验证明确拒绝时保留旧译文，并留下机器可读的拒绝原因。"""
+        with tempfile.TemporaryDirectory() as d:
+            store, _ = self._run(
+                d,
+                autofix=True,
+                verifier_response={
+                    "verdict": "reject",
+                    "rationale": "候选改坏了原文中的限定条件",
+                },
+            )
+            ch = store.load_chapter(0)
+            flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
+            self.assertTrue(flagged)
+            self.assertTrue(all(i.get("fixed") is False for i in flagged))
+            self.assertTrue(all(
+                i["repair_verification"]["code"] == "model_rejected"
+                for i in flagged
+            ))
+            self.assertNotEqual(ch.text_segments[0].target, self.FIX_TEXT)
+            with open(store.event_log_path, encoding="utf-8") as file:
+                events = [json.loads(line) for line in file]
+            rejected = [e for e in events if e.get("event") == "autofix_rejected"]
+            self.assertTrue(rejected)
+            self.assertEqual(rejected[0]["reason"], "model_rejected")
+
+    def test_autofix_verifier_failure_keeps_original(self):
+        """验证服务异常时 fail closed，不允许未经确认的候选覆盖旧译文。"""
+        with tempfile.TemporaryDirectory() as d:
+            store, _ = self._run(
+                d,
+                autofix=True,
+                verifier_response=RuntimeError("temporary verifier failure"),
+            )
+            ch = store.load_chapter(0)
+            flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
+            self.assertTrue(flagged)
+            self.assertTrue(all(i.get("fixed") is False for i in flagged))
+            self.assertTrue(all(
+                i["repair_verification"]["code"] == "invalid_response"
+                for i in flagged
+            ))
+            self.assertNotEqual(ch.text_segments[0].target, self.FIX_TEXT)
 
     def test_review_index_mapping(self):
         """整章多块审校时，块内 index 正确映射回章内段号。"""

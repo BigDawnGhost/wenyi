@@ -1,6 +1,7 @@
-"""审校 Agent（廉价档）+ 回译抽检。
+"""审校 Agent（廉价档）+ 修复验证 + 回译抽检。
 
 Reviewer：逐段比对原文/译文，报漏译、增译、误译、术语违例、人称错误。
+RepairVerifier：独立比较旧译文和修复候选，失败时保守拒绝写回。
 BackTranslator：把译文回译成源语言，再与原文比对，抽样发现重大语义偏离。
 """
 
@@ -37,6 +38,81 @@ class Reviewer(Agent):
         )
         return self.dict_items(
             self._ask_json(system, user, tier="cheap", key="issues"))
+
+
+class RepairVerifier(Agent):
+    """在自动修复写回前独立判断候选是否确实更好。"""
+
+    def verify(
+        self,
+        source: str,
+        current_target: str,
+        proposed_target: str,
+        *,
+        feedback: str,
+        glossary_terms=None,
+        context_before: str = "",
+        context_after: str = "",
+    ) -> dict[str, str]:
+        """返回结构化裁决；调用或格式异常一律 fail closed 为 reject。"""
+        system = prompts.render(
+            "repair_verifier_system", src=self.src, tgt=self.tgt
+        )
+        user = prompts.render(
+            "repair_verifier_user",
+            src=self.src,
+            tgt=self.tgt,
+            glossary=prompts.render_glossary(glossary_terms or []),
+            context_before=context_before or "（无）",
+            context_after=context_after or "（无）",
+            feedback=feedback or "（无）",
+            source=source,
+            current_target=current_target,
+            proposed_target=proposed_target,
+        )
+        data = self._ask_json(
+            system,
+            user,
+            tier="cheap",
+            default=None,
+            max_tokens=512,
+        )
+        if not isinstance(data, dict):
+            return {
+                "verdict": "reject",
+                "code": "invalid_response",
+                "rationale": "独立验证调用失败或未返回 JSON 对象",
+            }
+
+        verdict_value = data.get("verdict", "")
+        rationale_value = data.get("rationale", "")
+        verdict = (
+            verdict_value.strip().lower()
+            if isinstance(verdict_value, str)
+            else ""
+        )
+        rationale = (
+            rationale_value.strip()
+            if isinstance(rationale_value, str)
+            else ""
+        )
+        if verdict not in {"accept", "reject"}:
+            return {
+                "verdict": "reject",
+                "code": "invalid_verdict",
+                "rationale": "独立验证未返回明确的 accept 或 reject",
+            }
+        if not rationale:
+            return {
+                "verdict": "reject",
+                "code": "missing_rationale",
+                "rationale": "独立验证未给出可审计理由",
+            }
+        return {
+            "verdict": verdict,
+            "code": "accepted" if verdict == "accept" else "model_rejected",
+            "rationale": rationale[:500],
+        }
 
 
 class BackTranslator(Agent):

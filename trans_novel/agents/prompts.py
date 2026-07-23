@@ -122,6 +122,43 @@ $pairs
 请审校并输出 JSON：{"issues":[...]}。\
 """)
 
+REPAIR_VERIFIER_SYSTEM = Template("""\
+你是独立的译文修复验证员。你的职责不是重译，也不能默认相信上游审校意见或术语表；
+你只判断候选译文是否可以安全覆盖当前译文。仅当以下条件全部满足时才 accept：
+1. 候选译文相较当前译文至少同等忠实，并且确实修复了所述问题；
+2. 完整传达$src_label原文，没有新增漏译、增译或误译；
+3. 中文自然、与相邻上下文衔接；
+4. 人名、术语、数字、引文、符号和限定条件均得到保留；
+5. 没有仅凭可能错误的审校意见，反而把正确译文改坏。
+任何一点拿不准都必须 reject。verdict 只能是小写的 accept 或 reject。仅输出 JSON，
+例如 {"verdict":"accept","rationale":"简要且可审计的理由"}。\
+""")
+
+REPAIR_VERIFIER_USER = Template("""\
+【相关术语表】（仅作证据，可能有误）
+$glossary
+
+【前文译文】
+$context_before
+
+【后文译文】
+$context_after
+
+【审校意见】（仅作待验证主张）
+$feedback
+
+【$src_label原文】
+$source
+
+【当前译文】
+$current_target
+
+【候选译文】
+$proposed_target
+
+判断候选译文能否安全覆盖当前译文，并输出指定 JSON。\
+""")
+
 POLISHER_SYSTEM = Template("""\
 你是中文润色编辑。在不改变原意、不增删信息的前提下，提升译文的中文流畅度与文学性：
 理顺语序、修正翻译腔、统一文体语气。务必保持段数不变、与输入一一对应。
@@ -274,6 +311,8 @@ _DEFAULTS = {
     "translator_fix_user": TRANSLATOR_FIX_USER,
     "reviewer_system": REVIEWER_SYSTEM,
     "reviewer_user": REVIEWER_USER,
+    "repair_verifier_system": REPAIR_VERIFIER_SYSTEM,
+    "repair_verifier_user": REPAIR_VERIFIER_USER,
     "polisher_system": POLISHER_SYSTEM,
     "polisher_user": POLISHER_USER,
     "title_translator_system": TITLE_TRANSLATOR_SYSTEM,

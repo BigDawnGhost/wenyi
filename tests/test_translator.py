@@ -10,7 +10,7 @@ from trans_novel.config import Config
 from trans_novel.agents import prompts
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.agents.translator import Translator
-from trans_novel.pipeline.checks import length_flags
+from trans_novel.pipeline.checks import length_flags, repair_rejection_reason
 
 
 def _count_segments(user_content: str) -> int:
@@ -97,6 +97,30 @@ class TestChecks(unittest.TestCase):
         kinds = {f.index: f.reason for f in flags}
         self.assertEqual(kinds.get(0), "empty")     # 译文为空
         self.assertEqual(kinds.get(2), "too_long")  # 比值过大
+
+    def test_repair_gate_rejects_unchanged_candidate(self):
+        reason = repair_rejection_reason(
+            "Eine neue Übersetzung.",
+            "一段现有译文",
+            "一段现有译文",
+        )
+        self.assertEqual(reason, "unchanged")
+
+    def test_repair_gate_rejects_dropped_shared_number(self):
+        reason = repair_rejection_reason(
+            "Im Jahr 1872 erschien das Buch.",
+            "这本书于1872年出版。",
+            "这本书在那一年出版。",
+        )
+        self.assertEqual(reason, "dropped_number")
+
+    def test_repair_gate_allows_changed_candidate_with_preserved_number(self):
+        reason = repair_rejection_reason(
+            "Im Jahr 1872 erschien das Buch.",
+            "这本书于1872年问世。",
+            "这部作品于1872年出版。",
+        )
+        self.assertIsNone(reason)
 
 
 if __name__ == "__main__":
