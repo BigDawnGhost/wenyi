@@ -52,7 +52,12 @@ def _configure_windows_console(
 _configure_windows_console()
 
 _CONFIG: dict[str, Any] = {"path": "config.yaml", "skip_api_check": False}
-_API_CHECK_EXEMPT_COMMANDS = {"assemble"}
+_API_CHECK_EXEMPT_COMMANDS = {
+    "assemble",
+    "glossary",
+    "report",
+    "status",
+}
 
 
 def _config_path_from_args(args: Sequence[str]) -> str:
