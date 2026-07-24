@@ -55,7 +55,7 @@ class Agent:
                 [{"role": "system", "content": system},
                  {"role": "user", "content": user}], tier=tier,
                 max_tokens=max_tokens, stage=type(self).__name__) or "").strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 - 文本型辅助调用按契约回退默认值
             return default
 
     @staticmethod
