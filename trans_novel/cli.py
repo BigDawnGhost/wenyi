@@ -162,11 +162,22 @@ def _require_input_file(input_path: str) -> None:
 def _validate_output_format(fmt: str) -> str:
     """规范化并校验用户可选择的输出格式。"""
     normalized = fmt.strip().lower()
-    allowed = {"epub", "txt", "html", "markdown"}
+    allowed = {"epub", "txt", "html", "markdown", "pdf"}
     if normalized not in allowed:
         console.print(
             "[red]不支持的输出格式："
-            f"{fmt}（可选 epub / txt / html / markdown）[/]"
+            f"{fmt}（可选 epub / txt / html / markdown / pdf）[/]"
+        )
+        raise typer.Exit(2)
+    return normalized
+
+
+def _validate_pdf_engine(engine: str) -> str:
+    """规范化并校验 PDF 渲染引擎。"""
+    normalized = engine.strip().lower()
+    if normalized not in {"weasyprint", "fpdf2"}:
+        console.print(
+            f"[red]不支持的 PDF 引擎：{engine}（可选 weasyprint / fpdf2）[/]"
         )
         raise typer.Exit(2)
     return normalized
@@ -201,6 +212,7 @@ def _translate_impl(
     chapter: Optional[int] = None,
     fmt: str = "epub",
     out: Optional[str] = None,
+    pdf_engine: str = "weasyprint",
     polish: Optional[bool] = None,
     review: Optional[bool] = None,
     qa: Optional[bool] = None,
@@ -214,6 +226,7 @@ def _translate_impl(
             chapter=chapter,
             fmt=fmt,
             out=out,
+            pdf_engine=pdf_engine,
             polish=polish,
             review=review,
             qa=qa,
@@ -231,6 +244,7 @@ def _translate_impl_or_raise(
     chapter: Optional[int] = None,
     fmt: str = "epub",
     out: Optional[str] = None,
+    pdf_engine: str = "weasyprint",
     polish: Optional[bool] = None,
     review: Optional[bool] = None,
     qa: Optional[bool] = None,
@@ -242,6 +256,7 @@ def _translate_impl_or_raise(
 
     _require_input_file(input_path)
     fmt = _validate_output_format(fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     config = _load_config()
     if polish is not None:
         config.pipeline.polish = polish
@@ -310,6 +325,7 @@ def _translate_impl_or_raise(
             out_format=fmt,
             out_path=out,
             do_qa=qa,
+            pdf_engine=pdf_engine,
         )
 
     s = result["report"]["summary"]
@@ -416,12 +432,17 @@ def translate(
     fmt: str = typer.Option(
         "epub",
         "--format",
-        help="最终导出格式：epub / txt / html / markdown",
+        help="最终导出格式：epub / txt / html / markdown / pdf",
     ),
     out: Optional[str] = typer.Option(
         None,
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
+    ),
+    pdf_engine: str = typer.Option(
+        "weasyprint",
+        "--pdf-engine",
+        help="PDF 渲染引擎：weasyprint（默认）/ fpdf2",
     ),
     polish: Optional[bool] = typer.Option(
         None,
@@ -455,6 +476,7 @@ def translate(
         chapter=chapter,
         fmt=fmt,
         out=out,
+        pdf_engine=pdf_engine,
         polish=polish,
         review=review,
         qa=qa,
@@ -662,7 +684,12 @@ def assemble(
     fmt: str = typer.Option(
         "epub",
         "--format",
-        help="导出格式：epub / txt / html / markdown",
+        help="导出格式：epub / txt / html / markdown / pdf",
+    ),
+    pdf_engine: str = typer.Option(
+        "weasyprint",
+        "--pdf-engine",
+        help="PDF 渲染引擎：weasyprint（默认）/ fpdf2",
     ),
     mono: Optional[bool] = typer.Option(
         None,
@@ -681,6 +708,7 @@ def assemble(
 
     config = _load_config()
     fmt = _validate_output_format(fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     store = _runstore_for(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
@@ -699,6 +727,7 @@ def assemble(
                 out_format=fmt,
                 bilingual=False,
                 about_page=config.output.about_page,
+                pdf_engine=pdf_engine,
             )
         )
     if do_bilingual:
@@ -715,6 +744,7 @@ def assemble(
                     config.output.bilingual_preserve_source_style
                 ),
                 about_page=config.output.about_page,
+                pdf_engine=pdf_engine,
             )
         )
     for path in paths:

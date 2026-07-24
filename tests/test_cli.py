@@ -7,11 +7,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import typer
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
     _apply_store_languages,
     _configure_windows_console,
+    _validate_pdf_engine,
     app,
 )
 from trans_novel.config import Config
@@ -26,6 +28,16 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_pdf_engine_validation_accepts_both_backends(self):
+        self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")
+        self.assertEqual(_validate_pdf_engine(" fpdf2 "), "fpdf2")
+
+    def test_pdf_engine_validation_rejects_unknown_backend(self):
+        with self.assertRaises(typer.Exit) as raised:
+            _validate_pdf_engine("unknown")
+
+        self.assertEqual(raised.exception.exit_code, 2)
+
     def test_standalone_tools_restore_manifest_languages(self):
         cfg = Config.from_dict(
             {"language": {"source": "auto", "target": "zh"}}
@@ -405,7 +417,7 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.cli._load_config", return_value=cfg),
         ):
             result = CliRunner().invoke(
-                app, ["translate", "input.txt", "--format", "pdf"]
+                app, ["translate", "input.txt", "--format", "docx"]
             )
 
         self.assertEqual(result.exit_code, 2, result.output)

@@ -123,7 +123,7 @@ def load_document(
         doc = read_text(path, source_lang, target_lang)
     elif ext == ".fb2":
         doc = read_fb2(path, source_lang, target_lang)
-    elif ext in (".html", ".htm"):
+    elif ext in (".html", ".htm", ".xhtml"):
         doc = read_html(path, source_lang, target_lang)
     elif ext == ".pdf":
         if cache_dir is None:
@@ -136,7 +136,7 @@ def load_document(
         )
     else:
         raise ValueError(
-            f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .pdf）"
+            f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .xhtml / .pdf）"
         )
 
     if split_segments and split_segments > 0:

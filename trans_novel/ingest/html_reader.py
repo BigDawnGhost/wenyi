@@ -21,8 +21,10 @@ from __future__ import annotations
 import os
 
 from bs4 import BeautifulSoup, Tag
+from bs4.element import Comment
 
-from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
+from .epub_reader import annotate_epub_resource
+from .models import Chapter, Document, Segment
 
 # 块级 / 标题标签集合（与 epub_reader 一致）
 _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"}
@@ -48,31 +50,21 @@ def _extract_chapter(
     2. 为每个有效块打 data-tn-id 标记
     3. 标题优先用显式传入的 chapter_title，其次用首个 heading segment
     """
-    soup = BeautifulSoup(html, "html.parser")
-    segments: list[Segment] = []
-    idx = 0
-    for el in soup.find_all(_BLOCK_TAGS):
-        # 跳过嵌套在另一个块级元素内的块（如 blockquote / li 里的 p）
-        if any(getattr(p, "name", None) in _BLOCK_TAGS for p in el.parents):
-            continue
-        text = el.get_text().strip()
-        if not text:
-            continue
-        anchor = f"tn{chapter_index}_{idx}"
-        el["data-tn-id"] = anchor
-        kind = KIND_HEADING if el.name in _HEADING_TAGS else KIND_TEXT
-        segments.append(Segment(index=idx, source=text, kind=kind, anchor=anchor))
-        idx += 1
+    detected_title, segments, template = annotate_epub_resource(
+        html,
+        chapter_index,
+        f"html-chapter-{chapter_index}.xhtml",
+    )
+    # ``resource_href`` only has meaning for EPUB's physical-resource rebuild.
+    for segment in segments:
+        segment.resource_href = None
 
     # 标题优先级：显式传入 > 首个 heading segment > 无标题
     title = chapter_title.strip()
     if not title:
-        for s in segments:
-            if s.kind == KIND_HEADING:
-                title = s.source
-                break
+        title = detected_title
 
-    return title, segments, str(soup)
+    return title, segments, template
 
 
 # ── 公开 API ──────────────────────────────────────────────
@@ -156,7 +148,10 @@ def read_html(
     ci = 0
     for start, end in intervals:
         ch_children = children[start:end]
-        fragment_html = "".join(str(c) for c in ch_children)
+        fragment_html = "".join(
+            f"<!--{c}-->" if isinstance(c, Comment) else str(c)
+            for c in ch_children
+        )
 
         # 拼接所有连续标题作为章节标题（用 / 分隔，去换行；跳过空白）
         chapter_title = ""
@@ -180,7 +175,11 @@ def read_html(
             chapter_title=chapter_title,
         )
 
-        if not any(s.source.strip() for s in segments):
+        template_soup = BeautifulSoup(template, "html.parser")
+        has_visible_media = template_soup.find(
+            ["img", "picture", "svg", "object", "video", "audio", "canvas", "iframe"]
+        )
+        if not any(s.source.strip() for s in segments) and has_visible_media is None:
             continue
 
         chapters.append(

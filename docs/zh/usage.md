@@ -36,7 +36,28 @@ setx DEEPSEEK_API_KEY "sk-..."
 
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
 - 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
-- `--format txt|html|markdown`：改为导出指定格式；所有输入默认仍生成 EPUB。
+- `--format txt|html|markdown|pdf`：改为导出指定格式；所有输入默认仍生成
+  EPUB。默认 PDF 引擎为 WeasyPrint，在 macOS 与 Linux 上能获得最佳
+  HTML/CSS 还原效果。使用默认引擎时无需填写 `--pdf-engine`：
+
+  ```bash
+  uv sync --extra pdf-output
+  brew install weasyprint        # macOS
+  sudo apt install weasyprint    # Ubuntu/Debian
+  uv run trans-novel assemble book.html --format pdf
+  ```
+
+  也可使用无需系统排版库的跨平台轻量引擎：
+
+  ```bash
+  uv sync --extra pdf-output-lite
+  uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
+  ```
+
+  `fpdf2` 可处理基础排版和图片，但只支持有限的 HTML/CSS；与文字混排的图片
+  会作为独立区块输出。它会查找系统中的中文字体；如果未找到，请用
+  `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
+  Windows。
 - PDF 首次读取需设置 `MINERU_API_KEY`。转换结果保存为 `state/<书名>/source/converted.html`，后续运行会直接复用，也可人工修正后再续跑。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。

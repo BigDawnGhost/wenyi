@@ -19,6 +19,14 @@ dependencies = [
     "google-genai>=2.13.0",
 ]
 
+[project.optional-dependencies]
+pdf-output = [
+    "weasyprint>=69.0",
+]
+pdf-output-lite = [
+    "fpdf2>=2.8.5",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

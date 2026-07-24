@@ -1333,7 +1333,8 @@ class Orchestrator:
 
     def run_steps(self, input_path: str, steps, *,
                   progress: Optional[ProgressFn] = None,
-                  out_format: str = "epub", out_path: str | None = None) -> dict[str, Any]:
+                  out_format: str = "epub", out_path: str | None = None,
+                  pdf_engine: str = "weasyprint") -> dict[str, Any]:
         """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
         steps = set(steps)
         run_steps_input = sorted(steps)
@@ -1353,6 +1354,7 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
+                pdf_engine=pdf_engine,
             )
 
     def _finish_steps_locked(
@@ -1365,6 +1367,7 @@ class Orchestrator:
         progress: Optional[ProgressFn],
         out_format: str,
         out_path: str | None,
+        pdf_engine: str,
     ) -> dict[str, Any]:
         """在书级锁内执行 QA、报告和导出收尾步骤并返回结果汇总。"""
         from ..agents.consistency import ConsistencyChecker
@@ -1424,6 +1427,7 @@ class Orchestrator:
                         out_format=out_format,
                         bilingual=False,
                         about_page=out_cfg.about_page,
+                        pdf_engine=pdf_engine,
                     )
                 )
             if do_bilingual:
@@ -1440,6 +1444,7 @@ class Orchestrator:
                             out_cfg.bilingual_preserve_source_style
                         ),
                         about_page=out_cfg.about_page,
+                        pdf_engine=pdf_engine,
                     )
                 )
             store.log_event("assembled", outputs=outputs, out_format=out_format)
@@ -1461,7 +1466,8 @@ class Orchestrator:
 
     def run_all(self, input_path: str, *, progress: Optional[ProgressFn] = None,
                 out_format: str = "epub", out_path: str | None = None,
-                do_qa: bool | None = None) -> dict[str, Any]:
+                do_qa: bool | None = None,
+                pdf_engine: str = "weasyprint") -> dict[str, Any]:
         """翻译 → 最终审校 → 一致性 QA → 报告 → 回填，返回结果汇总。"""
         steps = {"translate", "report", "assemble"}
         if self.config.pipeline.review:
@@ -1469,4 +1475,5 @@ class Orchestrator:
         if do_qa if do_qa is not None else self.config.pipeline.consistency_qa:
             steps.add("qa")
         return self.run_steps(input_path, steps, progress=progress,
-                              out_format=out_format, out_path=out_path)
+                              out_format=out_format, out_path=out_path,
+                              pdf_engine=pdf_engine)

@@ -36,7 +36,30 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, and PDF.
 - Default output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
-- `--format txt|html|markdown`: export the selected format. Every input format still produces EPUB by default.
+- `--format txt|html|markdown|pdf`: export the selected format. Every input
+  format still produces EPUB by default. The default PDF engine is WeasyPrint;
+  `--pdf-engine` may be omitted when using it. WeasyPrint provides the best
+  HTML/CSS fidelity on macOS and Linux:
+
+  ```bash
+  uv sync --extra pdf-output
+  brew install weasyprint        # macOS
+  sudo apt install weasyprint    # Ubuntu/Debian
+  uv run trans-novel assemble book.html --format pdf
+  ```
+
+  A lightweight cross-platform engine is also available without system
+  rendering libraries:
+
+  ```bash
+  uv sync --extra pdf-output-lite
+  uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
+  ```
+
+  `fpdf2` supports simpler layout and images, but only a limited HTML/CSS
+  subset; images mixed with text are placed as separate blocks. It uses a
+  discoverable CJK system font. If none is found, set `TRANS_NOVEL_PDF_FONT`
+  to a TTF, OTF, or TTC font file. This option also works on Windows.
 - The first PDF import requires `MINERU_API_KEY`. Converted HTML is saved at `state/<book>/source/converted.html`, reused on later runs, and may be corrected manually before resuming.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
