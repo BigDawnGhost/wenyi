@@ -9,11 +9,11 @@ import tempfile
 import threading
 import unittest
 
+from trans_novel.agents.polisher import Polisher
+from trans_novel.agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
 from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
-from trans_novel.agents.polisher import Polisher
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
@@ -139,7 +139,7 @@ class TestReviewer(unittest.TestCase):
     def test_malformed_chunk_is_recursively_split_and_logged(self):
         def handler(messages, tier, json_mode):
             user = messages[-1]["content"]
-            count = len(re.findall(r"^\[(\d+)\]", user, re.M))
+            count = len(re.findall(r"^\[(\d+)\]", user, re.MULTILINE))
             if count > 1:
                 return '{"issues":['
             return json.dumps({"issues": [{
@@ -215,7 +215,7 @@ class TestReviewer(unittest.TestCase):
         cfg.pipeline.review_output_retries = 2
         client = FakeClient(handler=lambda m, t, j: "")
 
-        with self.assertRaisesRegex(ReviewOutputError, "response_not_object"):
+        with self.assertRaisesRegex(ReviewOutputError, "malformed_json"):
             Orchestrator(cfg, client=client)._review_chapter(
                 [Segment(index=0, source="源文", target="译文")],
                 [],

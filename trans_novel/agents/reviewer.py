@@ -9,11 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from json_repair import repair_json
-
+from ..llm.json_parser import parse_json_result
 from . import langprofile, prompts
 from .base import Agent
-from ..llm.json_parser import parse_json_loose
 
 
 class ReviewOutputError(ValueError):
@@ -69,31 +67,12 @@ class Reviewer(Agent):
             json_mode=True,
             stage=type(self).__name__,
         )
-        repaired = False
         try:
-            data = parse_json_loose(text)
+            parsed = parse_json_result(text)
         except ValueError:
-            data = None
-
-        # 旧的宽松解析器可能会从一个被截断的外层对象里只捞出内部 issues
-        # 数组。完整性回执不在时，必须回到原始文本交给 json-repair，不能把
-        # 这个局部数组误当成完整审校结果。
-        footer_present = (
-            isinstance(data, dict)
-            and list(data)[-2:] == ["reviewed_segments", "complete"]
-        )
-        if not footer_present:
-            try:
-                data = repair_json(
-                    text or "",
-                    return_objects=True,
-                    skip_json_loads=True,
-                )
-            except Exception:
-                # 两类解析错误都可能包含模型原始输出；统一转换为不携带正文
-                # 的稳定原因，供编排器安全记录和拆分恢复。
-                raise ReviewOutputError("malformed_json") from None
-            repaired = True
+            raise ReviewOutputError("malformed_json") from None
+        data = parsed.value
+        repaired = parsed.repaired
 
         if not isinstance(data, dict):
             raise ReviewOutputError("response_not_object")
