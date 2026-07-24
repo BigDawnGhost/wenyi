@@ -33,6 +33,15 @@ def _translated_para_count(calls) -> int:
     return n
 
 
+def _review_json(user: str, issues: list[dict]) -> str:
+    """构造带完整性回执的 Reviewer 测试响应。"""
+    return json.dumps({
+        "issues": issues,
+        "reviewed_segments": len(re.findall(r"^\[(\d+)\]", user, re.M)),
+        "complete": True,
+    }, ensure_ascii=False)
+
+
 def _config(state_dir: str):
     return Config.from_dict({
         "language": {"source": "ja", "target": "zh"},
@@ -374,9 +383,9 @@ class TestReviewReporting(unittest.TestCase):
             sys = messages[0]["content"]
             user = messages[-1]["content"]
             if "译文审校" in sys:
-                return json.dumps({"issues": [
+                return _review_json(user, [
                     {"index": 0, "type": "missing", "detail": "漏了一句", "suggestion": "补上"}
-                ]}, ensure_ascii=False)
+                ])
             if "文学翻译" in sys and "【审校意见】" in user:
                 return json.dumps({"translations": [fix_text]}, ensure_ascii=False)
             return routing_handler(messages, tier, json_mode)
@@ -459,9 +468,9 @@ class TestReviewReporting(unittest.TestCase):
         """整章多块审校时，块内 index 正确映射回章内段号。"""
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
-                return json.dumps({"issues": [
+                return _review_json(messages[-1]["content"], [
                     {"index": 0, "type": "missing", "detail": "x", "suggestion": ""}
-                ]}, ensure_ascii=False)
+                ])
             return routing_handler(messages, tier, json_mode)
 
         with tempfile.TemporaryDirectory() as d:
@@ -482,13 +491,10 @@ class TestReviewReporting(unittest.TestCase):
     def test_review_accepts_numeric_string_index(self):
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
-                return json.dumps(
-                    {"issues": [
-                        {"index": "0", "type": "missing",
-                         "detail": "x", "suggestion": ""}
-                    ]},
-                    ensure_ascii=False,
-                )
+                return _review_json(messages[-1]["content"], [
+                    {"index": "0", "type": "missing",
+                     "detail": "x", "suggestion": ""}
+                ])
             return routing_handler(messages, tier, json_mode)
 
         with tempfile.TemporaryDirectory() as d:
@@ -508,12 +514,10 @@ class TestReviewReporting(unittest.TestCase):
     def test_review_warns_when_index_is_invalid(self):
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
-                return json.dumps(
-                    {"issues": [
-                        {"index": "unknown", "type": "missing",
-                         "detail": "x", "suggestion": ""}
-                    ]}
-                )
+                return _review_json(messages[-1]["content"], [
+                    {"index": "unknown", "type": "missing",
+                     "detail": "x", "suggestion": ""}
+                ])
             return routing_handler(messages, tier, json_mode)
 
         with tempfile.TemporaryDirectory() as d:
@@ -632,12 +636,19 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             cfg.segment.max_chars_per_batch = 100_000
-            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            client = FakeClient(handler=handler)
+            orch = Orchestrator(cfg, client=client)
             store = orch.run(txt)
 
             with self.assertRaisesRegex(RuntimeError, "review service unavailable"):
                 orch.run_review(txt)
 
+            review_calls = [
+                call for call in client.calls
+                if "译文审校" in call["messages"][0]["content"]
+            ]
+            # 只恢复模型输出协议错误；服务故障不得因拆分逻辑被成倍重试。
+            self.assertEqual(len(review_calls), 1)
             self.assertEqual(
                 store.load_manifest()["chapters"][0]["review_status"],
                 REVIEW_FAILED,
@@ -854,7 +865,7 @@ class TestGlossaryScope(unittest.TestCase):
                 return json.dumps({"terms": []}, ensure_ascii=False)
             if "译文审校" in system:
                 self.assertIn("夏帆ちゃん → 小夏帆", user)
-                return json.dumps({"issues": []}, ensure_ascii=False)
+                return _review_json(user, [])
             return routing_handler(messages, tier, json_mode)
 
         with tempfile.TemporaryDirectory() as d:

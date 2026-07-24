@@ -15,7 +15,7 @@ import sqlite3
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 # 术语类型
 TYPE_PERSON = "人物"
@@ -38,12 +38,12 @@ class GlossaryTerm:
     type: str = TYPE_TERM
     gender: str = ""
     aliases: list[str] = field(default_factory=list)
-    first_chapter: Optional[int] = None
+    first_chapter: int | None = None
     note: str = ""
     status: str = "ok"
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "GlossaryTerm":
+    def from_row(cls, row: sqlite3.Row) -> GlossaryTerm:
         """把 SQLite 行转换为术语对象，并恢复 JSON 编码的别名。"""
         return cls(
             source=row["source"],
@@ -121,14 +121,14 @@ class GlossaryStore:
         self.conn.close()
 
     # ── 术语 ──────────────────────────────────────────────────────────────
-    def get_term(self, source: str) -> Optional[GlossaryTerm]:
+    def get_term(self, source: str) -> GlossaryTerm | None:
         """按原文精确查询术语；不存在时返回 None。"""
         row = self.conn.execute(
             "SELECT * FROM glossary WHERE source = ?", (source,)
         ).fetchone()
         return GlossaryTerm.from_row(row) if row else None
 
-    def upsert_term(self, term: GlossaryTerm, chapter: Optional[int] = None) -> str:
+    def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
         """插入或更新术语，返回 'inserted'|'unchanged'|'conflict'。
 
         同 source 已存在且 target 不同时保留当前译法，把新译法作为候选记录，
@@ -256,7 +256,7 @@ class GlossaryStore:
         return [dict(r) for r in rows]
 
     # ── 翻译记忆库 ──────────────────────────────────────────────────────
-    def add_tm(self, source_text: str, target_text: str, chapter: Optional[int] = None) -> None:
+    def add_tm(self, source_text: str, target_text: str, chapter: int | None = None) -> None:
         """新增或覆盖一条以源文哈希为键的翻译记忆。"""
         self.conn.execute(
             """INSERT INTO translation_memory (source_hash,source_text,target_text,chapter,updated_at)
@@ -267,7 +267,7 @@ class GlossaryStore:
         )
         self.conn.commit()
 
-    def tm_lookup(self, source_text: str) -> Optional[str]:
+    def tm_lookup(self, source_text: str) -> str | None:
         """按源文精确查找翻译记忆；未命中时返回 None。"""
         row = self.conn.execute(
             "SELECT target_text FROM translation_memory WHERE source_hash=?",

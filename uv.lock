@@ -555,6 +555,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json-repair"
+version = "0.61.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/a3/6001c2448ee54a80f35a2501b848f4bbd87987bd41ead8cc17367a2bfd56/json_repair-0.61.7.tar.gz", hash = "sha256:a3754543f050093efcda6c9ab00b20a236b5d082c8c622bc65b88fa74ff8d51f", size = 51573, upload-time = "2026-07-21T13:01:15.085Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/da/7f9e2b0a1120b107a204bbab6d0ef7ff2ae37790bddc5ee21c9c1f961f3b/json_repair-0.61.7-py3-none-any.whl", hash = "sha256:45c99b8cffef404e846b60d3dc21fc6f0fd5a4595cebad169dfab083ffb8246a", size = 50146, upload-time = "2026-07-21T13:01:13.734Z" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1142,6 +1151,7 @@ dependencies = [
     { name = "ebooklib" },
     { name = "google-genai" },
     { name = "httpx" },
+    { name = "json-repair" },
     { name = "lxml" },
     { name = "openai" },
     { name = "pydantic" },
@@ -1163,6 +1173,7 @@ requires-dist = [
     { name = "ebooklib", specifier = ">=0.18" },
     { name = "google-genai", specifier = ">=2.13.0" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "json-repair", specifier = ">=0.61,<1" },
     { name = "lxml", specifier = ">=5.0" },
     { name = "openai", specifier = ">=1.40" },
     { name = "pydantic", specifier = ">=2.7" },
