@@ -852,6 +852,12 @@ class TestGlossaryScope(unittest.TestCase):
                 ]}, ensure_ascii=False)
             if "术语" in system and "抽取器" in system:
                 return json.dumps({"terms": []}, ensure_ascii=False)
+            if "术语一致性校准器" in system:
+                self.assertIn("「夏帆ちゃん」と母親が言った。", user)
+                self.assertIn('"target": "小夏帆"', user)
+                return json.dumps({"terms": [
+                    {"source": "夏帆ちゃん", "target": "小夏帆"}
+                ]}, ensure_ascii=False)
             if "译文审校" in system:
                 self.assertIn("夏帆ちゃん → 小夏帆", user)
                 return json.dumps({"issues": []}, ensure_ascii=False)

@@ -221,6 +221,24 @@ $target
 请抽取新出现或被本批确认的术语、称呼变体和固定表达，输出 JSON：{"terms":[...]}。\
 """)
 
+GLOSSARY_HISTORY_SYSTEM = Template("""\
+你是小说翻译项目的术语一致性校准器。系统发现一批新术语在更早的已译正文中出现过，
+但当时尚未进入术语表。请依据每项提供的【首次出现原文】和【首次出现译文】，判断该
+source 在首次译文中实际采用的$tgt_label译名：
+1. 首次译文的实际写法优先于当前批次提出的 proposed_target；不得为了更自然而另创译名。
+2. 返回完整、可独立复用的译名，不要只返回首次译文中的局部字词。
+3. 若首次译文省略、意译到无法可靠对应，target 返回空字符串，禁止猜测。
+4. source 必须原样返回。仅输出 JSON：
+{"terms":[{"source":"原文术语","target":"首次译文中实际采用的译名；无法确定则为空"}]}\
+""")
+
+GLOSSARY_HISTORY_USER = Template("""\
+【待校准术语与首次出现上下文】
+$candidates_json
+
+请逐项核对首次译文，输出 JSON：{"terms":[...]}。\
+""")
+
 BACKTRANSLATE_SYSTEM = Template("""\
 你是回译译者。把给定的中文译文回译成$src_label，只看中文、忠实表达其含义，输出 JSON：
 {"backtranslations":["...",...]}，长度与输入一致。\
@@ -282,6 +300,8 @@ _DEFAULTS = {
     "analyzer_user": ANALYZER_USER,
     "glossary_extractor_system": GLOSSARY_EXTRACTOR_SYSTEM,
     "glossary_extractor_user": GLOSSARY_EXTRACTOR_USER,
+    "glossary_history_system": GLOSSARY_HISTORY_SYSTEM,
+    "glossary_history_user": GLOSSARY_HISTORY_USER,
     "backtranslate_system": BACKTRANSLATE_SYSTEM,
     "backtranslate_user": BACKTRANSLATE_USER,
     "consistency_system": CONSISTENCY_SYSTEM,
