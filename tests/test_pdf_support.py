@@ -242,8 +242,11 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                 assert isinstance(src, str)
                 asset_name = next(name for name in names if name.endswith(src))
                 self.assertTrue(archive.read(asset_name).startswith(b"GIF"))
+                package_title = package.find("dc:title")
+                self.assertIsNotNone(package_title)
+                assert package_title is not None
                 self.assertEqual(
-                    package.find("dc:title").get_text(),
+                    package_title.get_text(),
                     "sample-wenyi-zh",
                 )
 
