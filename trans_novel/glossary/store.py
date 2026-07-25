@@ -1,15 +1,13 @@
-"""SQLite 术语库 + 翻译记忆库。
+"""SQLite 术语库。
 
-三张表：
+两张表：
 - glossary：专有名词对照表（source 唯一）。同 source 出现不同 target 时保留当前
   译法，并把候选译法记入 term_conflicts，等待人工裁决。
 - term_conflicts：待裁决的译法冲突日志，供人工复核。
-- translation_memory：句群级译文对，供一致性参考与重译复用。
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
@@ -85,19 +83,8 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
     resolved        INTEGER DEFAULT 0,
     created_at      REAL
 );
-CREATE TABLE IF NOT EXISTS translation_memory (
-    source_hash TEXT PRIMARY KEY,
-    source_text TEXT NOT NULL,
-    target_text TEXT NOT NULL,
-    chapter     INTEGER,
-    updated_at  REAL
-);
+DROP TABLE IF EXISTS translation_memory;
 """
-
-
-def _hash(text: str) -> str:
-    """生成忽略首尾空白的翻译记忆键。"""
-    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
 
 
 def _match_text(text: str) -> str:
@@ -274,29 +261,8 @@ class GlossaryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # ── 翻译记忆库 ──────────────────────────────────────────────────────
-    def add_tm(self, source_text: str, target_text: str, chapter: int | None = None) -> None:
-        """新增或覆盖一条以源文哈希为键的翻译记忆。"""
-        self.conn.execute(
-            """INSERT INTO translation_memory (source_hash,source_text,target_text,chapter,updated_at)
-               VALUES (?,?,?,?,?)
-               ON CONFLICT(source_hash) DO UPDATE SET target_text=excluded.target_text,
-                   chapter=excluded.chapter, updated_at=excluded.updated_at""",
-            (_hash(source_text), source_text, target_text, chapter, time.time()),
-        )
-        self.conn.commit()
-
-    def tm_lookup(self, source_text: str) -> str | None:
-        """按源文精确查找翻译记忆；未命中时返回 None。"""
-        row = self.conn.execute(
-            "SELECT target_text FROM translation_memory WHERE source_hash=?",
-            (_hash(source_text),),
-        ).fetchone()
-        return row["target_text"] if row else None
-
     def stats(self) -> dict[str, int]:
-        """返回术语数、未决冲突数和翻译记忆条目数。"""
+        """返回术语数和未决冲突数。"""
         g = self.conn.execute("SELECT COUNT(*) FROM glossary").fetchone()[0]
         c = self.conn.execute("SELECT COUNT(*) FROM term_conflicts WHERE resolved=0").fetchone()[0]
-        t = self.conn.execute("SELECT COUNT(*) FROM translation_memory").fetchone()[0]
-        return {"terms": g, "open_conflicts": c, "tm_entries": t}
+        return {"terms": g, "open_conflicts": c}
