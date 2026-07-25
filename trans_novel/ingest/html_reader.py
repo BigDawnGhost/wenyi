@@ -149,8 +149,7 @@ def read_html(
     for start, end in intervals:
         ch_children = children[start:end]
         fragment_html = "".join(
-            f"<!--{c}-->" if isinstance(c, Comment) else str(c)
-            for c in ch_children
+            f"<!--{c}-->" if isinstance(c, Comment) else str(c) for c in ch_children
         )
 
         # 拼接所有连续标题作为章节标题（用 / 分隔，去换行；跳过空白）

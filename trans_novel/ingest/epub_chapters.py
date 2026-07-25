@@ -58,7 +58,9 @@ _STRATEGIES: dict[str, ChapterSplitStrategy] = {
 }
 
 
-def get_chapter_split_strategy(name: str = TopLevelTocStrategy.name) -> ChapterSplitStrategy:
+def get_chapter_split_strategy(
+    name: str = TopLevelTocStrategy.name,
+) -> ChapterSplitStrategy:
     """按稳定名称返回切章策略，为后续扩展保留单一入口。"""
     try:
         return _STRATEGIES[name]

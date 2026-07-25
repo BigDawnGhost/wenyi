@@ -10,9 +10,9 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import os
 import re
+from copy import deepcopy
 
 from .epub_reader import read_epub
 from .fb2_reader import read_fb2

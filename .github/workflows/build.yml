@@ -29,6 +29,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -42,12 +44,15 @@ jobs:
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
           --paths . --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
+          --copy-metadata trans-novel
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
           --distpath dist trans_novel/__main__.py
 
       - name: Smoke test executable
         shell: bash
-        run: ${{ matrix.binary }} --help
+        run: |
+          ${{ matrix.binary }} --help
+          ${{ matrix.binary }} --version
 
       - name: Package Windows executable
         if: runner.os == 'Windows'

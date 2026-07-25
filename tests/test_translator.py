@@ -6,33 +6,37 @@ import json
 import re
 import unittest
 
-from trans_novel.config import Config
 from trans_novel.agents import prompts
-from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.agents.translator import Translator
+from trans_novel.config import Config
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.checks import length_flags
 
 
 def _count_segments(user_content: str) -> int:
-    return len(re.findall(r"^\[(\d+)\]", user_content, re.M))
+    return len(re.findall(r"^\[(\d+)\]", user_content, re.MULTILINE))
 
 
 class TestTranslatorAlignment(unittest.TestCase):
     def _config(self):
-        return Config.from_dict({
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {"provider": "fake", "tiers": {
-                "strong": {"model": "deepseek-v4-pro"},
-                "cheap": {"model": "deepseek-v4-flash"},
-            }},
-            "pipeline": {"align_retry_limit": 1},
-        })
+        return Config.from_dict(
+            {
+                "language": {"source": "ja", "target": "zh"},
+                "llm": {
+                    "provider": "fake",
+                    "tiers": {
+                        "strong": {"model": "deepseek-v4-pro"},
+                        "cheap": {"model": "deepseek-v4-flash"},
+                    },
+                },
+                "pipeline": {"align_retry_limit": 1},
+            }
+        )
 
     def test_happy_path_aligned(self):
         def handler(messages, tier, json_mode):
             n = _count_segments(messages[-1]["content"])
-            return json.dumps({"translations": [f"译{i}" for i in range(n)]},
-                              ensure_ascii=False)
+            return json.dumps({"translations": [f"译{i}" for i in range(n)]}, ensure_ascii=False)
 
         t = Translator(FakeClient(handler=handler), self._config())
         out = t.translate_batch(["あ", "い", "う"])
@@ -53,15 +57,14 @@ class TestTranslatorAlignment(unittest.TestCase):
         out = t.translate_batch(["あ", "い", "う"])
         self.assertEqual(len(out), 3)  # 兜底后仍保证 1:1
         # 验证确实回退到了逐段（出现过 n==1 的调用）
-        single_calls = [c for c in client.calls
-                        if _count_segments(c["messages"][-1]["content"]) == 1]
+        single_calls = [
+            c for c in client.calls if _count_segments(c["messages"][-1]["content"]) == 1
+        ]
         self.assertGreaterEqual(len(single_calls), 3)
 
     def test_empty_per_segment_fallback_is_rejected(self):
         client = FakeClient(
-            handler=lambda messages, tier, json_mode: json.dumps(
-                {"translations": []}
-            )
+            handler=lambda messages, tier, json_mode: json.dumps({"translations": []})
         )
         translator = Translator(client, self._config())
 
@@ -70,9 +73,7 @@ class TestTranslatorAlignment(unittest.TestCase):
 
     def test_non_string_translation_is_rejected(self):
         client = FakeClient(
-            handler=lambda messages, tier, json_mode: json.dumps(
-                {"translations": [None]}
-            )
+            handler=lambda messages, tier, json_mode: json.dumps({"translations": [None]})
         )
         translator = Translator(client, self._config())
 
@@ -95,7 +96,7 @@ class TestChecks(unittest.TestCase):
         targets = ["", "短い但正常的中文译文内容", "x" * 40]
         flags = length_flags(sources, targets)
         kinds = {f.index: f.reason for f in flags}
-        self.assertEqual(kinds.get(0), "empty")     # 译文为空
+        self.assertEqual(kinds.get(0), "empty")  # 译文为空
         self.assertEqual(kinds.get(2), "too_long")  # 比值过大
 
 

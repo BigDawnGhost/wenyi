@@ -32,6 +32,7 @@ import xml.etree.ElementTree as ET
 
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
+
 def _local(el: ET.Element) -> str:
     """返回 FB2 元素去除 XML 命名空间后的标签名。"""
     return el.tag.rsplit("}", 1)[-1]
@@ -79,8 +80,7 @@ def _direct_segments(
         text = text.strip()
         if text:
             segments.append(
-                Segment(index=idx, source=text, kind=kind,
-                        anchor=f"tn{chapter_index}_{idx}")
+                Segment(index=idx, source=text, kind=kind, anchor=f"tn{chapter_index}_{idx}")
             )
             idx += 1
 
@@ -92,13 +92,13 @@ def _direct_segments(
             if image_id:
                 images.append({"id": image_id, "position": len(segments)})
         elif tag == "subtitle":
-            add(_strip_markup(el), KIND_HEADING)   # 节内小标题
-        elif tag in ("p", "v", "text-author"):     # 段落 / 诗行 / 署名
+            add(_strip_markup(el), KIND_HEADING)  # 节内小标题
+        elif tag in ("p", "v", "text-author"):  # 段落 / 诗行 / 署名
             for image in el.iter():
                 if image is not el and _local(image) == "image":
                     emit_block(image)
             add(_strip_markup(el), KIND_TEXT)
-        elif tag in _CONTAINER_BLOCKS:             # 容器：下钻
+        elif tag in _CONTAINER_BLOCKS:  # 容器：下钻
             for sub in el:
                 emit_block(sub)
         # empty-line / 其它 → 跳过
@@ -203,9 +203,7 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
             resources.append(
                 {
                     "id": resource_id,
-                    "content_type": binary.attrib.get(
-                        "content-type", "application/octet-stream"
-                    ),
+                    "content_type": binary.attrib.get("content-type", "application/octet-stream"),
                 }
             )
 

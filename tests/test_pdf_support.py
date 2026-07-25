@@ -22,7 +22,6 @@ from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
-
 _HTML = """\
 <!doctype html>
 <html>
@@ -90,17 +89,19 @@ class TestPdfIngest(unittest.TestCase):
                 file.write(b"invalid PDF is not read because conversion is mocked")
             cache_dir = os.path.join(directory, "state", "sample", "source")
 
-            with patch(
-                "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
-                side_effect=RuntimeError("connection reset"),
+            with (
+                patch(
+                    "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                    side_effect=RuntimeError("connection reset"),
+                ),
+                self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised,
             ):
-                with self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised:
-                    load_document(
-                        pdf_path,
-                        "en",
-                        "zh",
-                        cache_dir=cache_dir,
-                    )
+                load_document(
+                    pdf_path,
+                    "en",
+                    "zh",
+                    cache_dir=cache_dir,
+                )
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
@@ -167,7 +168,9 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             os.makedirs(os.path.join(directory, "images"))
             image_path = os.path.join(directory, "images", "chart.svg")
             with open(image_path, "w", encoding="utf-8") as file:
-                file.write('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>')
+                file.write(
+                    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+                )
             source_path = os.path.join(directory, "sample.html")
             with open(source_path, "w", encoding="utf-8") as file:
                 file.write(
@@ -229,6 +232,8 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                 names = archive.namelist()
                 chapter_name = next(name for name in names if name.endswith("/ch0.xhtml"))
                 chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
+                package_name = next(name for name in names if name.endswith(".opf"))
+                package = BeautifulSoup(archive.read(package_name), "xml")
                 image = chapter.find("img")
                 self.assertIsNotNone(image)
                 assert image is not None
@@ -237,6 +242,10 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                 assert isinstance(src, str)
                 asset_name = next(name for name in names if name.endswith(src))
                 self.assertTrue(archive.read(asset_name).startswith(b"GIF"))
+                self.assertEqual(
+                    package.find("dc:title").get_text(),
+                    "sample-wenyi-zh",
+                )
 
     def test_pdf_export_uses_print_html_and_weasyprint(self):
         writes: list[tuple[str, str | None, str]] = []

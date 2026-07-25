@@ -9,8 +9,12 @@ Running from source requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync
 export DEEPSEEK_API_KEY=sk-...
+uv run trans-novel --version
 uv run trans-novel translate book.epub
 ```
+
+The displayed version is generated from the repository's Git tags. Tagged builds show the
+release version; development builds include their commit distance and hash.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 

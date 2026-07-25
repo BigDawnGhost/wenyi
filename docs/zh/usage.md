@@ -9,8 +9,11 @@
 ```bash
 uv sync
 export DEEPSEEK_API_KEY=sk-...
+uv run trans-novel --version
 uv run trans-novel translate book.epub
 ```
+
+显示的版本号由仓库 Git 标签自动生成：标签构建显示正式版本，开发构建还会包含距标签的提交数与提交哈希。
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 

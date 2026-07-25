@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import GlossaryStore, GlossaryTerm, TYPE_PERSON
+from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
 from . import prompts
 from .base import Agent
 
@@ -26,8 +26,7 @@ class Analyzer(Agent):
     def analyze(self, sample_text: str) -> dict[str, Any]:
         """分析样本文本，并返回经过类型清洗的风格、角色和术语信息。"""
         system = prompts.render("analyzer_system", src=self.src, tgt=self.tgt)
-        user = prompts.render("analyzer_user", src=self.src, tgt=self.tgt,
-                              sample=sample_text)
+        user = prompts.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
         # 不传 default：分析失败照常抛出，由调用方决定（prepare 阶段失败应显式暴露）
         data = self._ask_json(system, user, tier="strong")
         if not isinstance(data, dict):
@@ -97,9 +96,13 @@ class Analyzer(Agent):
         if analysis.get("style_guide"):
             lines.append(f"风格指南：{analysis['style_guide']}")
         # 细粒度风格维度（旧 analysis.json 缺字段时自动跳过，向后兼容）
-        for key, tag in (("narration", "叙事"), ("pacing", "句式节奏"),
-                         ("register", "语域"), ("dialogue_style", "对话风格"),
-                         ("rhetoric", "修辞")):
+        for key, tag in (
+            ("narration", "叙事"),
+            ("pacing", "句式节奏"),
+            ("register", "语域"),
+            ("dialogue_style", "对话风格"),
+            ("rhetoric", "修辞"),
+        ):
             if analysis.get(key):
                 lines.append(f"{tag}：{analysis[key]}")
         chars = self.dict_items(analysis.get("characters"))
@@ -108,5 +111,7 @@ class Analyzer(Agent):
             for c in chars:
                 g = f"，{c.get('gender')}" if c.get("gender") else ""
                 note = f"，{c.get('note')}" if c.get("note") else ""
-                lines.append(f"  - {c.get('target', c.get('source',''))}({c.get('source','')}{g}{note})")
+                lines.append(
+                    f"  - {c.get('target', c.get('source', ''))}({c.get('source', '')}{g}{note})"
+                )
         return "\n".join(lines)

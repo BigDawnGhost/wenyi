@@ -24,8 +24,9 @@ class Synopsizer(Agent):
         if not source_text.strip():
             return ""
         system = prompts.render("chapter_digest_system", src=self.src, tgt=self.tgt)
-        user = prompts.render("chapter_digest_user", src=self.src, tgt=self.tgt,
-                              source=source_text[:8000])
+        user = prompts.render(
+            "chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000]
+        )
         # 机械任务走 fast 档（免思考）；梗概 ≤200 字，上限留足裕量防输出失控
         return self._ask_text(system, user, tier="fast", max_tokens=600)
 
@@ -65,7 +66,12 @@ class Synopsizer(Agent):
         """把一组章节梗概与风格分析归并成更高层概览。"""
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
         system = prompts.render("book_synopsis_system", src=self.src, tgt=self.tgt)
-        user = prompts.render("book_synopsis_user", src=self.src, tgt=self.tgt,
-                              analysis=analysis_brief or "（无）", digests=numbered)
+        user = prompts.render(
+            "book_synopsis_user",
+            src=self.src,
+            tgt=self.tgt,
+            analysis=analysis_brief or "（无）",
+            digests=numbered,
+        )
         # 概览 ≤500 字，fast 档 + 上限
         return self._ask_text(system, user, tier="fast", max_tokens=1200)

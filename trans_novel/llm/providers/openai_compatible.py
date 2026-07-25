@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,20 +35,14 @@ def _reasoning_body(
     kwargs: dict[str, Any] = {}
     extra_body: dict[str, Any] = {}
     if reasoning_style == "deepseek":
-        extra_body["thinking"] = {
-            "type": "enabled" if options.thinking else "disabled"
-        }
+        extra_body["thinking"] = {"type": "enabled" if options.thinking else "disabled"}
         if options.thinking:
             kwargs["reasoning_effort"] = options.reasoning_effort
     elif reasoning_style == "openai":
-        kwargs["reasoning_effort"] = (
-            options.reasoning_effort if options.thinking else "none"
-        )
+        kwargs["reasoning_effort"] = options.reasoning_effort if options.thinking else "none"
     elif reasoning_style == "openrouter":
         extra_body["reasoning"] = (
-            {"effort": options.reasoning_effort}
-            if options.thinking
-            else {"enabled": False}
+            {"effort": options.reasoning_effort} if options.thinking else {"enabled": False}
         )
     return kwargs, extra_body
 
@@ -58,7 +52,7 @@ def build_request_kwargs(
     messages: Messages,
     *,
     json_mode: bool = False,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
     reasoning_style: ReasoningStyle = "none",
 ) -> dict[str, Any]:
     """按配置的思考方言组装通用兼容端点请求参数。"""
@@ -76,15 +70,11 @@ def build_request_kwargs(
     if extra_body:
         kwargs["extra_body"] = extra_body
     if max_tokens is not None:
-        kwargs["max_tokens"] = (
-            max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
-        )
+        kwargs["max_tokens"] = max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
     return kwargs
 
 
-class OpenAICompatibleClient(
-    OpenAICompatibleBaseClient[OpenAICompatibleTierOptions]
-):
+class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleTierOptions]):
     def __init__(
         self,
         cfg: LLMConfig,
@@ -115,7 +105,7 @@ class OpenAICompatibleClient(
         messages: Messages,
         *,
         json_mode: bool,
-        max_tokens: Optional[int],
+        max_tokens: int | None,
     ) -> dict[str, Any]:
         """构造当前兼容端点档位的最终请求参数。"""
         return build_request_kwargs(

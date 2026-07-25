@@ -143,13 +143,7 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
     for index, (node, raw_offset) in enumerate(node_offsets):
         inline_id = f"{anchor}_inline_{index}"
         offset = min(max(raw_offset - leading, 0), source_length)
-        placement = (
-            "before"
-            if offset == 0
-            else "after"
-            if offset == source_length
-            else "inline"
-        )
+        placement = "before" if offset == 0 else "after" if offset == source_length else "inline"
         node[_INLINE_ID_ATTR] = inline_id
         nodes.append(
             {
@@ -173,8 +167,7 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
 def _has_meaningful_descendant_block(element: Tag) -> bool:
     """块内若已有更细粒度的正文块，则外层只作为布局容器保留。"""
     return any(
-        descendant.get_text(strip=True)
-        for descendant in element.find_all(_BLOCK_CANDIDATE_TAGS)
+        descendant.get_text(strip=True) for descendant in element.find_all(_BLOCK_CANDIDATE_TAGS)
     )
 
 
@@ -314,9 +307,7 @@ def _parse_opf(zf: zipfile.ZipFile, opf_path: str) -> tuple[str, list[str], list
     # EPUB3 NAV 是主目录；没有 NAV 时优先使用 spine.toc 指定的
     # EPUB2 NCX。其它目录仍保留供标题回填，但不与主目录混合切章。
     nav_ids = [
-        item_id
-        for item_id, (_href, _media, props) in manifest.items()
-        if "nav" in props.split()
+        item_id for item_id, (_href, _media, props) in manifest.items() if "nav" in props.split()
     ]
     ncx_ids = [
         item_id
@@ -344,7 +335,9 @@ def _looks_like_internal_title(title: str, href: str, book_title: str = "") -> b
     """判断 XHTML title 是否只是内部文件名或重复的全书书名。"""
     base = posixpath.basename(href).rsplit(".", 1)[0]
     stripped = title.strip()
-    return (bool(base) and stripped == base) or (bool(book_title) and stripped == book_title.strip())
+    return (bool(base) and stripped == base) or (
+        bool(book_title) and stripped == book_title.strip()
+    )
 
 
 def annotate_epub_resource(
@@ -372,9 +365,7 @@ def annotate_epub_resource(
             if not descendant.get_text(strip=True):
                 continue
             anchor_attrs = {
-                key: descendant.attrs.pop(key)
-                for key in ("id", "name")
-                if key in descendant.attrs
+                key: descendant.attrs.pop(key) for key in ("id", "name") if key in descendant.attrs
             }
             if anchor_attrs:
                 marker = soup.new_tag("a")
@@ -454,7 +445,9 @@ def _fragment_anchor_map(template: str) -> dict[str, str | None]:
         identifiers = [node.get("id"), node.get("name")]
         if not any(isinstance(value, str) and value for value in identifiers):
             continue
-        block = node if node.has_attr("data-tn-id") else node.find_parent(attrs={"data-tn-id": True})
+        block = (
+            node if node.has_attr("data-tn-id") else node.find_parent(attrs={"data-tn-id": True})
+        )
         if not isinstance(block, Tag):
             block = node.find_next(attrs={"data-tn-id": True})
         raw_anchor = block.get("data-tn-id") if isinstance(block, Tag) else None
@@ -508,7 +501,10 @@ def _logical_chapters(
         if not has_fragment:
             raw_segments = resource.get("segments")
             resource_segments = raw_segments if isinstance(raw_segments, list) else []
-            first = next((segment for segment in resource_segments if isinstance(segment, Segment)), None)
+            first = next(
+                (segment for segment in resource_segments if isinstance(segment, Segment)),
+                None,
+            )
             segment_anchor = first.anchor if first is not None else None
         if isinstance(segment_anchor, str) and segment_anchor in anchor_positions:
             entry["segment_anchor"] = segment_anchor
@@ -536,9 +532,7 @@ def _logical_chapters(
         if isinstance(entry.get("toc_path"), str) and entry.get("toc_path")
     }
     for toc_path in toc_paths:
-        path_entries = [
-            entry for entry in toc_entries if entry.get("toc_path") == toc_path
-        ]
+        path_entries = [entry for entry in toc_entries if entry.get("toc_path") == toc_path]
         children: dict[int, list[dict[str, object]]] = {}
         for entry in path_entries:
             parent_index = entry.get("parent_index")
@@ -600,7 +594,11 @@ def _logical_chapters(
         chapters: list[Chapter] = []
         for resource in resources:
             raw_segments = resource.get("segments")
-            segments = [s for s in raw_segments if isinstance(s, Segment)] if isinstance(raw_segments, list) else []
+            segments = (
+                [s for s in raw_segments if isinstance(s, Segment)]
+                if isinstance(raw_segments, list)
+                else []
+            )
             if not segments:
                 continue
             for index, segment in enumerate(segments):
@@ -639,9 +637,7 @@ def _logical_chapters(
         if boundary is not None:
             title = str(boundary.get("title") or "")
             toc_entry_id = boundary.get("entry_id")
-            first_href = segments[0].resource_href or str(
-                boundary.get("resource_href") or ""
-            )
+            first_href = segments[0].resource_href or str(boundary.get("resource_href") or "")
         else:
             first_href = segments[0].resource_href or ""
             title = segments[0].source if segments[0].kind == KIND_HEADING else ""
@@ -692,9 +688,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
                     "fragment_anchors": _fragment_anchor_map(template),
                 }
             )
-        chapters, split_strategy, split_toc_path = _logical_chapters(
-            resources, toc_entries
-        )
+        chapters, split_strategy, split_toc_path = _logical_chapters(resources, toc_entries)
         # XHTML 模板和内联布局都可从原始 EPUB 确定性重建，不写入运行状态。
         # Segment.meta 中其它格式或后续阶段添加的信息仍原样保留。
         for chapter in chapters:
@@ -715,8 +709,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,
             "epub_resources": [
-                {"index": resource["index"], "href": resource["href"]}
-                for resource in resources
+                {"index": resource["index"], "href": resource["href"]} for resource in resources
             ],
             "epub_split_strategy": split_strategy,
             "epub_split_toc_path": split_toc_path,
