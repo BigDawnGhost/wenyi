@@ -1,6 +1,6 @@
 [project]
 name = "trans-novel"
-version = "0.2.0"
+dynamic = ["version"]
 description = "A multi-agent long-form novel translation system with context, terminology, polishing, and review."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,8 +44,11 @@ testpaths = ["tests"]
 trans-novel = "trans_novel.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trans_novel"]

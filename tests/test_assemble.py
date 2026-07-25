@@ -558,7 +558,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
-            self.assertIn("<dc:title>縦書き小説-wenyi</dc:title>", opf)
+            self.assertIn("<dc:title>縦書き小説-wenyi-zh</dc:title>", opf)
             self.assertIn('page-progression-direction="ltr"', opf)
             self.assertIn("writing-mode: horizontal-tb", html)
             self.assertIn('lang="zh-Hans"', html)
@@ -743,8 +743,8 @@ class TestTitleTranslation(unittest.TestCase):
             out = assemble(store, ep, out_format="epub")
             with zipfile.ZipFile(out) as z:
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
-            # 书名不翻译，导出时在原书名后追加 -wenyi
-            self.assertIn("<dc:title>サンプル小説-wenyi</dc:title>", opf)
+            # 书名不翻译，导出时在原书名后追加 Wenyi 和目标语言标记
+            self.assertIn("<dc:title>サンプル小説-wenyi-zh</dc:title>", opf)
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
 

@@ -212,11 +212,14 @@ class TestBuildEpubFromChaptersBilingual(unittest.TestCase):
             out = assemble(store, txt, out_format="epub", bilingual=True)
             self.assertTrue(zipfile.is_zipfile(out))
             with zipfile.ZipFile(out) as z:
+                opf_name = next(name for name in z.namelist() if name.endswith(".opf"))
+                opf = z.read(opf_name).decode("utf-8")
                 xhtml_names = [
                     n for n in z.namelist() if n.endswith(".xhtml") and n.startswith("EPUB/")
                 ]
                 self.assertTrue(xhtml_names)
                 bodies = {n: z.read(n).decode("utf-8") for n in xhtml_names}
+            self.assertIn("<dc:title>novel-wenyi-zh-bi</dc:title>", opf)
             all_html = "\n".join(bodies.values())
             self.assertIn("tn-source", all_html)
             self.assertIn("译0", all_html)  # 译文仍在（fake 翻译器返回 译N）
