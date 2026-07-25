@@ -60,6 +60,7 @@ pipeline:
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
+  review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
   glossary_scope: chapter # chapter=本章相关词条；full=全量表
 
 # ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────
@@ -125,6 +126,11 @@ class PipelineConfig(BaseModel):
     book_understanding: bool = True
     prescan_concurrency: int = 4     # 预扫逐章梗概的并发线程数（各章独立，1=串行）
     review_concurrency: int = 4      # 最终审校连续分块并发数（结果按原块序合并，1=串行）
+    review_output_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+    )  # 单段畸形输出的额外重试次数
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
 
 
