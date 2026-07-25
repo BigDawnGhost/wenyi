@@ -18,10 +18,7 @@ from typing import Any
 
 # 术语类型
 TYPE_PERSON = "人物"
-TYPE_PLACE = "地名"
-TYPE_ORG = "组织"
 TYPE_TERM = "术语"
-TYPE_SKILL = "招式"
 TYPE_APPELLATION = "称谓"
 TYPE_HONORIFIC = "敬称"
 TYPE_SPEECH = "口癖"
@@ -200,12 +197,6 @@ class GlossaryStore:
                VALUES (?,?,?,?,?)""",
             (source, existing_target, proposed_target, chapter, time.time()),
         )
-
-    def delete_term(self, source: str) -> bool:
-        """删除一个术语条目（前端编辑用）。返回是否确有删除。"""
-        cur = self.conn.execute("DELETE FROM glossary WHERE source = ?", (source,))
-        self.conn.commit()
-        return cur.rowcount > 0
 
     def resolve_term(self, source: str, target: str) -> bool:
         """人工裁定最终译法并恢复正常状态，返回术语是否存在。"""

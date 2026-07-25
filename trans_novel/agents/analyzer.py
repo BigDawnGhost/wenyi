@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import GlossaryStore, GlossaryTerm, TYPE_PERSON
+from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
 from . import prompts
 from .base import Agent
 

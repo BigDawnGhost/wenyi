@@ -326,11 +326,6 @@ def render(name: str, *, src: str = "ja", tgt: str = "zh", **kwargs) -> str:
 
 
 # ── 渲染辅助 ───────────────────────────────────────────────────────────────
-def honorific_rule(strategy: str) -> str:
-    """敬称规则（保留以兼容调用方）；底层委托 langprofile。"""
-    return langprofile.honorific_rule(strategy)
-
-
 def render_glossary(terms: list[GlossaryTerm]) -> str:
     """把术语对象渲染为适合注入模型提示词的逐行对照表。"""
     if not terms:
