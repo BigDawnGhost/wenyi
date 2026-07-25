@@ -13,6 +13,7 @@ from trans_novel.glossary.store import (
     GlossaryTerm,
     TYPE_APPELLATION,
     TYPE_PERSON,
+    source_matches_text,
 )
 
 
@@ -59,6 +60,11 @@ class TestGlossary(unittest.TestCase):
             {term.source for term in hits},
             {"OpenAI", "ＡＢＣ"},
         )
+
+    def test_ascii_source_match_respects_word_boundaries(self):
+        self.assertTrue(source_matches_text("Ann", "Ann opened the door."))
+        self.assertTrue(source_matches_text("ANN", "ann opened the door."))
+        self.assertFalse(source_matches_text("Ann", "Anna opened the door."))
 
     def test_appellation_does_not_match_bare_name_alias(self):
         self.store.upsert_term(

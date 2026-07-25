@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 import unicodedata
@@ -102,6 +103,24 @@ def _hash(text: str) -> str:
 def _match_text(text: str) -> str:
     """Normalize width/compatibility forms and case for glossary matching."""
     return unicodedata.normalize("NFKC", text).casefold()
+
+
+def source_matches_text(source: str, text: str) -> bool:
+    """判断术语原文是否出现在文本中，并避免拉丁词命中更长单词。
+
+    CJK 等不以空格分词的语言沿用规范化子串匹配；纯 ASCII 名称额外检查
+    字母数字边界，避免 ``Ann`` 错误命中 ``Anna``。
+    """
+    key = _match_text(source).strip()
+    if not key:
+        return False
+    normalized_text = _match_text(text)
+    if key.isascii():
+        return re.search(
+            rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])",
+            normalized_text,
+        ) is not None
+    return key in normalized_text
 
 
 class GlossaryStore:
@@ -233,7 +252,7 @@ class GlossaryStore:
                 if term.type in _SOURCE_ONLY_TYPES
                 else [term.source] + term.aliases
             )
-            if any(k and _match_text(k) in normalized_text for k in keys):
+            if any(source_matches_text(k, normalized_text) for k in keys):
                 out.append(term)
         return out
 
