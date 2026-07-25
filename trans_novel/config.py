@@ -8,7 +8,6 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-
 _DEFAULT_CONFIG_YAML = """\
 # trans-novel 配置（多语言小说 → 中文）
 # 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
@@ -168,14 +167,14 @@ class Config(BaseModel):
             return False
 
     @classmethod
-    def load(cls, path: str = "config.yaml") -> "Config":
+    def load(cls, path: str = "config.yaml") -> Config:
         """从 YAML 文件加载配置，并应用缺失字段的类型化默认值。"""
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         return cls.from_dict(raw)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "Config":
+    def from_dict(cls, raw: dict[str, Any]) -> Config:
         """把 YAML 对应的嵌套字典转换为运行时配置模型。"""
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})

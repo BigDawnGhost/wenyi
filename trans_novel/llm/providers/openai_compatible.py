@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,7 +58,7 @@ def build_request_kwargs(
     messages: Messages,
     *,
     json_mode: bool = False,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
     reasoning_style: ReasoningStyle = "none",
 ) -> dict[str, Any]:
     """按配置的思考方言组装通用兼容端点请求参数。"""
@@ -115,7 +115,7 @@ class OpenAICompatibleClient(
         messages: Messages,
         *,
         json_mode: bool,
-        max_tokens: Optional[int],
+        max_tokens: int | None,
     ) -> dict[str, Any]:
         """构造当前兼容端点档位的最终请求参数。"""
         return build_request_kwargs(

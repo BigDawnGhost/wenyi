@@ -7,7 +7,7 @@ import re
 
 
 def _count_numbered(text: str) -> int:
-    return len(re.findall(r"^\[(\d+)\]", text, re.M))
+    return len(re.findall(r"^\[(\d+)\]", text, re.MULTILINE))
 
 
 def routing_handler(messages, tier, json_mode):

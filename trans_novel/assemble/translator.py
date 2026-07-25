@@ -128,8 +128,10 @@ class Translator(Agent):
                     book_synopsis,
                     chapter_digest,
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001, S112
+                # 对齐错误和短暂 provider 异常都应进入同一有限重试路径；
+                # 最终逐段兜底仍失败时会保留原异常作为 cause。
+                continue
 
         # 兜底：逐段翻译。任一段仍失败时显式中断，保留已落盘
         # 批次供续跑；不能用空字符串占位，否则章节会被错误标记为已完成。
