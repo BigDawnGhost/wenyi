@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tenacity import (
@@ -37,7 +37,7 @@ class GeminiTierOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_thinking_options(self) -> "GeminiTierOptions":
+    def validate_thinking_options(self) -> GeminiTierOptions:
         """验证 thinking_level 与 thinking_budget 互斥。"""
         if self.thinking_level is not None and self.thinking_budget is not None:
             raise ValueError("thinking_level 与 thinking_budget 互斥，不能同时设置")
@@ -82,15 +82,19 @@ def convert_messages_to_gemini(
             if content.strip():
                 system_parts.append(content)
         elif role == "assistant":
-            contents.append({
-                "role": "model",
-                "parts": [{"text": content}],
-            })
+            contents.append(
+                {
+                    "role": "model",
+                    "parts": [{"text": content}],
+                }
+            )
         else:  # user or others
-            contents.append({
-                "role": "user",
-                "parts": [{"text": content}],
-            })
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [{"text": content}],
+                }
+            )
 
     system_instruction = "\n\n".join(system_parts) if system_parts else None
     return system_instruction, contents
@@ -108,9 +112,8 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
         return None
 
     prompt_tokens = read_usage_int(usage_metadata, "prompt_token_count")
-    completion_tokens = (
-        read_usage_int(usage_metadata, "candidates_token_count")
-        + read_usage_int(usage_metadata, "thoughts_token_count")
+    completion_tokens = read_usage_int(usage_metadata, "candidates_token_count") + read_usage_int(
+        usage_metadata, "thoughts_token_count"
     )
     total_tokens = read_usage_int(usage_metadata, "total_token_count") or (
         prompt_tokens + completion_tokens
@@ -143,10 +146,7 @@ def is_retryable_gemini_error(exc: Exception) -> bool:
 
     # 捕获网络超时或连接错误
     exc_name = type(exc).__name__
-    if any(
-        kw in exc_name.lower()
-        for kw in ("timeout", "connection", "network", "servererror")
-    ):
+    if any(kw in exc_name.lower() for kw in ("timeout", "connection", "network", "servererror")):
         return True
 
     return False
@@ -193,9 +193,7 @@ class GeminiClient(LLMClient):
         """校验 Gemini API Key 配置。"""
         api_key, target_env = get_api_key_from_env(self.cfg.api_key_env)
         if not api_key:
-            raise RuntimeError(
-                f"未设置环境变量 {target_env}（或 {FALLBACK_API_KEY_ENV}）"
-            )
+            raise RuntimeError(f"未设置环境变量 {target_env}（或 {FALLBACK_API_KEY_ENV}）")
 
     def _ensure_client(self) -> Any:
         """惰性创建并校验 google.genai.Client 实例。"""
@@ -232,8 +230,8 @@ class GeminiClient(LLMClient):
         *,
         tier: str = "strong",
         json_mode: bool = False,
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> str:
         """调用 Gemini 模型并支持重试、JSON 模式与用量归因。"""
         tier_config: ResolvedTier[GeminiTierOptions] = resolve_tier(self.tiers, tier)
@@ -258,9 +256,13 @@ class GeminiClient(LLMClient):
             config_kwargs["temperature"] = tier_config.options.temperature
 
         # thinking 配置处理
-        if tier_config.options.thinking_level is not None or tier_config.options.thinking_budget is not None:
+        if (
+            tier_config.options.thinking_level is not None
+            or tier_config.options.thinking_budget is not None
+        ):
             try:
                 from google.genai import types
+
                 thinking_kwargs: dict[str, Any] = {}
                 if tier_config.options.thinking_level is not None:
                     thinking_kwargs["thinking_level"] = tier_config.options.thinking_level
@@ -321,8 +323,8 @@ class GeminiClient(LLMClient):
         messages: Messages,
         *,
         tier: str = "strong",
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> Any:
         """请求 Gemini 输出 JSON 并使用 parse_json_loose 容错解析。"""
         text = self.complete(

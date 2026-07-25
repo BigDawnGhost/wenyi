@@ -7,7 +7,7 @@ import re
 
 
 def _count_numbered(text: str) -> int:
-    return len(re.findall(r"^\[(\d+)\]", text, re.M))
+    return len(re.findall(r"^\[(\d+)\]", text, re.MULTILINE))
 
 
 def routing_handler(messages, tier, json_mode):
@@ -18,11 +18,16 @@ def routing_handler(messages, tier, json_mode):
         return json.dumps({"language": "ja"}, ensure_ascii=False)
 
     if "前期分析师" in system:
-        return json.dumps({
-            "genre": "校园", "tone": "冷峻", "style_guide": "克制",
-            "characters": [{"source": "綾小路", "target": "绫小路", "gender": "男"}],
-            "terms": [],
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "genre": "校园",
+                "tone": "冷峻",
+                "style_guide": "克制",
+                "characters": [{"source": "綾小路", "target": "绫小路", "gender": "男"}],
+                "terms": [],
+            },
+            ensure_ascii=False,
+        )
 
     if "标题翻译" in system:
         n = _count_numbered(user)
@@ -37,12 +42,21 @@ def routing_handler(messages, tier, json_mode):
         return json.dumps({"polished": [f"润{i}" for i in range(n)]}, ensure_ascii=False)
 
     if "译文审校" in system:
-        return json.dumps({"issues": []}, ensure_ascii=False)
+        n = _count_numbered(user)
+        return json.dumps(
+            {
+                "issues": [],
+                "reviewed_segments": n,
+                "complete": True,
+            },
+            ensure_ascii=False,
+        )
 
     if "术语" in system and "抽取器" in system:
-        return json.dumps({"terms": [
-            {"source": "堀北", "target": "堀北", "type": "人物", "gender": "女"}
-        ]}, ensure_ascii=False)
+        return json.dumps(
+            {"terms": [{"source": "堀北", "target": "堀北", "type": "人物", "gender": "女"}]},
+            ensure_ascii=False,
+        )
 
     if "回译译者" in system:
         n = _count_numbered(user)

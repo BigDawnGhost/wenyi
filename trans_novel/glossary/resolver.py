@@ -15,8 +15,3 @@ def resolve(store: GlossaryStore, source: str, target: str) -> bool:
         return False
     store.mark_conflicts_resolved(source)
     return True
-
-
-def pending_review(store: GlossaryStore) -> dict:
-    """汇总需要人工关注的译法冲突。"""
-    return {"conflicts": store.open_conflicts()}

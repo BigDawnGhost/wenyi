@@ -6,7 +6,7 @@ import os
 import threading
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 from tenacity import (
@@ -74,9 +74,7 @@ def base_request_kwargs(
         request_messages = [dict(message) for message in messages]
         for message in request_messages:
             if message.get("role") == "system":
-                message["content"] = (
-                    f"{message.get('content', '')}\n\n{_JSON_MODE_INSTRUCTION}"
-                )
+                message["content"] = f"{message.get('content', '')}\n\n{_JSON_MODE_INSTRUCTION}"
                 break
         else:
             request_messages.insert(
@@ -186,15 +184,11 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         """在发起任何模型流程前报告缺失的 API Key 环境变量。"""
         if not self.api_key_env:
             if self.requires_api_key:
-                raise RuntimeError(
-                    f"{self.provider_name} provider 需要配置 llm.api_key_env"
-                )
+                raise RuntimeError(f"{self.provider_name} provider 需要配置 llm.api_key_env")
             return
         api_key = os.environ.get(self.api_key_env, "").strip()
         if (self.requires_api_key or self.api_key_env) and not api_key:
-            raise RuntimeError(
-                f"未设置环境变量 {self.api_key_env}（{self.provider_name} API key）"
-            )
+            raise RuntimeError(f"未设置环境变量 {self.api_key_env}（{self.provider_name} API key）")
 
     def _normalize_usage(self, usage: Any) -> UsageSample | None:
         """标准 OpenAI 兼容响应默认使用嵌套缓存明细。"""
@@ -207,7 +201,7 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         messages: Messages,
         *,
         json_mode: bool,
-        max_tokens: Optional[int],
+        max_tokens: int | None,
     ) -> dict[str, Any]:
         """把通用调用转换成 provider 的请求方言。"""
         raise NotImplementedError
@@ -218,8 +212,8 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         *,
         tier: str = "strong",
         json_mode: bool = False,
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> str:
         """按指定档位调用兼容接口，自动重试并记录标准化用量。"""
         tier_config = resolve_tier(self.tiers, tier)

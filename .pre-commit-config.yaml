@@ -1,0 +1,9 @@
+# 提交前自动跑 ruff：先修 lint（含 import 排序），再格式化。
+# 启用一次即可：uv run pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.7
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

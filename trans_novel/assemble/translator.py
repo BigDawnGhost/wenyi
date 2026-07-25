@@ -31,18 +31,22 @@ class Translator(Agent):
         """调用一次批量翻译，并严格校验输出类型、数量和非空性。"""
         n = len(sources)
         system = prompts.render(
-            "translator_system", src=self.src, tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(
-                self.src, self.config.honorific_strategy),
+            "translator_system",
+            src=self.src,
+            tgt=self.tgt,
+            lang_guidance=langprofile.translate_guidance(self.src, self.config.honorific_strategy),
         )
         user = prompts.render(
-            "translator_user", src=self.src, tgt=self.tgt,
+            "translator_user",
+            src=self.src,
+            tgt=self.tgt,
             style=style or "（无）",
             book_synopsis=book_synopsis or "（无）",
             glossary=prompts.render_glossary(glossary_terms),
             chapter_digest=chapter_digest or "（无）",
             context=context or "（无）",
-            n=n, n_minus_1=n - 1,
+            n=n,
+            n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
         )
         # 不传 default：调用失败照常抛出，由 translate_batch 的重试/兜底逻辑处理
@@ -55,11 +59,13 @@ class Translator(Agent):
             raise AlignmentError("模型返回了空译文或非字符串译文")
         return items
 
-    def _translate_one(self, source, glossary_terms, style, context,
-                       book_synopsis, chapter_digest) -> str:
+    def _translate_one(
+        self, source, glossary_terms, style, context, book_synopsis, chapter_digest
+    ) -> str:
         """借用批量协议翻译单段，作为批量对齐失败后的最终兜底。"""
-        out = self._call_batch([source], glossary_terms, style, context,
-                               book_synopsis, chapter_digest)
+        out = self._call_batch(
+            [source], glossary_terms, style, context, book_synopsis, chapter_digest
+        )
         return out[0]
 
     def retranslate_with_feedback(
@@ -80,12 +86,15 @@ class Translator(Agent):
         user 用 translator_fix_user：前缀块与主翻译一致，上下文换成前文+后文译文，附审校意见。
         """
         system = prompts.render(
-            "translator_system", src=self.src, tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(
-                self.src, self.config.honorific_strategy),
+            "translator_system",
+            src=self.src,
+            tgt=self.tgt,
+            lang_guidance=langprofile.translate_guidance(self.src, self.config.honorific_strategy),
         )
         user = prompts.render(
-            "translator_fix_user", src=self.src, tgt=self.tgt,
+            "translator_fix_user",
+            src=self.src,
+            tgt=self.tgt,
             style=style or "（无）",
             book_synopsis=book_synopsis or "（无）",
             glossary=prompts.render_glossary(glossary_terms or []),
@@ -95,8 +104,7 @@ class Translator(Agent):
             feedback=feedback or "（无）",
             source=source,
         )
-        items = self._ask_json(system, user, tier="strong",
-                               key="translations", default=None)
+        items = self._ask_json(system, user, tier="strong", key="translations", default=None)
         if isinstance(items, list) and items:
             return str(items[0]).strip()
         return ""
@@ -128,8 +136,10 @@ class Translator(Agent):
                     book_synopsis,
                     chapter_digest,
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001, S112
+                # 对齐错误和短暂 provider 异常都应进入同一有限重试路径；
+                # 最终逐段兜底仍失败时会保留原异常作为 cause。
+                continue
 
         # 兜底：逐段翻译。任一段仍失败时显式中断，保留已落盘
         # 批次供续跑；不能用空字符串占位，否则章节会被错误标记为已完成。

@@ -57,9 +57,7 @@ def make_usage_sample(
         return None
     prompt_tokens = read_usage_int(usage, "prompt_tokens")
     completion_tokens = read_usage_int(usage, "completion_tokens")
-    total_tokens = read_usage_int(usage, "total_tokens") or (
-        prompt_tokens + completion_tokens
-    )
+    total_tokens = read_usage_int(usage, "total_tokens") or (prompt_tokens + completion_tokens)
     return UsageSample(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
@@ -84,9 +82,7 @@ def _normalize_usage_group(
         for name, values in group.items()
     }
     for slot in normalized.values():
-        slot["cache_hit_rate"] = _hit_rate(
-            slot["cache_hit_tokens"], slot["cache_miss_tokens"]
-        )
+        slot["cache_hit_rate"] = _hit_rate(slot["cache_hit_tokens"], slot["cache_miss_tokens"])
     return normalized
 
 
@@ -101,9 +97,7 @@ def _usage_summary(
     for values in tiers.values():
         for field in _USAGE_FIELDS:
             totals[field] += values[field]
-    totals["cache_hit_rate"] = _hit_rate(
-        totals["cache_hit_tokens"], totals["cache_miss_tokens"]
-    )
+    totals["cache_hit_rate"] = _hit_rate(totals["cache_hit_tokens"], totals["cache_miss_tokens"])
     return {"totals": totals, "by_tier": tiers, "by_stage": stages}
 
 
@@ -146,9 +140,7 @@ def usage_delta(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, 
     return _usage_summary(tier_delta, stage_delta)
 
 
-def merge_usage_summaries(
-    accumulated: dict[str, Any], increment: dict[str, Any]
-) -> dict[str, Any]:
+def merge_usage_summaries(accumulated: dict[str, Any], increment: dict[str, Any]) -> dict[str, Any]:
     """把一次运行增量合并进某本书的历史累计用量。"""
     tiers = _merge_usage_groups(accumulated["by_tier"], increment["by_tier"])
     stages = _merge_usage_groups(accumulated["by_stage"], increment["by_stage"])
@@ -174,13 +166,9 @@ class UsageTracker:
         if sample is None:
             return
         with self._lock:
-            slots = [
-                self._by_tier.setdefault(tier, dict.fromkeys(_USAGE_FIELDS, 0))
-            ]
+            slots = [self._by_tier.setdefault(tier, dict.fromkeys(_USAGE_FIELDS, 0))]
             if stage:
-                slots.append(
-                    self._by_stage.setdefault(stage, dict.fromkeys(_USAGE_FIELDS, 0))
-                )
+                slots.append(self._by_stage.setdefault(stage, dict.fromkeys(_USAGE_FIELDS, 0)))
             for slot in slots:
                 slot["calls"] += 1
                 slot["prompt_tokens"] += sample.prompt_tokens
@@ -193,7 +181,5 @@ class UsageTracker:
         """返回 totals、by_tier 和 by_stage，各槽位含 cache_hit_rate。"""
         with self._lock:
             by_tier = {tier: dict(values) for tier, values in self._by_tier.items()}
-            by_stage = {
-                stage: dict(values) for stage, values in self._by_stage.items()
-            }
+            by_stage = {stage: dict(values) for stage, values in self._by_stage.items()}
         return _usage_summary(by_tier, by_stage)

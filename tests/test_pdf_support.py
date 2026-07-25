@@ -19,7 +19,6 @@ from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
-
 _HTML = """\
 <!doctype html>
 <html>
@@ -87,17 +86,19 @@ class TestPdfIngest(unittest.TestCase):
                 file.write(b"invalid PDF is not read because conversion is mocked")
             cache_dir = os.path.join(directory, "state", "sample", "source")
 
-            with patch(
-                "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
-                side_effect=RuntimeError("connection reset"),
+            with (
+                patch(
+                    "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                    side_effect=RuntimeError("connection reset"),
+                ),
+                self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised,
             ):
-                with self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised:
-                    load_document(
-                        pdf_path,
-                        "en",
-                        "zh",
-                        cache_dir=cache_dir,
-                    )
+                load_document(
+                    pdf_path,
+                    "en",
+                    "zh",
+                    cache_dir=cache_dir,
+                )
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 

@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from trans_novel.llm.json_parser import parse_json_loose
+from trans_novel.llm.json_parser import parse_json_loose, parse_json_result
 from trans_novel.llm.providers.fake import FakeClient
 
 
@@ -63,13 +63,17 @@ class TestFakeClient(unittest.TestCase):
 
         c = FakeClient(handler=handler)
         self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "hello")
-        self.assertEqual(
-            c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"]
-        )
+        self.assertEqual(c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"])
         self.assertEqual(len(c.calls), 2)
 
 
 class TestParseJsonLooseRepairs(unittest.TestCase):
+    def test_parse_result_reports_whether_repair_was_used(self):
+        self.assertFalse(parse_json_result('{"a": 1}').repaired)
+        repaired = parse_json_result('{"a": 1')
+        self.assertTrue(repaired.repaired)
+        self.assertEqual(repaired.value, {"a": 1})
+
     def test_inner_ascii_quotes_repaired(self):
         # 真实案例：claude-opus-4.6 经 OpenRouter 输出的译文含未转义英文引号
         raw = '{"translations":["磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。"]}'
@@ -93,9 +97,7 @@ class TestParseJsonLooseRepairs(unittest.TestCase):
         self.assertEqual(parse_json_loose('{"a": "b, c: d"}'), {"a": "b, c: d"})
 
     def test_escaped_quotes_still_work(self):
-        self.assertEqual(
-            parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'}
-        )
+        self.assertEqual(parse_json_loose('{"a": "he said \\"hi\\""}'), {"a": 'he said "hi"'})
 
 
 class TestProviderRequestKwargs(unittest.TestCase):

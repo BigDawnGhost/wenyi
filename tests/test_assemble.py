@@ -12,30 +12,29 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from trans_novel.config import Config
-from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.runstore import RunStore
-from trans_novel.assemble.writer import (
-    _inject_bilingual_style,
-    _render_chapter_html,
-    _rewrite_html_document,
-    assemble,
-)
-from trans_novel.assemble.about import append_about_page
-from trans_novel.assemble.report import build_report
-from trans_novel.glossary.store import GlossaryStore
-from trans_novel.ingest.segmenter import load_document
-from trans_novel.ingest.epub_reader import annotate_epub_resource
-from trans_novel.ingest.models import Chapter
+from tests.fake_llm import routing_handler
 from tests.sample_data import (
     write_inline_sample_epub,
     write_nested_toc_epub,
     write_sample_epub,
     write_sample_txt,
 )
-from tests.fake_llm import routing_handler
-
+from trans_novel.assemble.about import append_about_page
+from trans_novel.assemble.report import build_report
+from trans_novel.assemble.writer import (
+    _inject_bilingual_style,
+    _render_chapter_html,
+    _rewrite_html_document,
+    assemble,
+)
+from trans_novel.config import Config
+from trans_novel.glossary.store import GlossaryStore
+from trans_novel.ingest.epub_reader import annotate_epub_resource
+from trans_novel.ingest.models import Chapter
+from trans_novel.ingest.segmenter import load_document
+from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.pipeline.orchestrator import Orchestrator
+from trans_novel.pipeline.runstore import RunStore
 
 _FB2_WITH_IMAGES = """\
 <?xml version="1.0" encoding="utf-8"?>
@@ -94,13 +93,17 @@ def _write_vertical_epub(path: str) -> None:
 
 
 def _config(state_dir: str):
-    return Config.from_dict({
-        "language": {"source": "ja", "target": "zh"},
-        "llm": {"provider": "fake", "tiers": {
-            "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-        "pipeline": {"review": True, "polish": True, "backtranslate_sample": 0.0},
-        "paths": {"state_dir": state_dir},
-    })
+    return Config.from_dict(
+        {
+            "language": {"source": "ja", "target": "zh"},
+            "llm": {
+                "provider": "fake",
+                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+            },
+            "pipeline": {"review": True, "polish": True, "backtranslate_sample": 0.0},
+            "paths": {"state_dir": state_dir},
+        }
+    )
 
 
 def _run(input_path, state_dir):
@@ -164,9 +167,7 @@ class TestAssembleText(unittest.TestCase):
             self.assertFalse(append_about_page(path, "zh-Hans"))
 
             with zipfile.ZipFile(path) as archive:
-                self.assertFalse(
-                    any("trans-novel-about" in name for name in archive.namelist())
-                )
+                self.assertFalse(any("trans-novel-about" in name for name in archive.namelist()))
 
     def test_bilingual_rewrite_removes_temporary_file_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -275,8 +276,7 @@ class TestAssembleEpub(unittest.TestCase):
 
     def test_rewrite_html_honors_declared_encoding_and_emits_utf8(self):
         source = (
-            '<?xml version="1.0" encoding="Shift_JIS"?>'
-            "<html><body><p>日本語</p></body></html>"
+            '<?xml version="1.0" encoding="Shift_JIS"?><html><body><p>日本語</p></body></html>'
         ).encode("shift_jis")
 
         output = _rewrite_html_document(
@@ -368,10 +368,7 @@ class TestAssembleEpub(unittest.TestCase):
         )
         self.assertIsNotNone(paragraph.find("br"))
         self.assertEqual(
-            [
-                child.name if isinstance(child, Tag) else str(child)
-                for child in paragraph.children
-            ],
+            [child.name if isinstance(child, Tag) else str(child) for child in paragraph.children],
             ["img", "甲乙", "br", "丙丁", "img"],
         )
         self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
@@ -525,7 +522,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
                 about = z.read("OEBPS/trans-novel-about.xhtml").decode("utf-8")
                 opf = BeautifulSoup(z.read("OEBPS/content.opf"), "xml")
-            self.assertIn("润0", html)            # 译文已替换
+            self.assertIn("润0", html)  # 译文已替换
             self.assertNotIn("data-tn-id", html)  # 占位标记已清除
             self.assertNotIn("綾小路は教室", html)  # 原文已被替换
             self.assertIn("关于此翻译", about)
@@ -561,6 +558,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
+            self.assertIn("<dc:title>縦書き小説-wenyi</dc:title>", opf)
             self.assertIn('page-progression-direction="ltr"', opf)
             self.assertIn("writing-mode: horizontal-tb", html)
             self.assertIn('lang="zh-Hans"', html)
@@ -745,23 +743,28 @@ class TestTitleTranslation(unittest.TestCase):
             out = assemble(store, ep, out_format="epub")
             with zipfile.ZipFile(out) as z:
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
-            self.assertIn("サンプル小説", opf)       # OPF 书名保持原文
+            # 书名不翻译，导出时在原书名后追加 -wenyi
+            self.assertIn("<dc:title>サンプル小説-wenyi</dc:title>", opf)
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
 
     def test_rewrite_nav_and_ncx_labels(self):
         from trans_novel.assemble.writer import _rewrite_toc
 
-        nav = (b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
-               b'<nav epub:type="toc"><ol>'
-               b'<li><a href="ch1.xhtml">\xe7\xac\xac\xe4\xb8\x80\xe7\xab\xa0</a></li>'
-               b'</ol></nav></body></html>')
+        nav = (
+            b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+            b'<nav epub:type="toc"><ol>'
+            b'<li><a href="ch1.xhtml">\xe7\xac\xac\xe4\xb8\x80\xe7\xab\xa0</a></li>'
+            b"</ol></nav></body></html>"
+        )
         out = _rewrite_toc(nav, {"ch1.xhtml": "第一章译名"}, is_ncx=False)
         self.assertIn("第一章译名", out.decode("utf-8"))
 
-        ncx = (b'<?xml version="1.0"?><ncx><navMap><navPoint>'
-               b'<navLabel><text>old</text></navLabel>'
-               b'<content src="text/ch1.xhtml#x"/></navPoint></navMap></ncx>')
+        ncx = (
+            b'<?xml version="1.0"?><ncx><navMap><navPoint>'
+            b"<navLabel><text>old</text></navLabel>"
+            b'<content src="text/ch1.xhtml#x"/></navPoint></navMap></ncx>'
+        )
         out2 = _rewrite_toc(ncx, {"ch1.xhtml": "第一章译名"}, is_ncx=True)
         dec = out2.decode("utf-8")
         self.assertIn("第一章译名", dec)
@@ -795,9 +798,18 @@ class TestConsistency(unittest.TestCase):
 
             def handler(messages, tier, json_mode):
                 if "一致性审查员" in messages[0]["content"]:
-                    return json.dumps({"issues": [
-                        {"type": "terminology", "detail": "X 译法不一致", "where": "第1章"}
-                    ]}, ensure_ascii=False)
+                    return json.dumps(
+                        {
+                            "issues": [
+                                {
+                                    "type": "terminology",
+                                    "detail": "X 译法不一致",
+                                    "where": "第1章",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
                 return "{}"
 
             g = GlossaryStore(store.glossary_path)
