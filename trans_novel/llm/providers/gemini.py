@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tenacity import (
@@ -37,7 +37,7 @@ class GeminiTierOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_thinking_options(self) -> "GeminiTierOptions":
+    def validate_thinking_options(self) -> GeminiTierOptions:
         """验证 thinking_level 与 thinking_budget 互斥。"""
         if self.thinking_level is not None and self.thinking_budget is not None:
             raise ValueError("thinking_level 与 thinking_budget 互斥，不能同时设置")
@@ -230,8 +230,8 @@ class GeminiClient(LLMClient):
         *,
         tier: str = "strong",
         json_mode: bool = False,
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> str:
         """调用 Gemini 模型并支持重试、JSON 模式与用量归因。"""
         tier_config: ResolvedTier[GeminiTierOptions] = resolve_tier(self.tiers, tier)
@@ -323,8 +323,8 @@ class GeminiClient(LLMClient):
         messages: Messages,
         *,
         tier: str = "strong",
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> Any:
         """请求 Gemini 输出 JSON 并使用 parse_json_loose 容错解析。"""
         text = self.complete(

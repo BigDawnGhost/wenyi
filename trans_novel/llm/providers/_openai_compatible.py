@@ -6,7 +6,7 @@ import os
 import threading
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 from tenacity import (
@@ -201,7 +201,7 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         messages: Messages,
         *,
         json_mode: bool,
-        max_tokens: Optional[int],
+        max_tokens: int | None,
     ) -> dict[str, Any]:
         """把通用调用转换成 provider 的请求方言。"""
         raise NotImplementedError
@@ -212,8 +212,8 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         *,
         tier: str = "strong",
         json_mode: bool = False,
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> str:
         """按指定档位调用兼容接口，自动重试并记录标准化用量。"""
         tier_config = resolve_tier(self.tiers, tier)

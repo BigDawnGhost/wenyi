@@ -10,7 +10,7 @@ Segment 是最小可对齐 / 可回填的翻译单元（通常一个段落或一
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -25,9 +25,9 @@ class Segment(BaseModel):
     index: int  # 章内序号（从 0 起）
     source: str  # 原文
     kind: str = KIND_TEXT  # text | heading
-    target: Optional[str] = None  # 译文（翻译/润色后填入）
-    anchor: Optional[str] = None  # 回填定位标记（EPUB 用占位符 id）
-    resource_href: Optional[str] = None  # EPUB: Segment 所属的物理 XHTML 路径
+    target: str | None = None  # 译文（翻译/润色后填入）
+    anchor: str | None = None  # 回填定位标记（EPUB 用占位符 id）
+    resource_href: str | None = None  # EPUB: Segment 所属的物理 XHTML 路径
     cont: bool = False  # 超长段被拆分后的续段：回填时并回上一段，不另起段落
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -36,7 +36,7 @@ class Segment(BaseModel):
         return self.model_dump()
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Segment":
+    def from_dict(cls, d: dict[str, Any]) -> Segment:
         """校验普通字典并恢复一个 Segment。"""
         return cls.model_validate(d)
 
@@ -47,8 +47,8 @@ class Chapter(BaseModel):
     index: int  # 全书章序号（从 0 起）
     title: str = ""
     segments: list[Segment] = Field(default_factory=list)
-    href: Optional[str] = None  # EPUB: 逻辑章起始物理资源路径（兼容展示）
-    template: Optional[str] = None  # HTML/旧 EPUB: 带占位符的回填模板
+    href: str | None = None  # EPUB: 逻辑章起始物理资源路径（兼容展示）
+    template: str | None = None  # HTML/旧 EPUB: 带占位符的回填模板
     meta: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -61,7 +61,7 @@ class Chapter(BaseModel):
         return self.model_dump()
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Chapter":
+    def from_dict(cls, d: dict[str, Any]) -> Chapter:
         """校验普通字典并恢复一个 Chapter。"""
         return cls.model_validate(d)
 
@@ -82,6 +82,6 @@ class Document(BaseModel):
         return self.model_dump()
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Document":
+    def from_dict(cls, d: dict[str, Any]) -> Document:
         """校验普通字典并恢复一个 Document。"""
         return cls.model_validate(d)

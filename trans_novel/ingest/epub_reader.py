@@ -500,7 +500,8 @@ def _logical_chapters(
             raw_segments = resource.get("segments")
             resource_segments = raw_segments if isinstance(raw_segments, list) else []
             first = next(
-                (segment for segment in resource_segments if isinstance(segment, Segment)), None
+                (segment for segment in resource_segments if isinstance(segment, Segment)),
+                None,
             )
             segment_anchor = first.anchor if first is not None else None
         if isinstance(segment_anchor, str) and segment_anchor in anchor_positions:

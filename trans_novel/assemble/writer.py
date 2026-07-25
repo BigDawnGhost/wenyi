@@ -16,6 +16,7 @@ from html import escape
 
 from bs4 import BeautifulSoup, UnicodeDammit
 from bs4.element import Tag
+from bs4.exceptions import ParserRejectedMarkup
 
 from ..ingest.epub_toc import nav_root_list, nav_toc_scopes
 from ..ingest.fb2_reader import read_fb2_binaries
@@ -28,10 +29,16 @@ _HTML_EXTS = (".xhtml", ".html", ".htm")
 _VERTICAL_MARKERS = (
     re.compile(
         rb"(?:-epub-|-webkit-)?writing-mode\s*:\s*(?:vertical-rl|vertical-lr|tb-rl)",
-        re.I,
+        re.IGNORECASE,
     ),
-    re.compile(rb"page-progression-direction\s*=\s*['\"]rtl['\"]", re.I),
-    re.compile(rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b", re.I),
+    re.compile(
+        rb"page-progression-direction\s*=\s*['\"]rtl['\"]",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b",
+        re.IGNORECASE,
+    ),
 )
 _HORIZONTAL_OVERRIDE_ID = "trans-novel-horizontal-override"
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
@@ -432,7 +439,7 @@ def _rewrite_opf_metadata(
             for spine in soup.find_all("spine"):
                 spine["page-progression-direction"] = "ltr"
         return soup.encode()
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
 
 
@@ -444,8 +451,15 @@ def _epub_looks_vertical(zf: zipfile.ZipFile) -> bool:
             continue
         try:
             data = zf.read(info.filename)
-        except Exception:
-            continue
+        except (
+            EOFError,
+            KeyError,
+            NotImplementedError,
+            OSError,
+            RuntimeError,
+            zipfile.BadZipFile,
+        ):
+            data = b""
         if any(marker.search(data) for marker in _VERTICAL_MARKERS):
             return True
     return False
@@ -509,7 +523,7 @@ def _rewrite_html_document(
             head.append(style)
         output = _XML_ENCODING.sub(r'\1"utf-8"', str(soup))
         return output.encode("utf-8")
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data if isinstance(data, bytes) else data.encode("utf-8")
 
 
@@ -663,7 +677,7 @@ def _rewrite_toc(
                 label.clear()
                 label.append(title)
         return str(soup).encode("utf-8")
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
 
 

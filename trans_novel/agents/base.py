@@ -40,7 +40,10 @@ class Agent:
         """
         try:
             data = self.client.complete_json(
-                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
                 tier=tier,
                 max_tokens=max_tokens,
                 stage=type(self).__name__,
@@ -57,13 +60,22 @@ class Agent:
         return data if data else fb
 
     def _ask_text(
-        self, system: str, user: str, *, tier: str, default: str = "", max_tokens: int | None = None
+        self,
+        system: str,
+        user: str,
+        *,
+        tier: str,
+        default: str = "",
+        max_tokens: int | None = None,
     ) -> str:
         """complete 纯文本并 strip；异常返回 default。"""
         try:
             return (
                 self.client.complete(
-                    [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
                     tier=tier,
                     max_tokens=max_tokens,
                     stage=type(self).__name__,

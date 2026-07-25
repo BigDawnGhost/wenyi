@@ -186,7 +186,10 @@ def write_nested_toc_epub(
                 '<nav epub:type="toc"><ol>',
                 '<nav epub:type="toc"><ol><li><a href="title.xhtml">Title Page</a></li>',
             )
-            zf.writestr("OEBPS/title.xhtml", '<html><body><div class="cover"></div></body></html>')
+            zf.writestr(
+                "OEBPS/title.xhtml",
+                '<html><body><div class="cover"></div></body></html>',
+            )
         if toc_kind == "ncx":
             zf.writestr(f"OEBPS/{ncx_filename}", ncx)
         elif toc_kind == "nav":

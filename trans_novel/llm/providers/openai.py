@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,7 +35,7 @@ def build_request_kwargs(
     messages: Messages,
     *,
     json_mode: bool = False,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """构造 OpenAI 请求，并使用 max_completion_tokens 限制输出。"""
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
@@ -73,7 +73,7 @@ class OpenAIClient(OpenAICompatibleBaseClient[OpenAITierOptions]):
         messages: Messages,
         *,
         json_mode: bool,
-        max_tokens: Optional[int],
+        max_tokens: int | None,
     ) -> dict[str, Any]:
         """构造当前 OpenAI 档位的最终请求参数。"""
         return build_request_kwargs(

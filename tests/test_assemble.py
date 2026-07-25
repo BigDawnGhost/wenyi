@@ -801,7 +801,11 @@ class TestConsistency(unittest.TestCase):
                     return json.dumps(
                         {
                             "issues": [
-                                {"type": "terminology", "detail": "X 译法不一致", "where": "第1章"}
+                                {
+                                    "type": "terminology",
+                                    "detail": "X 译法不一致",
+                                    "where": "第1章",
+                                }
                             ]
                         },
                         ensure_ascii=False,

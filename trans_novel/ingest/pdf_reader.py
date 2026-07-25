@@ -75,7 +75,7 @@ def read_pdf(
     # 若中间 HTML 不存在，调用 MinerU 转换
     if not os.path.isfile(html_path):
         _check_deps()
-        from .pdf_to_html import convert_pdf_to_html  # noqa: E402
+        from .pdf_to_html import convert_pdf_to_html
 
         try:
             convert_pdf_to_html(path, html_path, api_token=api_token)

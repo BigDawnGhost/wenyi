@@ -39,7 +39,7 @@ class RollingContext:
         d: dict,
         *,
         min_recent_keep: int = 0,
-    ) -> "RollingContext":
+    ) -> RollingContext:
         """从持久化字典恢复上下文，并保证至少满足当前配置容量。"""
         persisted = d.get("max_recent_keep", 40)
         max_recent_keep = persisted if isinstance(persisted, int) else 40

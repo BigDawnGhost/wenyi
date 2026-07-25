@@ -166,6 +166,10 @@ class BackTranslator(Agent):
         )
         return self.dict_items(
             self._ask_json(
-                _backtrans_compare_system(self.src), pairs, tier="cheap", key="issues", default=[]
+                _backtrans_compare_system(self.src),
+                pairs,
+                tier="cheap",
+                key="issues",
+                default=[],
             )
         )

@@ -123,7 +123,10 @@ def _parse_ncx(data: bytes, toc_path: str) -> list[dict[str, Any]]:
         node_index = len(entries)
         nav_label = _direct_xml_child(node, "navLabel")
         label_node = (
-            next((child for child in nav_label.iter() if _local(child.tag) == "text"), None)
+            next(
+                (child for child in nav_label.iter() if _local(child.tag) == "text"),
+                None,
+            )
             if nav_label is not None
             else None
         )

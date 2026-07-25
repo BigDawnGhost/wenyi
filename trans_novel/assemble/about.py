@@ -50,7 +50,7 @@ def about_xhtml(lang: str) -> bytes:
   </section>
 </body>
 </html>
-""".encode("utf-8")
+""".encode()
 
 
 def rootfile_path(container_xml: bytes) -> str | None:

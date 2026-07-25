@@ -29,7 +29,7 @@ def _translated_para_count(calls) -> int:
     n = 0
     for c in calls:
         if "文学翻译" in c["messages"][0]["content"]:
-            n += len(re.findall(r"^\[(\d+)\]", c["messages"][-1]["content"], re.M))
+            n += len(re.findall(r"^\[(\d+)\]", c["messages"][-1]["content"], re.MULTILINE))
     return n
 
 
@@ -38,7 +38,7 @@ def _review_json(user: str, issues: list[dict]) -> str:
     return json.dumps(
         {
             "issues": issues,
-            "reviewed_segments": len(re.findall(r"^\[(\d+)\]", user, re.M)),
+            "reviewed_segments": len(re.findall(r"^\[(\d+)\]", user, re.MULTILINE)),
             "complete": True,
         },
         ensure_ascii=False,
@@ -167,9 +167,10 @@ class TestSegmentLevelResume(unittest.TestCase):
 
         def handler(messages, tier, json_mode):
             if "文学翻译" in messages[0]["content"]:
-                n = len(re.findall(r"^\[(\d+)\]", messages[-1]["content"], re.M))
+                n = len(re.findall(r"^\[(\d+)\]", messages[-1]["content"], re.MULTILINE))
                 return json.dumps(
-                    {"translations": [f"{tag}译{i}" for i in range(n)]}, ensure_ascii=False
+                    {"translations": [f"{tag}译{i}" for i in range(n)]},
+                    ensure_ascii=False,
                 )
             return routing_handler(messages, tier, json_mode)
 
@@ -393,7 +394,14 @@ class TestReviewReporting(unittest.TestCase):
             if "译文审校" in sys:
                 return _review_json(
                     user,
-                    [{"index": 0, "type": "missing", "detail": "漏了一句", "suggestion": "补上"}],
+                    [
+                        {
+                            "index": 0,
+                            "type": "missing",
+                            "detail": "漏了一句",
+                            "suggestion": "补上",
+                        }
+                    ],
                 )
             if "文学翻译" in sys and "【审校意见】" in user:
                 return json.dumps({"translations": [fix_text]}, ensure_ascii=False)
@@ -497,7 +505,14 @@ class TestReviewReporting(unittest.TestCase):
             if "译文审校" in messages[0]["content"]:
                 return _review_json(
                     messages[-1]["content"],
-                    [{"index": "0", "type": "missing", "detail": "x", "suggestion": ""}],
+                    [
+                        {
+                            "index": "0",
+                            "type": "missing",
+                            "detail": "x",
+                            "suggestion": "",
+                        }
+                    ],
                 )
             return routing_handler(messages, tier, json_mode)
 
@@ -520,7 +535,14 @@ class TestReviewReporting(unittest.TestCase):
             if "译文审校" in messages[0]["content"]:
                 return _review_json(
                     messages[-1]["content"],
-                    [{"index": "unknown", "type": "missing", "detail": "x", "suggestion": ""}],
+                    [
+                        {
+                            "index": "unknown",
+                            "type": "missing",
+                            "detail": "x",
+                            "suggestion": "",
+                        }
+                    ],
                 )
             return routing_handler(messages, tier, json_mode)
 
@@ -774,7 +796,7 @@ class TestGlossaryScope(unittest.TestCase):
             system = messages[0]["content"]
             user = messages[-1]["content"]
             if "文学翻译" in system:
-                n = len(re.findall(r"^\[(\d+)\]", user, re.M))
+                n = len(re.findall(r"^\[(\d+)\]", user, re.MULTILINE))
                 return json.dumps(
                     {"translations": ["小夏帆" for _ in range(n)]}, ensure_ascii=False
                 )
@@ -879,7 +901,7 @@ class TestGlossaryScope(unittest.TestCase):
             system = messages[0]["content"]
             user = messages[-1]["content"]
             if "文学翻译" in system:
-                n = len(re.findall(r"^\[(\d+)\]", user, re.M))
+                n = len(re.findall(r"^\[(\d+)\]", user, re.MULTILINE))
                 return json.dumps(
                     {"translations": ["小夏帆" for _ in range(n)]}, ensure_ascii=False
                 )
@@ -904,7 +926,8 @@ class TestGlossaryScope(unittest.TestCase):
                 self.assertIn("「夏帆ちゃん」と母親が言った。", user)
                 self.assertIn('"target": "小夏帆"', user)
                 return json.dumps(
-                    {"terms": [{"source": "夏帆ちゃん", "target": "小夏帆"}]}, ensure_ascii=False
+                    {"terms": [{"source": "夏帆ちゃん", "target": "小夏帆"}]},
+                    ensure_ascii=False,
                 )
             if "译文审校" in system:
                 self.assertIn("夏帆ちゃん → 小夏帆", user)

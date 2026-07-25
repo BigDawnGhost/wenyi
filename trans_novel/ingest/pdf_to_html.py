@@ -19,8 +19,8 @@ import sys
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import httpx
 from pypdf import PdfReader, PdfWriter

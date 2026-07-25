@@ -14,7 +14,7 @@ from trans_novel.pipeline.checks import length_flags
 
 
 def _count_segments(user_content: str) -> int:
-    return len(re.findall(r"^\[(\d+)\]", user_content, re.M))
+    return len(re.findall(r"^\[(\d+)\]", user_content, re.MULTILINE))
 
 
 class TestTranslatorAlignment(unittest.TestCase):

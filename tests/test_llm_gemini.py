@@ -49,7 +49,9 @@ def test_api_key_env_precedence():
         assert env_name == "CUSTOM_KEY"
 
     with patch.dict(
-        os.environ, {"GEMINI_API_KEY": "gemini_val", "GOOGLE_API_KEY": "google_val"}, clear=True
+        os.environ,
+        {"GEMINI_API_KEY": "gemini_val", "GOOGLE_API_KEY": "google_val"},
+        clear=True,
     ):
         key, env_name = get_api_key_from_env()
         assert key == "gemini_val"

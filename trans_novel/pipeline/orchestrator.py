@@ -358,7 +358,10 @@ class Orchestrator:
         )
         try:
             data = self.client.complete_json(
-                [{"role": "system", "content": system}, {"role": "user", "content": sample}],
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": sample},
+                ],
                 tier="cheap",
                 stage="language_detect",
             )
@@ -378,7 +381,11 @@ class Orchestrator:
             return joined[:6000]
         if not labeled:
             return texts[0][:6000]
-        picks = [(0, "开头样章"), (len(texts) // 2, "中部样章"), (len(texts) - 1, "结尾样章")]
+        picks = [
+            (0, "开头样章"),
+            (len(texts) // 2, "中部样章"),
+            (len(texts) - 1, "结尾样章"),
+        ]
         parts: list[str] = []
         seen: set[int] = set()
         for idx, tag in picks:
@@ -621,7 +628,10 @@ class Orchestrator:
 
     # ── 章节标题 / 目录项翻译（书名保持原文）──────────────────────────────
     def _translate_titles(
-        self, store: RunStore, glossary: GlossaryStore, progress: ProgressFn | None = None
+        self,
+        store: RunStore,
+        glossary: GlossaryStore,
+        progress: ProgressFn | None = None,
     ) -> None:
         """翻译所有逻辑章标题和 NCX/NAV 目录节点并写回 manifest。
 
@@ -1740,5 +1750,9 @@ class Orchestrator:
         if do_qa if do_qa is not None else self.config.pipeline.consistency_qa:
             steps.add("qa")
         return self.run_steps(
-            input_path, steps, progress=progress, out_format=out_format, out_path=out_path
+            input_path,
+            steps,
+            progress=progress,
+            out_format=out_format,
+            out_path=out_path,
         )
