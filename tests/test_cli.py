@@ -58,6 +58,13 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         create.assert_called_once_with("settings/config.yaml")
 
+    def test_version_reads_installed_package_metadata(self):
+        with patch("trans_novel.cli.package_version", return_value="0.3.5"):
+            result = CliRunner().invoke(app, ["--version"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.output.strip(), "0.3.5")
+
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
             {

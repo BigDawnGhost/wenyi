@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from importlib.metadata import version as package_version
 from typing import Any, Protocol
 
 import typer
@@ -106,6 +107,13 @@ glossary_app = typer.Typer(
 console = Console()
 
 
+def _version_callback(value: bool) -> None:
+    """打印由 Git 标签生成的已安装包版本并立即退出。"""
+    if value:
+        console.print(package_version("trans-novel"))
+        raise typer.Exit()
+
+
 class _ManifestStore(Protocol):
     def load_manifest(self) -> dict[str, Any]:
         """返回运行目录中的 manifest 数据。"""
@@ -121,8 +129,16 @@ def _root(
         "-c",
         help="配置文件路径；文件不存在时自动创建",
     ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="显示版本号并退出",
+    ),
 ):
     """记录全局配置路径，并在子命令运行前校验模型凭据。"""
+    del version
     _CONFIG["path"] = config
     command = ctx.invoked_subcommand
     should_validate = (
