@@ -106,7 +106,6 @@ class TestOrchestrator(unittest.TestCase):
             g = GlossaryStore(store.glossary_path)
             self.assertIsNotNone(g.get_term("綾小路"))
             self.assertIsNotNone(g.get_term("堀北"))
-            self.assertGreater(g.stats()["tm_entries"], 0)  # 翻译记忆库已写入
             g.close()
 
             # ── 续跑：所有章已 done，不应再产生翻译调用 ──
@@ -435,14 +434,6 @@ class TestReviewReporting(unittest.TestCase):
             self.assertTrue(all(i.get("stage") == "review" for i in flagged))
             self.assertTrue(all("chapter" in i for i in flagged))
             self.assertEqual(ch.text_segments[0].target, self.FIX_TEXT)
-            glossary = GlossaryStore(store.glossary_path)
-            try:
-                self.assertEqual(
-                    glossary.tm_lookup(ch.text_segments[0].source),
-                    self.FIX_TEXT,
-                )
-            finally:
-                glossary.close()
 
     def test_autofix_off_reports_only(self):
         """autofix 关：仅上报 fixed=False，正文不动。"""

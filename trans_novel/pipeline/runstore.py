@@ -7,7 +7,7 @@
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
-  glossary.db       术语库 + 翻译记忆库
+  glossary.db       术语库 + 译法冲突记录
   report.json       QA 报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
 """
@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Iterator
+from typing import Any
 
 from ..ingest.models import Chapter, Document
 
@@ -97,7 +98,7 @@ class RunStore:
 
     @property
     def glossary_path(self) -> str:
-        """返回术语及翻译记忆数据库路径。"""
+        """返回术语及译法冲突数据库路径。"""
         return os.path.join(self.run_dir, "glossary.db")
 
     @property

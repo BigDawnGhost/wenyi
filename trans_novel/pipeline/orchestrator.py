@@ -1016,11 +1016,6 @@ class Orchestrator:
                 issues=bt_issues,
             )
 
-        # 翻译记忆库（仅作记录/参考，不用于跨位置复用译文）
-        for s in text_segs:
-            if s.target:
-                glossary.add_tm(s.source, s.target, ci)
-
         chapter.meta["backtranslation_issues"] = bt_issues
         store.save_chapter(chapter)
         if translation_changed:
@@ -1220,11 +1215,6 @@ class Orchestrator:
                         store=store,
                         chapter_index=ci,
                     )
-                    # 翻译阶段已写入旧译文；修复后覆盖相同 source_hash 的 TM。
-                    for segment in text_segs:
-                        if segment.target:
-                            glossary.add_tm(segment.source, segment.target, ci)
-
                 chapter.meta["review_issues"] = new_issues
                 chapter.meta["review_digest"] = self._review_digest(
                     text_segs, term_snapshot, autofix=do_autofix
