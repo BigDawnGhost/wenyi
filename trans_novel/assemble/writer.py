@@ -124,12 +124,19 @@ def _ch_title(c: dict) -> str:
     return (c.get("title_translated") or c.get("title") or "").strip()
 
 
-def _export_book_title(title: str | None) -> str:
-    """导出用书名：原书名后追加 -wenyi，不翻译书名本身。"""
+def _export_book_title(
+    title: str | None,
+    target_lang: str | None,
+    *,
+    bilingual: bool,
+) -> str:
+    """导出用书名：原书名后追加 Wenyi、目标语言及可选双语标记。"""
     base = (title or "").strip() or "translated"
-    if base.endswith("-wenyi"):
+    lang = (target_lang or "").strip().replace("_", "-").lower() or "zh"
+    suffix = f"-wenyi-{lang}{'-bi' if bilingual else ''}"
+    if base.endswith(suffix):
         return base
-    return f"{base}-wenyi"
+    return f"{base}{suffix}"
 
 
 def _seg_text(seg) -> str:
@@ -416,7 +423,7 @@ def _rewrite_opf_metadata(
     lang: str,
     force_horizontal: bool,
 ) -> bytes:
-    """更新 OPF 元数据：书名改为原名-wenyi，译后语言改为目标语言，竖排源书改横排方向。"""
+    """更新 OPF 元数据：标记 Wenyi 版本及语言，译后语言改为目标语言。"""
     try:
         soup = BeautifulSoup(data, "xml")
         if book_title:
@@ -916,7 +923,9 @@ def _assemble_epub(
 ) -> str:
     """复制原 EPUB，并按物理资源替换正文、精确回填目录及目标语言元数据。"""
     m = store.load_manifest()
-    target_lang = _epub_lang(m.get("target_lang", "zh"))
+    raw_target_lang = m.get("target_lang", "zh")
+    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
+    target_lang = _epub_lang(target_lang_code)
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_toc_entries = meta.get("toc_entries", [])
@@ -958,7 +967,11 @@ def _assemble_epub(
         if base and title:
             legacy_titles[base] = title
     source_title = m.get("title", "") if isinstance(m.get("title"), str) else ""
-    book_title = _export_book_title(source_title)
+    book_title = _export_book_title(
+        source_title,
+        target_lang_code,
+        bilingual=bilingual,
+    )
 
     with zipfile.ZipFile(source_path, "r") as zin:
         force_horizontal = _epub_looks_vertical(zin)
@@ -966,7 +979,7 @@ def _assemble_epub(
             zin,
             chapters,
             meta,
-            # 回填标注仍用原书名，避免把 -wenyi 后缀误判成正文标题。
+            # 回填标注仍用原书名，避免把导出版后缀误判成正文标题。
             book_title=source_title,
             bilingual=bilingual,
             order=order,
@@ -1083,10 +1096,14 @@ def _build_epub_from_chapters(
     from ebooklib import epub
 
     m = store.load_manifest()
+    raw_target_lang = m.get("target_lang", "zh")
+    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
     title = _export_book_title(
-        m.get("title", "translated") if isinstance(m.get("title"), str) else "translated"
+        m.get("title", "translated") if isinstance(m.get("title"), str) else "translated",
+        target_lang_code,
+        bilingual=bilingual,
     )
-    lang = _epub_lang(m.get("target_lang", "zh"))
+    lang = _epub_lang(target_lang_code)
 
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")
