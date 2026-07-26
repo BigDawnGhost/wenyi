@@ -39,12 +39,15 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertFalse(cfg.output.bilingual_preserve_source_style)
             self.assertTrue(cfg.output.about_page)
             self.assertFalse(cfg.pipeline.review)
-            self.assertFalse(cfg.pipeline.autofix_severe)
             self.assertTrue(cfg.pipeline.polish)
             self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
             self.assertFalse(cfg.pipeline.consistency_qa)
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
             self.assertEqual(cfg.pipeline.review_output_retries, 2)
+            self.assertTrue(cfg.pipeline.review_agent_loop)
+            self.assertEqual(cfg.pipeline.review_agent_tier, "strong")
+            self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
+            self.assertTrue(cfg.pipeline.review_conflict_arbitration)
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:
@@ -64,12 +67,15 @@ class TestConfigFileCreation(unittest.TestCase):
         cfg = Config.from_dict({"pipeline": {"review": False}})
 
         self.assertFalse(cfg.pipeline.review)
-        self.assertFalse(cfg.pipeline.autofix_severe)
         self.assertTrue(cfg.pipeline.polish)
         self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
         self.assertFalse(cfg.pipeline.consistency_qa)
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
         self.assertEqual(cfg.pipeline.review_output_retries, 2)
+        self.assertTrue(cfg.pipeline.review_agent_loop)
+        self.assertEqual(cfg.pipeline.review_agent_tier, "strong")
+        self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
+        self.assertTrue(cfg.pipeline.review_conflict_arbitration)
 
     def test_about_page_can_be_disabled(self):
         cfg = Config.from_dict({"output": {"about_page": False}})

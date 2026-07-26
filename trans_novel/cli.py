@@ -339,12 +339,13 @@ def _translate_impl_or_raise(
     s = result["report"]["summary"]
     console.print(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
-        f"审校 {s.get('chapters_reviewed', 0)}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
     _print_usage({"usage": result["store"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
+    if result.get("review_debug_dir"):
+        console.print(f"审校调试目录：{result['review_debug_dir']}")
 
 
 def _prepare_impl(input_path: str) -> None:
@@ -506,19 +507,12 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
-    force: bool = typer.Option(False, "--force", help="忽略审校摘要，强制重新审校全部章节"),
-    fix: bool | None = typer.Option(
-        None,
-        "--fix/--no-fix",
-        help="覆盖 pipeline.autofix_severe；开启后串行修复漏译和误译",
-    ),
 ):
-    """使用最终术语库审校完整译文；结果按章保存，可断点续审。"""
+    """全量运行取证式 Agent Review；全部结果只写入时间戳 Debug 目录。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input)
     config = _load_config()
-    autofix = config.pipeline.autofix_severe if fix is None else fix
     orch = Orchestrator(config)
 
     try:
@@ -546,23 +540,16 @@ def review(
                 prog.remove_task(task)
                 task = prog.add_task(label, total=None)
 
-            result = orch.run_review(
-                input,
-                progress=cb,
-                force=force,
-                autofix=autofix,
-            )
+            result = orch.run_review(input, progress=cb)
     except (IngestError, ImportError, OSError, ValueError) as error:
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
 
     issues = result["review_issues"]
-    console.print(
-        f"[bold green]全书审校完成[/]：发现 {len(issues)} 项问题"
-        f"{'，已按配置尝试修复严重项' if autofix else ''}。"
-    )
-    console.print(f"状态目录：{result['store'].run_dir}")
-    _print_usage({"usage": result["store"].load_usage() or {}})
+    console.print(f"[bold green]全书 Agent 审校完成[/]：发现 {len(issues)} 项问题建议。")
+    console.print("实验模式未修改正文或任何正式状态；建议和日志仅写入本次调试目录。")
+    if result.get("debug_dir"):
+        console.print(f"调试目录：{result['debug_dir']}")
 
 
 # ── 查询 / 细粒度命令 ──────────────────────────────────────────────────────
@@ -580,7 +567,7 @@ def status(
         raise typer.Exit(1)
     m = store.load_manifest()
     console.print(f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}")
-    table = Table("", "#", "章节", "翻译", "审校")
+    table = Table("", "#", "章节", "翻译")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
         table.add_row(
@@ -588,7 +575,6 @@ def status(
             str(c["index"]),
             c["title"],
             c["status"],
-            str(c.get("review_status", "pending")),
         )
     console.print(table)
     g = GlossaryStore(store.glossary_path)
@@ -781,7 +767,7 @@ def qa(
 def report(
     input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
 ) -> None:
-    """根据当前章节、审校和术语状态重新生成 report.json，不调用模型。"""
+    """根据当前章节和术语状态重新生成 report.json，不调用模型。"""
     from .assemble.report import build_report
     from .glossary.store import GlossaryStore
 
@@ -798,8 +784,7 @@ def report(
     console.print(f"QA 报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
-        f"待裁决冲突 {s['open_conflicts']}  审校问题 {s['review_issues']}  "
-        f"回译疑点 {s['backtranslation_issues']}"
+        f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"
     )
 
 

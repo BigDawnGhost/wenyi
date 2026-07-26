@@ -113,7 +113,9 @@ uv run trans-novel translate book.epub
 uv run trans-novel status book.epub
 ```
 
-更改润色设置不会自动重跑已经完成的翻译批次。最终审校拥有独立的持久化状态，可通过 `review --force` 单独重跑；只有需要从头翻译时才应使用新的状态目录或清理对应状态。
+更改润色设置不会自动重跑已经完成的翻译批次。实验性 Review 不同：每次执行
+`review` 都会全量重审完整译文，并创建新的时间戳调试目录。只有需要从头翻译时
+才应使用新的状态目录或清理对应状态。
 
 ## 独立阶段与术语管理
 
@@ -127,4 +129,11 @@ uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
 
-`review` 会使用最终术语库检查完整译文；`--force` 可重审未变化章节，`--fix` 可采纳通过校验的严重项修复。`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型的情况下重新导出已有译文。
+`review` 会使用最终术语库检查完整译文。原有 Reviewer 提示词先并发检查连续
+文本块；候选问题随后可进入有界取证循环，互相矛盾的跨块一致性建议还可获得
+终局建议。Review 不修复正文，也不更新 manifest、章节 JSON、`report.json`、
+正式事件日志或 `usage.json`。每次运行的提示词、原始响应、解析动作、取证结果、
+事件和建议会写入 `state/<书名>/debug/review-<时间戳>/`。
+
+`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型
+的情况下重新导出已有译文。

@@ -32,12 +32,17 @@ uv run trans-novel translate book.epub
 
 Final review is disabled by default. Set `pipeline.review: true` to run it
 automatically after the complete book has been translated and the glossary has
-reached its final state, or run and repeat the stage independently:
+reached its final state, or run the experimental Agent Review independently:
 
 ```bash
 uv run trans-novel review book.epub
-uv run trans-novel review book.epub --force --fix
 ```
+
+Each Review run starts from the beginning, checks chunks concurrently, and can
+selectively request cross-book evidence before resolving contradictory
+consistency suggestions. It does not fix or modify formal translation state;
+complete traces and recommendations are written to a timestamped directory
+under `state/<book>/debug/`.
 
 ## Supported formats and output
 

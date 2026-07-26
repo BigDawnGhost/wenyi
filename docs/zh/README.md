@@ -31,12 +31,15 @@ uv run trans-novel translate book.epub
 ```
 
 最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在全书翻译完成、
-术语库达到最终状态后再统一执行审校；也可以单独运行或强制重跑这一阶段：
+术语库达到最终状态后再统一执行审校；也可以独立运行实验性 Agent Review：
 
 ```bash
 uv run trans-novel review book.epub
-uv run trans-novel review book.epub --force --fix
 ```
+
+每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
+矛盾的一致性建议。它不修复正文，也不修改正式翻译状态；完整过程与建议只写入
+`state/<书名>/debug/` 下的时间戳目录。
 
 ## 支持范围
 

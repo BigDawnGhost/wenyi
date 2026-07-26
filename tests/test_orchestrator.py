@@ -7,21 +7,18 @@ import os
 import re
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
+from trans_novel.agents.reviewer import ReviewOutputError
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
-from trans_novel.pipeline.runstore import (
-    REVIEW_DONE,
-    REVIEW_FAILED,
-    REVIEW_PENDING,
-    STATUS_DONE,
-    STATUS_PENDING,
-)
+from trans_novel.pipeline.runstore import STATUS_DONE, STATUS_PENDING
 
 
 def _translated_para_count(calls) -> int:
@@ -63,6 +60,37 @@ def _config(state_dir: str):
             "paths": {"state_dir": state_dir},
         }
     )
+
+
+class MeteredFakeClient(FakeClient):
+    """每次离线调用都记录一小笔用量，用于验证 Review 用量隔离。"""
+
+    def complete(
+        self,
+        messages,
+        *,
+        tier="strong",
+        json_mode=False,
+        max_tokens=None,
+        stage=None,
+    ):
+        self.usage.record(
+            tier,
+            UsageSample(
+                prompt_tokens=5,
+                completion_tokens=3,
+                total_tokens=8,
+                cache_miss_tokens=5,
+            ),
+            stage,
+        )
+        return super().complete(
+            messages,
+            tier=tier,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+            stage=stage,
+        )
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -380,13 +408,10 @@ class TestRunSteps(unittest.TestCase):
 
 
 class TestReviewReporting(unittest.TestCase):
-    """独立最终审校 + 严重项自动重译（autofix_severe）。"""
+    """实验性全书 Agent Review：全量运行且结果只写 Debug 目录。"""
 
-    # 样例首段「第一章　出会い」7 字；fix 需在 3-21 字间（比值 0.3-3.0）方可通过长度校验
-    FIX_TEXT = "第一章 邂逅"  # 7 字，比值 1.0
-
-    def _handler(self, fix_text):
-        """审校每块报 index 0 漏译；带【审校意见】的翻译调用返回定向重译文。"""
+    def _handler(self):
+        """审校每块报 index 0 漏译，其它流水线调用沿用通用 Fake 响应。"""
 
         def handler(messages, tier, json_mode):
             sys = messages[0]["content"]
@@ -403,21 +428,17 @@ class TestReviewReporting(unittest.TestCase):
                         }
                     ],
                 )
-            if "文学翻译" in sys and "【审校意见】" in user:
-                return json.dumps({"translations": [fix_text]}, ensure_ascii=False)
             return routing_handler(messages, tier, json_mode)
 
         return handler
 
-    def _run(self, d, *, autofix, fix_text=None):
+    def _run(self, d):
         txt = os.path.join(d, "novel.txt")
         write_sample_txt(txt)
         cfg = _config(os.path.join(d, "state"))
-        cfg.pipeline.autofix_severe = autofix
-        handler = self._handler(fix_text or self.FIX_TEXT)
-        orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+        orch = Orchestrator(cfg, client=FakeClient(handler=self._handler()))
         orch.run(txt)
-        return orch.run_review(txt, autofix=autofix)["store"]
+        return orch.run_review(txt)
 
     def test_run_does_not_call_reviewer_even_for_only_chapter(self):
         """翻译主流程和 only_chapter 都不再隐式触发最终审校。"""
@@ -435,43 +456,106 @@ class TestReviewReporting(unittest.TestCase):
             ]
             self.assertEqual(review_calls, [])
             self.assertTrue(
-                all(
-                    chapter["review_status"] == REVIEW_PENDING
-                    for chapter in store.load_manifest()["chapters"]
-                )
+                all("review_status" not in chapter for chapter in store.load_manifest()["chapters"])
             )
 
-    def test_autofix_adopts_retranslation(self):
-        """autofix 开：严重项定向重译被采纳 → target 更新、fixed=True。"""
+    def test_debug_review_never_modifies_body_or_formal_review_state(self):
+        """实验 Review 只生成 Debug 建议，不修改任何正式状态文件。"""
         with tempfile.TemporaryDirectory() as d:
-            store = self._run(d, autofix=True)
-            ch = store.load_chapter(0)
-            flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
-            self.assertTrue(flagged)
-            self.assertTrue(all(i.get("fixed") is True for i in flagged))
-            self.assertTrue(all(i.get("stage") == "review" for i in flagged))
-            self.assertTrue(all("chapter" in i for i in flagged))
-            self.assertEqual(ch.text_segments[0].target, self.FIX_TEXT)
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = MeteredFakeClient(handler=self._handler())
+            orch = Orchestrator(cfg, client=client)
+            store = orch.run(txt)
+            watched = [
+                store.manifest_path,
+                store.chapter_path(0),
+                store.glossary_path,
+                store.usage_path,
+                store.event_log_path,
+                store.report_path,
+            ]
+            before = {
+                path: Path(path).read_bytes() if os.path.exists(path) else None for path in watched
+            }
+            formal_before = {
+                str(path.relative_to(store.run_dir)): path.read_bytes()
+                for path in Path(store.run_dir).rglob("*")
+                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
+            }
 
-    def test_autofix_off_reports_only(self):
-        """autofix 关：仅上报 fixed=False，正文不动。"""
-        with tempfile.TemporaryDirectory() as d:
-            store = self._run(d, autofix=False)
-            ch = store.load_chapter(0)
-            flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
-            self.assertTrue(flagged)
-            self.assertTrue(all(i.get("fixed") is False for i in flagged))
-            self.assertNotEqual(ch.text_segments[0].target, self.FIX_TEXT)
+            result = orch.run_review(txt)
+            store = result["store"]
+            chapter = store.load_chapter(0)
+            self.assertTrue(result["review_issues"])
+            self.assertEqual(chapter.meta.get("review_issues", []), [])
+            self.assertEqual(
+                before,
+                {
+                    path: Path(path).read_bytes() if os.path.exists(path) else None
+                    for path in watched
+                },
+            )
+            formal_after = {
+                str(path.relative_to(store.run_dir)): path.read_bytes()
+                for path in Path(store.run_dir).rglob("*")
+                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
+            }
+            self.assertEqual(formal_after, formal_before)
+            self.assertTrue(os.path.isfile(os.path.join(result["debug_dir"], "result.json")))
+            self.assertGreater(
+                client.usage_summary()["by_stage"]["Reviewer"]["calls"],
+                0,
+            )
 
-    def test_autofix_rejects_short_retranslation(self):
-        """重译结果过短（疑漏译）→ 不采纳，fixed=False，保留原译。"""
+    def test_debug_review_saves_initial_and_final_suggestions(self):
         with tempfile.TemporaryDirectory() as d:
-            store = self._run(d, autofix=True, fix_text="短")
-            ch = store.load_chapter(0)
-            flagged = [i for i in ch.meta["review_issues"] if i.get("type") == "missing"]
-            self.assertTrue(flagged)
-            self.assertTrue(all(i.get("fixed") is False for i in flagged))
-            self.assertNotEqual(ch.text_segments[0].target, "短")
+            result = self._run(d)
+            with open(
+                os.path.join(result["debug_dir"], "initial_issues.json"),
+                encoding="utf-8",
+            ) as file:
+                initial = json.load(file)
+            with open(
+                os.path.join(result["debug_dir"], "final_issues.json"),
+                encoding="utf-8",
+            ) as file:
+                final = json.load(file)
+            self.assertTrue(initial)
+            self.assertTrue(final)
+
+    def test_review_only_run_steps_is_also_debug_only(self):
+        """内部 review-only 步骤与独立命令一致，不写通用流水线事件。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            orch = Orchestrator(cfg, client=MeteredFakeClient(handler=self._handler()))
+            store = orch.run(txt)
+            formal_before = {
+                str(path.relative_to(store.run_dir)): path.read_bytes()
+                for path in Path(store.run_dir).rglob("*")
+                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
+            }
+
+            result = orch.run_steps(txt, {"review"})
+
+            formal_after = {
+                str(path.relative_to(store.run_dir)): path.read_bytes()
+                for path in Path(store.run_dir).rglob("*")
+                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
+            }
+            self.assertEqual(formal_after, formal_before)
+            self.assertIsNone(result["output"])
+            self.assertEqual(result["outputs"], [])
+            self.assertTrue(result["review_issues"])
+            self.assertTrue(os.path.isfile(os.path.join(result["review_debug_dir"], "run.json")))
+
+    def test_debug_review_does_not_create_formal_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            result = self._run(d)
+            self.assertFalse(os.path.exists(result["store"].report_path))
 
     def test_review_index_mapping(self):
         """整章多块审校时，块内 index 正确映射回章内段号。"""
@@ -480,7 +564,14 @@ class TestReviewReporting(unittest.TestCase):
             if "译文审校" in messages[0]["content"]:
                 return _review_json(
                     messages[-1]["content"],
-                    [{"index": 0, "type": "missing", "detail": "x", "suggestion": ""}],
+                    [
+                        {
+                            "index": 0,
+                            "type": "missing",
+                            "detail": "x",
+                            "suggestion": "补译",
+                        }
+                    ],
                 )
             return routing_handler(messages, tier, json_mode)
 
@@ -489,16 +580,18 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             cfg.segment.max_chars_per_batch = 8  # 审校块预算=24 → 每段自成一块
-            cfg.pipeline.autofix_severe = False
+            cfg.pipeline.review_agent_loop = False
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
             orch.run(txt)
-            store = orch.run_review(txt, autofix=False)["store"]
-            ch = store.load_chapter(0)
+            result = orch.run_review(txt)
             idxs = sorted(
-                i["index"] for i in ch.meta["review_issues"] if i.get("type") == "missing"
+                i["index"]
+                for i in result["review_issues"]
+                if i.get("chapter") == 0 and i.get("type") == "missing"
             )
+            segment_count = len(result["store"].load_chapter(0).text_segments)
             # 每块报 index 0 → 映射后应为各块首段的章内段号（0,1,2,...互不相同）
-            self.assertEqual(idxs, list(range(len(ch.text_segments))))
+            self.assertEqual(idxs, list(range(segment_count)))
 
     def test_review_accepts_numeric_string_index(self):
         def handler(messages, tier, json_mode):
@@ -510,7 +603,7 @@ class TestReviewReporting(unittest.TestCase):
                             "index": "0",
                             "type": "missing",
                             "detail": "x",
-                            "suggestion": "",
+                            "suggestion": "补译",
                         }
                     ],
                 )
@@ -520,17 +613,17 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.pipeline.autofix_severe = False
+            cfg.pipeline.review_agent_loop = False
 
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
             orch.run(txt)
-            store = orch.run_review(txt, autofix=False)["store"]
+            result = orch.run_review(txt)
 
-            issues = store.load_chapter(0).meta["review_issues"]
+            issues = result["review_issues"]
             self.assertTrue(issues)
             self.assertEqual(issues[0]["index"], 0)
 
-    def test_review_warns_when_index_is_invalid(self):
+    def test_review_rejects_invalid_index_instead_of_returning_zero(self):
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
                 return _review_json(
@@ -540,7 +633,7 @@ class TestReviewReporting(unittest.TestCase):
                             "index": "unknown",
                             "type": "missing",
                             "detail": "x",
-                            "suggestion": "",
+                            "suggestion": "补译",
                         }
                     ],
                 )
@@ -550,17 +643,18 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.pipeline.autofix_severe = False
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_output_retries = 0
+            cfg.segment.max_chars_per_batch = 100_000
 
-            with self.assertWarnsRegex(RuntimeWarning, "无效审校索引"):
-                orch = Orchestrator(cfg, client=FakeClient(handler=handler))
-                orch.run(txt)
-                store = orch.run_review(txt, autofix=False)["store"]
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            orch.run(txt)
 
-            self.assertEqual(store.load_chapter(0).meta["review_issues"], [])
+            with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
+                orch.run_review(txt)
 
-    def test_review_digest_skips_unchanged_chapters_and_force_reruns(self):
-        """摘要相同则跳过已审章节；force 会忽略摘要并重新审校。"""
+    def test_review_always_reruns_and_creates_a_new_debug_directory(self):
+        """实验模式忽略旧摘要，每次执行都是一轮独立全书 Review。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -569,31 +663,17 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=client)
             orch.run(txt)
 
-            orch.run_review(txt, autofix=False)
+            first = orch.run_review(txt)
             first_count = sum("译文审校" in call["messages"][0]["content"] for call in client.calls)
             manifest = orch.prepare(txt).load_manifest()
-            self.assertTrue(
-                all(chapter["review_status"] == REVIEW_DONE for chapter in manifest["chapters"])
-            )
-            store = orch.prepare(txt)
-            self.assertTrue(
-                all(
-                    store.load_chapter(chapter["index"]).meta.get("review_digest")
-                    for chapter in manifest["chapters"]
-                )
-            )
+            self.assertTrue(all("review_status" not in chapter for chapter in manifest["chapters"]))
 
-            orch.run_review(txt, autofix=False)
-            unchanged_count = sum(
+            second = orch.run_review(txt)
+            second_count = sum(
                 "译文审校" in call["messages"][0]["content"] for call in client.calls
             )
-            self.assertEqual(unchanged_count, first_count)
-
-            orch.run_review(txt, force=True, autofix=False)
-            forced_count = sum(
-                "译文审校" in call["messages"][0]["content"] for call in client.calls
-            )
-            self.assertGreater(forced_count, unchanged_count)
+            self.assertEqual(second_count, first_count * 2)
+            self.assertNotEqual(first["debug_dir"], second["debug_dir"])
 
     def test_review_rejects_incomplete_book(self):
         """独立最终审校要求全书所有章节均已翻译完成。"""
@@ -607,10 +687,7 @@ class TestReviewReporting(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "所有章节先完成翻译"):
                 orch.run_review(txt)
 
-            self.assertEqual(
-                store.load_manifest()["chapters"][0]["review_status"],
-                REVIEW_PENDING,
-            )
+            self.assertFalse(os.path.exists(os.path.join(store.run_dir, "debug")))
 
     def test_review_without_state_rejects_pdf_before_conversion(self):
         """PDF 尚无翻译状态时不得调用转换服务或创建空状态目录。"""
@@ -646,8 +723,8 @@ class TestReviewReporting(unittest.TestCase):
             self.assertEqual(client.calls, [])
             self.assertFalse(os.path.exists(cfg.state_dir))
 
-    def test_reviewer_failure_marks_chapter_failed(self):
-        """审校调用失败必须显式标记 failed，不能伪装成零问题。"""
+    def test_reviewer_failure_keeps_formal_status_and_writes_failed_debug_run(self):
+        """服务故障不污染正式状态，但 Debug run.json 必须留下失败收据。"""
 
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
@@ -659,9 +736,11 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             cfg.segment.max_chars_per_batch = 100_000
-            client = FakeClient(handler=handler)
+            client = MeteredFakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
             store = orch.run(txt)
+            usage_before = Path(store.usage_path).read_bytes()
+            events_before = Path(store.event_log_path).read_bytes()
 
             with self.assertRaisesRegex(RuntimeError, "review service unavailable"):
                 orch.run_review(txt)
@@ -671,10 +750,162 @@ class TestReviewReporting(unittest.TestCase):
             ]
             # 只恢复模型输出协议错误；服务故障不得因拆分逻辑被成倍重试。
             self.assertEqual(len(review_calls), 1)
-            self.assertEqual(
-                store.load_manifest()["chapters"][0]["review_status"],
-                REVIEW_FAILED,
+            self.assertTrue(
+                all("review_status" not in chapter for chapter in store.load_manifest()["chapters"])
             )
+            debug_root = os.path.join(store.run_dir, "debug")
+            runs = sorted(os.listdir(debug_root))
+            with open(
+                os.path.join(debug_root, runs[-1], "run.json"),
+                encoding="utf-8",
+            ) as file:
+                receipt = json.load(file)
+            self.assertEqual(receipt["status"], "failed")
+            self.assertEqual(receipt["error_type"], "RuntimeError")
+            self.assertEqual(Path(store.usage_path).read_bytes(), usage_before)
+            self.assertEqual(Path(store.event_log_path).read_bytes(), events_before)
+            self.assertEqual(client.usage_summary()["by_stage"]["Reviewer"]["calls"], 1)
+
+    def test_run_steps_excludes_review_usage_on_success_and_failure(self):
+        """组合流水线只持久化 Review 之前的用量，Review 成败都不泄漏。"""
+        for fail in (False, True):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as d:
+                txt = os.path.join(d, "novel.txt")
+                write_sample_txt(txt)
+                cfg = _config(os.path.join(d, "state"))
+                cfg.pipeline.review_agent_loop = False
+                base_store = Orchestrator(
+                    cfg,
+                    client=FakeClient(handler=routing_handler),
+                ).run(txt)
+
+                def handler(messages, tier, json_mode):
+                    if "译文审校" in messages[0]["content"]:
+                        if fail:
+                            raise RuntimeError("review failed")
+                        return _review_json(messages[-1]["content"], [])
+                    return routing_handler(messages, tier, json_mode)
+
+                client = MeteredFakeClient(handler=handler)
+                orch = Orchestrator(cfg, client=client)
+                client.usage.record(
+                    "cheap",
+                    UsageSample(
+                        prompt_tokens=11,
+                        completion_tokens=7,
+                        total_tokens=18,
+                        cache_miss_tokens=11,
+                    ),
+                    "PreReview",
+                )
+
+                if fail:
+                    with self.assertRaisesRegex(RuntimeError, "review failed"):
+                        orch.run_steps(txt, {"review", "report"})
+                else:
+                    result = orch.run_steps(txt, {"review", "report"})
+                    self.assertIsNotNone(result["report"])
+
+                usage = base_store.load_usage()
+                self.assertEqual(usage["by_stage"]["PreReview"]["calls"], 1)
+                self.assertNotIn("Reviewer", usage["by_stage"])
+                usage_events = [
+                    json.loads(line)
+                    for line in Path(base_store.event_log_path)
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                    if json.loads(line).get("event") == "usage_summary"
+                ]
+                self.assertTrue(usage_events)
+                self.assertNotIn("Reviewer", json.dumps(usage_events, ensure_ascii=False))
+
+    def test_non_review_run_does_not_reuse_previous_debug_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            orch.run(txt)
+
+            reviewed = orch.run_review(txt)
+            reported = orch.run_steps(txt, {"report"})
+
+            self.assertIsNotNone(reviewed["debug_dir"])
+            self.assertIsNone(reported["review_debug_dir"])
+
+    def test_conflict_arbitration_changes_final_debug_suggestions(self):
+        """终局仲裁会改写落选建议，同时在 Debug 中保留完整审计链。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            orch.run(txt)
+
+            def fake_review(text_segs, terms, *, chapter_index, **kwargs):
+                proposed = "绫小路" if chapter_index == 0 else "绫小路君"
+                return [
+                    {
+                        "index": 0,
+                        "_chunk_id": f"ch{chapter_index}-chunk",
+                        "type": "terminology",
+                        "detail": "译名不统一",
+                        "suggestion": f"统一为{proposed}",
+                        "consistency": {
+                            "kind": "term",
+                            "subject_source": "綾小路",
+                            "proposed_value": proposed,
+                        },
+                    }
+                ]
+
+            def fake_arbitrate(arbiter, conflict):
+                issue_ids = [issue["issue_id"] for issue in conflict["issues"]]
+                return {
+                    "conflict_id": conflict["conflict_id"],
+                    "consistency_key": conflict["consistency_key"],
+                    "issue_ids": issue_ids,
+                    "status": "suggested",
+                    "recommended_value": "绫小路",
+                    "reason": "沿用首次译名。",
+                    "supported_issue_ids": [issue_ids[0]],
+                    "rejected_issue_ids": [issue_ids[1]],
+                    "evidence_refs": [],
+                }
+
+            with (
+                patch.object(orch, "_review_chapter", side_effect=fake_review),
+                patch(
+                    "trans_novel.pipeline.orchestrator.ReviewConflictArbiter.arbitrate",
+                    new=fake_arbitrate,
+                ),
+            ):
+                result = orch.run_review(txt)
+
+            with open(
+                os.path.join(result["debug_dir"], "pre_arbitration_issues.json"),
+                encoding="utf-8",
+            ) as file:
+                before = json.load(file)
+            with open(
+                os.path.join(result["debug_dir"], "final_issues.json"),
+                encoding="utf-8",
+            ) as file:
+                final = json.load(file)
+            with open(
+                os.path.join(result["debug_dir"], "arbitration_superseded_issues.json"),
+                encoding="utf-8",
+            ) as file:
+                superseded = json.load(file)
+
+            self.assertEqual(len(before), 2)
+            self.assertEqual(len(final), 2)
+            self.assertEqual(len(superseded), 1)
+            self.assertEqual(
+                {issue["consistency"]["proposed_value"] for issue in final},
+                {"绫小路"},
+            )
+            self.assertEqual(result["review_issues"], final)
 
 
 class TestStyleAnalysis(unittest.TestCase):

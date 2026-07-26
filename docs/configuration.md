@@ -161,7 +161,6 @@ Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` pr
 ```yaml
 pipeline:
   review: false
-  autofix_severe: false
   polish: true
   backtranslate_sample: 0
   consistency_qa: false
@@ -170,26 +169,36 @@ pipeline:
   prescan_concurrency: 4
   review_concurrency: 4
   review_output_retries: 2
+  review_agent_loop: true
+  review_agent_tier: strong
+  review_agent_max_evidence_rounds: 2
+  review_conflict_arbitration: true
   glossary_scope: chapter
 ```
 
-- `review`: disabled by default; when enabled, automatically run the independent final-review stage after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
-- `autofix_severe`: during final review, retranslate severe omissions and mistranslations and adopt fixes that pass validation.
+- `review`: disabled by default; when enabled, automatically run the experimental evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
 - `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `review_concurrency`: number of contiguous final-review chunks that may run concurrently against the completed glossary; set it to `1` for sequential review.
+- `review_concurrency`: number of contiguous initial-review chunks that may run concurrently against fixed translated text and the completed glossary; set it to `1` for sequential review.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.
+- `review_agent_loop`: after the unchanged initial Reviewer finds candidates in a successful leaf chunk, let an Agent Loop selectively request evidence and confirm, dismiss, or refine those candidates.
+- `review_agent_tier`: model tier used by the evidence loop and cross-chunk arbiter. The default is `strong`.
+- `review_agent_max_evidence_rounds`: maximum selective evidence rounds per Agent Loop; the allowed range is `0` to `2`, after which the agent must return a final decision.
+- `review_conflict_arbitration`: after all chunks finish, run a recommendation-only arbiter when consistency proposals for the same term, pronoun, or fixed expression contradict one another.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
-The command-line flags `--polish`, `--no-polish`, `--qa`, and `--no-qa` override the corresponding configuration values for that run.
+The command-line flags `--polish`, `--no-polish`, `--review`, `--no-review`,
+`--qa`, and `--no-qa` override the corresponding configuration values for a
+`translate` run.
 
-Run final review independently with `trans-novel review INPUT`. `--force`
-rechecks already reviewed translations, while `--fix` or `--no-fix` overrides
-`autofix_severe` for that invocation.
+Run final review independently with `trans-novel review INPUT`. Each invocation
+reviews the complete translated book from the beginning. Review does not fix or
+persist changes to formal translation state; its complete replay trace and
+suggestions are written under `state/<book>/debug/review-<timestamp>/`.
 
 ## Output
 

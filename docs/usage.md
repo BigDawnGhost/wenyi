@@ -115,7 +115,11 @@ uv run trans-novel translate book.epub
 uv run trans-novel status book.epub
 ```
 
-Changing polishing settings does not automatically rerun translation batches that are already complete. Final review has its own persisted state and can be repeated independently with `review --force`; use a new state directory or remove the corresponding state only when you intentionally want a fresh translation.
+Changing polishing settings does not automatically rerun translation batches that
+are already complete. Experimental Review is different: every `review` invocation
+rechecks the complete translated book and creates a new timestamped debug run.
+Use a new state directory or remove the corresponding state only when you
+intentionally want a fresh translation.
 
 ## Independent stages and glossary management
 
@@ -129,4 +133,14 @@ uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
 
-`review` checks the complete translated book using the final glossary; add `--force` to recheck unchanged chapters or `--fix` to apply validated severe fixes. `qa` and `report` collect problems without modifying translated text. `assemble` rebuilds output from existing state without calling the model again.
+`review` checks the complete translated book using the final glossary. Its
+unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
+can then enter a bounded evidence loop, and contradictory cross-chunk consistency
+suggestions can receive a final recommendation. Review never fixes the body and
+does not update the manifest, chapter JSON, `report.json`, the formal event log, or
+`usage.json`. Each run writes prompts, raw responses, parsed actions, requested
+evidence, events, and suggestions to
+`state/<book>/debug/review-<timestamp>/`.
+
+`qa` and `report` collect problems without modifying translated text. `assemble`
+rebuilds output from existing state without calling the model again.

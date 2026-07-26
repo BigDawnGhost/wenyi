@@ -785,6 +785,8 @@ class TestReport(unittest.TestCase):
             self.assertEqual(s["empty_targets"], 0)  # 全部段都有译文
             self.assertGreaterEqual(s["terms"], 1)
             self.assertNotIn("low_confidence_terms", report)
+            self.assertNotIn("chapters_reviewed", s)
+            self.assertNotIn("review_issues", report)
 
 
 class TestConsistency(unittest.TestCase):

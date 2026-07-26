@@ -39,7 +39,6 @@ segment:
 # ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
 pipeline:
   review: false # 默认关闭；开启后在全书翻译完成后自动执行最终审校
-  autofix_severe: false # 最终审校后自动重译严重项（漏译/误译）；关掉仅上报
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
@@ -51,6 +50,10 @@ pipeline:
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
   review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
+  review_agent_loop: true # 初审发现候选后，使用强档按需取证并复核
+  review_agent_tier: strong # Review Agent Loop 与全书冲突仲裁使用的模型档位
+  review_agent_max_evidence_rounds: 2 # 最多两轮选择性取证，之后必须给出最终裁决
+  review_conflict_arbitration: true # 全部审校块完成后，对互相矛盾的统一建议再做终局仲裁
   glossary_scope: chapter # chapter=只注入本章出现的词条（长书省 token）；full=全量表
 
 # ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────

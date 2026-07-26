@@ -6,6 +6,7 @@ BackTranslator：把译文回译成源语言，再与原文比对，抽样发现
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,7 +49,12 @@ class Reviewer(Agent):
         return self.review_result(sources, targets, glossary_terms).issues
 
     def review_result(
-        self, sources: list[str], targets: list[str], glossary_terms=None
+        self,
+        sources: list[str],
+        targets: list[str],
+        glossary_terms=None,
+        *,
+        trace: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> ReviewResult:
         """返回带恢复元数据的问题列表；服务异常仍由调用方直接处理。"""
         if not sources:
@@ -62,21 +68,45 @@ class Reviewer(Agent):
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
-        text = self.client.complete(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            tier="cheap",
-            json_mode=True,
-            stage=type(self).__name__,
-        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        if trace:
+            trace("request", {"messages": [dict(message) for message in messages]})
+        try:
+            text = self.client.complete(
+                messages,
+                tier="cheap",
+                json_mode=True,
+                stage=type(self).__name__,
+            )
+        except Exception as error:
+            if trace:
+                trace(
+                    "error",
+                    {
+                        "error_type": type(error).__name__,
+                        "error": str(error),
+                    },
+                )
+            raise
+        if trace:
+            trace("response", {"raw_response": text})
         try:
             parsed = parse_json_result(text)
         except ValueError:
             raise ReviewOutputError("malformed_json") from None
         data = parsed.value
         repaired = parsed.repaired
+        if trace:
+            trace(
+                "parsed",
+                {
+                    "value": data,
+                    "json_repaired": repaired,
+                },
+            )
 
         if not isinstance(data, dict):
             raise ReviewOutputError("response_not_object")
@@ -97,13 +127,15 @@ class Reviewer(Agent):
             raise ReviewOutputError("issues_not_list")
         if any(not isinstance(item, dict) for item in issues):
             raise ReviewOutputError("issue_not_object")
-        if repaired:
-            self._validate_repaired_issues(issues, len(sources))
-        return ReviewResult(list(issues), repaired=repaired)
+        validated = self._validate_issues(issues, len(sources))
+        return ReviewResult(validated, repaired=repaired)
 
     @staticmethod
-    def _validate_repaired_issues(issues: list[dict], segment_count: int) -> None:
-        """修复后的内容须通过更严格的语义结构门禁，防止“修出”假结果。"""
+    def _validate_issues(
+        issues: list[dict[str, Any]],
+        segment_count: int,
+    ) -> list[dict[str, Any]]:
+        """规范并验证所有候选，防止坏字段被静默当成“无问题”。"""
         allowed_types = {
             "missing",
             "added",
@@ -130,6 +162,15 @@ class Reviewer(Agent):
                 value = item.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise ReviewOutputError(f"invalid_issue_{field}")
+        return [
+            {
+                "index": int(str(item["index"]).strip()),
+                "type": item["type"],
+                "detail": item["detail"].strip(),
+                "suggestion": item["suggestion"].strip(),
+            }
+            for item in issues
+        ]
 
 
 class BackTranslator(Agent):

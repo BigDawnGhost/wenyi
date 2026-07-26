@@ -316,11 +316,10 @@ class TestCliConfig(unittest.TestCase):
                 self.assertEqual(result.exit_code, 0, result.output)
                 validate.assert_not_called()
 
-    def test_review_command_runs_final_review_with_overrides(self):
+    def test_review_command_runs_full_debug_review(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"autofix_severe": False},
             }
         )
         captured = {}
@@ -335,6 +334,7 @@ class TestCliConfig(unittest.TestCase):
                 return {
                     "store": FakeStore(),
                     "review_issues": [{"index": 0, "type": "missing"}],
+                    "debug_dir": "/tmp/review-debug",
                 }
 
         with (
@@ -342,16 +342,13 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(
-                app,
-                ["review", "input.txt", "--force", "--fix"],
-            )
+            result = CliRunner().invoke(app, ["review", "input.txt"])
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertTrue(captured["kwargs"]["force"])
-        self.assertTrue(captured["kwargs"]["autofix"])
+        self.assertIn("progress", captured["kwargs"])
         self.assertIn("发现 1 项问题", result.output)
+        self.assertIn("/tmp/review-debug", result.output)
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
