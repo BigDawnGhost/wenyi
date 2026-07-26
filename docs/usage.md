@@ -41,14 +41,12 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, and PDF.
 - Default output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
 - `--format txt|html|markdown|pdf`: export the selected format. Every input
-  format still produces EPUB by default. The default PDF engine is WeasyPrint;
-  `--pdf-engine` may be omitted when using it. WeasyPrint provides the best
-  HTML/CSS fidelity on macOS and Linux:
+  format still produces EPUB by default. **PDF output is experimental.** The
+  default PDF engine is WeasyPrint; `--pdf-engine` may be omitted when using it.
+  Install its optional dependency with uv:
 
   ```bash
   uv sync --extra pdf-output
-  brew install weasyprint        # macOS
-  sudo apt install weasyprint    # Ubuntu/Debian
   uv run trans-novel assemble book.html --format pdf
   ```
 

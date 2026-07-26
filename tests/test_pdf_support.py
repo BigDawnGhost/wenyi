@@ -161,6 +161,57 @@ class TestPdfIngest(unittest.TestCase):
 
         self.assertEqual(store.run_dir, os.path.join(state_dir, "sample"))
 
+    def test_pdf_generated_epub_packages_images_from_converted_html(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = os.path.join(directory, "sample.pdf")
+            with open(pdf_path, "wb") as file:
+                file.write(b"not accessed when cached HTML exists")
+            cache_dir = os.path.join(directory, "state", "sample", "source")
+            image_dir = os.path.join(cache_dir, "images")
+            os.makedirs(image_dir)
+            with open(os.path.join(image_dir, "chart.svg"), "w", encoding="utf-8") as file:
+                file.write(
+                    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+                )
+            cached_html = os.path.join(cache_dir, "converted.html")
+            with open(cached_html, "w", encoding="utf-8") as file:
+                file.write(
+                    """<html><body><h1>Chapter</h1>
+                    <p><img src="images/chart.svg"/>Before text.</p>
+                    </body></html>"""
+                )
+            document = load_document(
+                pdf_path,
+                "en",
+                "zh",
+                cache_dir=cache_dir,
+            )
+            store = RunStore(os.path.join(directory, "run"))
+            _initialize_test_store(store, document)
+            _set_test_targets(store)
+            output_path = os.path.join(directory, "translated.epub")
+
+            assemble(
+                store,
+                pdf_path,
+                out_path=output_path,
+                out_format="epub",
+                about_page=False,
+            )
+
+            with zipfile.ZipFile(output_path) as archive:
+                names = archive.namelist()
+                chapter_name = next(name for name in names if name.endswith("/ch0.xhtml"))
+                chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
+                image = chapter.find("img")
+                self.assertIsNotNone(image)
+                assert image is not None
+                src = image.get("src")
+                self.assertIsInstance(src, str)
+                assert isinstance(src, str)
+                asset_name = next(name for name in names if name.endswith(src))
+                self.assertIn(b"<svg", archive.read(asset_name))
+
 
 class TestHtmlAndMarkdownIntegration(unittest.TestCase):
     def test_html_images_survive_translation_and_resources_are_copied(self):

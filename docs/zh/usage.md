@@ -40,13 +40,11 @@ setx DEEPSEEK_API_KEY "sk-..."
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
 - 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
 - `--format txt|html|markdown|pdf`：改为导出指定格式；所有输入默认仍生成
-  EPUB。默认 PDF 引擎为 WeasyPrint，在 macOS 与 Linux 上能获得最佳
-  HTML/CSS 还原效果。使用默认引擎时无需填写 `--pdf-engine`：
+  EPUB。**PDF 导出目前仍属于实验性支持。**默认 PDF 引擎为 WeasyPrint，
+  使用时无需填写 `--pdf-engine`，通过 uv 安装可选依赖即可：
 
   ```bash
   uv sync --extra pdf-output
-  brew install weasyprint        # macOS
-  sudo apt install weasyprint    # Ubuntu/Debian
   uv run trans-novel assemble book.html --format pdf
   ```
 

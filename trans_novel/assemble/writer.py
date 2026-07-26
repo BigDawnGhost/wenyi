@@ -261,6 +261,16 @@ def _materialize_html_resources(
     return rewritten
 
 
+def _template_resource_source(manifest: dict, source_path: str) -> str:
+    """Return the HTML file whose directory resolves template media references."""
+    raw_meta = manifest.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    converted_html_path = meta.get("converted_html_path")
+    if manifest.get("fmt") == "pdf" and isinstance(converted_html_path, str):
+        return converted_html_path
+    return source_path
+
+
 def _default_out(
     source_path: str,
     out_format: str,
@@ -1076,13 +1086,9 @@ def _assemble_html(
 {"".join(body_parts)}
 </body>
 </html>"""
-    resource_source = source_path
-    converted_html_path = meta.get("converted_html_path")
-    if m.get("fmt") == "pdf" and isinstance(converted_html_path, str):
-        resource_source = converted_html_path
     full_html = _materialize_html_resources(
         full_html,
-        source_path=resource_source,
+        source_path=_template_resource_source(m, source_path),
         out_path=out_path,
     )
 
@@ -1115,14 +1121,8 @@ def _assemble_pdf_weasyprint(
     try:
         HTML = getattr(importlib.import_module("weasyprint"), "HTML")
     except (ImportError, OSError, AttributeError) as error:
-        platform_hint = (
-            "macOS：brew install weasyprint"
-            if sys.platform == "darwin"
-            else "Linux：使用发行版包管理器安装 WeasyPrint/Pango，例如 sudo apt install weasyprint"
-        )
         raise ImportError(
-            "PDF 输出需要 WeasyPrint 及其系统排版库。"
-            "请先运行 uv sync --extra pdf-output；" + platform_hint
+            "实验性 PDF 输出需要 WeasyPrint，请运行：uv sync --extra pdf-output"
         ) from error
 
     with tempfile.TemporaryDirectory(prefix="trans-novel-pdf-") as directory:
@@ -1671,6 +1671,7 @@ def _build_epub_from_html_templates(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
+    resource_source = _template_resource_source(manifest, source_path)
 
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")
@@ -1691,7 +1692,7 @@ def _build_epub_from_html_templates(
         )
         rendered, assets = _package_html_resources(
             rendered,
-            source_dir=os.path.dirname(os.path.abspath(source_path)),
+            source_dir=os.path.dirname(os.path.abspath(resource_source)),
             href_prefix="assets",
         )
         packaged_assets.update(assets)
@@ -1795,7 +1796,7 @@ def assemble(
             order=order,
             preserve_source_style=preserve_source_style,
         )
-    elif m["fmt"] == "html":
+    elif m["fmt"] in {"html", "pdf"}:
         result = _build_epub_from_html_templates(
             store,
             source_path,
@@ -1805,7 +1806,7 @@ def assemble(
             preserve_source_style=preserve_source_style,
         )
     else:
-        # fb2 / text / html → 从章节数据生成规范 EPUB
+        # FB2 / text → 从章节数据生成规范 EPUB
         result = _build_epub_from_chapters(
             store,
             source_path,
