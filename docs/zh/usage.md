@@ -39,12 +39,49 @@ setx DEEPSEEK_API_KEY "sk-..."
 
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
 - 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
-- `--format txt|html|markdown`：改为导出指定格式；所有输入默认仍生成 EPUB。
-- PDF 首次读取需设置 `MINERU_API_KEY`。转换结果保存为 `state/<书名>/source/converted.html`，后续运行会直接复用，也可人工修正后再续跑。
+- `--format txt|html|markdown|pdf`：改为导出指定格式；所有输入默认仍生成 EPUB。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
 - 状态文件位于 `state/`，包含章节中间结果、术语 SQLite 库和报告。
+
+### 实验性 PDF 支持
+
+PDF 输入和 PDF 导出目前均属于实验性支持。
+
+#### PDF 输入
+
+首次读取 PDF 需设置 `MINERU_API_KEY`：
+
+```bash
+export MINERU_API_KEY=...
+uv run trans-novel translate book.pdf
+```
+
+MinerU 转换生成的 HTML 会保存到 `state/<书名>/source/converted.html`。
+后续运行会直接复用该文件，也可人工修正后再续跑。
+
+#### PDF 导出
+
+默认 PDF 引擎为 WeasyPrint。安装对应的可选依赖后，无需指定
+`--pdf-engine`：
+
+```bash
+uv sync --extra pdf-output
+uv run trans-novel assemble book.html --format pdf
+```
+
+如需不依赖系统排版库的跨平台轻量引擎，可使用 `fpdf2`：
+
+```bash
+uv sync --extra pdf-output-lite
+uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
+```
+
+`fpdf2` 可处理基础排版和图片，但只支持有限的 HTML/CSS；与文字混排的图片
+会作为独立区块输出。它会查找系统中的中文字体；如果未找到，请用
+`TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
+Windows。
 
 ## 常用命令
 
