@@ -76,9 +76,7 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
         idx = 0
         # 标题作为 heading segment（便于翻译并回填）
         if explicit_title:
-            segments.append(
-                Segment(index=idx, source=explicit_title, kind=KIND_HEADING)
-            )
+            segments.append(Segment(index=idx, source=explicit_title, kind=KIND_HEADING))
             idx += 1
         body = "\n".join(body_lines)
         for para in _split_paragraphs(body):

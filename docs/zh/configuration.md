@@ -89,8 +89,26 @@ llm:
         thinking: false
 ```
 
-`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取
-`OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+
+### Google Gemini
+
+通过官方 `google-genai` SDK 原生支持 Google Gemini 模型，设置 `provider: gemini`（或 `provider: google`）。默认读取 `GEMINI_API_KEY`（或兼容 `GOOGLE_API_KEY`）环境变量：
+
+```yaml
+llm:
+  provider: gemini
+  api_key_env: GEMINI_API_KEY
+  tiers:
+    strong:
+      model: gemini-3.6-flash
+    cheap:
+      model: gemini-3.6-flash
+    fast:
+      model: gemini-3.6-flash
+```
+
+Gemini 专属配置还支持针对思考模型的 `thinking_level`（如 `low` / `high`）与 `thinking_budget` 参数。
 
 ### 其他 OpenAI 兼容端点
 
@@ -164,6 +182,7 @@ pipeline:
   book_understanding: true
   prescan_concurrency: 4
   review_concurrency: 4
+  review_output_retries: 2
   glossary_scope: chapter
 ```
 
@@ -176,6 +195,7 @@ pipeline:
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
 - `review_concurrency`：使用最终术语库审校连续分块的并发数；设为 `1` 时串行审校。
+- `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
 命令行的 `--polish`、`--no-polish`、`--qa`、`--no-qa` 会覆盖对应配置。

@@ -10,9 +10,9 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import os
 import re
+from copy import deepcopy
 
 from .epub_reader import read_epub
 from .fb2_reader import read_fb2
@@ -135,9 +135,7 @@ def load_document(
             cache_dir=cache_dir,
         )
     else:
-        raise ValueError(
-            f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .pdf）"
-        )
+        raise ValueError(f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .pdf）")
 
     if split_segments and split_segments > 0:
         split_long_segments(doc.chapters, split_segments)

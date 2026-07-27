@@ -32,6 +32,7 @@ from wenyi_core.llm.usage import (
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.storage import FileStorage
+
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
 
@@ -188,9 +189,7 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         ]
         msgs = [{"role": "user", "content": "hi"}]
         with patch.object(c, "_ensure_client", return_value=_ClientStub(responses)):
-            self.assertEqual(
-                c.complete(msgs, tier="strong", stage="Translator"), "strong-out"
-            )
+            self.assertEqual(c.complete(msgs, tier="strong", stage="Translator"), "strong-out")
             self.assertEqual(c.complete(msgs, tier="cheap"), "cheap-out")
 
         summary = c.usage_summary()
@@ -417,13 +416,9 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
     def test_delta_and_merge_do_not_double_count(self):
         client = FakeClient()
-        self._record(
-            client, "strong", prompt=100, completion=20, stage="Translator"
-        )
+        self._record(client, "strong", prompt=100, completion=20, stage="Translator")
         first = client.usage_summary()
-        self._record(
-            client, "strong", prompt=50, completion=10, stage="Translator"
-        )
+        self._record(client, "strong", prompt=50, completion=10, stage="Translator")
         self._record(client, "fast", prompt=30, completion=5, stage="Synopsizer")
         second = client.usage_summary()
 
@@ -493,7 +488,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
             initial_client = FakeClient(handler=routing_handler)
             initial = Orchestrator(config, client=initial_client)
-            store = initial.run_steps(source, {"translate"})["storage"]
+            initial.run_steps(source, {"translate"})
             self._record(initial_client, "strong", prompt=100, completion=20)
             initial._flush_usage(scope="translate")
 

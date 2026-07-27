@@ -50,5 +50,4 @@ class ConsistencyChecker(Agent):
             + digests
             + '\n\n请输出 JSON：{"issues":[...]}。'
         )
-        return self.dict_items(
-            self._ask_json(system, user, tier="cheap", key="issues", default=[]))
+        return self.dict_items(self._ask_json(system, user, tier="cheap", key="issues", default=[]))

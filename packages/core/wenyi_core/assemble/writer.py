@@ -16,6 +16,7 @@ from html import escape
 
 from bs4 import BeautifulSoup, UnicodeDammit
 from bs4.element import Tag
+from bs4.exceptions import ParserRejectedMarkup
 
 from ..ingest.epub_toc import nav_root_list, nav_toc_scopes
 from ..ingest.fb2_reader import read_fb2_binaries
@@ -28,10 +29,16 @@ _HTML_EXTS = (".xhtml", ".html", ".htm")
 _VERTICAL_MARKERS = (
     re.compile(
         rb"(?:-epub-|-webkit-)?writing-mode\s*:\s*(?:vertical-rl|vertical-lr|tb-rl)",
-        re.I,
+        re.IGNORECASE,
     ),
-    re.compile(rb"page-progression-direction\s*=\s*['\"]rtl['\"]", re.I),
-    re.compile(rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b", re.I),
+    re.compile(
+        rb"page-progression-direction\s*=\s*['\"]rtl['\"]",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b",
+        re.IGNORECASE,
+    ),
 )
 _HORIZONTAL_OVERRIDE_ID = "trans-novel-horizontal-override"
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
@@ -44,6 +51,7 @@ _IMAGE_EXTENSION_BY_TYPE = {
 }
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
+_LINE_WRAPPER_ATTR = "data-tn-line"
 _XML_ENCODING = re.compile(
     r"(<\?xml[^>]*\bencoding\s*=\s*)(['\"])[^'\"]+\2",
     re.IGNORECASE,
@@ -116,6 +124,14 @@ def _ch_title(c: dict) -> str:
     return (c.get("title_translated") or c.get("title") or "").strip()
 
 
+def _export_book_title(title: str | None) -> str:
+    """导出用书名：原书名后追加 -wenyi，不翻译书名本身。"""
+    base = (title or "").strip() or "translated"
+    if base.endswith("-wenyi"):
+        return base
+    return f"{base}-wenyi"
+
+
 def _seg_text(seg) -> str:
     """返回有效译文；译文为空时回退到源文以避免丢内容。"""
     return seg.target if (seg.target and seg.target.strip()) else seg.source
@@ -152,8 +168,23 @@ def _bilingual_source(source: str, target: str) -> str:
     return source if (source.strip() and source != target) else ""
 
 
-def _replace_block_content(el: Tag, text: str, meta: dict[str, object]) -> None:
-    """用纯译文替换块内容，并按解析元数据恢复图片等非文本节点。"""
+def _append_text_with_breaks(soup: BeautifulSoup, element: Tag, text: str) -> None:
+    """向元素追加文本，并把译文换行转换为 XHTML ``br``。"""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for index, line in enumerate(lines):
+        if line:
+            element.append(line)
+        if index + 1 < len(lines):
+            element.append(soup.new_tag("br"))
+
+
+def _replace_block_content(
+    soup: BeautifulSoup,
+    el: Tag,
+    text: str,
+    meta: dict[str, object],
+) -> None:
+    """用译文替换块内容，按元数据恢复图片，并按译文换行生成 ``br``。"""
     raw_inline = meta.get(_INLINE_META_KEY)
     inline = raw_inline if isinstance(raw_inline, dict) else {}
     raw_nodes = inline.get("nodes")
@@ -188,11 +219,11 @@ def _replace_block_content(el: Tag, text: str, meta: dict[str, object]) -> None:
     for target_offset, _order, node in sorted(restored):
         target_offset = min(max(target_offset, cursor), len(text))
         if target_offset > cursor:
-            el.append(text[cursor:target_offset])
+            _append_text_with_breaks(soup, el, text[cursor:target_offset])
         el.append(node)
         cursor = target_offset
     if cursor < len(text):
-        el.append(text[cursor:])
+        _append_text_with_breaks(soup, el, text[cursor:])
 
 
 # ── 纯文本 ──────────────────────────────────────────────────────────────────
@@ -210,11 +241,7 @@ def _assemble_text(
         ch = store.load_chapter(c["index"])
         blocks: list[str] = []
         for kind, target, source in _merged_paragraphs(ch):
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 blocks.append(target)
             elif order == "source_first":
@@ -246,11 +273,7 @@ def _assemble_markdown(
         for kind, target, source in _merged_paragraphs(ch):
             if kind == KIND_HEADING:
                 target = heading_prefix + target
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 blocks.append(target)
             elif order == "source_first":
@@ -303,12 +326,13 @@ def _render_segments_html(
         el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
             continue
+        line_wrapper = el.has_attr(_LINE_WRAPPER_ATTR)
         render_meta = (
             render_meta_by_anchor.get(anchor, {})
             if render_meta_by_anchor is not None
             else stored_meta_by_anchor.get(anchor, {})
         )
-        _replace_block_content(el, text, render_meta)
+        _replace_block_content(soup, el, text, render_meta)
         del el["data-tn-id"]
         if not bilingual or kind_by_anchor.get(anchor) == KIND_HEADING:
             continue
@@ -319,7 +343,7 @@ def _render_segments_html(
         # 避免生成 <ul><li>...</li><p>...</p></ul> 之类的非法列表结构，
         # 同时保留引用块的语义和样式。
         nested_source = el.name in {"li", "blockquote"}
-        src_el = soup.new_tag("div" if nested_source else "p")
+        src_el = soup.new_tag("span" if line_wrapper else "div" if nested_source else "p")
         source_classes = ["tn-source"]
         if preserve_source_style:
             original_classes = el.get("class")
@@ -334,7 +358,13 @@ def _render_segments_html(
             source_classes.append("ibooks-dark-theme-use-custom-text-color")
         src_el["class"] = " ".join(source_classes)
         src_el.append(src)
-        if nested_source and order == "source_first":
+        if line_wrapper and order == "source_first":
+            el.insert_before(src_el)
+            src_el.insert_after(soup.new_tag("br"))
+        elif line_wrapper:
+            el.insert_after(src_el)
+            el.insert_after(soup.new_tag("br"))
+        elif nested_source and order == "source_first":
             el.insert(0, src_el)
         elif nested_source:
             el.append(src_el)
@@ -342,6 +372,9 @@ def _render_segments_html(
             el.insert_before(src_el)
         else:
             el.insert_after(src_el)
+    # br 拆行包装只用于提供独立回填锚点；完成后去掉 span，恢复干净 DOM。
+    for wrapper in list(soup.find_all(True, attrs={_LINE_WRAPPER_ATTR: True})):
+        wrapper.unwrap()
     return str(soup)
 
 
@@ -383,7 +416,7 @@ def _rewrite_opf_metadata(
     lang: str,
     force_horizontal: bool,
 ) -> bytes:
-    """更新 OPF 元数据：书名可选改写，译后语言改为目标语言，竖排源书改横排方向。"""
+    """更新 OPF 元数据：书名改为原名-wenyi，译后语言改为目标语言，竖排源书改横排方向。"""
     try:
         soup = BeautifulSoup(data, "xml")
         if book_title:
@@ -406,7 +439,7 @@ def _rewrite_opf_metadata(
             for spine in soup.find_all("spine"):
                 spine["page-progression-direction"] = "ltr"
         return soup.encode()
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
 
 
@@ -418,8 +451,15 @@ def _epub_looks_vertical(zf: zipfile.ZipFile) -> bool:
             continue
         try:
             data = zf.read(info.filename)
-        except Exception:
-            continue
+        except (
+            EOFError,
+            KeyError,
+            NotImplementedError,
+            OSError,
+            RuntimeError,
+            zipfile.BadZipFile,
+        ):
+            data = b""
         if any(marker.search(data) for marker in _VERTICAL_MARKERS):
             return True
     return False
@@ -483,7 +523,7 @@ def _rewrite_html_document(
             head.append(style)
         output = _XML_ENCODING.sub(r'\1"utf-8"', str(soup))
         return output.encode("utf-8")
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data if isinstance(data, bytes) else data.encode("utf-8")
 
 
@@ -578,9 +618,7 @@ def _rewrite_toc(
             else {}
         )
         legacy_titles = (
-            entries_or_legacy_titles
-            if isinstance(entries_or_legacy_titles, dict)
-            else {}
+            entries_or_legacy_titles if isinstance(entries_or_legacy_titles, dict) else {}
         )
         if is_ncx:
             soup = BeautifulSoup(data, "xml")
@@ -616,17 +654,12 @@ def _rewrite_toc(
                 node
                 for node in soup.find_all("nav")
                 if "toc"
-                in (
-                    _attr_str(node.get("epub:type"))
-                    or _attr_str(node.get("type"))
-                ).split()
+                in (_attr_str(node.get("epub:type")) or _attr_str(node.get("type"))).split()
             ]
             scopes: list[Tag | BeautifulSoup] = toc_navs or [soup]
             for scope in scopes:
                 for label in scope.find_all("a", href=True):
-                    title = legacy_titles.get(
-                        _base_no_frag(_attr_str(label.get("href")))
-                    )
+                    title = legacy_titles.get(_base_no_frag(_attr_str(label.get("href"))))
                     if title:
                         label.clear()
                         label.append(title)
@@ -644,7 +677,7 @@ def _rewrite_toc(
                 label.clear()
                 label.append(title)
         return str(soup).encode("utf-8")
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
 
 
@@ -702,9 +735,7 @@ def _render_epub_resources(
     declared_hrefs = {href for _index, href in resources}
     undeclared = sorted(set(grouped) - declared_hrefs)
     if undeclared:
-        raise ValueError(
-            "EPUB 翻译状态引用了未登记的正文资源：" + ", ".join(undeclared[:3])
-        )
+        raise ValueError("EPUB 翻译状态引用了未登记的正文资源：" + ", ".join(undeclared[:3]))
 
     # 延迟导入避免 reader -> models / writer 模块加载期间形成不必要的依赖环。
     from ..ingest.epub_reader import annotate_epub_resource
@@ -736,25 +767,17 @@ def _render_epub_resources(
         )
 
         # 状态和源书不匹配时不能静默漏回填；这种情况通常表示用户替换了原书。
-        available_anchors = {
-            segment.anchor for segment in annotated_segments if segment.anchor
-        }
+        available_anchors = {segment.anchor for segment in annotated_segments if segment.anchor}
         required_anchors = {
-            segment.anchor
-            for segment in segments
-            if segment.anchor and not segment.cont
+            segment.anchor for segment in segments if segment.anchor and not segment.cont
         }
         missing = sorted(required_anchors - available_anchors)
         if missing:
             preview = ", ".join(missing[:3])
-            raise ValueError(
-                f"EPUB 正文与翻译状态不匹配：{href} 缺少回填锚点 {preview}"
-            )
+            raise ValueError(f"EPUB 正文与翻译状态不匹配：{href} 缺少回填锚点 {preview}")
 
         fresh_by_anchor = {
-            segment.anchor: segment
-            for segment in annotated_segments
-            if segment.anchor
+            segment.anchor: segment for segment in annotated_segments if segment.anchor
         }
         stored_sources: dict[str, str] = {}
         current_anchor: str | None = None
@@ -773,13 +796,8 @@ def _render_epub_resources(
         ]
         if changed_anchors:
             preview = ", ".join(changed_anchors[:3])
-            raise ValueError(
-                f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）"
-            )
-        fresh_meta_by_anchor = {
-            anchor: segment.meta
-            for anchor, segment in fresh_by_anchor.items()
-        }
+            raise ValueError(f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）")
+        fresh_meta_by_anchor = {anchor: segment.meta for anchor, segment in fresh_by_anchor.items()}
         rendered[href] = _render_segments_html(
             template,
             segments,
@@ -808,7 +826,7 @@ def _assemble_html(
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
     # 始终确保 charset 声明，否则浏览器无法正确识别编码导致中文乱码
-    if 'charset' not in head_html.replace(' ', '').lower():
+    if "charset" not in head_html.replace(" ", "").lower():
         head_html = '<meta charset="utf-8"/>\n' + head_html
     if bilingual and not preserve_source_style and _BILINGUAL_STYLE_ID not in head_html:
         head_html += f'<style id="{_BILINGUAL_STYLE_ID}">\n{_BILINGUAL_CSS}</style>'
@@ -840,7 +858,7 @@ def _assemble_html(
             )
         rendered_epub = bool(body_parts)
 
-    for c in ([] if rendered_epub else m["chapters"]):
+    for c in [] if rendered_epub else m["chapters"]:
         ch = store.load_chapter(c["index"])
         if ch.template:
             # 复用 EPUB 的章节渲染（替换 data-tn-id → 译文，处理 cont 续段与双语）
@@ -862,11 +880,7 @@ def _assemble_html(
                 target_html = f"<h{level}>{escape(target)}</h{level}>"
             else:
                 target_html = f"<p>{escape(target)}</p>"
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 body_parts.append(target_html)
                 continue
@@ -914,9 +928,7 @@ def _assemble_epub(
     raw_toc_paths = meta.get("toc_paths")
     toc_paths: set[str] = set()
     if isinstance(raw_toc_paths, list):
-        toc_paths.update(
-            path for path in raw_toc_paths if isinstance(path, str) and path
-        )
+        toc_paths.update(path for path in raw_toc_paths if isinstance(path, str) and path)
     for entry in toc_entries:
         toc_path = entry.get("toc_path")
         if isinstance(toc_path, str) and toc_path:
@@ -945,7 +957,8 @@ def _assemble_epub(
         title = _translated_toc_title(entry)
         if base and title:
             legacy_titles[base] = title
-    book_title = ""
+    source_title = m.get("title", "") if isinstance(m.get("title"), str) else ""
+    book_title = _export_book_title(source_title)
 
     with zipfile.ZipFile(source_path, "r") as zin:
         force_horizontal = _epub_looks_vertical(zin)
@@ -953,7 +966,8 @@ def _assemble_epub(
             zin,
             chapters,
             meta,
-            book_title=m.get("title", "") if isinstance(m.get("title"), str) else "",
+            # 回填标注仍用原书名，避免把 -wenyi 后缀误判成正文标题。
+            book_title=source_title,
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
@@ -1002,11 +1016,7 @@ def _assemble_epub(
                         ),
                     )
                 elif low.endswith(_HTML_EXTS):
-                    html_data = (
-                        rendered[name].encode("utf-8")
-                        if name in rendered
-                        else data
-                    )
+                    html_data = rendered[name].encode("utf-8") if name in rendered else data
                     if name in toc_paths or _is_nav(html_data):
                         exact = _indexed_toc_entries(toc_entries, name)
                         toc_source = toc_entries if exact else legacy_titles
@@ -1035,9 +1045,7 @@ def _is_nav(data: bytes) -> bool:
     return b"epub:type" in data and b"toc" in data
 
 
-def _inject_bilingual_style(
-    out_path: str, chapter_filenames: set[str], lang: str
-) -> None:
+def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: str) -> None:
     """ebooklib 写盘时按模板重建每章 <head>，内联样式会被丢弃；这里对写好的 zip
     做一次后处理，把双语样式补回各章节 head（复用 _rewrite_html_document）。"""
     with zipfile.ZipFile(out_path, "r") as zin:
@@ -1075,7 +1083,9 @@ def _build_epub_from_chapters(
     from ebooklib import epub
 
     m = store.load_manifest()
-    title = m.get("title", "translated")
+    title = _export_book_title(
+        m.get("title", "translated") if isinstance(m.get("title"), str) else "translated"
+    )
     lang = _epub_lang(m.get("target_lang", "zh"))
 
     book = epub.EpubBook()
@@ -1093,14 +1103,10 @@ def _build_epub_from_chapters(
         binaries = read_fb2_binaries(source_path)
         cover_id = manifest_meta.get("fb2_cover_image")
         used_hrefs: set[str] = set()
-        for index, (resource_id, (content_type, payload)) in enumerate(
-            binaries.items()
-        ):
+        for index, (resource_id, (content_type, payload)) in enumerate(binaries.items()):
             stem, extension = os.path.splitext(os.path.basename(resource_id))
             safe_stem = _sanitize_filename(stem, f"image-{index}")
-            extension = extension.lower() or _IMAGE_EXTENSION_BY_TYPE.get(
-                content_type, ".bin"
-            )
+            extension = extension.lower() or _IMAGE_EXTENSION_BY_TYPE.get(content_type, ".bin")
             href = f"images/{safe_stem}{extension}"
             suffix = 2
             while href in used_hrefs:
@@ -1141,17 +1147,12 @@ def _build_epub_from_chapters(
         paragraphs = _merged_paragraphs(ch)
         for position, (kind, target, source) in enumerate(paragraphs):
             body_parts.extend(
-                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" '
-                'alt=""/></div>'
+                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
                 for href in images_by_position.get(position, [])
             )
             tag = "h1" if kind == KIND_HEADING else "p"
             target_html = f"<{tag}>{escape(target)}</{tag}>"
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 body_parts.append(target_html)
                 continue
@@ -1166,8 +1167,7 @@ def _build_epub_from_chapters(
             else:
                 body_parts.extend((target_html, src_html))
         body_parts.extend(
-            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" '
-            'alt=""/></div>'
+            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
             for href in images_by_position.get(len(paragraphs), [])
         )
         fname = f"ch{c['index']}.xhtml"
@@ -1225,9 +1225,7 @@ def assemble(
         _ensure_parent_dir(out_path)
         return _assemble_text(store, out_path, bilingual=bilingual, order=order)
     if out_format == "html":
-        out_path = out_path or _default_out(
-            source_path, "html", "", bilingual=bilingual
-        )
+        out_path = out_path or _default_out(source_path, "html", "", bilingual=bilingual)
         _ensure_parent_dir(out_path)
         return _assemble_html(
             store,
@@ -1238,9 +1236,7 @@ def assemble(
             preserve_source_style=preserve_source_style,
         )
     if out_format == "markdown":
-        out_path = out_path or _default_out(
-            source_path, "markdown", "", bilingual=bilingual
-        )
+        out_path = out_path or _default_out(source_path, "markdown", "", bilingual=bilingual)
         _ensure_parent_dir(out_path)
         return _assemble_markdown(store, out_path, bilingual=bilingual, order=order)
     out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)

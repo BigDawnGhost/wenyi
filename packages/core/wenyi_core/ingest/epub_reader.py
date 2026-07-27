@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -39,12 +40,12 @@ _BLOCK_TAGS = {
     "dt",
     "dd",
 }
+_BLOCK_CANDIDATE_TAGS = _BLOCK_TAGS | {"div"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
 _ATOMIC_INLINE_TAGS = {
     "audio",
-    "br",
     "canvas",
     "embed",
     "hr",
@@ -55,6 +56,8 @@ _ATOMIC_INLINE_TAGS = {
     "svg",
     "video",
 }
+
+_LINE_WRAPPER_ATTR = "data-tn-line"
 
 
 def _preserved_inline_roots(block: Tag) -> list[Tag]:
@@ -88,32 +91,46 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
 
 
 def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
-    """提取可翻译文本，并给内联非文本节点写入稳定 ID 和位置元数据。"""
+    """提取可翻译文本，并给内联非文本节点写入稳定 ID 和位置元数据。
+
+    XHTML 源码中的排版空白按浏览器规则折叠。``br`` 已在选择翻译
+    目标时拆成独立视觉行，因此不会进入单个 Segment 的文本。
+    """
     roots = _preserved_inline_roots(block)
     root_ids = {id(node) for node in roots}
     text_parts: list[str] = []
-    node_offsets: list[tuple[Tag, int]] = []
-    raw_length = 0
+    preserved_nodes: list[tuple[str, Tag]] = []
 
     def walk(parent: Tag) -> None:
         """递归收集正文文本节点，并记录需保留节点的源文偏移。"""
-        nonlocal raw_length
         for child in parent.children:
             if isinstance(child, Tag):
-                if child.name == "rt":
-                    # 振假名是注音而非正文；保留在模板中，不送给模型翻译。
+                if child.name in {"rt", "rp"}:
+                    # 振假名与不支持 ruby 时显示的备用括号都不是正文；
+                    # 保留在模板中，但不要把 ``漢字（かんじ）`` 拆成
+                    # 可翻译源文里的 ``漢字（）``。
                     continue
                 if id(child) in root_ids:
-                    node_offsets.append((child, raw_length))
+                    marker = f"\ue000tn-inline-{len(preserved_nodes)}\ue001"
+                    preserved_nodes.append((marker, child))
+                    text_parts.append(marker)
                 else:
                     walk(child)
             elif isinstance(child, NavigableString) and not isinstance(child, Comment):
-                value = str(child)
-                text_parts.append(value)
-                raw_length += len(value)
+                text_parts.append(str(child))
 
     walk(block)
-    raw_text = "".join(text_parts)
+    # 普通源码换行只是 HTML 排版空白，按浏览器规则折叠。
+    raw_text = re.sub(r"[ \t\r\n\f\v]+", " ", "".join(text_parts))
+
+    node_offsets: list[tuple[Tag, int]] = []
+    for marker, node in preserved_nodes:
+        offset = raw_text.find(marker)
+        if offset < 0:  # pragma: no cover - marker 由本函数写入
+            continue
+        raw_text = raw_text[:offset] + raw_text[offset + len(marker) :]
+        node_offsets.append((node, offset))
+
     text = raw_text.strip()
     if not text:
         return "", {}
@@ -124,13 +141,7 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
     for index, (node, raw_offset) in enumerate(node_offsets):
         inline_id = f"{anchor}_inline_{index}"
         offset = min(max(raw_offset - leading, 0), source_length)
-        placement = (
-            "before"
-            if offset == 0
-            else "after"
-            if offset == source_length
-            else "inline"
-        )
+        placement = "before" if offset == 0 else "after" if offset == source_length else "inline"
         node[_INLINE_ID_ATTR] = inline_id
         nodes.append(
             {
@@ -149,6 +160,80 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
             "nodes": nodes,
         }
     return text, meta
+
+
+def _has_meaningful_descendant_block(element: Tag) -> bool:
+    """块内若已有更细粒度的正文块，则外层只作为布局容器保留。"""
+    return any(
+        descendant.get_text(strip=True) for descendant in element.find_all(_BLOCK_CANDIDATE_TAGS)
+    )
+
+
+def _list_item_link_target(element: Tag) -> Tag | None:
+    """返回列表项自己的直接链接标签，避免回填时清空 ``li`` 和子列表。"""
+    link = element.find("a", recursive=False)
+    return link if isinstance(link, Tag) and link.get_text(strip=True) else None
+
+
+def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
+    """把直接 ``br`` 分隔的可见行包装为独立翻译目标，原 ``br`` 不动。"""
+    children = list(element.children)
+    if not any(isinstance(child, Tag) and child.name == "br" for child in children):
+        return [element]
+
+    runs: list[list[Tag | NavigableString]] = [[]]
+    for child in children:
+        if isinstance(child, Tag) and child.name == "br":
+            runs.append([])
+        elif isinstance(child, (Tag, NavigableString)):
+            runs[-1].append(child)
+
+    targets: list[Tag] = []
+    for run in runs:
+        has_text = any(
+            node.get_text(strip=True)
+            if isinstance(node, Tag)
+            else not isinstance(node, Comment) and bool(str(node).strip())
+            for node in run
+        )
+        if not has_text:
+            continue
+        wrapper = soup.new_tag("span")
+        wrapper[_LINE_WRAPPER_ATTR] = "true"
+        run[0].insert_before(wrapper)
+        for node in run:
+            wrapper.append(node.extract())
+        targets.append(wrapper)
+    return targets
+
+
+def _translation_targets(
+    soup: BeautifulSoup,
+    *,
+    skip_navigation: bool,
+) -> list[Tag]:
+    """按文档顺序选择可安全替换内容的最细粒度 EPUB 节点。
+
+    含子正文块的 ``div``/``blockquote`` 等仅作为容器保留；``li`` 的
+    直接链接文字单独成为翻译目标，从而同时保留列表层级和 ``href``。
+    """
+    targets: list[Tag] = []
+    for element in soup.find_all(_BLOCK_CANDIDATE_TAGS):
+        if skip_navigation and _inside_navigation_list(element):
+            continue
+
+        has_descendant_block = _has_meaningful_descendant_block(element)
+        if element.name == "li":
+            link = _list_item_link_target(element)
+            if link is not None:
+                targets.extend(_split_direct_break_lines(link, soup))
+            if link is not None or has_descendant_block:
+                continue
+
+        if has_descendant_block:
+            continue
+        targets.extend(_split_direct_break_lines(element, soup))
+    return targets
 
 
 def _find_opf_path(zf: zipfile.ZipFile) -> str:
@@ -220,9 +305,7 @@ def _parse_opf(zf: zipfile.ZipFile, opf_path: str) -> tuple[str, list[str], list
     # EPUB3 NAV 是主目录；没有 NAV 时优先使用 spine.toc 指定的
     # EPUB2 NCX。其它目录仍保留供标题回填，但不与主目录混合切章。
     nav_ids = [
-        item_id
-        for item_id, (_href, _media, props) in manifest.items()
-        if "nav" in props.split()
+        item_id for item_id, (_href, _media, props) in manifest.items() if "nav" in props.split()
     ]
     ncx_ids = [
         item_id
@@ -250,7 +333,9 @@ def _looks_like_internal_title(title: str, href: str, book_title: str = "") -> b
     """判断 XHTML title 是否只是内部文件名或重复的全书书名。"""
     base = posixpath.basename(href).rsplit(".", 1)[0]
     stripped = title.strip()
-    return (bool(base) and stripped == base) or (bool(book_title) and stripped == book_title.strip())
+    return (bool(base) and stripped == base) or (
+        bool(book_title) and stripped == book_title.strip()
+    )
 
 
 def annotate_epub_resource(
@@ -268,25 +353,17 @@ def annotate_epub_resource(
     """
     soup = BeautifulSoup(html, "html.parser")
     segments: list[Segment] = []
+    first_heading: Tag | None = None
+    heading_title_parts: list[str] = []
     idx = 0
-    for el in soup.find_all(_BLOCK_TAGS):
-        if skip_navigation and _inside_navigation_list(el):
-            # NAV 可以同时是 spine 中的可见目录页。目录 li 中嵌套着
-            # a/ol，若当普通段落回填会清空整棵目录结构；nav 内独立的
-            # “Contents”等 heading/p 仍可安全作为普通正文翻译。
-            continue
-        # 跳过嵌套在另一个块级元素内的块（避免重复计数，如 blockquote 里的 p）
-        if any(getattr(p, "name", None) in _BLOCK_TAGS for p in el.parents):
-            continue
+    for el in _translation_targets(soup, skip_navigation=skip_navigation):
         # 带文字的内联 id/name 包装会在回填纯译文时被拍平。先把它
         # 改成同位置的空锚点，便可复用现有内联非文本节点恢复机制。
         for descendant in list(el.find_all(True)):
             if not descendant.get_text(strip=True):
                 continue
             anchor_attrs = {
-                key: descendant.attrs.pop(key)
-                for key in ("id", "name")
-                if key in descendant.attrs
+                key: descendant.attrs.pop(key) for key in ("id", "name") if key in descendant.attrs
             }
             if anchor_attrs:
                 marker = soup.new_tag("a")
@@ -298,7 +375,18 @@ def annotate_epub_resource(
         if not text:
             continue
         el["data-tn-id"] = anchor
-        kind = KIND_HEADING if el.name in _HEADING_TAGS else KIND_TEXT
+        kind = (
+            KIND_HEADING
+            if el.name in _HEADING_TAGS or el.find_parent(_HEADING_TAGS) is not None
+            else KIND_TEXT
+        )
+        if kind == KIND_HEADING:
+            heading = el if el.name in _HEADING_TAGS else el.find_parent(_HEADING_TAGS)
+            if isinstance(heading, Tag):
+                if first_heading is None:
+                    first_heading = heading
+                if heading is first_heading:
+                    heading_title_parts.append(text)
         segments.append(
             Segment(
                 index=idx,
@@ -315,11 +403,7 @@ def annotate_epub_resource(
     # <title> → 无标题。逻辑章标题在后续切章时直接取完整 TOC 节点。
     # 一些 EPUB 把 XHTML 文件名写进 <title>，如 cUH.xhtml 的 <title>cUH</title>，
     # 或把全书书名写进每个 <title>，这不是读者可见章节标题，不能进入目录或标题翻译。
-    title = ""
-    for s in segments:
-        if s.kind == KIND_HEADING:
-            title = s.source
-            break
+    title = " ".join(heading_title_parts)
     if not title and soup.title and soup.title.string:
         candidate = soup.title.string.strip()
         if not _looks_like_internal_title(candidate, href, book_title):
@@ -359,7 +443,9 @@ def _fragment_anchor_map(template: str) -> dict[str, str | None]:
         identifiers = [node.get("id"), node.get("name")]
         if not any(isinstance(value, str) and value for value in identifiers):
             continue
-        block = node if node.has_attr("data-tn-id") else node.find_parent(attrs={"data-tn-id": True})
+        block = (
+            node if node.has_attr("data-tn-id") else node.find_parent(attrs={"data-tn-id": True})
+        )
         if not isinstance(block, Tag):
             block = node.find_next(attrs={"data-tn-id": True})
         raw_anchor = block.get("data-tn-id") if isinstance(block, Tag) else None
@@ -413,7 +499,10 @@ def _logical_chapters(
         if not has_fragment:
             raw_segments = resource.get("segments")
             resource_segments = raw_segments if isinstance(raw_segments, list) else []
-            first = next((segment for segment in resource_segments if isinstance(segment, Segment)), None)
+            first = next(
+                (segment for segment in resource_segments if isinstance(segment, Segment)),
+                None,
+            )
             segment_anchor = first.anchor if first is not None else None
         if isinstance(segment_anchor, str) and segment_anchor in anchor_positions:
             entry["segment_anchor"] = segment_anchor
@@ -441,9 +530,7 @@ def _logical_chapters(
         if isinstance(entry.get("toc_path"), str) and entry.get("toc_path")
     }
     for toc_path in toc_paths:
-        path_entries = [
-            entry for entry in toc_entries if entry.get("toc_path") == toc_path
-        ]
+        path_entries = [entry for entry in toc_entries if entry.get("toc_path") == toc_path]
         children: dict[int, list[dict[str, object]]] = {}
         for entry in path_entries:
             parent_index = entry.get("parent_index")
@@ -505,7 +592,11 @@ def _logical_chapters(
         chapters: list[Chapter] = []
         for resource in resources:
             raw_segments = resource.get("segments")
-            segments = [s for s in raw_segments if isinstance(s, Segment)] if isinstance(raw_segments, list) else []
+            segments = (
+                [s for s in raw_segments if isinstance(s, Segment)]
+                if isinstance(raw_segments, list)
+                else []
+            )
             if not segments:
                 continue
             for index, segment in enumerate(segments):
@@ -544,9 +635,7 @@ def _logical_chapters(
         if boundary is not None:
             title = str(boundary.get("title") or "")
             toc_entry_id = boundary.get("entry_id")
-            first_href = segments[0].resource_href or str(
-                boundary.get("resource_href") or ""
-            )
+            first_href = segments[0].resource_href or str(boundary.get("resource_href") or "")
         else:
             first_href = segments[0].resource_href or ""
             title = segments[0].source if segments[0].kind == KIND_HEADING else ""
@@ -597,9 +686,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
                     "fragment_anchors": _fragment_anchor_map(template),
                 }
             )
-        chapters, split_strategy, split_toc_path = _logical_chapters(
-            resources, toc_entries
-        )
+        chapters, split_strategy, split_toc_path = _logical_chapters(resources, toc_entries)
         # XHTML 模板和内联布局都可从原始 EPUB 确定性重建，不写入运行状态。
         # Segment.meta 中其它格式或后续阶段添加的信息仍原样保留。
         for chapter in chapters:
@@ -620,8 +707,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,
             "epub_resources": [
-                {"index": resource["index"], "href": resource["href"]}
-                for resource in resources
+                {"index": resource["index"], "href": resource["href"]} for resource in resources
             ],
             "epub_split_strategy": split_strategy,
             "epub_split_toc_path": split_toc_path,

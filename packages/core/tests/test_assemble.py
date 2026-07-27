@@ -93,13 +93,17 @@ def _write_vertical_epub(path: str) -> None:
 
 
 def _config(state_dir: str):
-    return Config.from_dict({
-        "language": {"source": "ja", "target": "zh"},
-        "llm": {"provider": "fake", "tiers": {
-            "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-        "pipeline": {"review": True, "polish": True, "backtranslate_sample": 0.0},
-        "paths": {"state_dir": state_dir},
-    })
+    return Config.from_dict(
+        {
+            "language": {"source": "ja", "target": "zh"},
+            "llm": {
+                "provider": "fake",
+                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+            },
+            "pipeline": {"review": True, "polish": True, "backtranslate_sample": 0.0},
+            "paths": {"state_dir": state_dir},
+        }
+    )
 
 
 def _run(input_path, state_dir):
@@ -163,9 +167,7 @@ class TestAssembleText(unittest.TestCase):
             self.assertFalse(append_about_page(path, "zh-Hans"))
 
             with zipfile.ZipFile(path) as archive:
-                self.assertFalse(
-                    any("trans-novel-about" in name for name in archive.namelist())
-                )
+                self.assertFalse(any("trans-novel-about" in name for name in archive.namelist()))
 
     def test_bilingual_rewrite_removes_temporary_file_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -274,8 +276,7 @@ class TestAssembleEpub(unittest.TestCase):
 
     def test_rewrite_html_honors_declared_encoding_and_emits_utf8(self):
         source = (
-            '<?xml version="1.0" encoding="Shift_JIS"?>'
-            "<html><body><p>日本語</p></body></html>"
+            '<?xml version="1.0" encoding="Shift_JIS"?><html><body><p>日本語</p></body></html>'
         ).encode("shift_jis")
 
         output = _rewrite_html_document(
@@ -345,7 +346,8 @@ class TestAssembleEpub(unittest.TestCase):
             0,
             "chapter.xhtml",
         )
-        segments[0].target = "甲乙丙丁"
+        segments[0].target = "甲乙"
+        segments[1].target = "丙丁"
         chapter = Chapter(
             index=0,
             title=title,
@@ -366,10 +368,7 @@ class TestAssembleEpub(unittest.TestCase):
         )
         self.assertIsNotNone(paragraph.find("br"))
         self.assertEqual(
-            [
-                child.name if isinstance(child, Tag) else str(child)
-                for child in paragraph.children
-            ],
+            [child.name if isinstance(child, Tag) else str(child) for child in paragraph.children],
             ["img", "甲乙", "br", "丙丁", "img"],
         )
         self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
@@ -380,6 +379,108 @@ class TestAssembleEpub(unittest.TestCase):
         self.assertIsInstance(standalone_image, Tag)
         assert isinstance(standalone_image, Tag)
         self.assertEqual(standalone_image.get("src"), "standalone.jpg")
+
+    def test_epub_render_preserves_nested_list_links_and_blockquote_lines(self):
+        html = """<html><body>
+<ul><li><a href="#author">Author</a><ul>
+<li><a href="chapter.xhtml#one">Chapter One</a></li>
+<li><a href="chapter.xhtml#two">Chapter Two</a></li>
+</ul></li></ul>
+<blockquote><div>Dedication One</div><div>Dedication Two</div></blockquote>
+</body></html>"""
+        title, segments, template = annotate_epub_resource(html, 0, "contents.xhtml")
+        for segment, target in zip(
+            segments,
+            ["作者", "第一章", "第二章", "献词一", "献词二"],
+        ):
+            segment.target = target
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="contents.xhtml",
+            template=template,
+        )
+
+        rendered = BeautifulSoup(_render_chapter_html(chapter), "html.parser")
+
+        links = rendered.find_all("a")
+        self.assertEqual(
+            [link.get_text() for link in links],
+            ["作者", "第一章", "第二章"],
+        )
+        self.assertEqual(
+            [link.get("href") for link in links],
+            ["#author", "chapter.xhtml#one", "chapter.xhtml#two"],
+        )
+        self.assertEqual(len(rendered.find_all("li")), 3)
+        quote = rendered.find("blockquote")
+        self.assertIsInstance(quote, Tag)
+        assert isinstance(quote, Tag)
+        self.assertEqual(
+            [line.get_text() for line in quote.find_all("div", recursive=False)],
+            ["献词一", "献词二"],
+        )
+
+    def test_epub_render_rebuilds_heading_breaks_from_translated_lines(self):
+        html = """<html><body><h1>
+Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
+</h1></body></html>"""
+        title, segments, template = annotate_epub_resource(html, 0, "title.xhtml")
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["Isaac Asimov", "Tales of the Black Widowers"],
+        )
+        segments[0].target = "艾萨克·阿西莫夫"
+        segments[1].target = "《黑鳏夫俱乐部故事》"
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="title.xhtml",
+            template=template,
+        )
+
+        rendered = BeautifulSoup(_render_chapter_html(chapter), "html.parser")
+        heading = rendered.find("h1")
+        self.assertIsInstance(heading, Tag)
+        assert isinstance(heading, Tag)
+        self.assertEqual(len(heading.find_all("br")), 3)
+        self.assertIsNone(rendered.select_one("[data-tn-line]"))
+        self.assertEqual(
+            [
+                child.name if isinstance(child, Tag) else str(child)
+                for child in heading.children
+                if isinstance(child, Tag) or str(child).strip()
+            ],
+            ["艾萨克·阿西莫夫", "br", "br", "《黑鳏夫俱乐部故事》", "br"],
+        )
+
+    def test_bilingual_break_lines_keep_valid_paragraph_structure(self):
+        html = "<html><body><p>First<br/>Second</p></body></html>"
+        title, segments, template = annotate_epub_resource(html, 0, "lines.xhtml")
+        segments[0].target = "第一"
+        segments[1].target = "第二"
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="lines.xhtml",
+            template=template,
+        )
+
+        rendered = BeautifulSoup(
+            _render_chapter_html(chapter, bilingual=True),
+            "html.parser",
+        )
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertIsNone(paragraph.find("p"))
+        self.assertEqual(
+            [source.get_text() for source in paragraph.select("span.tn-source")],
+            ["First", "Second"],
+        )
 
     def test_bilingual_render_does_not_duplicate_inline_images(self):
         html = """<html><body>
@@ -421,7 +522,7 @@ class TestAssembleEpub(unittest.TestCase):
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
                 about = z.read("OEBPS/trans-novel-about.xhtml").decode("utf-8")
                 opf = BeautifulSoup(z.read("OEBPS/content.opf"), "xml")
-            self.assertIn("润0", html)            # 译文已替换
+            self.assertIn("润0", html)  # 译文已替换
             self.assertNotIn("data-tn-id", html)  # 占位标记已清除
             self.assertNotIn("綾小路は教室", html)  # 原文已被替换
             self.assertIn("关于此翻译", about)
@@ -457,6 +558,7 @@ class TestAssembleEpub(unittest.TestCase):
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
+            self.assertIn("<dc:title>縦書き小説-wenyi</dc:title>", opf)
             self.assertIn('page-progression-direction="ltr"', opf)
             self.assertIn("writing-mode: horizontal-tb", html)
             self.assertIn('lang="zh-Hans"', html)
@@ -641,23 +743,28 @@ class TestTitleTranslation(unittest.TestCase):
             out = assemble(store, ep, out_format="epub")
             with zipfile.ZipFile(out) as z:
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
-            self.assertIn("サンプル小説", opf)       # OPF 书名保持原文
+            # 书名不翻译，导出时在原书名后追加 -wenyi
+            self.assertIn("<dc:title>サンプル小説-wenyi</dc:title>", opf)
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
 
     def test_rewrite_nav_and_ncx_labels(self):
         from wenyi_core.assemble.writer import _rewrite_toc
 
-        nav = (b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
-               b'<nav epub:type="toc"><ol>'
-               b'<li><a href="ch1.xhtml">\xe7\xac\xac\xe4\xb8\x80\xe7\xab\xa0</a></li>'
-               b'</ol></nav></body></html>')
+        nav = (
+            b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+            b'<nav epub:type="toc"><ol>'
+            b'<li><a href="ch1.xhtml">\xe7\xac\xac\xe4\xb8\x80\xe7\xab\xa0</a></li>'
+            b"</ol></nav></body></html>"
+        )
         out = _rewrite_toc(nav, {"ch1.xhtml": "第一章译名"}, is_ncx=False)
         self.assertIn("第一章译名", out.decode("utf-8"))
 
-        ncx = (b'<?xml version="1.0"?><ncx><navMap><navPoint>'
-               b'<navLabel><text>old</text></navLabel>'
-               b'<content src="text/ch1.xhtml#x"/></navPoint></navMap></ncx>')
+        ncx = (
+            b'<?xml version="1.0"?><ncx><navMap><navPoint>'
+            b"<navLabel><text>old</text></navLabel>"
+            b'<content src="text/ch1.xhtml#x"/></navPoint></navMap></ncx>'
+        )
         out2 = _rewrite_toc(ncx, {"ch1.xhtml": "第一章译名"}, is_ncx=True)
         dec = out2.decode("utf-8")
         self.assertIn("第一章译名", dec)
@@ -689,9 +796,18 @@ class TestConsistency(unittest.TestCase):
 
             def handler(messages, tier, json_mode):
                 if "一致性审查员" in messages[0]["content"]:
-                    return json.dumps({"issues": [
-                        {"type": "terminology", "detail": "X 译法不一致", "where": "第1章"}
-                    ]}, ensure_ascii=False)
+                    return json.dumps(
+                        {
+                            "issues": [
+                                {
+                                    "type": "terminology",
+                                    "detail": "X 译法不一致",
+                                    "where": "第1章",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
                 return "{}"
 
             checker = ConsistencyChecker(FakeClient(handler=handler), cfg)

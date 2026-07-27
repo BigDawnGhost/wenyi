@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import typer
 from rich.console import Console
@@ -51,7 +51,13 @@ def _configure_windows_console(
 
 _configure_windows_console()
 
-_CONFIG = {"path": "config.yaml"}
+_CONFIG: dict[str, Any] = {"path": "config.yaml", "skip_api_check": False}
+_API_CHECK_EXEMPT_COMMANDS = {
+    "assemble",
+    "glossary",
+    "report",
+    "status",
+}
 
 
 def _config_path_from_args(args: Sequence[str]) -> str:
@@ -81,8 +87,9 @@ class _ConfigInitializingGroup(TyperGroup):
         cli_args = list(args) if args is not None else sys.argv[1:]
         config_path = _config_path_from_args(cli_args)
         _CONFIG["path"] = config_path
+        _CONFIG["skip_api_check"] = any(arg in {"--help", "-h"} for arg in cli_args)
         Config.create_default_file(config_path)
-        return super().main(args=args, *main_args, **main_kwargs)
+        return super().main(*main_args, args=args, **main_kwargs)
 
 
 app = typer.Typer(
@@ -107,6 +114,7 @@ class _ManifestStore(Protocol):
 
 @app.callback()
 def _root(
+    ctx: typer.Context,
     config: str = typer.Option(
         "config.yaml",
         "--config",
@@ -114,13 +122,32 @@ def _root(
         help="配置文件路径；文件不存在时自动创建",
     ),
 ):
-    """记录本次 CLI 调用使用的全局配置文件路径。"""
+    """记录全局配置路径，并在子命令运行前校验模型凭据。"""
     _CONFIG["path"] = config
+    command = ctx.invoked_subcommand
+    should_validate = (
+        not _CONFIG.get("skip_api_check")
+        and command is not None
+        and command not in _API_CHECK_EXEMPT_COMMANDS
+    )
+    if should_validate:
+        try:
+            _validate_api_configuration()
+        except (OSError, RuntimeError, ValueError) as error:
+            console.print(f"[red]错误：{error}[/]")
+            raise typer.Exit(1) from None
 
 
 def _load_config() -> Config:
     """加载当前 CLI 调用选定的配置文件。"""
-    return Config.load(_CONFIG["path"])
+    return Config.load(str(_CONFIG["path"]))
+
+
+def _validate_api_configuration() -> None:
+    """构建当前 provider 并在任何命令逻辑前校验所需 API 凭据。"""
+    from .llm.factory import build_client
+
+    build_client(_load_config()).validate_credentials()
 
 
 def _require_input_file(input_path: str) -> None:
@@ -135,10 +162,7 @@ def _validate_output_format(fmt: str) -> str:
     normalized = fmt.strip().lower()
     allowed = {"epub", "txt", "html", "markdown"}
     if normalized not in allowed:
-        console.print(
-            "[red]不支持的输出格式："
-            f"{fmt}（可选 epub / txt / html / markdown）[/]"
-        )
+        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown）[/]")
         raise typer.Exit(2)
     return normalized
 
@@ -169,14 +193,14 @@ def _apply_store_languages(config: Config, store: _ManifestStore) -> None:
 def _translate_impl(
     input_path: str,
     *,
-    chapter: Optional[int] = None,
+    chapter: int | None = None,
     fmt: str = "epub",
-    out: Optional[str] = None,
-    polish: Optional[bool] = None,
-    review: Optional[bool] = None,
-    qa: Optional[bool] = None,
-    mono: Optional[bool] = None,
-    bilingual: Optional[bool] = None,
+    out: str | None = None,
+    polish: bool | None = None,
+    review: bool | None = None,
+    qa: bool | None = None,
+    mono: bool | None = None,
+    bilingual: bool | None = None,
 ) -> None:
     """执行一键翻译流程，并把预期的输入/配置错误转成简洁 CLI 提示。"""
     try:
@@ -199,14 +223,14 @@ def _translate_impl(
 def _translate_impl_or_raise(
     input_path: str,
     *,
-    chapter: Optional[int] = None,
+    chapter: int | None = None,
     fmt: str = "epub",
-    out: Optional[str] = None,
-    polish: Optional[bool] = None,
-    review: Optional[bool] = None,
-    qa: Optional[bool] = None,
-    mono: Optional[bool] = None,
-    bilingual: Optional[bool] = None,
+    out: str | None = None,
+    polish: bool | None = None,
+    review: bool | None = None,
+    qa: bool | None = None,
+    mono: bool | None = None,
+    bilingual: bool | None = None,
 ) -> None:
     """执行翻译并保留原异常，由 ``_translate_impl`` 转为 CLI 错误。"""
     from .pipeline.orchestrator import Orchestrator
@@ -238,8 +262,7 @@ def _translate_impl_or_raise(
             ignored.append("--bilingual/--no-bilingual")
         if ignored:
             raise ValueError(
-                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项："
-                + "、".join(ignored)
+                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项：" + "、".join(ignored)
             )
 
     orch = Orchestrator(config)
@@ -330,8 +353,7 @@ def _prepare_impl(input_path: str) -> None:
     chapters = manifest.get("chapters", [])
     analysis = store.load_analysis() or {}
     digests = sum(
-        bool(store.load_chapter(item["index"]).meta.get("source_digest"))
-        for item in chapters
+        bool(store.load_chapter(item["index"]).meta.get("source_digest")) for item in chapters
     )
     console.print(
         f"[bold green]准备完成[/]：解析 {len(chapters)} 章，"
@@ -378,7 +400,7 @@ def translate(
         ...,
         help="待翻译书籍（EPUB / FB2 / TXT / Markdown / HTML / PDF）",
     ),
-    chapter: Optional[int] = typer.Option(
+    chapter: int | None = typer.Option(
         None,
         "--chapter",
         min=0,
@@ -389,32 +411,32 @@ def translate(
         "--format",
         help="最终导出格式：epub / txt / html / markdown",
     ),
-    out: Optional[str] = typer.Option(
+    out: str | None = typer.Option(
         None,
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
     ),
-    polish: Optional[bool] = typer.Option(
+    polish: bool | None = typer.Option(
         None,
         "--polish/--no-polish",
         help="覆盖 pipeline.polish，控制翻译后是否润色",
     ),
-    review: Optional[bool] = typer.Option(
+    review: bool | None = typer.Option(
         None,
         "--review/--no-review",
         help="覆盖 pipeline.review，控制全书翻译后是否执行最终审校",
     ),
-    qa: Optional[bool] = typer.Option(
+    qa: bool | None = typer.Option(
         None,
         "--qa/--no-qa",
         help="覆盖 pipeline.consistency_qa，控制是否执行跨章一致性扫描",
     ),
-    mono: Optional[bool] = typer.Option(
+    mono: bool | None = typer.Option(
         None,
         "--mono/--no-mono",
         help="覆盖 output.mono，控制是否生成单语版",
     ),
-    bilingual: Optional[bool] = typer.Option(
+    bilingual: bool | None = typer.Option(
         None,
         "--bilingual/--no-bilingual",
         help="覆盖 output.bilingual，控制是否生成原文译文对照版",
@@ -448,10 +470,8 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
-    force: bool = typer.Option(
-        False, "--force", help="忽略审校摘要，强制重新审校全部章节"
-    ),
-    fix: Optional[bool] = typer.Option(
+    force: bool = typer.Option(False, "--force", help="忽略审校摘要，强制重新审校全部章节"),
+    fix: bool | None = typer.Option(
         None,
         "--fix/--no-fix",
         help="覆盖 pipeline.autofix_severe；开启后串行修复漏译和误译",
@@ -523,9 +543,7 @@ def status(
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     m = store.load_manifest()
-    console.print(
-        f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}"
-    )
+    console.print(f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}")
     table = Table("", "#", "章节", "翻译", "审校")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
@@ -625,7 +643,7 @@ def glossary_resolve(
 @app.command(rich_help_panel="状态与输出")
 def assemble(
     input: str = typer.Argument(..., help="已完成或部分完成翻译的源文件"),
-    out: Optional[str] = typer.Option(
+    out: str | None = typer.Option(
         None,
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
@@ -635,12 +653,12 @@ def assemble(
         "--format",
         help="导出格式：epub / txt / html / markdown",
     ),
-    mono: Optional[bool] = typer.Option(
+    mono: bool | None = typer.Option(
         None,
         "--mono/--no-mono",
         help="覆盖 output.mono，控制是否生成单语版",
     ),
-    bilingual: Optional[bool] = typer.Option(
+    bilingual: bool | None = typer.Option(
         None,
         "--bilingual/--no-bilingual",
         help="覆盖 output.bilingual，控制是否生成原文译文对照版",
@@ -682,9 +700,7 @@ def assemble(
                 out_format=fmt,
                 bilingual=True,
                 order=config.output.bilingual_order,
-                preserve_source_style=(
-                    config.output.bilingual_preserve_source_style
-                ),
+                preserve_source_style=(config.output.bilingual_preserve_source_style),
                 about_page=config.output.about_page,
             )
         )
@@ -714,9 +730,7 @@ def qa(
         g.close()
     console.print(f"一致性问题 {len(issues)} 项：")
     for it in issues:
-        console.print(
-            f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})"
-        )
+        console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
 
 
 @app.command(rich_help_panel="状态与输出")

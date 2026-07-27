@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 from .json_parser import parse_json_loose
 from .usage import UsageTracker
@@ -22,6 +22,9 @@ class LLMClient(ABC):
         """返回累计 token 用量快照（totals + by_tier + cache_hit_rate）。"""
         return self.usage.summary()
 
+    def validate_credentials(self) -> None:
+        """校验 provider 调用所需凭据；本地或测试 provider 默认免检。"""
+
     @abstractmethod
     def complete(
         self,
@@ -29,8 +32,8 @@ class LLMClient(ABC):
         *,
         tier: str = "strong",
         json_mode: bool = False,
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> str:
         """返回模型回复的纯文本；stage 仅用于用量归因。"""
         raise NotImplementedError
@@ -40,8 +43,8 @@ class LLMClient(ABC):
         messages: Messages,
         *,
         tier: str = "strong",
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> Any:
         """要求 JSON 输出并解析。"""
         text = self.complete(

@@ -33,6 +33,10 @@ def build_client(config: Config) -> LLMClient:
         from .providers.vllm import VLLMClient
 
         return VLLMClient(config.llm)
+    if provider in ("gemini", "google"):
+        from .providers.gemini import GeminiClient
+
+        return GeminiClient(config.llm)
     if provider == "fake":
         from .providers.fake import FakeClient
 
@@ -40,5 +44,5 @@ def build_client(config: Config) -> LLMClient:
     raise ValueError(
         f"未知 provider：{provider}"
         "（支持 deepseek / openai / openrouter / openai-compatible / "
-        "ollama / vllm / fake）"
+        "ollama / vllm / gemini / fake）"
     )

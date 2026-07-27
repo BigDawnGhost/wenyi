@@ -13,6 +13,8 @@ dependencies = [
     "lxml>=5.0",
     "ebooklib>=0.18",
     "pypdf>=6.14.2",
+    "google-genai>=2.13.0",
+    "json-repair>=0.61,<1",
 ]
 
 [build-system]

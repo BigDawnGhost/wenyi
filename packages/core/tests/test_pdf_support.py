@@ -8,7 +8,6 @@ import unittest
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
-
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.cli import _runstore_for
 from wenyi_core.config import Config
@@ -18,7 +17,6 @@ from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage import FileStorage
-
 
 _HTML = """\
 <!doctype html>
@@ -87,17 +85,19 @@ class TestPdfIngest(unittest.TestCase):
                 file.write(b"invalid PDF is not read because conversion is mocked")
             cache_dir = os.path.join(directory, "state", "sample", "source")
 
-            with patch(
-                "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
-                side_effect=RuntimeError("connection reset"),
+            with (
+                patch(
+                    "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                    side_effect=RuntimeError("connection reset"),
+                ),
+                self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised,
             ):
-                with self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised:
-                    load_document(
-                        pdf_path,
-                        "en",
-                        "zh",
-                        cache_dir=cache_dir,
-                    )
+                load_document(
+                    pdf_path,
+                    "en",
+                    "zh",
+                    cache_dir=cache_dir,
+                )
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 

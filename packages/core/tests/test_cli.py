@@ -22,9 +22,7 @@ class FakeStore:
 
 class TestCliConfig(unittest.TestCase):
     def test_standalone_tools_restore_manifest_languages(self):
-        cfg = Config.from_dict(
-            {"language": {"source": "auto", "target": "zh"}}
-        )
+        cfg = Config.from_dict({"language": {"source": "auto", "target": "zh"}})
 
         class Store:
             @staticmethod
@@ -241,6 +239,59 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("conflicts", result.output)
         self.assertIn("resolve", result.output)
 
+    def test_api_preflight_covers_model_commands(self):
+        for command in (
+            "translate",
+            "prepare",
+            "review",
+            "qa",
+        ):
+            with self.subTest(command=command):
+                with patch(
+                    "wenyi_core.cli._validate_api_configuration",
+                    side_effect=RuntimeError("missing key"),
+                ) as validate:
+                    result = CliRunner().invoke(app, [command])
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("missing key", result.output)
+                validate.assert_called_once_with()
+
+    def test_api_preflight_skips_local_commands(self):
+        for args in (
+            ["status", "missing.txt"],
+            ["report", "missing.txt"],
+            ["glossary", "list", "missing.txt"],
+            ["glossary", "conflicts", "missing.txt"],
+            [
+                "glossary",
+                "resolve",
+                "missing.txt",
+                "source",
+                "target",
+            ],
+            ["assemble", "missing.txt"],
+        ):
+            with self.subTest(args=args):
+                with patch(
+                    "wenyi_core.cli._validate_api_configuration",
+                    side_effect=AssertionError(f"{args} must not validate credentials"),
+                ) as validate:
+                    result = CliRunner().invoke(app, args)
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("输入文件不存在", result.output)
+                validate.assert_not_called()
+
+    def test_api_preflight_skips_help_at_every_level(self):
+        for args in (["--help"], ["translate", "--help"], ["glossary", "--help"]):
+            with self.subTest(args=args):
+                with patch(
+                    "wenyi_core.cli._validate_api_configuration",
+                    side_effect=AssertionError("help must not validate credentials"),
+                ) as validate:
+                    result = CliRunner().invoke(app, args)
+                self.assertEqual(result.exit_code, 0, result.output)
+                validate.assert_not_called()
+
     def test_review_command_runs_final_review_with_overrides(self):
         cfg = Config.from_dict(
             {
@@ -278,27 +329,37 @@ class TestCliConfig(unittest.TestCase):
         self.assertTrue(captured["kwargs"]["autofix"])
         self.assertIn("发现 1 项问题", result.output)
 
-    def test_translate_missing_input_exits_before_loading_config(self):
+    def test_translate_reports_missing_input_file(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
-        with patch(
-            "wenyi_core.cli._load_config",
-            side_effect=AssertionError("config should not load"),
-        ):
+        with patch("wenyi_core.cli._validate_api_configuration"):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("输入文件不存在", result.output)
+        self.assertNotIn("Traceback", result.output)
+
+    def test_assemble_skips_api_preflight(self):
+        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        with (
+            patch("wenyi_core.cli._load_config", return_value=cfg),
+            patch("wenyi_core.cli.os.path.isfile", return_value=False),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            result = CliRunner().invoke(app, ["assemble", "missing.epub"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("输入文件不存在", result.output)
+        self.assertNotIn("DEEPSEEK_API_KEY", result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
-        cfg = Config.from_dict(
-            {"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}}
-        )
+        cfg = Config.from_dict({"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}})
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
             ValueError("不支持的输出格式：xml"),
         ):
             with self.subTest(error=type(error).__name__):
+
                 class FakeOrchestrator:
                     def __init__(self, config):
                         pass
@@ -327,10 +388,9 @@ class TestCliConfig(unittest.TestCase):
                 "wenyi_core.cli._load_config",
                 side_effect=AssertionError("config should not load"),
             ),
+            patch("wenyi_core.cli._validate_api_configuration"),
         ):
-            result = CliRunner().invoke(
-                app, ["translate", "input.txt", "--format", "pdf"]
-            )
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "pdf"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("不支持的输出格式", result.output)
@@ -350,9 +410,7 @@ class TestCliConfig(unittest.TestCase):
             patch("wenyi_core.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             patch("wenyi_core.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(
-                app, ["translate", "input.txt", "--chapter", "9"]
-            )
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--chapter", "9"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("章节编号 9 不存在", result.output)
@@ -367,6 +425,7 @@ class TestCliConfig(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
+                    "llm": {"provider": "fake"},
                     "paths": {"state_dir": state_dir},
                 }
             )

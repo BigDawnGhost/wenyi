@@ -8,24 +8,29 @@ import tempfile
 import unittest
 import zipfile
 
-from wenyi_core.config import Config
 from wenyi_core.agents.langprofile import honorific_rule
-from wenyi_core.postprocess.punct import normalize_zh, normalize_zh_segments
+from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from tests.sample_data import write_sample_txt
+from wenyi_core.postprocess.punct import normalize_zh, normalize_zh_segments
+
 from tests.fake_llm import routing_handler
+from tests.sample_data import write_sample_txt
 
 
 class TestModelLanguageDetection(unittest.TestCase):
     def _cfg(self, state: str) -> Config:
-        return Config.from_dict({
-            "language": {"source": "auto", "target": "zh"},
-            "llm": {"provider": "fake", "tiers": {
-                "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-            "pipeline": {"book_understanding": False},
-            "paths": {"state_dir": state},
-        })
+        return Config.from_dict(
+            {
+                "language": {"source": "auto", "target": "zh"},
+                "llm": {
+                    "provider": "fake",
+                    "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                },
+                "pipeline": {"book_understanding": False},
+                "paths": {"state_dir": state},
+            }
+        )
 
     def test_auto_uses_model_detection(self):
         with tempfile.TemporaryDirectory() as d:
@@ -60,11 +65,13 @@ class TestModelLanguageDetection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
-            cfg = Config.from_dict({
-                "language": {"source": "ja", "target": "ja-JP"},
-                "llm": {"provider": "fake"},
-                "paths": {"state_dir": os.path.join(d, "state")},
-            })
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "ja", "target": "ja-JP"},
+                    "llm": {"provider": "fake"},
+                    "paths": {"state_dir": os.path.join(d, "state")},
+                }
+            )
             client = FakeClient(handler=routing_handler)
 
             with self.assertRaisesRegex(ValueError, "源语言与目标语言相同（ja）"):
@@ -155,18 +162,27 @@ class TestRunAll(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             state = os.path.join(d, "state")
-            cfg = Config.from_dict({
-                "language": {"source": "auto", "target": "zh"},
-                "llm": {"provider": "fake", "tiers": {
-                    "strong": {"model": "p"}, "cheap": {"model": "f"}}},
-                "pipeline": {"review": True, "polish": True,
-                             "backtranslate_sample": 0.0, "consistency_qa": True},
-                "paths": {"state_dir": state},
-            })
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "auto", "target": "zh"},
+                    "llm": {
+                        "provider": "fake",
+                        "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                    },
+                    "pipeline": {
+                        "review": True,
+                        "polish": True,
+                        "backtranslate_sample": 0.0,
+                        "consistency_qa": True,
+                    },
+                    "paths": {"state_dir": state},
+                }
+            )
             seen = []
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             result = orch.run_all(
-                txt, progress=lambda done, total, label: seen.append((done, total)),
+                txt,
+                progress=lambda done, total, label: seen.append((done, total)),
                 out_format="epub",
             )
             self.assertTrue(result["output"].endswith(".epub"))

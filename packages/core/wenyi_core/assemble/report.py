@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import GlossaryStore
-from ..pipeline.runstore import REVIEW_DONE, RunStore, STATUS_DONE
+from ..pipeline.runstore import REVIEW_DONE, STATUS_DONE, RunStore
 
 
 def build_report(storage: RunStore) -> dict[str, Any]:
@@ -17,9 +16,7 @@ def build_report(storage: RunStore) -> dict[str, Any]:
     chapters_total = len(m["chapters"])
     chapters_done = sum(1 for c in m["chapters"] if c["status"] == STATUS_DONE)
     chapters_reviewed = sum(
-        1
-        for chapter in m["chapters"]
-        if chapter.get("review_status") == REVIEW_DONE
+        1 for chapter in m["chapters"] if chapter.get("review_status") == REVIEW_DONE
     )
 
     review_issues: list[dict] = []
@@ -35,8 +32,9 @@ def build_report(storage: RunStore) -> dict[str, Any]:
         bt_issues.extend(ch.meta.get("backtranslation_issues", []))
         for s in ch.text_segments:
             if not (s.target and s.target.strip()):
-                empty_targets.append({"chapter": c["index"], "index": s.index,
-                                      "source": s.source[:60]})
+                empty_targets.append(
+                    {"chapter": c["index"], "index": s.index, "source": s.source[:60]}
+                )
 
     conflicts = storage.open_conflicts()
     low_conf = [

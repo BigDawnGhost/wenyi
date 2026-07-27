@@ -1,4 +1,4 @@
-"""术语库 + 翻译记忆库测试。"""
+"""术语库测试。"""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 
 from wenyi_core.glossary.store import (
-    GlossaryStore,
-    GlossaryTerm,
     TYPE_APPELLATION,
     TYPE_PERSON,
+    GlossaryStore,
+    GlossaryTerm,
+    source_matches_text,
 )
 
 
@@ -27,8 +28,14 @@ class TestGlossary(unittest.TestCase):
 
     def test_insert_and_lookup(self):
         r = self.store.upsert_term(
-            GlossaryTerm(source="綾小路", target="绫小路", type=TYPE_PERSON,
-                         gender="男", aliases=["綾小路くん"], reading="あやのこうじ"),
+            GlossaryTerm(
+                source="綾小路",
+                target="绫小路",
+                type=TYPE_PERSON,
+                gender="男",
+                aliases=["綾小路くん"],
+                reading="あやのこうじ",
+            ),
             chapter=0,
         )
         self.assertEqual(r, "inserted")
@@ -46,12 +53,8 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(hits[0].source, "綾小路")
 
     def test_terms_in_text_normalizes_case_and_character_width(self):
-        self.store.upsert_term(
-            GlossaryTerm(source="OpenAI", target="开放人工智能")
-        )
-        self.store.upsert_term(
-            GlossaryTerm(source="ＡＢＣ", target="ABC 组织")
-        )
+        self.store.upsert_term(GlossaryTerm(source="OpenAI", target="开放人工智能"))
+        self.store.upsert_term(GlossaryTerm(source="ＡＢＣ", target="ABC 组织"))
 
         hits = self.store.terms_in_text("openai 与 ABC")
 
@@ -59,6 +62,11 @@ class TestGlossary(unittest.TestCase):
             {term.source for term in hits},
             {"OpenAI", "ＡＢＣ"},
         )
+
+    def test_ascii_source_match_respects_word_boundaries(self):
+        self.assertTrue(source_matches_text("Ann", "Ann opened the door."))
+        self.assertTrue(source_matches_text("ANN", "ann opened the door."))
+        self.assertFalse(source_matches_text("Ann", "Anna opened the door."))
 
     def test_appellation_does_not_match_bare_name_alias(self):
         self.store.upsert_term(
@@ -75,13 +83,9 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(hits[0].source, "夏帆ちゃん")
 
     def test_conflict_keeps_current_until_resolved(self):
-        self.store.upsert_term(
-            GlossaryTerm(source="堀北", target="堀北"), chapter=0
-        )
+        self.store.upsert_term(GlossaryTerm(source="堀北", target="堀北"), chapter=0)
         # 提交不同译法：保留当前译法并记录候选项。
-        r = self.store.upsert_term(
-            GlossaryTerm(source="堀北", target="掘北"), chapter=1
-        )
+        r = self.store.upsert_term(GlossaryTerm(source="堀北", target="掘北"), chapter=1)
         self.assertEqual(r, "conflict")
         term = self.store.get_term("堀北")
         assert term is not None
@@ -106,9 +110,7 @@ class TestGlossary(unittest.TestCase):
             store = GlossaryStore(path)
             try:
                 barrier.wait()
-                return store.upsert_term(
-                    GlossaryTerm(source="Name", target=target), chapter=1
-                )
+                return store.upsert_term(GlossaryTerm(source="Name", target=target), chapter=1)
             finally:
                 store.close()
 
@@ -123,17 +125,10 @@ class TestGlossary(unittest.TestCase):
         finally:
             check.close()
 
-    def test_translation_memory(self):
-        self.store.add_tm("風が強かった。", "风很大。", chapter=1)
-        self.assertEqual(self.store.tm_lookup("風が強かった。"), "风很大。")
-        self.assertIsNone(self.store.tm_lookup("未登録"))
-
     def test_stats(self):
         self.store.upsert_term(GlossaryTerm(source="A", target="甲"))
-        self.store.add_tm("a", "甲译")
         s = self.store.stats()
-        self.assertEqual(s["terms"], 1)
-        self.assertEqual(s["tm_entries"], 1)
+        self.assertEqual(s, {"terms": 1, "open_conflicts": 0})
 
 
 if __name__ == "__main__":

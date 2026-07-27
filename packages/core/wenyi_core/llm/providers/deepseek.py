@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -65,14 +65,12 @@ def build_request_kwargs(
     messages: Messages,
     *,
     json_mode: bool = False,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """把通用调用参数转换成 DeepSeek 的思考模式请求方言。"""
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
     extra_body: dict[str, Any] = {
-        "thinking": {
-            "type": "enabled" if tier_config.options.thinking else "disabled"
-        }
+        "thinking": {"type": "enabled" if tier_config.options.thinking else "disabled"}
     }
     if tier_config.options.thinking:
         kwargs["reasoning_effort"] = tier_config.options.reasoning_effort
@@ -80,9 +78,7 @@ def build_request_kwargs(
         extra_body = deep_merge(extra_body, tier_config.options.extra_body)
     kwargs["extra_body"] = extra_body
     if max_tokens is not None:
-        kwargs["max_tokens"] = (
-            max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
-        )
+        kwargs["max_tokens"] = max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
     return kwargs
 
 
@@ -113,7 +109,7 @@ class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
         messages: Messages,
         *,
         json_mode: bool,
-        max_tokens: Optional[int],
+        max_tokens: int | None,
     ) -> dict[str, Any]:
         """构造当前 DeepSeek 档位的最终请求参数。"""
         return build_request_kwargs(
