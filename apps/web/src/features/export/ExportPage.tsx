@@ -14,6 +14,8 @@ import { Download, Share2 } from "lucide-react";
 const FORMATS = [
   { id: "epub", name: "EPUB", desc: "保持原书排版" },
   { id: "txt", name: "TXT", desc: "纯文本" },
+  { id: "html", name: "HTML", desc: "网页格式" },
+  { id: "markdown", name: "Markdown", desc: "轻量标记语言" },
 ];
 
 export default function ExportPage() {
@@ -35,7 +37,7 @@ export default function ExportPage() {
 
   return (
     <>
-      <PageHeader title="导出" subtitle="生成译文文件（EPUB / TXT）" />
+      <PageHeader title="导出" subtitle="生成译文文件（EPUB / TXT / HTML / Markdown）" />
       <PageContainer className="space-y-4 max-w-3xl">
         <Card>
           <CardContent className="p-4 space-y-4">

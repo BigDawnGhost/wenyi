@@ -205,13 +205,16 @@ def _export_sync(pid: str, *, export_id: int, fmt: str, bilingual: bool,
                  preserve_source_style: bool = False) -> int:
     from wenyi_core.assemble.writer import assemble
 
+    ext_map = {"epub": "epub", "txt": "txt", "html": "html", "markdown": "md"}
+    ext = ext_map.get(fmt, "txt")
+
     pool = init_pool(settings.psycopg_dsn)
     storage = PostgresStorage(pid, pool)
     storage.repair_resource_hrefs()
     source = _resolve_source(pid)
     out_dir = paths.exports_dir(pid)
-    base = os.path.join(out_dir, f"export.{'epub' if fmt == 'epub' else 'txt'}")
-    bi_base = os.path.join(out_dir, f"export-bi.{'epub' if fmt == 'epub' else 'txt'}")
+    base = os.path.join(out_dir, f"export.{ext}")
+    bi_base = os.path.join(out_dir, f"export-bi.{ext}")
     out_path = bi_base if bilingual else base
     result_path = assemble(
         storage, source, out_path=out_path, out_format=fmt,

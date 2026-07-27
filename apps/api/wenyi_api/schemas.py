@@ -139,7 +139,7 @@ class StrategyTemplateOut(BaseModel):
 
 # ── 导出 ─────────────────────────────────────────────────────────────────
 class ExportRequest(BaseModel):
-    format: str = "epub"            # epub | txt
+    format: str = "epub"            # epub | txt | html | markdown
     bilingual: bool = False
     order: str = "target_first"
     about_page: bool = True
