@@ -52,12 +52,15 @@ uv run trans-novel review book.epub
 The explicit command runs even when `pipeline.review` is disabled. Every invocation
 reviews the complete translated book from the beginning. It never fixes text and
 does not update chapter JSON, the manifest, `report.json`, the formal event log, or
-`usage.json`. Prompts, raw responses, parsed actions, requested evidence, events,
-and final suggestions are written only to:
+the formal `usage.json`. Prompts, raw responses, parsed actions, requested evidence,
+events, final suggestions, and the run-local usage delta are written only to:
 
 ```text
 state/<book>/debug/review-YYYYMMDD-HHMMSS-ffffff/
 ```
+
+The debug directory contains its own `usage.json` with totals plus `by_tier` and
+`by_stage` breakdowns. It is written for both successful and failed review runs.
 
 These debug traces contain source and translated passages. Treat them with the
 same privacy and copyright care as the rest of the state directory.

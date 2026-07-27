@@ -138,9 +138,11 @@ unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
 can then enter a bounded evidence loop, and contradictory cross-chunk consistency
 suggestions can receive a final recommendation. Review never fixes the body and
 does not update the manifest, chapter JSON, `report.json`, the formal event log, or
-`usage.json`. Each run writes prompts, raw responses, parsed actions, requested
-evidence, events, and suggestions to
+the formal `usage.json`. Each run writes prompts, raw responses, parsed actions,
+requested evidence, events, suggestions, and its model-usage delta to
 `state/<book>/debug/review-<timestamp>/`.
+The debug directory's `usage.json` includes totals plus `by_tier` and `by_stage`
+breakdowns and is retained on both success and failure.
 
 `qa` and `report` collect problems without modifying translated text. `assemble`
 rebuilds output from existing state without calling the model again.

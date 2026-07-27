@@ -504,6 +504,14 @@ class TestReviewReporting(unittest.TestCase):
             }
             self.assertEqual(formal_after, formal_before)
             self.assertTrue(os.path.isfile(os.path.join(result["debug_dir"], "result.json")))
+            with open(
+                os.path.join(result["debug_dir"], "usage.json"),
+                encoding="utf-8",
+            ) as file:
+                debug_usage = json.load(file)
+            self.assertGreater(debug_usage["totals"]["calls"], 0)
+            self.assertIn("Reviewer", debug_usage["by_stage"])
+            self.assertNotIn("Translator", debug_usage["by_stage"])
             self.assertGreater(
                 client.usage_summary()["by_stage"]["Reviewer"]["calls"],
                 0,
@@ -762,6 +770,14 @@ class TestReviewReporting(unittest.TestCase):
                 receipt = json.load(file)
             self.assertEqual(receipt["status"], "failed")
             self.assertEqual(receipt["error_type"], "RuntimeError")
+            with open(
+                os.path.join(debug_root, runs[-1], "usage.json"),
+                encoding="utf-8",
+            ) as file:
+                debug_usage = json.load(file)
+            self.assertEqual(debug_usage["totals"]["calls"], 1)
+            self.assertEqual(debug_usage["totals"]["total_tokens"], 8)
+            self.assertEqual(debug_usage["by_stage"]["Reviewer"]["calls"], 1)
             self.assertEqual(Path(store.usage_path).read_bytes(), usage_before)
             self.assertEqual(Path(store.event_log_path).read_bytes(), events_before)
             self.assertEqual(client.usage_summary()["by_stage"]["Reviewer"]["calls"], 1)

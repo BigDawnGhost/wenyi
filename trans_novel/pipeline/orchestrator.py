@@ -1158,6 +1158,17 @@ class Orchestrator:
                 "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
             },
         )
+        usage_before = self.client.usage_summary()
+
+        def save_debug_usage() -> dict[str, Any]:
+            """保存本次实验 Review 的用量增量，不写入正式 usage.json。"""
+            usage = usage_delta(self.client.usage_summary(), usage_before)
+            debug.write_json("usage.json", usage)
+            debug.log_event(
+                "review_debug_usage_recorded",
+                **usage["totals"],
+            )
+            return usage
 
         done = 0
         raw_issues: list[dict[str, Any]] = []
@@ -1302,6 +1313,7 @@ class Orchestrator:
                 },
             )
             debug.write_json("summary.json", summary)
+            save_debug_usage()
             debug.finish(status="finished", **summary)
             return final_issues
         except Exception as error:
@@ -1309,6 +1321,7 @@ class Orchestrator:
             debug.write_json("initial_issues.json", initial_issues)
             debug.write_json("dismissed_issues.json", dismissed)
             debug.write_json("partial_issues.json", raw_issues)
+            save_debug_usage()
             debug.finish(
                 status="failed",
                 issue_count=len(raw_issues),
