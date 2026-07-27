@@ -105,6 +105,9 @@ class FileStorage:
     def set_chapter_status(self, ci: int, status: str) -> None:
         self._run.set_chapter_status(ci, status)
 
+    def set_chapter_review_status(self, ci: int, status: str) -> None:
+        self._run.set_chapter_review_status(ci, status)
+
     def pending_chapters(self) -> list[int]:
         return self._run.pending_chapters()
 

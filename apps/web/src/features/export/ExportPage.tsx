@@ -23,11 +23,12 @@ export default function ExportPage() {
   const [bilingual, setBilingual] = useState(false);
   const [order, setOrder] = useState("target_first");
   const [about, setAbout] = useState(true);
+  const [preserveStyle, setPreserveStyle] = useState(false);
 
   const { data: exports } = useQuery({ queryKey: ["exports", pid], queryFn: () => api.listExports(pid), enabled: !!pid, refetchInterval: (q) => (q.state.data?.some((e) => e.status === "pending") ? 3000 : false) });
 
   const create = useMutation({
-    mutationFn: () => api.createExport(pid, { format: fmt, bilingual, order, about_page: about }),
+    mutationFn: () => api.createExport(pid, { format: fmt, bilingual, order, about_page: about, preserve_source_style: preserveStyle }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["exports", pid] }); toast.success("已开始生成导出"); },
     onError: (e) => toast.error(`导出失败：${(e as Error).message}`),
   });
@@ -60,6 +61,9 @@ export default function ExportPage() {
               )}
             </div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={about} onChange={(e) => setAbout(e.target.checked)} /> 附加"关于此翻译"说明页</label>
+            {bilingual && (
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={preserveStyle} onChange={(e) => setPreserveStyle(e.target.checked)} /> 保留原文样式（不注入淡化 CSS）</label>
+            )}
             <Button onClick={() => create.mutate()} disabled={create.isPending}><Download className="h-4 w-4" /> 导出</Button>
           </CardContent>
         </Card>

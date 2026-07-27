@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS projects (
     source_lang  TEXT,
     target_lang  TEXT,
     source_path  TEXT,              -- 上传原件在 data/ 下的相对路径
-    status       TEXT DEFAULT 'created',   -- created|preparing|translating|paused|postprocessing|done|error
+    status       TEXT DEFAULT 'created',   -- created|preparing|prepared|translating|paused|reviewing|reviewed|postprocessing|done|error
     strategy     JSONB,             -- 用户选择的策略定义
     meta         JSONB DEFAULT '{}'::jsonb,    -- manifest.meta（目录项等）
     context      JSONB,             -- 滚动上下文
@@ -34,18 +34,22 @@ CREATE TABLE IF NOT EXISTS chapters (
 );
 
 CREATE TABLE IF NOT EXISTS segments (
-    project_id   TEXT NOT NULL,
-    chapter_seq  INTEGER NOT NULL,
-    seg_seq      INTEGER NOT NULL,
-    source       TEXT DEFAULT '',
-    target       TEXT,
-    kind         TEXT DEFAULT 'text',
-    anchor       TEXT,
-    cont         BOOLEAN DEFAULT FALSE,
-    meta         JSONB DEFAULT '{}'::jsonb,
+    project_id     TEXT NOT NULL,
+    chapter_seq    INTEGER NOT NULL,
+    seg_seq        INTEGER NOT NULL,
+    source         TEXT DEFAULT '',
+    target         TEXT,
+    kind           TEXT DEFAULT 'text',
+    anchor         TEXT,
+    cont           BOOLEAN DEFAULT FALSE,
+    meta           JSONB DEFAULT '{}'::jsonb,
+    resource_href  TEXT,
     PRIMARY KEY (project_id, chapter_seq, seg_seq),
     FOREIGN KEY (project_id, chapter_seq) REFERENCES chapters(project_id, seq) ON DELETE CASCADE
 );
+
+-- 已有库补列（CREATE TABLE IF NOT EXISTS 不会给旧表加新列）
+ALTER TABLE segments ADD COLUMN IF NOT EXISTS resource_href TEXT;
 
 CREATE TABLE IF NOT EXISTS glossary (
     project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

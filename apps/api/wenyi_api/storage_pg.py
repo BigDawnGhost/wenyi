@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from typing import Any, Optional
 
@@ -105,7 +106,7 @@ class PostgresStorage:
             if prow is None:
                 raise KeyError(f"project {pid} not found")
             rows = conn.execute(
-                """SELECT seq, title, href, status, title_translated
+                """SELECT seq, title, href, status, title_translated, meta
                    FROM chapters WHERE project_id=%s ORDER BY seq""",
                 (pid,),
             ).fetchall()
@@ -117,6 +118,7 @@ class PostgresStorage:
             }
             if r[4] is not None:
                 c["title_translated"] = r[4]
+            c["review_status"] = (r[5] or {}).get("_review_status", "pending")
             chapters.append(c)
         return {
             "title": prow[0], "fmt": prow[1], "source_path": prow[2],
@@ -153,6 +155,20 @@ class PostgresStorage:
                 (status, self.project_id, ci),
             )
 
+    def set_chapter_review_status(self, ci: int, status: str) -> None:
+        with self._conn as conn:
+            conn.execute(
+                """UPDATE chapters
+                   SET meta=jsonb_set(
+                       COALESCE(meta, '{}'::jsonb),
+                       '{_review_status}',
+                       to_jsonb(%s::text),
+                       true
+                   )
+                   WHERE project_id=%s AND seq=%s""",
+                (status, self.project_id, ci),
+            )
+
     def pending_chapters(self) -> list[int]:
         with self._conn as conn:
             rows = conn.execute(
@@ -182,10 +198,10 @@ class PostgresStorage:
         for s in ch.segments:
             conn.execute(
                 """INSERT INTO segments
-                   (project_id, chapter_seq, seg_seq, source, target, kind, anchor, cont, meta)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   (project_id, chapter_seq, seg_seq, source, target, kind, anchor, cont, meta, resource_href)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (self.project_id, ch.index, s.index, s.source, s.target,
-                 s.kind, s.anchor, s.cont, Json(s.meta or {})),
+                 s.kind, s.anchor, s.cont, Json(s.meta or {}), s.resource_href),
             )
 
     def save_chapter(self, chapter: Chapter) -> None:
@@ -203,14 +219,15 @@ class PostgresStorage:
             if crow is None:
                 raise KeyError(f"chapter {ci} not found in project {self.project_id}")
             srows = conn.execute(
-                """SELECT seg_seq, source, target, kind, anchor, cont, meta
+                """SELECT seg_seq, source, target, kind, anchor, cont, meta, resource_href
                    FROM segments WHERE project_id=%s AND chapter_seq=%s
                    ORDER BY seg_seq""",
                 (self.project_id, ci),
             ).fetchall()
         segments = [
             Segment(index=r[0], source=r[1], target=r[2], kind=r[3] or "text",
-                    anchor=r[4], cont=bool(r[5]), meta=r[6] or {})
+                    anchor=r[4], cont=bool(r[5]), meta=r[6] or {},
+                    resource_href=r[7])
             for r in srows
         ]
         return Chapter(index=ci, title=crow[0] or "", segments=segments,
@@ -515,3 +532,55 @@ class PostgresStorage:
                 (self.project_id,),
             ).fetchone()[0]
         return {"terms": g, "open_conflicts": c, "tm_entries": t}
+
+    # ── 升级修复 ─────────────────────────────────────────────────────────
+    _ANCHOR_RE = re.compile(r"tn(\d+)_")
+
+    def repair_resource_hrefs(self) -> int:
+        """从 anchor 反推并回填缺失的 resource_href（修复升级前已有数据）。
+
+        anchor 格式为 ``tn{resource_index}_{idx}``，resource_index → href 的
+        映射保存在 manifest.meta.epub_resources。此处只补 NULL 行，幂等，
+        已有正确值的不动。返回修复的段数。
+        """
+        meta = self.load_manifest().get("meta") or {}
+        raw_resources = meta.get("epub_resources")
+        if not isinstance(raw_resources, list):
+            return 0
+        index_to_href: dict[int, str] = {}
+        for r in raw_resources:
+            if isinstance(r, dict):
+                idx = r.get("index")
+                href = r.get("href")
+                if isinstance(idx, int) and isinstance(href, str):
+                    index_to_href[idx] = href
+        if not index_to_href:
+            return 0
+
+        pid = self.project_id
+        with self._conn as conn:
+            rows = conn.execute(
+                """SELECT chapter_seq, seg_seq, anchor FROM segments
+                   WHERE project_id=%s AND anchor IS NOT NULL
+                     AND resource_href IS NULL""",
+                (pid,),
+            ).fetchall()
+            if not rows:
+                return 0
+            fixed = 0
+            for chapter_seq, seg_seq, anchor in rows:
+                m = self._ANCHOR_RE.match(anchor)
+                if not m:
+                    continue
+                href = index_to_href.get(int(m.group(1)))
+                if not href:
+                    continue
+                conn.execute(
+                    """UPDATE segments SET resource_href=%s
+                       WHERE project_id=%s AND chapter_seq=%s AND seg_seq=%s""",
+                    (href, pid, chapter_seq, seg_seq),
+                )
+                fixed += 1
+        if fixed:
+            self.log_event("resource_href_repaired", count=fixed)
+        return fixed

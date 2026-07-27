@@ -161,6 +161,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ strategy }),
     }),
+  prepare: (pid: string) =>
+    request<{ job_id: string; kind: string }>(`/projects/${pid}/prepare`, { method: "POST" }),
   pause: (pid: string) => request<{ message: string }>(`/projects/${pid}/pause`, { method: "POST" }),
   resume: (pid: string) => request<{ job_id: string; kind: string }>(`/projects/${pid}/resume`, { method: "POST" }),
 
@@ -199,13 +201,18 @@ export const api = {
     }),
   markReviewComplete: (pid: string, ci: number) =>
     request<{ ok: boolean }>(`/projects/${pid}/review/${ci}/complete`, { method: "POST" }),
+  runAiReview: (pid: string, opts?: { force?: boolean; autofix?: boolean }) =>
+    request<{ job_id: string; kind: string }>(`/projects/${pid}/review/run`, {
+      method: "POST",
+      body: JSON.stringify(opts ?? {}),
+    }),
 
   getAnalysis: (pid: string) => request<AnalysisPayload>(`/projects/${pid}/analysis`),
   updateAnalysis: (pid: string, analysis: Record<string, unknown>) =>
     request<{ ok: boolean }>(`/projects/${pid}/analysis`, { method: "PUT", body: JSON.stringify({ analysis }) }),
 
   listExports: (pid: string) => request<ExportOut[]>(`/projects/${pid}/exports`),
-  createExport: (pid: string, body: { format: string; bilingual?: boolean; order?: string; about_page?: boolean }) =>
+  createExport: (pid: string, body: { format: string; bilingual?: boolean; order?: string; about_page?: boolean; preserve_source_style?: boolean }) =>
     request<{ job_id: string; kind: string }>(`/projects/${pid}/exports`, { method: "POST", body: JSON.stringify(body) }),
   downloadExportUrl: (pid: string, id: number) => `${BASE}/projects/${pid}/exports/${id}/download`,
 

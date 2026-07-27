@@ -8,7 +8,6 @@ import unittest
 from unittest.mock import patch
 
 from typer.testing import CliRunner
-
 from wenyi_core.cli import _apply_store_languages, _configure_windows_console, app
 from wenyi_core.config import Config
 from wenyi_core.ingest.errors import MinerUError
@@ -259,8 +258,11 @@ class TestCliConfig(unittest.TestCase):
                 captured["input_path"] = input_path
                 captured["kwargs"] = kwargs
                 return {
-<<<<<<< HEAD:packages/core/tests/test_cli.py
-                with (
+                    "store": FakeStore(),
+                    "review_issues": [{"type": "missing"}],
+                }
+
+        with (
             patch("wenyi_core.cli._load_config", return_value=cfg),
             patch("wenyi_core.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             patch("wenyi_core.cli.os.path.isfile", return_value=True),

@@ -39,7 +39,6 @@ from ..ingest.segmenter import batch_segments, load_document
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
-from ..pipeline.runstore import slugify
 from ..postprocess.punct import normalize_zh, normalize_zh_segments
 from ..storage import STATUS_DONE, FileStorage, Storage
 from . import checks
@@ -47,10 +46,7 @@ from .context import RollingContext
 from .runstore import (
     REVIEW_DONE,
     REVIEW_FAILED,
-    REVIEW_PENDING,
     REVIEW_RUNNING,
-    RunStore,
-    STATUS_DONE,
     slugify,
 )
 
@@ -223,7 +219,7 @@ class Orchestrator:
         # 存储注入：未注入时自动构造 FileStorage
         if self.storage is None:
             run_dir = os.path.join(self.config.state_dir, slugify(title))
-            self.storage = FileStorage(run_dir)
+            self.storage = FileStorage(run_dir, create=False)
 
         if not self.storage.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
@@ -274,6 +270,25 @@ class Orchestrator:
 
         with self._storage_lock():
             return self._prepare_new(doc, input_path, progress)
+
+    def prepare_for_translation(
+        self,
+        input_path: str,
+        *,
+        progress: Optional[ProgressFn] = None,
+    ) -> Storage:
+        """完成解析、分析和全书预扫，但不翻译正文。"""
+        storage = self.prepare(input_path, progress=progress)
+        with self._storage_lock():
+            manifest = storage.load_manifest()
+            self._apply_language(
+                manifest.get("source_lang") or self.config.source_lang
+            )
+            try:
+                self._build_understanding(progress=progress)
+            finally:
+                self._flush_usage(scope="prepare")
+        return storage
 
     def _prepare_new(self, doc, input_path: str,
                      progress: Optional[ProgressFn]) -> Storage:
@@ -407,7 +422,6 @@ class Orchestrator:
             context = RollingContext.from_dict(
                 storage.load_context() or {},
                 min_recent_keep=max(40, self.config.pipeline.rolling_context_segments),
-            )
             )
             style = self.analyzer.style_brief(storage.load_analysis() or {})
             # 翻译前预扫源文，建立全书理解（幂等、可续跑）；全书概览注入每章翻译
@@ -768,7 +782,7 @@ class Orchestrator:
                            style: str, book_synopsis: str = "", *,
                            progress: Optional[ProgressFn] = None,
                            done: int = 0, total: int = 0) -> int:
-        """翻译、润色、抽取、审校并落盘单章，返回更新后的完成段数。"""
+        """翻译、润色、术语抽取并落盘单章，返回更新后的完成段数。"""
         storage = self.storage
         chapter = storage.load_chapter(ci)
         text_segs = chapter.text_segments
@@ -886,29 +900,7 @@ class Orchestrator:
         src_text = "\n".join(s.source for s in text_segs)
         tgt_text = "\n".join(s.target or "" for s in text_segs)
         self.extractor.extract_and_store(storage, src_text, tgt_text, ci)
-        term_snapshot = self._chapter_term_snapshot(text_segs)
         storage.log_event("chapter_glossary_extracted", chapter=ci)
-
-        # ── 章末整章审校（移出批内关键路径；块内 index 映射回章内段号）──
-        # 幂等：续跑重入章末时清掉旧审校项，防重复累积。
-        if self.config.pipeline.review:
-            review_issues = []
-            new_issues = self._review_chapter(text_segs, term_snapshot)
-            storage.log_event(
-                "chapter_reviewed",
-                chapter=ci,
-                issue_count=len(new_issues),
-                issues=new_issues,
-            )
-            if self.config.pipeline.autofix_severe:
-                self._autofix_severe(text_segs, new_issues, term_snapshot, style,
-                                     book_synopsis, chapter_digest,
-                                     chapter_index=ci)
-            for it in new_issues:
-                it["chapter"] = ci
-                it.setdefault("fixed", False)
-                it["stage"] = "review"
-            review_issues.extend(new_issues)
 
         # 回译抽检
         bt_issues: list[dict] = []
@@ -1063,17 +1055,17 @@ class Orchestrator:
         )
         chapters = manifest.get("chapters", [])
         loaded = {
-            item["index"]: store.load_chapter(item["index"])
+            item["index"]: storage.load_chapter(item["index"])
             for item in chapters
         }
         total = sum(len(chapter.text_segments) for chapter in loaded.values())
         done = 0
         all_issues: list[dict] = []
-        analysis = store.load_analysis() or {}
+        analysis = storage.load_analysis() or {}
         style = self.analyzer.style_brief(analysis)
         book_synopsis = str(analysis.get("book_synopsis", "") or "")
 
-        store.log_event(
+        storage.log_event(
             "book_review_started",
             force=force,
             autofix=do_autofix,
@@ -1084,7 +1076,7 @@ class Orchestrator:
             ci = item["index"]
             chapter = loaded[ci]
             text_segs = chapter.text_segments
-            term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+            term_snapshot = self._chapter_term_snapshot(text_segs)
             digest = self._review_digest(
                 text_segs, term_snapshot, autofix=do_autofix
             )
@@ -1102,7 +1094,7 @@ class Orchestrator:
                 ]
                 all_issues.extend(existing)
                 done += len(text_segs)
-                store.log_event(
+                storage.log_event(
                     "chapter_review_skipped",
                     chapter=ci,
                     reason="unchanged",
@@ -1112,7 +1104,7 @@ class Orchestrator:
                     progress(done, total, label)
                 continue
 
-            store.set_chapter_review_status(ci, REVIEW_RUNNING)
+            storage.set_chapter_review_status(ci, REVIEW_RUNNING)
             if progress:
                 progress(done, total, label)
             try:
@@ -1130,23 +1122,22 @@ class Orchestrator:
                         style,
                         book_synopsis,
                         str(chapter.meta.get("source_digest", "") or ""),
-                        store=store,
                         chapter_index=ci,
                     )
                     # 翻译阶段已写入旧译文；修复后覆盖相同 source_hash 的 TM。
                     for segment in text_segs:
                         if segment.target:
-                            glossary.add_tm(segment.source, segment.target, ci)
+                            storage.add_tm(segment.source, segment.target, ci)
 
                 chapter.meta["review_issues"] = new_issues
                 chapter.meta["review_digest"] = self._review_digest(
                     text_segs, term_snapshot, autofix=do_autofix
                 )
-                store.save_chapter(chapter)
-                store.set_chapter_review_status(ci, REVIEW_DONE)
+                storage.save_chapter(chapter)
+                storage.set_chapter_review_status(ci, REVIEW_DONE)
             except Exception as error:
-                store.set_chapter_review_status(ci, REVIEW_FAILED)
-                store.log_event(
+                storage.set_chapter_review_status(ci, REVIEW_FAILED)
+                storage.log_event(
                     "chapter_review_failed",
                     chapter=ci,
                     error_type=type(error).__name__,
@@ -1156,7 +1147,7 @@ class Orchestrator:
 
             all_issues.extend(new_issues)
             done += len(text_segs)
-            store.log_event(
+            storage.log_event(
                 "chapter_reviewed",
                 chapter=ci,
                 issue_count=len(new_issues),
@@ -1166,7 +1157,7 @@ class Orchestrator:
             if progress:
                 progress(done, total, label)
 
-        store.log_event(
+        storage.log_event(
             "book_review_finished",
             issue_count=len(all_issues),
             autofix=do_autofix,
@@ -1353,7 +1344,11 @@ class Orchestrator:
                 )
             finally:
                 self._flush_usage(scope="review")
-        return {"storage": storage, "review_issues": issues}
+        return {
+            "storage": storage,
+            "store": storage,
+            "review_issues": issues,
+        }
 
     def run_steps(self, input_path: str, steps, *,
                   progress: Optional[ProgressFn] = None,
@@ -1377,8 +1372,11 @@ class Orchestrator:
             storage.log_event("run_steps_started", steps=run_steps_input, input_path=input_path)
 
             qa_issues: list[dict] = []
+            review_issues: list[dict] = []
             report: dict[str, Any] | None = None
             try:
+                if "review" in steps:
+                    review_issues = self._review_book(progress=progress)
                 if "qa" in steps:
                     if progress:
                         progress(0, 0, "一致性 QA…")
@@ -1448,6 +1446,7 @@ class Orchestrator:
                 "output": outputs[0] if outputs else None,
                 "outputs": outputs,
                 "report": report,
+                "review_issues": review_issues,
                 "qa_issues": qa_issues,
             }
 

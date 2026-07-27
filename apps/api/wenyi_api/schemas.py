@@ -143,6 +143,7 @@ class ExportRequest(BaseModel):
     bilingual: bool = False
     order: str = "target_first"
     about_page: bool = True
+    preserve_source_style: bool = False
 
 
 class ExportOut(BaseModel):

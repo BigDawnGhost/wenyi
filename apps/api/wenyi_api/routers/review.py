@@ -1,4 +1,4 @@
-"""审校：并排段落对照（P0 只读 + 单段编辑译文）+ 标记完成。"""
+"""审校：并排段落对照（P0 只读 + 单段编辑译文）+ 标记完成 + 全书 AI 审校触发。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from pydantic import BaseModel
 from wenyi_core.ingest.models import Segment
 
 from ..db import get_pool
+from ..schemas import JobEnqueued
 from ..storage_pg import PostgresStorage
+from ..workers import enqueue
 
 router = APIRouter(prefix="/projects/{pid}/review", tags=["review"])
 
@@ -18,6 +20,28 @@ class SegmentEdit(BaseModel):
 
 class ReviewStatus(BaseModel):
     status: str  # ok | pending
+
+
+class ReviewRunRequest(BaseModel):
+    force: bool = False
+    autofix: bool = True
+
+
+# 静态路径须注册在 /{ci} 之前，避免被路径参数抢先匹配。
+@router.post("/run", response_model=JobEnqueued)
+async def run_ai_review(pid: str, body: ReviewRunRequest | None = None) -> dict:
+    """触发全书 AI 审校：按章并发检测问题，严重项自动修复。"""
+    from .. import dal
+    if dal.get_project(pid) is None:
+        raise HTTPException(404, "project not found")
+    dal.set_project_status(pid, "reviewing")
+    job = await enqueue(
+        "run_review",
+        project_id=pid,
+        force=body.force if body else False,
+        autofix=body.autofix if body else True,
+    )
+    return {"job_id": job.job_id if job else "sync", "project_id": pid, "kind": "review"}
 
 
 @router.get("/{ci}")

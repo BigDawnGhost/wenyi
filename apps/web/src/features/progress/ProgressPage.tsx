@@ -9,12 +9,22 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Download, Pause, Play } from "lucide-react";
+import { Download, Pause, Play, BookOpen } from "lucide-react";
 
 export default function ProgressPage() {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
-  const { data: project } = useQuery({ queryKey: ["project", pid], queryFn: () => api.getProject(pid), enabled: !!pid });
+  const { data: project } = useQuery({
+    queryKey: ["project", pid],
+    queryFn: () => api.getProject(pid),
+    enabled: !!pid,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "translating" || status === "preparing" || status === "reviewing"
+        ? 3000
+        : false;
+    },
+  });
   const { data: chapters, refetch } = useQuery({ queryKey: ["chapters", pid], queryFn: () => api.listChapters(pid), enabled: !!pid, refetchInterval: 3000 });
   const { msg, log, connected } = useProjectProgress(pid);
 
@@ -27,9 +37,24 @@ export default function ProgressPage() {
 
   const pause = useMutation({ mutationFn: () => api.pause(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已暂停"); } });
   const resume = useMutation({ mutationFn: () => api.resume(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已恢复"); } });
+  const prepare = useMutation({ mutationFn: () => api.prepare(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已开始译前准备"); } });
 
   const translating = project?.status === "translating";
+  const preparing = project?.status === "preparing";
+  const reviewing = project?.status === "reviewing";
   const paused = project?.status === "paused";
+  const busy = translating || preparing || reviewing;
+  const currentStatus = paused
+    ? "已暂停"
+    : preparing
+      ? msg?.label || "准备中"
+      : reviewing
+        ? msg?.label || "审校中"
+        : translating
+          ? msg?.label || "翻译中"
+          : project?.status === "error"
+            ? "失败"
+            : project?.status || "—";
 
   return (
     <>
@@ -38,7 +63,8 @@ export default function ProgressPage() {
         subtitle={project?.title || undefined}
         actions={
           <>
-            {translating && <Button variant="outline" onClick={() => pause.mutate()}><Pause className="h-4 w-4" /> 暂停</Button>}
+            {!busy && <Button variant="outline" onClick={() => prepare.mutate()} disabled={prepare.isPending}><BookOpen className="h-4 w-4" /> 译前准备</Button>}
+            {busy && <Button variant="outline" onClick={() => pause.mutate()}><Pause className="h-4 w-4" /> 暂停</Button>}
             {paused && <Button onClick={() => resume.mutate()}><Play className="h-4 w-4" /> 恢复</Button>}
             <Link to={`/projects/${pid}/export`}><Button variant="outline"><Download className="h-4 w-4" /> 导出</Button></Link>
           </>
@@ -47,7 +73,7 @@ export default function ProgressPage() {
       <PageContainer className="space-y-4">
         <div className="grid gap-3 md:grid-cols-4">
           <StatCard label="翻译进度" value={`${wsDone}/${wsTotal}`} sub={`${pct}%`}><Progress value={pct} className="mt-2" /></StatCard>
-          <StatCard label="当前状态" value={paused ? "已暂停" : msg?.label || (translating ? "翻译中" : project?.status || "—")} sub={connected ? "实时连接" : "离线"} />
+          <StatCard label="当前状态" value={currentStatus} sub={connected ? "实时连接" : "离线"} />
           <StatCard label="策略" value={(project?.strategy as { template?: string })?.template || "自定义"} />
           <StatCard label="状态" value={project?.status || "—"} />
         </div>

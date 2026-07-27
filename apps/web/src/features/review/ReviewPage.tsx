@@ -7,7 +7,7 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Sparkles } from "lucide-react";
 
 export default function ReviewPage() {
   const { pid = "", ci } = useParams();
@@ -30,6 +30,11 @@ export default function ReviewPage() {
     mutationFn: () => api.markReviewComplete(pid, idx!),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["chapters", pid] }); toast.success("已标记审校完成"); },
   });
+  const aiReview = useMutation({
+    mutationFn: () => api.runAiReview(pid),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["chapters", pid] }); toast.success("已启动全书 AI 审校"); },
+    onError: (e) => toast.error(`AI 审校失败：${(e as Error).message}`),
+  });
 
   const go = (delta: number) => {
     if (!reviewable.length || idx === undefined) return;
@@ -47,6 +52,7 @@ export default function ReviewPage() {
         subtitle="左原文 / 右译文，点击译文可直接编辑"
         actions={
           <>
+            <Button variant="outline" onClick={() => aiReview.mutate()} disabled={aiReview.isPending}><Sparkles className="h-4 w-4" /> AI 审校</Button>
             <Button variant="outline" onClick={() => go(-1)}><ChevronLeft className="h-4 w-4" /> 上一章</Button>
             <Button variant="outline" onClick={() => go(1)}>下一章 <ChevronRight className="h-4 w-4" /></Button>
             <Button onClick={() => complete.mutate()} disabled={complete.isPending || idx === undefined}><Check className="h-4 w-4" /> 标记审校完成</Button>

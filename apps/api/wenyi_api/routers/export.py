@@ -43,6 +43,7 @@ async def create_export(pid: str, body: ExportRequest) -> dict:
             "bilingual": body.bilingual,
             "order": body.order,
             "about_page": body.about_page,
+            "preserve_source_style": body.preserve_source_style,
         },
     )
     try:
@@ -54,6 +55,7 @@ async def create_export(pid: str, body: ExportRequest) -> dict:
             bilingual=body.bilingual,
             order=body.order,
             about_page=body.about_page,
+            preserve_source_style=body.preserve_source_style,
         )
     except Exception:
         dal.set_export_status(export_id, "error")

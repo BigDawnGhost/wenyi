@@ -102,6 +102,16 @@ async def start_translation(pid: str, body: StartTranslation | None = None) -> d
     return {"job_id": job.job_id if job else "sync", "project_id": pid, "kind": "translation"}
 
 
+@router.post("/{pid}/prepare", response_model=JobEnqueued)
+async def prepare_only(pid: str) -> dict:
+    """仅执行译前准备（解析、语言检测、风格分析、术语提取、全书概览），不翻译正文。"""
+    if dal.get_project(pid) is None:
+        raise HTTPException(404, "project not found")
+    set_project_status(pid, "preparing")
+    job = await enqueue("run_prepare", project_id=pid)
+    return {"job_id": job.job_id if job else "sync", "project_id": pid, "kind": "prepare"}
+
+
 @router.post("/{pid}/pause", response_model=Message)
 def pause(pid: str) -> dict:
     set_project_status(pid, "paused")

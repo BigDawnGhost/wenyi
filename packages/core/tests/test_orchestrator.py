@@ -20,8 +20,9 @@ from wenyi_core.pipeline.runstore import (
     STATUS_DONE,
     STATUS_PENDING,
 )
-from tests.sample_data import write_sample_txt
+
 from tests.fake_llm import routing_handler
+from tests.sample_data import write_sample_txt
 
 
 def _translated_para_count(calls) -> int:
@@ -631,7 +632,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=client)
 
             with (
-                patch("trans_novel.pipeline.orchestrator.load_document") as loader,
+                patch("wenyi_core.pipeline.orchestrator.load_document") as loader,
                 self.assertRaisesRegex(ValueError, "尚无翻译进度"),
             ):
                 orch.run_review(pdf)

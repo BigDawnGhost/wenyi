@@ -42,11 +42,12 @@ def test_create_export_inserts_pending_record_before_enqueue(monkeypatch):
         (
             "project-1",
             "epub",
-            {
-                "bilingual": True,
-                "order": "source_first",
-                "about_page": False,
-            },
+                {
+                    "bilingual": True,
+                    "order": "source_first",
+                    "about_page": False,
+                    "preserve_source_style": False,
+                },
         ),
     )
     assert calls[1] == (
@@ -60,6 +61,7 @@ def test_create_export_inserts_pending_record_before_enqueue(monkeypatch):
                 "bilingual": True,
                 "order": "source_first",
                 "about_page": False,
+                "preserve_source_style": False,
             },
         ),
     )

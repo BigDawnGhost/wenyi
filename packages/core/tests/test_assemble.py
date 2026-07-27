@@ -11,31 +11,30 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-
-from wenyi_core.config import Config
-from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.assemble.about import append_about_page
+from wenyi_core.assemble.report import build_report
 from wenyi_core.assemble.writer import (
     _inject_bilingual_style,
     _render_chapter_html,
     _rewrite_html_document,
     assemble,
 )
-from wenyi_core.assemble.about import append_about_page
-from wenyi_core.assemble.report import build_report
-from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.segmenter import load_document
+from wenyi_core.config import Config
 from wenyi_core.ingest.epub_reader import annotate_epub_resource
 from wenyi_core.ingest.models import Chapter
+from wenyi_core.ingest.segmenter import load_document
+from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.storage import FileStorage
+
+from tests.fake_llm import routing_handler
 from tests.sample_data import (
     write_inline_sample_epub,
     write_nested_toc_epub,
     write_sample_epub,
     write_sample_txt,
 )
-from tests.fake_llm import routing_handler
-
 
 _FB2_WITH_IMAGES = """\
 <?xml version="1.0" encoding="utf-8"?>
@@ -470,7 +469,7 @@ class TestTitleTranslation(unittest.TestCase):
             source = os.path.join(directory, "novel.epub")
             write_sample_epub(source)
             document = load_document(source, "ja", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             manifest = store.stage_document(document)
             manifest["meta"]["toc_entries"] = [
                 {
@@ -487,20 +486,20 @@ class TestTitleTranslation(unittest.TestCase):
                 store.save_chapter(chapter)
             store.save_manifest(manifest)
             client = FakeClient(handler=routing_handler)
-            orchestrator = Orchestrator(_config(directory), client=client)
-            glossary = GlossaryStore(store.glossary_path)
-            try:
-                with (
-                    patch.object(
-                        client,
-                        "complete_json",
-                        return_value={"titles": []},
-                    ),
-                    self.assertRaisesRegex(RuntimeError, "invalid number"),
-                ):
-                    orchestrator._translate_titles(store, glossary)
-            finally:
-                glossary.close()
+            orchestrator = Orchestrator(
+                _config(directory),
+                client=client,
+                storage=store,
+            )
+            with (
+                patch.object(
+                    client,
+                    "complete_json",
+                    return_value={"titles": []},
+                ),
+                self.assertRaisesRegex(RuntimeError, "invalid number"),
+            ):
+                orchestrator._translate_titles()
 
             entry = store.load_manifest()["meta"]["toc_entries"][0]
             self.assertNotIn("title_translated", entry)
