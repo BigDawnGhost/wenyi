@@ -192,6 +192,10 @@ export const api = {
   listConflicts: (pid: string) => request<Conflict[]>(`/projects/${pid}/glossary/conflicts`),
   resolveConflict: (pid: string, cid: number, body: { decision: string; target?: string }) =>
     request<{ message: string }>(`/projects/${pid}/glossary/conflicts/${cid}/resolve`, { method: "POST", body: JSON.stringify(body) }),
+  exportGlossaryUrl: (pid: string, format: "json" | "csv") =>
+    `${BASE}/projects/${pid}/glossary/export?format=${format}`,
+  importGlossary: (pid: string, terms: Partial<Term>[]) =>
+    request<{ imported: number }>(`/projects/${pid}/glossary/import`, { method: "POST", body: JSON.stringify({ terms }) }),
 
   getReview: (pid: string, ci: number) => request<ChapterSegments>(`/projects/${pid}/review/${ci}`),
   editSegment: (pid: string, ci: number, segIdx: number, target: string) =>
