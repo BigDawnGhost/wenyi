@@ -21,3 +21,19 @@ explore/
 *.azw3
 *.pdf
 *.html
+
+# ── Web 升级（monorepo）─────────────────────────────────────────
+node_modules/
+.next/
+.turbo/
+.env
+.env.local
+data/
+*.zh-bi.epub
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+local_references
