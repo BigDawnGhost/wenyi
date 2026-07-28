@@ -299,6 +299,25 @@ class TestRepairVerifier(unittest.TestCase):
         self.assertEqual(result["verdict"], "reject")
         self.assertEqual(result["code"], "invalid_response")
 
+    def test_ambiguous_verdict_fails_closed(self):
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps(
+                {
+                    "verdict": "maybe",
+                    "rationale": "候选似乎更好，但无法确定",
+                },
+                ensure_ascii=False,
+            )
+        )
+        result = RepairVerifier(client, _cfg()).verify(
+            "原文",
+            "旧译文",
+            "候选译文",
+            feedback="误译",
+        )
+        self.assertEqual(result["verdict"], "reject")
+        self.assertEqual(result["code"], "invalid_verdict")
+
     def test_missing_rationale_fails_closed(self):
         client = FakeClient(
             handler=lambda m, t, j: json.dumps(
