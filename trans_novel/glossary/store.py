@@ -100,10 +100,15 @@ def _match_text(text: str) -> str:
 _WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
 
 
-def _source_pattern(key: str) -> re.Pattern[str] | None:
+def _source_pattern(
+    key: str,
+    *,
+    case_sensitive: bool = False,
+) -> re.Pattern[str] | None:
     """为空格分词文字构造边界正则；连续书写文字返回 None 使用子串匹配。"""
     if key.isascii():
-        return re.compile(rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])")
+        boundary = "A-Za-z0-9_" if case_sensitive else "a-z0-9_"
+        return re.compile(rf"(?<![{boundary}]){re.escape(key)}(?![{boundary}])")
 
     letters = [char for char in key if char.isalpha()]
     if not letters or not all(
@@ -117,17 +122,25 @@ def _source_pattern(key: str) -> re.Pattern[str] | None:
     return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
 
 
-def source_matches_text(source: str, text: str) -> bool:
+def source_matches_text(
+    source: str,
+    text: str,
+    *,
+    case_sensitive: bool = False,
+) -> bool:
     """判断术语原文是否出现，并避免空格分词文字命中更长单词。
 
     CJK 等连续书写文字沿用规范化子串匹配；ASCII、拉丁、希腊和西里尔文字
     检查单词边界，避免 ``Ann`` 命中 ``Anna``、``гад`` 命中 ``гадкий``。
+    冲突人物等需要区分专名/普通词义时可保留大小写，避免 ``Giant`` 命中
+    ``giant fingers``。
     """
-    key = _match_text(source).strip()
+    normalize = unicodedata.normalize
+    key = normalize("NFKC", source).strip() if case_sensitive else _match_text(source).strip()
     if not key:
         return False
-    normalized_text = _match_text(text)
-    if pattern := _source_pattern(key):
+    normalized_text = normalize("NFKC", text) if case_sensitive else _match_text(text)
+    if pattern := _source_pattern(key, case_sensitive=case_sensitive):
         return pattern.search(normalized_text) is not None
     return key in normalized_text
 

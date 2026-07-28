@@ -64,7 +64,9 @@ class Reviewer(Agent):
             "reviewer_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(
+                [term for term in (glossary_terms or []) if getattr(term, "status", "ok") == "ok"]
+            ),
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
