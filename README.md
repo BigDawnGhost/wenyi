@@ -41,10 +41,10 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 |---|---|
 | Segments translated in isolation, unaware of surrounding content | Whole-book prescan with chapter digests and rolling context |
 | Glossary managed manually or as an afterthought | Real-time term extraction with conflict detection, fed back into subsequent batches |
-| Single-pass translation, fragile to interruptions | Chapter-level state machine: resume any interrupted run with the same command |
-| Raw model output, no systematic quality process | Translate → polish → review → backtranslate → consistency QA |
+| Single-pass translation, fragile to interruptions | Batch checkpoints and chapter status tracking: resume any interrupted run with the same command |
+| Raw model output, no systematic quality process | Translate → polish → chapter-level backtranslation sampling → final review → consistency QA |
 
-Wenyi is designed for **long-form texts** — novels, memoirs, biographies — where translating a sentence in chapter 3 demands knowledge of chapter 1, and a character's name must remain consistent across 500 pages.
+Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
 
 ---
 
@@ -52,11 +52,11 @@ Wenyi is designed for **long-form texts** — novels, memoirs, biographies — w
 
 - **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- **Multi-stage quality** — optional polishing (strong model), side-by-side review, backtranslation sampling, and cross-chapter consistency QA
-- **Resumability** — chapter-level state machine with atomic writes; interrupt at any point and resume with the same command
+- **Multi-stage quality** — optional polishing (strong model), final AI review, backtranslation sampling, and cross-chapter consistency QA
+- **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
 - **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
-- **Native EPUB preservation** — writes translated text back into the original XHTML templates, preserving styles, images, TOC, and anchors
-- **Bilingual output** — optional side-by-side edition with visually subdued source text, including dark mode support
+- **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
+- **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support
 
 ---
 
@@ -69,18 +69,17 @@ Wenyi requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 ### Installation
 
 ```bash
-git clone git@github.com:BigDawnGhost/wenyi.git
+git clone https://github.com/BigDawnGhost/wenyi.git
 cd wenyi
 uv sync
 ```
 
 ### Configuration
 
-Set your API key and optionally review the generated config file:
+Set your API key:
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-# config.yaml is auto-created on first run if missing
 ```
 
 ### One-command translation
@@ -124,7 +123,7 @@ uv run trans-novel translate book.epub
 uv run trans-novel translate book.epub --polish --review --qa     # enable all quality stages
 uv run trans-novel translate book.epub --no-polish                 # disable polishing
 uv run trans-novel translate book.epub --bilingual                 # produce both editions
-uv run trans-novel translate book.epub --chapter 3                 # translate a single chapter
+uv run trans-novel translate book.epub --chapter 0                 # translate the first chapter (indices start at 0)
 uv run trans-novel translate book.epub --format txt                # export as plain text
 ```
 
@@ -137,36 +136,36 @@ uv run trans-novel translate book.epub --format txt                # export as p
 | EPUB, FB2, TXT, Markdown, HTML, PDF | EPUB (monolingual / bilingual), TXT, HTML, Markdown |
 
 - PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
-- EPUB output preserves the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
+- EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 
 ---
 
 ## Translation pipeline
 
-```
-  Input file
-    ↓
-  Parse chapters + detect language
-    ↓
-  Whole-book prescan (chapter digests + synopsis)  ← parallel
-    ↓
-  Style analysis + initial glossary
-    ↓
-  ┌─ Translate chapter by chapter ──────────────────────┐
-  │  Per batch: inject context → translate               │
-  │  → extract terms → polish → normalize punctuation    │
-  │  → backtranslate sample → persist                    │
-  └──────────────────────────────────────────────────────┘
-    ↓
-  Final review (against completed glossary)    ← optional, parallel
-    ↓
-  Cross-chapter consistency QA                  ← optional
-    ↓
-  Generate report + assemble output EPUB
+```mermaid
+flowchart TD
+    A[Input file] --> B[Parse chapters and detect language]
+    B --> C[Analyze style and seed the glossary]
+    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
+    D --> E
+
+    subgraph T[Translate chapter by chapter]
+        E[Inject context and translate a batch]
+        E --> F[Polish and persist translations]
+        F --> G[Extract terms and refresh the glossary]
+        G --> H{More batches?}
+        H -- Yes --> E
+        H -- No --> I[Normalize punctuation and run chapter-level term extraction]
+        I --> J[Check backtranslation samples and persist the final chapter]
+    end
+
+    J --> K[Optional parallel final review<br/>Using the completed glossary]
+    K --> L[Optional cross-chapter consistency QA]
+    L --> M[Generate the report and assemble the selected output]
 ```
 
-The prescan runs in parallel (configurable concurrency) and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
+When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 
 ---
 
