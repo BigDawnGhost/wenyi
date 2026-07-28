@@ -1,0 +1,27 @@
+# 文译 Worker（Arq）：与 api 共用内核与依赖，仅 CMD 不同。
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libxml2 libxslt1.1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+COPY packages/core/pyproject.toml packages/core/pyproject.toml
+COPY packages/cli/pyproject.toml packages/cli/pyproject.toml
+COPY apps/api/pyproject.toml apps/api/pyproject.toml
+COPY packages/core packages/core
+COPY packages/cli packages/cli
+COPY apps/api apps/api
+COPY config.yaml ./
+
+RUN uv sync --all-packages --no-dev
+
+CMD ["uv", "run", "arq", "wenyi_api.workers.WorkerSettings"]
