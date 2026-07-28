@@ -1,6 +1,6 @@
 [project]
 name = "trans-novel"
-version = "0.2.0"
+dynamic = ["version"]
 description = "A multi-agent long-form novel translation system with context, terminology, polishing, and review."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,14 +15,35 @@ dependencies = [
     "ebooklib>=0.18",      # EPUB 读写
     "typer>=0.12",         # CLI
     "rich>=13.7",          # 表格 / 进度条
+    "json-repair>=0.61,<1", # 仅用于 Reviewer 畸形 JSON 的本地修复
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
 ]
 
+[project.optional-dependencies]
+pdf-output = [
+    "weasyprint>=69.0",
+]
+pdf-output-lite = [
+    "fpdf2>=2.8.5",
+]
+
 [dependency-groups]
 dev = [
+    "pre-commit>=3.7",
     "pytest>=8.0",
+    "ruff>=0.12",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import 排序
+select = ["E", "W", "F", "I"]
+# 超长行主要是中文 prompt 字面量，formatter 不会拆字符串
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -31,8 +52,11 @@ testpaths = ["tests"]
 trans-novel = "trans_novel.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trans_novel"]

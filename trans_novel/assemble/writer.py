@@ -9,13 +9,24 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import importlib
+import mimetypes
 import os
+import posixpath
 import re
+import sys
+import tempfile
 import zipfile
 from html import escape
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup, UnicodeDammit
-from bs4.element import Tag
+from bs4.element import Comment, Tag
+from bs4.exceptions import ParserRejectedMarkup
 
 from ..ingest.epub_toc import nav_root_list, nav_toc_scopes
 from ..ingest.fb2_reader import read_fb2_binaries
@@ -28,10 +39,16 @@ _HTML_EXTS = (".xhtml", ".html", ".htm")
 _VERTICAL_MARKERS = (
     re.compile(
         rb"(?:-epub-|-webkit-)?writing-mode\s*:\s*(?:vertical-rl|vertical-lr|tb-rl)",
-        re.I,
+        re.IGNORECASE,
     ),
-    re.compile(rb"page-progression-direction\s*=\s*['\"]rtl['\"]", re.I),
-    re.compile(rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b", re.I),
+    re.compile(
+        rb"page-progression-direction\s*=\s*['\"]rtl['\"]",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b",
+        re.IGNORECASE,
+    ),
 )
 _HORIZONTAL_OVERRIDE_ID = "trans-novel-horizontal-override"
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
@@ -67,6 +84,31 @@ _BILINGUAL_CSS = """\
   }
 }
 """
+_PRINT_CSS = """\
+@page {
+  size: A5;
+  margin: 18mm 16mm 20mm;
+  @bottom-center {
+    content: counter(page);
+    color: #666;
+    font-size: 9pt;
+  }
+}
+html, body {
+  background: white !important;
+  color: black;
+  font-family: "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  font-size: 10.5pt;
+  line-height: 1.75;
+}
+body { margin: 0; padding: 0; max-width: none; }
+h1 { break-before: page; }
+h1:first-child { break-before: auto; }
+h1, h2, h3, h4, h5, h6 { break-after: avoid; page-break-after: avoid; }
+p { orphans: 2; widows: 2; }
+img, svg, picture { max-width: 100%; height: auto; }
+figure { break-inside: avoid; page-break-inside: avoid; }
+"""
 
 
 def _sanitize_filename(name: str, fallback: str = "translated") -> str:
@@ -76,12 +118,157 @@ def _sanitize_filename(name: str, fallback: str = "translated") -> str:
     return name[:120] or fallback
 
 
-_OUT_EXT = {"epub": ".epub", "txt": ".txt", "html": ".html", "markdown": ".md"}
+_OUT_EXT = {
+    "epub": ".epub",
+    "txt": ".txt",
+    "html": ".html",
+    "markdown": ".md",
+    "pdf": ".pdf",
+}
+_RESOURCE_ATTRS = {
+    "img": ("src",),
+    "source": ("src",),
+    "object": ("data",),
+    "embed": ("src",),
+    "audio": ("src",),
+    "video": ("src", "poster"),
+    "image": ("href", "xlink:href"),
+}
+_DATA_URI = re.compile(
+    r"^data:(?P<media>[-\w.+/]+)?(?P<params>(?:;[-\w.+]+=[^;,]+)*)(?P<b64>;base64)?,(?P<data>.*)$",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def _ensure_parent_dir(path: str) -> None:
     """Create the output directory while allowing a bare filename."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+
+def _resource_extension(media_type: str, reference: str) -> str:
+    """Return a stable extension for a packaged HTML resource."""
+    extension = os.path.splitext(urlsplit(reference).path)[1].lower()
+    if extension and len(extension) <= 10:
+        return extension
+    return _IMAGE_EXTENSION_BY_TYPE.get(
+        media_type,
+        mimetypes.guess_extension(media_type) or ".bin",
+    )
+
+
+def _load_html_resource(
+    reference: str,
+    *,
+    source_dir: str,
+) -> tuple[str, bytes] | None:
+    """Load a local or data-URI resource without escaping the HTML source tree."""
+    value = reference.strip()
+    if not value or value.startswith(("#", "http://", "https://", "//")):
+        return None
+    match = _DATA_URI.match(value)
+    if match:
+        media_type = (match.group("media") or "application/octet-stream").lower()
+        raw = match.group("data")
+        try:
+            payload = (
+                base64.b64decode(raw, validate=True)
+                if match.group("b64")
+                else unquote(raw).encode("utf-8")
+            )
+        except (ValueError, binascii.Error):
+            return None
+        return media_type, payload
+
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.scheme != "file":
+        return None
+    relative = unquote(parsed.path)
+    candidate = os.path.abspath(os.path.join(source_dir, relative))
+    try:
+        if os.path.commonpath((candidate, os.path.abspath(source_dir))) != os.path.abspath(
+            source_dir
+        ):
+            return None
+    except ValueError:
+        return None
+    if not os.path.isfile(candidate):
+        return None
+    media_type = mimetypes.guess_type(candidate)[0] or "application/octet-stream"
+    return media_type, Path(candidate).read_bytes()
+
+
+def _package_html_resources(
+    html: str,
+    *,
+    source_dir: str,
+    href_prefix: str,
+) -> tuple[str, dict[str, tuple[str, bytes]]]:
+    """Rewrite image/media references and return packaged href -> payload entries."""
+    soup = BeautifulSoup(html, "html.parser")
+    packaged: dict[str, tuple[str, bytes]] = {}
+    href_by_reference: dict[str, str] = {}
+
+    def package(reference: str) -> str:
+        if reference in href_by_reference:
+            return href_by_reference[reference]
+        loaded = _load_html_resource(reference, source_dir=source_dir)
+        if loaded is None:
+            return reference
+        media_type, payload = loaded
+        digest = hashlib.sha256(payload).hexdigest()[:16]
+        extension = _resource_extension(media_type, reference)
+        href = posixpath.join(href_prefix, f"{digest}{extension}")
+        packaged[href] = (media_type, payload)
+        href_by_reference[reference] = href
+        return href
+
+    for tag_name, attrs in _RESOURCE_ATTRS.items():
+        for element in soup.find_all(tag_name):
+            for attr in attrs:
+                value = element.get(attr)
+                if isinstance(value, str):
+                    element[attr] = package(value)
+            srcset = element.get("srcset")
+            if isinstance(srcset, str) and not srcset.lstrip().startswith("data:"):
+                rewritten = []
+                for candidate in srcset.split(","):
+                    bits = candidate.strip().split()
+                    if bits:
+                        bits[0] = package(bits[0])
+                    rewritten.append(" ".join(bits))
+                element["srcset"] = ", ".join(rewritten)
+    return str(soup), packaged
+
+
+def _materialize_html_resources(
+    html: str,
+    *,
+    source_path: str,
+    out_path: str,
+) -> str:
+    """Copy HTML media beside an exported document and rewrite its references."""
+    asset_dir_name = f"{Path(out_path).stem}.assets"
+    rewritten, packaged = _package_html_resources(
+        html,
+        source_dir=os.path.dirname(os.path.abspath(source_path)),
+        href_prefix=asset_dir_name,
+    )
+    for href, (_media_type, payload) in packaged.items():
+        destination = os.path.join(os.path.dirname(os.path.abspath(out_path)), *href.split("/"))
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        with open(destination, "wb") as file:
+            file.write(payload)
+    return rewritten
+
+
+def _template_resource_source(manifest: dict, source_path: str) -> str:
+    """Return the HTML file whose directory resolves template media references."""
+    raw_meta = manifest.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    converted_html_path = meta.get("converted_html_path")
+    if manifest.get("fmt") == "pdf" and isinstance(converted_html_path, str):
+        return converted_html_path
+    return source_path
 
 
 def _default_out(
@@ -115,6 +302,21 @@ def bilingual_out_path(out_path: str) -> str:
 def _ch_title(c: dict) -> str:
     """章节展示标题：优先译名，回退原标题。"""
     return (c.get("title_translated") or c.get("title") or "").strip()
+
+
+def _export_book_title(
+    title: str | None,
+    target_lang: str | None,
+    *,
+    bilingual: bool,
+) -> str:
+    """导出用书名：原书名后追加 Wenyi、目标语言及可选双语标记。"""
+    base = (title or "").strip() or "translated"
+    lang = (target_lang or "").strip().replace("_", "-").lower() or "zh"
+    suffix = f"-wenyi-{lang}{'-bi' if bilingual else ''}"
+    if base.endswith(suffix):
+        return base
+    return f"{base}{suffix}"
 
 
 def _seg_text(seg) -> str:
@@ -226,11 +428,7 @@ def _assemble_text(
         ch = store.load_chapter(c["index"])
         blocks: list[str] = []
         for kind, target, source in _merged_paragraphs(ch):
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 blocks.append(target)
             elif order == "source_first":
@@ -262,11 +460,7 @@ def _assemble_markdown(
         for kind, target, source in _merged_paragraphs(ch):
             if kind == KIND_HEADING:
                 target = heading_prefix + target
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 blocks.append(target)
             elif order == "source_first":
@@ -336,9 +530,7 @@ def _render_segments_html(
         # 避免生成 <ul><li>...</li><p>...</p></ul> 之类的非法列表结构，
         # 同时保留引用块的语义和样式。
         nested_source = el.name in {"li", "blockquote"}
-        src_el = soup.new_tag(
-            "span" if line_wrapper else "div" if nested_source else "p"
-        )
+        src_el = soup.new_tag("span" if line_wrapper else "div" if nested_source else "p")
         source_classes = ["tn-source"]
         if preserve_source_style:
             original_classes = el.get("class")
@@ -411,7 +603,7 @@ def _rewrite_opf_metadata(
     lang: str,
     force_horizontal: bool,
 ) -> bytes:
-    """更新 OPF 元数据：书名可选改写，译后语言改为目标语言，竖排源书改横排方向。"""
+    """更新 OPF 元数据：标记 Wenyi 版本及语言，译后语言改为目标语言。"""
     try:
         soup = BeautifulSoup(data, "xml")
         if book_title:
@@ -434,7 +626,7 @@ def _rewrite_opf_metadata(
             for spine in soup.find_all("spine"):
                 spine["page-progression-direction"] = "ltr"
         return soup.encode()
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
 
 
@@ -446,8 +638,15 @@ def _epub_looks_vertical(zf: zipfile.ZipFile) -> bool:
             continue
         try:
             data = zf.read(info.filename)
-        except Exception:
-            continue
+        except (
+            EOFError,
+            KeyError,
+            NotImplementedError,
+            OSError,
+            RuntimeError,
+            zipfile.BadZipFile,
+        ):
+            data = b""
         if any(marker.search(data) for marker in _VERTICAL_MARKERS):
             return True
     return False
@@ -511,7 +710,7 @@ def _rewrite_html_document(
             head.append(style)
         output = _XML_ENCODING.sub(r'\1"utf-8"', str(soup))
         return output.encode("utf-8")
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data if isinstance(data, bytes) else data.encode("utf-8")
 
 
@@ -606,9 +805,7 @@ def _rewrite_toc(
             else {}
         )
         legacy_titles = (
-            entries_or_legacy_titles
-            if isinstance(entries_or_legacy_titles, dict)
-            else {}
+            entries_or_legacy_titles if isinstance(entries_or_legacy_titles, dict) else {}
         )
         if is_ncx:
             soup = BeautifulSoup(data, "xml")
@@ -644,17 +841,12 @@ def _rewrite_toc(
                 node
                 for node in soup.find_all("nav")
                 if "toc"
-                in (
-                    _attr_str(node.get("epub:type"))
-                    or _attr_str(node.get("type"))
-                ).split()
+                in (_attr_str(node.get("epub:type")) or _attr_str(node.get("type"))).split()
             ]
             scopes: list[Tag | BeautifulSoup] = toc_navs or [soup]
             for scope in scopes:
                 for label in scope.find_all("a", href=True):
-                    title = legacy_titles.get(
-                        _base_no_frag(_attr_str(label.get("href")))
-                    )
+                    title = legacy_titles.get(_base_no_frag(_attr_str(label.get("href"))))
                     if title:
                         label.clear()
                         label.append(title)
@@ -672,7 +864,7 @@ def _rewrite_toc(
                 label.clear()
                 label.append(title)
         return str(soup).encode("utf-8")
-    except Exception:
+    except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
 
 
@@ -730,9 +922,7 @@ def _render_epub_resources(
     declared_hrefs = {href for _index, href in resources}
     undeclared = sorted(set(grouped) - declared_hrefs)
     if undeclared:
-        raise ValueError(
-            "EPUB 翻译状态引用了未登记的正文资源：" + ", ".join(undeclared[:3])
-        )
+        raise ValueError("EPUB 翻译状态引用了未登记的正文资源：" + ", ".join(undeclared[:3]))
 
     # 延迟导入避免 reader -> models / writer 模块加载期间形成不必要的依赖环。
     from ..ingest.epub_reader import annotate_epub_resource
@@ -764,25 +954,17 @@ def _render_epub_resources(
         )
 
         # 状态和源书不匹配时不能静默漏回填；这种情况通常表示用户替换了原书。
-        available_anchors = {
-            segment.anchor for segment in annotated_segments if segment.anchor
-        }
+        available_anchors = {segment.anchor for segment in annotated_segments if segment.anchor}
         required_anchors = {
-            segment.anchor
-            for segment in segments
-            if segment.anchor and not segment.cont
+            segment.anchor for segment in segments if segment.anchor and not segment.cont
         }
         missing = sorted(required_anchors - available_anchors)
         if missing:
             preview = ", ".join(missing[:3])
-            raise ValueError(
-                f"EPUB 正文与翻译状态不匹配：{href} 缺少回填锚点 {preview}"
-            )
+            raise ValueError(f"EPUB 正文与翻译状态不匹配：{href} 缺少回填锚点 {preview}")
 
         fresh_by_anchor = {
-            segment.anchor: segment
-            for segment in annotated_segments
-            if segment.anchor
+            segment.anchor: segment for segment in annotated_segments if segment.anchor
         }
         stored_sources: dict[str, str] = {}
         current_anchor: str | None = None
@@ -801,13 +983,8 @@ def _render_epub_resources(
         ]
         if changed_anchors:
             preview = ", ".join(changed_anchors[:3])
-            raise ValueError(
-                f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）"
-            )
-        fresh_meta_by_anchor = {
-            anchor: segment.meta
-            for anchor, segment in fresh_by_anchor.items()
-        }
+            raise ValueError(f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）")
+        fresh_meta_by_anchor = {anchor: segment.meta for anchor, segment in fresh_by_anchor.items()}
         rendered[href] = _render_segments_html(
             template,
             segments,
@@ -836,7 +1013,7 @@ def _assemble_html(
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
     # 始终确保 charset 声明，否则浏览器无法正确识别编码导致中文乱码
-    if 'charset' not in head_html.replace(' ', '').lower():
+    if "charset" not in head_html.replace(" ", "").lower():
         head_html = '<meta charset="utf-8"/>\n' + head_html
     if bilingual and not preserve_source_style and _BILINGUAL_STYLE_ID not in head_html:
         head_html += f'<style id="{_BILINGUAL_STYLE_ID}">\n{_BILINGUAL_CSS}</style>'
@@ -868,7 +1045,7 @@ def _assemble_html(
             )
         rendered_epub = bool(body_parts)
 
-    for c in ([] if rendered_epub else m["chapters"]):
+    for c in [] if rendered_epub else m["chapters"]:
         ch = store.load_chapter(c["index"])
         if ch.template:
             # 复用 EPUB 的章节渲染（替换 data-tn-id → 译文，处理 cont 续段与双语）
@@ -890,11 +1067,7 @@ def _assemble_html(
                 target_html = f"<h{level}>{escape(target)}</h{level}>"
             else:
                 target_html = f"<p>{escape(target)}</p>"
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 body_parts.append(target_html)
                 continue
@@ -913,10 +1086,266 @@ def _assemble_html(
 {"".join(body_parts)}
 </body>
 </html>"""
+    full_html = _materialize_html_resources(
+        full_html,
+        source_path=_template_resource_source(m, source_path),
+        out_path=out_path,
+    )
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(full_html)
     return out_path
+
+
+def _assemble_pdf_weasyprint(
+    store: RunStore,
+    source_path: str,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+    preserve_source_style: bool = False,
+) -> str:
+    """Render a print-specific HTML export to PDF with WeasyPrint."""
+    if sys.platform == "darwin":
+        # uv's standalone Python does not always search Homebrew's library
+        # directory, even when ``brew install weasyprint`` installed Pango.
+        brew_libs = [
+            path for path in ("/opt/homebrew/lib", "/usr/local/lib") if os.path.isdir(path)
+        ]
+        if brew_libs:
+            existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+            os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = os.pathsep.join(
+                [*brew_libs, *([existing] if existing else [])]
+            )
+    try:
+        HTML = getattr(importlib.import_module("weasyprint"), "HTML")
+    except (ImportError, OSError, AttributeError) as error:
+        raise ImportError(
+            "实验性 PDF 输出需要 WeasyPrint，请运行：uv sync --extra pdf-output"
+        ) from error
+
+    with tempfile.TemporaryDirectory(prefix="trans-novel-pdf-") as directory:
+        html_path = os.path.join(directory, "book.html")
+        _assemble_html(
+            store,
+            source_path,
+            html_path,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
+        with open(html_path, encoding="utf-8") as file:
+            soup = BeautifulSoup(file.read(), "html.parser")
+        head = soup.find("head")
+        if head is None:
+            head = soup.new_tag("head")
+            soup.insert(0, head)
+        style = soup.new_tag("style", id="trans-novel-print-style")
+        style.string = _PRINT_CSS
+        head.append(style)
+        HTML(string=str(soup), base_url=directory).write_pdf(out_path)
+    return out_path
+
+
+def _find_fpdf_font() -> str:
+    """Find a user-specified or common cross-platform CJK font file."""
+    configured = os.environ.get("TRANS_NOVEL_PDF_FONT", "").strip()
+    candidates = [
+        configured,
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    ]
+    windows_dir = os.environ.get("WINDIR", "")
+    if windows_dir:
+        candidates.extend(
+            [
+                os.path.join(windows_dir, "Fonts", "msyh.ttc"),
+                os.path.join(windows_dir, "Fonts", "simsun.ttc"),
+            ]
+        )
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    raise RuntimeError(
+        "fpdf2 PDF 输出需要中文字体。请设置 TRANS_NOVEL_PDF_FONT，"
+        "指向一个包含中文字符的 TTF/OTF/TTC 字体文件。"
+    )
+
+
+def _normalize_html_for_fpdf(html: str, *, base_dir: str) -> str:
+    """Reduce rendered book HTML to the subset supported by fpdf2."""
+    soup = BeautifulSoup(html, "html.parser")
+    body = soup.find("body") or soup
+    for comment in list(body.find_all(string=lambda node: isinstance(node, Comment))):
+        comment.extract()
+    for picture in list(body.find_all("picture")):
+        image = picture.find("img")
+        if isinstance(image, Tag):
+            picture.replace_with(image.extract())
+        else:
+            picture.decompose()
+    for figure in list(body.find_all("figure")):
+        caption = figure.find("figcaption")
+        if isinstance(caption, Tag):
+            caption.name = "p"
+            caption["align"] = "center"
+        figure.unwrap()
+    # fpdf2 renders ``img`` as a flowable rather than true inline content.
+    # Split mixed paragraphs explicitly so media keeps its source order.
+    for paragraph in list(body.find_all("p")):
+        if not paragraph.find("img", recursive=False) or not paragraph.get_text(strip=True):
+            continue
+        replacements: list[Tag] = []
+        current = soup.new_tag("p")
+        current.attrs.update(paragraph.attrs)
+        for child in list(paragraph.children):
+            if isinstance(child, Tag) and child.name == "img":
+                if current.get_text(strip=True):
+                    replacements.append(current)
+                replacements.append(child.extract())
+                current = soup.new_tag("p")
+                current.attrs.update(paragraph.attrs)
+            else:
+                current.append(child.extract())
+        if current.get_text(strip=True):
+            replacements.append(current)
+        for replacement in replacements:
+            paragraph.insert_before(replacement)
+        paragraph.decompose()
+    for element in list(body.find_all(["source", "style", "script"])):
+        element.decompose()
+    for image in body.find_all("img"):
+        src = image.get("src")
+        if isinstance(src, str) and not urlsplit(src).scheme:
+            absolute_src = os.path.abspath(os.path.join(base_dir, src))
+            image["src"] = absolute_src
+            natural_width = 0
+            if absolute_src.lower().endswith(".svg"):
+                try:
+                    svg_head = Path(absolute_src).read_text(encoding="utf-8", errors="ignore")[
+                        :2048
+                    ]
+                    width_match = re.search(
+                        r"<svg[^>]*\bwidth=['\"]?([0-9.]+)",
+                        svg_head,
+                        re.IGNORECASE,
+                    )
+                    natural_width = round(float(width_match.group(1))) if width_match else 0
+                except (OSError, ValueError):
+                    natural_width = 0
+            else:
+                try:
+                    open_image = getattr(importlib.import_module("PIL.Image"), "open")
+
+                    with open_image(absolute_src) as raster:
+                        natural_width = raster.width
+                except (ImportError, OSError, AttributeError):
+                    natural_width = 0
+            image["width"] = str(min(natural_width or 340, 340))
+    for element in list(body.find_all(["div", "section", "article", "main", "header", "footer"])):
+        element.unwrap()
+    return body.decode_contents()
+
+
+def _assemble_pdf_fpdf2(
+    store: RunStore,
+    source_path: str,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+    preserve_source_style: bool = False,
+) -> str:
+    """Render normalized book HTML with fpdf2 and no system rendering libraries."""
+    try:
+        fpdf_module = importlib.import_module("fpdf")
+        FPDF = getattr(fpdf_module, "FPDF")
+        FontFace = getattr(fpdf_module, "FontFace")
+    except (ImportError, AttributeError) as error:
+        raise ImportError(
+            "fpdf2 PDF 输出需要可选依赖，请运行：uv sync --extra pdf-output-lite"
+        ) from error
+
+    font_path = _find_fpdf_font()
+
+    class BookPDF(FPDF):
+        def footer(self) -> None:
+            self.set_y(-12)
+            self.set_font("WenyiCJK", size=8)
+            self.set_text_color(100)
+            self.cell(0, 6, f"{self.page_no()}/{{nb}}", align="C")
+
+    with tempfile.TemporaryDirectory(prefix="trans-novel-fpdf-") as directory:
+        html_path = os.path.join(directory, "book.html")
+        _assemble_html(
+            store,
+            source_path,
+            html_path,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
+        with open(html_path, encoding="utf-8") as file:
+            normalized = _normalize_html_for_fpdf(file.read(), base_dir=directory)
+
+        pdf = BookPDF(format=(148, 210))
+        pdf.set_margins(16, 18, 16)
+        pdf.set_auto_page_break(auto=True, margin=18)
+        pdf.add_font("WenyiCJK", style="", fname=font_path)
+        pdf.add_font("WenyiCJK", style="B", fname=font_path)
+        pdf.add_font("WenyiCJK", style="I", fname=font_path)
+        pdf.add_font("WenyiCJK", style="BI", fname=font_path)
+        pdf.alias_nb_pages()
+        pdf.add_page()
+        pdf.write_html(
+            normalized,
+            font_family="WenyiCJK",
+            tag_styles={
+                "h1": FontFace(size_pt=20, emphasis="B"),
+                "h2": FontFace(size_pt=16, emphasis="B"),
+                "h3": FontFace(size_pt=14, emphasis="B"),
+                "p": FontFace(size_pt=11),
+            },
+        )
+        pdf.output(out_path)
+    return out_path
+
+
+def _assemble_pdf(
+    store: RunStore,
+    source_path: str,
+    out_path: str,
+    *,
+    engine: str,
+    bilingual: bool = False,
+    order: str = "target_first",
+    preserve_source_style: bool = False,
+) -> str:
+    """Dispatch PDF output to the selected rendering backend."""
+    if engine == "weasyprint":
+        return _assemble_pdf_weasyprint(
+            store,
+            source_path,
+            out_path,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
+    if engine == "fpdf2":
+        return _assemble_pdf_fpdf2(
+            store,
+            source_path,
+            out_path,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
+    raise ValueError("不支持的 PDF 引擎：" + engine + "（可选 weasyprint / fpdf2）")
 
 
 def _assemble_epub(
@@ -930,7 +1359,9 @@ def _assemble_epub(
 ) -> str:
     """复制原 EPUB，并按物理资源替换正文、精确回填目录及目标语言元数据。"""
     m = store.load_manifest()
-    target_lang = _epub_lang(m.get("target_lang", "zh"))
+    raw_target_lang = m.get("target_lang", "zh")
+    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
+    target_lang = _epub_lang(target_lang_code)
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_toc_entries = meta.get("toc_entries", [])
@@ -942,9 +1373,7 @@ def _assemble_epub(
     raw_toc_paths = meta.get("toc_paths")
     toc_paths: set[str] = set()
     if isinstance(raw_toc_paths, list):
-        toc_paths.update(
-            path for path in raw_toc_paths if isinstance(path, str) and path
-        )
+        toc_paths.update(path for path in raw_toc_paths if isinstance(path, str) and path)
     for entry in toc_entries:
         toc_path = entry.get("toc_path")
         if isinstance(toc_path, str) and toc_path:
@@ -973,7 +1402,12 @@ def _assemble_epub(
         title = _translated_toc_title(entry)
         if base and title:
             legacy_titles[base] = title
-    book_title = ""
+    source_title = m.get("title", "") if isinstance(m.get("title"), str) else ""
+    book_title = _export_book_title(
+        source_title,
+        target_lang_code,
+        bilingual=bilingual,
+    )
 
     with zipfile.ZipFile(source_path, "r") as zin:
         force_horizontal = _epub_looks_vertical(zin)
@@ -981,7 +1415,8 @@ def _assemble_epub(
             zin,
             chapters,
             meta,
-            book_title=m.get("title", "") if isinstance(m.get("title"), str) else "",
+            # 回填标注仍用原书名，避免把导出版后缀误判成正文标题。
+            book_title=source_title,
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
@@ -1030,11 +1465,7 @@ def _assemble_epub(
                         ),
                     )
                 elif low.endswith(_HTML_EXTS):
-                    html_data = (
-                        rendered[name].encode("utf-8")
-                        if name in rendered
-                        else data
-                    )
+                    html_data = rendered[name].encode("utf-8") if name in rendered else data
                     if name in toc_paths or _is_nav(html_data):
                         exact = _indexed_toc_entries(toc_entries, name)
                         toc_source = toc_entries if exact else legacy_titles
@@ -1063,9 +1494,7 @@ def _is_nav(data: bytes) -> bool:
     return b"epub:type" in data and b"toc" in data
 
 
-def _inject_bilingual_style(
-    out_path: str, chapter_filenames: set[str], lang: str
-) -> None:
+def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: str) -> None:
     """ebooklib 写盘时按模板重建每章 <head>，内联样式会被丢弃；这里对写好的 zip
     做一次后处理，把双语样式补回各章节 head（复用 _rewrite_html_document）。"""
     with zipfile.ZipFile(out_path, "r") as zin:
@@ -1103,8 +1532,14 @@ def _build_epub_from_chapters(
     from ebooklib import epub
 
     m = store.load_manifest()
-    title = m.get("title", "translated")
-    lang = _epub_lang(m.get("target_lang", "zh"))
+    raw_target_lang = m.get("target_lang", "zh")
+    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
+    title = _export_book_title(
+        m.get("title", "translated") if isinstance(m.get("title"), str) else "translated",
+        target_lang_code,
+        bilingual=bilingual,
+    )
+    lang = _epub_lang(target_lang_code)
 
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")
@@ -1121,14 +1556,10 @@ def _build_epub_from_chapters(
         binaries = read_fb2_binaries(source_path)
         cover_id = manifest_meta.get("fb2_cover_image")
         used_hrefs: set[str] = set()
-        for index, (resource_id, (content_type, payload)) in enumerate(
-            binaries.items()
-        ):
+        for index, (resource_id, (content_type, payload)) in enumerate(binaries.items()):
             stem, extension = os.path.splitext(os.path.basename(resource_id))
             safe_stem = _sanitize_filename(stem, f"image-{index}")
-            extension = extension.lower() or _IMAGE_EXTENSION_BY_TYPE.get(
-                content_type, ".bin"
-            )
+            extension = extension.lower() or _IMAGE_EXTENSION_BY_TYPE.get(content_type, ".bin")
             href = f"images/{safe_stem}{extension}"
             suffix = 2
             while href in used_hrefs:
@@ -1169,17 +1600,12 @@ def _build_epub_from_chapters(
         paragraphs = _merged_paragraphs(ch)
         for position, (kind, target, source) in enumerate(paragraphs):
             body_parts.extend(
-                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" '
-                'alt=""/></div>'
+                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
                 for href in images_by_position.get(position, [])
             )
             tag = "h1" if kind == KIND_HEADING else "p"
             target_html = f"<{tag}>{escape(target)}</{tag}>"
-            src = (
-                _bilingual_source(source, target)
-                if (bilingual and kind != KIND_HEADING)
-                else ""
-            )
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 body_parts.append(target_html)
                 continue
@@ -1194,8 +1620,7 @@ def _build_epub_from_chapters(
             else:
                 body_parts.extend((target_html, src_html))
         body_parts.extend(
-            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" '
-            'alt=""/></div>'
+            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
             for href in images_by_position.get(len(paragraphs), [])
         )
         fname = f"ch{c['index']}.xhtml"
@@ -1220,6 +1645,85 @@ def _build_epub_from_chapters(
     return out_path
 
 
+def _build_epub_from_html_templates(
+    store: RunStore,
+    source_path: str,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+    preserve_source_style: bool = False,
+) -> str:
+    """Build EPUB from rendered HTML templates and package their media resources."""
+    from ebooklib import epub
+
+    manifest = store.load_manifest()
+    raw_target_lang = manifest.get("target_lang", "zh")
+    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
+    raw_title = manifest.get("title", "translated")
+    title = _export_book_title(
+        raw_title if isinstance(raw_title, str) else "translated",
+        target_lang_code,
+        bilingual=bilingual,
+    )
+    lang = _epub_lang(target_lang_code)
+    raw_meta = manifest.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    head_html = meta.get("head_html", "")
+    head_html = head_html if isinstance(head_html, str) else ""
+    resource_source = _template_resource_source(manifest, source_path)
+
+    book = epub.EpubBook()
+    book.set_identifier(f"trans-novel-{title}")
+    book.set_title(title)
+    book.set_language(lang)
+    spine: list = ["nav"]
+    toc: list = []
+    packaged_assets: dict[str, tuple[str, bytes]] = {}
+
+    for chapter_meta in manifest["chapters"]:
+        chapter = store.load_chapter(chapter_meta["index"])
+        chapter_title = _ch_title(chapter_meta) or chapter.title
+        rendered = _render_chapter_html(
+            chapter,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
+        rendered, assets = _package_html_resources(
+            rendered,
+            source_dir=os.path.dirname(os.path.abspath(resource_source)),
+            href_prefix="assets",
+        )
+        packaged_assets.update(assets)
+        filename = f"ch{chapter.index}.xhtml"
+        item = epub.EpubHtml(title=chapter_title, file_name=filename, lang=lang)
+        item.content = (
+            f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}">'
+            f"<head><title>{escape(chapter_title)}</title>{head_html}</head>"
+            f"<body>{rendered}</body></html>"
+        )
+        book.add_item(item)
+        spine.append(item)
+        toc.append(item)
+
+    for index, (href, (media_type, payload)) in enumerate(packaged_assets.items()):
+        book.add_item(
+            epub.EpubItem(
+                uid=f"html-resource-{index}",
+                file_name=href,
+                media_type=media_type,
+                content=payload,
+            )
+        )
+    book.toc = toc
+    book.spine = spine
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(out_path, book)
+    return out_path
+
+
 def assemble(
     store: RunStore,
     source_path: str,
@@ -1230,6 +1734,7 @@ def assemble(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about_page: bool = True,
+    pdf_engine: str = "weasyprint",
 ) -> str:
     """生成译文文件（默认 EPUB）。
 
@@ -1239,6 +1744,7 @@ def assemble(
     out_format="txt"：无论原文格式，按章重建为纯文本。
     out_format="html"：优先回填 HTML 模板，无模板时按章重建。
     out_format="markdown"：无论原文格式，按章重建为 Markdown。
+    out_format="pdf"：先生成打印专用 HTML，再由 WeasyPrint 分页输出。
     bilingual=True 时额外输出原文，order 控制译文/原文先后。
     preserve_source_style=True 时原文继承原书正文样式，不注入淡化 CSS。
     about_page=True 时在书末附加“关于此翻译”说明页。
@@ -1253,9 +1759,7 @@ def assemble(
         _ensure_parent_dir(out_path)
         return _assemble_text(store, out_path, bilingual=bilingual, order=order)
     if out_format == "html":
-        out_path = out_path or _default_out(
-            source_path, "html", "", bilingual=bilingual
-        )
+        out_path = out_path or _default_out(source_path, "html", "", bilingual=bilingual)
         _ensure_parent_dir(out_path)
         return _assemble_html(
             store,
@@ -1266,11 +1770,21 @@ def assemble(
             preserve_source_style=preserve_source_style,
         )
     if out_format == "markdown":
-        out_path = out_path or _default_out(
-            source_path, "markdown", "", bilingual=bilingual
-        )
+        out_path = out_path or _default_out(source_path, "markdown", "", bilingual=bilingual)
         _ensure_parent_dir(out_path)
         return _assemble_markdown(store, out_path, bilingual=bilingual, order=order)
+    if out_format == "pdf":
+        out_path = out_path or _default_out(source_path, "pdf", "", bilingual=bilingual)
+        _ensure_parent_dir(out_path)
+        return _assemble_pdf(
+            store,
+            source_path,
+            out_path,
+            engine=pdf_engine,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
     out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
     _ensure_parent_dir(out_path)
     if m["fmt"] == "epub":
@@ -1282,8 +1796,17 @@ def assemble(
             order=order,
             preserve_source_style=preserve_source_style,
         )
+    elif m["fmt"] in {"html", "pdf"}:
+        result = _build_epub_from_html_templates(
+            store,
+            source_path,
+            out_path,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
     else:
-        # fb2 / text / html → 从章节数据生成规范 EPUB
+        # FB2 / text → 从章节数据生成规范 EPUB
         result = _build_epub_from_chapters(
             store,
             source_path,

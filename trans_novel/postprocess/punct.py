@@ -15,9 +15,9 @@ from __future__ import annotations
 import re
 
 _CJK = (
-    "一-鿿"      # CJK 统一汉字
-    "぀-ヿ"      # 假名（保险）
-    "＀-￯"      # 全角符号
+    "一-鿿"  # CJK 统一汉字
+    "぀-ヿ"  # 假名（保险）
+    "＀-￯"  # 全角符号
     "“”‘’（）《》【】、，。！？：；…—"
 )
 _CJK_RE = f"[{_CJK}]"
@@ -75,27 +75,27 @@ def _convert_ellipsis_dash(text: str) -> str:
     text = re.sub(r"。{3,}", "……", text)
     text = re.sub(r"・{2,}", "……", text)
     text = re.sub(r"\.{3,}", "……", text)
-    text = re.sub(r"…+", "……", text)          # 单个/多个 … → ……
+    text = re.sub(r"…+", "……", text)  # 单个/多个 … → ……
     text = re.sub(r"-{2,}", "——", text)
-    text = re.sub(r"—{1,}", "——", text)        # — / —— 归一为 ——
+    text = re.sub(r"—{1,}", "——", text)  # — / —— 归一为 ——
     return text
 
 
 def _convert_halfwidth(text: str) -> str:
     """半角 ,.!?:; 紧邻 CJK 时转全角。"""
+
     def repl(m: re.Match) -> str:
         """按映射表替换一个已匹配的半角标点。"""
         return _HALF_TO_FULL[m.group(0)]
 
     # 标点左侧是 CJK 时转换；只与右侧 CJK 相邻时，若左侧是 ASCII
     # 字母/数字则保留，避免把 Mr.王、v2.版本 之类的边界误改。
-    pattern = re.compile(
-        rf"(?<={_CJK_RE})[,.!?:;]|[,.!?:;](?={_CJK_RE})"
-    )
+    pattern = re.compile(rf"(?<={_CJK_RE})[,.!?:;]|[,.!?:;](?={_CJK_RE})")
     return pattern.sub(
         lambda match: (
             match.group(0)
-            if match.start() > 0 and text[match.start() - 1].isascii()
+            if match.start() > 0
+            and text[match.start() - 1].isascii()
             and text[match.start() - 1].isalnum()
             else repl(match)
         ),

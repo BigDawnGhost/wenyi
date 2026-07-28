@@ -107,9 +107,10 @@ REVIEWER_SYSTEM = Template("""\
   （对照表为全书参考，含本批未出现的词条；只就本批原文实际出现的词判断，勿因表中无关词条误报）
 - pronoun：人称/性别代词错误
 只报实质性错误：合理的语序调整、自然意译、风格润色**不算问题**，不要报。
-拿不准是否为错就不报，宁缺毋滥。每条须给出可直接采纳的 suggestion。仅输出 JSON：
-{"issues":[{"index":整数段号,"type":"...","detail":"简述","suggestion":"修改后的译文或具体改法"}]}
-没有问题则输出 {"issues":[]}。\
+拿不准是否为错就不报，宁缺毋滥。每条须给出可直接采纳的 suggestion。
+必须完成本批全部段落后，才输出对象末尾的完整性回执；仅输出 JSON：
+{"issues":[{"index":整数段号,"type":"...","detail":"简述","suggestion":"修改后的译文或具体改法"}],"reviewed_segments":本批段数,"complete":true}
+没有问题时 issues 为空数组，但仍须保留完整性回执。\
 """)
 
 REVIEWER_USER = Template("""\
@@ -119,7 +120,8 @@ $glossary
 【逐段对照】（共 $n 段）
 $pairs
 
-请审校并输出 JSON：{"issues":[...]}。\
+请审校全部 $n 段并输出 JSON。对象最后两个字段必须依次为
+"reviewed_segments":$n 和 "complete":true；它们相当于本批完成回执，不得提前输出。\
 """)
 
 REPAIR_VERIFIER_SYSTEM = Template("""\
@@ -127,7 +129,7 @@ REPAIR_VERIFIER_SYSTEM = Template("""\
 你只判断候选译文是否可以安全覆盖当前译文。仅当以下条件全部满足时才 accept：
 1. 候选译文相较当前译文至少同等忠实，并且确实修复了所述问题；
 2. 完整传达$src_label原文，没有新增漏译、增译或误译；
-3. 中文自然、与相邻上下文衔接；
+3. $tgt_label表达自然、与相邻上下文衔接；
 4. 人名、术语、数字、引文、符号和限定条件均得到保留；
 5. 没有仅凭可能错误的审校意见，反而把正确译文改坏。
 任何一点拿不准都必须 reject。verdict 只能是小写的 accept 或 reject。仅输出 JSON，
@@ -258,6 +260,24 @@ $target
 请抽取新出现或被本批确认的术语、称呼变体和固定表达，输出 JSON：{"terms":[...]}。\
 """)
 
+GLOSSARY_HISTORY_SYSTEM = Template("""\
+你是小说翻译项目的术语一致性校准器。系统发现一批新术语在更早的已译正文中出现过，
+但当时尚未进入术语表。请依据每项提供的【首次出现原文】和【首次出现译文】，判断该
+source 在首次译文中实际采用的$tgt_label译名：
+1. 首次译文的实际写法优先于当前批次提出的 proposed_target；不得为了更自然而另创译名。
+2. 返回完整、可独立复用的译名，不要只返回首次译文中的局部字词。
+3. 若首次译文省略、意译到无法可靠对应，target 返回空字符串，禁止猜测。
+4. source 必须原样返回。仅输出 JSON：
+{"terms":[{"source":"原文术语","target":"首次译文中实际采用的译名；无法确定则为空"}]}\
+""")
+
+GLOSSARY_HISTORY_USER = Template("""\
+【待校准术语与首次出现上下文】
+$candidates_json
+
+请逐项核对首次译文，输出 JSON：{"terms":[...]}。\
+""")
+
 BACKTRANSLATE_SYSTEM = Template("""\
 你是回译译者。把给定的中文译文回译成$src_label，只看中文、忠实表达其含义，输出 JSON：
 {"backtranslations":["...",...]}，长度与输入一致。\
@@ -321,6 +341,8 @@ _DEFAULTS = {
     "analyzer_user": ANALYZER_USER,
     "glossary_extractor_system": GLOSSARY_EXTRACTOR_SYSTEM,
     "glossary_extractor_user": GLOSSARY_EXTRACTOR_USER,
+    "glossary_history_system": GLOSSARY_HISTORY_SYSTEM,
+    "glossary_history_user": GLOSSARY_HISTORY_USER,
     "backtranslate_system": BACKTRANSLATE_SYSTEM,
     "backtranslate_user": BACKTRANSLATE_USER,
     "consistency_system": CONSISTENCY_SYSTEM,
@@ -329,6 +351,7 @@ _DEFAULTS = {
     "book_synopsis_system": BOOK_SYNOPSIS_SYSTEM,
     "book_synopsis_user": BOOK_SYNOPSIS_USER,
 }
+
 
 def render(name: str, *, src: str = "ja", tgt: str = "zh", **kwargs) -> str:
     """渲染内置模板；按 src 自动注入语言相关默认占位。"""
@@ -343,11 +366,6 @@ def render(name: str, *, src: str = "ja", tgt: str = "zh", **kwargs) -> str:
 
 
 # ── 渲染辅助 ───────────────────────────────────────────────────────────────
-def honorific_rule(strategy: str) -> str:
-    """敬称规则（保留以兼容调用方）；底层委托 langprofile。"""
-    return langprofile.honorific_rule(strategy)
-
-
 def render_glossary(terms: list[GlossaryTerm]) -> str:
     """把术语对象渲染为适合注入模型提示词的逐行对照表。"""
     if not terms:

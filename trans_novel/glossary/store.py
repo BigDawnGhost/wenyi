@@ -1,34 +1,31 @@
-"""SQLite 术语库 + 翻译记忆库。
+"""SQLite 术语库。
 
-三张表：
+两张表：
 - glossary：专有名词对照表（source 唯一）。同 source 出现不同 target 时保留当前
   译法，并把候选译法记入 term_conflicts，等待人工裁决。
 - term_conflicts：待裁决的译法冲突日志，供人工复核。
-- translation_memory：句群级译文对，供一致性参考与重译复用。
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
+import re
 import sqlite3
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 # 术语类型
 TYPE_PERSON = "人物"
-TYPE_PLACE = "地名"
-TYPE_ORG = "组织"
 TYPE_TERM = "术语"
-TYPE_SKILL = "招式"
 TYPE_APPELLATION = "称谓"
 TYPE_HONORIFIC = "敬称"
 TYPE_SPEECH = "口癖"
 TYPE_FIXED_EXPR = "固定表达"
 
 _SOURCE_ONLY_TYPES = {TYPE_APPELLATION, TYPE_HONORIFIC, TYPE_SPEECH, TYPE_FIXED_EXPR}
+
 
 @dataclass
 class GlossaryTerm:
@@ -38,12 +35,12 @@ class GlossaryTerm:
     type: str = TYPE_TERM
     gender: str = ""
     aliases: list[str] = field(default_factory=list)
-    first_chapter: Optional[int] = None
+    first_chapter: int | None = None
     note: str = ""
     status: str = "ok"
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "GlossaryTerm":
+    def from_row(cls, row: sqlite3.Row) -> GlossaryTerm:
         """把 SQLite 行转换为术语对象，并恢复 JSON 编码的别名。"""
         return cls(
             source=row["source"],
@@ -73,7 +70,10 @@ CREATE TABLE IF NOT EXISTS glossary (
 )
 """
 
-_SCHEMA = _CREATE_GLOSSARY_TABLE + ";" + """
+_SCHEMA = (
+    _CREATE_GLOSSARY_TABLE
+    + ";"
+    + """
 CREATE TABLE IF NOT EXISTS term_conflicts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     source          TEXT NOT NULL,
@@ -84,24 +84,109 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
     resolved        INTEGER DEFAULT 0,
     created_at      REAL
 );
-CREATE TABLE IF NOT EXISTS translation_memory (
-    source_hash TEXT PRIMARY KEY,
-    source_text TEXT NOT NULL,
-    target_text TEXT NOT NULL,
-    chapter     INTEGER,
-    updated_at  REAL
-);
+DROP TABLE IF EXISTS translation_memory;
 """
-
-
-def _hash(text: str) -> str:
-    """生成忽略首尾空白的翻译记忆键。"""
-    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+)
 
 
 def _match_text(text: str) -> str:
     """Normalize width/compatibility forms and case for glossary matching."""
     return unicodedata.normalize("NFKC", text).casefold()
+
+
+_WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
+
+
+def _source_pattern(key: str) -> re.Pattern[str] | None:
+    """为空格分词文字构造边界正则；连续书写文字返回 None 使用子串匹配。"""
+    if key.isascii():
+        return re.compile(rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])")
+
+    letters = [char for char in key if char.isalpha()]
+    if not letters or not all(
+        any(script in unicodedata.name(char, "") for script in _WORD_BOUNDARY_SCRIPTS)
+        for char in letters
+    ):
+        return None
+
+    left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
+    right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
+    return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
+
+
+def source_matches_text(source: str, text: str) -> bool:
+    """判断术语原文是否出现，并避免空格分词文字命中更长单词。
+
+    CJK 等连续书写文字沿用规范化子串匹配；ASCII、拉丁、希腊和西里尔文字
+    检查单词边界，避免 ``Ann`` 命中 ``Anna``、``гад`` 命中 ``гадкий``。
+    """
+    key = _match_text(source).strip()
+    if not key:
+        return False
+    normalized_text = _match_text(text)
+    if pattern := _source_pattern(key):
+        return pattern.search(normalized_text) is not None
+    return key in normalized_text
+
+
+def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
+    """返回术语在已规范化文本中的非重叠命中区间。"""
+    key = _match_text(source).strip()
+    if not key:
+        return []
+    if pattern := _source_pattern(key):
+        return [match.span() for match in pattern.finditer(normalized_text)]
+
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while (index := normalized_text.find(key, start)) != -1:
+        end = index + len(key)
+        spans.append((index, end))
+        start = end
+    return spans
+
+
+def _merged_occurrence_count(spans: set[tuple[int, int]]) -> int:
+    """把 source 与 alias 在同一处产生的重叠命中合并为一次正文提及。"""
+    count = 0
+    active_end = -1
+    for start, end in sorted(spans):
+        if start >= active_end:
+            count += 1
+            active_end = end
+        else:
+            active_end = max(active_end, end)
+    return count
+
+
+class GlossaryOccurrenceMatcher:
+    """复用一份规范化全文，按 source/alias 判断术语是否重复出现。"""
+
+    def __init__(self, text: str):
+        self.normalized_text = _match_text(text)
+
+    def recurring_terms(
+        self,
+        terms: list[GlossaryTerm],
+        *,
+        min_occurrences: int = 2,
+    ) -> list[GlossaryTerm]:
+        """筛出 source/alias 在全文累计出现至少指定次数的术语。"""
+        if min_occurrences <= 1:
+            return GlossaryStore.terms_in(terms, self.normalized_text)
+
+        recurring: list[GlossaryTerm] = []
+        for term in terms:
+            raw_keys = (
+                [term.source] if term.type in _SOURCE_ONLY_TYPES else [term.source, *term.aliases]
+            )
+            keys = {normalized for key in raw_keys if (normalized := _match_text(key).strip())}
+            spans: set[tuple[int, int]] = set()
+            for key in keys:
+                spans.update(_source_occurrence_spans(key, self.normalized_text))
+            if _merged_occurrence_count(spans) >= min_occurrences:
+                recurring.append(term)
+        return recurring
 
 
 class GlossaryStore:
@@ -121,14 +206,12 @@ class GlossaryStore:
         self.conn.close()
 
     # ── 术语 ──────────────────────────────────────────────────────────────
-    def get_term(self, source: str) -> Optional[GlossaryTerm]:
+    def get_term(self, source: str) -> GlossaryTerm | None:
         """按原文精确查询术语；不存在时返回 None。"""
-        row = self.conn.execute(
-            "SELECT * FROM glossary WHERE source = ?", (source,)
-        ).fetchone()
+        row = self.conn.execute("SELECT * FROM glossary WHERE source = ?", (source,)).fetchone()
         return GlossaryTerm.from_row(row) if row else None
 
-    def upsert_term(self, term: GlossaryTerm, chapter: Optional[int] = None) -> str:
+    def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
         """插入或更新术语，返回 'inserted'|'unchanged'|'conflict'。
 
         同 source 已存在且 target 不同时保留当前译法，把新译法作为候选记录，
@@ -146,10 +229,16 @@ class GlossaryStore:
                         status,updated_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        term.source, term.target, term.reading, term.type, term.gender,
+                        term.source,
+                        term.target,
+                        term.reading,
+                        term.type,
+                        term.gender,
                         json.dumps(term.aliases, ensure_ascii=False),
                         term.first_chapter if term.first_chapter is not None else chapter,
-                        term.note, term.status, now,
+                        term.note,
+                        term.status,
+                        now,
                     ),
                 )
                 result = "inserted"
@@ -172,9 +261,7 @@ class GlossaryStore:
                 result = "unchanged"
             else:
                 # target 不同：保留当前译法，记录候选译法等待人工裁决。
-                self._log_conflict(
-                    term.source, existing.target, term.target, chapter
-                )
+                self._log_conflict(term.source, existing.target, term.target, chapter)
                 self.conn.execute(
                     "UPDATE glossary SET status='conflict', updated_at=? WHERE source=?",
                     (now, term.source),
@@ -195,12 +282,6 @@ class GlossaryStore:
             (source, existing_target, proposed_target, chapter, time.time()),
         )
 
-    def delete_term(self, source: str) -> bool:
-        """删除一个术语条目（前端编辑用）。返回是否确有删除。"""
-        cur = self.conn.execute("DELETE FROM glossary WHERE source = ?", (source,))
-        self.conn.commit()
-        return cur.rowcount > 0
-
     def resolve_term(self, source: str, target: str) -> bool:
         """人工裁定最终译法并恢复正常状态，返回术语是否存在。"""
         cur = self.conn.execute(
@@ -212,9 +293,7 @@ class GlossaryStore:
 
     def all_terms(self) -> list[GlossaryTerm]:
         """按术语类型和原文排序返回全部术语。"""
-        rows = self.conn.execute(
-            "SELECT * FROM glossary ORDER BY type, source"
-        ).fetchall()
+        rows = self.conn.execute("SELECT * FROM glossary ORDER BY type, source").fetchall()
         return [GlossaryTerm.from_row(r) for r in rows]
 
     @staticmethod
@@ -229,13 +308,28 @@ class GlossaryStore:
             # 称谓/口癖/固定表达是带语气或场景的派生写法，不能因为 alias
             # 命中裸名就把派生译法注入到普通称呼处。
             keys = (
-                [term.source]
-                if term.type in _SOURCE_ONLY_TYPES
-                else [term.source] + term.aliases
+                [term.source] if term.type in _SOURCE_ONLY_TYPES else [term.source] + term.aliases
             )
-            if any(k and _match_text(k) in normalized_text for k in keys):
+            if any(source_matches_text(k, normalized_text) for k in keys):
                 out.append(term)
         return out
+
+    @staticmethod
+    def recurring_terms(
+        terms: list[GlossaryTerm],
+        text: str,
+        *,
+        min_occurrences: int = 2,
+    ) -> list[GlossaryTerm]:
+        """筛出 source/alias 在全文累计出现至少指定次数的术语。
+
+        称谓、敬称、口癖和固定表达只按 source 统计，避免裸名 alias 让派生表达
+        被误判为高频。其它类型会合并 source 与去重后的 aliases 出现次数。
+        """
+        return GlossaryOccurrenceMatcher(text).recurring_terms(
+            terms,
+            min_occurrences=min_occurrences,
+        )
 
     def terms_in_text(self, text: str) -> list[GlossaryTerm]:
         """返回 source 或任一别名在 text 中出现的术语（注入翻译 prompt 用）。"""
@@ -243,9 +337,7 @@ class GlossaryStore:
 
     def mark_conflicts_resolved(self, source: str) -> None:
         """把指定原文术语的全部未决冲突标记为已处理。"""
-        self.conn.execute(
-            "UPDATE term_conflicts SET resolved=1 WHERE source=?", (source,)
-        )
+        self.conn.execute("UPDATE term_conflicts SET resolved=1 WHERE source=?", (source,))
         self.conn.commit()
 
     def open_conflicts(self) -> list[dict[str, Any]]:
@@ -255,29 +347,8 @@ class GlossaryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # ── 翻译记忆库 ──────────────────────────────────────────────────────
-    def add_tm(self, source_text: str, target_text: str, chapter: Optional[int] = None) -> None:
-        """新增或覆盖一条以源文哈希为键的翻译记忆。"""
-        self.conn.execute(
-            """INSERT INTO translation_memory (source_hash,source_text,target_text,chapter,updated_at)
-               VALUES (?,?,?,?,?)
-               ON CONFLICT(source_hash) DO UPDATE SET target_text=excluded.target_text,
-                   chapter=excluded.chapter, updated_at=excluded.updated_at""",
-            (_hash(source_text), source_text, target_text, chapter, time.time()),
-        )
-        self.conn.commit()
-
-    def tm_lookup(self, source_text: str) -> Optional[str]:
-        """按源文精确查找翻译记忆；未命中时返回 None。"""
-        row = self.conn.execute(
-            "SELECT target_text FROM translation_memory WHERE source_hash=?",
-            (_hash(source_text),),
-        ).fetchone()
-        return row["target_text"] if row else None
-
     def stats(self) -> dict[str, int]:
-        """返回术语数、未决冲突数和翻译记忆条目数。"""
+        """返回术语数和未决冲突数。"""
         g = self.conn.execute("SELECT COUNT(*) FROM glossary").fetchone()[0]
         c = self.conn.execute("SELECT COUNT(*) FROM term_conflicts WHERE resolved=0").fetchone()[0]
-        t = self.conn.execute("SELECT COUNT(*) FROM translation_memory").fetchone()[0]
-        return {"terms": g, "open_conflicts": c, "tm_entries": t}
+        return {"terms": g, "open_conflicts": c}

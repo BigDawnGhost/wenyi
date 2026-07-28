@@ -37,11 +37,7 @@ class ResolvedEpubHref:
         """返回内容目标的稳定键；它不是目录节点的唯一 ID。"""
         if not self.resource_href:
             return ""
-        return (
-            f"{self.resource_href}#{self.fragment}"
-            if self.fragment
-            else self.resource_href
-        )
+        return f"{self.resource_href}#{self.fragment}" if self.fragment else self.resource_href
 
 
 def resolve_epub_href(base_path: str, raw_href: str) -> ResolvedEpubHref:
@@ -127,7 +123,10 @@ def _parse_ncx(data: bytes, toc_path: str) -> list[dict[str, Any]]:
         node_index = len(entries)
         nav_label = _direct_xml_child(node, "navLabel")
         label_node = (
-            next((child for child in nav_label.iter() if _local(child.tag) == "text"), None)
+            next(
+                (child for child in nav_label.iter() if _local(child.tag) == "text"),
+                None,
+            )
             if nav_label is not None
             else None
         )
@@ -172,8 +171,7 @@ def nav_toc_scopes(soup: BeautifulSoup) -> list[Tag | BeautifulSoup]:
     typed = [
         nav
         for nav in soup.find_all("nav")
-        if "toc"
-        in (str(nav.get("epub:type") or nav.get("type") or "")).split()
+        if "toc" in (str(nav.get("epub:type") or nav.get("type") or "")).split()
     ]
     if typed:
         return typed
@@ -231,9 +229,7 @@ def _parse_nav(data: bytes, toc_path: str) -> list[dict[str, Any]]:
     return entries
 
 
-def parse_toc_entries(
-    zf: zipfile.ZipFile, toc_paths: list[str]
-) -> list[dict[str, Any]]:
+def parse_toc_entries(zf: zipfile.ZipFile, toc_paths: list[str]) -> list[dict[str, Any]]:
     """解析所有已存在的 NCX/NAV 文件，返回有序目录节点。
 
     每份目录独立容错：损坏的兼容 NCX 不应阻断有效的主 NAV。除常见

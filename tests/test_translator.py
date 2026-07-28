@@ -6,33 +6,37 @@ import json
 import re
 import unittest
 
-from trans_novel.config import Config
 from trans_novel.agents import prompts
-from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.agents.translator import Translator
+from trans_novel.config import Config
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.checks import length_flags, repair_rejection_reason
 
 
 def _count_segments(user_content: str) -> int:
-    return len(re.findall(r"^\[(\d+)\]", user_content, re.M))
+    return len(re.findall(r"^\[(\d+)\]", user_content, re.MULTILINE))
 
 
 class TestTranslatorAlignment(unittest.TestCase):
     def _config(self):
-        return Config.from_dict({
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {"provider": "fake", "tiers": {
-                "strong": {"model": "deepseek-v4-pro"},
-                "cheap": {"model": "deepseek-v4-flash"},
-            }},
-            "pipeline": {"align_retry_limit": 1},
-        })
+        return Config.from_dict(
+            {
+                "language": {"source": "ja", "target": "zh"},
+                "llm": {
+                    "provider": "fake",
+                    "tiers": {
+                        "strong": {"model": "deepseek-v4-pro"},
+                        "cheap": {"model": "deepseek-v4-flash"},
+                    },
+                },
+                "pipeline": {"align_retry_limit": 1},
+            }
+        )
 
     def test_happy_path_aligned(self):
         def handler(messages, tier, json_mode):
             n = _count_segments(messages[-1]["content"])
-            return json.dumps({"translations": [f"译{i}" for i in range(n)]},
-                              ensure_ascii=False)
+            return json.dumps({"translations": [f"译{i}" for i in range(n)]}, ensure_ascii=False)
 
         t = Translator(FakeClient(handler=handler), self._config())
         out = t.translate_batch(["あ", "い", "う"])
@@ -53,15 +57,14 @@ class TestTranslatorAlignment(unittest.TestCase):
         out = t.translate_batch(["あ", "い", "う"])
         self.assertEqual(len(out), 3)  # 兜底后仍保证 1:1
         # 验证确实回退到了逐段（出现过 n==1 的调用）
-        single_calls = [c for c in client.calls
-                        if _count_segments(c["messages"][-1]["content"]) == 1]
+        single_calls = [
+            c for c in client.calls if _count_segments(c["messages"][-1]["content"]) == 1
+        ]
         self.assertGreaterEqual(len(single_calls), 3)
 
     def test_empty_per_segment_fallback_is_rejected(self):
         client = FakeClient(
-            handler=lambda messages, tier, json_mode: json.dumps(
-                {"translations": []}
-            )
+            handler=lambda messages, tier, json_mode: json.dumps({"translations": []})
         )
         translator = Translator(client, self._config())
 
@@ -70,9 +73,7 @@ class TestTranslatorAlignment(unittest.TestCase):
 
     def test_non_string_translation_is_rejected(self):
         client = FakeClient(
-            handler=lambda messages, tier, json_mode: json.dumps(
-                {"translations": [None]}
-            )
+            handler=lambda messages, tier, json_mode: json.dumps({"translations": [None]})
         )
         translator = Translator(client, self._config())
 
@@ -95,7 +96,7 @@ class TestChecks(unittest.TestCase):
         targets = ["", "短い但正常的中文译文内容", "x" * 40]
         flags = length_flags(sources, targets)
         kinds = {f.index: f.reason for f in flags}
-        self.assertEqual(kinds.get(0), "empty")     # 译文为空
+        self.assertEqual(kinds.get(0), "empty")  # 译文为空
         self.assertEqual(kinds.get(2), "too_long")  # 比值过大
 
     def test_repair_gate_rejects_unchanged_candidate(self):
@@ -119,6 +120,41 @@ class TestChecks(unittest.TestCase):
             "Im Jahr 1872 erschien das Buch.",
             "这本书于1872年问世。",
             "这部作品于1872年出版。",
+        )
+        self.assertIsNone(reason)
+
+    def test_repair_gate_allows_complete_chinese_candidates_from_ab_run(self):
+        """德译中的完整候选不应被跨语言字符比误判为过短。"""
+        cases = [
+            # index, source length, current target length, proposed target length
+            (44, 1084, 281, 325),
+            (142, 303, 86, 87),
+            (286, 1137, 328, 316),
+            (298, 891, 254, 243),
+            (337, 840, 237, 238),
+        ]
+        for index, source_len, current_len, proposed_len in cases:
+            with self.subTest(index=index):
+                reason = repair_rejection_reason(
+                    "D" * source_len,
+                    "旧" * current_len,
+                    "新" * proposed_len,
+                )
+                self.assertIsNone(reason)
+
+    def test_repair_gate_rejects_candidate_truncated_against_current_target(self):
+        reason = repair_rejection_reason(
+            "D" * 1000,
+            "这是现有的完整中文译文。" * 20,
+            "残片",
+        )
+        self.assertEqual(reason, "too_short")
+
+    def test_repair_gate_allows_moderately_shorter_candidate_for_verification(self):
+        reason = repair_rejection_reason(
+            "D" * 500,
+            "旧" * 100,
+            "新" * 40,
         )
         self.assertIsNone(reason)
 

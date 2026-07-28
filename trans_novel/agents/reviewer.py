@@ -7,10 +7,28 @@ BackTranslator：把译文回译成源语言，再与原文比对，抽样发现
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from ..llm.json_parser import parse_json_result
 from . import langprofile, prompts
 from .base import Agent
+
+
+class ReviewOutputError(ValueError):
+    """审校模型返回了可通过缩小输入重试的结构化输出错误。"""
+
+    def __init__(self, reason: str):
+        super().__init__(f"审校输出协议错误：{reason}")
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class ReviewResult:
+    """一次审校调用的结构化结果，以及是否经过本地 JSON 修复。"""
+
+    issues: list[dict[str, Any]]
+    repaired: bool = False
 
 
 def _backtrans_compare_system(src: str) -> str:
@@ -24,20 +42,95 @@ def _backtrans_compare_system(src: str) -> str:
 
 
 class Reviewer(Agent):
-    def review(self, sources: list[str], targets: list[str],
-               glossary_terms=None) -> list[dict[str, Any]]:
+    def review(
+        self, sources: list[str], targets: list[str], glossary_terms=None
+    ) -> list[dict[str, Any]]:
         """返回问题列表：[{index,type,detail,suggestion}]。"""
+        return self.review_result(sources, targets, glossary_terms).issues
+
+    def review_result(
+        self, sources: list[str], targets: list[str], glossary_terms=None
+    ) -> ReviewResult:
+        """返回带恢复元数据的问题列表；服务异常仍由调用方直接处理。"""
         if not sources:
-            return []
+            return ReviewResult([])
         system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
-            "reviewer_user", src=self.src, tgt=self.tgt,
+            "reviewer_user",
+            src=self.src,
+            tgt=self.tgt,
             glossary=prompts.render_glossary(glossary_terms or []),
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
-        return self.dict_items(
-            self._ask_json(system, user, tier="cheap", key="issues"))
+        text = self.client.complete(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            tier="cheap",
+            json_mode=True,
+            stage=type(self).__name__,
+        )
+        try:
+            parsed = parse_json_result(text)
+        except ValueError:
+            raise ReviewOutputError("malformed_json") from None
+        data = parsed.value
+        repaired = parsed.repaired
+
+        if not isinstance(data, dict):
+            raise ReviewOutputError("response_not_object")
+        if list(data)[-2:] != ["reviewed_segments", "complete"]:
+            raise ReviewOutputError("completion_footer_not_last")
+        reviewed_segments = data.get("reviewed_segments")
+        if (
+            isinstance(reviewed_segments, bool)
+            or not isinstance(reviewed_segments, int)
+            or reviewed_segments != len(sources)
+        ):
+            raise ReviewOutputError("reviewed_segments_mismatch")
+        if data.get("complete") is not True:
+            raise ReviewOutputError("completion_marker_missing")
+
+        issues = data.get("issues")
+        if not isinstance(issues, list):
+            raise ReviewOutputError("issues_not_list")
+        if any(not isinstance(item, dict) for item in issues):
+            raise ReviewOutputError("issue_not_object")
+        if repaired:
+            self._validate_repaired_issues(issues, len(sources))
+        return ReviewResult(list(issues), repaired=repaired)
+
+    @staticmethod
+    def _validate_repaired_issues(issues: list[dict], segment_count: int) -> None:
+        """修复后的内容须通过更严格的语义结构门禁，防止“修出”假结果。"""
+        allowed_types = {
+            "missing",
+            "added",
+            "mistranslation",
+            "terminology",
+            "pronoun",
+        }
+        for item in issues:
+            index = item.get("index")
+            if isinstance(index, str):
+                try:
+                    index = int(index.strip())
+                except ValueError:
+                    index = None
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 0 <= index < segment_count
+            ):
+                raise ReviewOutputError("invalid_issue_index")
+            if item.get("type") not in allowed_types:
+                raise ReviewOutputError("invalid_issue_type")
+            for field in ("detail", "suggestion"):
+                value = item.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ReviewOutputError(f"invalid_issue_{field}")
 
 
 class RepairVerifier(Agent):
@@ -55,9 +148,7 @@ class RepairVerifier(Agent):
         context_after: str = "",
     ) -> dict[str, str]:
         """返回结构化裁决；调用或格式异常一律 fail closed 为 reject。"""
-        system = prompts.render(
-            "repair_verifier_system", src=self.src, tgt=self.tgt
-        )
+        system = prompts.render("repair_verifier_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "repair_verifier_user",
             src=self.src,
@@ -86,16 +177,8 @@ class RepairVerifier(Agent):
 
         verdict_value = data.get("verdict", "")
         rationale_value = data.get("rationale", "")
-        verdict = (
-            verdict_value.strip().lower()
-            if isinstance(verdict_value, str)
-            else ""
-        )
-        rationale = (
-            rationale_value.strip()
-            if isinstance(rationale_value, str)
-            else ""
-        )
+        verdict = verdict_value.strip().lower() if isinstance(verdict_value, str) else ""
+        rationale = rationale_value.strip() if isinstance(rationale_value, str) else ""
         if verdict not in {"accept", "reject"}:
             return {
                 "verdict": "reject",
@@ -123,10 +206,20 @@ class BackTranslator(Agent):
         if not targets:
             return []
         system = prompts.render("backtranslate_system", src=self.src, tgt=self.tgt)
-        user = prompts.render("backtranslate_user", src=self.src, tgt=self.tgt,
-                              n=len(targets), numbered_target=prompts.numbered(targets))
-        items = self._ask_json(system, user, tier="fast",  # 机械回译免思考；语义比对(check)仍走 cheap
-                               key="backtranslations", default=[])
+        user = prompts.render(
+            "backtranslate_user",
+            src=self.src,
+            tgt=self.tgt,
+            n=len(targets),
+            numbered_target=prompts.numbered(targets),
+        )
+        items = self._ask_json(
+            system,
+            user,
+            tier="fast",  # 机械回译免思考；语义比对(check)仍走 cheap
+            key="backtranslations",
+            default=[],
+        )
         return [str(x) for x in items] if isinstance(items, list) else []
 
     def check(self, sources: list[str], targets: list[str]) -> list[dict[str, Any]]:
@@ -138,5 +231,11 @@ class BackTranslator(Agent):
             f"[{i}] 原文：{s}\n    回译：{b}" for i, (s, b) in enumerate(zip(sources, back))
         )
         return self.dict_items(
-            self._ask_json(_backtrans_compare_system(self.src), pairs,
-                           tier="cheap", key="issues", default=[]))
+            self._ask_json(
+                _backtrans_compare_system(self.src),
+                pairs,
+                tier="cheap",
+                key="issues",
+                default=[],
+            )
+        )

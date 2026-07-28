@@ -12,17 +12,25 @@ from .base import Agent
 
 
 class Polisher(Agent):
-    def polish(self, targets: list[str], *, glossary_terms: list[GlossaryTerm] | None = None,
-               style: str = "") -> list[str]:
+    def polish(
+        self,
+        targets: list[str],
+        *,
+        glossary_terms: list[GlossaryTerm] | None = None,
+        style: str = "",
+    ) -> list[str]:
         """润色等长译文列表；调用失败或数量不符时原样返回输入。"""
         if not targets:
             return []
         n = len(targets)
         system = prompts.render("polisher_system", src=self.src, tgt=self.tgt, n=n)
         user = prompts.render(
-            "polisher_user", src=self.src, tgt=self.tgt,
+            "polisher_user",
+            src=self.src,
+            tgt=self.tgt,
             glossary=prompts.render_glossary(glossary_terms or []),
-            style=style or "（无）", n=n,
+            style=style or "（无）",
+            n=n,
             numbered_target=prompts.numbered(targets),
         )
         items = self._ask_json(system, user, tier="strong", key="polished", default=None)

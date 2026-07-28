@@ -9,7 +9,8 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
-from typing import Any, Optional, Protocol
+from importlib.metadata import version as package_version
+from typing import Any, Protocol
 
 import typer
 from rich.console import Console
@@ -52,7 +53,12 @@ def _configure_windows_console(
 _configure_windows_console()
 
 _CONFIG: dict[str, Any] = {"path": "config.yaml", "skip_api_check": False}
-_API_CHECK_EXEMPT_COMMANDS = {"assemble"}
+_API_CHECK_EXEMPT_COMMANDS = {
+    "assemble",
+    "glossary",
+    "report",
+    "status",
+}
 
 
 def _config_path_from_args(args: Sequence[str]) -> str:
@@ -82,11 +88,9 @@ class _ConfigInitializingGroup(TyperGroup):
         cli_args = list(args) if args is not None else sys.argv[1:]
         config_path = _config_path_from_args(cli_args)
         _CONFIG["path"] = config_path
-        _CONFIG["skip_api_check"] = any(
-            arg in {"--help", "-h"} for arg in cli_args
-        )
+        _CONFIG["skip_api_check"] = any(arg in {"--help", "-h"} for arg in cli_args)
         Config.create_default_file(config_path)
-        return super().main(args=args, *main_args, **main_kwargs)
+        return super().main(*main_args, args=args, **main_kwargs)
 
 
 app = typer.Typer(
@@ -101,6 +105,13 @@ glossary_app = typer.Typer(
     help="查看术语、检查冲突并裁定固定译名。",
 )
 console = Console()
+
+
+def _version_callback(value: bool) -> None:
+    """打印由 Git 标签生成的已安装包版本并立即退出。"""
+    if value:
+        console.print(package_version("trans-novel"))
+        raise typer.Exit()
 
 
 class _ManifestStore(Protocol):
@@ -118,8 +129,16 @@ def _root(
         "-c",
         help="配置文件路径；文件不存在时自动创建",
     ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="显示版本号并退出",
+    ),
 ):
     """记录全局配置路径，并在子命令运行前校验模型凭据。"""
+    del version
     _CONFIG["path"] = config
     command = ctx.invoked_subcommand
     should_validate = (
@@ -157,12 +176,18 @@ def _require_input_file(input_path: str) -> None:
 def _validate_output_format(fmt: str) -> str:
     """规范化并校验用户可选择的输出格式。"""
     normalized = fmt.strip().lower()
-    allowed = {"epub", "txt", "html", "markdown"}
+    allowed = {"epub", "txt", "html", "markdown", "pdf"}
     if normalized not in allowed:
-        console.print(
-            "[red]不支持的输出格式："
-            f"{fmt}（可选 epub / txt / html / markdown）[/]"
-        )
+        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown / pdf）[/]")
+        raise typer.Exit(2)
+    return normalized
+
+
+def _validate_pdf_engine(engine: str) -> str:
+    """规范化并校验 PDF 渲染引擎。"""
+    normalized = engine.strip().lower()
+    if normalized not in {"weasyprint", "fpdf2"}:
+        console.print(f"[red]不支持的 PDF 引擎：{engine}（可选 weasyprint / fpdf2）[/]")
         raise typer.Exit(2)
     return normalized
 
@@ -193,14 +218,15 @@ def _apply_store_languages(config: Config, store: _ManifestStore) -> None:
 def _translate_impl(
     input_path: str,
     *,
-    chapter: Optional[int] = None,
+    chapter: int | None = None,
     fmt: str = "epub",
-    out: Optional[str] = None,
-    polish: Optional[bool] = None,
-    review: Optional[bool] = None,
-    qa: Optional[bool] = None,
-    mono: Optional[bool] = None,
-    bilingual: Optional[bool] = None,
+    out: str | None = None,
+    pdf_engine: str = "weasyprint",
+    polish: bool | None = None,
+    review: bool | None = None,
+    qa: bool | None = None,
+    mono: bool | None = None,
+    bilingual: bool | None = None,
 ) -> None:
     """执行一键翻译流程，并把预期的输入/配置错误转成简洁 CLI 提示。"""
     try:
@@ -209,6 +235,7 @@ def _translate_impl(
             chapter=chapter,
             fmt=fmt,
             out=out,
+            pdf_engine=pdf_engine,
             polish=polish,
             review=review,
             qa=qa,
@@ -223,20 +250,22 @@ def _translate_impl(
 def _translate_impl_or_raise(
     input_path: str,
     *,
-    chapter: Optional[int] = None,
+    chapter: int | None = None,
     fmt: str = "epub",
-    out: Optional[str] = None,
-    polish: Optional[bool] = None,
-    review: Optional[bool] = None,
-    qa: Optional[bool] = None,
-    mono: Optional[bool] = None,
-    bilingual: Optional[bool] = None,
+    out: str | None = None,
+    pdf_engine: str = "weasyprint",
+    polish: bool | None = None,
+    review: bool | None = None,
+    qa: bool | None = None,
+    mono: bool | None = None,
+    bilingual: bool | None = None,
 ) -> None:
     """执行翻译并保留原异常，由 ``_translate_impl`` 转为 CLI 错误。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input_path)
     fmt = _validate_output_format(fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     config = _load_config()
     if polish is not None:
         config.pipeline.polish = polish
@@ -262,8 +291,7 @@ def _translate_impl_or_raise(
             ignored.append("--bilingual/--no-bilingual")
         if ignored:
             raise ValueError(
-                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项："
-                + "、".join(ignored)
+                "--chapter 只翻译并保存指定章节，不能同时使用收尾选项：" + "、".join(ignored)
             )
 
     orch = Orchestrator(config)
@@ -305,6 +333,7 @@ def _translate_impl_or_raise(
             out_format=fmt,
             out_path=out,
             do_qa=qa,
+            pdf_engine=pdf_engine,
         )
 
     s = result["report"]["summary"]
@@ -354,8 +383,7 @@ def _prepare_impl(input_path: str) -> None:
     chapters = manifest.get("chapters", [])
     analysis = store.load_analysis() or {}
     digests = sum(
-        bool(store.load_chapter(item["index"]).meta.get("source_digest"))
-        for item in chapters
+        bool(store.load_chapter(item["index"]).meta.get("source_digest")) for item in chapters
     )
     console.print(
         f"[bold green]准备完成[/]：解析 {len(chapters)} 章，"
@@ -402,7 +430,7 @@ def translate(
         ...,
         help="待翻译书籍（EPUB / FB2 / TXT / Markdown / HTML / PDF）",
     ),
-    chapter: Optional[int] = typer.Option(
+    chapter: int | None = typer.Option(
         None,
         "--chapter",
         min=0,
@@ -411,34 +439,39 @@ def translate(
     fmt: str = typer.Option(
         "epub",
         "--format",
-        help="最终导出格式：epub / txt / html / markdown",
+        help="最终导出格式：epub / txt / html / markdown / pdf",
     ),
-    out: Optional[str] = typer.Option(
+    out: str | None = typer.Option(
         None,
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
     ),
-    polish: Optional[bool] = typer.Option(
+    pdf_engine: str = typer.Option(
+        "weasyprint",
+        "--pdf-engine",
+        help="PDF 渲染引擎：weasyprint（默认）/ fpdf2",
+    ),
+    polish: bool | None = typer.Option(
         None,
         "--polish/--no-polish",
         help="覆盖 pipeline.polish，控制翻译后是否润色",
     ),
-    review: Optional[bool] = typer.Option(
+    review: bool | None = typer.Option(
         None,
         "--review/--no-review",
         help="覆盖 pipeline.review，控制全书翻译后是否执行最终审校",
     ),
-    qa: Optional[bool] = typer.Option(
+    qa: bool | None = typer.Option(
         None,
         "--qa/--no-qa",
         help="覆盖 pipeline.consistency_qa，控制是否执行跨章一致性扫描",
     ),
-    mono: Optional[bool] = typer.Option(
+    mono: bool | None = typer.Option(
         None,
         "--mono/--no-mono",
         help="覆盖 output.mono，控制是否生成单语版",
     ),
-    bilingual: Optional[bool] = typer.Option(
+    bilingual: bool | None = typer.Option(
         None,
         "--bilingual/--no-bilingual",
         help="覆盖 output.bilingual，控制是否生成原文译文对照版",
@@ -450,6 +483,7 @@ def translate(
         chapter=chapter,
         fmt=fmt,
         out=out,
+        pdf_engine=pdf_engine,
         polish=polish,
         review=review,
         qa=qa,
@@ -472,10 +506,8 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
-    force: bool = typer.Option(
-        False, "--force", help="忽略审校摘要，强制重新审校全部章节"
-    ),
-    fix: Optional[bool] = typer.Option(
+    force: bool = typer.Option(False, "--force", help="忽略审校摘要，强制重新审校全部章节"),
+    fix: bool | None = typer.Option(
         None,
         "--fix/--no-fix",
         help="覆盖 pipeline.autofix_severe；开启后串行修复漏译和误译",
@@ -547,9 +579,7 @@ def status(
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
     m = store.load_manifest()
-    console.print(
-        f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}"
-    )
+    console.print(f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}")
     table = Table("", "#", "章节", "翻译", "审校")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
@@ -649,7 +679,7 @@ def glossary_resolve(
 @app.command(rich_help_panel="状态与输出")
 def assemble(
     input: str = typer.Argument(..., help="已完成或部分完成翻译的源文件"),
-    out: Optional[str] = typer.Option(
+    out: str | None = typer.Option(
         None,
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
@@ -657,14 +687,19 @@ def assemble(
     fmt: str = typer.Option(
         "epub",
         "--format",
-        help="导出格式：epub / txt / html / markdown",
+        help="导出格式：epub / txt / html / markdown / pdf",
     ),
-    mono: Optional[bool] = typer.Option(
+    pdf_engine: str = typer.Option(
+        "weasyprint",
+        "--pdf-engine",
+        help="PDF 渲染引擎：weasyprint（默认）/ fpdf2",
+    ),
+    mono: bool | None = typer.Option(
         None,
         "--mono/--no-mono",
         help="覆盖 output.mono，控制是否生成单语版",
     ),
-    bilingual: Optional[bool] = typer.Option(
+    bilingual: bool | None = typer.Option(
         None,
         "--bilingual/--no-bilingual",
         help="覆盖 output.bilingual，控制是否生成原文译文对照版",
@@ -676,6 +711,7 @@ def assemble(
 
     config = _load_config()
     fmt = _validate_output_format(fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     store = _runstore_for(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
@@ -694,6 +730,7 @@ def assemble(
                 out_format=fmt,
                 bilingual=False,
                 about_page=config.output.about_page,
+                pdf_engine=pdf_engine,
             )
         )
     if do_bilingual:
@@ -706,10 +743,9 @@ def assemble(
                 out_format=fmt,
                 bilingual=True,
                 order=config.output.bilingual_order,
-                preserve_source_style=(
-                    config.output.bilingual_preserve_source_style
-                ),
+                preserve_source_style=(config.output.bilingual_preserve_source_style),
                 about_page=config.output.about_page,
+                pdf_engine=pdf_engine,
             )
         )
     for path in paths:
@@ -738,9 +774,7 @@ def qa(
         g.close()
     console.print(f"一致性问题 {len(issues)} 项：")
     for it in issues:
-        console.print(
-            f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})"
-        )
+        console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
 
 
 @app.command(rich_help_panel="状态与输出")

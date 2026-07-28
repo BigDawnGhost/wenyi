@@ -48,6 +48,7 @@ def length_flags(
 
 
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_REPAIR_MIN_RETENTION_RATIO = 0.25
 
 
 def _comparable_text(text: str) -> str:
@@ -60,6 +61,25 @@ def _number_tokens(text: str) -> Counter[str]:
     """提取可安全做确定性比对的阿拉伯数字记号及其出现次数。"""
     normalized = unicodedata.normalize("NFKC", text or "")
     return Counter(_NUMBER_RE.findall(normalized))
+
+
+def _repair_length_rejection_reason(
+    current_target: str,
+    proposed_target: str,
+) -> str | None:
+    """只拒绝相对现有译文明显截断的修复候选。
+
+    修复阶段不能继续使用“译文字符数 / 原文字符数”的固定阈值：不同语言
+    的字符密度差异很大，德译中尤其容易把完整译文误判为过短。这里改为
+    在同一种目标语言内比较候选和现有译文，只拦截缩减到四分之一以下的
+    明显残片。修补漏译时大幅扩写可能合理，因此不做确定性上限判断，
+    而是交给后续独立验证员判断语义与完整性。
+    """
+    current_len = len(_comparable_text(current_target))
+    proposed_len = len(_comparable_text(proposed_target))
+    if current_len and proposed_len / current_len < _REPAIR_MIN_RETENTION_RATIO:
+        return "too_short"
+    return None
 
 
 def repair_rejection_reason(
@@ -80,9 +100,12 @@ def repair_rejection_reason(
     if proposed == current:
         return "unchanged"
 
-    flags = length_flags([source], [proposed_target])
-    if flags:
-        return flags[0].reason
+    length_reason = _repair_length_rejection_reason(
+        current_target,
+        proposed_target,
+    )
+    if length_reason is not None:
+        return length_reason
 
     required_numbers = _number_tokens(source) & _number_tokens(current_target)
     missing_numbers = required_numbers - _number_tokens(proposed_target)

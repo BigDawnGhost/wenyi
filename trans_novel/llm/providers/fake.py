@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from ..base import LLMClient, Messages
 
@@ -16,7 +17,7 @@ class FakeClient(LLMClient):
 
     def __init__(
         self,
-        handler: Optional[Callable[[Messages, str, bool], str]] = None,
+        handler: Callable[[Messages, str, bool], str] | None = None,
     ) -> None:
         """保存可选响应处理器，并初始化调用记录列表。"""
         super().__init__()
@@ -29,8 +30,8 @@ class FakeClient(LLMClient):
         *,
         tier: str = "strong",
         json_mode: bool = False,
-        max_tokens: Optional[int] = None,
-        stage: Optional[str] = None,
+        max_tokens: int | None = None,
+        stage: str | None = None,
     ) -> str:
         """记录调用并返回处理器结果；未配置处理器时返回最小默认响应。"""
         self.calls.append(

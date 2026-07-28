@@ -7,7 +7,7 @@
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
-  glossary.db       术语库 + 翻译记忆库
+  glossary.db       术语库 + 译法冲突记录
   report.json       QA 报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
 """
@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Iterator
+from typing import Any
 
 from ..ingest.models import Chapter, Document
 
@@ -97,7 +98,7 @@ class RunStore:
 
     @property
     def glossary_path(self) -> str:
-        """返回术语及翻译记忆数据库路径。"""
+        """返回术语及译法冲突数据库路径。"""
         return os.path.join(self.run_dir, "glossary.db")
 
     @property
@@ -159,11 +160,14 @@ class RunStore:
             "target_lang": doc.target_lang,
             "meta": doc.meta,
             "chapters": [
-                {"index": c.index, "title": c.title,
-                 "href": c.href,
-                 "toc_entry_id": c.meta.get("toc_entry_id"),
-                 "status": STATUS_PENDING,
-                 "review_status": REVIEW_PENDING}
+                {
+                    "index": c.index,
+                    "title": c.title,
+                    "href": c.href,
+                    "toc_entry_id": c.meta.get("toc_entry_id"),
+                    "status": STATUS_PENDING,
+                    "review_status": REVIEW_PENDING,
+                }
                 for c in doc.chapters
             ],
         }
@@ -268,9 +272,7 @@ class RunStore:
                             and isinstance(count, int)
                         ):
                             continue
-                        completed.setdefault(ci, set()).add(
-                            self.batch_glossary_key(start, count)
-                        )
+                        completed.setdefault(ci, set()).add(self.batch_glossary_key(start, count))
             self._batch_glossary_event_cache = completed
         return set(self._batch_glossary_event_cache.get(chapter, set()))
 
@@ -289,11 +291,7 @@ class RunStore:
             chapter = data.get("chapter")
             start = data.get("start_index")
             count = data.get("count")
-            if (
-                isinstance(chapter, int)
-                and isinstance(start, int)
-                and isinstance(count, int)
-            ):
+            if isinstance(chapter, int) and isinstance(start, int) and isinstance(count, int):
                 self._batch_glossary_event_cache.setdefault(chapter, set()).add(
                     self.batch_glossary_key(start, count)
                 )

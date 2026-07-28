@@ -8,7 +8,6 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-
 _DEFAULT_CONFIG_YAML = """\
 # trans-novel 配置（多语言小说 → 中文）
 # 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
@@ -60,6 +59,7 @@ pipeline:
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
+  review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
   glossary_scope: chapter # chapter=本章相关词条；full=全量表
 
 # ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────
@@ -114,17 +114,22 @@ class SegmentConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     review: bool = False
-    autofix_severe: bool = False     # 严重项经硬规则和独立验证后写回；关闭则仅上报
-    align_retry_limit: int = 2       # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
-    polish: bool = True              # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
+    autofix_severe: bool = False  # 严重项经硬规则和独立验证后写回；关闭则仅上报
+    align_retry_limit: int = 2  # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
+    polish: bool = True  # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
     backtranslate_sample: float = 0.0
     consistency_qa: bool = False
     rolling_context_segments: int = 6
     # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
     book_understanding: bool = True
-    prescan_concurrency: int = 4     # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-    review_concurrency: int = 4      # 最终审校连续分块并发数（结果按原块序合并，1=串行）
+    prescan_concurrency: int = 4  # 预扫逐章梗概的并发线程数（各章独立，1=串行）
+    review_concurrency: int = 4  # 最终审校连续分块并发数（结果按原块序合并，1=串行）
+    review_output_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+    )  # 单段畸形输出的额外重试次数
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
 
 
@@ -139,7 +144,7 @@ class OutputConfig(BaseModel):
 
 
 class Config(BaseModel):
-    source_lang: str = "auto"        # auto | ja | en | …（auto 时由模型检测）
+    source_lang: str = "auto"  # auto | ja | en | …（auto 时由模型检测）
     target_lang: str = "zh"
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
@@ -162,14 +167,14 @@ class Config(BaseModel):
             return False
 
     @classmethod
-    def load(cls, path: str = "config.yaml") -> "Config":
+    def load(cls, path: str = "config.yaml") -> Config:
         """从 YAML 文件加载配置，并应用缺失字段的类型化默认值。"""
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         return cls.from_dict(raw)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "Config":
+    def from_dict(cls, raw: dict[str, Any]) -> Config:
         """把 YAML 对应的嵌套字典转换为运行时配置模型。"""
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})

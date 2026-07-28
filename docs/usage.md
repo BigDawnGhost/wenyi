@@ -9,8 +9,12 @@ Running from source requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync
 export DEEPSEEK_API_KEY=sk-...
+uv run trans-novel --version
 uv run trans-novel translate book.epub
 ```
+
+The displayed version is generated from the repository's Git tags. Tagged builds show the
+release version; development builds include their commit distance and hash.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
@@ -36,12 +40,50 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, and PDF.
 - Default output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
-- `--format txt|html|markdown`: export the selected format. Every input format still produces EPUB by default.
-- The first PDF import requires `MINERU_API_KEY`. Converted HTML is saved at `state/<book>/source/converted.html`, reused on later runs, and may be corrected manually before resuming.
+- `--format txt|html|markdown|pdf`: export the selected format. Every input format still produces EPUB by default.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
 - Runtime data is stored under `state/`, including chapter intermediates, the SQLite glossary, usage data, and reports.
+
+### Experimental PDF support
+
+PDF input and PDF output are both experimental.
+
+#### PDF input
+
+The first PDF import requires `MINERU_API_KEY`:
+
+```bash
+export MINERU_API_KEY=...
+uv run trans-novel translate book.pdf
+```
+
+MinerU's converted HTML is saved at `state/<book>/source/converted.html`.
+Later runs reuse this file, and you may correct it manually before resuming.
+
+#### PDF output
+
+WeasyPrint is the default PDF engine. Install its optional dependency and omit
+`--pdf-engine`:
+
+```bash
+uv sync --extra pdf-output
+uv run trans-novel assemble book.html --format pdf
+```
+
+For a lightweight cross-platform engine without system rendering libraries,
+use `fpdf2`:
+
+```bash
+uv sync --extra pdf-output-lite
+uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
+```
+
+`fpdf2` supports basic layout and images, but only a limited HTML/CSS subset.
+Images mixed with text are placed as separate blocks. It uses a discoverable
+CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
+TTC font file. This option also works on Windows.
 
 ## Common commands
 
