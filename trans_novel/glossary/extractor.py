@@ -12,7 +12,14 @@ from dataclasses import dataclass, replace
 
 from ..agents import prompts
 from ..agents.base import Agent
-from .store import GlossaryStore, GlossaryTerm, source_matches_text
+from ..config import Config
+from ..llm.base import LLMClient
+from .store import (
+    GlossaryOccurrenceMatcher,
+    GlossaryStore,
+    GlossaryTerm,
+    source_matches_text,
+)
 
 
 def _text(value: object, default: str = "") -> str:
@@ -35,6 +42,45 @@ class TranslatedSegmentEvidence:
 
 
 class GlossaryExtractor(Agent):
+    def __init__(self, client: LLMClient, config: Config):
+        super().__init__(client, config)
+        self._recurrence_corpus: str | None = None
+        self._recurrence_matcher: GlossaryOccurrenceMatcher | None = None
+        self._recurrence_cache: dict[tuple[str, str, tuple[str, ...]], bool] = {}
+
+    def _recurring_existing_terms(
+        self,
+        terms: list[GlossaryTerm],
+        source_corpus: str,
+    ) -> list[GlossaryTerm]:
+        """返回全书至少出现两次的既有术语，并缓存逐条全文匹配结果。"""
+        if source_corpus is not self._recurrence_corpus:
+            self._recurrence_corpus = source_corpus
+            self._recurrence_matcher = GlossaryOccurrenceMatcher(source_corpus)
+            self._recurrence_cache.clear()
+
+        assert self._recurrence_matcher is not None
+        missing: list[GlossaryTerm] = []
+        for term in terms:
+            signature = (term.source, term.type, tuple(term.aliases))
+            if signature not in self._recurrence_cache:
+                missing.append(term)
+
+        if missing:
+            matched = {
+                (term.source, term.type, tuple(term.aliases))
+                for term in self._recurrence_matcher.recurring_terms(missing)
+            }
+            for term in missing:
+                signature = (term.source, term.type, tuple(term.aliases))
+                self._recurrence_cache[signature] = signature in matched
+
+        return [
+            term
+            for term in terms
+            if self._recurrence_cache[(term.source, term.type, tuple(term.aliases))]
+        ]
+
     def extract(
         self, source_text: str, target_text: str, existing: list[GlossaryTerm]
     ) -> list[GlossaryTerm]:
@@ -161,14 +207,23 @@ class GlossaryExtractor(Agent):
         *,
         history: Iterable[TranslatedSegmentEvidence] = (),
         before: tuple[int, int] | None = None,
+        source_corpus: str | None = None,
     ) -> dict[str, int]:
         """抽取术语并入库；新术语优先沿用其首次历史译法。
 
         ``history`` 仅包含已有译文证据。若新术语在 ``before`` 位置之前出现，
         会先用首次出现的原译文校准 target；历史证据无法判定时暂不入库，
         避免把后出的候选译名锁定并污染后文。
+
+        传入 ``source_corpus`` 时，抽取提示词只注入在全书源文中累计出现至少
+        两次的既有术语。低频术语仍保留在数据库中，只是不再反复占用抽取上下文。
         """
-        existing = store.all_terms()
+        all_existing = store.all_terms()
+        existing = (
+            self._recurring_existing_terms(all_existing, source_corpus)
+            if source_corpus is not None
+            else all_existing
+        )
         terms = self.extract(source_text, target_text, existing)
         occurrences = (
             self._first_occurrences(terms, store, history, before) if before is not None else {}

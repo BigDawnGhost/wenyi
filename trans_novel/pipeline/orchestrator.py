@@ -467,7 +467,7 @@ class Orchestrator:
             progress_chapters = [chapter["index"] for chapter in manifest.get("chapters", [])]
 
         total, done = self._progress_counts(store, progress_chapters)
-        translation_history = self._load_translation_history(store)
+        translation_history, source_corpus = self._load_translation_inputs(store)
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
@@ -484,6 +484,7 @@ class Orchestrator:
                     style,
                     book_synopsis,
                     translation_history=translation_history,
+                    source_corpus=source_corpus,
                     progress=progress,
                     done=done,
                     total=total,
@@ -502,11 +503,12 @@ class Orchestrator:
         return store
 
     @staticmethod
-    def _load_translation_history(
+    def _load_translation_inputs(
         store: RunStore,
-    ) -> dict[tuple[int, int], TranslatedSegmentEvidence]:
-        """从章节状态重建已译段落位置索引，供新术语查找首次译法。"""
+    ) -> tuple[dict[tuple[int, int], TranslatedSegmentEvidence], str]:
+        """一次读取章节，重建历史译文索引并拼接完整源文。"""
         history: dict[tuple[int, int], TranslatedSegmentEvidence] = {}
+        source_parts: list[str] = []
         manifest = store.load_manifest()
         chapter_indices = sorted(
             chapter["index"]
@@ -516,6 +518,7 @@ class Orchestrator:
         for chapter_index in chapter_indices:
             chapter = store.load_chapter(chapter_index)
             for segment_index, segment in enumerate(chapter.text_segments):
+                source_parts.append(segment.source)
                 target = (segment.target or "").strip()
                 if not target:
                     continue
@@ -525,7 +528,7 @@ class Orchestrator:
                     source=segment.source,
                     target=target,
                 )
-        return history
+        return history, "\n".join(source_parts)
 
     @staticmethod
     def _update_translation_history(
@@ -899,6 +902,7 @@ class Orchestrator:
         book_synopsis: str = "",
         *,
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
+        source_corpus: str,
         progress: ProgressFn | None = None,
         done: int = 0,
         total: int = 0,
@@ -952,6 +956,7 @@ class Orchestrator:
                         batch_start,
                         b,
                         translation_history,
+                        source_corpus,
                     )
                     glossary_checkpoints.add(glossary_key)
                 term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
@@ -1005,7 +1010,15 @@ class Orchestrator:
             # 增量持久化译文，下次中断从此批之后续跑。
             store.save_chapter(chapter)
             # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
-            self._extract_batch_glossary(glossary, store, ci, batch_start, b, translation_history)
+            self._extract_batch_glossary(
+                glossary,
+                store,
+                ci,
+                batch_start,
+                b,
+                translation_history,
+                source_corpus,
+            )
             self._update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
             term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
@@ -1037,6 +1050,7 @@ class Orchestrator:
             ci,
             history=translation_history.values(),
             before=(ci, len(text_segs)),
+            source_corpus=source_corpus,
         )
         store.log_event(
             "chapter_glossary_extracted",
@@ -1097,6 +1111,7 @@ class Orchestrator:
         start_index: int,
         batch,
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
+        source_corpus: str,
     ) -> dict[str, int]:
         """每批译完/续跑跳过后即时抽取术语，供同章后续批次使用。"""
         src_text = "\n".join(s.source for s in batch)
@@ -1108,6 +1123,7 @@ class Orchestrator:
             chapter,
             history=translation_history.values(),
             before=(chapter, start_index),
+            source_corpus=source_corpus,
         )
         store.log_event(
             "batch_glossary_extracted",
@@ -1610,6 +1626,7 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str = "epub",
         out_path: str | None = None,
+        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
         steps = set(steps)
@@ -1630,6 +1647,7 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
+                pdf_engine=pdf_engine,
             )
 
     def _finish_steps_locked(
@@ -1642,6 +1660,7 @@ class Orchestrator:
         progress: ProgressFn | None,
         out_format: str,
         out_path: str | None,
+        pdf_engine: str,
     ) -> dict[str, Any]:
         """在书级锁内执行 QA、报告和导出收尾步骤并返回结果汇总。"""
         from ..agents.consistency import ConsistencyChecker
@@ -1701,6 +1720,7 @@ class Orchestrator:
                         out_format=out_format,
                         bilingual=False,
                         about_page=out_cfg.about_page,
+                        pdf_engine=pdf_engine,
                     )
                 )
             if do_bilingual:
@@ -1715,6 +1735,7 @@ class Orchestrator:
                         order=out_cfg.bilingual_order,
                         preserve_source_style=(out_cfg.bilingual_preserve_source_style),
                         about_page=out_cfg.about_page,
+                        pdf_engine=pdf_engine,
                     )
                 )
             store.log_event("assembled", outputs=outputs, out_format=out_format)
@@ -1742,6 +1763,7 @@ class Orchestrator:
         out_format: str = "epub",
         out_path: str | None = None,
         do_qa: bool | None = None,
+        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """翻译 → 最终审校 → 一致性 QA → 报告 → 回填，返回结果汇总。"""
         steps = {"translate", "report", "assemble"}
@@ -1755,4 +1777,5 @@ class Orchestrator:
             progress=progress,
             out_format=out_format,
             out_path=out_path,
+            pdf_engine=pdf_engine,
         )

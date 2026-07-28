@@ -13,7 +13,7 @@ from trans_novel.glossary.extractor import (
     GlossaryExtractor,
     TranslatedSegmentEvidence,
 )
-from trans_novel.glossary.store import GlossaryStore
+from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.context import RollingContext
 
@@ -93,6 +93,34 @@ class TestAnalyzer(unittest.TestCase):
 
 
 class TestExtractor(unittest.TestCase):
+    def test_existing_context_only_includes_terms_repeated_in_source_corpus(self):
+        prompts_seen: list[str] = []
+
+        def handler(messages, tier, json_mode):
+            prompts_seen.append(messages[-1]["content"])
+            return json.dumps({"terms": []}, ensure_ascii=False)
+
+        extractor = GlossaryExtractor(FakeClient(handler=handler), _cfg())
+        with tempfile.TemporaryDirectory() as d:
+            store = GlossaryStore(os.path.join(d, "g.db"))
+            store.upsert_term(GlossaryTerm(source="唯一术语", target="唯一译法"))
+            store.upsert_term(GlossaryTerm(source="重复术语", target="重复译法"))
+
+            extractor.extract_and_store(
+                store,
+                "本批原文。",
+                "本批译文。",
+                chapter=0,
+                source_corpus="唯一术语只出现一次。重复术语出现，然后重复术语再次出现。",
+            )
+
+            self.assertEqual(len(store.all_terms()), 2)
+            store.close()
+
+        self.assertEqual(len(prompts_seen), 1)
+        self.assertNotIn("唯一术语 → 唯一译法", prompts_seen[0])
+        self.assertIn("重复术语 → 重复译法", prompts_seen[0])
+
     def test_extract_and_store(self):
         terms = {
             "terms": [

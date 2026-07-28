@@ -1,6 +1,6 @@
 [project]
 name = "trans-novel"
-version = "0.2.0"
+dynamic = ["version"]
 description = "A multi-agent long-form novel translation system with context, terminology, polishing, and review."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,6 +18,14 @@ dependencies = [
     "json-repair>=0.61,<1", # 仅用于 Reviewer 畸形 JSON 的本地修复
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
+]
+
+[project.optional-dependencies]
+pdf-output = [
+    "weasyprint>=69.0",
+]
+pdf-output-lite = [
+    "fpdf2>=2.8.5",
 ]
 
 [dependency-groups]
@@ -44,8 +52,11 @@ testpaths = ["tests"]
 trans-novel = "trans_novel.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trans_novel"]

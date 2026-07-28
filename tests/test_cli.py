@@ -7,11 +7,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import typer
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
     _apply_store_languages,
     _configure_windows_console,
+    _validate_pdf_engine,
     app,
 )
 from trans_novel.config import Config
@@ -26,6 +28,16 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_pdf_engine_validation_accepts_both_backends(self):
+        self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")
+        self.assertEqual(_validate_pdf_engine(" fpdf2 "), "fpdf2")
+
+    def test_pdf_engine_validation_rejects_unknown_backend(self):
+        with self.assertRaises(typer.Exit) as raised:
+            _validate_pdf_engine("unknown")
+
+        self.assertEqual(raised.exception.exit_code, 2)
+
     def test_standalone_tools_restore_manifest_languages(self):
         cfg = Config.from_dict({"language": {"source": "auto", "target": "zh"}})
 
@@ -57,6 +69,13 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         create.assert_called_once_with("settings/config.yaml")
+
+    def test_version_reads_installed_package_metadata(self):
+        with patch("trans_novel.cli.package_version", return_value="0.3.5"):
+            result = CliRunner().invoke(app, ["--version"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.output.strip(), "0.3.5")
 
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
@@ -399,7 +418,7 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
         ):
-            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "pdf"])
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "docx"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("不支持的输出格式", result.output)
