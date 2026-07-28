@@ -36,12 +36,26 @@ async def shutdown(ctx: dict) -> None:
 
 
 # 真正的任务函数（worker 进程执行）
-from .tasks import run_export, run_prepare, run_qa, run_review, run_translation  # noqa: E402
+from .tasks import (  # noqa: E402
+    run_chapter_translation,
+    run_export,
+    run_prepare,
+    run_qa,
+    run_review,
+    run_translation,
+)
 
 
 class WorkerSettings:
     """``arq wenyi_api.workers.WorkerSettings`` 入口。"""
-    functions = [run_translation, run_prepare, run_review, run_qa, run_export]
+    functions = [
+        run_translation,
+        run_chapter_translation,
+        run_prepare,
+        run_review,
+        run_qa,
+        run_export,
+    ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = _redis_settings()

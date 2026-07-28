@@ -9,6 +9,13 @@ from psycopg.types.json import Json
 
 from .db import get_pool
 
+RUNNING_PROJECT_STATUSES = frozenset({
+    "preparing",
+    "translating",
+    "reviewing",
+    "qa",
+})
+
 
 def _conn():
     return get_pool().connection()
@@ -107,6 +114,15 @@ def chapter_summaries(pid: str) -> list[dict]:
          "target_word_count": r[5] or 0, "review_issue_count": r[6] or 0}
         for r in rows
     ]
+
+
+def set_chapter_status(pid: str, chapter_index: int, status: str) -> None:
+    with _conn() as c:
+        c.execute(
+            """UPDATE chapters SET status=%s
+               WHERE project_id=%s AND seq=%s""",
+            (status, pid, chapter_index),
+        )
 
 
 def total_word_count(pid: str) -> int:

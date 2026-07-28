@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
@@ -7,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BookOpen, Download, LoaderCircle, Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { BookOpen, Download, FileOutput, LoaderCircle, Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
 
 export default function ProgressPage() {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
+  const [assembleExportId, setAssembleExportId] = useState<number | null>(null);
   const { data: project } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
@@ -32,6 +33,15 @@ export default function ProgressPage() {
     enabled: !!pid,
     refetchInterval: (query) => query.state.data?.status === "running" ? 2000 : false,
   });
+  const { data: assembleExports } = useQuery({
+    queryKey: ["exports", pid],
+    queryFn: () => api.listExports(pid),
+    enabled: !!pid && assembleExportId !== null,
+    refetchInterval: (query) => {
+      const tracked = query.state.data?.find((item) => item.id === assembleExportId);
+      return tracked?.status === "pending" ? 2000 : false;
+    },
+  });
   const { msg, log, connected } = useProjectProgress(pid);
 
   // 实时进度优先用 WS 数据
@@ -48,6 +58,15 @@ export default function ProgressPage() {
   const pause = useMutation({ mutationFn: () => api.pause(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已暂停"); } });
   const resume = useMutation({ mutationFn: () => api.resume(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已恢复"); } });
   const prepare = useMutation({ mutationFn: () => api.prepare(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已开始译前准备"); } });
+  const assemble = useMutation({
+    mutationFn: () => api.assemble(pid),
+    onSuccess: (result) => {
+      setAssembleExportId(result.export_id);
+      qc.invalidateQueries({ queryKey: ["exports", pid] });
+      toast.success("已开始重新组装");
+    },
+    onError: (error) => toast.error(`重新组装失败：${error.message}`),
+  });
   const runQA = useMutation({
     mutationFn: () => api.runQA(pid),
     onSuccess: () => {
@@ -74,6 +93,18 @@ export default function ProgressPage() {
   const pipelineBusy = translating || preparing || reviewing;
   const busy = pipelineBusy || qaRunning;
   const translated = total > 0 && done === total;
+  useEffect(() => {
+    if (assembleExportId === null) return;
+    const tracked = assembleExports?.find((item) => item.id === assembleExportId);
+    if (tracked?.status === "done") {
+      toast.success("重新组装完成，可前往导出页下载");
+      setAssembleExportId(null);
+    } else if (tracked?.status === "error") {
+      toast.error("重新组装失败，请查看事件日志后重试");
+      setAssembleExportId(null);
+    }
+  }, [assembleExportId, assembleExports]);
+
   const currentStatus = paused
     ? "已暂停"
     : qaRunning
@@ -118,6 +149,17 @@ export default function ProgressPage() {
               <RefreshCw className={`h-4 w-4 ${regenerateReport.isPending ? "animate-spin" : ""}`} />
               重生成报告
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => assemble.mutate()}
+              disabled={done === 0 || busy || assemble.isPending || assembleExportId !== null}
+              title={done > 0 ? "从已有译文重新生成默认 EPUB，不调用模型" : "至少翻译一章后可用"}
+            >
+              {assemble.isPending || assembleExportId !== null
+                ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                : <FileOutput className="h-4 w-4" />}
+              重新组装
+            </Button>
             <Link to={`/projects/${pid}/export`}><Button variant="outline"><Download className="h-4 w-4" /> 导出</Button></Link>
           </>
         }
@@ -147,7 +189,7 @@ export default function ProgressPage() {
           reportSummary={regenerateReport.data?.summary}
         />
 
-        <ChapterTable pid={pid} chapters={chapters || []} />
+        <ChapterTable pid={pid} chapters={chapters || []} busy={busy} />
       </PageContainer>
     </>
   );
@@ -260,7 +302,28 @@ function StatCard({ label, value, sub, children }: { label: string; value: strin
   );
 }
 
-function ChapterTable({ pid, chapters }: { pid: string; chapters: import("@/lib/api").ChapterSummary[] }) {
+function ChapterTable({
+  pid,
+  chapters,
+  busy,
+}: {
+  pid: string;
+  chapters: import("@/lib/api").ChapterSummary[];
+  busy: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const translateChapter = useMutation({
+    mutationFn: (chapterIndex: number) => api.translateChapter(pid, chapterIndex),
+    onSuccess: async (_, chapterIndex) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["project", pid] }),
+        queryClient.invalidateQueries({ queryKey: ["chapters", pid] }),
+      ]);
+      toast.success(`已开始翻译第 ${chapterIndex + 1} 章`);
+    },
+    onError: (error) => toast.error(`无法开始单章翻译：${error.message}`),
+  });
+
   return (
     <Card>
       <CardContent className="p-0">
@@ -295,6 +358,20 @@ function ChapterTable({ pid, chapters }: { pid: string; chapters: import("@/lib/
                     <Link to={`/projects/${pid}/review/${c.index}`} className="text-xs text-primary hover:underline">
                       {c.review_issue_count > 0 ? "审校" : "查看"}
                     </Link>
+                  )}
+                  {c.status !== "done" && c.status !== "translating" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || translateChapter.isPending}
+                      onClick={() => translateChapter.mutate(c.index)}
+                    >
+                      {translateChapter.isPending && translateChapter.variables === c.index
+                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        : <Play className="h-3.5 w-3.5" />}
+                      翻译此章
+                    </Button>
                   )}
                 </td>
               </tr>

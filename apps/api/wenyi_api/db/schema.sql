@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS chapters (
     title_translated TEXT,
     href             TEXT,
     template         TEXT,
-    status           TEXT DEFAULT 'pending',   -- pending | done
+    status           TEXT DEFAULT 'pending',   -- pending | translating | done
     meta             JSONB DEFAULT '{}'::jsonb, -- review_issues / backtranslation_issues / source_digest
     PRIMARY KEY (project_id, seq)
 );
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS exports (
 CREATE TABLE IF NOT EXISTS jobs (
     id          SERIAL PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    kind        TEXT NOT NULL,            -- translation | export | prepare | review | qa
+    kind        TEXT NOT NULL,            -- translation | chapter_translation | export | prepare | review | qa
     status      TEXT DEFAULT 'queued',    -- queued | running | paused | done | error
     arq_job_id  TEXT,
     error       TEXT,

@@ -117,6 +117,65 @@ async def run_translation(ctx, *, project_id: str,
         raise
 
 
+def _translate_chapter_sync(pid: str, chapter_index: int) -> None:
+    """同步执行单章翻译，不运行全书审校、QA、报告或组装。"""
+    from wenyi_core.llm.factory import build_client
+    from wenyi_core.pipeline.orchestrator import Orchestrator
+
+    pool = init_pool(settings.psycopg_dsn)
+    import redis as redis_lib
+    redis = redis_lib.from_url(settings.redis_url)
+
+    cfg = _build_config_for(pid)
+    source = _resolve_source(pid)
+    storage = _pipeline_storage(pid, pool)
+    client = build_client(cfg)
+    orch = Orchestrator(cfg, client=client, storage=storage)
+    progress = _progress_with_pause(redis, pid)
+    try:
+        orch.run(source, only_chapter=chapter_index, progress=progress)
+        chapters = dal.chapter_summaries(pid)
+        status = (
+            "done"
+            if chapters and all(chapter["status"] == "done" for chapter in chapters)
+            else "prepared"
+        )
+        dal.set_project_status(pid, status)
+    except PauseRequested:
+        storage.set_chapter_status(chapter_index, "pending")
+        dal.set_project_status(pid, "paused")
+    except Exception as e:  # noqa: BLE001
+        storage.set_chapter_status(chapter_index, "pending")
+        dal.set_project_status(pid, "error")
+        storage.log_event(
+            "chapter_translation_error",
+            chapter=chapter_index,
+            error=str(e),
+        )
+        raise
+
+
+async def run_chapter_translation(
+    ctx,
+    *,
+    project_id: str,
+    chapter_index: int,
+) -> None:
+    """Arq 任务：只翻译并保存指定章节。"""
+    dal.set_project_status(project_id, "translating")
+    try:
+        await asyncio.to_thread(
+            _translate_chapter_sync,
+            project_id,
+            chapter_index,
+        )
+    except Exception:
+        # _translate_chapter_sync 负责恢复章节状态；此处覆盖其 try 块之前的启动异常。
+        dal.set_chapter_status(project_id, chapter_index, "pending")
+        dal.set_project_status(project_id, "error")
+        raise
+
+
 def _prepare_sync(pid: str) -> None:
     """同步执行译前准备（解析、语言检测、风格分析、术语提取、全书概览）。"""
     from wenyi_core.llm.factory import build_client

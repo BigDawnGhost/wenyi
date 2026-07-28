@@ -192,3 +192,7 @@ class JobEnqueued(BaseModel):
     job_id: str
     project_id: str
     kind: str
+
+
+class AssembleEnqueued(JobEnqueued):
+    export_id: int

@@ -32,6 +32,94 @@ def test_run_translation_marks_startup_failure_as_error(monkeypatch):
     ]
 
 
+def test_run_chapter_translation_marks_startup_failure_as_error(monkeypatch):
+    project_statuses: list[tuple[str, str]] = []
+    chapter_statuses: list[tuple[str, int, str]] = []
+    monkeypatch.setattr(
+        tasks.dal,
+        "set_project_status",
+        lambda pid, status: project_statuses.append((pid, status)),
+    )
+    monkeypatch.setattr(
+        tasks.dal,
+        "set_chapter_status",
+        lambda pid, ci, status: chapter_statuses.append((pid, ci, status)),
+    )
+
+    def fail_before_pipeline(project_id: str, chapter_index: int) -> None:
+        raise RuntimeError("config missing")
+
+    monkeypatch.setattr(tasks, "_translate_chapter_sync", fail_before_pipeline)
+
+    with pytest.raises(RuntimeError, match="config missing"):
+        asyncio.run(
+            tasks.run_chapter_translation(
+                {},
+                project_id="project-1",
+                chapter_index=3,
+            )
+        )
+
+    assert project_statuses == [
+        ("project-1", "translating"),
+        ("project-1", "error"),
+    ]
+    assert chapter_statuses == [("project-1", 3, "pending")]
+
+
+def test_translate_chapter_sync_runs_only_requested_chapter(monkeypatch):
+    import redis as redis_lib
+    import wenyi_core.llm.factory as factory_mod
+    import wenyi_core.pipeline.orchestrator as orch_mod
+
+    calls: list[tuple[str, object]] = []
+    project_statuses: list[tuple[str, str]] = []
+    storage = SimpleNamespace(
+        set_chapter_status=lambda ci, status: calls.append(
+            ("chapter_status", (ci, status))
+        ),
+        log_event=lambda event, **data: calls.append(("event", (event, data))),
+    )
+
+    class FakeOrchestrator:
+        def __init__(self, config, *, client, storage):
+            calls.append(("init", (config, client, storage)))
+
+        def run(self, source, *, only_chapter, progress):
+            calls.append(("run", (source, only_chapter, progress)))
+
+    monkeypatch.setattr(tasks, "init_pool", lambda dsn: "pool")
+    monkeypatch.setattr(tasks, "_build_config_for", lambda pid: "config")
+    monkeypatch.setattr(tasks, "_resolve_source", lambda pid: "/data/source.epub")
+    monkeypatch.setattr(tasks, "_pipeline_storage", lambda pid, pool: storage)
+    monkeypatch.setattr(
+        tasks,
+        "_progress_with_pause",
+        lambda redis, pid: "progress",
+    )
+    monkeypatch.setattr(
+        tasks.dal,
+        "chapter_summaries",
+        lambda pid: [
+            {"index": 0, "status": "done"},
+            {"index": 1, "status": "pending"},
+        ],
+    )
+    monkeypatch.setattr(
+        tasks.dal,
+        "set_project_status",
+        lambda pid, status: project_statuses.append((pid, status)),
+    )
+    monkeypatch.setattr(factory_mod, "build_client", lambda cfg: "client")
+    monkeypatch.setattr(orch_mod, "Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr(redis_lib, "from_url", lambda url: "redis")
+
+    tasks._translate_chapter_sync("project-1", 0)
+
+    assert ("run", ("/data/source.epub", 0, "progress")) in calls
+    assert project_statuses == [("project-1", "prepared")]
+
+
 def test_run_prepare_marks_startup_failure_as_error(monkeypatch):
     statuses: list[tuple[str, str]] = []
 

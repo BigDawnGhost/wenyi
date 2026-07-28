@@ -12,6 +12,7 @@ from .. import dal, paths
 from ..config import settings
 from ..dal import set_project_status
 from ..schemas import (
+    AssembleEnqueued,
     JobEnqueued,
     Message,
     Project,
@@ -23,6 +24,14 @@ from ..schemas import (
 from ..workers import enqueue
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_DEFAULT_ASSEMBLE_FORMAT = "epub"
+_DEFAULT_ASSEMBLE_OPTIONS = {
+    "bilingual": False,
+    "order": "target_first",
+    "about_page": True,
+    "preserve_source_style": False,
+}
 
 _UPLOAD_FORMATS = {
     "epub": "epub",
@@ -132,6 +141,42 @@ async def prepare_only(pid: str) -> dict:
     set_project_status(pid, "preparing")
     job = await enqueue("run_prepare", project_id=pid)
     return {"job_id": job.job_id if job else "sync", "project_id": pid, "kind": "prepare"}
+
+
+@router.post("/{pid}/assemble", response_model=AssembleEnqueued)
+async def assemble_output(pid: str) -> dict:
+    """从已有译文状态重新生成默认 EPUB，并登记为可下载导出。"""
+    project = dal.get_project(pid)
+    if project is None:
+        raise HTTPException(404, "project not found")
+    if project["status"] in dal.RUNNING_PROJECT_STATUSES:
+        raise HTTPException(409, "project already has a running task")
+    chapters = dal.chapter_summaries(pid)
+    if not any(chapter["status"] == "done" for chapter in chapters):
+        raise HTTPException(409, "project has no translated chapters")
+
+    export_id = dal.create_export(
+        pid,
+        _DEFAULT_ASSEMBLE_FORMAT,
+        dict(_DEFAULT_ASSEMBLE_OPTIONS),
+    )
+    try:
+        job = await enqueue(
+            "run_export",
+            project_id=pid,
+            export_id=export_id,
+            fmt=_DEFAULT_ASSEMBLE_FORMAT,
+            **_DEFAULT_ASSEMBLE_OPTIONS,
+        )
+    except Exception:
+        dal.set_export_status(export_id, "error")
+        raise
+    return {
+        "job_id": job.job_id if job else "sync",
+        "project_id": pid,
+        "kind": "assemble",
+        "export_id": export_id,
+    }
 
 
 @router.post("/{pid}/pause", response_model=Message)

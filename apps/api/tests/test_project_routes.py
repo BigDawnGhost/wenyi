@@ -67,6 +67,89 @@ def test_start_translation_without_body_keeps_existing_strategy(monkeypatch):
     assert result["job_id"] == "job-2"
 
 
+def test_assemble_output_creates_default_export_before_enqueue(monkeypatch):
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        projects.dal,
+        "get_project",
+        lambda pid: {"id": pid, "status": "done"},
+    )
+    monkeypatch.setattr(
+        projects.dal,
+        "chapter_summaries",
+        lambda pid: [{"index": 0, "status": "done"}],
+    )
+
+    def fake_create_export(pid: str, fmt: str, options: dict) -> int:
+        calls.append(("create", (pid, fmt, options)))
+        return 17
+
+    async def fake_enqueue(name: str, **kwargs):
+        calls.append(("enqueue", (name, kwargs)))
+        return SimpleNamespace(job_id="assemble-job")
+
+    monkeypatch.setattr(projects.dal, "create_export", fake_create_export)
+    monkeypatch.setattr(projects, "enqueue", fake_enqueue)
+
+    result = asyncio.run(projects.assemble_output("project-1"))
+
+    assert calls == [
+        (
+            "create",
+            (
+                "project-1",
+                "epub",
+                {
+                    "bilingual": False,
+                    "order": "target_first",
+                    "about_page": True,
+                    "preserve_source_style": False,
+                },
+            ),
+        ),
+        (
+            "enqueue",
+            (
+                "run_export",
+                {
+                    "project_id": "project-1",
+                    "export_id": 17,
+                    "fmt": "epub",
+                    "bilingual": False,
+                    "order": "target_first",
+                    "about_page": True,
+                    "preserve_source_style": False,
+                },
+            ),
+        ),
+    ]
+    assert result == {
+        "job_id": "assemble-job",
+        "project_id": "project-1",
+        "kind": "assemble",
+        "export_id": 17,
+    }
+
+
+def test_assemble_output_requires_existing_translation(monkeypatch):
+    monkeypatch.setattr(
+        projects.dal,
+        "get_project",
+        lambda pid: {"id": pid, "status": "prepared"},
+    )
+    monkeypatch.setattr(
+        projects.dal,
+        "chapter_summaries",
+        lambda pid: [{"index": 0, "status": "pending"}],
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(projects.assemble_output("project-1"))
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "project has no translated chapters"
+
+
 def _stub_upload_dependencies(monkeypatch, tmp_path):
     saved: list[tuple[str, str, str]] = []
     monkeypatch.setattr(projects.dal, "get_project", lambda pid: {"id": pid})

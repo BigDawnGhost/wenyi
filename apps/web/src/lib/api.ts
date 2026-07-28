@@ -188,6 +188,11 @@ export const api = {
     }),
   prepare: (pid: string) =>
     request<{ job_id: string; kind: string }>(`/projects/${pid}/prepare`, { method: "POST" }),
+  assemble: (pid: string) =>
+    request<{ job_id: string; kind: string; export_id: number }>(
+      `/projects/${pid}/assemble`,
+      { method: "POST" },
+    ),
   pause: (pid: string) => request<{ message: string }>(`/projects/${pid}/pause`, { method: "POST" }),
   resume: (pid: string) => request<{ job_id: string; kind: string }>(`/projects/${pid}/resume`, { method: "POST" }),
   runQA: (pid: string) =>
@@ -198,6 +203,11 @@ export const api = {
 
   listChapters: (pid: string) => request<ChapterSummary[]>(`/projects/${pid}/chapters`),
   getChapter: (pid: string, ci: number) => request<ChapterSegments>(`/projects/${pid}/chapters/${ci}`),
+  translateChapter: (pid: string, ci: number) =>
+    request<{ job_id: string; kind: string }>(
+      `/projects/${pid}/chapters/${ci}/translate`,
+      { method: "POST" },
+    ),
 
   listTerms: (pid: string, params: { q?: string; type?: string; locked?: boolean } = {}) => {
     const s = new URLSearchParams();
