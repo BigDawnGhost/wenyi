@@ -10,7 +10,6 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 [![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square)](https://github.com/BigDawnGhost/wenyi/stargazers)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/Tybfva4HT)
 
 **English** | [简体中文](docs/zh/README.md)
@@ -21,22 +20,22 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 
 ---
 
-## 🧭 Table of contents
+## Table of contents
 
-- [🤔 Why Wenyi](#why-wenyi)
-- [✨ Core features](#core-features)
-- [🚀 Quick start](#quick-start)
-- [📂 Supported formats](#supported-formats)
-- [🔄 Translation pipeline](#translation-pipeline)
-- [📖 Documentation](#documentation)
-- [⚠️ Limitations](#limitations)
-- [🤝 Community](#community)
-- [⭐ Star history](#star-history)
-- [📄 License](#license)
+- [Why Wenyi](#why-wenyi)
+- [Core features](#core-features)
+- [Quick start](#quick-start)
+- [Supported formats](#supported-formats)
+- [Translation pipeline](#translation-pipeline)
+- [Documentation](#documentation)
+- [Limitations](#limitations)
+- [Community](#community)
+- [Star history](#star-history)
+- [License](#license)
 
 ---
 
-## 🤔 Why Wenyi
+## Why Wenyi
 
 | Typical approach | Wenyi |
 |---|---|
@@ -45,29 +44,29 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 | Single-pass translation, fragile to interruptions | Chapter-level state machine: resume any interrupted run with the same command |
 | Raw model output, no systematic quality process | Translate → polish → review → backtranslate → consistency QA |
 
-Wenyi is designed for **long-form texts** — novels, memoirs, biographies — where translating a sentence in chapter 3 demands knowledge of chapter 1, and a character's name must remain consistent across 500 pages. 📖✨
+Wenyi is designed for **long-form texts** — novels, memoirs, biographies — where translating a sentence in chapter 3 demands knowledge of chapter 1, and a character's name must remain consistent across 500 pages.
 
 ---
 
-## ✨ Core features
+## Core features
 
-- 📖 **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
-- 🔤 **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- ✅ **Multi-stage quality** — optional polishing (strong model), side-by-side review, backtranslation sampling, and cross-chapter consistency QA
-- ⏯️ **Resumability** — chapter-level state machine with atomic writes; interrupt at any point and resume with the same command
-- 🤖 **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
-- 🎨 **Native EPUB preservation** — writes translated text back into the original XHTML templates, preserving styles, images, TOC, and anchors
-- 🌗 **Bilingual output** — optional side-by-side edition with visually subdued source text, including dark mode support
+- **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
+- **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
+- **Multi-stage quality** — optional polishing (strong model), side-by-side review, backtranslation sampling, and cross-chapter consistency QA
+- **Resumability** — chapter-level state machine with atomic writes; interrupt at any point and resume with the same command
+- **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
+- **Native EPUB preservation** — writes translated text back into the original XHTML templates, preserving styles, images, TOC, and anchors
+- **Bilingual output** — optional side-by-side edition with visually subdued source text, including dark mode support
 
 ---
 
-## 🚀 Quick start
+## Quick start
 
-### 📋 Prerequisites
+### Prerequisites
 
 Wenyi requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
-### 📦 Installation
+### Installation
 
 ```bash
 git clone git@github.com:BigDawnGhost/wenyi.git
@@ -75,7 +74,7 @@ cd wenyi
 uv sync
 ```
 
-### 🔑 Configuration
+### Configuration
 
 Set your API key and optionally review the generated config file:
 
@@ -84,7 +83,7 @@ export DEEPSEEK_API_KEY=sk-...
 # config.yaml is auto-created on first run if missing
 ```
 
-### ⚡ One-command translation
+### One-command translation
 
 ```bash
 uv run trans-novel translate book.epub
@@ -92,7 +91,7 @@ uv run trans-novel translate book.epub
 
 This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
 
-### 🪜 Step-by-step workflow
+### Step-by-step workflow
 
 ```bash
 # 1. Prepare — parse, analyze, prescan (no body text translated)
@@ -111,7 +110,7 @@ uv run trans-novel qa book.epub
 uv run trans-novel status book.epub
 ```
 
-### ⏯️ Interrupt and resume
+### Interrupt and resume
 
 Every completed batch is persisted immediately. If a run is interrupted, execute the same command again:
 
@@ -119,7 +118,7 @@ Every completed batch is persisted immediately. If a run is interrupted, execute
 uv run trans-novel translate book.epub
 ```
 
-### 🎛️ Command-line overrides
+### Command-line overrides
 
 ```bash
 uv run trans-novel translate book.epub --polish --review --qa     # enable all quality stages
@@ -131,73 +130,80 @@ uv run trans-novel translate book.epub --format txt                # export as p
 
 ---
 
-## 📂 Supported formats
+## Supported formats
 
 | Input | Output |
 |---|---|
 | EPUB, FB2, TXT, Markdown, HTML, PDF | EPUB (monolingual / bilingual), TXT, HTML, Markdown |
 
-- 📑 PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
-- 🖼️ EPUB output preserves the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
-- 🌐 Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
+- PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
+- EPUB output preserves the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
+- Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 
 ---
 
-## 🔄 Translation pipeline
+## Translation pipeline
 
-```mermaid
-flowchart TD
-    A["📄 Input file"] --> B["🔍 Parse chapters + detect language"]
-    B --> C["📖 Whole-book prescan<br/>chapter digests + synopsis"]
-    C --> D["🎨 Style analysis + initial glossary"]
-    D --> LOOP
-    subgraph LOOP["🔁 Chapter-by-chapter loop"]
-        direction LR
-        L1["🧩 Inject context"] --> L2["✍️ Translate"] --> L3["🔤 Extract terms"] --> L4["✨ Polish"] --> L5["✒️ Normalize punctuation"] --> L6["🔄 Backtranslate sample"] --> L7["💾 Persist"]
-    end
-    LOOP --> F["🧐 Final review (optional, parallel)"]
-    F --> G["🧪 Consistency QA (optional)"]
-    G --> H["📦 Report + assemble EPUB"]
+```
+  Input file
+    ↓
+  Parse chapters + detect language
+    ↓
+  Whole-book prescan (chapter digests + synopsis)  ← parallel
+    ↓
+  Style analysis + initial glossary
+    ↓
+  ┌─ Translate chapter by chapter ──────────────────────┐
+  │  Per batch: inject context → translate               │
+  │  → extract terms → polish → normalize punctuation    │
+  │  → backtranslate sample → persist                    │
+  └──────────────────────────────────────────────────────┘
+    ↓
+  Final review (against completed glossary)    ← optional, parallel
+    ↓
+  Cross-chapter consistency QA                  ← optional
+    ↓
+  Generate report + assemble output EPUB
 ```
 
-The prescan runs in parallel (configurable concurrency) and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters. 🔁
+The prescan runs in parallel (configurable concurrency) and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 
 ---
 
-## 📖 Documentation
+## Documentation
 
-- 📘 [Usage guide](docs/usage.md) — installation, Windows setup, input/output, resumability, independent stages
-- ⚙️ [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
-- 🔄 [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
-- 🛠️ [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
+- [Usage guide](docs/usage.md) — installation, Windows setup, input/output, resumability, independent stages
+- [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
+- [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
+- [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
 
-Translated state directories for public-domain books may be shared through [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase). 🚨 Do not publish copyrighted text, private books, or `state/` directories containing sensitive information without permission.
-
----
-
-## ⚠️ Limitations
-
-- 🎯 The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
-- 💰 Polishing and final review are the most expensive stages — they significantly increase token consumption.
-- 📑 PDF input depends on the MinerU external service; the initial conversion requires an API key.
-- 🤖 Translation quality is bounded by the capabilities of the chosen LLM model.
-- 💾 Very long books may produce large state directories; storage requirements grow with book length.
+Translated state directories for public-domain books may be shared through [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase). Do not publish copyrighted text, private books, or `state/` directories containing sensitive information without permission.
 
 ---
 
-## 🤝 Community
+## Limitations
 
-- 💬 [Discord server](https://discord.gg/Tybfva4HT)
-- 🐧 QQ group: 1055065098
-- 🐛 [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
-- 💡 [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
+- The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
+- Polishing and final review are the most expensive stages — they significantly increase token consumption.
+- PDF input depends on the MinerU external service; the initial conversion requires an API key.
+- Translation quality is bounded by the capabilities of the chosen LLM model.
+- Very long books may produce large state directories; storage requirements grow with book length.
 
 ---
 
-## ⭐ Star history
+## Community
+
+- [Discord server](https://discord.gg/Tybfva4HT)
+- QQ group: 1055065098
+- [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
+- [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
+
+---
+
+## Star history
 
 <details>
-<summary>📈 Click to expand the star history chart</summary>
+<summary>Click to expand the star history chart</summary>
 <br>
 
 <a href="https://www.star-history.com/?repos=BigDawnGhost%2FWenyi&type=date&legend=top-left">
@@ -212,14 +218,6 @@ Translated state directories for public-domain books may be shared through [weny
 
 ---
 
-## 📄 License
+## License
 
 [MIT](LICENSE)
-
----
-
-<div align="center">
-
-Enjoying Wenyi? Give it a ⭐ to support the project!
-
-</div>
