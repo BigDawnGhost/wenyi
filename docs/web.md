@@ -26,6 +26,7 @@ cp .env.example deploy/.env
 | 变量 | 说明 |
 |------|------|
 | `DEEPSEEK_API_KEY` | **必填**。LLM 鉴权；不填则翻译会失败 |
+| `MINERU_API_KEY` | 上传 PDF 时必填。用于首次将 PDF 转换为 HTML；上传 HTML 等其他格式时不需要 |
 | `WENYI_API_TOKEN` | 可选。填写后 HTTP 请求需带 `Authorization: Bearer <token>`（`/health`、`/ws/` 除外） |
 | `WENYI_CORS_ORIGINS` | 可选。CORS 源，逗号分隔；默认 `*` |
 | `DATABASE_URL` / `REDIS_URL` | Compose 内已写死服务名；仅本地开发时需改成 `localhost` |
@@ -96,7 +97,7 @@ pnpm dev:web      # http://localhost:5173（Vite 已代理 /api、/ws → 8000�
 
 ## 日常使用概要
 
-1. 打开 Web UI，创建项目并上传 EPUB / FB2 / TXT。
+1. 打开 Web UI，创建项目并上传 EPUB / FB2 / TXT / Markdown / HTML / PDF。
 2. 选择翻译策略（快速出稿 / 标准翻译 / 精翻，或自定义步骤）。
 3. 开始翻译后可在进度页看实时状态；术语、审校、风格、导出等在对应页面操作。
 4. 导出完成后在导出页下载成品。

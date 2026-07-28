@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from wenyi_api.workers import tasks
@@ -79,6 +80,30 @@ def test_run_review_marks_startup_failure_as_error(monkeypatch):
     ]
 
 
+def test_resolve_source_uses_recorded_path_without_parsed_title(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "project-1" / "source.html"
+    source.parent.mkdir()
+    source.write_text("<h1>Chapter</h1>", encoding="utf-8")
+    monkeypatch.setattr(
+        tasks.dal,
+        "get_project",
+        lambda pid: {
+            "id": pid,
+            "title": None,
+            "source_path": "project-1/source.html",
+        },
+    )
+    monkeypatch.setattr(
+        tasks,
+        "settings",
+        SimpleNamespace(data_dir=str(tmp_path)),
+    )
+
+    assert tasks._resolve_source("project-1") == str(source)
+
+
 def test_prepare_sync_uses_prepare_for_translation(monkeypatch):
     """译前准备应走 prepare_for_translation（含全书概览），而非仅 prepare。"""
     import redis as redis_lib
@@ -100,7 +125,7 @@ def test_prepare_sync_uses_prepare_for_translation(monkeypatch):
     monkeypatch.setattr(tasks, "_build_config_for", lambda pid: object())
     monkeypatch.setattr(tasks, "_resolve_source", lambda pid: "/tmp/x.epub")
     monkeypatch.setattr(tasks, "init_pool", lambda dsn: object())
-    monkeypatch.setattr(tasks, "PostgresStorage", lambda pid, pool: object())
+    monkeypatch.setattr(tasks, "_pipeline_storage", lambda pid, pool: object())
     monkeypatch.setattr(tasks.dal, "set_project_status", lambda pid, status: None)
     monkeypatch.setattr(
         tasks, "_progress_with_pause", lambda redis, pid: (lambda *a, **k: None)

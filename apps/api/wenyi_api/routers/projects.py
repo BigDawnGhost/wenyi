@@ -6,6 +6,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from wenyi_core.ingest.errors import MinerUError
 
 from .. import dal, paths
 from ..config import settings
@@ -22,6 +23,14 @@ from ..schemas import (
 from ..workers import enqueue
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_UPLOAD_FORMATS = {
+    "epub": "epub",
+    "fb2": "fb2",
+    "html": "html",
+    "htm": "html",
+    "pdf": "pdf",
+}
 
 
 @router.get("", response_model=list[Project])
@@ -61,7 +70,7 @@ def upload_source(pid: str, file: UploadFile = File(...),
         raise HTTPException(404, "project not found")
     filename = file.filename or "source"
     ext = fmt or os.path.splitext(filename)[1].lstrip(".").lower()
-    fmt_code = "epub" if ext == "epub" else ("fb2" if ext == "fb2" else "text")
+    fmt_code = _UPLOAD_FORMATS.get(ext, "text")
     dest = paths.source_path(pid, fmt_code)
     with open(dest, "wb") as f:
         f.write(file.file.read())
@@ -69,7 +78,20 @@ def upload_source(pid: str, file: UploadFile = File(...),
     from wenyi_core.ingest.segmenter import load_document
 
     try:
-        doc = load_document(dest, "auto", "zh")
+        cache_dir = paths.source_cache_dir(pid) if fmt_code == "pdf" else None
+        if cache_dir is not None:
+            converted_html = os.path.join(cache_dir, "converted.html")
+            if os.path.isfile(converted_html):
+                os.remove(converted_html)
+        doc = load_document(dest, "auto", "zh", cache_dir=cache_dir)
+    except MinerUError as e:
+        detail = str(e)
+        if "MINERU_API_KEY" in detail:
+            detail = (
+                "PDF 解析服务尚未配置 MINERU_API_KEY，"
+                "请联系管理员配置后重试"
+            )
+        raise HTTPException(422, f"解析失败：{detail}") from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(422, f"解析失败：{e}") from e
 

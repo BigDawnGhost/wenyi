@@ -30,18 +30,25 @@ _SOURCE_ONLY_TYPES = {t for t in (
 class PostgresStorage:
     """Postgres 后端 Storage。一个实例绑定一个 project_id。"""
 
-    def __init__(self, project_id: str, pool: ConnectionPool):
+    def __init__(
+        self,
+        project_id: str,
+        pool: ConnectionPool,
+        *,
+        run_dir: str | None = None,
+    ):
         self.project_id = project_id
         self._pool = pool
+        self._run_dir = run_dir
 
     @property
     def _conn(self):  # 便捷：返回上下文管理器
         return self._pool.connection()
 
-    # ── 路径兼容属性（assemble / cli 风格访问；Web 模式无文件，给占位）─────
+    # ── 路径兼容属性（管线可注入项目文件目录，其余场景给占位）────────────
     @property
     def run_dir(self) -> str:
-        return f"<postgres:{self.project_id}>"
+        return self._run_dir or f"<postgres:{self.project_id}>"
 
     @property
     def glossary_path(self) -> str:

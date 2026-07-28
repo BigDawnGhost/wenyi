@@ -11,7 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { api, type UploadPreview } from "@/lib/api";
-import { Check, ChevronLeft, ChevronRight, Upload as UploadIcon } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  FileCode2,
+  FileText,
+  Upload as UploadIcon,
+} from "lucide-react";
 
 const LANGS = [
   ["auto", "自动检测"], ["ja", "日语"], ["en", "英语"], ["ko", "韩语"],
@@ -34,6 +41,7 @@ export default function CreateProject() {
   const [strategy, setStrategy] = useState<{ template?: string; steps?: Record<string, unknown> }>({ template: "标准翻译" });
   const [customOpen, setCustomOpen] = useState(false);
   const [pid, setPid] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const { data: stepsDef } = useQuery({ queryKey: ["steps"], queryFn: api.listSteps });
 
@@ -45,18 +53,36 @@ export default function CreateProject() {
 
   const upload = useMutation({
     mutationFn: ({ id, f }: { id: string; f: File }) => api.uploadSource(id, f),
-    onSuccess: setPreview,
-    onError: (e) => toast.error(`上传失败：${(e as Error).message}`),
+    onMutate: () => setUploadError(null),
+    onSuccess: (result) => {
+      setPreview(result);
+      setUploadError(null);
+    },
+    onError: (error, { f }) => {
+      const message = uploadErrorMessage(error, f);
+      setUploadError(message);
+      toast.error(message);
+    },
   });
 
   const onDrop = (accepted: File[]) => {
     const f = accepted[0];
     if (!f) return;
     setFile(f);
+    setPreview(null);
+    setUploadError(null);
     if (pid) upload.mutate({ id: pid, f });
   };
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, accept: { "application/epub+zip": [".epub"], "text/plain": [".txt", ".md"], "application/x-fictionbook": [".fb2"] }, maxFiles: 1,
+    onDrop,
+    accept: {
+      "application/epub+zip": [".epub"],
+      "text/plain": [".txt", ".md"],
+      "application/x-fictionbook": [".fb2"],
+      "text/html": [".html", ".htm"],
+      "application/pdf": [".pdf"],
+    },
+    maxFiles: 1,
   });
 
   const startTranslation = useMutation({
@@ -117,7 +143,7 @@ export default function CreateProject() {
                     <input {...getInputProps()} />
                     <UploadIcon className="h-8 w-8 mx-auto text-muted-foreground" />
                     <p className="mt-2 text-sm">拖拽文件到此处，或点击选择</p>
-                    <p className="mt-1 text-xs text-muted-foreground">支持 .epub / .fb2 / .txt / .md</p>
+                    <p className="mt-1 text-xs text-muted-foreground">支持 .epub / .fb2 / .txt / .md / .html / .pdf</p>
                   </div>
                 ) : (
                   <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 p-4 space-y-3">
@@ -127,7 +153,7 @@ export default function CreateProject() {
                     </div>
                     <div className="grid grid-cols-4 gap-3 text-sm">
                       <Field label="书名" value={preview.title} />
-                      <Field label="格式" value={preview.fmt} />
+                      <FormatField format={preview.fmt} />
                       <Field label="章节数" value={String(preview.chapter_count)} />
                       <Field label="总段落数" value={String(preview.total_word_count)} />
                     </div>
@@ -142,6 +168,11 @@ export default function CreateProject() {
                         ))}
                       </div>
                     </details>
+                  </div>
+                )}
+                {uploadError && (
+                  <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                    {uploadError}
                   </div>
                 )}
               </div>
@@ -197,6 +228,32 @@ function Field({ label, value }: { label: string; value?: string | null }) {
       <div className="font-medium truncate">{value || "—"}</div>
     </div>
   );
+}
+
+function FormatField({ format }: { format: string }) {
+  const normalized = format.toLowerCase();
+  const isHtml = normalized === "html";
+  const Icon = isHtml ? FileCode2 : FileText;
+  const label = isHtml ? "HTML" : normalized === "pdf" ? "PDF" : normalized.toUpperCase();
+
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground">格式</div>
+      <div className="flex items-center gap-1.5 font-medium">
+        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function uploadErrorMessage(error: unknown, file: File): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  const isPdf = file.name.toLowerCase().endsWith(".pdf");
+  if (isPdf && /MINERU_API_KEY|API token not provided/i.test(detail)) {
+    return "PDF 解析服务尚未配置，请联系管理员设置 MINERU_API_KEY 后重试。";
+  }
+  return `上传失败：${detail}`;
 }
 
 function Stepper({ step }: { step: number }) {

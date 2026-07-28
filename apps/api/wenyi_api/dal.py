@@ -44,7 +44,7 @@ def get_project(pid: str) -> Optional[dict]:
     with _conn() as c:
         r = c.execute(
             """SELECT id, name, title, fmt, source_lang, target_lang, status,
-                      strategy, book_title, created_at
+                      strategy, book_title, created_at, source_path
                FROM projects WHERE id=%s""",
             (pid,),
         ).fetchone()
@@ -55,6 +55,7 @@ def get_project(pid: str) -> Optional[dict]:
         "source_lang": r[4], "target_lang": r[5], "status": r[6],
         "strategy": r[7], "book_title": r[8],
         "created_at": r[9].isoformat() if r[9] else None,
+        "source_path": r[10],
     }
 
 

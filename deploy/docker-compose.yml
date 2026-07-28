@@ -36,6 +36,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATA_DIR: /data
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
       WENYI_API_TOKEN: ${WENYI_API_TOKEN:-}
       WENYI_CORS_ORIGINS: "*"
     volumes:
@@ -58,6 +59,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATA_DIR: /data
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
     volumes:
       - data:/data
     depends_on:

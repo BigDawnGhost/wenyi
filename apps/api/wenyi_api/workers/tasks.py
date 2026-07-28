@@ -12,7 +12,7 @@ import os
 
 from .. import dal, paths
 from ..config import settings
-from ..db import get_pool, init_pool
+from ..db import init_pool
 from ..emitters import redis_progress_fn
 from ..storage_pg import PostgresStorage
 from ..strategies import strategy_to_config
@@ -29,22 +29,16 @@ def _load_base_config() -> "object":
     return Config.load(settings.config_path)
 
 
+def _pipeline_storage(pid: str, pool) -> PostgresStorage:
+    return PostgresStorage(pid, pool, run_dir=paths.project_dir(pid))
+
+
 def _resolve_source(pid: str) -> str:
     p = dal.get_project(pid)
-    if p is None or not p.get("title"):
-        # 项目可能尚未上传/解析；按 fmt 兜底
-        for ext in ("epub", "txt", "fb2"):
-            candidate = paths.source_path(pid, "epub" if ext == "epub" else
-                                           ("fb2" if ext == "fb2" else "text"))
-            if os.path.isfile(candidate):
-                return candidate
+    if p is None:
         raise RuntimeError(f"项目 {pid} 找不到上传原件")
-    # 已上传：source_path 相对 data_dir 存储
-    rel = None
-    with get_pool().connection() as c:
-        row = c.execute("SELECT source_path FROM projects WHERE id=%s", (pid,)).fetchone()
-    if row:
-        rel = row[0]
+
+    rel = p.get("source_path")
     if rel:
         abs_path = rel if os.path.isabs(rel) else os.path.join(settings.data_dir, rel)
         if os.path.isfile(abs_path):
@@ -95,7 +89,7 @@ def _translate_sync(pid: str, *, do_qa: bool | None = None) -> None:
 
     cfg = _build_config_for(pid)
     source = _resolve_source(pid)
-    storage = PostgresStorage(pid, pool)
+    storage = _pipeline_storage(pid, pool)
     client = build_client(cfg)
     orch = Orchestrator(cfg, client=client, storage=storage)
     progress = _progress_with_pause(redis, pid)
@@ -134,7 +128,7 @@ def _prepare_sync(pid: str) -> None:
 
     cfg = _build_config_for(pid)
     source = _resolve_source(pid)
-    storage = PostgresStorage(pid, pool)
+    storage = _pipeline_storage(pid, pool)
     client = build_client(cfg)
     orch = Orchestrator(cfg, client=client, storage=storage)
     progress = _progress_with_pause(redis, pid)
