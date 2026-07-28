@@ -148,7 +148,8 @@ $review_evidence_tools
 decisions 必须且只能覆盖全部候选 ID。新增问题只能指向当前块，不得替相邻块或其它章节报错。
 只有确需跨块统一的术语、人称或固定表达才填写 consistency；普通漏译、增译、误译留空。
 不填写 consistency 时必须输出空对象 {}，不得照抄示例中的类型占位文字。
-evidence_refs 只能引用系统实际返回或当前块已有的 ref。拿不准就驳回，禁止为了显得认真而保留误报。\
+evidence_refs 应引用工具结果中的 ref；为兼容也可引用成功请求的 request_id，系统会展开为该请求
+实际返回的 ref。不得引用失败请求或编造 ref。拿不准就驳回，禁止为了显得认真而保留误报。\
 """)
 
 REVIEW_AGENT_USER = Template("""\
@@ -188,7 +189,8 @@ $review_evidence_tools
  "evidence_refs":["实际取得的 ref"],
  "complete":true}
 status=suggested 时，recommended_value 必须等于一个输入 proposed_value；系统会据此确定全部支持与否决项，
-无需也不得逐项枚举问题 ID。证据不足时使用 status=unresolved。\
+无需也不得逐项枚举问题 ID。evidence_refs 应引用工具结果中的 ref；为兼容也可引用成功请求的
+request_id，系统会展开为实际 ref。不得引用失败请求或编造 ref。证据不足时使用 status=unresolved。\
 """)
 
 REVIEW_ARBITER_USER = Template("""\

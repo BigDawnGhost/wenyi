@@ -560,7 +560,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                                 "kind": "term",
                                 "proposed_value": "安",
                             },
-                            "evidence_refs": ["ch0:text0:seg0"],
+                            "evidence_refs": ["term-1"],
                         }
                     ],
                     "new_issues": [
@@ -623,6 +623,63 @@ class TestReviewAgentLoop(unittest.TestCase):
         self.assertIn("parsed", trace["turns"][0])
         self.assertIn("evidence_results", trace["turns"][0])
         self.assertTrue(any(event["event"] == "review_evidence_supplied" for event in events))
+
+    def test_malformed_agent_output_is_retried_once(self):
+        calls = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ""
+            self.assertIn("不是完整有效的 JSON", messages[-1]["content"])
+            return json.dumps(
+                {
+                    "action": "final",
+                    "decisions": [
+                        {
+                            "candidate_id": "ch0-base0-candidate0",
+                            "verdict": "confirmed",
+                            "detail": "确认漏译",
+                            "suggestion": "补译",
+                            "reason": "",
+                            "consistency": {},
+                            "evidence_refs": [],
+                        }
+                    ],
+                    "new_issues": [],
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            outcome = ReviewAgentLoop(
+                FakeClient(handler=handler),
+                _config(),
+                self._evidence(),
+                debug,
+            ).review_chunk(
+                chapter=0,
+                chunk_base=0,
+                sources=["Ann arrived."],
+                targets=["安到了。"],
+                initial_issues=[
+                    {
+                        "index": 0,
+                        "type": "missing",
+                        "detail": "初审候选",
+                        "suggestion": "补译",
+                    }
+                ],
+            )
+            with open(debug.path("events.jsonl"), encoding="utf-8") as file:
+                events = [json.loads(line) for line in file]
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(outcome.fallback_reason, "")
+        self.assertTrue(any(event["event"] == "review_agent_output_retry" for event in events))
 
     def test_dismissed_summary_is_self_contained_and_links_to_initial_candidate(self):
         initial = {
@@ -933,6 +990,76 @@ class TestReviewAgentLoop(unittest.TestCase):
 
 
 class TestReviewConflictArbiter(unittest.TestCase):
+    def test_arbiter_expands_successful_evidence_request_id(self):
+        evidence = BookEvidenceIndex(
+            [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
+            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            {},
+        )
+        issues = normalize_review_issues(
+            [
+                {
+                    "chapter": 0,
+                    "index": index,
+                    "_chunk_id": f"chunk-{index}",
+                    "type": "terminology",
+                    "detail": "译名问题",
+                    "suggestion": f"统一为{proposed}",
+                    "consistency": {
+                        "kind": "term",
+                        "subject_source": "Ann",
+                        "proposed_value": proposed,
+                    },
+                }
+                for index, proposed in enumerate(("安", "安妮"))
+            ],
+            evidence,
+        )
+        conflict = build_conflict_groups(issues)[0]
+        calls = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return json.dumps(
+                    {
+                        "action": "request_evidence",
+                        "requests": [
+                            {
+                                "request_id": "arb-1",
+                                "tool": "glossary_term",
+                                "arguments": {"term": "Ann"},
+                            }
+                        ],
+                        "complete": False,
+                    }
+                )
+            return json.dumps(
+                {
+                    "action": "final",
+                    "conflict_id": conflict["conflict_id"],
+                    "status": "suggested",
+                    "recommended_value": "安",
+                    "reason": "术语证据支持现有译名。",
+                    "evidence_refs": ["arb-1"],
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = ReviewConflictArbiter(
+                FakeClient(handler=handler),
+                _config(),
+                evidence,
+                ReviewRunStore(directory),
+            ).arbitrate(conflict)
+
+        expected_ref = evidence.glossary_term({"term": "Ann"})["term"]["ref"]
+        self.assertEqual(result["status"], "suggested")
+        self.assertEqual(result["evidence_refs"], [expected_ref])
+
     def test_conflicting_cross_chunk_claims_are_arbitrated(self):
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
