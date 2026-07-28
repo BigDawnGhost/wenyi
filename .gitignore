@@ -37,3 +37,4 @@ data/
 htmlcov/
 
 local_references
+.scratch/
