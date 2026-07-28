@@ -1,77 +1,195 @@
-# 文译
+# 文译 (Wenyi)
+
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/BigDawnGhost/wenyi/blob/master/LICENSE)
+[![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=social)](https://github.com/BigDawnGhost/wenyi)
 
 [English](../../README.md) | **简体中文**
 
 ![文译双语对照版阅读效果](../images/bilingual-preview.png)
 
-将多语言 EPUB、FB2、TXT、Markdown、HTML 和 PDF 小说翻译为中文的命令行工具。它以长篇小说的翻译质量为重点：全书预扫、滚动上下文、实时术语库、润色和审校均可按需启用。
+> 将多语言长篇小说翻译为中文的命令行工具。
+> 全书预分析、实时术语闭环、多阶段审校 —— 一条命令，从 EPUB 到可读的中文译本。
+
+---
+
+## 目录
+
+- [为什么选择文译](#为什么选择文译)
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [支持格式](#支持格式)
+- [翻译流水线](#翻译流水线)
+- [文档](#文档)
+- [憧憬与不足](#憧憬与不足)
+- [社区](#社区)
+- [星标历史](#星标历史)
+- [许可证](#许可证)
+
+---
+
+## 为什么选择文译
+
+| 常见方案 | 文译 |
+|---|---|
+| 逐段翻译，彼此孤立，缺乏上下文 | 全书预扫 + 逐章梗概 + 滚动上下文，翻译第 3 章时已知第 1 章内容 |
+| 术语靠人工事后整理 | 翻译中实时抽取专有名词，自动检测译法冲突，立即影响后续批次 |
+| 一次性翻译，中断即作废 | 章级状态机，任意中断后重新执行同一命令即可续跑 |
+| 模型直出，无系统性质控 | 翻译 → 润色 → 审校 → 回译 → 跨章一致性 QA 多阶段流水线 |
+
+文译为**长文本**设计 —— 长篇小说、回忆录、传记 —— 在这种场景下，第 3 章的一句话需要了解第 1 章的内容，一个人物的名字必须在 500 页中保持一致。
+
+---
+
+## 核心特性
+
+- **全书理解** — 翻译前预扫源文，生成逐章梗概和全书概览，注入每批翻译上下文
+- **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
+- **多阶段质量保证** — 可选润色（强档模型重译）、逐段审校、回译抽检、跨章一致性 QA
+- **断点续跑** — 章级状态机 + 原子写入；任意中断后重新执行同一命令即可续跑
+- **8 种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点
+- **原生 EPUB 回填** — 不重新生成 EPUB，只替换译文片段，保留原书样式、图片、目录和锚点
+- **双语对照输出** — 可选原文译文对照版，原文视觉淡化，支持深色模式
+
+---
 
 ## 快速开始
 
+### 环境要求
+
 需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。
 
+### 安装
+
 ```bash
+git clone git@github.com:BigDawnGhost/wenyi.git
+cd wenyi
 uv sync
+```
+
+### 配置
+
+设置 API 密钥，可选查看自动生成的配置文件：
+
+```bash
 export DEEPSEEK_API_KEY=sk-...
+# 首次运行自动创建 config.yaml，也可手动编辑
+```
+
+### 一键翻译
+
+```bash
 uv run trans-novel translate book.epub
 ```
 
-翻译完成后，默认在源文件所在目录的 `output/` 中生成单语中文版 `book.zh.epub`；也可按需生成原文对照版 `book.zh-bi.epub`。运行状态、章节 JSON、术语库和报告写入 `state/`。中断后重新执行同一条 `translate` 命令即可续跑：
+解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
+
+### 分步工作流
 
 ```bash
+# 1. 译前准备 — 解析、分析、预扫（不翻译正文）
+uv run trans-novel prepare book.epub
+
+# 2. 翻译 — 从准备状态续跑
 uv run trans-novel translate book.epub
+
+# 3. 独立审校 — 基于最终术语库的逐章审校
+uv run trans-novel review book.epub
+
+# 4. 一致性 QA
+uv run trans-novel qa book.epub
+
+# 5. 查看进度
 uv run trans-novel status book.epub
 ```
 
-如果希望先检查风格指南和初始术语表，再开始翻译正文，可以先执行：
+### 中断续跑
+
+每个完成的批次立即持久化。中断后重新执行同一命令即可续跑：
 
 ```bash
-uv run trans-novel prepare book.epub
 uv run trans-novel translate book.epub
 ```
 
-最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在全书翻译完成、
-术语库达到最终状态后再统一执行审校；也可以单独运行或强制重跑这一阶段：
+### 命令行覆盖
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --force --fix
+uv run trans-novel translate book.epub --polish --review --qa     # 启用全部质量阶段
+uv run trans-novel translate book.epub --no-polish                 # 关闭润色
+uv run trans-novel translate book.epub --bilingual                 # 同时生成双语版
+uv run trans-novel translate book.epub --chapter 3                 # 仅翻译指定章节
+uv run trans-novel translate book.epub --format txt                # 导出为纯文本
 ```
 
-## 支持范围
+---
 
-- 输入：EPUB、FB2、TXT、Markdown、HTML、PDF。
-- 输出：默认生成单语 EPUB，可选双语对照版；也可导出 TXT、HTML 或 Markdown。
-- PDF：首次读取通过 MinerU 转换为 `state/<书名>/source/converted.html`，需设置 `MINERU_API_KEY`；后续运行直接复用该缓存。
-- EPUB：尽量保留原书样式、图片、目录与锚点；译文元数据默认设为简体中文，并将竖排样式转为横排。
-- 语言：默认由模型识别源语言，也可在 `config.yaml` 固定为语言代码。
+## 支持格式
 
-可通过命令行临时选择产物：
+| 输入 | 输出 |
+|---|---|
+| EPUB、FB2、TXT、Markdown、HTML、PDF | EPUB（单语 / 双语）、TXT、HTML、Markdown |
 
-```bash
-uv run trans-novel translate book.epub --bilingual           # 同时生成单语版和双语版
-uv run trans-novel translate book.epub --no-mono --bilingual # 仅生成双语版
+- PDF 输入首次需 `MINERU_API_KEY` 调用外部转换服务，转换后的 HTML 缓存复用。
+- EPUB 输出保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
+- 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
+
+---
+
+## 翻译流水线
+
+```
+  输入文件
+    ↓
+  解析章节 + 检测语言
+    ↓
+  全书预扫（逐章梗概 + 全书概览）  ← 并行
+    ↓
+  风格分析 + 初始术语
+    ↓
+  ┌─ 逐章翻译 ──────────────────────────────┐
+  │  每批：注入上下文 → 翻译                   │
+  │  → 术语抽取 → 润色 → 标点规范化            │
+  │  → 回译抽检 → 落盘                       │
+  └──────────────────────────────────────────┘
+    ↓
+  最终审校（基于最终术语库）    ← 可选，并行
+    ↓
+  跨章一致性 QA                ← 可选
+    ↓
+  生成报告 + 组装输出 EPUB
 ```
 
-双语版默认译文在上、原文在下，可在 `config.yaml` 中将 `output.bilingual_order` 改为 `source_first`。
+预扫阶段并行执行（可配置并发数），幂等可续跑 —— 已完成的梗概跨运行复用。翻译过程中，每批获得最新的术语快照和已译上下文，确保代词、术语和语气跨章一致。
+
+---
 
 ## 文档
 
-- [使用指南](usage.md)：安装、Windows 使用、输入输出、断点续跑和独立工作流阶段。
-- [配置说明](configuration.md)：模型、源语言、流水线开关、切分与路径配置。
-- [翻译流程](pipeline.md)：预扫、术语、上下文、润色、审校和断点续跑如何协作。
-- [贡献指南](CONTRIBUTING.md)：开发、测试和贡献要求。
+- [使用指南](usage.md) — 安装、Windows 使用、输入输出、断点续跑和独立工作流阶段
+- [配置说明](configuration.md) — 模型提供商、源语言、流水线开关、切分与路径配置
+- [翻译流程](pipeline.md) — 预扫、术语、上下文、润色、审校和断点续跑如何协作
+- [贡献指南](CONTRIBUTING.md) — 开发、测试和贡献要求
 
-公版书翻译生成的状态目录可在 [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase) 查看，也欢迎提交分享；请勿提交或分享无授权的版权文本、私人书籍或包含敏感信息的 `state/` 目录。
+公版书翻译生成的状态目录可在 [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase) 查看，也欢迎提交分享。请勿提交或分享无授权的版权文本、私人书籍或包含敏感信息的 `state/` 目录。
+
+---
 
 ## 憧憬与不足
 
-本项目为作者个人兴趣所开发，仅在于针对长文本书籍的译介做出一份微薄的努力，未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。现阶段翻译文本一些口头禅前后翻译不一致，专有名词翻译不准确的问题，已经改进！如果还有什么问题，可以提交issue，如果你有什么想法，欢迎在讨论区提出，如果你有一定的编程能力，欢迎给我提交PR，让这个项目变得更好。👏
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，极长的书籍可能产生较大的状态目录，PDF 输入依赖外部 MinerU 服务。当前译文管线主要针对简体中文输出优化，不支持其他目标语言。
 
-项目社区：
+未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
 
-- [加入文译 Discord 服务器](https://discord.gg/Tybfva4HT)
+---
+
+## 社区
+
+- [Discord 服务器](https://discord.gg/Tybfva4HT)
 - QQ 群：1055065098
+- [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — 问题反馈
+- [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — 想法与讨论
+
+---
 
 ## 星标历史
 
@@ -82,3 +200,9 @@ uv run trans-novel translate book.epub --no-mono --bilingual # 仅生成双语�
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
  </picture>
 </a>
+
+---
+
+## 许可证
+
+[MIT](https://github.com/BigDawnGhost/wenyi/blob/master/LICENSE)
