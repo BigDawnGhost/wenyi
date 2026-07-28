@@ -143,6 +143,31 @@ export interface AnalysisPayload {
   analysis: Record<string, unknown>;
   chapter_digests: { index: number; title: string; digest: string }[];
 }
+export interface ConsistencyIssue {
+  type: "terminology" | "pronoun" | "tone" | "punctuation";
+  detail: string;
+  where?: string | string[];
+}
+export interface QAResult {
+  status: "idle" | "running" | "completed" | "error";
+  issues: ConsistencyIssue[];
+  error?: string | null;
+}
+export interface ReportSummary {
+  chapters_total: number;
+  chapters_done: number;
+  chapters_reviewed: number;
+  terms: number;
+  open_conflicts: number;
+  review_issues: number;
+  backtranslation_issues: number;
+  empty_targets: number;
+}
+export interface ReportData {
+  summary: ReportSummary;
+  consistency_issues?: ConsistencyIssue[];
+  [key: string]: unknown;
+}
 
 // ── 调用 ───────────────────────────────────────────────────────────────
 export const api = {
@@ -165,6 +190,11 @@ export const api = {
     request<{ job_id: string; kind: string }>(`/projects/${pid}/prepare`, { method: "POST" }),
   pause: (pid: string) => request<{ message: string }>(`/projects/${pid}/pause`, { method: "POST" }),
   resume: (pid: string) => request<{ job_id: string; kind: string }>(`/projects/${pid}/resume`, { method: "POST" }),
+  runQA: (pid: string) =>
+    request<{ job_id: string; kind: string }>(`/projects/${pid}/qa`, { method: "POST" }),
+  getQA: (pid: string) => request<QAResult>(`/projects/${pid}/qa`),
+  regenerateReport: (pid: string) =>
+    request<ReportData>(`/projects/${pid}/report`, { method: "POST" }),
 
   listChapters: (pid: string) => request<ChapterSummary[]>(`/projects/${pid}/chapters`),
   getChapter: (pid: string, ci: number) => request<ChapterSegments>(`/projects/${pid}/chapters/${ci}`),

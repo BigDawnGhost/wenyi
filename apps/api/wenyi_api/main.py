@@ -21,6 +21,7 @@ from .routers import (
     glossary,
     health,
     projects,
+    qa,
     review,
     strategies,
     style,
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(strategies.router)
     app.include_router(projects.router)
+    app.include_router(qa.router)
     app.include_router(chapters.router)
     app.include_router(glossary.router)
     app.include_router(review.router)

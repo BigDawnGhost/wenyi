@@ -194,6 +194,94 @@ async def run_review(ctx, *, project_id: str,
         raise
 
 
+def _record_qa_error(
+    pid: str,
+    error: Exception,
+    *,
+    completion_status: str,
+) -> None:
+    """尽力持久化 QA 启动或运行错误，避免状态永久停在 running。"""
+    from ..qa_state import (
+        COMPLETION_STATUSES,
+        read_qa_state,
+        write_qa_state,
+    )
+
+    try:
+        pool = init_pool(settings.psycopg_dsn)
+        storage = _pipeline_storage(pid, pool)
+        current_state = read_qa_state(storage.load_report() or {})
+        if current_state is not None and current_state["status"] == "error":
+            return
+        stable_status = (
+            completion_status
+            if completion_status in COMPLETION_STATUSES
+            else "done"
+        )
+        write_qa_state(
+            storage,
+            status="error",
+            completion_status=stable_status,
+            error=str(error),
+        )
+        storage.log_event("consistency_qa_error", error=str(error))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _qa_sync(pid: str, *, completion_status: str = "done") -> None:
+    """同步执行跨章一致性检查并把结果写入项目报告。"""
+    from wenyi_core.agents.consistency import ConsistencyChecker
+    from wenyi_core.assemble.report import build_report
+    from wenyi_core.llm.factory import build_client
+
+    from ..qa_state import write_qa_state
+
+    pool = init_pool(settings.psycopg_dsn)
+    import redis as redis_lib
+    redis = redis_lib.from_url(settings.redis_url)
+
+    cfg = _build_config_for(pid)
+    storage = _pipeline_storage(pid, pool)
+    progress = redis_progress_fn(redis, pid, kind="qa")
+    try:
+        progress(0, 1, "一致性检查中…")
+        issues = ConsistencyChecker(build_client(cfg), cfg).check_and_record(storage)
+        report = build_report(storage, consistency_issues=issues)
+        storage.save_report(report)
+        write_qa_state(
+            storage,
+            status="completed",
+            completion_status=completion_status,
+        )
+        progress(1, 1, f"一致性检查完成：发现 {len(issues)} 项问题")
+        dal.set_project_status(pid, completion_status)
+    except Exception as e:  # noqa: BLE001
+        dal.set_project_status(pid, "error")
+        _record_qa_error(pid, e, completion_status=completion_status)
+        raise
+
+
+async def run_qa(ctx, *, project_id: str,
+                 completion_status: str = "done") -> None:
+    """Arq 任务：执行全书跨章一致性检查。"""
+    dal.set_project_status(project_id, "qa")
+    try:
+        await asyncio.to_thread(
+            _qa_sync,
+            project_id,
+            completion_status=completion_status,
+        )
+    except Exception as e:
+        dal.set_project_status(project_id, "error")
+        _record_qa_error(
+            project_id,
+            e,
+            completion_status=completion_status,
+        )
+        raise
+
+
 def _export_sync(pid: str, *, export_id: int, fmt: str, bilingual: bool,
                  order: str, about_page: bool,
                  preserve_source_style: bool = False) -> int:

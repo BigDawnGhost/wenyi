@@ -1639,19 +1639,19 @@ class Orchestrator:
                 if "qa" in steps:
                     if progress:
                         progress(0, 0, "一致性 QA…")
-                    qa_issues = ConsistencyChecker(self.client, self.config).check(storage)
-                    storage.log_event(
-                        "consistency_qa_finished",
-                        issue_count=len(qa_issues),
-                        issues=qa_issues,
-                    )
+                    qa_issues = ConsistencyChecker(
+                        self.client,
+                        self.config,
+                    ).check_and_record(storage)
 
                 self._flush_usage(scope="pipeline")
                 if "report" in steps:
                     if progress:
                         progress(0, 0, "生成报告…")
-                    report = build_report(storage)
-                    report["consistency_issues"] = qa_issues
+                    report = build_report(
+                        storage,
+                        consistency_issues=qa_issues if "qa" in steps else None,
+                    )
                     storage.save_report(report)
                     storage.log_event("report_saved")
             finally:

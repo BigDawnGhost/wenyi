@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +47,19 @@ class UploadPreview(BaseModel):
 class StartTranslation(BaseModel):
     do_qa: Optional[bool] = None
     strategy: Optional[dict[str, Any]] = None
+
+
+# ── 一致性 QA / 报告 ───────────────────────────────────────────────────
+class ConsistencyIssueOut(BaseModel):
+    type: Literal["terminology", "pronoun", "tone", "punctuation"]
+    detail: str
+    where: str | list[str] = ""
+
+
+class QAResult(BaseModel):
+    status: Literal["idle", "running", "completed", "error"]
+    issues: list[ConsistencyIssueOut] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 # ── 章节 / 段落 ──────────────────────────────────────────────────────────

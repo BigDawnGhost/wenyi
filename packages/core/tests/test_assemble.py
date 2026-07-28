@@ -783,6 +783,14 @@ class TestReport(unittest.TestCase):
             self.assertEqual(s["empty_targets"], 0)  # 全部段都有译文
             self.assertGreaterEqual(s["terms"], 1)
             self.assertIn("low_confidence_terms", report)
+            with_qa = build_report(
+                store,
+                consistency_issues=[{"type": "tone", "detail": "语气漂移"}],
+            )
+            self.assertEqual(
+                with_qa["consistency_issues"],
+                [{"type": "tone", "detail": "语气漂移"}],
+            )
 
 
 class TestConsistency(unittest.TestCase):
@@ -811,9 +819,17 @@ class TestConsistency(unittest.TestCase):
                 return "{}"
 
             checker = ConsistencyChecker(FakeClient(handler=handler), cfg)
-            issues = checker.check(store)
+            issues = checker.check_and_record(store)
             self.assertEqual(len(issues), 1)
             self.assertEqual(issues[0]["type"], "terminology")
+            with open(store.event_log_path, encoding="utf-8") as event_file:
+                events = [json.loads(line) for line in event_file]
+            qa_event = next(
+                event
+                for event in events
+                if event["event"] == "consistency_qa_finished"
+            )
+            self.assertEqual(qa_event["issue_count"], 1)
 
 
 if __name__ == "__main__":

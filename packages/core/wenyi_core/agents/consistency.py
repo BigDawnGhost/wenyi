@@ -51,3 +51,13 @@ class ConsistencyChecker(Agent):
             + '\n\n请输出 JSON：{"issues":[...]}。'
         )
         return self.dict_items(self._ask_json(system, user, tier="cheap", key="issues", default=[]))
+
+    def check_and_record(self, storage: Storage) -> list[dict[str, Any]]:
+        """执行检查并把结果事件写入存储，供各入口复用。"""
+        issues = self.check(storage)
+        storage.log_event(
+            "consistency_qa_finished",
+            issue_count=len(issues),
+            issues=issues,
+        )
+        return issues

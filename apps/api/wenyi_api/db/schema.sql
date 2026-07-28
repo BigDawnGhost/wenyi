@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS projects (
     source_lang  TEXT,
     target_lang  TEXT,
     source_path  TEXT,              -- 上传原件在 data/ 下的相对路径
-    status       TEXT DEFAULT 'created',   -- created|preparing|prepared|translating|paused|reviewing|reviewed|postprocessing|done|error
+    status       TEXT DEFAULT 'created',   -- created|preparing|prepared|translating|paused|reviewing|reviewed|qa|postprocessing|done|error
     strategy     JSONB,             -- 用户选择的策略定义
     meta         JSONB DEFAULT '{}'::jsonb,    -- manifest.meta（目录项等）
     context      JSONB,             -- 滚动上下文
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS exports (
 CREATE TABLE IF NOT EXISTS jobs (
     id          SERIAL PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    kind        TEXT NOT NULL,            -- translation | export | prepare
+    kind        TEXT NOT NULL,            -- translation | export | prepare | review | qa
     status      TEXT DEFAULT 'queued',    -- queued | running | paused | done | error
     arq_job_id  TEXT,
     error       TEXT,

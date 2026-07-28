@@ -10,7 +10,11 @@ from typing import Any
 from ..pipeline.runstore import REVIEW_DONE, STATUS_DONE, RunStore
 
 
-def build_report(storage: RunStore) -> dict[str, Any]:
+def build_report(
+    storage: RunStore,
+    *,
+    consistency_issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """汇总完成进度、空译文、术语冲突、审校和回译问题。"""
     m = storage.load_manifest()
     chapters_total = len(m["chapters"])
@@ -44,7 +48,7 @@ def build_report(storage: RunStore) -> dict[str, Any]:
     ]
     gstats = storage.stats()
 
-    return {
+    report = {
         "summary": {
             "chapters_total": chapters_total,
             "chapters_done": chapters_done,
@@ -61,3 +65,6 @@ def build_report(storage: RunStore) -> dict[str, Any]:
         "backtranslation_issues": bt_issues,
         "empty_targets": empty_targets,
     }
+    if consistency_issues is not None:
+        report["consistency_issues"] = consistency_issues
+    return report
