@@ -97,24 +97,38 @@ def _match_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold()
 
 
-def source_matches_text(source: str, text: str) -> bool:
-    """判断术语原文是否出现在文本中，并避免拉丁词命中更长单词。
+_WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
 
-    CJK 等不以空格分词的语言沿用规范化子串匹配；纯 ASCII 名称额外检查
-    字母数字边界，避免 ``Ann`` 错误命中 ``Anna``。
+
+def _source_pattern(key: str) -> re.Pattern[str] | None:
+    """为空格分词文字构造边界正则；连续书写文字返回 None 使用子串匹配。"""
+    if key.isascii():
+        return re.compile(rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])")
+
+    letters = [char for char in key if char.isalpha()]
+    if not letters or not all(
+        any(script in unicodedata.name(char, "") for script in _WORD_BOUNDARY_SCRIPTS)
+        for char in letters
+    ):
+        return None
+
+    left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
+    right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
+    return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
+
+
+def source_matches_text(source: str, text: str) -> bool:
+    """判断术语原文是否出现，并避免空格分词文字命中更长单词。
+
+    CJK 等连续书写文字沿用规范化子串匹配；ASCII、拉丁、希腊和西里尔文字
+    检查单词边界，避免 ``Ann`` 命中 ``Anna``、``гад`` 命中 ``гадкий``。
     """
     key = _match_text(source).strip()
     if not key:
         return False
     normalized_text = _match_text(text)
-    if key.isascii():
-        return (
-            re.search(
-                rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])",
-                normalized_text,
-            )
-            is not None
-        )
+    if pattern := _source_pattern(key):
+        return pattern.search(normalized_text) is not None
     return key in normalized_text
 
 
@@ -127,6 +141,64 @@ def term_match_sources(term: GlossaryTerm) -> list[str]:
     if term.type in _SOURCE_ONLY_TYPES:
         return [term.source]
     return [term.source, *term.aliases]
+
+
+def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
+    """返回术语在已规范化文本中的非重叠命中区间。"""
+    key = _match_text(source).strip()
+    if not key:
+        return []
+    if pattern := _source_pattern(key):
+        return [match.span() for match in pattern.finditer(normalized_text)]
+
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while (index := normalized_text.find(key, start)) != -1:
+        end = index + len(key)
+        spans.append((index, end))
+        start = end
+    return spans
+
+
+def _merged_occurrence_count(spans: set[tuple[int, int]]) -> int:
+    """把 source 与 alias 在同一处产生的重叠命中合并为一次正文提及。"""
+    count = 0
+    active_end = -1
+    for start, end in sorted(spans):
+        if start >= active_end:
+            count += 1
+            active_end = end
+        else:
+            active_end = max(active_end, end)
+    return count
+
+
+class GlossaryOccurrenceMatcher:
+    """复用一份规范化全文，按 source/alias 判断术语是否重复出现。"""
+
+    def __init__(self, text: str):
+        self.normalized_text = _match_text(text)
+
+    def recurring_terms(
+        self,
+        terms: list[GlossaryTerm],
+        *,
+        min_occurrences: int = 2,
+    ) -> list[GlossaryTerm]:
+        """筛出 source/alias 在全文累计出现至少指定次数的术语。"""
+        if min_occurrences <= 1:
+            return GlossaryStore.terms_in(terms, self.normalized_text)
+
+        recurring: list[GlossaryTerm] = []
+        for term in terms:
+            raw_keys = term_match_sources(term)
+            keys = {normalized for key in raw_keys if (normalized := _match_text(key).strip())}
+            spans: set[tuple[int, int]] = set()
+            for key in keys:
+                spans.update(_source_occurrence_spans(key, self.normalized_text))
+            if _merged_occurrence_count(spans) >= min_occurrences:
+                recurring.append(term)
+        return recurring
 
 
 class GlossaryStore:
@@ -299,6 +371,23 @@ class GlossaryStore:
             if any(source_matches_text(k, normalized_text) for k in keys):
                 out.append(term)
         return out
+
+    @staticmethod
+    def recurring_terms(
+        terms: list[GlossaryTerm],
+        text: str,
+        *,
+        min_occurrences: int = 2,
+    ) -> list[GlossaryTerm]:
+        """筛出 source/alias 在全文累计出现至少指定次数的术语。
+
+        称谓、敬称、口癖和固定表达只按 source 统计，避免裸名 alias 让派生表达
+        被误判为高频。其它类型会合并 source 与去重后的 aliases 出现次数。
+        """
+        return GlossaryOccurrenceMatcher(text).recurring_terms(
+            terms,
+            min_occurrences=min_occurrences,
+        )
 
     def terms_in_text(self, text: str) -> list[GlossaryTerm]:
         """返回 source 或任一别名在 text 中出现的术语（注入翻译 prompt 用）。"""
