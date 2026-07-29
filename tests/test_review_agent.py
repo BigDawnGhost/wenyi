@@ -27,7 +27,7 @@ from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.review_debug import DebugReviewRun
+from trans_novel.pipeline.review_debug import DebugReviewRun, review_candidate_id
 from trans_novel.pipeline.review_evidence import BookEvidenceIndex
 
 
@@ -426,6 +426,16 @@ class TestReadonlyGlossarySnapshot(unittest.TestCase):
 
 
 class TestDebugReviewRun(unittest.TestCase):
+    def test_candidate_id_format_with_and_without_round(self):
+        self.assertEqual(
+            review_candidate_id(2, 10, 3),
+            "ch2-base10-candidate3",
+        )
+        self.assertEqual(
+            review_candidate_id(2, 10, 3, 4),
+            "r4-ch2-base10-candidate3",
+        )
+
     def test_equal_timestamps_never_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
             moment = datetime(2026, 7, 27, 12, 30, tzinfo=timezone.utc)

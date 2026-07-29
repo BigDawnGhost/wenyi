@@ -142,12 +142,9 @@ class _ReviewRoundResult:
     """一次全书影子译文 Review 及冲突仲裁后的确定性结果。"""
 
     issues: list[dict[str, Any]]
-    initial_issues: list[dict[str, Any]]
-    dismissed_issues: list[dict[str, Any]]
     pre_arbitration_issues: list[dict[str, Any]]
     arbitration_superseded: list[dict[str, Any]]
     conflict_groups: list[dict[str, Any]]
-    arbitrations: list[dict[str, Any]]
     residual_conflicts: list[dict[str, Any]]
     fallback_agent_count: int
 
@@ -1405,12 +1402,9 @@ class Orchestrator:
         )
         return _ReviewRoundResult(
             issues=final_issues,
-            initial_issues=initial_issues,
-            dismissed_issues=dismissed,
             pre_arbitration_issues=pre_arbitration_issues,
             arbitration_superseded=arbitration_superseded,
             conflict_groups=conflict_groups,
-            arbitrations=arbitrations,
             residual_conflicts=residual_conflicts,
             fallback_agent_count=fallback_agent_count,
         )
@@ -2027,7 +2021,6 @@ class Orchestrator:
                 "arbitration_superseded_issues.json",
                 latest.arbitration_superseded,
             )
-            debug.write_json("final_issues.json", unresolved)
             debug.write_json(
                 "residual_conflicts.json",
                 [

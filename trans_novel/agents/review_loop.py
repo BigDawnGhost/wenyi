@@ -12,7 +12,7 @@ from typing import Any, Callable
 from ..config import Config
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
-from ..pipeline.review_debug import DebugReviewRun
+from ..pipeline.review_debug import DebugReviewRun, review_candidate_id
 from ..pipeline.review_evidence import BookEvidenceIndex
 from . import prompts
 
@@ -295,16 +295,6 @@ class ReviewAgentLoop:
         self._loop = _ActionLoop(client, config, evidence, debug)
 
     @staticmethod
-    def _candidate_id(
-        chapter: int,
-        chunk_base: int,
-        ordinal: int,
-        review_round: int | None = None,
-    ) -> str:
-        prefix = f"r{review_round}-" if review_round is not None else ""
-        return f"{prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
-
-    @staticmethod
     def _consistency(value: Any) -> dict[str, str]:
         """清洗跨块一致性 claim；普通问题返回空字典。"""
         if value is None or value == {}:
@@ -350,7 +340,7 @@ class ReviewAgentLoop:
         candidates: list[dict[str, Any]] = []
         for ordinal, issue in enumerate(initial_issues):
             candidate = dict(issue)
-            candidate["candidate_id"] = self._candidate_id(
+            candidate["candidate_id"] = review_candidate_id(
                 chapter,
                 chunk_base,
                 ordinal,

@@ -538,7 +538,7 @@ class TestReviewReporting(unittest.TestCase):
                 0,
             )
 
-    def test_debug_review_saves_initial_and_final_suggestions(self):
+    def test_debug_review_saves_initial_and_unresolved_suggestions(self):
         with tempfile.TemporaryDirectory() as d:
             result = self._run(d)
             with open(
@@ -547,12 +547,13 @@ class TestReviewReporting(unittest.TestCase):
             ) as file:
                 initial = json.load(file)
             with open(
-                os.path.join(result["debug_dir"], "final_issues.json"),
+                os.path.join(result["debug_dir"], "unresolved_issues.json"),
                 encoding="utf-8",
             ) as file:
-                final = json.load(file)
+                unresolved = json.load(file)
             self.assertTrue(initial)
-            self.assertTrue(final)
+            self.assertTrue(unresolved)
+            self.assertFalse(os.path.exists(os.path.join(result["debug_dir"], "final_issues.json")))
 
     def test_review_only_run_steps_is_also_debug_only(self):
         """内部 review-only 步骤与独立命令一致，不写通用流水线事件。"""
@@ -876,6 +877,8 @@ class TestReviewReporting(unittest.TestCase):
                     self.assertIsNotNone(result["report"])
 
                 usage = base_store.load_usage()
+                self.assertIsNotNone(usage)
+                assert usage is not None
                 self.assertEqual(usage["by_stage"]["PreReview"]["calls"], 1)
                 self.assertNotIn("Reviewer", usage["by_stage"])
                 usage_events = [
@@ -964,7 +967,7 @@ class TestReviewReporting(unittest.TestCase):
             ) as file:
                 before = json.load(file)
             with open(
-                os.path.join(result["debug_dir"], "final_issues.json"),
+                os.path.join(result["debug_dir"], "unresolved_issues.json"),
                 encoding="utf-8",
             ) as file:
                 final = json.load(file)

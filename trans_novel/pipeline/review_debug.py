@@ -15,6 +15,17 @@ from threading import Lock
 from typing import Any
 
 
+def review_candidate_id(
+    chapter: int,
+    chunk_base: int,
+    ordinal: int,
+    review_round: int | None = None,
+) -> str:
+    """生成初审快照与 Agent 协议共用的确定性候选 ID。"""
+    prefix = f"r{review_round}-" if review_round is not None else ""
+    return f"{prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
+
+
 class DebugReviewRun:
     """管理一次 Debug-only Review 的目录、事件流和原子 JSON 写入。"""
 
@@ -110,12 +121,14 @@ class DebugReviewRun:
             index = issue.get("index")
             if not isinstance(index, int) or isinstance(index, bool):
                 continue
-            round_prefix = f"r{self._active_round}-" if self._active_round is not None else ""
             rows.append(
                 {
                     **dict(issue),
-                    "candidate_id": (
-                        f"{round_prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
+                    "candidate_id": review_candidate_id(
+                        chapter,
+                        chunk_base,
+                        ordinal,
+                        self._active_round,
                     ),
                     "chapter": chapter,
                     "index": chunk_base + index,
