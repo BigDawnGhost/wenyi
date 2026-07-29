@@ -50,12 +50,15 @@ uv run trans-novel review book.epub
 
 即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。每次运行都会从头
 审查完整译文，不修复正文，也不会更新章节 JSON、manifest、`report.json`、
-正式 `events.jsonl` 或 `usage.json`。提示词、原始响应、解析后的动作、取证结果、
-事件和最终建议只写入：
+正式 `events.jsonl` 或正式 `usage.json`。提示词、原始响应、解析后的动作、
+取证结果、事件、最终建议和本次运行的用量增量只写入：
 
 ```text
 state/<书名>/debug/review-YYYYMMDD-HHMMSS-ffffff/
 ```
+
+该调试目录内有独立的 `usage.json`，包含总量及 `by_tier`、`by_stage` 明细；
+无论审校成功还是失败都会保留。
 
 调试记录包含原文和译文片段，应与其他状态文件一样注意隐私与版权。
 
