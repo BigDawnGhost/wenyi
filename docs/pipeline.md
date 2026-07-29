@@ -64,11 +64,15 @@ state/<book>/debug/review-YYYYMMDD-HHMMSS-ffffff/
 The debug directory contains its own `usage.json` with totals plus `by_tier` and
 `by_stage` breakdowns. It is written for both successful and failed review runs.
 `rounds/<NNN>/` contains each pass's overlay and Reviewer/Fixer traces; aggregate
-files include `patches.json`, `verified_patches.json`, `unresolved_issues.json`,
-`fix_failures.json`, `rounds.json`, `shadow_targets.json`, `summary.json`, and
-`result.json`. Stop reasons include `clean_confirmed`, `max_rounds`,
-`no_progress`, `cycle_detected`, and `unresolved_fixes` (a previously confirmed
-issue did not receive a valid patch even if a later Reviewer missed it).
+files include `patches.json`, `not_rereported_patches.json`,
+`unresolved_issues.json`, `fix_failures.json`, `rounds.json`,
+`shadow_targets.json`, `summary.json`, and `result.json`.
+`not_rereported_patches.json` means only that a subsequent blind review did not
+report the logical issue covered by the patch again. It is an audit outcome, not
+proof that the replacement is semantically correct. Stop reasons include
+`clean_confirmed`, `max_rounds`, `no_progress`, `cycle_detected`, and
+`unresolved_fixes` (a previously confirmed issue did not receive a valid patch
+even if a later Reviewer missed it).
 
 These debug traces contain source and translated passages. Treat them with the
 same privacy and copyright care as the rest of the state directory.

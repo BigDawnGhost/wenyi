@@ -61,11 +61,13 @@ state/<书名>/debug/review-YYYYMMDD-HHMMSS-ffffff/
 该调试目录内有独立的 `usage.json`，包含总量及 `by_tier`、`by_stage` 明细；
 无论审校成功还是失败都会保留。
 `rounds/<NNN>/` 保存各轮 overlay 及 Reviewer/Fixer trace；汇总文件包括
-`patches.json`、`verified_patches.json`、`unresolved_issues.json`、
+`patches.json`、`not_rereported_patches.json`、`unresolved_issues.json`、
 `fix_failures.json`、`rounds.json`、`shadow_targets.json`、`summary.json`
-和 `result.json`。停止原因包括 `clean_confirmed`、`max_rounds`、
-`no_progress`、`cycle_detected` 和 `unresolved_fixes`（已确认问题未获得
-有效补丁时，即使后续 Reviewer 漏报也不会被当成 clean）。
+和 `result.json`。`not_rereported_patches.json` 只表示后续盲审没有再次报告
+补丁所覆盖的逻辑问题，是一种审计结果，并不证明替换文本在语义上正确。停止原因
+包括 `clean_confirmed`、`max_rounds`、`no_progress`、`cycle_detected`
+和 `unresolved_fixes`（已确认问题未获得有效补丁时，即使后续 Reviewer
+漏报也不会被当成 clean）。
 
 调试记录包含原文和译文片段，应与其他状态文件一样注意隐私与版权。
 

@@ -199,6 +199,59 @@ def _review_conflict_records(
     ]
 
 
+def _review_unresolved_conflict_records(
+    issues: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """从最终未解决问题重建冲突记录，避免被最后一轮空结果掩盖。"""
+    groups = build_conflict_groups(issues)
+    arbitrations: list[dict[str, Any]] = []
+    for group in groups:
+        issue_ids = [str(issue["issue_id"]) for issue in group["issues"]]
+        annotations = [
+            issue.get("arbitration")
+            for issue in group["issues"]
+            if isinstance(issue.get("arbitration"), dict)
+        ]
+        reasons = [
+            str(annotation.get("reason", "")).strip()
+            for annotation in annotations
+            if str(annotation.get("reason", "")).strip()
+        ]
+        evidence_refs = sorted(
+            {
+                str(ref)
+                for issue in group["issues"]
+                for ref in issue.get("evidence_refs", [])
+                if isinstance(ref, str) and ref
+            }
+        )
+        arbitrations.append(
+            {
+                "conflict_id": group["conflict_id"],
+                "consistency_key": group["consistency_key"],
+                "issue_ids": issue_ids,
+                "status": "unresolved",
+                "recommended_value": "",
+                "reason": reasons[-1] if reasons else "最终未解决问题仍包含互斥建议。",
+                "supported_issue_ids": issue_ids,
+                "rejected_issue_ids": [],
+                "evidence_refs": evidence_refs,
+            }
+        )
+    return _review_conflict_records(groups, arbitrations)
+
+
+def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
+    """统计最终未解决问题中仍由降级 Agent 产生的独立审校块。"""
+    return len(
+        {
+            str(issue.get("_chunk_id") or issue.get("issue_key") or issue.get("issue_id"))
+            for issue in issues
+            if issue.get("agent_fallback")
+        }
+    )
+
+
 class Orchestrator:
     def __init__(self, config: Config, client: LLMClient | None = None):
         """初始化共享 LLM 客户端、用量检查点和各流水线 Agent。"""
@@ -1640,7 +1693,7 @@ class Orchestrator:
             issues: list[dict[str, Any]],
             failures: list[dict[str, Any]],
         ) -> None:
-            """保留未得到有效补丁的问题，避免后续 Reviewer 漏报后假 clean。"""
+            """按稳定问题键保留 Fix 失败项，避免后续 Reviewer 漏报后假 clean。"""
             by_id = {
                 str(issue["issue_id"]): issue
                 for issue in issues
@@ -1655,19 +1708,10 @@ class Orchestrator:
                     issue = by_id.get(str(issue_id))
                     if issue is None:
                         continue
-                    location_type = (
-                        issue.get("chapter"),
-                        issue.get("index"),
-                        issue.get("type"),
-                    )
-                    for blocked_id, blocked in list(blocked_issues.items()):
-                        if (
-                            blocked.get("chapter"),
-                            blocked.get("index"),
-                            blocked.get("type"),
-                        ) == location_type:
-                            blocked_issues.pop(blocked_id)
-                    blocked_issues[str(issue_id)] = {
+                    issue_key = issue.get("issue_key")
+                    if not isinstance(issue_key, str) or not issue_key:
+                        continue
+                    blocked_issues[issue_key] = {
                         **dict(issue),
                         "fix_failure": {
                             "status": failure.get("status"),
@@ -1679,12 +1723,18 @@ class Orchestrator:
         def effective_issues(current: _ReviewRoundResult) -> list[dict[str, Any]]:
             """合并本轮问题与历史未修项，按书序返回公开的未解决问题。"""
             combined = {
-                str(issue["issue_id"]): dict(issue)
+                str(issue["issue_key"]): dict(issue)
                 for issue in current.issues
-                if isinstance(issue.get("issue_id"), str)
+                if isinstance(issue.get("issue_key"), str)
             }
-            for issue_id, issue in blocked_issues.items():
-                combined.setdefault(issue_id, dict(issue))
+            for issue_key, blocked in blocked_issues.items():
+                current_issue = combined.get(issue_key)
+                if current_issue is None:
+                    combined[issue_key] = dict(blocked)
+                    continue
+                fix_failure = blocked.get("fix_failure")
+                if isinstance(fix_failure, dict):
+                    current_issue["fix_failure"] = dict(fix_failure)
             return sorted(
                 combined.values(),
                 key=lambda issue: (
@@ -1731,19 +1781,32 @@ class Orchestrator:
                         progress=progress,
                     )
 
-                    issue_locations = {
-                        (issue.get("chapter"), issue.get("index")) for issue in latest.issues
+                    current_issue_keys = {
+                        str(issue["issue_key"])
+                        for issue in latest.issues
+                        if isinstance(issue.get("issue_key"), str)
                     }
-                    for location, patch_record in active_patches.items():
+                    for patch_record in active_patches.values():
                         if patch_record.get("round", review_round) >= review_round:
                             continue
-                        if location in issue_locations:
+                        covered_issue_keys = {
+                            str(issue_key)
+                            for issue_key in patch_record.get("issue_keys", [])
+                            if isinstance(issue_key, str)
+                        }
+                        rereported = sorted(covered_issue_keys & current_issue_keys)
+                        not_rereported = sorted(covered_issue_keys - current_issue_keys)
+                        for issue_key in not_rereported:
+                            blocked_issues.pop(issue_key, None)
+                        patch_record["rereported_issue_keys"] = rereported
+                        patch_record["not_rereported_issue_keys"] = not_rereported
+                        if rereported:
                             patch_record["status"] = "needs_revision"
                             patch_record["failed_review_round"] = review_round
                         else:
-                            if patch_record.get("status") != "verified":
-                                patch_record["verified_in_round"] = review_round
-                            patch_record["status"] = "verified"
+                            if patch_record.get("status") != "not_rereported":
+                                patch_record["not_rereported_in_round"] = review_round
+                            patch_record["status"] = "not_rereported"
 
                     round_summary: dict[str, Any] = {
                         "review_round": review_round,
@@ -1842,8 +1905,15 @@ class Orchestrator:
                         round_summaries.append(round_summary)
                         break
 
+                    issue_keys_by_id = {
+                        str(issue["issue_id"]): str(issue["issue_key"])
+                        for issue in latest.issues
+                        if isinstance(issue.get("issue_id"), str)
+                        and isinstance(issue.get("issue_key"), str)
+                    }
                     candidate_overrides = dict(target_overrides)
                     applicable: list[ProvisionalPatch] = []
+                    hash_failures: list[dict[str, Any]] = []
                     for patch in patches:
                         location = (patch.chapter, patch.index)
                         current = evidence.segment_ref(*location)
@@ -1862,25 +1932,15 @@ class Orchestrator:
                             }
                             fix_failures.append(failure)
                             failures.append(failure)
+                            hash_failures.append(failure)
                             continue
                         candidate_overrides[location] = patch.after
                         applicable.append(patch)
 
                     register_blocked(
                         latest.issues,
-                        [
-                            {
-                                **failure,
-                                "review_round": review_round,
-                            }
-                            for failure in failures
-                        ],
+                        hash_failures,
                     )
-                    for patch in applicable:
-                        location = (patch.chapter, patch.index)
-                        for issue_id, blocked in list(blocked_issues.items()):
-                            if (blocked.get("chapter"), blocked.get("index")) == location:
-                                blocked_issues.pop(issue_id)
                     round_summary["fix_failure_count"] = len(failures)
                     round_summary["blocked_issue_count"] = len(blocked_issues)
                     candidate_digest = _review_overlay_digest(
@@ -1905,6 +1965,13 @@ class Orchestrator:
                         for patch in applicable:
                             record = {
                                 **patch.as_dict(),
+                                "issue_keys": sorted(
+                                    {
+                                        issue_keys_by_id[issue_id]
+                                        for issue_id in patch.issue_ids
+                                        if issue_id in issue_keys_by_id
+                                    }
+                                ),
                                 "status": "rejected_cycle",
                             }
                             patch_records.append(record)
@@ -1918,6 +1985,13 @@ class Orchestrator:
                         location = (patch.chapter, patch.index)
                         previous = active_patches.get(location)
                         record = patch.as_dict()
+                        record["issue_keys"] = sorted(
+                            {
+                                issue_keys_by_id[issue_id]
+                                for issue_id in patch.issue_ids
+                                if issue_id in issue_keys_by_id
+                            }
+                        )
                         if previous is not None:
                             previous["status"] = "superseded"
                             previous["superseded_by"] = patch.patch_id
@@ -1935,6 +2009,13 @@ class Orchestrator:
                 raise RuntimeError("Review loop finished without a review round")
 
             unresolved = effective_issues(latest)
+            final_conflicts = _review_unresolved_conflict_records(unresolved)
+            final_residual_conflicts = [
+                record
+                for record in final_conflicts
+                if record.get("arbitration", {}).get("status") == "unresolved"
+            ]
+            final_fallback_agent_count = _review_unresolved_fallback_count(unresolved)
             initial_issues, dismissed = debug.result_snapshots()
             debug.write_json("initial_issues.json", initial_issues)
             debug.write_json("dismissed_issues.json", dismissed)
@@ -1951,24 +2032,18 @@ class Orchestrator:
                 "residual_conflicts.json",
                 [
                     {
-                        "conflict_id": group["conflict_id"],
-                        "consistency_key": group["consistency_key"],
-                        "issue_ids": [issue["issue_id"] for issue in group["issues"]],
+                        "conflict_id": record["conflict_id"],
+                        "consistency_key": record["consistency_key"],
+                        "issue_ids": record["issue_ids"],
                     }
-                    for group in latest.residual_conflicts
+                    for record in final_residual_conflicts
                 ],
             )
-            debug.write_json(
-                "conflicts.json",
-                _review_conflict_records(
-                    latest.conflict_groups,
-                    latest.arbitrations,
-                ),
-            )
+            debug.write_json("conflicts.json", final_conflicts)
             debug.write_json("patches.json", patch_records)
             debug.write_json(
-                "verified_patches.json",
-                [patch for patch in patch_records if patch["status"] == "verified"],
+                "not_rereported_patches.json",
+                [patch for patch in patch_records if patch["status"] == "not_rereported"],
             )
             debug.write_json(
                 "unresolved_issues.json",
@@ -1993,14 +2068,14 @@ class Orchestrator:
                 "pre_arbitration_issue_count": len(latest.pre_arbitration_issues),
                 "arbitration_superseded_count": len(latest.arbitration_superseded),
                 "issue_count": len(unresolved),
-                "conflict_count": len(latest.conflict_groups),
-                "unresolved_conflict_count": len(latest.residual_conflicts),
-                "fallback_agent_count": latest.fallback_agent_count,
+                "conflict_count": len(final_conflicts),
+                "unresolved_conflict_count": len(final_residual_conflicts),
+                "fallback_agent_count": final_fallback_agent_count,
                 "review_round_count": len(round_summaries),
                 "fix_round_count": fix_rounds,
                 "patch_count": len(patch_records),
-                "verified_patch_count": sum(
-                    patch["status"] == "verified" for patch in patch_records
+                "not_rereported_patch_count": sum(
+                    patch["status"] == "not_rereported" for patch in patch_records
                 ),
                 "shadow_override_count": len(target_overrides),
                 "blocked_issue_count": len(blocked_issues),
@@ -2013,7 +2088,7 @@ class Orchestrator:
                 {
                     "summary": summary,
                     "issues": unresolved,
-                    "conflicts": latest.arbitrations,
+                    "conflicts": final_conflicts,
                     "patches": patch_records,
                     "fix_failures": fix_failures,
                     "arbitration_superseded_issues": (latest.arbitration_superseded),

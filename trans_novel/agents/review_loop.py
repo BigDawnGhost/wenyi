@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -43,6 +44,31 @@ def _text(value: Any) -> str:
 def _normalized(value: str) -> str:
     """统一兼容字符、宽度和大小写以比较建议值。"""
     return unicodedata.normalize("NFKC", value).casefold().strip()
+
+
+def _identity_text(value: Any) -> str:
+    """规整问题身份字段中的空白和兼容字符，降低跨轮措辞抖动。"""
+    return re.sub(r"\s+", " ", _normalized(_text(value)))
+
+
+def _review_issue_key(issue: dict[str, Any]) -> str:
+    """生成跨 Review 轮次稳定、与临时 ``issue_id`` 无关的问题键。"""
+    consistency = issue.get("consistency")
+    consistency_key = (
+        _identity_text(consistency.get("key")) if isinstance(consistency, dict) else ""
+    )
+    subject = consistency_key or _identity_text(issue.get("detail"))
+    payload = json.dumps(
+        [
+            issue.get("chapter"),
+            issue.get("index"),
+            _identity_text(issue.get("type")),
+            subject,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"review-issue-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:20]}"
 
 
 def _safe_id(value: str) -> str:
@@ -514,9 +540,9 @@ def normalize_review_issues(
     issues: list[dict[str, Any]],
     evidence: BookEvidenceIndex,
 ) -> list[dict[str, Any]]:
-    """确定性清洗、去除同位置完全重复项并生成 issue/一致性键。"""
+    """确定性清洗，并生成轮内 ID 与跨轮稳定的问题键。"""
     prepared: list[dict[str, Any]] = []
-    seen: set[tuple[Any, ...]] = set()
+    seen_keys: set[str] = set()
     for issue in sorted(
         issues,
         key=lambda item: (
@@ -526,18 +552,7 @@ def normalize_review_issues(
             item.get("type", ""),
         ),
     ):
-        fingerprint = (
-            issue.get("chapter"),
-            issue.get("index"),
-            issue.get("type"),
-            _normalized(_text(issue.get("detail"))),
-            _normalized(_text(issue.get("suggestion"))),
-        )
-        if fingerprint in seen:
-            continue
-        seen.add(fingerprint)
         item = dict(issue)
-        item["issue_id"] = f"review-{len(prepared) + 1:05d}"
         consistency = item.get("consistency")
         if isinstance(consistency, dict):
             kind = _text(consistency.get("kind"))
@@ -554,21 +569,26 @@ def normalize_review_issues(
                         "ambiguous_sources": ambiguous,
                         "auto_arbitration": False,
                     }
-                    prepared.append(item)
-                    continue
-                canonical = term.source if term is not None else subject
-                canonical_key = (
-                    f"glossary:{canonical}" if term is not None else _normalized(canonical)
-                )
-                item["consistency"] = {
-                    "kind": kind,
-                    "subject_source": subject,
-                    "canonical_source": canonical,
-                    "key": f"{kind}:{canonical_key}",
-                    "proposed_value": proposed,
-                }
+                else:
+                    canonical = term.source if term is not None else subject
+                    canonical_key = (
+                        f"glossary:{canonical}" if term is not None else _normalized(canonical)
+                    )
+                    item["consistency"] = {
+                        "kind": kind,
+                        "subject_source": subject,
+                        "canonical_source": canonical,
+                        "key": f"{kind}:{canonical_key}",
+                        "proposed_value": proposed,
+                    }
             else:
                 item["consistency"] = {}
+        issue_key = _review_issue_key(item)
+        if issue_key in seen_keys:
+            continue
+        seen_keys.add(issue_key)
+        item["issue_key"] = issue_key
+        item["issue_id"] = f"review-{len(prepared) + 1:05d}"
         prepared.append(item)
     return prepared
 
