@@ -17,7 +17,7 @@ from bs4.exceptions import ParserRejectedMarkup
 
 from ..ingest.epub_toc import nav_root_list, nav_toc_scopes
 from ..ingest.fb2_reader import read_fb2_binaries
-from ..ingest.models import KIND_HEADING, Chapter, Segment
+from ..ingest.models import Chapter, Segment
 from ..pipeline.runstore import RunStore
 from .html_renderer import (
     _BILINGUAL_CSS,
@@ -32,7 +32,6 @@ from .html_resources import (
     _template_resource_source,
 )
 from .writer_common import (
-    _bilingual_source,
     _ch_title,
     _epub_lang,
     _export_book_title,

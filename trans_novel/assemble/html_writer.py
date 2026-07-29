@@ -7,14 +7,12 @@
 
 from __future__ import annotations
 
-import os
 import zipfile
 from html import escape
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from ..ingest.models import KIND_HEADING
 from ..pipeline.runstore import RunStore
 from .epub_writer import _epub_resource_specs, _render_epub_resources
 from .html_renderer import (
@@ -24,7 +22,7 @@ from .html_renderer import (
     _render_paragraph_html,
 )
 from .html_resources import _materialize_html_resources, _template_resource_source
-from .writer_common import _bilingual_source, _epub_lang, _merged_paragraphs
+from .writer_common import _epub_lang, _merged_paragraphs
 
 
 def _assemble_html(

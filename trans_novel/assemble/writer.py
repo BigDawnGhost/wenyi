@@ -9,8 +9,8 @@
 - pdf_writer：PDF 输出
 - epub_writer：EPUB 回填与新建
 
-公共接口 ``assemble()`` 和 ``bilingual_out_path()`` 保持不变；
-私有函数通过重新导出保持现有测试和 monkeypatch 兼容。
+公共接口 ``assemble()`` 和 ``bilingual_out_path()`` 保持不变。少量仍被现有
+调用方使用的私有辅助也继续导出；需要替换实现细节的测试应直接 patch 对应子模块。
 """
 
 from __future__ import annotations
@@ -36,6 +36,16 @@ from .writer_common import (
     _epub_lang,
     bilingual_out_path,
 )
+
+__all__ = [
+    "assemble",
+    "bilingual_out_path",
+    "_default_out",
+    "_inject_bilingual_style",
+    "_render_chapter_html",
+    "_rewrite_html_document",
+    "_rewrite_toc",
+]
 
 
 def assemble(

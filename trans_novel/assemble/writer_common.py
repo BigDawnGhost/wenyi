@@ -112,9 +112,6 @@ def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:
 def _bilingual_source(source: str, target: str) -> str:
     """双语原文去重：原文为空白，或与译文相同（翻译回退到原文）时不输出原文。"""
     return source if (source.strip() and source != target) else ""
-def _bilingual_source(source: str, target: str) -> str:
-    """双语原文去重：原文为空白，或与译文相同（翻译回退到原文）时不输出原文。"""
-    return source if (source.strip() and source != target) else ""
 
 
 def _ordered_pair(source: str, target: str, order: str) -> tuple[str, str]:

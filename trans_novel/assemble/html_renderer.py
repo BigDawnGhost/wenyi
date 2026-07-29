@@ -12,7 +12,7 @@ from html import escape
 from bs4 import BeautifulSoup
 from bs4.element import Comment, Tag
 
-from ..ingest.models import KIND_HEADING, Segment
+from ..ingest.models import KIND_HEADING, Chapter, Segment
 from .writer_common import _bilingual_source, _ordered_pair, _seg_text
 
 # 双语原文样式 ID，用于在 <head> 中注入或检测已有样式
