@@ -295,14 +295,18 @@ class TestAssembleTextBilingual(unittest.TestCase):
 
 class TestDefaultOutBilingual(unittest.TestCase):
     def test_bilingual_suffix(self):
-        out = _default_out("/tmp/novel.txt", "epub", "", bilingual=True)
-        self.assertEqual(os.path.basename(out), "novel.zh-bi.epub")
-        self.assertEqual(os.path.dirname(out), "/tmp/output")
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            out = _default_out(source, "epub", "", bilingual=True)
+            self.assertEqual(os.path.basename(out), "novel.zh-bi.epub")
+            self.assertEqual(os.path.dirname(out), os.path.join(directory, "output"))
 
     def test_mono_suffix_unchanged(self):
-        out = _default_out("/tmp/novel.txt", "epub", "")
-        self.assertEqual(os.path.basename(out), "novel.zh.epub")
-        self.assertEqual(os.path.dirname(out), "/tmp/output")
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            out = _default_out(source, "epub", "")
+            self.assertEqual(os.path.basename(out), "novel.zh.epub")
+            self.assertEqual(os.path.dirname(out), os.path.join(directory, "output"))
 
 
 class TestOutputConfigParsing(unittest.TestCase):
