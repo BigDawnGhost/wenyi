@@ -180,7 +180,7 @@ class TestAssembleText(unittest.TestCase):
 
             with (
                 patch(
-                    "trans_novel.assemble.writer.os.replace",
+                    "trans_novel.assemble.epub_writer.os.replace",
                     side_effect=OSError("replace failed"),
                 ),
                 self.assertRaisesRegex(OSError, "replace failed"),

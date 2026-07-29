@@ -403,7 +403,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                     },
                 ),
                 patch(
-                    "trans_novel.assemble.writer._find_fpdf_font",
+                    "trans_novel.assemble.pdf_writer._find_fpdf_font",
                     return_value=font_path,
                 ),
             ):
