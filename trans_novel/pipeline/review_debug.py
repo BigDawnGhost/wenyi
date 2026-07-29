@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from threading import Lock
 from typing import Any
@@ -42,6 +44,7 @@ class DebugReviewRun:
         self._initial_issues: list[dict[str, Any]] = []
         self._dismissed_issues: list[dict[str, Any]] = []
         self._metadata: dict[str, Any] = {}
+        self._active_round: int | None = None
 
     @staticmethod
     def _atomic_json(path: str, data: Any) -> None:
@@ -54,7 +57,24 @@ class DebugReviewRun:
 
     def path(self, relative: str) -> str:
         """返回本次 Review 目录内的绝对路径。"""
+        if self._active_round is not None:
+            relative = f"rounds/{self._active_round:03d}/{relative}"
         return os.path.join(self.run_dir, relative)
+
+    @contextmanager
+    def round_scope(self, round_number: int) -> Iterator[None]:
+        """把块级 trace 和阶段产物隔离到指定 Review 轮次目录。
+
+        一轮内可以有多个并发 worker，但不同轮次严格串行，因此只需在主线程
+        切换一次作用域；worker 读取到的轮次在整轮完成前保持不变。
+        """
+        if self._active_round is not None:
+            raise RuntimeError("Review round scopes cannot be nested")
+        self._active_round = round_number
+        try:
+            yield
+        finally:
+            self._active_round = None
 
     def write_json(self, relative: str, data: Any) -> str:
         """原子保存一个调试 JSON 并返回绝对路径。"""
@@ -64,6 +84,8 @@ class DebugReviewRun:
 
     def log_event(self, event: str, **data: Any) -> None:
         """线程安全地追加结构化调试事件。"""
+        if self._active_round is not None:
+            data.setdefault("review_round", self._active_round)
         with self._event_lock:
             self._sequence += 1
             row = {
@@ -88,12 +110,20 @@ class DebugReviewRun:
             index = issue.get("index")
             if not isinstance(index, int) or isinstance(index, bool):
                 continue
+            round_prefix = f"r{self._active_round}-" if self._active_round is not None else ""
             rows.append(
                 {
                     **dict(issue),
-                    "candidate_id": f"ch{chapter}-base{chunk_base}-candidate{ordinal}",
+                    "candidate_id": (
+                        f"{round_prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
+                    ),
                     "chapter": chapter,
                     "index": chunk_base + index,
+                    **(
+                        {"review_round": self._active_round}
+                        if self._active_round is not None
+                        else {}
+                    ),
                 }
             )
         with self._result_lock:
@@ -112,6 +142,7 @@ class DebugReviewRun:
                 **dict(issue),
                 "chapter": chapter,
                 "index": chunk_base + int(issue["index"]),
+                **({"review_round": self._active_round} if self._active_round is not None else {}),
             }
             for issue in issues
             if isinstance(issue.get("index"), int) and not isinstance(issue.get("index"), bool)
@@ -119,14 +150,32 @@ class DebugReviewRun:
         with self._result_lock:
             self._dismissed_issues.extend(rows)
 
-    def result_snapshots(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """返回按书序排列的初审和驳回问题副本。"""
-        with self._result_lock:
-            initial = [dict(issue) for issue in self._initial_issues]
-            dismissed = [dict(issue) for issue in self._dismissed_issues]
+    def result_snapshots(
+        self,
+        round_number: int | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """返回按轮次和书序排列的初审、驳回问题副本。
 
-        def position(item: dict[str, Any]) -> tuple[Any, Any]:
-            return item.get("chapter", -1), item.get("index", -1)
+        ``round_number`` 为空时返回本次实验的全部轮次，保留旧的单轮调用语义。
+        """
+        with self._result_lock:
+            initial = [
+                dict(issue)
+                for issue in self._initial_issues
+                if round_number is None or issue.get("review_round") == round_number
+            ]
+            dismissed = [
+                dict(issue)
+                for issue in self._dismissed_issues
+                if round_number is None or issue.get("review_round") == round_number
+            ]
+
+        def position(item: dict[str, Any]) -> tuple[Any, Any, Any]:
+            return (
+                item.get("review_round", -1),
+                item.get("chapter", -1),
+                item.get("index", -1),
+            )
 
         return sorted(initial, key=position), sorted(dismissed, key=position)
 

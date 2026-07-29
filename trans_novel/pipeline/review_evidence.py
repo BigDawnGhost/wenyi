@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from threading import Lock
@@ -70,14 +71,24 @@ class BookEvidenceIndex:
         chapters: list[Chapter],
         terms: list[GlossaryTerm],
         analysis: dict[str, Any],
+        *,
+        target_overrides: Mapping[tuple[int, int], str] | None = None,
     ):
+        """构建全书只读证据索引。
+
+        ``target_overrides`` 以 ``(chapter.index, text_index)`` 为键，为指定
+        段落提供仅在本索引中生效的影子译文。未覆盖的位置仍读取章节中的正式
+        译文，因此默认调用方式及持久化数据均不受影响。
+        """
         flattened: list[SegmentRef] = []
         by_location: dict[tuple[int, int], int] = {}
         chapter_digests: dict[int, str] = {}
+        overrides = target_overrides if target_overrides is not None else {}
         for chapter in chapters:
             chapter_digests[chapter.index] = str(chapter.meta.get("source_digest", "") or "")
             for text_index, segment in enumerate(chapter.text_segments):
                 position = len(flattened)
+                location = (chapter.index, text_index)
                 flattened.append(
                     SegmentRef(
                         global_ordinal=position,
@@ -85,11 +96,11 @@ class BookEvidenceIndex:
                         text_index=text_index,
                         segment_index=segment.index,
                         source=segment.source,
-                        target=segment.target or "",
+                        target=overrides.get(location, segment.target or ""),
                         chapter_title=chapter.title,
                     )
                 )
-                by_location[(chapter.index, text_index)] = position
+                by_location[location] = position
 
         self.segments = tuple(flattened)
         self._by_location = by_location

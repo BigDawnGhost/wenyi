@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from trans_novel.agents.review_fixer import (
+    ProvisionalPatch,
+    ReviewFixer,
+    ReviewFixerProtocolError,
+)
 from trans_novel.agents.review_loop import (
     ReviewAgentLoop,
     ReviewConflictArbiter,
@@ -275,6 +280,81 @@ class TestBookEvidenceIndex(unittest.TestCase):
             ["Ann spoke.", "ANN returned.", "End."],
         )
 
+    def test_target_overrides_are_visible_without_mutating_chapters(self):
+        original = self.chapters[0].text_segments[0].target
+        index = BookEvidenceIndex(
+            self.chapters,
+            [self.term],
+            {},
+            target_overrides={(0, 0): "影子修订。"},
+        )
+
+        context = index.segment_context({"chapter": 0, "index": 0, "before": 0, "after": 0})
+
+        self.assertEqual(index.segments[0].target, "影子修订。")
+        self.assertEqual(context["segments"][0]["target"], "影子修订。")
+        self.assertEqual(self.chapters[0].text_segments[0].target, original)
+
+
+class TestReviewFixer(unittest.TestCase):
+    def _propose(self, payload: dict) -> ProvisionalPatch:
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                payload,
+                ensure_ascii=False,
+            )
+        )
+        return ReviewFixer(client, _config()).propose(
+            1,
+            "ch0:text1:seg1",
+            0,
+            1,
+            "Original sentence.",
+            "当前译文。",
+            [
+                {
+                    "issue_id": "r1-review-00001",
+                    "chapter": 0,
+                    "index": 1,
+                    "type": "mistranslation",
+                    "detail": "原意不完整",
+                    "suggestion": "补全信息",
+                }
+            ],
+        )
+
+    def _valid_payload(self, replacement: str = "修订后的完整译文。") -> dict:
+        return {
+            "segment_ref": "ch0:text1:seg1",
+            "before_hash": ReviewFixer.target_hash("当前译文。"),
+            "issue_ids": ["r1-review-00001"],
+            "replacement": replacement,
+            "complete": True,
+        }
+
+    def test_valid_full_segment_patch_is_provisional(self):
+        patch = self._propose(self._valid_payload())
+
+        self.assertEqual(patch.before, "当前译文。")
+        self.assertEqual(patch.after, "修订后的完整译文。")
+        self.assertEqual(patch.issue_ids, ("r1-review-00001",))
+        self.assertEqual(patch.status, "provisional")
+
+    def test_rejects_protocol_drift_and_unchanged_replacement(self):
+        wrong_ids = self._valid_payload()
+        wrong_ids["issue_ids"] = ["another-issue"]
+        extra_field = self._valid_payload()
+        extra_field["explanation"] = "不允许"
+
+        for payload, reason in (
+            (wrong_ids, "issue_ids_mismatch"),
+            (extra_field, "unexpected_fields"),
+            (self._valid_payload("当前译文。"), "unchanged_replacement"),
+        ):
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(ReviewFixerProtocolError, reason):
+                    self._propose(payload)
+
 
 class TestReadonlyGlossarySnapshot(unittest.TestCase):
     def test_reads_committed_wal_without_touching_formal_database_files(self):
@@ -356,6 +436,54 @@ class TestDebugReviewRun(unittest.TestCase):
             self.assertTrue(os.path.isdir(first.run_dir))
             self.assertTrue(os.path.isdir(second.run_dir))
             self.assertNotIn(":", os.path.basename(first.run_dir))
+
+    def test_round_scopes_isolate_files_events_and_issue_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = DebugReviewRun(directory)
+            for review_round, detail in ((1, "第一轮"), (2, "第二轮")):
+                with debug.round_scope(review_round):
+                    debug.write_json("agents/same.json", {"detail": detail})
+                    debug.record_initial_issues(
+                        chapter=0,
+                        chunk_base=0,
+                        issues=[
+                            {
+                                "index": 0,
+                                "type": "missing",
+                                "detail": detail,
+                                "suggestion": "修复",
+                            }
+                        ],
+                    )
+                    debug.log_event("round_probe")
+
+            first = json.loads(
+                Path(debug.run_dir, "rounds/001/agents/same.json").read_text(encoding="utf-8")
+            )
+            second = json.loads(
+                Path(debug.run_dir, "rounds/002/agents/same.json").read_text(encoding="utf-8")
+            )
+            first_issues, _ = debug.result_snapshots(1)
+            second_issues, _ = debug.result_snapshots(2)
+            events = [
+                json.loads(line)
+                for line in Path(debug.run_dir, "events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+
+        self.assertEqual(first["detail"], "第一轮")
+        self.assertEqual(second["detail"], "第二轮")
+        self.assertEqual(first_issues[0]["review_round"], 1)
+        self.assertEqual(second_issues[0]["review_round"], 2)
+        self.assertNotEqual(
+            first_issues[0]["candidate_id"],
+            second_issues[0]["candidate_id"],
+        )
+        self.assertEqual(
+            [event["review_round"] for event in events],
+            [1, 2],
+        )
 
 
 class TestReviewAgentLoop(unittest.TestCase):

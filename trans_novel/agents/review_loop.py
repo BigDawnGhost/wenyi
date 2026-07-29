@@ -269,8 +269,14 @@ class ReviewAgentLoop:
         self._loop = _ActionLoop(client, config, evidence, debug)
 
     @staticmethod
-    def _candidate_id(chapter: int, chunk_base: int, ordinal: int) -> str:
-        return f"ch{chapter}-base{chunk_base}-candidate{ordinal}"
+    def _candidate_id(
+        chapter: int,
+        chunk_base: int,
+        ordinal: int,
+        review_round: int | None = None,
+    ) -> str:
+        prefix = f"r{review_round}-" if review_round is not None else ""
+        return f"{prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
 
     @staticmethod
     def _consistency(value: Any) -> dict[str, str]:
@@ -312,15 +318,22 @@ class ReviewAgentLoop:
         sources: list[str],
         targets: list[str],
         initial_issues: list[dict[str, Any]],
+        review_round: int | None = None,
     ) -> ReviewLoopOutcome:
         """运行块级有界取证；失败时原样保留所有初审候选。"""
         candidates: list[dict[str, Any]] = []
         for ordinal, issue in enumerate(initial_issues):
             candidate = dict(issue)
-            candidate["candidate_id"] = self._candidate_id(chapter, chunk_base, ordinal)
+            candidate["candidate_id"] = self._candidate_id(
+                chapter,
+                chunk_base,
+                ordinal,
+                review_round,
+            )
             candidates.append(candidate)
 
-        agent_id = f"chunk-ch{chapter}-base{chunk_base}-n{len(sources)}"
+        round_prefix = f"r{review_round}-" if review_round is not None else ""
+        agent_id = f"{round_prefix}chunk-ch{chapter}-base{chunk_base}-n{len(sources)}"
         self.debug.log_event(
             "review_agent_started",
             agent_id=agent_id,

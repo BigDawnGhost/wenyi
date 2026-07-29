@@ -173,6 +173,9 @@ pipeline:
   review_agent_tier: strong
   review_agent_max_evidence_rounds: 2
   review_conflict_arbitration: true
+  review_fix_loop: true
+  review_fix_max_rounds: 2
+  review_clean_confirmations: 2
   glossary_scope: chapter
 ```
 
@@ -183,12 +186,15 @@ pipeline:
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `review_concurrency`: number of contiguous initial-review chunks that may run concurrently against fixed translated text and the completed glossary; set it to `1` for sequential review.
+- `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.
 - `review_agent_loop`: after the unchanged initial Reviewer finds candidates in a successful leaf chunk, let an Agent Loop selectively request evidence and confirm, dismiss, or refine those candidates.
-- `review_agent_tier`: model tier used by the evidence loop and cross-chunk arbiter. The default is `strong`.
+- `review_agent_tier`: model tier used by the evidence loop, cross-chunk arbiter, and provisional Review Fixer. The default is `strong`.
 - `review_agent_max_evidence_rounds`: maximum selective evidence rounds per Agent Loop; the allowed range is `0` to `2`, after which the agent must return a final decision.
 - `review_conflict_arbitration`: after all chunks finish, run a recommendation-only arbiter when consistency proposals for the same term, pronoun, or fixed expression contradict one another.
+- `review_fix_loop`: generate complete provisional segment replacements for confirmed issues in a Debug-only shadow translation, then blindly review the whole book again. Disabling it keeps the single-pass recommendation-only behavior.
+- `review_fix_max_rounds`: maximum number of provisional Fix rounds, from `0` to `4`; this is not the total number of Review passes.
+- `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
 The command-line flags `--polish`, `--no-polish`, `--review`, `--no-review`,
@@ -196,8 +202,9 @@ The command-line flags `--polish`, `--no-polish`, `--review`, `--no-review`,
 `translate` run.
 
 Run final review independently with `trans-novel review INPUT`. Each invocation
-reviews the complete translated book from the beginning. Review does not fix or
-persist changes to formal translation state; its complete replay trace and
+reviews the complete translated book from the beginning. Review may modify only a
+run-local shadow translation; it never persists replacements to formal translation
+state. Its replay trace, provisional patches, verification results, and remaining
 suggestions are written under `state/<book>/debug/review-<timestamp>/`.
 
 ## Output

@@ -42,6 +42,27 @@ def _review_json(user: str, issues: list[dict]) -> str:
     )
 
 
+def _fix_json(user: str, replacement: str) -> str:
+    """从 Fixer 请求回显身份字段，并构造完整临时替换协议。"""
+
+    def field(name: str) -> str:
+        match = re.search(rf"^{name}:\s*(.+)$", user, re.MULTILINE)
+        if match is None:
+            raise AssertionError(f"Fixer prompt missing {name}")
+        return match.group(1).strip()
+
+    return json.dumps(
+        {
+            "segment_ref": field("segment_ref"),
+            "before_hash": field("before_hash"),
+            "issue_ids": json.loads(field("issue_ids")),
+            "replacement": replacement,
+            "complete": True,
+        },
+        ensure_ascii=False,
+    )
+
+
 def _config(state_dir: str):
     return Config.from_dict(
         {
@@ -601,6 +622,38 @@ class TestReviewReporting(unittest.TestCase):
             # 每块报 index 0 → 映射后应为各块首段的章内段号（0,1,2,...互不相同）
             self.assertEqual(idxs, list(range(segment_count)))
 
+    def test_review_progress_advances_per_chunk_and_resets_for_blind_round(self):
+        """Review 按块推进段落数；下一轮盲审和 clean 确认使用独立阶段。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.segment.max_chars_per_batch = 8  # 每章拆成多个顶层审校块
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_clean_confirmations = 2
+            cfg.pipeline.review_concurrency = 2
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            orch.run(txt)
+            events: list[tuple[int, int, str]] = []
+
+            orch.run_review(
+                txt,
+                progress=lambda done, total, label: events.append((done, total, label)),
+            )
+
+        first = [(done, total) for done, total, label in events if label == "全书审校 R1"]
+        second = [(done, total) for done, total, label in events if label == "全书盲审 R2"]
+        clean = [(done, total) for done, total, label in events if label == "干净确认"]
+        self.assertGreater(len(first), 2)
+        self.assertGreater(len(second), 2)
+        for stage in (first, second):
+            self.assertEqual(stage[0][0], 0)
+            self.assertEqual(stage[-1][0], stage[-1][1])
+            self.assertEqual([done for done, _ in stage], sorted(done for done, _ in stage))
+            self.assertTrue(any(0 < done < total for done, total in stage))
+        self.assertEqual(clean, [(1, 2), (2, 2)])
+
     def test_review_accepts_numeric_string_index(self):
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
@@ -855,8 +908,10 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.review_fix_loop = False
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             orch.run(txt)
+            progress_events: list[tuple[int, int, str]] = []
 
             def fake_review(text_segs, terms, *, chapter_index, **kwargs):
                 proposed = "绫小路" if chapter_index == 0 else "绫小路君"
@@ -896,7 +951,12 @@ class TestReviewReporting(unittest.TestCase):
                     new=fake_arbitrate,
                 ),
             ):
-                result = orch.run_review(txt)
+                result = orch.run_review(
+                    txt,
+                    progress=lambda done, total, label: progress_events.append(
+                        (done, total, label)
+                    ),
+                )
 
             with open(
                 os.path.join(result["debug_dir"], "pre_arbitration_issues.json"),
@@ -922,6 +982,380 @@ class TestReviewReporting(unittest.TestCase):
                 {"绫小路"},
             )
             self.assertEqual(result["review_issues"], final)
+            self.assertEqual(
+                [(done, total) for done, total, label in progress_events if label == "冲突仲裁 R1"],
+                [(0, 1), (1, 1)],
+            )
+
+    def test_shadow_fix_is_blindly_rereviewed_with_translation_context(self):
+        """临时修订进入下一轮 Reviewer，且不修改任何正式状态文件。"""
+        review_users: list[str] = []
+        fix_users: list[str] = []
+
+        def handler(messages, tier, json_mode):
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "译文审校" in system:
+                review_users.append(user)
+                issues = (
+                    [
+                        {
+                            "index": 1,
+                            "type": "mistranslation",
+                            "detail": "语义不完整",
+                            "suggestion": "补全原文信息",
+                        },
+                        {
+                            "index": 1,
+                            "type": "terminology",
+                            "detail": "人物译名不统一",
+                            "suggestion": "沿用术语表译名",
+                        },
+                    ]
+                    if len(review_users) == 1
+                    else []
+                )
+                return _review_json(user, issues)
+            if "谨慎修订编辑" in system:
+                fix_users.append(user)
+                return _fix_json(user, "影子修订译文。")
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_conflict_arbitration = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_fix_max_rounds = 2
+            cfg.pipeline.review_clean_confirmations = 2
+            cfg.pipeline.review_concurrency = 1
+            client = MeteredFakeClient(handler=handler)
+            orch = Orchestrator(cfg, client=client)
+            store = orch.run(txt)
+            formal_before = {
+                str(path.relative_to(store.run_dir)): path.read_bytes()
+                for path in Path(store.run_dir).rglob("*")
+                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
+            }
+
+            progress_events: list[tuple[int, int, str]] = []
+            result = orch.run_review(
+                txt,
+                progress=lambda done, total, label: progress_events.append((done, total, label)),
+            )
+
+            formal_after = {
+                str(path.relative_to(store.run_dir)): path.read_bytes()
+                for path in Path(store.run_dir).rglob("*")
+                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
+            }
+            summary = json.loads(
+                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
+            )
+            patches = json.loads(
+                Path(result["debug_dir"], "patches.json").read_text(encoding="utf-8")
+            )
+            fixer_trace_exists = Path(
+                result["debug_dir"],
+                "rounds/001/fixers/ch0-text1.json",
+            ).is_file()
+
+        self.assertEqual(formal_after, formal_before)
+        self.assertEqual(len(fix_users), 1)
+        self.assertIn("语义不完整", fix_users[0])
+        self.assertIn("人物译名不统一", fix_users[0])
+        self.assertIn("风格指南：克制", fix_users[0])
+        self.assertIn("全书概览", fix_users[0])
+        self.assertIn("本章梗概", fix_users[0])
+        self.assertTrue(
+            any("影子修订译文。" in user for user in review_users[2:]),
+            "第二轮基础 Reviewer 必须直接读取影子译文",
+        )
+        self.assertEqual(result["review_issues"], [])
+        self.assertEqual(summary["termination"], "clean_confirmed")
+        self.assertEqual(summary["review_round_count"], 3)
+        self.assertEqual(summary["fix_round_count"], 1)
+        self.assertEqual(summary["verified_patch_count"], 1)
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(len(patches[0]["issue_ids"]), 2)
+        self.assertEqual(patches[0]["status"], "verified")
+        self.assertTrue(fixer_trace_exists)
+        self.assertEqual(
+            [(done, total) for done, total, label in progress_events if label == "影子修订 R1"],
+            [(0, 1), (1, 1)],
+        )
+        self.assertIn("全书盲审 R2", [label for _, _, label in progress_events])
+
+    def test_clean_first_pass_requires_an_independent_confirmation(self):
+        review_calls = 0
+        fix_calls = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal review_calls, fix_calls
+            system = messages[0]["content"]
+            if "译文审校" in system:
+                review_calls += 1
+                return _review_json(messages[-1]["content"], [])
+            if "谨慎修订编辑" in system:
+                fix_calls += 1
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_clean_confirmations = 2
+            cfg.pipeline.review_concurrency = 1
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            orch.run(txt)
+
+            result = orch.run_review(txt)
+            summary = json.loads(
+                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(review_calls, 4)  # 两章 × 两轮全书盲审
+        self.assertEqual(fix_calls, 0)
+        self.assertEqual(summary["review_round_count"], 2)
+        self.assertEqual(summary["clean_streak"], 2)
+        self.assertEqual(summary["termination"], "clean_confirmed")
+
+    def test_last_allowed_fix_still_gets_two_clean_review_passes(self):
+        """最后一轮 Fix 后仍须保留两次完整盲审的执行容量。"""
+        review_calls = 0
+        fix_calls = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal review_calls, fix_calls
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "译文审校" in system:
+                call = review_calls
+                review_calls += 1
+                issues = (
+                    [
+                        {
+                            "index": 1,
+                            "type": "mistranslation",
+                            "detail": f"第 {call // 2 + 1} 轮仍需调整",
+                            "suggestion": "继续改写",
+                        }
+                    ]
+                    if call in {0, 2}
+                    else []
+                )
+                return _review_json(user, issues)
+            if "谨慎修订编辑" in system:
+                fix_calls += 1
+                return _fix_json(user, f"影子版本 {fix_calls}。")
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_conflict_arbitration = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_fix_max_rounds = 2
+            cfg.pipeline.review_clean_confirmations = 2
+            cfg.pipeline.review_concurrency = 1
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            orch.run(txt)
+
+            result = orch.run_review(txt)
+            summary = json.loads(
+                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(review_calls, 8)  # 两章 × 四轮全书 Review
+        self.assertEqual(fix_calls, 2)
+        self.assertEqual(summary["review_round_count"], 4)
+        self.assertEqual(summary["fix_round_count"], 2)
+        self.assertEqual(summary["clean_streak"], 2)
+        self.assertEqual(summary["termination"], "clean_confirmed")
+
+    def test_clean_pass_before_a_fix_does_not_consume_post_fix_confirmation(self):
+        """Fix 前的 clean 不能挤掉补丁后的两次独立确认。"""
+        review_calls = 0
+        fix_calls = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal review_calls, fix_calls
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "译文审校" in system:
+                call = review_calls
+                review_calls += 1
+                issues = (
+                    [
+                        {
+                            "index": 1,
+                            "type": "mistranslation",
+                            "detail": "第二轮才发现的问题",
+                            "suggestion": "修订该段",
+                        }
+                    ]
+                    if call == 2
+                    else []
+                )
+                return _review_json(user, issues)
+            if "谨慎修订编辑" in system:
+                fix_calls += 1
+                return _fix_json(user, "迟发现问题的影子修订。")
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_conflict_arbitration = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_fix_max_rounds = 1
+            cfg.pipeline.review_clean_confirmations = 2
+            cfg.pipeline.review_concurrency = 1
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            orch.run(txt)
+
+            result = orch.run_review(txt)
+            summary = json.loads(
+                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(review_calls, 8)  # clean → issue/fix → clean → clean
+        self.assertEqual(fix_calls, 1)
+        self.assertEqual(summary["review_round_count"], 4)
+        self.assertEqual(summary["clean_streak"], 2)
+        self.assertEqual(summary["termination"], "clean_confirmed")
+
+    def test_failed_fixer_issue_survives_when_other_patch_passes_review(self):
+        """部分 Fixer 失败的问题不能因下一轮漏报而被当成 clean。"""
+        review_calls = 0
+
+        def handler(messages, tier, json_mode):
+            nonlocal review_calls
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "译文审校" in system:
+                call = review_calls
+                review_calls += 1
+                issues = (
+                    [
+                        {
+                            "index": 0,
+                            "type": "mistranslation",
+                            "detail": "第一段需修订",
+                            "suggestion": "修订第一段",
+                        },
+                        {
+                            "index": 1,
+                            "type": "mistranslation",
+                            "detail": "第二段需修订",
+                            "suggestion": "修订第二段",
+                        },
+                    ]
+                    if call == 0
+                    else []
+                )
+                return _review_json(user, issues)
+            if "谨慎修订编辑" in system:
+                if "ch0:text0:" in user:
+                    return _fix_json(user, "第一段影子修订。")
+                return ""
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_conflict_arbitration = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_fix_max_rounds = 2
+            cfg.pipeline.review_clean_confirmations = 2
+            cfg.pipeline.review_concurrency = 1
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            orch.run(txt)
+
+            result = orch.run_review(txt)
+            summary = json.loads(
+                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
+            )
+            patches = json.loads(
+                Path(result["debug_dir"], "patches.json").read_text(encoding="utf-8")
+            )
+            failures = json.loads(
+                Path(result["debug_dir"], "fix_failures.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(summary["termination"], "unresolved_fixes")
+        self.assertEqual(summary["blocked_issue_count"], 1)
+        self.assertEqual(summary["issue_count"], 1)
+        self.assertEqual(len(result["review_issues"]), 1)
+        self.assertEqual(result["review_issues"][0]["index"], 1)
+        self.assertEqual(result["review_issues"][0]["fix_failure"]["reason"], "malformed_json")
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(patches[0]["status"], "verified")
+        self.assertEqual(len(failures), 1)
+
+    def test_shadow_loop_detects_a_b_a_oscillation(self):
+        review_calls = 0
+        fix_calls = 0
+        original_target = ""
+
+        def handler(messages, tier, json_mode):
+            nonlocal review_calls, fix_calls
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "译文审校" in system:
+                current = review_calls
+                review_calls += 1
+                issues = (
+                    [
+                        {
+                            "index": 1,
+                            "type": "mistranslation",
+                            "detail": "仍需调整",
+                            "suggestion": "改写",
+                        }
+                    ]
+                    if current % 2 == 0
+                    else []
+                )
+                return _review_json(user, issues)
+            if "谨慎修订编辑" in system:
+                replacement = "影子版本 B。" if fix_calls == 0 else original_target
+                fix_calls += 1
+                return _fix_json(user, replacement)
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as directory:
+            txt = os.path.join(directory, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.review_agent_loop = False
+            cfg.pipeline.review_conflict_arbitration = False
+            cfg.pipeline.review_fix_loop = True
+            cfg.pipeline.review_fix_max_rounds = 2
+            cfg.pipeline.review_concurrency = 1
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+            store = orch.run(txt)
+            original_target = store.load_chapter(0).text_segments[1].target or ""
+
+            result = orch.run_review(txt)
+            summary = json.loads(
+                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(review_calls, 4)  # 两章 × 两轮，未进入第三轮
+        self.assertEqual(fix_calls, 2)
+        self.assertEqual(summary["review_round_count"], 2)
+        self.assertEqual(summary["termination"], "cycle_detected")
 
 
 class TestStyleAnalysis(unittest.TestCase):

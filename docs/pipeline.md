@@ -39,6 +39,7 @@ The glossary constrains later translation and supplies evidence to the final rev
 - **Experimental Agent Review:** starts only after every chapter has been translated and uses the completed glossary. Contiguous chapter chunks are checked concurrently with the existing Reviewer prompt. Every response must end with a completion receipt containing the exact reviewed-segment count and `complete: true`. Syntax-only JSON damage is repaired locally with `json-repair`; a missing or invalid receipt recursively splits only the affected chunk, and a singleton receives at most `1 + review_output_retries` attempts.
 - **Selective evidence loop:** when a successfully reviewed leaf chunk contains candidates and `review_agent_loop` is enabled, a bounded Agent Loop confirms, dismisses, or refines them and may add issues within that chunk. It can request one glossary entry by source or alias, the first, middle, last, or Nth occurrence of a term, nearby source-and-translation segments, and limited book, chapter, or style context instead of loading the whole book or glossary into every prompt. The loop uses the configured tier (`strong` by default) and must decide after at most `review_agent_max_evidence_rounds` evidence rounds.
 - **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The Debug final-suggestion view conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available for audit. It never changes the glossary or translated text.
+- **Shadow Fix and blind re-review:** confirmed issues for the same segment are grouped into one Fixer request. The Fixer receives the style brief, book synopsis, chapter digest, relevant glossary subset, and nearby source/translation pairs, and must return one complete replacement segment rather than a diff. All Fixers in a round read one immutable shadow snapshot; their patches are applied together only after the round finishes. The next whole-book Review and evidence index read the updated shadow text without receiving the old issue explanations. Unresolved arbitration conflicts and unverified Agent fallbacks are left unresolved. The loop stops after consecutive clean passes, the configured Fix limit, no progress, or an A→B→A cycle.
 - **Whole-book consistency QA:** checks terminology, references, voice, and punctuation after translation. It reports issues by default without rewriting the text.
 
 Final review is disabled by default. Setting `pipeline.review: true` inserts it
@@ -50,10 +51,11 @@ uv run trans-novel review book.epub
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Every invocation
-reviews the complete translated book from the beginning. It never fixes text and
-does not update chapter JSON, the manifest, `report.json`, the formal event log, or
-the formal `usage.json`. Prompts, raw responses, parsed actions, requested evidence,
-events, final suggestions, and the run-local usage delta are written only to:
+reviews the complete translated book from the beginning. It may update only a
+Debug shadow translation and never changes chapter JSON, the manifest, glossary,
+`report.json`, the formal event log, or the formal `usage.json`. Prompts, raw
+responses, parsed actions, requested evidence, provisional patches, events,
+remaining suggestions, and the run-local usage delta are written only to:
 
 ```text
 state/<book>/debug/review-YYYYMMDD-HHMMSS-ffffff/
@@ -61,6 +63,12 @@ state/<book>/debug/review-YYYYMMDD-HHMMSS-ffffff/
 
 The debug directory contains its own `usage.json` with totals plus `by_tier` and
 `by_stage` breakdowns. It is written for both successful and failed review runs.
+`rounds/<NNN>/` contains each pass's overlay and Reviewer/Fixer traces; aggregate
+files include `patches.json`, `verified_patches.json`, `unresolved_issues.json`,
+`fix_failures.json`, `rounds.json`, `shadow_targets.json`, `summary.json`, and
+`result.json`. Stop reasons include `clean_confirmed`, `max_rounds`,
+`no_progress`, `cycle_detected`, and `unresolved_fixes` (a previously confirmed
+issue did not receive a valid patch even if a later Reviewer missed it).
 
 These debug traces contain source and translated passages. Treat them with the
 same privacy and copyright care as the rest of the state directory.

@@ -131,9 +131,11 @@ uv run trans-novel assemble book.epub
 
 `review` 会使用最终术语库检查完整译文。原有 Reviewer 提示词先并发检查连续
 文本块；候选问题随后可进入有界取证循环，互相矛盾的跨块一致性建议还可获得
-终局建议。Review 不修复正文，也不更新 manifest、章节 JSON、`report.json`、
-正式事件日志或正式 `usage.json`。每次运行的提示词、原始响应、解析动作、
-取证结果、事件、建议和模型用量增量会写入
+终局建议。确认的问题可以生成完整单段的 Debug 影子替换；同轮 Fixer 都读取
+同一份不可变快照，下一轮全书 Review 不接收旧问题说明，只盲审更新后的影子译文。
+这些替换不会写入 manifest、章节 JSON、术语库、`report.json`、正式事件日志或
+正式 `usage.json`。每次运行的提示词、原始响应、解析动作、取证结果、影子补丁、
+事件、剩余建议和模型用量增量会写入
 `state/<书名>/debug/review-<时间戳>/`。调试目录内独立的 `usage.json` 包含
 总量及 `by_tier`、`by_stage` 明细，无论成功还是失败都会保留。
 

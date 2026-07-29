@@ -106,6 +106,76 @@ glossary_app = typer.Typer(
 )
 console = Console()
 
+_REVIEW_PROGRESS_PREFIXES = (
+    "全书审校 R",
+    "全书盲审 R",
+    "冲突仲裁 R",
+    "影子修订 R",
+)
+
+
+class _RichProgressBridge:
+    """把通用回调映射为 Rich 任务，并为 Review 的各阶段保留独立进度条。"""
+
+    def __init__(self, progress: Progress, initial_description: str) -> None:
+        self.progress = progress
+        self.task = progress.add_task(initial_description, total=None)
+        self.review_tasks: dict[str, Any] = {}
+        self.in_review = False
+
+    @staticmethod
+    def _is_review_stage(label: str) -> bool:
+        """判断标签是否属于需要独立显示的 Review/Fix 循环阶段。"""
+        return label == "干净确认" or label.startswith(_REVIEW_PROGRESS_PREFIXES)
+
+    def __call__(self, done: int, total: int, label: str) -> None:
+        """更新普通单任务进度，或创建/更新 Review 阶段的独立任务。"""
+        if self._is_review_stage(label):
+            if not self.in_review:
+                self.progress.remove_task(self.task)
+                self.in_review = True
+            task = self.review_tasks.get(label)
+            if task is None:
+                task = self.progress.add_task(
+                    label,
+                    total=total if total > 0 else None,
+                    completed=done,
+                )
+                self.review_tasks[label] = task
+            else:
+                self.progress.update(
+                    task,
+                    completed=done,
+                    total=total if total > 0 else None,
+                    description=label,
+                )
+            return
+
+        if self.in_review:
+            for review_task in self.review_tasks.values():
+                self.progress.remove_task(review_task)
+            self.review_tasks.clear()
+            self.in_review = False
+            self.task = self.progress.add_task(
+                label,
+                total=total if total > 0 else None,
+                completed=done,
+            )
+            return
+
+        if total > 0:
+            self.progress.update(
+                self.task,
+                completed=done,
+                total=total,
+                description=label,
+            )
+            return
+        # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
+        # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
+        self.progress.remove_task(self.task)
+        self.task = self.progress.add_task(label, total=None)
+
 
 def _version_callback(value: bool) -> None:
     """打印由 Git 标签生成的已安装包版本并立即退出。"""
@@ -304,18 +374,7 @@ def _translate_impl_or_raise(
         TimeElapsedColumn(),
         console=console,
     ) as prog:
-        task = prog.add_task("准备中…", total=None)
-
-        def cb(done: int, total: int, label: str) -> None:
-            """把编排器的通用进度回调同步到 Rich 任务。"""
-            nonlocal task
-            if total > 0:
-                prog.update(task, completed=done, total=total, description=label)
-                return
-            # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
-            # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
-            prog.remove_task(task)
-            task = prog.add_task(label, total=None)
+        cb = _RichProgressBridge(prog, "准备中…")
 
         if chapter is not None:
             try:
@@ -508,7 +567,7 @@ def prepare(
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
 ):
-    """全量运行取证式 Agent Review；全部结果只写入时间戳 Debug 目录。"""
+    """全量运行取证、影子修订与盲复审；结果只写入时间戳 Debug 目录。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input)
@@ -524,30 +583,19 @@ def review(
             TimeElapsedColumn(),
             console=console,
         ) as prog:
-            task = prog.add_task("准备全书审校…", total=None)
-
-            def cb(done: int, total: int, label: str) -> None:
-                """把全书审校进度同步到 Rich 任务。"""
-                nonlocal task
-                if total > 0:
-                    prog.update(
-                        task,
-                        completed=done,
-                        total=total,
-                        description=label,
-                    )
-                    return
-                prog.remove_task(task)
-                task = prog.add_task(label, total=None)
-
+            cb = _RichProgressBridge(prog, "准备全书审校…")
             result = orch.run_review(input, progress=cb)
     except (IngestError, ImportError, OSError, ValueError) as error:
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
 
     issues = result["review_issues"]
-    console.print(f"[bold green]全书 Agent 审校完成[/]：发现 {len(issues)} 项问题建议。")
-    console.print("实验模式未修改正文或任何正式状态；建议和日志仅写入本次调试目录。")
+    console.print(
+        f"[bold green]全书 Agent 审校完成[/]：影子修订复审后仍有 {len(issues)} 项问题建议。"
+    )
+    console.print(
+        "实验模式只修改本次影子译文；正式正文和正式状态未变，临时补丁、建议及日志仅写入调试目录。"
+    )
     if result.get("debug_dir"):
         console.print(f"调试目录：{result['debug_dir']}")
 

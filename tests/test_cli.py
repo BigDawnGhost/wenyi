@@ -331,6 +331,15 @@ class TestCliConfig(unittest.TestCase):
             def run_review(self, input_path, **kwargs):
                 captured["input_path"] = input_path
                 captured["kwargs"] = kwargs
+                progress = kwargs["progress"]
+                progress(0, 4, "全书审校 R1")
+                progress(2, 4, "全书审校 R1")
+                progress(4, 4, "全书审校 R1")
+                progress(0, 1, "影子修订 R1")
+                progress(1, 1, "影子修订 R1")
+                progress(0, 4, "全书盲审 R2")
+                progress(4, 4, "全书盲审 R2")
+                progress(1, 2, "干净确认")
                 return {
                     "store": FakeStore(),
                     "review_issues": [{"index": 0, "type": "missing"}],
@@ -347,8 +356,10 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
         self.assertIn("progress", captured["kwargs"])
-        self.assertIn("发现 1 项问题", result.output)
+        self.assertIn("影子修订复审后仍有 1 项问题", result.output)
         self.assertIn("/tmp/review-debug", result.output)
+        for label in ("全书审校 R1", "影子修订 R1", "全书盲审 R2", "干净确认"):
+            self.assertIn(label, result.output)
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")

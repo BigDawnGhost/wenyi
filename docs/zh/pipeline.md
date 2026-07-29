@@ -39,6 +39,7 @@
 - **实验性 Agent Review**：全部章节翻译完成后才开始，并使用最终术语库。章节按连续文本块并发执行原有 Reviewer 提示词。每次响应都必须以“实际审校段数 + `complete: true`”作为末尾完成回执。单纯的 JSON 语法损坏会先用 `json-repair` 在本地修复；缺少或不符合预期的回执只会递归拆分受影响的审校块，单段最多尝试 `1 + review_output_retries` 次。
 - **选择性取证循环**：成功完成初审的叶块若产生候选问题，且开启 `review_agent_loop`，有界 Agent Loop 会确认、驳回或细化候选，也可补充当前块内的问题。它能按原文或别名读取单个术语条目，按首次、中间、末次或第 N 次请求术语命中，获取指定段落的相邻原译文，以及有限的全书概览、章节梗概和风格信息，无需给每个请求注入整本书或全量术语表。循环默认使用 `strong` 档，并必须在最多 `review_agent_max_evidence_rounds` 轮取证后给出结论。
 - **跨块仲裁**：所有并发块完成后，同一术语、人称或固定表达若出现互相矛盾的一致性建议，可再交给终局仲裁器。Debug 最终建议视图会保守地把所有落选建议统一改写为胜出值；所有被替代的旧建议仍保留供审计，不会修改术语库或正文。
+- **影子修订与盲复审**：同一段的多个确认问题会合并为一次 Fixer 请求。Fixer 会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，并必须返回完整单段替换而非局部 diff。同轮所有 Fixer 读取同一份不可变影子快照，全部结束后才统一应用；下一轮全书 Reviewer 与取证索引只读取更新后的影子译文，不接收旧问题说明。未解决的仲裁冲突和未经确认的 Agent fallback 会保留为未解决项。连续无问题、达到 Fix 上限、没有有效进展或检测到 A→B→A 循环时停止。
 - **全书一致性 QA**：在收尾阶段检查术语、人称、语气和标点的一致性，默认只报告问题。
 
 最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在翻译与 QA 之间
@@ -49,9 +50,9 @@ uv run trans-novel review book.epub
 ```
 
 即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。每次运行都会从头
-审查完整译文，不修复正文，也不会更新章节 JSON、manifest、`report.json`、
-正式 `events.jsonl` 或正式 `usage.json`。提示词、原始响应、解析后的动作、
-取证结果、事件、最终建议和本次运行的用量增量只写入：
+审查完整译文。它只会更新 Debug 影子译文，不会修改章节 JSON、manifest、术语库、
+`report.json`、正式 `events.jsonl` 或正式 `usage.json`。提示词、原始响应、
+解析后的动作、取证结果、临时补丁、事件、剩余建议和本次运行的用量增量只写入：
 
 ```text
 state/<书名>/debug/review-YYYYMMDD-HHMMSS-ffffff/
@@ -59,6 +60,12 @@ state/<书名>/debug/review-YYYYMMDD-HHMMSS-ffffff/
 
 该调试目录内有独立的 `usage.json`，包含总量及 `by_tier`、`by_stage` 明细；
 无论审校成功还是失败都会保留。
+`rounds/<NNN>/` 保存各轮 overlay 及 Reviewer/Fixer trace；汇总文件包括
+`patches.json`、`verified_patches.json`、`unresolved_issues.json`、
+`fix_failures.json`、`rounds.json`、`shadow_targets.json`、`summary.json`
+和 `result.json`。停止原因包括 `clean_confirmed`、`max_rounds`、
+`no_progress`、`cycle_detected` 和 `unresolved_fixes`（已确认问题未获得
+有效补丁时，即使后续 Reviewer 漏报也不会被当成 clean）。
 
 调试记录包含原文和译文片段，应与其他状态文件一样注意隐私与版权。
 

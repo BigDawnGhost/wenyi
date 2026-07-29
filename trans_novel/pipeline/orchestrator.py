@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from threading import Lock
@@ -24,6 +26,11 @@ from typing import Any
 
 from ..agents.analyzer import Analyzer
 from ..agents.polisher import Polisher
+from ..agents.review_fixer import (
+    ProvisionalPatch,
+    ReviewFixer,
+    ReviewFixerProtocolError,
+)
 from ..agents.review_loop import (
     ReviewAgentLoop,
     ReviewConflictArbiter,
@@ -128,6 +135,68 @@ def _resume_batches(segments, max_chars: int) -> list[list]:
 class _BatchResult:
     targets: list[str]
     bt_samples: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _ReviewRoundResult:
+    """一次全书影子译文 Review 及冲突仲裁后的确定性结果。"""
+
+    issues: list[dict[str, Any]]
+    initial_issues: list[dict[str, Any]]
+    dismissed_issues: list[dict[str, Any]]
+    pre_arbitration_issues: list[dict[str, Any]]
+    arbitration_superseded: list[dict[str, Any]]
+    conflict_groups: list[dict[str, Any]]
+    arbitrations: list[dict[str, Any]]
+    residual_conflicts: list[dict[str, Any]]
+    fallback_agent_count: int
+
+
+def _review_overlay_digest(
+    chapters,
+    overrides: Mapping[tuple[int, int], str],
+) -> str:
+    """计算全书有效影子译文指纹，用于检测无进展与 A↔B 振荡。"""
+    payload = [
+        (
+            chapter.index,
+            text_index,
+            overrides.get((chapter.index, text_index), segment.target or ""),
+        )
+        for chapter in chapters
+        for text_index, segment in enumerate(chapter.text_segments)
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _review_conflict_records(
+    groups: list[dict[str, Any]],
+    arbitrations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把冲突组及对应仲裁结果序列化为稳定的 Debug 记录。"""
+    return [
+        {
+            "conflict_id": group["conflict_id"],
+            "consistency_key": group["consistency_key"],
+            "issue_ids": [issue["issue_id"] for issue in group["issues"]],
+            "proposals": [
+                {
+                    "issue_id": issue["issue_id"],
+                    "chapter": issue["chapter"],
+                    "index": issue["index"],
+                    "proposed_value": issue["consistency"]["proposed_value"],
+                }
+                for issue in group["issues"]
+            ],
+            "arbitration": arbitration,
+        }
+        for group, arbitration in zip(groups, arbitrations)
+    ]
 
 
 class Orchestrator:
@@ -1126,6 +1195,364 @@ class Orchestrator:
 
     # ── 实验性全书 Agent Review ─────────────────────────────────────────────
 
+    def _review_round(
+        self,
+        loaded,
+        all_terms: list[GlossaryTerm],
+        evidence: BookEvidenceIndex,
+        debug: DebugReviewRun,
+        *,
+        review_round: int,
+        target_overrides: Mapping[tuple[int, int], str],
+        progress: ProgressFn | None = None,
+    ) -> _ReviewRoundResult:
+        """对同一份只读影子译文完成一轮全书审校和冲突仲裁。"""
+        total = sum(len(chapter.text_segments) for chapter in loaded)
+        done = 0
+        review_label = (
+            f"全书审校 R{review_round}" if review_round == 1 else f"全书盲审 R{review_round}"
+        )
+        if progress:
+            progress(0, total, review_label)
+        raw_issues: list[dict[str, Any]] = []
+        for chapter in loaded:
+            text_segs = chapter.text_segments
+            if self.config.pipeline.glossary_scope == "chapter":
+                source_text = "\n".join(segment.source for segment in text_segs)
+                term_snapshot = GlossaryStore.terms_in(all_terms, source_text)
+            else:
+                term_snapshot = all_terms
+
+            def on_chunk_finished(segment_count: int) -> None:
+                """在一个顶层审校块完成后推进本轮全书段落进度。"""
+                nonlocal done
+                done += segment_count
+                if progress:
+                    progress(done, total, review_label)
+
+            chapter_issues = self._review_chapter(
+                text_segs,
+                term_snapshot,
+                chapter_index=chapter.index,
+                evidence=evidence,
+                debug=debug,
+                target_overrides=target_overrides,
+                review_round=review_round,
+                on_chunk_finished=on_chunk_finished,
+            )
+            for issue in chapter_issues:
+                issue["chapter"] = chapter.index
+                issue["stage"] = "review_agent"
+                issue["review_round"] = review_round
+            raw_issues.extend(chapter_issues)
+            debug.log_event(
+                "review_debug_chapter_finished",
+                chapter=chapter.index,
+                segment_count=len(text_segs),
+                issue_count=len(chapter_issues),
+            )
+
+        pre_arbitration_issues = normalize_review_issues(raw_issues, evidence)
+        for issue in pre_arbitration_issues:
+            issue["issue_id"] = f"r{review_round}-{issue['issue_id']}"
+        conflict_groups = build_conflict_groups(pre_arbitration_issues)
+        arbitrations: list[dict[str, Any]] = []
+        if conflict_groups and self.config.pipeline.review_conflict_arbitration:
+            arbitration_label = f"冲突仲裁 R{review_round}"
+            arbitration_total = len(conflict_groups)
+            if progress:
+                progress(0, arbitration_total, arbitration_label)
+            workers = min(
+                max(1, self.config.pipeline.review_concurrency),
+                arbitration_total,
+            )
+
+            def arbitrate(group: dict[str, Any]) -> dict[str, Any]:
+                return ReviewConflictArbiter(
+                    self.client,
+                    self.config,
+                    evidence,
+                    debug,
+                ).arbitrate(group)
+
+            if workers == 1:
+                for done_count, group in enumerate(conflict_groups, start=1):
+                    arbitrations.append(arbitrate(group))
+                    if progress:
+                        progress(done_count, arbitration_total, arbitration_label)
+            else:
+                ordered_arbitrations: list[dict[str, Any] | None] = [None] * arbitration_total
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(arbitrate, group): position
+                        for position, group in enumerate(conflict_groups)
+                    }
+                    for done_count, future in enumerate(as_completed(futures), start=1):
+                        ordered_arbitrations[futures[future]] = future.result()
+                        if progress:
+                            progress(done_count, arbitration_total, arbitration_label)
+                arbitrations = [
+                    arbitration for arbitration in ordered_arbitrations if arbitration is not None
+                ]
+        elif conflict_groups:
+            arbitrations = [
+                {
+                    "conflict_id": group["conflict_id"],
+                    "consistency_key": group["consistency_key"],
+                    "issue_ids": [issue["issue_id"] for issue in group["issues"]],
+                    "status": "unresolved",
+                    "recommended_value": "",
+                    "reason": "配置已关闭全书冲突仲裁。",
+                    "supported_issue_ids": [issue["issue_id"] for issue in group["issues"]],
+                    "rejected_issue_ids": [],
+                    "evidence_refs": [],
+                }
+                for group in conflict_groups
+            ]
+
+        final_issues, arbitration_superseded = apply_review_arbitrations(
+            pre_arbitration_issues,
+            arbitrations,
+        )
+        fallback_agent_count = len(
+            {
+                issue["_chunk_id"]
+                for issue in pre_arbitration_issues
+                if issue.get("agent_fallback") and isinstance(issue.get("_chunk_id"), str)
+            }
+        )
+        residual_conflicts = build_conflict_groups(final_issues)
+        initial_issues, dismissed = debug.result_snapshots(review_round)
+        debug.write_json("initial_issues.json", initial_issues)
+        debug.write_json("dismissed_issues.json", dismissed)
+        debug.write_json("pre_arbitration_issues.json", pre_arbitration_issues)
+        debug.write_json("arbitration_superseded_issues.json", arbitration_superseded)
+        debug.write_json("final_issues.json", final_issues)
+        debug.write_json(
+            "residual_conflicts.json",
+            [
+                {
+                    "conflict_id": group["conflict_id"],
+                    "consistency_key": group["consistency_key"],
+                    "issue_ids": [issue["issue_id"] for issue in group["issues"]],
+                }
+                for group in residual_conflicts
+            ],
+        )
+        debug.write_json(
+            "conflicts.json",
+            _review_conflict_records(conflict_groups, arbitrations),
+        )
+        debug.log_event(
+            "review_round_finished",
+            issue_count=len(final_issues),
+            conflict_count=len(conflict_groups),
+            unresolved_conflict_count=len(residual_conflicts),
+            fallback_agent_count=fallback_agent_count,
+        )
+        return _ReviewRoundResult(
+            issues=final_issues,
+            initial_issues=initial_issues,
+            dismissed_issues=dismissed,
+            pre_arbitration_issues=pre_arbitration_issues,
+            arbitration_superseded=arbitration_superseded,
+            conflict_groups=conflict_groups,
+            arbitrations=arbitrations,
+            residual_conflicts=residual_conflicts,
+            fallback_agent_count=fallback_agent_count,
+        )
+
+    def _propose_review_patches(
+        self,
+        round_result: _ReviewRoundResult,
+        evidence: BookEvidenceIndex,
+        all_terms: list[GlossaryTerm],
+        analysis: dict[str, Any],
+        debug: DebugReviewRun,
+        *,
+        review_round: int,
+        fix_round: int,
+        progress: ProgressFn | None = None,
+    ) -> tuple[list[ProvisionalPatch], list[dict[str, Any]]]:
+        """按段聚合已确认问题，并行生成仅供下一轮验证的完整段落替换。"""
+        grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        skipped: list[dict[str, Any]] = []
+        for issue in round_result.issues:
+            chapter = issue.get("chapter")
+            index = issue.get("index")
+            issue_id = issue.get("issue_id")
+            if (
+                isinstance(chapter, bool)
+                or not isinstance(chapter, int)
+                or isinstance(index, bool)
+                or not isinstance(index, int)
+                or not isinstance(issue_id, str)
+            ):
+                skipped.append(
+                    {
+                        "issue_id": issue_id,
+                        "status": "skipped",
+                        "reason": "invalid_issue_location",
+                    }
+                )
+                continue
+            arbitration = issue.get("arbitration")
+            if isinstance(arbitration, dict) and arbitration.get("status") == "unresolved":
+                skipped.append(
+                    {
+                        "issue_id": issue_id,
+                        "chapter": chapter,
+                        "index": index,
+                        "status": "skipped",
+                        "reason": "unresolved_consistency_conflict",
+                    }
+                )
+                continue
+            if self.config.pipeline.review_agent_loop and issue.get("agent_fallback"):
+                skipped.append(
+                    {
+                        "issue_id": issue_id,
+                        "chapter": chapter,
+                        "index": index,
+                        "status": "skipped",
+                        "reason": "unverified_agent_fallback",
+                    }
+                )
+                continue
+            grouped.setdefault((chapter, index), []).append(issue)
+
+        jobs = sorted(grouped.items())
+        if not jobs:
+            return [], skipped
+        fix_label = f"影子修订 R{fix_round}"
+        fix_total = len(jobs)
+        if progress:
+            progress(0, fix_total, fix_label)
+        style = self.analyzer.style_brief(analysis)
+        book_synopsis = str(analysis.get("book_synopsis", "") or "")
+        fixer = ReviewFixer(self.client, self.config)
+
+        def propose(
+            job: tuple[tuple[int, int], list[dict[str, Any]]],
+        ) -> tuple[ProvisionalPatch | None, dict[str, Any] | None]:
+            (chapter, index), issues = job
+            segment = evidence.segment_ref(chapter, index)
+            if segment is None:
+                return None, {
+                    "issue_ids": [issue["issue_id"] for issue in issues],
+                    "chapter": chapter,
+                    "index": index,
+                    "status": "skipped",
+                    "reason": "segment_not_found",
+                }
+            context = evidence.segment_context(
+                {
+                    "chapter": chapter,
+                    "index": index,
+                    "before": 4,
+                    "after": 4,
+                }
+            )
+            context_segments = context.get("segments", []) if context.get("ok") else []
+            nearby_pairs = [
+                (str(item.get("source", "")), str(item.get("target", "")))
+                for item in context_segments
+                if isinstance(item, dict) and item.get("ref") != segment.ref
+            ]
+            context_source = "\n".join(
+                str(item.get("source", "")) for item in context_segments if isinstance(item, dict)
+            )
+            relevant_terms = GlossaryStore.terms_in(
+                all_terms,
+                context_source or segment.source,
+            )
+            trace_path = f"fixers/ch{chapter}-text{index}.json"
+            trace: dict[str, Any] = {
+                "chapter": chapter,
+                "index": index,
+                "segment_ref": segment.ref,
+                "issue_ids": [issue["issue_id"] for issue in issues],
+                "status": "running",
+            }
+            debug.write_json(trace_path, trace)
+
+            def record(event: str, data: dict[str, Any]) -> None:
+                trace[event] = data
+                debug.write_json(trace_path, trace)
+
+            try:
+                patch = fixer.propose(
+                    review_round,
+                    segment.ref,
+                    chapter,
+                    index,
+                    segment.source,
+                    segment.target,
+                    issues,
+                    style=style,
+                    book_synopsis=book_synopsis,
+                    chapter_digest=evidence.chapter_digests.get(chapter, ""),
+                    relevant_glossary=relevant_terms,
+                    nearby_pairs=nearby_pairs,
+                    trace=record,
+                )
+            except Exception as error:  # noqa: BLE001 - 单段 Fix 失败保留为未解决建议
+                trace["status"] = "failed"
+                trace["error"] = {
+                    "type": type(error).__name__,
+                    "message": str(error),
+                }
+                debug.write_json(trace_path, trace)
+                return None, {
+                    "issue_ids": [issue["issue_id"] for issue in issues],
+                    "chapter": chapter,
+                    "index": index,
+                    "segment_ref": segment.ref,
+                    "status": "failed",
+                    "reason": (
+                        str(error)
+                        if isinstance(error, ReviewFixerProtocolError)
+                        else f"{type(error).__name__}: {error}"
+                    ),
+                }
+            trace["status"] = "finished"
+            trace["patch"] = patch.as_dict()
+            debug.write_json(trace_path, trace)
+            return patch, None
+
+        workers = min(
+            max(1, self.config.pipeline.review_concurrency),
+            fix_total,
+        )
+        if workers == 1:
+            results = []
+            for done_count, job in enumerate(jobs, start=1):
+                results.append(propose(job))
+                if progress:
+                    progress(done_count, fix_total, fix_label)
+        else:
+            ordered_results: list[tuple[ProvisionalPatch | None, dict[str, Any] | None] | None] = [
+                None
+            ] * fix_total
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(propose, job): position for position, job in enumerate(jobs)
+                }
+                for done_count, future in enumerate(as_completed(futures), start=1):
+                    ordered_results[futures[future]] = future.result()
+                    if progress:
+                        progress(done_count, fix_total, fix_label)
+            results = [result for result in ordered_results if result is not None]
+        patches = [patch for patch, _ in results if patch is not None]
+        failures = [failure for _, failure in results if failure is not None]
+        debug.log_event(
+            "review_fix_round_finished",
+            patch_count=len(patches),
+            skipped_count=len(skipped),
+            failed_count=len(failures),
+        )
+        return patches, [*skipped, *failures]
+
     def _review_book_debug(
         self,
         store: RunStore,
@@ -1133,10 +1560,11 @@ class Orchestrator:
         *,
         progress: ProgressFn | None = None,
     ) -> list[dict[str, Any]]:
-        """全量运行实验性 Review，只把过程和建议写入时间戳 Debug 目录。
+        """在只读影子译文上循环 Review→临时 Fix→盲复审。
 
-        不保存 chapter、manifest、report、正式 events/usage，也不修改术语库。
-        每次调用都是一轮可独立比较的完整实验。
+        正式 chapter、manifest、report、events、usage 和术语库始终不变。每轮
+        Fix 只更新内存 overlay 与本次时间戳 Debug 目录，下一轮全书 Review
+        不接收旧问题说明，只读取修改后的影子译文。
         """
         manifest = store.load_manifest()
         pending = [
@@ -1153,7 +1581,6 @@ class Orchestrator:
         loaded = [store.load_chapter(item["index"]) for item in chapter_rows]
         total = sum(len(chapter.text_segments) for chapter in loaded)
         analysis = store.load_analysis() or {}
-        evidence = BookEvidenceIndex(loaded, all_terms, analysis)
         debug = DebugReviewRun(store.run_dir)
         self._last_review_debug_dir = debug.run_dir
         debug.start(
@@ -1172,6 +1599,9 @@ class Orchestrator:
                     self.config.pipeline.review_agent_max_evidence_rounds
                 ),
                 "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
+                "review_fix_loop": self.config.pipeline.review_fix_loop,
+                "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
+                "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
             },
         )
         usage_before = self.client.usage_summary()
@@ -1186,96 +1616,337 @@ class Orchestrator:
             )
             return usage
 
-        done = 0
-        raw_issues: list[dict[str, Any]] = []
+        target_overrides: dict[tuple[int, int], str] = {}
+        seen_overlays = {_review_overlay_digest(loaded, target_overrides)}
+        patch_records: list[dict[str, Any]] = []
+        active_patches: dict[tuple[int, int], dict[str, Any]] = {}
+        fix_failures: list[dict[str, Any]] = []
+        blocked_issues: dict[str, dict[str, Any]] = {}
+        round_summaries: list[dict[str, Any]] = []
+        latest: _ReviewRoundResult | None = None
+        clean_streak = 0
+        fix_rounds = 0
+        termination = "not_started"
+        fix_loop = self.config.pipeline.review_fix_loop
+        required_clean = self.config.pipeline.review_clean_confirmations if fix_loop else 1
+        # 每次 Fix 前最多可能先出现 ``required_clean - 1`` 轮干净结果；
+        # 每个已接受补丁后仍须保留完整盲审，并最终容纳连续 clean 确认。
+        # 该上界避免在最后一轮接受一个从未被下一轮 Reviewer 看见的补丁。
+        max_review_rounds = (
+            (self.config.pipeline.review_fix_max_rounds + 1) * required_clean if fix_loop else 1
+        )
+
+        def register_blocked(
+            issues: list[dict[str, Any]],
+            failures: list[dict[str, Any]],
+        ) -> None:
+            """保留未得到有效补丁的问题，避免后续 Reviewer 漏报后假 clean。"""
+            by_id = {
+                str(issue["issue_id"]): issue
+                for issue in issues
+                if isinstance(issue.get("issue_id"), str)
+            }
+            for failure in failures:
+                failure_ids = failure.get("issue_ids")
+                if not isinstance(failure_ids, list):
+                    failure_id = failure.get("issue_id")
+                    failure_ids = [failure_id] if isinstance(failure_id, str) else []
+                for issue_id in failure_ids:
+                    issue = by_id.get(str(issue_id))
+                    if issue is None:
+                        continue
+                    location_type = (
+                        issue.get("chapter"),
+                        issue.get("index"),
+                        issue.get("type"),
+                    )
+                    for blocked_id, blocked in list(blocked_issues.items()):
+                        if (
+                            blocked.get("chapter"),
+                            blocked.get("index"),
+                            blocked.get("type"),
+                        ) == location_type:
+                            blocked_issues.pop(blocked_id)
+                    blocked_issues[str(issue_id)] = {
+                        **dict(issue),
+                        "fix_failure": {
+                            "status": failure.get("status"),
+                            "reason": failure.get("reason"),
+                            "review_round": failure.get("review_round"),
+                        },
+                    }
+
+        def effective_issues(current: _ReviewRoundResult) -> list[dict[str, Any]]:
+            """合并本轮问题与历史未修项，按书序返回公开的未解决问题。"""
+            combined = {
+                str(issue["issue_id"]): dict(issue)
+                for issue in current.issues
+                if isinstance(issue.get("issue_id"), str)
+            }
+            for issue_id, issue in blocked_issues.items():
+                combined.setdefault(issue_id, dict(issue))
+            return sorted(
+                combined.values(),
+                key=lambda issue: (
+                    issue.get("chapter", -1),
+                    issue.get("index", -1),
+                    issue.get("review_round", -1),
+                    issue.get("issue_id", ""),
+                ),
+            )
+
         try:
-            for chapter in loaded:
-                text_segs = chapter.text_segments
-                if self.config.pipeline.glossary_scope == "chapter":
-                    source_text = "\n".join(segment.source for segment in text_segs)
-                    term_snapshot = GlossaryStore.terms_in(all_terms, source_text)
-                else:
-                    term_snapshot = all_terms
-                label = f"Agent 审校：{self._chapter_progress_label(chapter.title, chapter.index)}"
-                if progress:
-                    progress(done, total, label)
-                chapter_issues = self._review_chapter(
-                    text_segs,
-                    term_snapshot,
-                    chapter_index=chapter.index,
-                    evidence=evidence,
-                    debug=debug,
+            for review_round in range(1, max_review_rounds + 1):
+                overlay_digest = _review_overlay_digest(loaded, target_overrides)
+                evidence = BookEvidenceIndex(
+                    loaded,
+                    all_terms,
+                    analysis,
+                    target_overrides=target_overrides,
                 )
-                for issue in chapter_issues:
-                    issue["chapter"] = chapter.index
-                    issue["stage"] = "review_agent"
-                raw_issues.extend(chapter_issues)
-                done += len(text_segs)
-                debug.log_event(
-                    "review_debug_chapter_finished",
-                    chapter=chapter.index,
-                    segment_count=len(text_segs),
-                    issue_count=len(chapter_issues),
-                )
-                if progress:
-                    progress(done, total, label)
-
-            pre_arbitration_issues = normalize_review_issues(raw_issues, evidence)
-            conflict_groups = build_conflict_groups(pre_arbitration_issues)
-            arbitrations: list[dict[str, Any]] = []
-            if conflict_groups and self.config.pipeline.review_conflict_arbitration:
-                workers = min(
-                    max(1, self.config.pipeline.review_concurrency),
-                    len(conflict_groups),
-                )
-
-                def arbitrate(group: dict[str, Any]) -> dict[str, Any]:
-                    return ReviewConflictArbiter(
-                        self.client,
-                        self.config,
+                with debug.round_scope(review_round):
+                    debug.log_event(
+                        "review_round_started",
+                        overlay_digest=overlay_digest,
+                        override_count=len(target_overrides),
+                    )
+                    debug.write_json(
+                        "overlay.json",
+                        [
+                            {
+                                "chapter": chapter,
+                                "index": index,
+                                "target": target,
+                            }
+                            for (chapter, index), target in sorted(target_overrides.items())
+                        ],
+                    )
+                    latest = self._review_round(
+                        loaded,
+                        all_terms,
                         evidence,
                         debug,
-                    ).arbitrate(group)
+                        review_round=review_round,
+                        target_overrides=target_overrides,
+                        progress=progress,
+                    )
 
-                if workers == 1:
-                    arbitrations = [arbitrate(group) for group in conflict_groups]
-                else:
-                    with ThreadPoolExecutor(max_workers=workers) as executor:
-                        arbitrations = list(executor.map(arbitrate, conflict_groups))
-            elif conflict_groups:
-                arbitrations = [
-                    {
-                        "conflict_id": group["conflict_id"],
-                        "consistency_key": group["consistency_key"],
-                        "issue_ids": [issue["issue_id"] for issue in group["issues"]],
-                        "status": "unresolved",
-                        "recommended_value": "",
-                        "reason": "配置已关闭全书冲突仲裁。",
-                        "supported_issue_ids": [issue["issue_id"] for issue in group["issues"]],
-                        "rejected_issue_ids": [],
-                        "evidence_refs": [],
+                    issue_locations = {
+                        (issue.get("chapter"), issue.get("index")) for issue in latest.issues
                     }
-                    for group in conflict_groups
-                ]
+                    for location, patch_record in active_patches.items():
+                        if patch_record.get("round", review_round) >= review_round:
+                            continue
+                        if location in issue_locations:
+                            patch_record["status"] = "needs_revision"
+                            patch_record["failed_review_round"] = review_round
+                        else:
+                            if patch_record.get("status") != "verified":
+                                patch_record["verified_in_round"] = review_round
+                            patch_record["status"] = "verified"
 
-            final_issues, arbitration_superseded = apply_review_arbitrations(
-                pre_arbitration_issues,
-                arbitrations,
-            )
-            fallback_agent_count = len(
-                {
-                    issue["_chunk_id"]
-                    for issue in pre_arbitration_issues
-                    if issue.get("agent_fallback") and isinstance(issue.get("_chunk_id"), str)
-                }
-            )
-            residual_conflicts = build_conflict_groups(final_issues)
+                    round_summary: dict[str, Any] = {
+                        "review_round": review_round,
+                        "overlay_digest": overlay_digest,
+                        "override_count": len(target_overrides),
+                        "issue_count": len(latest.issues),
+                        "conflict_count": len(latest.conflict_groups),
+                        "unresolved_conflict_count": len(latest.residual_conflicts),
+                        "fallback_agent_count": latest.fallback_agent_count,
+                        "clean_streak_before": clean_streak,
+                        "blocked_issue_count": len(blocked_issues),
+                    }
+                    if not latest.issues:
+                        if blocked_issues:
+                            clean_streak = 0
+                            if progress:
+                                progress(0, required_clean, "干净确认")
+                            termination = "unresolved_fixes"
+                            round_summary["clean_streak_after"] = 0
+                            round_summary["patch_count"] = 0
+                            round_summary["termination"] = termination
+                            debug.write_json("summary.json", round_summary)
+                            round_summaries.append(round_summary)
+                            break
+                        clean_streak += 1
+                        if progress:
+                            progress(clean_streak, required_clean, "干净确认")
+                        round_summary["clean_streak_after"] = clean_streak
+                        round_summary["patch_count"] = 0
+                        if clean_streak >= required_clean:
+                            termination = "clean_confirmed"
+                            round_summary["termination"] = termination
+                        debug.write_json("summary.json", round_summary)
+                        round_summaries.append(round_summary)
+                        if termination == "clean_confirmed":
+                            break
+                        continue
+
+                    if clean_streak and progress:
+                        progress(0, required_clean, "干净确认")
+                    clean_streak = 0
+                    round_summary["clean_streak_after"] = 0
+                    if not fix_loop:
+                        termination = "issues_reported"
+                        round_summary["patch_count"] = 0
+                        round_summary["termination"] = termination
+                        debug.write_json("summary.json", round_summary)
+                        round_summaries.append(round_summary)
+                        break
+                    if fix_rounds >= self.config.pipeline.review_fix_max_rounds:
+                        termination = "max_rounds"
+                        round_summary["patch_count"] = 0
+                        round_summary["termination"] = termination
+                        debug.write_json("summary.json", round_summary)
+                        round_summaries.append(round_summary)
+                        break
+
+                    patches, failures = self._propose_review_patches(
+                        latest,
+                        evidence,
+                        all_terms,
+                        analysis,
+                        debug,
+                        review_round=review_round,
+                        fix_round=fix_rounds + 1,
+                        progress=progress,
+                    )
+                    fix_failures.extend(
+                        [
+                            {
+                                **failure,
+                                "review_round": review_round,
+                            }
+                            for failure in failures
+                        ]
+                    )
+                    register_blocked(
+                        latest.issues,
+                        [
+                            {
+                                **failure,
+                                "review_round": review_round,
+                            }
+                            for failure in failures
+                        ],
+                    )
+                    round_summary["patch_count"] = len(patches)
+                    if not patches:
+                        termination = "no_progress"
+                        round_summary["fix_failure_count"] = len(failures)
+                        round_summary["blocked_issue_count"] = len(blocked_issues)
+                        round_summary["termination"] = termination
+                        debug.write_json("patches.json", [])
+                        debug.write_json("fix_failures.json", failures)
+                        debug.write_json("summary.json", round_summary)
+                        round_summaries.append(round_summary)
+                        break
+
+                    candidate_overrides = dict(target_overrides)
+                    applicable: list[ProvisionalPatch] = []
+                    for patch in patches:
+                        location = (patch.chapter, patch.index)
+                        current = evidence.segment_ref(*location)
+                        if (
+                            current is None
+                            or ReviewFixer.target_hash(current.target) != patch.before_hash
+                        ):
+                            failure = {
+                                "patch_id": patch.patch_id,
+                                "issue_ids": list(patch.issue_ids),
+                                "chapter": patch.chapter,
+                                "index": patch.index,
+                                "status": "failed",
+                                "reason": "before_hash_changed",
+                                "review_round": review_round,
+                            }
+                            fix_failures.append(failure)
+                            failures.append(failure)
+                            continue
+                        candidate_overrides[location] = patch.after
+                        applicable.append(patch)
+
+                    register_blocked(
+                        latest.issues,
+                        [
+                            {
+                                **failure,
+                                "review_round": review_round,
+                            }
+                            for failure in failures
+                        ],
+                    )
+                    for patch in applicable:
+                        location = (patch.chapter, patch.index)
+                        for issue_id, blocked in list(blocked_issues.items()):
+                            if (blocked.get("chapter"), blocked.get("index")) == location:
+                                blocked_issues.pop(issue_id)
+                    round_summary["fix_failure_count"] = len(failures)
+                    round_summary["blocked_issue_count"] = len(blocked_issues)
+                    candidate_digest = _review_overlay_digest(
+                        loaded,
+                        candidate_overrides,
+                    )
+                    debug.write_json(
+                        "patches.json",
+                        [patch.as_dict() for patch in patches],
+                    )
+                    debug.write_json("fix_failures.json", failures)
+                    round_summary["candidate_overlay_digest"] = candidate_digest
+                    round_summary["applicable_patch_count"] = len(applicable)
+                    if not applicable or candidate_digest == overlay_digest:
+                        termination = "no_progress"
+                        round_summary["termination"] = termination
+                        debug.write_json("summary.json", round_summary)
+                        round_summaries.append(round_summary)
+                        break
+                    if candidate_digest in seen_overlays:
+                        termination = "cycle_detected"
+                        for patch in applicable:
+                            record = {
+                                **patch.as_dict(),
+                                "status": "rejected_cycle",
+                            }
+                            patch_records.append(record)
+                        round_summary["termination"] = termination
+                        debug.write_json("summary.json", round_summary)
+                        round_summaries.append(round_summary)
+                        break
+
+                    fix_rounds += 1
+                    for patch in applicable:
+                        location = (patch.chapter, patch.index)
+                        previous = active_patches.get(location)
+                        record = patch.as_dict()
+                        if previous is not None:
+                            previous["status"] = "superseded"
+                            previous["superseded_by"] = patch.patch_id
+                        patch_records.append(record)
+                        active_patches[location] = record
+                    target_overrides = candidate_overrides
+                    seen_overlays.add(candidate_digest)
+                    round_summary["fix_round"] = fix_rounds
+                    debug.write_json("summary.json", round_summary)
+                    round_summaries.append(round_summary)
+            else:
+                termination = "max_rounds"
+
+            if latest is None:  # pragma: no cover - max_review_rounds 至少为 1
+                raise RuntimeError("Review loop finished without a review round")
+
+            unresolved = effective_issues(latest)
             initial_issues, dismissed = debug.result_snapshots()
             debug.write_json("initial_issues.json", initial_issues)
             debug.write_json("dismissed_issues.json", dismissed)
-            debug.write_json("pre_arbitration_issues.json", pre_arbitration_issues)
-            debug.write_json("arbitration_superseded_issues.json", arbitration_superseded)
-            debug.write_json("final_issues.json", final_issues)
+            debug.write_json(
+                "pre_arbitration_issues.json",
+                latest.pre_arbitration_issues,
+            )
+            debug.write_json(
+                "arbitration_superseded_issues.json",
+                latest.arbitration_superseded,
+            )
+            debug.write_json("final_issues.json", unresolved)
             debug.write_json(
                 "residual_conflicts.json",
                 [
@@ -1284,71 +1955,90 @@ class Orchestrator:
                         "consistency_key": group["consistency_key"],
                         "issue_ids": [issue["issue_id"] for issue in group["issues"]],
                     }
-                    for group in residual_conflicts
+                    for group in latest.residual_conflicts
                 ],
             )
             debug.write_json(
                 "conflicts.json",
+                _review_conflict_records(
+                    latest.conflict_groups,
+                    latest.arbitrations,
+                ),
+            )
+            debug.write_json("patches.json", patch_records)
+            debug.write_json(
+                "verified_patches.json",
+                [patch for patch in patch_records if patch["status"] == "verified"],
+            )
+            debug.write_json(
+                "unresolved_issues.json",
+                unresolved,
+            )
+            debug.write_json("fix_failures.json", fix_failures)
+            debug.write_json("rounds.json", round_summaries)
+            debug.write_json(
+                "shadow_targets.json",
                 [
                     {
-                        "conflict_id": group["conflict_id"],
-                        "consistency_key": group["consistency_key"],
-                        "issue_ids": [issue["issue_id"] for issue in group["issues"]],
-                        "proposals": [
-                            {
-                                "issue_id": issue["issue_id"],
-                                "chapter": issue["chapter"],
-                                "index": issue["index"],
-                                "proposed_value": issue["consistency"]["proposed_value"],
-                            }
-                            for issue in group["issues"]
-                        ],
-                        "arbitration": arbitration,
+                        "chapter": chapter,
+                        "index": index,
+                        "target": target,
                     }
-                    for group, arbitration in zip(conflict_groups, arbitrations)
+                    for (chapter, index), target in sorted(target_overrides.items())
                 ],
             )
             summary = {
                 "initial_issue_count": len(initial_issues),
                 "dismissed_issue_count": len(dismissed),
-                "pre_arbitration_issue_count": len(pre_arbitration_issues),
-                "arbitration_superseded_count": len(arbitration_superseded),
-                "issue_count": len(final_issues),
-                "conflict_count": len(conflict_groups),
-                "unresolved_conflict_count": len(residual_conflicts),
-                "fallback_agent_count": fallback_agent_count,
+                "pre_arbitration_issue_count": len(latest.pre_arbitration_issues),
+                "arbitration_superseded_count": len(latest.arbitration_superseded),
+                "issue_count": len(unresolved),
+                "conflict_count": len(latest.conflict_groups),
+                "unresolved_conflict_count": len(latest.residual_conflicts),
+                "fallback_agent_count": latest.fallback_agent_count,
+                "review_round_count": len(round_summaries),
+                "fix_round_count": fix_rounds,
+                "patch_count": len(patch_records),
+                "verified_patch_count": sum(
+                    patch["status"] == "verified" for patch in patch_records
+                ),
+                "shadow_override_count": len(target_overrides),
+                "blocked_issue_count": len(blocked_issues),
+                "clean_streak": clean_streak,
+                "termination": termination,
                 "debug_dir": debug.run_dir,
             }
             debug.write_json(
                 "result.json",
                 {
                     "summary": summary,
-                    "issues": final_issues,
-                    "conflicts": arbitrations,
-                    "arbitration_superseded_issues": arbitration_superseded,
+                    "issues": unresolved,
+                    "conflicts": latest.arbitrations,
+                    "patches": patch_records,
+                    "fix_failures": fix_failures,
+                    "arbitration_superseded_issues": (latest.arbitration_superseded),
                 },
             )
             debug.write_json("summary.json", summary)
             save_debug_usage()
             debug.finish(status="finished", **summary)
-            return final_issues
+            return unresolved
         except Exception as error:
             initial_issues, dismissed = debug.result_snapshots()
             debug.write_json("initial_issues.json", initial_issues)
             debug.write_json("dismissed_issues.json", dismissed)
-            debug.write_json("partial_issues.json", raw_issues)
+            debug.write_json(
+                "partial_issues.json",
+                effective_issues(latest) if latest is not None else [],
+            )
+            debug.write_json("partial_patches.json", patch_records)
+            debug.write_json("fix_failures.json", fix_failures)
             save_debug_usage()
             debug.finish(
                 status="failed",
-                issue_count=len(raw_issues),
-                conflict_count=0,
-                fallback_agent_count=len(
-                    {
-                        issue["_chunk_id"]
-                        for issue in raw_issues
-                        if issue.get("agent_fallback") and isinstance(issue.get("_chunk_id"), str)
-                    }
-                ),
+                issue_count=len(latest.issues) if latest is not None else 0,
+                conflict_count=(len(latest.conflict_groups) if latest is not None else 0),
+                fallback_agent_count=(latest.fallback_agent_count if latest is not None else 0),
                 error_type=type(error).__name__,
                 error=str(error),
                 debug_dir=debug.run_dir,
@@ -1363,6 +2053,9 @@ class Orchestrator:
         chapter_index: int | None = None,
         evidence: BookEvidenceIndex | None = None,
         debug: DebugReviewRun | None = None,
+        target_overrides: Mapping[tuple[int, int], str] | None = None,
+        review_round: int | None = None,
+        on_chunk_finished: Callable[[int], None] | None = None,
     ) -> list[dict]:
         """把一章切成连续块并行审校，返回映射到章内段号的问题。
 
@@ -1394,13 +2087,26 @@ class Orchestrator:
         def review_once(chunk_base: int, chunk: list, *, attempt: int = 1) -> list[dict]:
             """调用一次审校，并把合法块内索引映射为章内索引。"""
             srcs = [s.source for s in chunk]
-            tgts = [s.target or "" for s in chunk]
+            overrides = target_overrides or {}
+
+            def target_for(local_index: int, segment) -> str:
+                """读取本轮影子译文；无章位置时回退正式译文。"""
+                if chapter_index is None:
+                    return segment.target or ""
+                return overrides.get(
+                    (chapter_index, chunk_base + local_index),
+                    segment.target or "",
+                )
+
+            tgts = [target_for(local_index, segment) for local_index, segment in enumerate(chunk)]
             local_issues: list[dict] = []
             initial_trace: dict[str, Any] | None = None
             initial_path = ""
             if debug is not None:
+                round_prefix = f"r{review_round}-" if review_round is not None else ""
                 initial_id = (
-                    f"initial-ch{chapter_index}-base{chunk_base}-n{len(chunk)}-attempt{attempt}"
+                    f"initial-{round_prefix}ch{chapter_index}-base{chunk_base}"
+                    f"-n{len(chunk)}-attempt{attempt}"
                 )
                 initial_path = f"initial/{initial_id}.json"
                 initial_trace = {
@@ -1482,6 +2188,7 @@ class Orchestrator:
                     sources=srcs,
                     targets=tgts,
                     initial_issues=local_issues,
+                    review_round=review_round,
                 )
                 local_issues = outcome.issues
                 dismissed = outcome.dismissed
@@ -1492,7 +2199,8 @@ class Orchestrator:
                     issues=dismissed,
                 )
 
-            chunk_id = f"ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
+            round_prefix = f"r{review_round}-" if review_round is not None else ""
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
             mapped: list[dict[str, Any]] = []
             for issue in local_issues:
                 local_index = issue.get("index")
@@ -1582,11 +2290,24 @@ class Orchestrator:
         )
         try:
             if workers == 1:
-                results = [review_one(job) for job in jobs]
+                results = []
+                for job in jobs:
+                    results.append(review_one(job))
+                    if on_chunk_finished:
+                        on_chunk_finished(len(job[1]))
             else:
+                ordered_results: list[list[dict] | None] = [None] * len(jobs)
                 with ThreadPoolExecutor(max_workers=workers) as ex:
-                    # executor.map 保持输入顺序；并发完成顺序不会改变 issue 顺序。
-                    results = list(ex.map(review_one, jobs))
+                    futures = {
+                        ex.submit(review_one, job): (position, len(job[1]))
+                        for position, job in enumerate(jobs)
+                    }
+                    for future in as_completed(futures):
+                        position, segment_count = futures[future]
+                        ordered_results[position] = future.result()
+                        if on_chunk_finished:
+                            on_chunk_finished(segment_count)
+                results = [result for result in ordered_results if result is not None]
         finally:
             if debug is not None:
                 with recovery_lock:

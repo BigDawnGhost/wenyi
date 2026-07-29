@@ -137,9 +137,11 @@ uv run trans-novel review book.epub
 
 Each Review run starts from the beginning, checks chunks concurrently, and can
 selectively request cross-book evidence before resolving contradictory
-consistency suggestions. It does not fix or modify formal translation state;
-complete traces and recommendations are written to a timestamped directory
-under `state/<book>/debug/`.
+consistency suggestions. Confirmed issues can produce provisional full-segment
+replacements in a Debug-only shadow translation. A fresh whole-book review sees
+the shadow text—but not the previous issue explanation—and validates it again.
+Formal translation state is never modified; traces, shadow patches, and remaining
+recommendations are written under `state/<book>/debug/`.
 
 ---
 
@@ -174,12 +176,18 @@ flowchart TD
         I --> J[Check backtranslation samples and persist the final chapter]
     end
 
-    J --> K[Optional parallel final review<br/>Using the completed glossary]
-    K --> L[Optional cross-chapter consistency QA]
+    J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
+    K --> N{Confirmed issues?}
+    N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
+    O --> K
+    N -- No, confirmed twice --> L[Optional cross-chapter consistency QA]
     L --> M[Generate the report and assemble the selected output]
 ```
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
+The Review Fixer receives the same style brief, book synopsis, chapter digest,
+relevant glossary subset, and nearby source/translation context used to preserve
+the book's voice. Its replacements remain temporary Debug artifacts.
 
 ---
 
@@ -197,7 +205,8 @@ Translated state directories for public-domain books may be shared through [weny
 ## Limitations
 
 - The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
-- Polishing and final review are the most expensive stages — they significantly increase token consumption.
+- Polishing and final review are the most expensive stages. Shadow fixing may
+  trigger multiple full-book review passes and additional Fixer calls.
 - PDF input depends on the MinerU external service; the initial conversion requires an API key.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large state directories; storage requirements grow with book length.

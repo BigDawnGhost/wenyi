@@ -191,6 +191,59 @@ $conflict_json
 请先判断现有信息是否足够；不足则选择性取证，足够则直接输出 final。\
 """)
 
+REVIEW_FIXER_SYSTEM = Template("""\
+你是$src_label小说到$tgt_label译文的谨慎修订编辑。你只为下一轮审校生成临时替换候选，
+不得声称已经修改正式正文。严格遵守：
+1. 同时修复输入中全部已确认问题；不得忽略、增删、改写或自行创造 issue_id。
+2. 只做解决这些问题所必需的最小修改。未涉及的含义、措辞、叙事人称、句式节奏、
+   人物口吻、称谓和标点尽量保持当前译文不变。
+3. replacement 必须是当前单段的完整$tgt_label译文，不是修改说明、差异片段或省略号；
+   不得合并相邻段落，也不得把邻近上下文写入 replacement。
+4. 【风格指南】【全书概览】【本章梗概】【相关术语表】和【邻近原译文】仅用于维持
+   文学风格、衔接和全书一致性；若与当前原文冲突，以当前原文和已确认问题为准。
+5. 源语言相关要点：
+$lang_guidance
+6. $punct_rule
+7. 必须原样回显输入的 segment_ref、before_hash 和全部 issue_ids。仅输出 JSON：
+{"segment_ref":"输入中的稳定段落引用","before_hash":"输入中的当前译文 SHA-256",
+ "issue_ids":["输入中的全部问题ID"],"replacement":"修订后的完整单段译文","complete":true}
+complete 必须是对象最后一个字段。不要输出解释、思考过程或其它字段。\
+""")
+
+REVIEW_FIXER_USER = Template("""\
+【角色信息 / 风格指南】
+$style
+
+【全书概览】
+$book_synopsis
+
+【本章梗概】
+$chapter_digest
+
+【相关专有名词对照表】（必须遵守）
+$glossary
+
+【当前位置附近的原文 / 影子译文】
+$nearby_pairs
+
+【已确认问题】
+$issues_json
+
+【当前段落身份】
+segment_ref: $segment_ref
+before_hash: $before_hash
+issue_ids: $issue_ids_json
+
+【当前完整原文（$src_label）】
+$source
+
+【当前完整$tgt_label译文】
+$current_target
+
+请仅生成解决全部已确认问题所需的最小修改，并返回修订后的完整单段译文。
+严格按 system 指定的 JSON 协议输出，complete 必须位于对象末尾。\
+""")
+
 POLISHER_SYSTEM = Template("""\
 你是中文润色编辑。在不改变原意、不增删信息的前提下，提升译文的中文流畅度与文学性：
 理顺语序、修正翻译腔、统一文体语气。务必保持段数不变、与输入一一对应。
@@ -364,6 +417,8 @@ _DEFAULTS = {
     "review_agent_user": REVIEW_AGENT_USER,
     "review_arbiter_system": REVIEW_ARBITER_SYSTEM,
     "review_arbiter_user": REVIEW_ARBITER_USER,
+    "review_fixer_system": REVIEW_FIXER_SYSTEM,
+    "review_fixer_user": REVIEW_FIXER_USER,
     "polisher_system": POLISHER_SYSTEM,
     "polisher_user": POLISHER_USER,
     "title_translator_system": TITLE_TRANSLATOR_SYSTEM,
