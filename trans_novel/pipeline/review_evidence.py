@@ -40,6 +40,8 @@ class SegmentRef:
     segment_index: int
     source: str
     target: str
+    baseline_target: str
+    target_origin: str
     chapter_title: str
 
     @property
@@ -50,7 +52,7 @@ class SegmentRef:
     def compact(self) -> dict[str, Any]:
         """序列化为证据载荷。"""
         limit = 4000
-        return {
+        payload = {
             "ref": self.ref,
             "chapter": self.chapter,
             "text_index": self.text_index,
@@ -58,9 +60,18 @@ class SegmentRef:
             "chapter_title": self.chapter_title,
             "source": self.source[:limit],
             "target": self.target[:limit],
+            "target_origin": self.target_origin,
             "source_truncated": len(self.source) > limit,
             "target_truncated": len(self.target) > limit,
         }
+        if self.target_origin == "shadow_override":
+            payload.update(
+                {
+                    "baseline_target": self.baseline_target[:limit],
+                    "baseline_target_truncated": len(self.baseline_target) > limit,
+                }
+            )
+        return payload
 
 
 class BookEvidenceIndex:
@@ -89,6 +100,8 @@ class BookEvidenceIndex:
             for text_index, segment in enumerate(chapter.text_segments):
                 position = len(flattened)
                 location = (chapter.index, text_index)
+                baseline_target = segment.target or ""
+                has_override = location in overrides
                 flattened.append(
                     SegmentRef(
                         global_ordinal=position,
@@ -96,7 +109,9 @@ class BookEvidenceIndex:
                         text_index=text_index,
                         segment_index=segment.index,
                         source=segment.source,
-                        target=overrides.get(location, segment.target or ""),
+                        target=overrides.get(location, baseline_target),
+                        baseline_target=baseline_target,
+                        target_origin=("shadow_override" if has_override else "formal"),
                         chapter_title=chapter.title,
                     )
                 )

@@ -293,7 +293,16 @@ class TestBookEvidenceIndex(unittest.TestCase):
 
         self.assertEqual(index.segments[0].target, "影子修订。")
         self.assertEqual(context["segments"][0]["target"], "影子修订。")
+        self.assertEqual(context["segments"][0]["target_origin"], "shadow_override")
+        self.assertEqual(context["segments"][0]["baseline_target"], original)
         self.assertEqual(self.chapters[0].text_segments[0].target, original)
+
+    def test_formal_targets_are_labeled_without_duplicate_baseline_payload(self):
+        context = self.index.segment_context({"chapter": 0, "index": 0, "before": 0, "after": 0})
+
+        segment = context["segments"][0]
+        self.assertEqual(segment["target_origin"], "formal")
+        self.assertNotIn("baseline_target", segment)
 
 
 class TestReviewFixer(unittest.TestCase):
