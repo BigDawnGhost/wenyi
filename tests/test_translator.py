@@ -10,7 +10,7 @@ from trans_novel.agents import prompts
 from trans_novel.agents.translator import Translator
 from trans_novel.config import Config
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.checks import length_flags
+from trans_novel.pipeline.checks import length_flags, repair_rejection_reason
 
 
 def _count_segments(user_content: str) -> int:
@@ -98,6 +98,65 @@ class TestChecks(unittest.TestCase):
         kinds = {f.index: f.reason for f in flags}
         self.assertEqual(kinds.get(0), "empty")  # 译文为空
         self.assertEqual(kinds.get(2), "too_long")  # 比值过大
+
+    def test_repair_gate_rejects_unchanged_candidate(self):
+        reason = repair_rejection_reason(
+            "Eine neue Übersetzung.",
+            "一段现有译文",
+            "一段现有译文",
+        )
+        self.assertEqual(reason, "unchanged")
+
+    def test_repair_gate_rejects_dropped_shared_number(self):
+        reason = repair_rejection_reason(
+            "Im Jahr 1872 erschien das Buch.",
+            "这本书于1872年出版。",
+            "这本书在那一年出版。",
+        )
+        self.assertEqual(reason, "dropped_number")
+
+    def test_repair_gate_allows_changed_candidate_with_preserved_number(self):
+        reason = repair_rejection_reason(
+            "Im Jahr 1872 erschien das Buch.",
+            "这本书于1872年问世。",
+            "这部作品于1872年出版。",
+        )
+        self.assertIsNone(reason)
+
+    def test_repair_gate_allows_complete_chinese_candidates_from_ab_run(self):
+        """德译中的完整候选不应被跨语言字符比误判为过短。"""
+        cases = [
+            # index, source length, current target length, proposed target length
+            (44, 1084, 281, 325),
+            (142, 303, 86, 87),
+            (286, 1137, 328, 316),
+            (298, 891, 254, 243),
+            (337, 840, 237, 238),
+        ]
+        for index, source_len, current_len, proposed_len in cases:
+            with self.subTest(index=index):
+                reason = repair_rejection_reason(
+                    "D" * source_len,
+                    "旧" * current_len,
+                    "新" * proposed_len,
+                )
+                self.assertIsNone(reason)
+
+    def test_repair_gate_rejects_candidate_truncated_against_current_target(self):
+        reason = repair_rejection_reason(
+            "D" * 1000,
+            "这是现有的完整中文译文。" * 20,
+            "残片",
+        )
+        self.assertEqual(reason, "too_short")
+
+    def test_repair_gate_allows_moderately_shorter_candidate_for_verification(self):
+        reason = repair_rejection_reason(
+            "D" * 500,
+            "旧" * 100,
+            "新" * 40,
+        )
+        self.assertIsNone(reason)
 
 
 if __name__ == "__main__":

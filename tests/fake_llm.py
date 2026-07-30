@@ -52,6 +52,15 @@ def routing_handler(messages, tier, json_mode):
             ensure_ascii=False,
         )
 
+    if "修复验证员" in system:
+        return json.dumps(
+            {
+                "verdict": "accept",
+                "rationale": "候选修复了所述问题且未引入新偏差",
+            },
+            ensure_ascii=False,
+        )
+
     if "术语" in system and "抽取器" in system:
         return json.dumps(
             {"terms": [{"source": "堀北", "target": "堀北", "type": "人物", "gender": "女"}]},
