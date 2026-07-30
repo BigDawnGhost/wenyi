@@ -107,11 +107,16 @@ REVIEW_EVIDENCE_TOOLS = """\
    {"chapter":整数,"index":章内 text_segments 下标,"before":0..6,"after":0..6}。
 4. book_context：读取一项书级信息。
    {"section":"style_guide|book_synopsis|chapter_digest","chapter":可选整数}。
+段落证据中的 target_origin=formal 表示冻结基线译文；target_origin=shadow_override
+表示本次 Review/Fix 循环尚未确认的影子修订，此时 baseline_target 给出冻结基线。
+多个 shadow_override 的重复不构成独立证据，不得据此反向证明术语表或修订正确。
 """
 
 REVIEW_AGENT_SYSTEM = Template("""\
 你是$src_label小说到$tgt_label译文的取证审校 Agent。初审已经给出一组候选问题；你必须核验每项，
 必要时通过 JSON 动作申请有限的全书证据，再给出最终判断。不得假设未取得的上下文。
+术语库和影子修订都是待核验材料，不是不可推翻的事实；须同时对照原文语义、术语 note、
+冻结基线及独立上下文。若它们互相矛盾，应驳回候选或保留基线，不得仅因影子修订重复出现而确认。
 
 $review_evidence_tools
 
@@ -164,6 +169,8 @@ $candidates_json
 REVIEW_ARBITER_SYSTEM = Template("""\
 你是全书 Review 冲突的终局仲裁 Agent。不同审校块针对同一术语、人物代词或固定表达提出了
 互相矛盾的建议。你只能给出供人工确认的裁决建议，不得声称已修改正文或术语库。
+术语库和影子修订都是待核验材料；target_origin=shadow_override 的重复不能作为独立多数证据。
+若术语目标、note、原文语义和冻结基线相互矛盾且无法消解，必须输出 unresolved。
 
 $review_evidence_tools
 优先按 first/middle/last 或明确的第 N 次出现选择性取证，不得请求全量正文。
