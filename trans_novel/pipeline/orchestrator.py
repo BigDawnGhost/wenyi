@@ -7,8 +7,8 @@
 翻译前先预扫源文建立全书理解（逐章梗概+全书概览，fast 档并行），作恒定前缀注入每章翻译。
 
 全书翻译完成后，独立 Review 阶段使用最终术语库按章并行审校；候选问题进入
-有界 Agent Loop 按需检索全书证据，跨块矛盾建议再统一仲裁。实验结果只写入
-时间戳 Debug 目录，不改正文或正式运行状态。run_all 随后执行一致性 QA、报告和导出。
+有界 Agent Loop 按需检索全书证据，跨块矛盾建议再统一仲裁。结果写入独立的
+正式 Review 目录，不改正文；run_all 随后仍以正式章节执行一致性 QA、报告和导出。
 进度回调 progress(done_segments, total_segments, label) 与 UI 无关，每批完成即触发。
 """
 
@@ -50,8 +50,8 @@ from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
 from ..postprocess.punct import normalize_zh_segments
 from .context import RollingContext
-from .review_debug import DebugReviewRun
 from .review_evidence import BookEvidenceIndex
+from .review_run import ReviewOutcome, ReviewRunStore
 from .runstore import STATUS_DONE, RunStore, slugify
 
 ProgressFn = Callable[[int, int, str], None]
@@ -171,11 +171,108 @@ def _review_overlay_digest(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _review_content_digest(chapters) -> str:
+    """计算本次 Review 实际读取的正式正文摘要。"""
+    payload = [
+        (
+            chapter.index,
+            text_index,
+            segment.index,
+            segment.anchor or "",
+            segment.kind,
+            segment.source,
+            segment.target or "",
+        )
+        for chapter in chapters
+        for text_index, segment in enumerate(chapter.text_segments)
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _review_net_changes(
+    chapters,
+    overrides: Mapping[tuple[int, int], str],
+    patch_records: list[dict[str, Any]],
+    active_patches: Mapping[tuple[int, int], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把多轮影子补丁折叠成每段一条的最终修改建议。"""
+    baseline = {
+        (chapter.index, text_index): segment.target or ""
+        for chapter in chapters
+        for text_index, segment in enumerate(chapter.text_segments)
+    }
+    issue_keys_by_location: dict[tuple[int, int], set[str]] = {}
+    for patch in patch_records:
+        chapter = patch.get("chapter")
+        index = patch.get("index")
+        if (
+            not isinstance(chapter, int)
+            or isinstance(chapter, bool)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or patch.get("status") == "rejected_cycle"
+        ):
+            continue
+        keys = issue_keys_by_location.setdefault((chapter, index), set())
+        keys.update(str(key) for key in patch.get("issue_keys", []) if isinstance(key, str) and key)
+
+    changes: list[dict[str, Any]] = []
+    for location, suggested_target in sorted(overrides.items()):
+        if baseline.get(location) == suggested_target:
+            continue
+        active = active_patches.get(location) or {}
+        changes.append(
+            {
+                "chapter": location[0],
+                "index": location[1],
+                "suggested_target": suggested_target,
+                "issue_keys": sorted(issue_keys_by_location.get(location, set())),
+                "review_result": str(active.get("status") or "provisional"),
+            }
+        )
+    return changes
+
+
+def _review_public_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """裁剪内部审校字段，生成面向用户的稳定问题列表。"""
+    public: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        issue_key = issue.get("issue_key")
+        chapter = issue.get("chapter")
+        index = issue.get("index")
+        if (
+            not isinstance(issue_key, str)
+            or not issue_key
+            or not isinstance(chapter, int)
+            or isinstance(chapter, bool)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+        ):
+            continue
+        public[issue_key] = {
+            "issue_key": issue_key,
+            "chapter": chapter,
+            "index": index,
+            "type": str(issue.get("type") or ""),
+            "detail": str(issue.get("detail") or ""),
+            "suggestion": str(issue.get("suggestion") or ""),
+        }
+    return sorted(
+        public.values(),
+        key=lambda issue: (issue["chapter"], issue["index"], issue["issue_key"]),
+    )
+
+
 def _review_conflict_records(
     groups: list[dict[str, Any]],
     arbitrations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """把冲突组及对应仲裁结果序列化为稳定的 Debug 记录。"""
+    """把冲突组及对应仲裁结果序列化为稳定的逐轮记录。"""
     return [
         {
             "conflict_id": group["conflict_id"],
@@ -263,7 +360,6 @@ class Orchestrator:
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
-        self._last_review_debug_dir: str | None = None
 
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
@@ -1243,14 +1339,14 @@ class Orchestrator:
         )
         return summary
 
-    # ── 实验性全书 Agent Review ─────────────────────────────────────────────
+    # ── 只读全书 Agent Review ───────────────────────────────────────────────
 
     def _review_round(
         self,
         loaded,
         all_terms: list[GlossaryTerm],
         evidence: BookEvidenceIndex,
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
         *,
         review_round: int,
         target_overrides: Mapping[tuple[int, int], str],
@@ -1296,7 +1392,7 @@ class Orchestrator:
                 issue["review_round"] = review_round
             raw_issues.extend(chapter_issues)
             debug.log_event(
-                "review_debug_chapter_finished",
+                "review_chapter_finished",
                 chapter=chapter.index,
                 segment_count=len(text_segs),
                 issue_count=len(chapter_issues),
@@ -1415,7 +1511,7 @@ class Orchestrator:
         evidence: BookEvidenceIndex,
         all_terms: list[GlossaryTerm],
         analysis: dict[str, Any],
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
         *,
         review_round: int,
         fix_round: int,
@@ -1600,18 +1696,18 @@ class Orchestrator:
         )
         return patches, [*skipped, *failures]
 
-    def _review_book_debug(
+    def _run_review_session(
         self,
         store: RunStore,
         all_terms: list[GlossaryTerm],
         *,
         progress: ProgressFn | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> ReviewOutcome:
         """在只读影子译文上循环 Review→临时 Fix→盲复审。
 
-        正式 chapter、manifest、report、events、usage 和术语库始终不变。每轮
-        Fix 只更新内存 overlay 与本次时间戳 Debug 目录，下一轮全书 Review
-        不接收旧问题说明，只读取修改后的影子译文。
+        正式 chapter、manifest 和术语库始终不变。每轮 Fix 只更新内存 overlay
+        与本次 Review 目录；下一轮全书 Review 不接收旧问题说明，只读取修改后
+        的影子译文。会话摘要、用量与正式事件在结束时持久化。
         """
         manifest = store.load_manifest()
         pending = [
@@ -1628,39 +1724,47 @@ class Orchestrator:
         loaded = [store.load_chapter(item["index"]) for item in chapter_rows]
         total = sum(len(chapter.text_segments) for chapter in loaded)
         analysis = store.load_analysis() or {}
-        debug = DebugReviewRun(store.run_dir)
-        self._last_review_debug_dir = debug.run_dir
+        reviewed_content_digest = _review_content_digest(loaded)
+        debug = ReviewRunStore(store.run_dir)
         debug.start(
-            source_path=manifest.get("source_path"),
-            title=manifest.get("title"),
-            source_lang=self.config.source_lang,
-            target_lang=self.config.target_lang,
-            chapter_count=len(loaded),
-            total_segments=total,
-            config={
-                "review_concurrency": self.config.pipeline.review_concurrency,
-                "review_output_retries": self.config.pipeline.review_output_retries,
-                "review_agent_loop": self.config.pipeline.review_agent_loop,
-                "review_agent_tier": self.config.pipeline.review_agent_tier,
-                "review_agent_max_evidence_rounds": (
-                    self.config.pipeline.review_agent_max_evidence_rounds
-                ),
-                "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
-                "review_fix_loop": self.config.pipeline.review_fix_loop,
-                "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
-                "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
+            reviewed_content_digest=reviewed_content_digest,
+            metadata={
+                "source_path": manifest.get("source_path"),
+                "title": manifest.get("title"),
+                "source_lang": self.config.source_lang,
+                "target_lang": self.config.target_lang,
+                "chapter_count": len(loaded),
+                "total_segments": total,
+                "config": {
+                    "review_concurrency": self.config.pipeline.review_concurrency,
+                    "review_output_retries": self.config.pipeline.review_output_retries,
+                    "review_agent_loop": self.config.pipeline.review_agent_loop,
+                    "review_agent_tier": self.config.pipeline.review_agent_tier,
+                    "review_agent_max_evidence_rounds": (
+                        self.config.pipeline.review_agent_max_evidence_rounds
+                    ),
+                    "review_conflict_arbitration": (
+                        self.config.pipeline.review_conflict_arbitration
+                    ),
+                    "review_fix_loop": self.config.pipeline.review_fix_loop,
+                    "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
+                    "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
+                },
             },
+        )
+        store.log_event(
+            "review_started",
+            review_id=debug.review_id,
+            review_dir=debug.run_dir,
+            reviewed_content_digest=reviewed_content_digest,
         )
         usage_before = self.client.usage_summary()
 
-        def save_debug_usage() -> dict[str, Any]:
-            """保存本次实验 Review 的用量增量，不写入正式 usage.json。"""
+        def save_review_usage() -> dict[str, Any]:
+            """保存本次 Review 增量并合并到本书累计用量。"""
             usage = usage_delta(self.client.usage_summary(), usage_before)
-            debug.write_json("usage.json", usage)
-            debug.log_event(
-                "review_debug_usage_recorded",
-                **usage["totals"],
-            )
+            debug.save_usage(usage)
+            self._flush_usage(store, scope="review")
             return usage
 
         target_overrides: dict[tuple[int, int], str] = {}
@@ -2011,18 +2115,18 @@ class Orchestrator:
             ]
             final_fallback_agent_count = _review_unresolved_fallback_count(unresolved)
             initial_issues, dismissed = debug.result_snapshots()
-            debug.write_json("initial_issues.json", initial_issues)
-            debug.write_json("dismissed_issues.json", dismissed)
+            debug.write_json("rounds/final/initial_issues.json", initial_issues)
+            debug.write_json("rounds/final/dismissed_issues.json", dismissed)
             debug.write_json(
-                "pre_arbitration_issues.json",
+                "rounds/final/pre_arbitration_issues.json",
                 latest.pre_arbitration_issues,
             )
             debug.write_json(
-                "arbitration_superseded_issues.json",
+                "rounds/final/arbitration_superseded_issues.json",
                 latest.arbitration_superseded,
             )
             debug.write_json(
-                "residual_conflicts.json",
+                "rounds/final/residual_conflicts.json",
                 [
                     {
                         "conflict_id": record["conflict_id"],
@@ -2032,20 +2136,20 @@ class Orchestrator:
                     for record in final_residual_conflicts
                 ],
             )
-            debug.write_json("conflicts.json", final_conflicts)
-            debug.write_json("patches.json", patch_records)
+            debug.write_json("rounds/final/conflicts.json", final_conflicts)
+            debug.write_json("rounds/final/patch-history.json", patch_records)
             debug.write_json(
-                "not_rereported_patches.json",
+                "rounds/final/not_rereported_patches.json",
                 [patch for patch in patch_records if patch["status"] == "not_rereported"],
             )
             debug.write_json(
-                "unresolved_issues.json",
+                "rounds/final/unresolved_issues.json",
                 unresolved,
             )
-            debug.write_json("fix_failures.json", fix_failures)
-            debug.write_json("rounds.json", round_summaries)
+            debug.write_json("rounds/final/fix_failures.json", fix_failures)
+            debug.write_json("rounds/final/rounds.json", round_summaries)
             debug.write_json(
-                "shadow_targets.json",
+                "rounds/final/shadow_targets.json",
                 [
                     {
                         "chapter": chapter,
@@ -2055,61 +2159,100 @@ class Orchestrator:
                     for (chapter, index), target in sorted(target_overrides.items())
                 ],
             )
+            public_issues = _review_public_issues(unresolved)
+            changes = _review_net_changes(
+                loaded,
+                target_overrides,
+                patch_records,
+                active_patches,
+            )
             summary = {
                 "initial_issue_count": len(initial_issues),
                 "dismissed_issue_count": len(dismissed),
                 "pre_arbitration_issue_count": len(latest.pre_arbitration_issues),
                 "arbitration_superseded_count": len(latest.arbitration_superseded),
-                "issue_count": len(unresolved),
+                "issue_count": len(public_issues),
                 "conflict_count": len(final_conflicts),
                 "unresolved_conflict_count": len(final_residual_conflicts),
                 "fallback_agent_count": final_fallback_agent_count,
                 "review_round_count": len(round_summaries),
                 "fix_round_count": fix_rounds,
                 "patch_count": len(patch_records),
+                "change_count": len(changes),
                 "not_rereported_patch_count": sum(
                     patch["status"] == "not_rereported" for patch in patch_records
                 ),
                 "shadow_override_count": len(target_overrides),
                 "blocked_issue_count": len(blocked_issues),
                 "clean_streak": clean_streak,
-                "termination": termination,
-                "debug_dir": debug.run_dir,
             }
-            debug.write_json(
-                "result.json",
-                {
-                    "summary": summary,
-                    "issues": unresolved,
-                    "conflicts": final_conflicts,
-                    "patches": patch_records,
-                    "fix_failures": fix_failures,
-                    "arbitration_superseded_issues": (latest.arbitration_superseded),
-                },
+            debug.write_json("rounds/final/summary.json", summary)
+            result = debug.finish(
+                status="completed",
+                termination=termination,
+                summary=summary,
+                issues=public_issues,
+                changes=changes,
             )
-            debug.write_json("summary.json", summary)
-            save_debug_usage()
-            debug.finish(status="finished", **summary)
-            return unresolved
+            usage = save_review_usage()
+            store.log_event(
+                "review_finished",
+                review_id=debug.review_id,
+                review_dir=debug.run_dir,
+                status="completed",
+                termination=termination,
+                issue_count=len(public_issues),
+                change_count=len(changes),
+            )
+            return ReviewOutcome(
+                run_dir=debug.run_dir,
+                result=result,
+                usage=usage,
+            )
         except Exception as error:
             initial_issues, dismissed = debug.result_snapshots()
-            debug.write_json("initial_issues.json", initial_issues)
-            debug.write_json("dismissed_issues.json", dismissed)
-            debug.write_json(
-                "partial_issues.json",
-                effective_issues(latest) if latest is not None else [],
+            partial_issues = effective_issues(latest) if latest is not None else []
+            public_issues = _review_public_issues(partial_issues)
+            partial_changes = _review_net_changes(
+                loaded,
+                target_overrides,
+                patch_records,
+                active_patches,
             )
-            debug.write_json("partial_patches.json", patch_records)
-            debug.write_json("fix_failures.json", fix_failures)
-            save_debug_usage()
+            debug.write_json("rounds/final/initial_issues.json", initial_issues)
+            debug.write_json("rounds/final/dismissed_issues.json", dismissed)
+            debug.write_json(
+                "rounds/final/partial_issues.json",
+                partial_issues,
+            )
+            debug.write_json("rounds/final/partial_patches.json", patch_records)
+            debug.write_json("rounds/final/fix_failures.json", fix_failures)
             debug.finish(
                 status="failed",
-                issue_count=len(latest.issues) if latest is not None else 0,
-                conflict_count=(len(latest.conflict_groups) if latest is not None else 0),
-                fallback_agent_count=(latest.fallback_agent_count if latest is not None else 0),
+                termination="error",
+                summary={
+                    "issue_count": len(public_issues),
+                    "change_count": len(partial_changes),
+                    "conflict_count": (len(latest.conflict_groups) if latest is not None else 0),
+                    "fallback_agent_count": (
+                        latest.fallback_agent_count if latest is not None else 0
+                    ),
+                },
+                issues=public_issues,
+                changes=partial_changes,
+                error={"type": type(error).__name__, "message": str(error)},
+            )
+            save_review_usage()
+            store.log_event(
+                "review_finished",
+                review_id=debug.review_id,
+                review_dir=debug.run_dir,
+                status="failed",
+                termination="error",
+                issue_count=len(public_issues),
+                change_count=len(partial_changes),
                 error_type=type(error).__name__,
                 error=str(error),
-                debug_dir=debug.run_dir,
             )
             raise
 
@@ -2120,7 +2263,7 @@ class Orchestrator:
         *,
         chapter_index: int | None = None,
         evidence: BookEvidenceIndex | None = None,
-        debug: DebugReviewRun | None = None,
+        debug: ReviewRunStore | None = None,
         target_overrides: Mapping[tuple[int, int], str] | None = None,
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
@@ -2469,27 +2612,23 @@ class Orchestrator:
         *,
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
-        """全量执行 Debug-only Review，不修改正式状态、Usage 或正文。"""
-        self._last_review_debug_dir = None
+        """全量执行只读 Review，并保存正式结果、事件与用量。"""
         store = self._locate_existing_store(input_path, progress=progress)
         with store.lock():
             manifest = store.load_manifest()
             self._apply_language(manifest.get("source_lang") or self.config.source_lang)
             terms = GlossaryStore.load_terms_readonly(store.glossary_path)
-            try:
-                issues = self._review_book_debug(
-                    store,
-                    terms,
-                    progress=progress,
-                )
-            finally:
-                # 实验 Review 的调用不进入正式 usage.json；抬高 checkpoint，
-                # 避免同一 Orchestrator 后续阶段把本次用量补写进去。
-                self._usage_checkpoint = self.client.usage_summary()
+            outcome = self._run_review_session(
+                store,
+                terms,
+                progress=progress,
+            )
         return {
             "store": store,
-            "review_issues": issues,
-            "debug_dir": self._last_review_debug_dir,
+            "review_issues": outcome.issues,
+            "review_changes": outcome.changes,
+            "review_result": outcome.result,
+            "review_dir": outcome.run_dir,
         }
 
     def run_steps(
@@ -2503,7 +2642,6 @@ class Orchestrator:
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
-        self._last_review_debug_dir = None
         steps = set(steps)
         run_steps_input = sorted(steps)
         if steps == {"review"}:
@@ -2514,7 +2652,9 @@ class Orchestrator:
                 "outputs": [],
                 "report": None,
                 "review_issues": reviewed["review_issues"],
-                "review_debug_dir": reviewed["debug_dir"],
+                "review_changes": reviewed["review_changes"],
+                "review_result": reviewed["review_result"],
+                "review_dir": reviewed["review_dir"],
                 "qa_issues": [],
             }
 
@@ -2559,25 +2699,28 @@ class Orchestrator:
             GlossaryStore(store.glossary_path) if {"qa", "report"}.intersection(steps) else None
         )
         review_issues: list[dict] = []
+        review_changes: list[dict] = []
+        review_result: dict[str, Any] | None = None
+        review_dir: str | None = None
         qa_issues: list[dict] = []
         report: dict[str, Any] | None = None
         try:
             if "review" in steps:
-                # 先保存 Review 前的合法增量；Review 自身所有用量无论成功失败
-                # 都通过推进 checkpoint 排除在正式 usage.json 之外。
+                # 先保存此前阶段的增量，使会话 usage.json 只包含 Review 调用。
                 self._flush_usage(store, scope="pipeline")
-                try:
-                    review_issues = self._review_book_debug(
-                        store,
-                        (
-                            glossary.all_terms()
-                            if glossary is not None
-                            else GlossaryStore.load_terms_readonly(store.glossary_path)
-                        ),
-                        progress=progress,
-                    )
-                finally:
-                    self._usage_checkpoint = self.client.usage_summary()
+                outcome = self._run_review_session(
+                    store,
+                    (
+                        glossary.all_terms()
+                        if glossary is not None
+                        else GlossaryStore.load_terms_readonly(store.glossary_path)
+                    ),
+                    progress=progress,
+                )
+                review_issues = outcome.issues
+                review_changes = outcome.changes
+                review_result = outcome.result
+                review_dir = outcome.run_dir
 
             if "qa" in steps:
                 if glossary is None:  # pragma: no cover - 由 needs 条件保证
@@ -2655,7 +2798,9 @@ class Orchestrator:
             "outputs": outputs,
             "report": report,
             "review_issues": review_issues,
-            "review_debug_dir": self._last_review_debug_dir,
+            "review_changes": review_changes,
+            "review_result": review_result,
+            "review_dir": review_dir,
             "qa_issues": qa_issues,
         }
 

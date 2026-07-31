@@ -403,8 +403,15 @@ def _translate_impl_or_raise(
     _print_usage({"usage": result["store"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
-    if result.get("review_debug_dir"):
-        console.print(f"审校调试目录：{result['review_debug_dir']}")
+    if result.get("review_dir"):
+        review_result = result.get("review_result") or {}
+        review_summary = review_result.get("summary") or {}
+        console.print(
+            f"审校结果：{review_result.get('termination', 'unknown')}，"
+            f"问题 {review_summary.get('issue_count', 0)} 项，"
+            f"修改建议 {review_summary.get('change_count', 0)} 项。"
+        )
+        console.print(f"审校目录：{result['review_dir']}")
 
 
 def _prepare_impl(input_path: str) -> None:
@@ -567,7 +574,7 @@ def prepare(
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
 ):
-    """全量运行取证、影子修订与盲复审；结果只写入时间戳 Debug 目录。"""
+    """全量运行取证、影子修订与盲复审；不修改正式正文。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input)
@@ -589,15 +596,15 @@ def review(
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
 
-    issues = result["review_issues"]
+    review_result = result["review_result"]
+    summary = review_result["summary"]
     console.print(
-        f"[bold green]全书 Agent 审校完成[/]：影子修订复审后仍有 {len(issues)} 项问题建议。"
+        f"[bold green]全书 Agent 审校完成[/]：{review_result['termination']}，"
+        f"仍有 {summary['issue_count']} 项问题，"
+        f"生成 {summary['change_count']} 项修改建议。"
     )
-    console.print(
-        "实验模式只修改本次影子译文；正式正文和正式状态未变，临时补丁、建议及日志仅写入调试目录。"
-    )
-    if result.get("debug_dir"):
-        console.print(f"调试目录：{result['debug_dir']}")
+    console.print("审校结果为只读建议，正式章节译文未修改。")
+    console.print(f"审校目录：{result['review_dir']}")
 
 
 # ── 查询 / 细粒度命令 ──────────────────────────────────────────────────────

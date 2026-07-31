@@ -429,7 +429,7 @@ class TestRunSteps(unittest.TestCase):
 
 
 class TestReviewReporting(unittest.TestCase):
-    """实验性全书 Agent Review：全量运行且结果只写 Debug 目录。"""
+    """只读全书 Agent Review：不改正文，但保存正式结果、事件与用量。"""
 
     def _handler(self):
         """审校每块报 index 0 漏译，其它流水线调用沿用通用 Fake 响应。"""
@@ -461,6 +461,16 @@ class TestReviewReporting(unittest.TestCase):
         orch.run(txt)
         return orch.run_review(txt)
 
+    @staticmethod
+    def _load_internal_issues(result):
+        """读取只供逻辑断言使用的完整逐轮问题记录。"""
+        return json.loads(
+            Path(
+                result["review_dir"],
+                "rounds/final/unresolved_issues.json",
+            ).read_text(encoding="utf-8")
+        )
+
     def test_run_does_not_call_reviewer_even_for_only_chapter(self):
         """翻译主流程和 only_chapter 都不再隐式触发最终审校。"""
         with tempfile.TemporaryDirectory() as d:
@@ -480,8 +490,8 @@ class TestReviewReporting(unittest.TestCase):
                 all("review_status" not in chapter for chapter in store.load_manifest()["chapters"])
             )
 
-    def test_debug_review_never_modifies_body_or_formal_review_state(self):
-        """实验 Review 只生成 Debug 建议，不修改任何正式状态文件。"""
+    def test_review_never_modifies_body_or_translation_state(self):
+        """Review 只生成建议，不修改正文、manifest、术语库或报告。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -493,18 +503,13 @@ class TestReviewReporting(unittest.TestCase):
                 store.manifest_path,
                 store.chapter_path(0),
                 store.glossary_path,
-                store.usage_path,
-                store.event_log_path,
                 store.report_path,
             ]
             before = {
                 path: Path(path).read_bytes() if os.path.exists(path) else None for path in watched
             }
-            formal_before = {
-                str(path.relative_to(store.run_dir)): path.read_bytes()
-                for path in Path(store.run_dir).rglob("*")
-                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
-            }
+            usage_before = Path(store.usage_path).read_bytes()
+            events_before = Path(store.event_log_path).read_bytes()
 
             result = orch.run_review(txt)
             store = result["store"]
@@ -518,71 +523,77 @@ class TestReviewReporting(unittest.TestCase):
                     for path in watched
                 },
             )
-            formal_after = {
-                str(path.relative_to(store.run_dir)): path.read_bytes()
-                for path in Path(store.run_dir).rglob("*")
-                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
-            }
-            self.assertEqual(formal_after, formal_before)
-            self.assertTrue(os.path.isfile(os.path.join(result["debug_dir"], "result.json")))
+            self.assertNotEqual(Path(store.usage_path).read_bytes(), usage_before)
+            self.assertNotEqual(Path(store.event_log_path).read_bytes(), events_before)
+            self.assertTrue(os.path.isfile(os.path.join(result["review_dir"], "result.json")))
             with open(
-                os.path.join(result["debug_dir"], "usage.json"),
+                os.path.join(result["review_dir"], "usage.json"),
                 encoding="utf-8",
             ) as file:
-                debug_usage = json.load(file)
-            self.assertGreater(debug_usage["totals"]["calls"], 0)
-            self.assertIn("Reviewer", debug_usage["by_stage"])
-            self.assertNotIn("Translator", debug_usage["by_stage"])
+                review_usage = json.load(file)
+            self.assertGreater(review_usage["totals"]["calls"], 0)
+            self.assertIn("Reviewer", review_usage["by_stage"])
+            self.assertNotIn("Translator", review_usage["by_stage"])
+            self.assertIn("Reviewer", (store.load_usage() or {})["by_stage"])
             self.assertGreater(
                 client.usage_summary()["by_stage"]["Reviewer"]["calls"],
                 0,
             )
 
-    def test_debug_review_saves_initial_and_unresolved_suggestions(self):
+    def test_review_saves_unified_result_and_round_diagnostics(self):
         with tempfile.TemporaryDirectory() as d:
             result = self._run(d)
             with open(
-                os.path.join(result["debug_dir"], "initial_issues.json"),
+                os.path.join(
+                    result["review_dir"],
+                    "rounds/final/initial_issues.json",
+                ),
                 encoding="utf-8",
             ) as file:
                 initial = json.load(file)
             with open(
-                os.path.join(result["debug_dir"], "unresolved_issues.json"),
+                os.path.join(result["review_dir"], "result.json"),
                 encoding="utf-8",
             ) as file:
-                unresolved = json.load(file)
+                saved = json.load(file)
             self.assertTrue(initial)
-            self.assertTrue(unresolved)
-            self.assertFalse(os.path.exists(os.path.join(result["debug_dir"], "final_issues.json")))
+            self.assertTrue(saved["issues"])
+            self.assertEqual(saved, result["review_result"])
+            self.assertEqual(
+                set(saved["issues"][0]),
+                {"issue_key", "chapter", "index", "type", "detail", "suggestion"},
+            )
+            self.assertEqual(
+                set(os.listdir(result["review_dir"])),
+                {
+                    "events.jsonl",
+                    "result.json",
+                    "rounds",
+                    "usage.json",
+                },
+            )
 
-    def test_review_only_run_steps_is_also_debug_only(self):
-        """内部 review-only 步骤与独立命令一致，不写通用流水线事件。"""
+    def test_review_only_run_steps_returns_formal_read_only_result(self):
+        """内部 review-only 步骤与独立命令一致，并保持正文只读。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=MeteredFakeClient(handler=self._handler()))
             store = orch.run(txt)
-            formal_before = {
-                str(path.relative_to(store.run_dir)): path.read_bytes()
-                for path in Path(store.run_dir).rglob("*")
-                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
-            }
+            manifest_before = Path(store.manifest_path).read_bytes()
+            chapter_before = Path(store.chapter_path(0)).read_bytes()
 
             result = orch.run_steps(txt, {"review"})
 
-            formal_after = {
-                str(path.relative_to(store.run_dir)): path.read_bytes()
-                for path in Path(store.run_dir).rglob("*")
-                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
-            }
-            self.assertEqual(formal_after, formal_before)
+            self.assertEqual(Path(store.manifest_path).read_bytes(), manifest_before)
+            self.assertEqual(Path(store.chapter_path(0)).read_bytes(), chapter_before)
             self.assertIsNone(result["output"])
             self.assertEqual(result["outputs"], [])
             self.assertTrue(result["review_issues"])
-            self.assertTrue(os.path.isfile(os.path.join(result["review_debug_dir"], "run.json")))
+            self.assertTrue(os.path.isfile(os.path.join(result["review_dir"], "result.json")))
 
-    def test_debug_review_does_not_create_formal_report(self):
+    def test_independent_review_does_not_create_report_implicitly(self):
         with tempfile.TemporaryDirectory() as d:
             result = self._run(d)
             self.assertFalse(os.path.exists(result["store"].report_path))
@@ -715,8 +726,8 @@ class TestReviewReporting(unittest.TestCase):
             with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
                 orch.run_review(txt)
 
-    def test_review_always_reruns_and_creates_a_new_debug_directory(self):
-        """实验模式忽略旧摘要，每次执行都是一轮独立全书 Review。"""
+    def test_review_always_reruns_and_creates_a_new_review_directory(self):
+        """每次执行都是一轮独立全书 Review。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -735,7 +746,7 @@ class TestReviewReporting(unittest.TestCase):
                 "译文审校" in call["messages"][0]["content"] for call in client.calls
             )
             self.assertEqual(second_count, first_count * 2)
-            self.assertNotEqual(first["debug_dir"], second["debug_dir"])
+            self.assertNotEqual(first["review_dir"], second["review_dir"])
 
     def test_review_rejects_incomplete_book(self):
         """独立最终审校要求全书所有章节均已翻译完成。"""
@@ -749,7 +760,7 @@ class TestReviewReporting(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "所有章节先完成翻译"):
                 orch.run_review(txt)
 
-            self.assertFalse(os.path.exists(os.path.join(store.run_dir, "debug")))
+            self.assertFalse(os.path.exists(store.reviews_dir))
 
     def test_review_without_state_rejects_pdf_before_conversion(self):
         """PDF 尚无翻译状态时不得调用转换服务或创建空状态目录。"""
@@ -785,8 +796,8 @@ class TestReviewReporting(unittest.TestCase):
             self.assertEqual(client.calls, [])
             self.assertFalse(os.path.exists(cfg.state_dir))
 
-    def test_reviewer_failure_keeps_formal_status_and_writes_failed_debug_run(self):
-        """服务故障不污染正式状态，但 Debug run.json 必须留下失败收据。"""
+    def test_reviewer_failure_keeps_body_and_writes_failed_review_result(self):
+        """服务故障不污染正文，但必须记录失败结果、事件和用量。"""
 
         def handler(messages, tier, json_mode):
             if "译文审校" in messages[0]["content"]:
@@ -815,29 +826,30 @@ class TestReviewReporting(unittest.TestCase):
             self.assertTrue(
                 all("review_status" not in chapter for chapter in store.load_manifest()["chapters"])
             )
-            debug_root = os.path.join(store.run_dir, "debug")
-            runs = sorted(os.listdir(debug_root))
+            runs = sorted(os.listdir(store.reviews_dir))
             with open(
-                os.path.join(debug_root, runs[-1], "run.json"),
+                os.path.join(store.reviews_dir, runs[-1], "result.json"),
                 encoding="utf-8",
             ) as file:
                 receipt = json.load(file)
             self.assertEqual(receipt["status"], "failed")
-            self.assertEqual(receipt["error_type"], "RuntimeError")
+            self.assertEqual(receipt["termination"], "error")
+            self.assertEqual(receipt["error"]["type"], "RuntimeError")
             with open(
-                os.path.join(debug_root, runs[-1], "usage.json"),
+                os.path.join(store.reviews_dir, runs[-1], "usage.json"),
                 encoding="utf-8",
             ) as file:
-                debug_usage = json.load(file)
-            self.assertEqual(debug_usage["totals"]["calls"], 1)
-            self.assertEqual(debug_usage["totals"]["total_tokens"], 8)
-            self.assertEqual(debug_usage["by_stage"]["Reviewer"]["calls"], 1)
-            self.assertEqual(Path(store.usage_path).read_bytes(), usage_before)
-            self.assertEqual(Path(store.event_log_path).read_bytes(), events_before)
+                review_usage = json.load(file)
+            self.assertEqual(review_usage["totals"]["calls"], 1)
+            self.assertEqual(review_usage["totals"]["total_tokens"], 8)
+            self.assertEqual(review_usage["by_stage"]["Reviewer"]["calls"], 1)
+            self.assertNotEqual(Path(store.usage_path).read_bytes(), usage_before)
+            self.assertNotEqual(Path(store.event_log_path).read_bytes(), events_before)
+            self.assertEqual((store.load_usage() or {})["by_stage"]["Reviewer"]["calls"], 1)
             self.assertEqual(client.usage_summary()["by_stage"]["Reviewer"]["calls"], 1)
 
-    def test_run_steps_excludes_review_usage_on_success_and_failure(self):
-        """组合流水线只持久化 Review 之前的用量，Review 成败都不泄漏。"""
+    def test_run_steps_records_review_usage_on_success_and_failure(self):
+        """组合流水线按阶段持久化 Review 之前及 Review 自身的用量。"""
         for fail in (False, True):
             with self.subTest(fail=fail), tempfile.TemporaryDirectory() as d:
                 txt = os.path.join(d, "novel.txt")
@@ -880,7 +892,7 @@ class TestReviewReporting(unittest.TestCase):
                 self.assertIsNotNone(usage)
                 assert usage is not None
                 self.assertEqual(usage["by_stage"]["PreReview"]["calls"], 1)
-                self.assertNotIn("Reviewer", usage["by_stage"])
+                self.assertIn("Reviewer", usage["by_stage"])
                 usage_events = [
                     json.loads(line)
                     for line in Path(base_store.event_log_path)
@@ -889,9 +901,9 @@ class TestReviewReporting(unittest.TestCase):
                     if json.loads(line).get("event") == "usage_summary"
                 ]
                 self.assertTrue(usage_events)
-                self.assertNotIn("Reviewer", json.dumps(usage_events, ensure_ascii=False))
+                self.assertIn("Reviewer", json.dumps(usage_events, ensure_ascii=False))
 
-    def test_non_review_run_does_not_reuse_previous_debug_directory(self):
+    def test_non_review_run_does_not_report_a_new_review_directory(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -902,11 +914,15 @@ class TestReviewReporting(unittest.TestCase):
             reviewed = orch.run_review(txt)
             reported = orch.run_steps(txt, {"report"})
 
-            self.assertIsNotNone(reviewed["debug_dir"])
-            self.assertIsNone(reported["review_debug_dir"])
+            self.assertIsNotNone(reviewed["review_dir"])
+            self.assertIsNone(reported["review_dir"])
+            self.assertEqual(
+                reported["report"]["review"]["review_id"],
+                reviewed["review_result"]["review_id"],
+            )
 
-    def test_conflict_arbitration_changes_final_debug_suggestions(self):
-        """终局仲裁会改写落选建议，同时在 Debug 中保留完整审计链。"""
+    def test_conflict_arbitration_changes_final_review_suggestions(self):
+        """终局仲裁会改写落选建议，同时保留完整逐轮记录。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -962,17 +978,20 @@ class TestReviewReporting(unittest.TestCase):
                 )
 
             with open(
-                os.path.join(result["debug_dir"], "pre_arbitration_issues.json"),
+                os.path.join(
+                    result["review_dir"],
+                    "rounds/final/pre_arbitration_issues.json",
+                ),
                 encoding="utf-8",
             ) as file:
                 before = json.load(file)
+            final = result["review_result"]["issues"]
+            internal_final = self._load_internal_issues(result)
             with open(
-                os.path.join(result["debug_dir"], "unresolved_issues.json"),
-                encoding="utf-8",
-            ) as file:
-                final = json.load(file)
-            with open(
-                os.path.join(result["debug_dir"], "arbitration_superseded_issues.json"),
+                os.path.join(
+                    result["review_dir"],
+                    "rounds/final/arbitration_superseded_issues.json",
+                ),
                 encoding="utf-8",
             ) as file:
                 superseded = json.load(file)
@@ -981,7 +1000,7 @@ class TestReviewReporting(unittest.TestCase):
             self.assertEqual(len(final), 2)
             self.assertEqual(len(superseded), 1)
             self.assertEqual(
-                {issue["consistency"]["proposed_value"] for issue in final},
+                {issue["consistency"]["proposed_value"] for issue in internal_final},
                 {"绫小路"},
             )
             self.assertEqual(result["review_issues"], final)
@@ -1037,11 +1056,8 @@ class TestReviewReporting(unittest.TestCase):
             client = MeteredFakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
             store = orch.run(txt)
-            formal_before = {
-                str(path.relative_to(store.run_dir)): path.read_bytes()
-                for path in Path(store.run_dir).rglob("*")
-                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
-            }
+            manifest_before = Path(store.manifest_path).read_bytes()
+            chapter_before = Path(store.chapter_path(0)).read_bytes()
 
             progress_events: list[tuple[int, int, str]] = []
             result = orch.run_review(
@@ -1049,26 +1065,27 @@ class TestReviewReporting(unittest.TestCase):
                 progress=lambda done, total, label: progress_events.append((done, total, label)),
             )
 
-            formal_after = {
-                str(path.relative_to(store.run_dir)): path.read_bytes()
-                for path in Path(store.run_dir).rglob("*")
-                if path.is_file() and "debug" not in path.relative_to(store.run_dir).parts
-            }
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
             patches = json.loads(
-                Path(result["debug_dir"], "patches.json").read_text(encoding="utf-8")
+                Path(result["review_dir"], "rounds/final/patch-history.json").read_text(
+                    encoding="utf-8"
+                )
             )
             not_rereported = json.loads(
-                Path(result["debug_dir"], "not_rereported_patches.json").read_text(encoding="utf-8")
+                Path(
+                    result["review_dir"],
+                    "rounds/final/not_rereported_patches.json",
+                ).read_text(encoding="utf-8")
             )
             fixer_trace_exists = Path(
-                result["debug_dir"],
+                result["review_dir"],
                 "rounds/001/fixers/ch0-text1.json",
             ).is_file()
+            manifest_after = Path(store.manifest_path).read_bytes()
+            chapter_after = Path(store.chapter_path(0)).read_bytes()
 
-        self.assertEqual(formal_after, formal_before)
+        self.assertEqual(manifest_after, manifest_before)
+        self.assertEqual(chapter_after, chapter_before)
         self.assertEqual(len(fix_users), 1)
         self.assertIn("语义不完整", fix_users[0])
         self.assertIn("人物译名不统一", fix_users[0])
@@ -1080,7 +1097,7 @@ class TestReviewReporting(unittest.TestCase):
             "第二轮基础 Reviewer 必须直接读取影子译文",
         )
         self.assertEqual(result["review_issues"], [])
-        self.assertEqual(summary["termination"], "clean_confirmed")
+        self.assertEqual(result["review_result"]["termination"], "clean_confirmed")
         self.assertEqual(summary["review_round_count"], 3)
         self.assertEqual(summary["fix_round_count"], 1)
         self.assertEqual(summary["not_rereported_patch_count"], 1)
@@ -1089,7 +1106,19 @@ class TestReviewReporting(unittest.TestCase):
         self.assertEqual(patches[0]["status"], "not_rereported")
         self.assertEqual(patches[0]["not_rereported_in_round"], 2)
         self.assertEqual(not_rereported, patches)
-        self.assertFalse(Path(result["debug_dir"], "verified_patches.json").exists())
+        self.assertFalse(Path(result["review_dir"], "verified_patches.json").exists())
+        self.assertEqual(
+            result["review_changes"],
+            [
+                {
+                    "chapter": 0,
+                    "index": 1,
+                    "suggested_target": "影子修订译文。",
+                    "issue_keys": patches[0]["issue_keys"],
+                    "review_result": "not_rereported",
+                }
+            ],
+        )
         self.assertTrue(fixer_trace_exists)
         self.assertEqual(
             [(done, total) for done, total, label in progress_events if label == "影子修订 R1"],
@@ -1123,15 +1152,13 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
 
         self.assertEqual(review_calls, 4)  # 两章 × 两轮全书盲审
         self.assertEqual(fix_calls, 0)
         self.assertEqual(summary["review_round_count"], 2)
         self.assertEqual(summary["clean_streak"], 2)
-        self.assertEqual(summary["termination"], "clean_confirmed")
+        self.assertEqual(result["review_result"]["termination"], "clean_confirmed")
 
     def test_last_allowed_fix_still_gets_two_clean_review_passes(self):
         """最后一轮 Fix 后仍须保留两次完整盲审的执行容量。"""
@@ -1177,16 +1204,14 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
 
         self.assertEqual(review_calls, 8)  # 两章 × 四轮全书 Review
         self.assertEqual(fix_calls, 2)
         self.assertEqual(summary["review_round_count"], 4)
         self.assertEqual(summary["fix_round_count"], 2)
         self.assertEqual(summary["clean_streak"], 2)
-        self.assertEqual(summary["termination"], "clean_confirmed")
+        self.assertEqual(result["review_result"]["termination"], "clean_confirmed")
 
     def test_clean_pass_before_a_fix_does_not_consume_post_fix_confirmation(self):
         """Fix 前的 clean 不能挤掉补丁后的两次独立确认。"""
@@ -1232,15 +1257,13 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
 
         self.assertEqual(review_calls, 8)  # clean → issue/fix → clean → clean
         self.assertEqual(fix_calls, 1)
         self.assertEqual(summary["review_round_count"], 4)
         self.assertEqual(summary["clean_streak"], 2)
-        self.assertEqual(summary["termination"], "clean_confirmed")
+        self.assertEqual(result["review_result"]["termination"], "clean_confirmed")
 
     def test_failed_fixer_issue_survives_when_other_patch_passes_review(self):
         """部分 Fixer 失败的问题不能因下一轮漏报而被当成 clean。"""
@@ -1292,22 +1315,25 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
             patches = json.loads(
-                Path(result["debug_dir"], "patches.json").read_text(encoding="utf-8")
+                Path(result["review_dir"], "rounds/final/patch-history.json").read_text(
+                    encoding="utf-8"
+                )
             )
             failures = json.loads(
-                Path(result["debug_dir"], "fix_failures.json").read_text(encoding="utf-8")
+                Path(result["review_dir"], "rounds/final/fix_failures.json").read_text(
+                    encoding="utf-8"
+                )
             )
+            internal_issues = self._load_internal_issues(result)
 
-        self.assertEqual(summary["termination"], "unresolved_fixes")
+        self.assertEqual(result["review_result"]["termination"], "unresolved_fixes")
         self.assertEqual(summary["blocked_issue_count"], 1)
         self.assertEqual(summary["issue_count"], 1)
         self.assertEqual(len(result["review_issues"]), 1)
         self.assertEqual(result["review_issues"][0]["index"], 1)
-        self.assertEqual(result["review_issues"][0]["fix_failure"]["reason"], "malformed_json")
+        self.assertEqual(internal_issues[0]["fix_failure"]["reason"], "malformed_json")
         self.assertEqual(len(patches), 1)
         self.assertEqual(patches[0]["status"], "not_rereported")
         self.assertEqual(len(failures), 1)
@@ -1374,19 +1400,21 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
+            internal_issues = self._load_internal_issues(result)
 
         self.assertEqual(review_calls, 6)  # 三轮全书 Review，每轮两章
-        self.assertEqual(summary["termination"], "unresolved_fixes")
+        self.assertEqual(result["review_result"]["termination"], "unresolved_fixes")
         self.assertEqual(summary["blocked_issue_count"], 1)
         self.assertEqual(len(result["review_issues"]), 1)
         issue = result["review_issues"][0]
         self.assertEqual((issue["chapter"], issue["index"]), (0, 1))
         self.assertEqual(issue["type"], "terminology")
         self.assertEqual(issue["detail"], "旧术语问题")
-        self.assertEqual(issue["fix_failure"]["reason"], "malformed_json")
+        internal_issue = next(
+            item for item in internal_issues if item["issue_key"] == issue["issue_key"]
+        )
+        self.assertEqual(internal_issue["fix_failure"]["reason"], "malformed_json")
 
     def test_same_segment_same_type_fix_failures_remain_distinct(self):
         """同段同类型的两个独立问题不能在 blocked 状态中互相覆盖。"""
@@ -1433,21 +1461,17 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
+            internal_issues = self._load_internal_issues(result)
 
-        self.assertEqual(summary["termination"], "no_progress")
+        self.assertEqual(result["review_result"]["termination"], "no_progress")
         self.assertEqual(summary["blocked_issue_count"], 2)
         self.assertEqual(
             {issue["detail"] for issue in result["review_issues"]},
             {"人物动作漏译", "时间关系误译"},
         )
         self.assertTrue(
-            all(
-                issue["fix_failure"]["reason"] == "malformed_json"
-                for issue in result["review_issues"]
-            )
+            all(issue["fix_failure"]["reason"] == "malformed_json" for issue in internal_issues)
         )
 
     def test_rereported_blocked_issue_is_deduplicated_across_rounds(self):
@@ -1503,13 +1527,11 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            internal_issues = self._load_internal_issues(result)
 
         repeated = [
             issue
-            for issue in result["review_issues"]
+            for issue in internal_issues
             if (
                 issue.get("chapter"),
                 issue.get("index"),
@@ -1518,7 +1540,7 @@ class TestReviewReporting(unittest.TestCase):
             )
             == (0, 1, "terminology", "跨轮重复的术语问题")
         ]
-        self.assertEqual(summary["termination"], "max_rounds")
+        self.assertEqual(result["review_result"]["termination"], "max_rounds")
         self.assertEqual(len(repeated), 1)
         self.assertEqual(repeated[0]["review_round"], 2)
         self.assertEqual(repeated[0]["fix_failure"]["reason"], "malformed_json")
@@ -1599,15 +1621,11 @@ class TestReviewReporting(unittest.TestCase):
             }
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            internal_issues = self._load_internal_issues(result)
 
-        self.assertEqual(summary["termination"], "cycle_detected")
+        self.assertEqual(result["review_result"]["termination"], "cycle_detected")
         blocked = [
-            issue
-            for issue in result["review_issues"]
-            if issue.get("detail") == "循环前已阻塞的术语问题"
+            issue for issue in internal_issues if issue.get("detail") == "循环前已阻塞的术语问题"
         ]
         self.assertEqual(len(blocked), 1)
         self.assertEqual(blocked[0]["fix_failure"]["reason"], "malformed_json")
@@ -1694,15 +1712,18 @@ class TestReviewReporting(unittest.TestCase):
             with patch.object(orch, "_review_chapter", side_effect=fake_review):
                 result = orch.run_review(txt)
 
-            debug_dir = Path(result["debug_dir"])
-            summary = json.loads((debug_dir / "summary.json").read_text(encoding="utf-8"))
-            result_json = json.loads((debug_dir / "result.json").read_text(encoding="utf-8"))
-            conflicts = json.loads((debug_dir / "conflicts.json").read_text(encoding="utf-8"))
-            residual = json.loads(
-                (debug_dir / "residual_conflicts.json").read_text(encoding="utf-8")
+            review_dir = Path(result["review_dir"])
+            result_json = json.loads((review_dir / "result.json").read_text(encoding="utf-8"))
+            summary = result_json["summary"]
+            conflicts = json.loads(
+                (review_dir / "rounds/final/conflicts.json").read_text(encoding="utf-8")
             )
+            residual = json.loads(
+                (review_dir / "rounds/final/residual_conflicts.json").read_text(encoding="utf-8")
+            )
+            internal_issues = self._load_internal_issues(result)
 
-        self.assertEqual(summary["termination"], "unresolved_fixes")
+        self.assertEqual(result_json["termination"], "unresolved_fixes")
         self.assertEqual(summary["issue_count"], 3)
         self.assertEqual(summary["blocked_issue_count"], 3)
         self.assertEqual(summary["conflict_count"], 1)
@@ -1711,7 +1732,7 @@ class TestReviewReporting(unittest.TestCase):
         self.assertEqual(result_json["summary"], summary)
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(len(residual), 1)
-        unresolved_ids = {issue["issue_id"] for issue in result["review_issues"]}
+        unresolved_ids = {issue["issue_id"] for issue in internal_issues}
         conflict_ids = set(conflicts[0]["issue_ids"])
         residual_ids = set(residual[0]["issue_ids"])
         self.assertEqual(conflict_ids, residual_ids)
@@ -1762,14 +1783,12 @@ class TestReviewReporting(unittest.TestCase):
             original_target = store.load_chapter(0).text_segments[1].target or ""
 
             result = orch.run_review(txt)
-            summary = json.loads(
-                Path(result["debug_dir"], "summary.json").read_text(encoding="utf-8")
-            )
+            summary = result["review_result"]["summary"]
 
         self.assertEqual(review_calls, 4)  # 两章 × 两轮，未进入第三轮
         self.assertEqual(fix_calls, 2)
         self.assertEqual(summary["review_round_count"], 2)
-        self.assertEqual(summary["termination"], "cycle_detected")
+        self.assertEqual(result["review_result"]["termination"], "cycle_detected")
 
 
 class TestStyleAnalysis(unittest.TestCase):

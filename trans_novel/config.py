@@ -63,7 +63,7 @@ pipeline:
   review_agent_tier: strong # 取证复核与全书冲突仲裁使用的模型档位
   review_agent_max_evidence_rounds: 2 # 最多两轮选择性取证，之后必须裁决
   review_conflict_arbitration: true # 全部审校块完成后仲裁互相矛盾的一致性建议
-  review_fix_loop: true # 只在 Debug 影子译文上暂改并盲复审，不写回正式正文
+  review_fix_loop: true # 只在内存影子译文上暂改并盲复审，不写回正式正文
   review_fix_max_rounds: 2 # 最多生成两轮临时替换；完整 Review 轮数另受连续 clean 确认影响
   review_clean_confirmations: 2 # 连续两轮未发现问题才视为影子译文通过
   glossary_scope: chapter # chapter=本章相关词条；full=全量表
@@ -143,7 +143,7 @@ class PipelineConfig(BaseModel):
         le=2,
     )
     review_conflict_arbitration: bool = True  # 全部块完成后仲裁互相矛盾的一致性建议
-    review_fix_loop: bool = True  # 仅在 Debug overlay 上生成临时替换并盲复审
+    review_fix_loop: bool = True  # 仅在内存影子译文上生成临时替换并盲复审
     review_fix_max_rounds: int = Field(default=2, ge=0, le=4)
     review_clean_confirmations: int = Field(default=2, ge=1, le=2)
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表

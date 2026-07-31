@@ -1,8 +1,4 @@
-"""实验性 Review 的独立调试产物。
-
-每次全书审校创建一个带时间戳的目录。并发 worker 只写各自唯一的
-agent trace；共享事件流由本类加锁串行追加，避免污染正式 events.jsonl。
-"""
+"""正式但只读的全书 Review 运行记录。"""
 
 from __future__ import annotations
 
@@ -10,6 +6,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
 from typing import Any
@@ -26,27 +23,46 @@ def review_candidate_id(
     return f"{prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
 
 
-class DebugReviewRun:
-    """管理一次 Debug-only Review 的目录、事件流和原子 JSON 写入。"""
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """一次已完成 Review 的正式结果及目录。"""
+
+    run_dir: str
+    result: dict[str, Any]
+    usage: dict[str, Any]
+
+    @property
+    def issues(self) -> list[dict[str, Any]]:
+        """返回盲复审结束后仍存在的问题。"""
+        return list(self.result.get("issues") or [])
+
+    @property
+    def changes(self) -> list[dict[str, Any]]:
+        """返回折叠后的最终影子修改建议。"""
+        return list(self.result.get("changes") or [])
+
+
+class ReviewRunStore:
+    """管理一次只读 Review 的结果、事件与逐轮记录。"""
 
     def __init__(self, book_run_dir: str, *, now: datetime | None = None):
         moment = (now or datetime.now().astimezone()).astimezone()
         stamp = moment.strftime("%Y%m%d-%H%M%S-%f")
-        debug_root = os.path.join(book_run_dir, "debug")
-        os.makedirs(debug_root, exist_ok=True)
+        review_root = os.path.join(book_run_dir, "reviews")
+        os.makedirs(review_root, exist_ok=True)
 
-        candidate = os.path.join(debug_root, f"review-{stamp}")
+        candidate = os.path.join(review_root, f"review-{stamp}")
         suffix = 1
         while True:
             try:
                 os.makedirs(candidate)
                 break
             except FileExistsError:
-                candidate = os.path.join(debug_root, f"review-{stamp}-{suffix:02d}")
+                candidate = os.path.join(review_root, f"review-{stamp}-{suffix:02d}")
                 suffix += 1
 
         self.run_dir = candidate
-        self.run_id = os.path.basename(candidate)
+        self.review_id = os.path.basename(candidate)
         self.started_at = moment.isoformat(timespec="microseconds")
         self._event_path = os.path.join(candidate, "events.jsonl")
         self._event_lock = Lock()
@@ -54,8 +70,8 @@ class DebugReviewRun:
         self._result_lock = Lock()
         self._initial_issues: list[dict[str, Any]] = []
         self._dismissed_issues: list[dict[str, Any]] = []
-        self._metadata: dict[str, Any] = {}
         self._active_round: int | None = None
+        self._reviewed_content_digest = ""
 
     @staticmethod
     def _atomic_json(path: str, data: Any) -> None:
@@ -74,11 +90,7 @@ class DebugReviewRun:
 
     @contextmanager
     def round_scope(self, round_number: int) -> Iterator[None]:
-        """把块级 trace 和阶段产物隔离到指定 Review 轮次目录。
-
-        一轮内可以有多个并发 worker，但不同轮次严格串行，因此只需在主线程
-        切换一次作用域；worker 读取到的轮次在整轮完成前保持不变。
-        """
+        """把并发 trace 与阶段产物隔离到指定 Review 轮次。"""
         if self._active_round is not None:
             raise RuntimeError("Review round scopes cannot be nested")
         self._active_round = round_number
@@ -88,13 +100,13 @@ class DebugReviewRun:
             self._active_round = None
 
     def write_json(self, relative: str, data: Any) -> str:
-        """原子保存一个调试 JSON 并返回绝对路径。"""
+        """原子保存一个逐轮 JSON 并返回绝对路径。"""
         path = self.path(relative)
         self._atomic_json(path, data)
         return path
 
     def log_event(self, event: str, **data: Any) -> None:
-        """线程安全地追加结构化调试事件。"""
+        """线程安全地追加本次 Review 的结构化事件。"""
         if self._active_round is not None:
             data.setdefault("review_round", self._active_round)
         with self._event_lock:
@@ -167,10 +179,7 @@ class DebugReviewRun:
         self,
         round_number: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """返回按轮次和书序排列的初审、驳回问题副本。
-
-        ``round_number`` 为空时返回本次实验的全部轮次，保留旧的单轮调用语义。
-        """
+        """返回按轮次和书序排列的初审、驳回问题副本。"""
         with self._result_lock:
             initial = [
                 dict(issue)
@@ -192,47 +201,61 @@ class DebugReviewRun:
 
         return sorted(initial, key=position), sorted(dismissed, key=position)
 
-    def start(self, **metadata: Any) -> None:
-        """在首个模型调用前写入本次运行的初始说明。"""
-        self._metadata = dict(metadata)
-        self.write_json(
-            "run.json",
+    def start(self, *, reviewed_content_digest: str, metadata: dict[str, Any]) -> None:
+        """在首个模型调用前创建运行中结果并保存运行参数。"""
+        self._reviewed_content_digest = reviewed_content_digest
+        self.write_json("rounds/metadata.json", metadata)
+        self._atomic_json(
+            os.path.join(self.run_dir, "result.json"),
             {
-                "run_id": self.run_id,
+                "review_id": self.review_id,
                 "status": "running",
+                "termination": "not_started",
+                "reviewed_content_digest": reviewed_content_digest,
                 "started_at": self.started_at,
-                **metadata,
+                "summary": {"issue_count": 0, "change_count": 0},
+                "issues": [],
+                "changes": [],
             },
         )
-        self.log_event("review_debug_started", run_id=self.run_id)
+        self.log_event("review_started", review_id=self.review_id)
 
-    def finish(self, *, status: str, **summary: Any) -> None:
-        """更新 run.json，并保留成功或失败时的最终摘要。"""
-        finished_at = datetime.now().astimezone().isoformat(timespec="microseconds")
-        self.write_json(
-            "run.json",
-            {
-                "run_id": self.run_id,
-                "status": status,
-                "started_at": self.started_at,
-                "finished_at": finished_at,
-                **self._metadata,
-                **summary,
-            },
-        )
+    def finish(
+        self,
+        *,
+        status: str,
+        termination: str,
+        summary: dict[str, Any],
+        issues: list[dict[str, Any]],
+        changes: list[dict[str, Any]],
+        error: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """写入最终统一结果并返回其内存副本。"""
+        result: dict[str, Any] = {
+            "review_id": self.review_id,
+            "status": status,
+            "termination": termination,
+            "reviewed_content_digest": self._reviewed_content_digest,
+            "started_at": self.started_at,
+            "finished_at": datetime.now().astimezone().isoformat(timespec="microseconds"),
+            "summary": dict(summary),
+            "issues": list(issues),
+            "changes": list(changes),
+        }
+        if error is not None:
+            result["error"] = dict(error)
+        self._atomic_json(os.path.join(self.run_dir, "result.json"), result)
         self.log_event(
-            "review_debug_finished",
-            run_id=self.run_id,
+            "review_finished",
+            review_id=self.review_id,
             status=status,
-            **{
-                key: value
-                for key, value in summary.items()
-                if key
-                in {
-                    "issue_count",
-                    "conflict_count",
-                    "fallback_agent_count",
-                    "error_type",
-                }
-            },
+            termination=termination,
+            issue_count=len(issues),
+            change_count=len(changes),
         )
+        return result
+
+    def save_usage(self, usage: dict[str, Any]) -> None:
+        """保存本次 Review 的 Token 增量。"""
+        self._atomic_json(os.path.join(self.run_dir, "usage.json"), usage)
+        self.log_event("review_usage_recorded", **usage["totals"])

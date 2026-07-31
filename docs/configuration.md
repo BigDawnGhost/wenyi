@@ -179,7 +179,7 @@ pipeline:
   glossary_scope: chapter
 ```
 
-- `review`: disabled by default; when enabled, automatically run the experimental evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
+- `review`: disabled by default; when enabled, automatically run the evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
 - `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
@@ -192,7 +192,7 @@ pipeline:
 - `review_agent_tier`: model tier used by the evidence loop, cross-chunk arbiter, and provisional Review Fixer. The default is `strong`.
 - `review_agent_max_evidence_rounds`: maximum selective evidence rounds per Agent Loop; the allowed range is `0` to `2`, after which the agent must return a final decision.
 - `review_conflict_arbitration`: after all chunks finish, run a recommendation-only arbiter when consistency proposals for the same term, pronoun, or fixed expression contradict one another.
-- `review_fix_loop`: generate complete provisional segment replacements for confirmed issues in a Debug-only shadow translation, then blindly review the whole book again. Disabling it keeps the single-pass recommendation-only behavior.
+- `review_fix_loop`: generate complete provisional segment replacements for confirmed issues in a run-local shadow translation, then blindly review the whole book again. Disabling it keeps the single-pass recommendation-only behavior.
 - `review_fix_max_rounds`: maximum number of provisional Fix rounds, from `0` to `4`; this is not the total number of Review passes.
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
@@ -204,8 +204,9 @@ The command-line flags `--polish`, `--no-polish`, `--review`, `--no-review`,
 Run final review independently with `trans-novel review INPUT`. Each invocation
 reviews the complete translated book from the beginning. Review may modify only a
 run-local shadow translation; it never persists replacements to formal translation
-state. Its replay trace, provisional patches, verification results, and remaining
-suggestions are written under `state/<book>/debug/review-<timestamp>/`.
+state. The consolidated result and internal round records are written under
+`state/<book>/reviews/review-<timestamp>/`. Review usage is stored both as the
+run-local delta and in the book's cumulative usage totals.
 
 ## Output
 

@@ -12,8 +12,8 @@ from typing import Any, Callable
 from ..config import Config
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
-from ..pipeline.review_debug import DebugReviewRun, review_candidate_id
 from ..pipeline.review_evidence import BookEvidenceIndex
+from ..pipeline.review_run import ReviewRunStore, review_candidate_id
 from . import prompts
 
 _ISSUE_TYPES = {"missing", "added", "mistranslation", "terminology", "pronoun"}
@@ -84,7 +84,7 @@ class _ActionLoop:
         client: LLMClient,
         config: Config,
         evidence: BookEvidenceIndex,
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
     ):
         self.client = client
         self.config = config
@@ -287,7 +287,7 @@ class ReviewAgentLoop:
         client: LLMClient,
         config: Config,
         evidence: BookEvidenceIndex,
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
     ):
         self.config = config
         self.evidence = evidence
@@ -627,7 +627,7 @@ def apply_review_arbitrations(
     """把终局仲裁应用到建议视图，不修改正文或术语库。
 
     ``suggested`` 冲突保留所有已确认的问题：原建议值落选的位置仍然需要修正，
-    因此把其建议改写为最终统一值，同时另存仲裁前版本供 Debug 审计。
+    因此把其建议改写为最终统一值，同时另存仲裁前版本供逐轮审计。
     ``unresolved`` 冲突保留全部问题并附上未解决标记。
     """
     by_id = {
@@ -691,7 +691,7 @@ class ReviewConflictArbiter:
         client: LLMClient,
         config: Config,
         evidence: BookEvidenceIndex,
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
     ):
         self.config = config
         self.evidence = evidence

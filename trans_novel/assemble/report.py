@@ -9,10 +9,7 @@ from ..pipeline.runstore import STATUS_DONE, RunStore
 
 
 def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
-    """汇总完成进度、空译文、术语冲突和回译问题。
-
-    实验性 Agent Review 的建议只存在于时间戳 Debug 目录，不进入正式报告。
-    """
+    """汇总完成进度、空译文、术语冲突、回译和最新 Review 摘要。"""
     m = store.load_manifest()
     chapters_total = len(m["chapters"])
     chapters_done = sum(1 for c in m["chapters"] if c["status"] == STATUS_DONE)
@@ -34,7 +31,7 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
     conflicts = glossary.open_conflicts()
     gstats = glossary.stats()
 
-    return {
+    report: dict[str, Any] = {
         "summary": {
             "chapters_total": chapters_total,
             "chapters_done": chapters_done,
@@ -47,3 +44,15 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
         "backtranslation_issues": bt_issues,
         "empty_targets": empty_targets,
     }
+    review = store.load_latest_review_result()
+    if review is not None:
+        review_summary = review.get("summary") or {}
+        report["review"] = {
+            "review_id": review.get("review_id"),
+            "status": review.get("status"),
+            "termination": review.get("termination"),
+            "issue_count": int(review_summary.get("issue_count") or 0),
+            "change_count": int(review_summary.get("change_count") or 0),
+            "read_only": True,
+        }
+    return report

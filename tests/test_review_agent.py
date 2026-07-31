@@ -27,8 +27,8 @@ from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.review_debug import DebugReviewRun, review_candidate_id
 from trans_novel.pipeline.review_evidence import BookEvidenceIndex
+from trans_novel.pipeline.review_run import ReviewRunStore, review_candidate_id
 
 
 def _config() -> Config:
@@ -434,7 +434,7 @@ class TestReadonlyGlossarySnapshot(unittest.TestCase):
                 writer.close()
 
 
-class TestDebugReviewRun(unittest.TestCase):
+class TestReviewRunStore(unittest.TestCase):
     def test_candidate_id_format_with_and_without_round(self):
         self.assertEqual(
             review_candidate_id(2, 10, 3),
@@ -448,8 +448,8 @@ class TestDebugReviewRun(unittest.TestCase):
     def test_equal_timestamps_never_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
             moment = datetime(2026, 7, 27, 12, 30, tzinfo=timezone.utc)
-            first = DebugReviewRun(directory, now=moment)
-            second = DebugReviewRun(directory, now=moment)
+            first = ReviewRunStore(directory, now=moment)
+            second = ReviewRunStore(directory, now=moment)
 
             self.assertNotEqual(first.run_dir, second.run_dir)
             self.assertTrue(os.path.isdir(first.run_dir))
@@ -458,7 +458,7 @@ class TestDebugReviewRun(unittest.TestCase):
 
     def test_round_scopes_isolate_files_events_and_issue_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
-            debug = DebugReviewRun(directory)
+            debug = ReviewRunStore(directory)
             for review_round, detail in ((1, "第一轮"), (2, "第二轮")):
                 with debug.round_scope(review_round):
                     debug.write_json("agents/same.json", {"detail": detail})
@@ -583,7 +583,7 @@ class TestReviewAgentLoop(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as directory:
-            debug = DebugReviewRun(directory)
+            debug = ReviewRunStore(directory)
             outcome = ReviewAgentLoop(
                 FakeClient(handler=handler),
                 _config(),
@@ -654,7 +654,7 @@ class TestReviewAgentLoop(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as directory:
-            debug = DebugReviewRun(directory)
+            debug = ReviewRunStore(directory)
             debug.record_initial_issues(
                 chapter=0,
                 chunk_base=0,
@@ -716,7 +716,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -776,7 +776,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -826,7 +826,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -868,7 +868,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -913,7 +913,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -993,7 +993,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflicts[0])
 
         self.assertEqual(result["status"], "suggested")
@@ -1048,7 +1048,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflict)
 
         self.assertEqual(
@@ -1102,7 +1102,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflict)
 
         self.assertEqual(result["recommended_value"], "NASA")
@@ -1157,7 +1157,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "unresolved")
@@ -1212,7 +1212,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "suggested")
@@ -1249,7 +1249,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 client,
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflict)
 
         self.assertEqual(client.calls, [])
@@ -1370,7 +1370,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                DebugReviewRun(directory),
+                ReviewRunStore(directory),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "unresolved")

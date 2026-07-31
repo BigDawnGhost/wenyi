@@ -116,8 +116,8 @@ uv run trans-novel status book.epub
 ```
 
 Changing polishing settings does not automatically rerun translation batches that
-are already complete. Experimental Review is different: every `review` invocation
-rechecks the complete translated book and creates a new timestamped debug run.
+are already complete. Review is different: every `review` invocation rechecks the
+complete translated book and creates a new timestamped read-only review run.
 Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
@@ -137,16 +137,15 @@ uv run trans-novel assemble book.epub
 unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
 can then enter a bounded evidence loop, and contradictory cross-chunk consistency
 suggestions can receive a final recommendation. Confirmed issues may generate
-provisional full-segment replacements in a Debug-only shadow translation. Every
+provisional full-segment replacements in a run-local shadow translation. Every
 Fixer in a round reads the same immutable snapshot; the next whole-book pass
 blindly reviews the resulting shadow text without receiving prior issue
 explanations. Review never writes these replacements to the manifest, chapter
-JSON, glossary, `report.json`, the formal event log, or the formal `usage.json`.
-Each run writes prompts, raw responses, parsed actions, requested evidence,
-patches, events, remaining suggestions, and its model-usage delta to
-`state/<book>/debug/review-<timestamp>/`.
-The debug directory's `usage.json` includes totals plus `by_tier` and `by_stage`
-breakdowns and is retained on both success and failure.
+JSON, or glossary. Each run writes one user-facing `result.json`, its model-usage
+delta, an event stream, and internal round traces to
+`state/<book>/reviews/review-<timestamp>/`. The same usage delta is also added once
+to the book's cumulative `usage.json`; `report.json` contains only a compact
+read-only review summary.
 
 `qa` and `report` collect problems without modifying translated text. `assemble`
 rebuilds output from existing state without calling the model again.

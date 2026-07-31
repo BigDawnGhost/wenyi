@@ -42,7 +42,7 @@ class ProvisionalPatch:
     status: Literal["provisional"] = "provisional"
 
     def as_dict(self) -> dict[str, Any]:
-        """返回可直接写入 Debug JSON 的稳定表示。"""
+        """返回可直接写入 Review 逐轮记录的稳定表示。"""
         return {
             "patch_id": self.patch_id,
             "round": self.round,

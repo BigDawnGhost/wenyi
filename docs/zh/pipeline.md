@@ -13,7 +13,7 @@
 -> 按章、按批翻译
 -> 实时抽取和更新术语
 -> 可选润色与标点规范化
--> 可选执行实验性的取证式全书审校
+-> 可选执行取证式全书审校
 -> 可选全书一致性 QA
 -> 生成报告
 -> 回填并组装指定格式的成品
@@ -36,9 +36,9 @@
 - **段数对齐**：模型必须返回与输入等长的 JSON 数组；失败会重试，仍失败时逐段兜底。
 - **润色**：不改变原意和段落数量的前提下提升中文流畅度。
 - **标点规范化**：统一为简体中文大陆常用全角标点。
-- **实验性 Agent Review**：全部章节翻译完成后才开始，并使用最终术语库。章节按连续文本块并发执行原有 Reviewer 提示词。每次响应都必须以“实际审校段数 + `complete: true`”作为末尾完成回执。单纯的 JSON 语法损坏会先用 `json-repair` 在本地修复；缺少或不符合预期的回执只会递归拆分受影响的审校块，单段最多尝试 `1 + review_output_retries` 次。
+- **Agent Review**：全部章节翻译完成后才开始，并使用最终术语库。章节按连续文本块并发执行原有 Reviewer 提示词。每次响应都必须以“实际审校段数 + `complete: true`”作为末尾完成回执。单纯的 JSON 语法损坏会先用 `json-repair` 在本地修复；缺少或不符合预期的回执只会递归拆分受影响的审校块，单段最多尝试 `1 + review_output_retries` 次。
 - **选择性取证循环**：成功完成初审的叶块若产生候选问题，且开启 `review_agent_loop`，有界 Agent Loop 会确认、驳回或细化候选，也可补充当前块内的问题。它能按原文或别名读取单个术语条目，按首次、中间、末次或第 N 次请求术语命中，获取指定段落的相邻原译文，以及有限的全书概览、章节梗概和风格信息，无需给每个请求注入整本书或全量术语表。循环默认使用 `strong` 档，并必须在最多 `review_agent_max_evidence_rounds` 轮取证后给出结论。
-- **跨块仲裁**：所有并发块完成后，同一术语、人称或固定表达若出现互相矛盾的一致性建议，可再交给终局仲裁器。Debug 最终建议视图会保守地把所有落选建议统一改写为胜出值；所有被替代的旧建议仍保留供审计，不会修改术语库或正文。
+- **跨块仲裁**：所有并发块完成后，同一术语、人称或固定表达若出现互相矛盾的一致性建议，可再交给终局仲裁器。最终建议集会保守地把所有落选建议统一改写为胜出值；所有被替代的旧建议仍保留在逐轮记录中，不会修改术语库或正文。
 - **影子修订与盲复审**：同一段的多个确认问题会合并为一次 Fixer 请求。Fixer 会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，并必须返回完整单段替换而非局部 diff。同轮所有 Fixer 读取同一份不可变影子快照，全部结束后才统一应用；下一轮全书 Reviewer 与取证索引只读取更新后的影子译文，不接收旧问题说明。未解决的仲裁冲突和未经确认的 Agent fallback 会保留为未解决项。连续无问题、达到 Fix 上限、没有有效进展或检测到 A→B→A 循环时停止。
 - **全书一致性 QA**：在收尾阶段检查术语、人称、语气和标点的一致性，默认只报告问题。
 
@@ -50,26 +50,24 @@ uv run trans-novel review book.epub
 ```
 
 即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。每次运行都会从头
-审查完整译文。它只会更新 Debug 影子译文，不会修改章节 JSON、manifest、术语库、
-`report.json`、正式 `events.jsonl` 或正式 `usage.json`。提示词、原始响应、
-解析后的动作、取证结果、临时补丁、事件、剩余建议和本次运行的用量增量只写入：
+审查完整译文。它只会更新本次运行内存中的影子译文，不会修改章节 JSON、manifest
+或术语库。最终结果、本次用量、事件和内部逐轮记录写入：
 
 ```text
-state/<书名>/debug/review-YYYYMMDD-HHMMSS-ffffff/
+state/<书名>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ```
 
-该调试目录内有独立的 `usage.json`，包含总量及 `by_tier`、`by_stage` 明细；
-无论审校成功还是失败都会保留。
-`rounds/<NNN>/` 保存各轮 overlay 及 Reviewer/Fixer trace；汇总文件包括
-`patches.json`、`not_rereported_patches.json`、`unresolved_issues.json`、
-`fix_failures.json`、`rounds.json`、`shadow_targets.json`、`summary.json`
-和 `result.json`。`not_rereported_patches.json` 只表示后续盲审没有再次报告
-补丁所覆盖的逻辑问题，是一种审计结果，并不证明替换文本在语义上正确。停止原因
+目录顶层只有 `result.json`、`usage.json`、`events.jsonl` 和 `rounds/`。
+`result.json` 集中保存最终问题和折叠后的修改建议，并只用章节号和段落索引定位
+正式章节 JSON，不重复保存原文和上下文。`rounds/` 保存 Prompt、响应、补丁和失败
+信息以便诊断。本次用量增量还会且只会合并一次到本书累计 `usage.json`；
+`report.json` 只记录 Review ID、停止原因、问题数、建议数和 `read_only: true`。
+
+`not_rereported` 只表示后续盲审没有再次报告该建议所覆盖的逻辑问题，并不证明
+候选替换在语义上正确。停止原因
 包括 `clean_confirmed`、`max_rounds`、`no_progress`、`cycle_detected`
 和 `unresolved_fixes`（已确认问题未获得有效补丁时，即使后续 Reviewer
 漏报也不会被当成 clean）。
-
-调试记录包含原文和译文片段，应与其他状态文件一样注意隐私与版权。
 
 ## 断点续跑
 

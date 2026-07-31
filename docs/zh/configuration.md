@@ -192,7 +192,7 @@ pipeline:
   glossary_scope: chapter
 ```
 
-- `review`：默认关闭；开启后在全书翻译完成时自动执行实验性的取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
+- `review`：默认关闭；开启后在全书翻译完成时自动执行取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `backtranslate_sample`：回译抽检比例，`0` 为关闭。
 - `consistency_qa`：全书完成后进行跨章术语、人称、语气和标点检查。
@@ -205,7 +205,7 @@ pipeline:
 - `review_agent_tier`：取证循环、跨块仲裁和临时 Review Fixer 所用的模型档位，默认 `strong`。
 - `review_agent_max_evidence_rounds`：每个 Agent Loop 最多允许的选择性取证轮数，范围为 `0` 到 `2`；用完后必须给出最终结论。
 - `review_conflict_arbitration`：所有块结束后，同一术语、人称或固定表达的一致性建议若互相矛盾，再执行只给建议、不修改数据的终局仲裁。
-- `review_fix_loop`：针对确认的问题在 Debug 影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。
+- `review_fix_loop`：针对确认的问题在本次运行的影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。
 - `review_fix_max_rounds`：最多生成的临时 Fix 轮数，范围为 `0` 到 `4`；它不是 Review 总轮数。
 - `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
@@ -214,9 +214,9 @@ pipeline:
 `--qa`、`--no-qa` 会覆盖对应配置。
 
 可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
-译文。Review 只会修改本次运行的影子译文，不会把替换写入正式翻译状态；完整
-回放、临时补丁、复审结果和剩余建议会保存到
-`state/<书名>/debug/review-<时间戳>/`。
+译文。Review 只会修改本次运行的影子译文，不会把替换写入正式翻译状态；统一
+结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
+本次 Review 用量既保存为目录内增量，也会计入本书累计用量。
 
 ## 输出
 

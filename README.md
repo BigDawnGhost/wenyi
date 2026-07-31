@@ -129,7 +129,7 @@ uv run trans-novel translate book.epub --format txt                # export as p
 
 Final review is disabled by default. Set `pipeline.review: true` to run it
 automatically after the complete book has been translated and the glossary has
-reached its final state, or run the experimental Agent Review independently:
+reached its final state, or run Agent Review independently:
 
 ```bash
 uv run trans-novel review book.epub
@@ -138,10 +138,11 @@ uv run trans-novel review book.epub
 Each Review run starts from the beginning, checks chunks concurrently, and can
 selectively request cross-book evidence before resolving contradictory
 consistency suggestions. Confirmed issues can produce provisional full-segment
-replacements in a Debug-only shadow translation. A fresh whole-book review sees
+replacements in a run-local shadow translation. A fresh whole-book review sees
 the shadow text—but not the previous issue explanation—and validates it again.
-Formal translation state is never modified; traces, shadow patches, and remaining
-recommendations are written under `state/<book>/debug/`.
+Formal translation state is never modified. The consolidated read-only result,
+run usage, events, and internal round records are written under
+`state/<book>/reviews/review-<timestamp>/`.
 
 ---
 
@@ -177,17 +178,18 @@ flowchart TD
     end
 
     J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
-    K --> N{Confirmed issues?}
+    K --> N{Confirmed issues and<br/>Fix budget remaining?}
     N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
     O --> K
-    N -- No, confirmed twice --> L[Optional cross-chapter consistency QA]
+    N -- No or stopped --> P[Save read-only issues<br/>and modification suggestions]
+    P --> L[Optional cross-chapter consistency QA]
     L --> M[Generate the report and assemble the selected output]
 ```
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 The Review Fixer receives the same style brief, book synopsis, chapter digest,
 relevant glossary subset, and nearby source/translation context used to preserve
-the book's voice. Its replacements remain temporary Debug artifacts.
+the book's voice. Its replacements remain temporary review suggestions.
 
 ---
 

@@ -10,6 +10,7 @@
   glossary.db       术语库 + 译法冲突记录
   report.json       QA 报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
+  reviews/          每次只读全书 Review 的正式结果与逐轮记录
 """
 
 from __future__ import annotations
@@ -121,6 +122,11 @@ class RunStore:
         """返回输入预处理缓存目录；由具体读取器按需创建。"""
         return os.path.join(self.run_dir, "source")
 
+    @property
+    def reviews_dir(self) -> str:
+        """返回只读全书 Review 的运行记录目录。"""
+        return os.path.join(self.run_dir, "reviews")
+
     # ── 通用 JSON ─────────────────────────────────────────────────────────
     @staticmethod
     def _write_json(path: str, data) -> None:
@@ -229,6 +235,24 @@ class RunStore:
     def load_usage(self) -> dict | None:
         """读取累计 token 用量；文件尚不存在时返回 None。"""
         return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
+
+    def load_latest_review_result(self) -> dict[str, Any] | None:
+        """按目录时间顺序读取最近一次完整或失败的 Review 结果。"""
+        if not os.path.isdir(self.reviews_dir):
+            return None
+        for name in sorted(os.listdir(self.reviews_dir), reverse=True):
+            if not name.startswith("review-"):
+                continue
+            path = os.path.join(self.reviews_dir, name, "result.json")
+            if not os.path.isfile(path):
+                continue
+            try:
+                result = self._read_json(path)
+            except (OSError, json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(result, dict):
+                return result
+        return None
 
     # ── 批次恢复检查点 ────────────────────────────────────────────────────
     @staticmethod

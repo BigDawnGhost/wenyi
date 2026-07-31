@@ -316,7 +316,7 @@ class TestCliConfig(unittest.TestCase):
                 self.assertEqual(result.exit_code, 0, result.output)
                 validate.assert_not_called()
 
-    def test_review_command_runs_full_debug_review(self):
+    def test_review_command_runs_full_read_only_review(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
@@ -343,7 +343,12 @@ class TestCliConfig(unittest.TestCase):
                 return {
                     "store": FakeStore(),
                     "review_issues": [{"index": 0, "type": "missing"}],
-                    "debug_dir": "/tmp/review-debug",
+                    "review_changes": [{"chapter": 0, "index": 0}],
+                    "review_result": {
+                        "termination": "max_rounds",
+                        "summary": {"issue_count": 1, "change_count": 1},
+                    },
+                    "review_dir": "/tmp/reviews/review-20260801-120000",
                 }
 
         with (
@@ -356,8 +361,10 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
         self.assertIn("progress", captured["kwargs"])
-        self.assertIn("影子修订复审后仍有 1 项问题", result.output)
-        self.assertIn("/tmp/review-debug", result.output)
+        self.assertIn("max_rounds", result.output)
+        self.assertIn("仍有 1 项问题", result.output)
+        self.assertIn("生成 1 项修改建议", result.output)
+        self.assertIn("/tmp/reviews/review-20260801-120000", result.output)
         for label in ("全书审校 R1", "影子修订 R1", "全书盲审 R2", "干净确认"):
             self.assertIn(label, result.output)
 
