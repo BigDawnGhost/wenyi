@@ -1822,6 +1822,16 @@ def assemble(
         supported = " / ".join(_OUT_EXT)
         raise ValueError(f"不支持的输出格式：{out_format}（支持 {supported}）")
 
+    if out_path is not None:
+        try:
+            same_file = os.path.samefile(source_path, out_path)
+        except OSError:
+            same_file = os.path.normcase(os.path.realpath(source_path)) == os.path.normcase(
+                os.path.realpath(out_path)
+            )
+        if same_file:
+            raise ValueError(f"输出路径不能与源文件相同：{out_path}")
+
     m = store.load_manifest()
     if out_format == "txt":
         out_path = out_path or _default_out(source_path, "txt", "", bilingual=bilingual)

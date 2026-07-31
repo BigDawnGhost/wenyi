@@ -113,6 +113,43 @@ def _run(input_path, state_dir):
 
 
 class TestAssembleText(unittest.TestCase):
+    def test_epub_output_cannot_replace_source_through_path_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "book.epub")
+            write_sample_epub(source)
+            store, _ = _run(source, os.path.join(directory, "state"))
+            with open(source, "rb") as file:
+                original = file.read()
+
+            aliases = [
+                source,
+                os.path.join(directory, ".", "book.epub"),
+                os.path.relpath(source),
+            ]
+            symlink = os.path.join(directory, "book-link.epub")
+            try:
+                os.symlink(source, symlink)
+            except (NotImplementedError, OSError):
+                pass
+            else:
+                aliases.append(symlink)
+
+            for out_path in aliases:
+                with (
+                    self.subTest(out_path=out_path),
+                    self.assertRaisesRegex(ValueError, "输出路径不能与源文件相同"),
+                ):
+                    assemble(
+                        store,
+                        source,
+                        out_path=out_path,
+                        out_format="epub",
+                        about_page=False,
+                    )
+
+            with open(source, "rb") as file:
+                self.assertEqual(file.read(), original)
+
     def test_fb2_images_and_cover_are_preserved_in_generated_epub(self):
         with tempfile.TemporaryDirectory() as d:
             fb2 = os.path.join(d, "illustrated.fb2")
