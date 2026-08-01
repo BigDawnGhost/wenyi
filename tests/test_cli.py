@@ -8,11 +8,13 @@ import unittest
 from unittest.mock import patch
 
 import typer
+from rich.progress import Progress
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
     _apply_store_languages,
     _configure_windows_console,
+    _RichProgressBridge,
     _validate_pdf_engine,
     app,
 )
@@ -28,6 +30,22 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_progress_bridge_reuses_one_task_across_review_stages(self):
+        progress = Progress(disable=True)
+        bridge = _RichProgressBridge(progress, "准备全书审校…")
+
+        bridge(0, 6386, "全书审校 R1")
+        bridge(6386, 6386, "全书审校 R1")
+        bridge(0, 58, "影子修订 R1")
+        bridge(58, 58, "影子修订 R1")
+        bridge(0, 6386, "全书盲审 R2")
+
+        self.assertEqual(len(progress.tasks), 1)
+        task = progress.tasks[0]
+        self.assertEqual(task.description, "全书盲审 R2")
+        self.assertEqual(task.completed, 0)
+        self.assertEqual(task.total, 6386)
+
     def test_pdf_engine_validation_accepts_both_backends(self):
         self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")
         self.assertEqual(_validate_pdf_engine(" fpdf2 "), "fpdf2")
@@ -365,8 +383,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("仍有 1 项问题", result.output)
         self.assertIn("生成 1 项修改建议", result.output)
         self.assertIn("/tmp/reviews/review-20260801-120000", result.output)
-        for label in ("全书审校 R1", "影子修订 R1", "全书盲审 R2", "干净确认"):
-            self.assertIn(label, result.output)
+        self.assertIn("干净确认", result.output)
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")

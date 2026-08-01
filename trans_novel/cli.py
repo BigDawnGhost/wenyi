@@ -106,63 +106,16 @@ glossary_app = typer.Typer(
 )
 console = Console()
 
-_REVIEW_PROGRESS_PREFIXES = (
-    "全书审校 R",
-    "全书盲审 R",
-    "冲突仲裁 R",
-    "影子修订 R",
-)
-
 
 class _RichProgressBridge:
-    """把通用回调映射为 Rich 任务，并为 Review 的各阶段保留独立进度条。"""
+    """把流水线的阶段进度映射到同一个 Rich 任务。"""
 
     def __init__(self, progress: Progress, initial_description: str) -> None:
         self.progress = progress
         self.task = progress.add_task(initial_description, total=None)
-        self.review_tasks: dict[str, Any] = {}
-        self.in_review = False
-
-    @staticmethod
-    def _is_review_stage(label: str) -> bool:
-        """判断标签是否属于需要独立显示的 Review/Fix 循环阶段。"""
-        return label == "干净确认" or label.startswith(_REVIEW_PROGRESS_PREFIXES)
 
     def __call__(self, done: int, total: int, label: str) -> None:
-        """更新普通单任务进度，或创建/更新 Review 阶段的独立任务。"""
-        if self._is_review_stage(label):
-            if not self.in_review:
-                self.progress.remove_task(self.task)
-                self.in_review = True
-            task = self.review_tasks.get(label)
-            if task is None:
-                task = self.progress.add_task(
-                    label,
-                    total=total if total > 0 else None,
-                    completed=done,
-                )
-                self.review_tasks[label] = task
-            else:
-                self.progress.update(
-                    task,
-                    completed=done,
-                    total=total if total > 0 else None,
-                    description=label,
-                )
-            return
-
-        if self.in_review:
-            for review_task in self.review_tasks.values():
-                self.progress.remove_task(review_task)
-            self.review_tasks.clear()
-            self.in_review = False
-            self.task = self.progress.add_task(
-                label,
-                total=total if total > 0 else None,
-                completed=done,
-            )
-            return
-
+        """刷新当前阶段的标题与计数，避免阶段切换产生多行进度条。"""
         if total > 0:
             self.progress.update(
                 self.task,
