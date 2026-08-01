@@ -115,7 +115,11 @@ uv run trans-novel translate book.epub
 uv run trans-novel status book.epub
 ```
 
-Changing polishing settings does not automatically rerun translation batches that are already complete. Final review has its own persisted state and can be repeated independently with `review --force`; use a new state directory or remove the corresponding state only when you intentionally want a fresh translation.
+Changing polishing settings does not automatically rerun translation batches that
+are already complete. Review is different: every `review` invocation rechecks the
+complete translated book and creates a new timestamped read-only review run.
+Use a new state directory or remove the corresponding state only when you
+intentionally want a fresh translation.
 
 ## Independent stages and glossary management
 
@@ -129,4 +133,19 @@ uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
 
-`review` checks the complete translated book using the final glossary; add `--force` to recheck unchanged chapters or `--fix` to apply validated severe fixes. `qa` and `report` collect problems without modifying translated text. `assemble` rebuilds output from existing state without calling the model again.
+`review` checks the complete translated book using the final glossary. Its
+unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
+can then enter a bounded evidence loop, and contradictory cross-chunk consistency
+suggestions can receive a final recommendation. Confirmed issues may generate
+provisional full-segment replacements in a run-local shadow translation. Every
+Fixer in a round reads the same immutable snapshot; the next whole-book pass
+blindly reviews the resulting shadow text without receiving prior issue
+explanations. Review never writes these replacements to the manifest, chapter
+JSON, or glossary. Each run writes one user-facing `result.json`, its model-usage
+delta, an event stream, and internal round traces to
+`state/<book>/reviews/review-<timestamp>/`. The same usage delta is also added once
+to the book's cumulative `usage.json`; `report.json` contains only a compact
+read-only review summary.
+
+`qa` and `report` collect problems without modifying translated text. `assemble`
+rebuilds output from existing state without calling the model again.

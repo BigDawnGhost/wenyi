@@ -107,6 +107,29 @@ glossary_app = typer.Typer(
 console = Console()
 
 
+class _RichProgressBridge:
+    """把流水线的阶段进度映射到同一个 Rich 任务。"""
+
+    def __init__(self, progress: Progress, initial_description: str) -> None:
+        self.progress = progress
+        self.task = progress.add_task(initial_description, total=None)
+
+    def __call__(self, done: int, total: int, label: str) -> None:
+        """刷新当前阶段的标题与计数，避免阶段切换产生多行进度条。"""
+        if total > 0:
+            self.progress.update(
+                self.task,
+                completed=done,
+                total=total,
+                description=label,
+            )
+            return
+        # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
+        # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
+        self.progress.remove_task(self.task)
+        self.task = self.progress.add_task(label, total=None)
+
+
 def _version_callback(value: bool) -> None:
     """打印由 Git 标签生成的已安装包版本并立即退出。"""
     if value:
@@ -304,18 +327,7 @@ def _translate_impl_or_raise(
         TimeElapsedColumn(),
         console=console,
     ) as prog:
-        task = prog.add_task("准备中…", total=None)
-
-        def cb(done: int, total: int, label: str) -> None:
-            """把编排器的通用进度回调同步到 Rich 任务。"""
-            nonlocal task
-            if total > 0:
-                prog.update(task, completed=done, total=total, description=label)
-                return
-            # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
-            # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
-            prog.remove_task(task)
-            task = prog.add_task(label, total=None)
+        cb = _RichProgressBridge(prog, "准备中…")
 
         if chapter is not None:
             try:
@@ -339,12 +351,20 @@ def _translate_impl_or_raise(
     s = result["report"]["summary"]
     console.print(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
-        f"审校 {s.get('chapters_reviewed', 0)}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
     _print_usage({"usage": result["store"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
+    if result.get("review_dir"):
+        review_result = result.get("review_result") or {}
+        review_summary = review_result.get("summary") or {}
+        console.print(
+            f"审校结果：{review_result.get('termination', 'unknown')}，"
+            f"问题 {review_summary.get('issue_count', 0)} 项，"
+            f"修改建议 {review_summary.get('change_count', 0)} 项。"
+        )
+        console.print(f"审校目录：{result['review_dir']}")
 
 
 def _prepare_impl(input_path: str) -> None:
@@ -506,19 +526,12 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
-    force: bool = typer.Option(False, "--force", help="忽略审校摘要，强制重新审校全部章节"),
-    fix: bool | None = typer.Option(
-        None,
-        "--fix/--no-fix",
-        help="覆盖 pipeline.autofix_severe；开启后串行修复漏译和误译",
-    ),
 ):
-    """使用最终术语库审校完整译文；结果按章保存，可断点续审。"""
+    """全量运行取证、影子修订与盲复审；不修改正式正文。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input)
     config = _load_config()
-    autofix = config.pipeline.autofix_severe if fix is None else fix
     orch = Orchestrator(config)
 
     try:
@@ -530,39 +543,21 @@ def review(
             TimeElapsedColumn(),
             console=console,
         ) as prog:
-            task = prog.add_task("准备全书审校…", total=None)
-
-            def cb(done: int, total: int, label: str) -> None:
-                """把全书审校进度同步到 Rich 任务。"""
-                nonlocal task
-                if total > 0:
-                    prog.update(
-                        task,
-                        completed=done,
-                        total=total,
-                        description=label,
-                    )
-                    return
-                prog.remove_task(task)
-                task = prog.add_task(label, total=None)
-
-            result = orch.run_review(
-                input,
-                progress=cb,
-                force=force,
-                autofix=autofix,
-            )
+            cb = _RichProgressBridge(prog, "准备全书审校…")
+            result = orch.run_review(input, progress=cb)
     except (IngestError, ImportError, OSError, ValueError) as error:
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
 
-    issues = result["review_issues"]
+    review_result = result["review_result"]
+    summary = review_result["summary"]
     console.print(
-        f"[bold green]全书审校完成[/]：发现 {len(issues)} 项问题"
-        f"{'，已按配置尝试修复严重项' if autofix else ''}。"
+        f"[bold green]全书 Agent 审校完成[/]：{review_result['termination']}，"
+        f"仍有 {summary['issue_count']} 项问题，"
+        f"生成 {summary['change_count']} 项修改建议。"
     )
-    console.print(f"状态目录：{result['store'].run_dir}")
-    _print_usage({"usage": result["store"].load_usage() or {}})
+    console.print("审校结果为只读建议，正式章节译文未修改。")
+    console.print(f"审校目录：{result['review_dir']}")
 
 
 # ── 查询 / 细粒度命令 ──────────────────────────────────────────────────────
@@ -580,7 +575,7 @@ def status(
         raise typer.Exit(1)
     m = store.load_manifest()
     console.print(f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}")
-    table = Table("", "#", "章节", "翻译", "审校")
+    table = Table("", "#", "章节", "翻译")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
         table.add_row(
@@ -588,7 +583,6 @@ def status(
             str(c["index"]),
             c["title"],
             c["status"],
-            str(c.get("review_status", "pending")),
         )
     console.print(table)
     g = GlossaryStore(store.glossary_path)
@@ -781,7 +775,7 @@ def qa(
 def report(
     input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
 ) -> None:
-    """根据当前章节、审校和术语状态重新生成 report.json，不调用模型。"""
+    """根据当前章节和术语状态重新生成 report.json，不调用模型。"""
     from .assemble.report import build_report
     from .glossary.store import GlossaryStore
 
@@ -798,8 +792,7 @@ def report(
     console.print(f"QA 报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
-        f"待裁决冲突 {s['open_conflicts']}  审校问题 {s['review_issues']}  "
-        f"回译疑点 {s['backtranslation_issues']}"
+        f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"
     )
 
 

@@ -8,11 +8,13 @@ import unittest
 from unittest.mock import patch
 
 import typer
+from rich.progress import Progress
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
     _apply_store_languages,
     _configure_windows_console,
+    _RichProgressBridge,
     _validate_pdf_engine,
     app,
 )
@@ -28,6 +30,22 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_progress_bridge_reuses_one_task_across_review_stages(self):
+        progress = Progress(disable=True)
+        bridge = _RichProgressBridge(progress, "准备全书审校…")
+
+        bridge(0, 6386, "全书审校 R1")
+        bridge(6386, 6386, "全书审校 R1")
+        bridge(0, 58, "影子修订 R1")
+        bridge(58, 58, "影子修订 R1")
+        bridge(0, 6386, "全书盲审 R2")
+
+        self.assertEqual(len(progress.tasks), 1)
+        task = progress.tasks[0]
+        self.assertEqual(task.description, "全书盲审 R2")
+        self.assertEqual(task.completed, 0)
+        self.assertEqual(task.total, 6386)
+
     def test_pdf_engine_validation_accepts_both_backends(self):
         self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")
         self.assertEqual(_validate_pdf_engine(" fpdf2 "), "fpdf2")
@@ -316,11 +334,10 @@ class TestCliConfig(unittest.TestCase):
                 self.assertEqual(result.exit_code, 0, result.output)
                 validate.assert_not_called()
 
-    def test_review_command_runs_final_review_with_overrides(self):
+    def test_review_command_runs_full_read_only_review(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"autofix_severe": False},
             }
         )
         captured = {}
@@ -332,9 +349,24 @@ class TestCliConfig(unittest.TestCase):
             def run_review(self, input_path, **kwargs):
                 captured["input_path"] = input_path
                 captured["kwargs"] = kwargs
+                progress = kwargs["progress"]
+                progress(0, 4, "全书审校 R1")
+                progress(2, 4, "全书审校 R1")
+                progress(4, 4, "全书审校 R1")
+                progress(0, 1, "影子修订 R1")
+                progress(1, 1, "影子修订 R1")
+                progress(0, 4, "全书盲审 R2")
+                progress(4, 4, "全书盲审 R2")
+                progress(1, 2, "干净确认")
                 return {
                     "store": FakeStore(),
                     "review_issues": [{"index": 0, "type": "missing"}],
+                    "review_changes": [{"chapter": 0, "index": 0}],
+                    "review_result": {
+                        "termination": "max_rounds",
+                        "summary": {"issue_count": 1, "change_count": 1},
+                    },
+                    "review_dir": "/tmp/reviews/review-20260801-120000",
                 }
 
         with (
@@ -342,16 +374,16 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(
-                app,
-                ["review", "input.txt", "--force", "--fix"],
-            )
+            result = CliRunner().invoke(app, ["review", "input.txt"])
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertTrue(captured["kwargs"]["force"])
-        self.assertTrue(captured["kwargs"]["autofix"])
-        self.assertIn("发现 1 项问题", result.output)
+        self.assertIn("progress", captured["kwargs"])
+        self.assertIn("max_rounds", result.output)
+        self.assertIn("仍有 1 项问题", result.output)
+        self.assertIn("生成 1 项修改建议", result.output)
+        self.assertIn("/tmp/reviews/review-20260801-120000", result.output)
+        self.assertIn("干净确认", result.output)
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")

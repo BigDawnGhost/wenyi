@@ -355,6 +355,60 @@ def _bilingual_source(source: str, target: str) -> str:
     return source if (source.strip() and source != target) else ""
 
 
+def _japanese_ruby_source(element: Tag, source_lang: str) -> str:
+    """日语双语原文保留 ruby 注音，并拍平其它文本内联标签。"""
+    normalized_lang = source_lang.strip().replace("_", "-").lower()
+    if not (normalized_lang == "ja" or normalized_lang.startswith("ja-")):
+        return ""
+    if element.find("ruby") is None:
+        return ""
+
+    fragment = BeautifulSoup(str(element), "html.parser")
+    root = fragment.find(element.name)
+    if not isinstance(root, Tag):
+        return ""
+    for comment in list(root.find_all(string=lambda node: isinstance(node, Comment))):
+        comment.extract()
+    for tag in list(
+        root.find_all(
+            [
+                "audio",
+                "canvas",
+                "embed",
+                "hr",
+                "iframe",
+                "img",
+                "math",
+                "object",
+                "script",
+                "source",
+                "style",
+                "svg",
+                "video",
+            ]
+        )
+    ):
+        tag.decompose()
+    ruby_tags = {"ruby", "rb", "rt", "rp", "rtc", "br"}
+    for tag in list(root.find_all(True)):
+        if tag.name not in ruby_tags:
+            tag.unwrap()
+            continue
+        for attr in ("id", "name", "data-tn-id", _INLINE_ID_ATTR, _LINE_WRAPPER_ATTR):
+            tag.attrs.pop(attr, None)
+    return root.decode_contents()
+
+
+def _append_source(soup: BeautifulSoup, element: Tag, source: str, markup: str) -> None:
+    """向双语原文块写入纯文本，或写入已净化的日语 ruby 片段。"""
+    if not markup:
+        element.append(source)
+        return
+    fragment = BeautifulSoup(markup, "html.parser")
+    for child in list(fragment.contents):
+        element.append(child.extract())
+
+
 def _append_text_with_breaks(soup: BeautifulSoup, element: Tag, text: str) -> None:
     """向元素追加文本，并把译文换行转换为 XHTML ``br``。"""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -482,6 +536,7 @@ def _render_segments_html(
     bilingual: bool = False,
     order: str = "target_first",
     preserve_source_style: bool = False,
+    source_lang: str = "",
 ) -> str:
     """把同一物理 HTML 资源内的译文按锚点一次性回填。
 
@@ -513,6 +568,12 @@ def _render_segments_html(
         el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
             continue
+        src = (
+            _bilingual_source(src_by_anchor.get(anchor, ""), text)
+            if bilingual and kind_by_anchor.get(anchor) != KIND_HEADING
+            else ""
+        )
+        source_markup = _japanese_ruby_source(el, source_lang) if src else ""
         line_wrapper = el.has_attr(_LINE_WRAPPER_ATTR)
         render_meta = (
             render_meta_by_anchor.get(anchor, {})
@@ -521,9 +582,6 @@ def _render_segments_html(
         )
         _replace_block_content(soup, el, text, render_meta)
         del el["data-tn-id"]
-        if not bilingual or kind_by_anchor.get(anchor) == KIND_HEADING:
-            continue
-        src = _bilingual_source(src_by_anchor.get(anchor, ""), text)
         if not src:
             continue
         # p 的原文可作为相邻段落插入；li/blockquote 则必须留在原容器内，
@@ -544,7 +602,7 @@ def _render_segments_html(
         else:
             source_classes.append("ibooks-dark-theme-use-custom-text-color")
         src_el["class"] = " ".join(source_classes)
-        src_el.append(src)
+        _append_source(soup, src_el, src, source_markup)
         if line_wrapper and order == "source_first":
             el.insert_before(src_el)
             src_el.insert_after(soup.new_tag("br"))
@@ -571,6 +629,7 @@ def _render_chapter_html(
     bilingual: bool = False,
     order: str = "target_first",
     preserve_source_style: bool = False,
+    source_lang: str = "",
 ) -> str:
     """回填一个旧式“每章一个模板”的 HTML/EPUB 章节。
 
@@ -583,6 +642,7 @@ def _render_chapter_html(
         bilingual=bilingual,
         order=order,
         preserve_source_style=preserve_source_style,
+        source_lang=source_lang,
     )
 
 
@@ -908,6 +968,7 @@ def _render_epub_resources(
     bilingual: bool,
     order: str,
     preserve_source_style: bool,
+    source_lang: str,
 ) -> dict[str, str]:
     """从原 EPUB 重建稳定模板，并将每个物理 XHTML 仅渲染一次。
 
@@ -992,6 +1053,7 @@ def _render_epub_resources(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            source_lang=source_lang,
         )
     return rendered
 
@@ -1031,6 +1093,9 @@ def _assemble_html(
                 bilingual=bilingual,
                 order=order,
                 preserve_source_style=preserve_source_style,
+                source_lang=(
+                    m.get("source_lang", "") if isinstance(m.get("source_lang"), str) else ""
+                ),
             )
         for _resource_index, href in _epub_resource_specs(meta):
             resource_html = rendered.get(href)
@@ -1362,6 +1427,8 @@ def _assemble_epub(
     raw_target_lang = m.get("target_lang", "zh")
     target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
     target_lang = _epub_lang(target_lang_code)
+    raw_source_lang = m.get("source_lang", "")
+    source_lang = raw_source_lang if isinstance(raw_source_lang, str) else ""
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_toc_entries = meta.get("toc_entries", [])
@@ -1420,6 +1487,7 @@ def _assemble_epub(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            source_lang=source_lang,
         )
         if not rendered:
             # 旧状态：每个 Chapter 自带一份物理 XHTML 模板。
@@ -1430,6 +1498,7 @@ def _assemble_epub(
                         bilingual=bilingual,
                         order=order,
                         preserve_source_style=preserve_source_style,
+                        source_lang=source_lang,
                     )
 
         infos = zin.infolist()

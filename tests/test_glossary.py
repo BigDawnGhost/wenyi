@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 
 from trans_novel.glossary.store import (
     TYPE_APPELLATION,
@@ -186,7 +187,7 @@ class TestGlossary(unittest.TestCase):
 
     def test_opening_store_removes_legacy_translation_memory_table(self):
         self.store.close()
-        with sqlite3.connect(self.store.db_path) as conn:
+        with closing(sqlite3.connect(self.store.db_path)) as conn:
             conn.execute(
                 """CREATE TABLE translation_memory (
                     source_hash TEXT PRIMARY KEY,
@@ -195,6 +196,7 @@ class TestGlossary(unittest.TestCase):
                 )"""
             )
             conn.execute("INSERT INTO translation_memory VALUES ('hash', 'source', 'target')")
+            conn.commit()
 
         self.store = GlossaryStore(self.store.db_path)
         row = self.store.conn.execute(
