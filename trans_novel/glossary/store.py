@@ -9,8 +9,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -129,6 +132,17 @@ def source_matches_text(source: str, text: str) -> bool:
     return key in normalized_text
 
 
+def term_match_sources(term: GlossaryTerm) -> list[str]:
+    """返回术语在源文中的允许匹配写法。
+
+    称谓、敬称、口癖和固定表达只按完整 source 匹配，避免其裸名 alias
+    把带语气/场景的派生译法注入普通称呼；其它实体可同时匹配 aliases。
+    """
+    if term.type in _SOURCE_ONLY_TYPES:
+        return [term.source]
+    return [term.source, *term.aliases]
+
+
 def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
     """返回术语在已规范化文本中的非重叠命中区间。"""
     key = _match_text(source).strip()
@@ -177,9 +191,7 @@ class GlossaryOccurrenceMatcher:
 
         recurring: list[GlossaryTerm] = []
         for term in terms:
-            raw_keys = (
-                [term.source] if term.type in _SOURCE_ONLY_TYPES else [term.source, *term.aliases]
-            )
+            raw_keys = term_match_sources(term)
             keys = {normalized for key in raw_keys if (normalized := _match_text(key).strip())}
             spans: set[tuple[int, int]] = set()
             for key in keys:
@@ -204,6 +216,54 @@ class GlossaryStore:
     def close(self) -> None:
         """关闭底层 SQLite 连接。"""
         self.conn.close()
+
+    @classmethod
+    def load_terms_readonly(cls, db_path: str) -> list[GlossaryTerm]:
+        """从临时文件快照读取术语，不触碰正式数据库及其 WAL 锁文件。
+
+        ``immutable=1`` 虽不会创建 ``-shm``，却会忽略尚未 checkpoint 的
+        已提交 WAL。这里把数据库和现存 WAL 复制到临时目录，再让 SQLite
+        在副本上恢复完整视图；副本产生的 ``-shm``/checkpoint 也不会污染
+        书籍的正式状态目录。
+        """
+        with tempfile.TemporaryDirectory(prefix="wenyi-glossary-review-") as directory:
+            snapshot_path = f"{directory}/glossary.db"
+            wal_path = f"{db_path}-wal"
+            snapshot_wal_path = f"{snapshot_path}-wal"
+
+            def signature(path: str) -> tuple[int, int, int, int] | None:
+                """返回足以发现复制期间文件变化的轻量签名。"""
+                try:
+                    stat = os.stat(path)
+                except FileNotFoundError:
+                    return None
+                return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+            # DB 与 WAL 是两个文件，不能把一次顺序 copy 当作原子快照。复制前后
+            # 签名一致才接受；若恰逢 checkpoint/写入则丢弃副本并重试。
+            for _attempt in range(5):
+                before = signature(db_path), signature(wal_path)
+                try:
+                    shutil.copy2(db_path, snapshot_path)
+                    if before[1] is not None:
+                        shutil.copy2(wal_path, snapshot_wal_path)
+                    elif os.path.exists(snapshot_wal_path):
+                        os.unlink(snapshot_wal_path)
+                except FileNotFoundError:
+                    continue
+                after = signature(db_path), signature(wal_path)
+                if before == after:
+                    break
+            else:
+                raise RuntimeError("术语库在只读快照期间持续变化，请稍后重试 Review")
+
+            conn = sqlite3.connect(snapshot_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute("SELECT * FROM glossary ORDER BY type, source").fetchall()
+                return [GlossaryTerm.from_row(row) for row in rows]
+            finally:
+                conn.close()
 
     # ── 术语 ──────────────────────────────────────────────────────────────
     def get_term(self, source: str) -> GlossaryTerm | None:
@@ -307,9 +367,7 @@ class GlossaryStore:
         for term in terms:
             # 称谓/口癖/固定表达是带语气或场景的派生写法，不能因为 alias
             # 命中裸名就把派生译法注入到普通称呼处。
-            keys = (
-                [term.source] if term.type in _SOURCE_ONLY_TYPES else [term.source] + term.aliases
-            )
+            keys = term_match_sources(term)
             if any(source_matches_text(k, normalized_text) for k in keys):
                 out.append(term)
         return out

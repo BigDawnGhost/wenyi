@@ -127,6 +127,23 @@ uv run trans-novel translate book.epub --chapter 0                 # translate t
 uv run trans-novel translate book.epub --format txt                # export as plain text
 ```
 
+Final review is disabled by default. Set `pipeline.review: true` to run it
+automatically after the complete book has been translated and the glossary has
+reached its final state, or run Agent Review independently:
+
+```bash
+uv run trans-novel review book.epub
+```
+
+Each Review run starts from the beginning, checks chunks concurrently, and can
+selectively request cross-book evidence before resolving contradictory
+consistency suggestions. Confirmed issues can produce provisional full-segment
+replacements in a run-local shadow translation. A fresh whole-book review sees
+the shadow text—but not the previous issue explanation—and validates it again.
+Formal translation state is never modified. The consolidated read-only result,
+run usage, events, and internal round records are written under
+`state/<book>/reviews/review-<timestamp>/`.
+
 ---
 
 ## Supported formats
@@ -160,12 +177,19 @@ flowchart TD
         I --> J[Check backtranslation samples and persist the final chapter]
     end
 
-    J --> K[Optional parallel final review<br/>Using the completed glossary]
-    K --> L[Optional cross-chapter consistency QA]
+    J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
+    K --> N{Confirmed issues and<br/>Fix budget remaining?}
+    N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
+    O --> K
+    N -- No or stopped --> P[Save read-only issues<br/>and modification suggestions]
+    P --> L[Optional cross-chapter consistency QA]
     L --> M[Generate the report and assemble the selected output]
 ```
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
+The Review Fixer receives the same style brief, book synopsis, chapter digest,
+relevant glossary subset, and nearby source/translation context used to preserve
+the book's voice. Its replacements remain temporary review suggestions.
 
 ---
 
@@ -183,7 +207,8 @@ Translated state directories for public-domain books may be shared through [weny
 ## Limitations
 
 - The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
-- Polishing and final review are the most expensive stages — they significantly increase token consumption.
+- Polishing and final review are the most expensive stages. Shadow fixing may
+  trigger multiple full-book review passes and additional Fixer calls.
 - PDF input depends on the MinerU external service; the initial conversion requires an API key.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large state directories; storage requirements grow with book length.

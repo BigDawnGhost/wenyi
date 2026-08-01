@@ -36,7 +36,9 @@ class FakeClient(LLMClient):
         """记录调用并返回处理器结果；未配置处理器时返回最小默认响应。"""
         self.calls.append(
             {
-                "messages": messages,
+                # Agent Loop 会在后续轮次 append transcript；保存快照，避免历史
+                # 调用记录随同一个 mutable list 被追改。
+                "messages": [dict(message) for message in messages],
                 "tier": tier,
                 "json_mode": json_mode,
                 "max_tokens": max_tokens,
