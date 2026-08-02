@@ -236,6 +236,10 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
             response = client.chat.completions.create(**kwargs)
             sample = self._normalize_usage(getattr(response, "usage", None))
             self.usage.record(tier, sample, stage)
-            return response.choices[0].message.content or ""
+            message = response.choices[0].message
+            content = message.content or ""
+            if json_mode and not content:
+                content = getattr(message, "reasoning_content", None) or ""
+            return content
 
         return _call()

@@ -55,8 +55,13 @@ def _make_usage(
     return u
 
 
-def _make_response(content: str, usage: Any) -> Any:
-    msg = SimpleNamespace(content=content)
+def _make_response(
+    content: str,
+    usage: Any,
+    *,
+    reasoning_content: str | None = None,
+) -> Any:
+    msg = SimpleNamespace(content=content, reasoning_content=reasoning_content)
     choice = SimpleNamespace(message=msg)
     return SimpleNamespace(choices=[choice], usage=usage)
 
@@ -98,6 +103,75 @@ def _minimal_deepseek_cfg() -> LLMConfig:
             "cheap": TierConfig(model="m2"),
         },
     )
+
+
+def _minimal_openai_compatible_cfg() -> LLMConfig:
+    return LLMConfig(
+        provider="openai-compatible",
+        base_url="x",
+        max_retries=0,
+        tiers={"strong": TierConfig(model="m")},
+    )
+
+
+class TestOpenAICompatibleReasoningContent(unittest.TestCase):
+    def test_json_mode_falls_back_to_reasoning_content_when_content_is_empty(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        reasoning_content = '{"translations":["译文"]}'
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        response = _make_response(
+            "",
+            None,
+            reasoning_content=reasoning_content,
+        )
+
+        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            self.assertEqual(
+                client.complete(
+                    [{"role": "user", "content": "translate"}],
+                    json_mode=True,
+                ),
+                reasoning_content,
+            )
+
+    def test_plain_mode_does_not_fall_back_to_reasoning_content(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        response = _make_response(
+            "",
+            None,
+            reasoning_content="不要把这段思考当成译文",
+        )
+
+        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            self.assertEqual(
+                client.complete(
+                    [{"role": "user", "content": "translate"}],
+                ),
+                "",
+            )
+
+    def test_json_mode_prefers_content_when_both_fields_exist(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        content = '{"translations":["content"]}'
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        response = _make_response(
+            content,
+            None,
+            reasoning_content='{"translations":["reasoning"]}',
+        )
+
+        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            self.assertEqual(
+                client.complete(
+                    [{"role": "user", "content": "translate"}],
+                    json_mode=True,
+                ),
+                content,
+            )
 
 
 class TestDeepSeekProviderDefaults(unittest.TestCase):
