@@ -36,6 +36,23 @@ setx DEEPSEEK_API_KEY "sk-..."
 
 You may also set `language.source` to a known ISO language code to avoid an additional model call for language detection.
 
+## macOS
+
+Releases provide separate terminal executables for Apple Silicon (`wenyi-macos-arm64.tar.gz`)
+and Intel (`wenyi-macos-x64.tar.gz`) Macs. Download the archive matching your processor,
+verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # use wenyi-macos-x64.tar.gz on Intel Macs
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+These command-line executables are ad-hoc signed by PyInstaller but are not notarized with an
+Apple Developer certificate. macOS may quarantine a downloaded build; after verifying the
+checksum, approve it in **System Settings → Privacy & Security** if prompted.
+
 ## Input and output
 
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, and PDF.

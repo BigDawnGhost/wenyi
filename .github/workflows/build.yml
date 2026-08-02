@@ -2,6 +2,10 @@ name: Build executables
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/workflows/build.yml
   release:
     types: [published]
 
@@ -26,6 +30,18 @@ jobs:
             artifact: wenyi-linux-x64
             binary: ./dist/wenyi
             archive: ./dist/wenyi-linux-x64.tar.gz
+          - name: macOS Apple Silicon
+            runner: macos-15
+            artifact: wenyi-macos-arm64
+            binary: ./dist/wenyi
+            archive: ./dist/wenyi-macos-arm64.tar.gz
+            expected_arch: arm64
+          - name: macOS Intel
+            runner: macos-15-intel
+            artifact: wenyi-macos-x64
+            binary: ./dist/wenyi
+            archive: ./dist/wenyi-macos-x64.tar.gz
+            expected_arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +70,15 @@ jobs:
           ${{ matrix.binary }} --help
           ${{ matrix.binary }} --version
 
+      - name: Verify macOS executable
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          file_output="$(file "${{ matrix.binary }}")"
+          echo "$file_output"
+          grep -q "${{ matrix.expected_arch }}" <<<"$file_output"
+          codesign --verify --deep --strict "${{ matrix.binary }}"
+
       - name: Package Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
@@ -61,10 +86,10 @@ jobs:
           Compress-Archive -LiteralPath dist/wenyi.exe
           -DestinationPath dist/wenyi-windows-x64.zip -Force
 
-      - name: Package Linux executable
-        if: runner.os == 'Linux'
+      - name: Package POSIX executable
+        if: runner.os != 'Windows'
         shell: bash
-        run: tar -C dist -czf dist/wenyi-linux-x64.tar.gz wenyi
+        run: tar -czf "${{ matrix.archive }}" -C dist wenyi
 
       - name: Upload packaged executable
         uses: actions/upload-artifact@v4
