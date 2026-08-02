@@ -236,9 +236,12 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
             response = client.chat.completions.create(**kwargs)
             sample = self._normalize_usage(getattr(response, "usage", None))
             self.usage.record(tier, sample, stage)
-            message = response.choices[0].message
+            choice = response.choices[0]
+            message = choice.message
             content = message.content or ""
             if json_mode and not content:
+                if str(getattr(choice, "finish_reason", "")).lower() == "length":
+                    raise RuntimeError("OpenAI-compatible 响应因达到 token 上限而截断")
                 content = getattr(message, "reasoning_content", None) or ""
             return content
 

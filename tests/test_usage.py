@@ -60,9 +60,10 @@ def _make_response(
     usage: Any,
     *,
     reasoning_content: str | None = None,
+    finish_reason: str | None = None,
 ) -> Any:
     msg = SimpleNamespace(content=content, reasoning_content=reasoning_content)
-    choice = SimpleNamespace(message=msg)
+    choice = SimpleNamespace(message=msg, finish_reason=finish_reason)
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
@@ -134,6 +135,44 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 ),
                 reasoning_content,
             )
+
+    def test_complete_json_uses_final_json_from_reasoning_content(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        reasoning_content = (
+            '示例：{"translations":["翻译后的中文"]}\n最终输出：{"translations":["越过山口……"]}'
+        )
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        response = _make_response(
+            "",
+            None,
+            reasoning_content=reasoning_content,
+        )
+
+        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            self.assertEqual(
+                client.complete_json(
+                    [{"role": "user", "content": "translate"}],
+                ),
+                {"translations": ["越过山口……"]},
+            )
+
+    def test_complete_json_rejects_reasoning_content_after_length_finish(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        response = _make_response(
+            "",
+            None,
+            reasoning_content='{"translations":["翻译后的中文"]}',
+            finish_reason="length",
+        )
+
+        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            with self.assertRaises(RuntimeError):
+                client.complete_json(
+                    [{"role": "user", "content": "translate"}],
+                )
 
     def test_plain_mode_does_not_fall_back_to_reasoning_content(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
