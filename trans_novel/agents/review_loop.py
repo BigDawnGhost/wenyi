@@ -623,12 +623,12 @@ def build_conflict_groups(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def apply_review_arbitrations(
     issues: list[dict[str, Any]],
     arbitrations: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """把终局仲裁应用到建议视图，不修改正文或术语库。
 
     ``suggested`` 冲突保留所有已确认的问题：原建议值落选的位置仍然需要修正，
     因此把其建议改写为最终统一值，同时另存仲裁前版本供逐轮审计。
-    ``unresolved`` 冲突保留全部问题并附上未解决标记。
+    ``unresolved`` 冲突从可执行建议中移出，完整保留到人工处理队列。
     """
     by_id = {
         str(issue["issue_id"]): dict(issue)
@@ -636,6 +636,7 @@ def apply_review_arbitrations(
         if isinstance(issue.get("issue_id"), str)
     }
     superseded_rows: list[dict[str, Any]] = []
+    unresolved_rows: list[dict[str, Any]] = []
     for arbitration in arbitrations:
         conflict_id = _text(arbitration.get("conflict_id"))
         status = arbitration.get("status")
@@ -670,8 +671,10 @@ def apply_review_arbitrations(
                     by_id[str(issue_id)]["arbitration"] = annotation
         elif status == "unresolved":
             for issue_id in arbitration.get("issue_ids", []):
-                if str(issue_id) in by_id:
-                    by_id[str(issue_id)]["arbitration"] = annotation
+                issue = by_id.pop(str(issue_id), None)
+                if issue is not None:
+                    issue["arbitration"] = {**annotation, "action": "withheld"}
+                    unresolved_rows.append(issue)
 
     order = {
         str(issue["issue_id"]): position
@@ -680,7 +683,8 @@ def apply_review_arbitrations(
     }
     final = sorted(by_id.values(), key=lambda issue: order.get(str(issue["issue_id"]), -1))
     superseded_rows.sort(key=lambda issue: order.get(str(issue["issue_id"]), -1))
-    return final, superseded_rows
+    unresolved_rows.sort(key=lambda issue: order.get(str(issue["issue_id"]), -1))
+    return final, superseded_rows, unresolved_rows
 
 
 class ReviewConflictArbiter:

@@ -41,6 +41,11 @@ class ReviewOutcome:
         """返回折叠后的最终影子修改建议。"""
         return list(self.result.get("changes") or [])
 
+    @property
+    def unresolved_issues(self) -> list[dict[str, Any]]:
+        """返回因仲裁未决而禁止自动执行的问题。"""
+        return list(self.result.get("unresolved_issues") or [])
+
 
 class ReviewRunStore:
     """管理一次只读 Review 的结果、事件与逐轮记录。"""
@@ -215,6 +220,7 @@ class ReviewRunStore:
                 "started_at": self.started_at,
                 "summary": {"issue_count": 0, "change_count": 0},
                 "issues": [],
+                "unresolved_issues": [],
                 "changes": [],
             },
         )
@@ -227,6 +233,7 @@ class ReviewRunStore:
         termination: str,
         summary: dict[str, Any],
         issues: list[dict[str, Any]],
+        unresolved_issues: list[dict[str, Any]] | None = None,
         changes: list[dict[str, Any]],
         error: dict[str, str] | None = None,
     ) -> dict[str, Any]:
@@ -240,6 +247,7 @@ class ReviewRunStore:
             "finished_at": datetime.now().astimezone().isoformat(timespec="microseconds"),
             "summary": dict(summary),
             "issues": list(issues),
+            "unresolved_issues": list(unresolved_issues or []),
             "changes": list(changes),
         }
         if error is not None:

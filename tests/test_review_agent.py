@@ -1261,7 +1261,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
             {"issue_id": "review-00001", "detail": "保留", "suggestion": "统一为安"},
             {"issue_id": "review-00002", "detail": "改写", "suggestion": "统一为安妮"},
         ]
-        final, rejected = apply_review_arbitrations(
+        final, rejected, unresolved = apply_review_arbitrations(
             issues,
             [
                 {
@@ -1280,18 +1280,19 @@ class TestReviewConflictArbiter(unittest.TestCase):
             ["review-00001", "review-00002"],
         )
         self.assertEqual([issue["issue_id"] for issue in rejected], ["review-00002"])
+        self.assertEqual(unresolved, [])
         self.assertEqual(final[0]["arbitration"]["recommended_value"], "安")
         self.assertEqual(final[1]["detail"], "该处相关表达需按终局仲裁统一为「安」。")
         self.assertEqual(final[1]["pre_arbitration_detail"], "改写")
         self.assertEqual(final[1]["suggestion"], "按终局仲裁将相关表达统一为「安」。")
         self.assertEqual(final[1]["pre_arbitration_suggestion"], "统一为安妮")
 
-    def test_unresolved_arbitration_keeps_every_issue(self):
+    def test_unresolved_arbitration_withholds_every_issue(self):
         issues = [
             {"issue_id": "review-00001", "detail": "甲"},
             {"issue_id": "review-00002", "detail": "乙"},
         ]
-        final, rejected = apply_review_arbitrations(
+        final, rejected, unresolved = apply_review_arbitrations(
             issues,
             [
                 {
@@ -1306,9 +1307,11 @@ class TestReviewConflictArbiter(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(len(final), 2)
+        self.assertEqual(final, [])
         self.assertEqual(rejected, [])
-        self.assertTrue(all(issue["arbitration"]["status"] == "unresolved" for issue in final))
+        self.assertEqual(len(unresolved), 2)
+        self.assertTrue(all(issue["arbitration"]["status"] == "unresolved" for issue in unresolved))
+        self.assertTrue(all(issue["arbitration"]["action"] == "withheld" for issue in unresolved))
 
     def test_unproposed_suggested_value_falls_back_to_unresolved(self):
         evidence = BookEvidenceIndex(
