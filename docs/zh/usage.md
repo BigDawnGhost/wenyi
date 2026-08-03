@@ -19,6 +19,9 @@ uv run trans-novel translate book.epub
 
 ## Windows
 
+Release 提供 `wenyi-windows-x64.zip` 和 `wenyi-windows-arm64.zip`。请下载与
+处理器架构匹配的压缩包，并使用 `SHA256SUMS.txt` 校验文件。
+
 使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
 
 ```powershell
@@ -34,6 +37,18 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 也可把 `language.source` 设为已知的语言代码，避免调用模型自动识别源语言。
+
+## Linux
+
+Release 提供 `wenyi-linux-x64.tar.gz` 和 `wenyi-linux-arm64.tar.gz`。请下载与
+处理器架构匹配的压缩包，使用 `SHA256SUMS.txt` 校验后执行：
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # x64 系统请改用 wenyi-linux-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
 
 ## macOS
 

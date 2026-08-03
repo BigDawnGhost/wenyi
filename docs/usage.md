@@ -20,6 +20,9 @@ Whenever the program starts, it checks for `config.yaml` in the current director
 
 ## Windows
 
+Releases provide `wenyi-windows-x64.zip` and `wenyi-windows-arm64.zip`. Download
+the archive matching your processor and verify it against `SHA256SUMS.txt`.
+
 When using a packaged `wenyi.exe`, set the API key in PowerShell:
 
 ```powershell
@@ -35,6 +38,18 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 You may also set `language.source` to a known ISO language code to avoid an additional model call for language detection.
+
+## Linux
+
+Releases provide `wenyi-linux-x64.tar.gz` and `wenyi-linux-arm64.tar.gz`. Download
+the archive matching your processor, verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # use wenyi-linux-x64.tar.gz on x64 systems
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
 
 ## macOS
 
