@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
@@ -10,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.fake_llm import routing_handler
+from tests.fake_llm import _numbered_segments, routing_handler
 from tests.sample_data import write_sample_txt
 from trans_novel.agents.reviewer import ReviewOutputError
 from trans_novel.config import Config
@@ -160,9 +161,11 @@ class TestOrchestrator(unittest.TestCase):
             from trans_novel.glossary.store import GlossaryStore
 
             g = GlossaryStore(store.glossary_path)
-            self.assertIsNotNone(g.get_term("綾小路"))
-            self.assertIsNotNone(g.get_term("堀北"))
-            g.close()
+            try:
+                self.assertIsNotNone(g.get_term("綾小路"))
+                self.assertIsNotNone(g.get_term("堀北"))
+            finally:
+                g.close()
 
             # ── 续跑：所有章已 done，不应再产生翻译调用 ──
             client2 = FakeClient(handler=routing_handler)
@@ -212,15 +215,31 @@ class TestOrchestrator(unittest.TestCase):
 
 class TestSegmentLevelResume(unittest.TestCase):
     def _tr_handler(self, tag):
-        """返回带标记的翻译 handler（译文形如 {tag}译{i}），其余走默认路由。"""
+        """返回带标记的翻译 handler（译文形如 {tag}译{i}），其余走默认路由。
+
+        与 tests.fake_llm 同样按源段长度填充：首译长度门默认开启，
+        填充保证本组测试里门不触发，翻译调用计数只表达续跑语义。
+        """
 
         def handler(messages, tier, json_mode):
             if "文学翻译" in messages[0]["content"]:
-                n = len(re.findall(r"^\[(\d+)\]", messages[-1]["content"], re.MULTILINE))
-                return json.dumps(
-                    {"translations": [f"{tag}译{i}" for i in range(n)]},
-                    ensure_ascii=False,
-                )
+                segs = _numbered_segments(messages[-1]["content"])
+                if not segs:
+                    segs = [
+                        (i, "")
+                        for i in range(
+                            len(
+                                re.findall(
+                                    r"^\[(\d+)\]", messages[-1]["content"], re.MULTILINE
+                                )
+                            )
+                        )
+                    ]
+                out = []
+                for i, seg in segs:
+                    base = f"{tag}译{i}"
+                    out.append(base + "x" * max(0, math.ceil(0.6 * len(seg)) - len(base)))
+                return json.dumps({"translations": out}, ensure_ascii=False)
             return routing_handler(messages, tier, json_mode)
 
         return handler

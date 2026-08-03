@@ -57,6 +57,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
 - **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support
+- **Chinese-to-English translation** — translates Chinese fiction into consistent international English with publication-oriented name and terminology handling
 
 ---
 
@@ -82,13 +83,21 @@ Set your API key:
 export DEEPSEEK_API_KEY=sk-...
 ```
 
+The default direction is non-Chinese source text to Simplified Chinese. For Chinese-to-English translation, set:
+
+```yaml
+language:
+  source: zh # or auto
+  target: en
+```
+
 ### One-command translation
 
 ```bash
 uv run trans-novel translate book.epub
 ```
 
-This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
+This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The target language determines the default suffix: `output/book.zh.epub` or `output/book.en.epub`.
 
 ### Step-by-step workflow
 
@@ -153,7 +162,7 @@ run usage, events, and internal round records are written under
 | EPUB, FB2, TXT, Markdown, HTML, PDF | EPUB (monolingual / bilingual), TXT, HTML, Markdown |
 
 - PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
-- EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
+- EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical source layouts are converted to horizontal for translated reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 
 ---
@@ -206,7 +215,7 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## Limitations
 
-- The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
+- Supported directions are non-Chinese source languages to Simplified Chinese, and Chinese to international English. Other target-language combinations are rejected.
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
 - PDF input depends on the MinerU external service; the initial conversion requires an API key.

@@ -21,9 +21,9 @@ Read input
 
 ## Whole-book understanding and context
 
-The prescan creates a digest for each chapter and a synopsis of the complete book. For every translation batch, the prompt presents stable information first: style guidance, the whole-book synopsis, the current chapter digest, relevant glossary terms, recent translated context, and finally the source text to translate.
+The prescan creates a digest for each chapter and a synopsis of the complete book. Long chapters are summarized from head, middle, and tail samples so climactic and turning-point content near the chapter end also reaches the translator. For every translation batch, the prompt presents stable information first: style guidance, the whole-book synopsis, the current chapter digest, relevant glossary terms, recent translated context, and finally the source text to translate.
 
-This lets early chapters benefit from knowledge of later events while helping adjacent batches preserve pronouns, forms of address, tone, and sentences that span multiple source segments.
+This lets early chapters benefit from knowledge of later events while helping adjacent batches preserve pronouns, forms of address, tone, and sentences that span multiple source segments. The recent-context tail is segment-based (`rolling_context_segments`) with a character floor (`rolling_context_min_chars`), so dialogue-dense passages automatically pull in earlier segments instead of leaving the translator without referents.
 
 ## Glossary
 
@@ -34,8 +34,9 @@ The glossary constrains later translation and supplies evidence to the final rev
 ## Quality controls
 
 - **Segment alignment:** the model must return a JSON array with the same number of items as the input. Wenyi retries mismatched batches and falls back to translating one segment at a time.
-- **Polishing:** improves Chinese fluency while preserving meaning and segment count.
-- **Punctuation normalization:** converts punctuation to common Simplified Chinese full-width conventions.
+- **Length gate:** abnormally short first-pass translations (a classic half-translated segment signature) are retranslated once individually at no cost when translation is healthy; segments that polishing abnormally shortens revert to their pre-polish text. Abnormally long segments are only reported, never rewritten automatically.
+- **Polishing:** improves target-language fluency while preserving meaning and segment count.
+- **Punctuation normalization:** applies common full-width conventions to Chinese output and conservatively removes obvious residual CJK punctuation from English output.
 - **Agent Review:** starts only after every chapter has been translated and uses the completed glossary. Contiguous chapter chunks are checked concurrently with the existing Reviewer prompt. Every response must end with a completion receipt containing the exact reviewed-segment count and `complete: true`. Syntax-only JSON damage is repaired locally with `json-repair`; a missing or invalid receipt recursively splits only the affected chunk, and a singleton receives at most `1 + review_output_retries` attempts.
 - **Selective evidence loop:** when a successfully reviewed leaf chunk contains candidates and `review_agent_loop` is enabled, a bounded Agent Loop confirms, dismisses, or refines them and may add issues within that chunk. It can request one glossary entry by source or alias, the first, middle, last, or Nth occurrence of a term, nearby source-and-translation segments, and limited book, chapter, or style context instead of loading the whole book or glossary into every prompt. The loop uses the configured tier (`strong` by default) and must decide after at most `review_agent_max_evidence_rounds` evidence rounds.
 - **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The final suggestion set conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available in the round traces. It never changes the glossary or translated text.
@@ -77,4 +78,4 @@ even if a later Reviewer missed it).
 
 ## Resumability
 
-Each completed translation batch is persisted immediately. Running `translate` again skips completed batches and fills only missing work. `assemble` can regenerate output directly from stored state.
+Each completed translation batch is persisted immediately. Running `translate` again skips completed batches and fills only missing work. The source/target direction is part of the saved run contract and cannot be changed in place. `assemble` can regenerate output directly from stored state.

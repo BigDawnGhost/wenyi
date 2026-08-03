@@ -1,9 +1,9 @@
-# trans-novel 配置（多语言小说 → 中文）
+# trans-novel 配置（非中文小说 → 中文；中文小说 → 英文）
 # 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
 
 language:
-  source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
-  target: zh # 译文语言
+  source: auto # auto 由模型识别；中译英可设为 zh
+  target: zh # zh=非中文→简体中文；en=中文→国际英文
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
@@ -64,7 +64,7 @@ honorific:
   # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
+# ── 标点规范化（按目标语言清理明显不合规范的标点）──────────────────────────
 punctuation:
   normalize: true
 
@@ -74,7 +74,7 @@ paths:
 
 # ── 双语输出 ───────────────────────────────────────────────────────────────
 output:
-  mono: true            # 产出单语中文版
+  mono: true            # 产出单语译本（文件名后缀跟随目标语言）
   bilingual: false      # 产出双语版（原文淡化，与译文对照）
   bilingual_order: target_first  # target_first=译文在上原文在下; source_first=原文在上
   bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示

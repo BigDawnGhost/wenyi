@@ -38,7 +38,7 @@ setx DEEPSEEK_API_KEY "sk-..."
 ## 输入与输出
 
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
-- 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
+- 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.<目标语言>.epub`；双语版 `<书名>.<目标语言>-bi.epub` 需按需开启（目标语言为 `zh` 或 `en`）。
 - `--format txt|html|markdown|pdf`：改为导出指定格式；所有输入默认仍生成 EPUB。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
@@ -114,8 +114,9 @@ uv run trans-novel status book.epub
 ```
 
 更改润色设置不会自动重跑已经完成的翻译批次。Review 不同：每次执行
-`review` 都会全量重审完整译文，并创建新的时间戳只读审校目录。只有需要从头翻译时
-才应使用新的状态目录或清理对应状态。
+`review` 都会全量重审完整译文，并创建新的时间戳只读审校目录。已有状态目录内
+不能更改源语言或目标语言；开始另一翻译方向时须配置不同的 `paths.state_dir`。
+只有需要从头翻译时才应使用新的状态目录或清理对应状态。
 
 ## 独立阶段与术语管理
 

@@ -12,7 +12,14 @@ language:
   target: zh
 ```
 
-`source: auto` 会调用模型识别源语言；也可以写死 ISO 639-1 代码，例如 `ja`、`en`、`ko`、`ru`、`fr`、`de`、`es`。目标语言目前为简体中文。
+`source: auto` 会调用模型识别源语言；也可以写死 ISO 639-1 代码，例如 `zh`、`ja`、`en`、`ko`、`ru`、`fr`、`de`、`es`。
+
+当前正式支持两类方向：
+
+- 非中文源语言译成简体中文（`target: zh`）；
+- 中文译成国际英文（`source: zh` 或 `auto`，`target: en`）。
+
+英文目标检测到非中文源文本、源目标相同或其他目标语言时，流水线会在翻译前报错。状态目录与创建时的翻译方向绑定；切换方向须使用不同的 `paths.state_dir`。
 
 ## 模型
 
@@ -178,6 +185,8 @@ pipeline:
   backtranslate_sample: 0
   consistency_qa: false
   rolling_context_segments: 6
+  rolling_context_min_chars: 1500
+  translate_length_gate: true
   book_understanding: true
   prescan_concurrency: 4
   review_concurrency: 4
@@ -197,6 +206,8 @@ pipeline:
 - `backtranslate_sample`：回译抽检比例，`0` 为关闭。
 - `consistency_qa`：全书完成后进行跨章术语、人称、语气和标点检查。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
+- `rolling_context_min_chars`：前文译文的字符预算下限；最近若干段总量不足时向前多取更早段（上限为滚动上下文缓冲区）。`0` 表示纯按段数（旧行为）。
+- `translate_length_gate`：首译长度门。明显过短的段自动定向重译一次（重译仍短则保留原译）；润色后异常变短的段回退润色前译文。正常运行不产生额外模型调用。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
@@ -229,8 +240,8 @@ output:
   about_page: true
 ```
 
-- `mono`：生成单语中文版，文件名为 `<书名>.zh.epub`。
-- `bilingual`：生成原文与译文对照版，文件名为 `<书名>.zh-bi.epub`。
+- `mono`：生成单语译本，文件名为 `<书名>.<目标语言>.epub`。
+- `bilingual`：生成原文与译文对照版，文件名为 `<书名>.<目标语言>-bi.epub`。
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
 - `bilingual_preserve_source_style`：设为 `true` 时，原文继承书籍正文样式，不使用灰色淡化背景；仅影响 EPUB 和 HTML。
 - `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
@@ -257,5 +268,5 @@ paths:
 - `max_chars_per_batch`：单个模型翻译批次的目标字符数。
 - `max_chars_per_segment`：超长段落的拆分阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
-- `punctuation.normalize`：统一简体中文大陆常用全角标点。
+- `punctuation.normalize`：按目标语言规范标点；中文统一为大陆常用全角标点，英文只保守转换明显残留的中日文句读，不改写正常英文空格或撇号。
 - `state_dir`：断点、章节产物、术语库和报告的位置。

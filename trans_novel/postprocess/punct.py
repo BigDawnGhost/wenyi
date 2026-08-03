@@ -1,6 +1,6 @@
-"""译文标点规范化 —— 统一为简体中文大陆通用全角标点。
+"""译文标点规范化。
 
-确定性兜底（提示词已要求，这里再保一道）：
+中文确定性兜底（提示词已要求，这里再保一道）：
 - 日式引号 「」→ “”，『』→ ‘’；
 - 英式直引号 "→ “/”（按出现次序配对），' → ‘/’（按次序配对，撇号尽量保留）；
 - 半角 , . ! ? : ; 在中文语境（相邻为 CJK）→ 全角 ，。！？：；；
@@ -8,6 +8,9 @@
 
 策略保守：英文/数字串内部的半角标点（如 9.11、Mr. Smith）不误伤——
 仅当半角标点紧邻 CJK 字符时才转全角。
+
+英文规范化只转换明显残留的中日文句读和排印符号，不调整空格、英文引号或
+撇号，避免在缺少句法上下文时改坏正常英文。
 """
 
 from __future__ import annotations
@@ -24,6 +27,25 @@ _CJK_RE = f"[{_CJK}]"
 
 # 半角标点 → 全角
 _HALF_TO_FULL = {",": "，", ".": "。", "!": "！", "?": "？", ":": "：", ";": "；"}
+
+_CJK_TO_EN = {
+    "，": ",",
+    "。": ".",
+    "！": "!",
+    "？": "?",
+    "：": ":",
+    "；": ";",
+    "、": ",",
+    "（": "(",
+    "）": ")",
+    "「": "“",
+    "」": "”",
+    "『": "‘",
+    "』": "’",
+    "　": " ",
+}
+_EN_SPACED_CJK_PUNCT = "，。：；！？"
+_EN_CLOSING_PUNCT = "”’\"')]}，。！？：；、,.!?:;"
 
 
 def _convert_quotes(
@@ -161,3 +183,47 @@ def normalize_zh_segments(
         )
         normalized.append(value)
     return normalized
+
+
+def normalize_en(text: str) -> str:
+    """保守清理英文译文中明显残留的中文全角句读和排印符号。"""
+    if not text:
+        return text
+    out: list[str] = []
+    for index, char in enumerate(text):
+        converted = _CJK_TO_EN.get(char, char)
+        previous = text[index - 1] if index else ""
+        following = text[index + 1] if index + 1 < len(text) else ""
+
+        if char == "（" and out and not out[-1].isspace() and out[-1] not in "([{“‘/-":
+            out.append(" ")
+        out.append(converted)
+
+        numeric_separator = char in "，。：" and previous.isdigit() and following.isdigit()
+        url_separator = char == "：" and text[index + 1 : index + 3] == "//"
+        if (
+            char in _EN_SPACED_CJK_PUNCT
+            and following
+            and not following.isspace()
+            and following not in _EN_CLOSING_PUNCT
+            and not numeric_separator
+            and not url_separator
+        ):
+            out.append(" ")
+        elif (
+            char == "）"
+            and following
+            and not following.isspace()
+            and following not in _EN_CLOSING_PUNCT
+        ):
+            out.append(" ")
+
+    text = "".join(out)
+    text = re.sub(r"(?:…{2,}|\.{6,})", "…", text)
+    text = re.sub(r"(?:—{2,}|-{2,})", "—", text)
+    return text
+
+
+def normalize_en_segments(texts: list[str]) -> list[str]:
+    """逐段规范化英文标点；英文引号状态不由本地规则推断。"""
+    return [normalize_en(text) for text in texts]

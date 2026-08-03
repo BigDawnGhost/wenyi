@@ -21,6 +21,7 @@ def length_flags(
     *,
     too_short: float = 0.30,
     too_long: float = 3.0,
+    min_source_chars: int = 0,
 ) -> list[LengthFlag]:
     """按 译文/原文 字符比标记可疑段。
 
@@ -36,9 +37,31 @@ def length_flags(
         if t_len == 0:
             flags.append(LengthFlag(i, 0.0, "empty"))
             continue
+        if s_len < min_source_chars:
+            continue
         ratio = t_len / s_len
         if ratio < too_short:
             flags.append(LengthFlag(i, ratio, "too_short"))
         elif ratio > too_long:
             flags.append(LengthFlag(i, ratio, "too_long"))
     return flags
+
+
+def length_flags_for_direction(
+    sources: list[str],
+    targets: list[str],
+    source_lang: str,
+    target_lang: str,
+) -> list[LengthFlag]:
+    """按翻译方向使用宽松阈值，减少中译英字符扩张造成的误报。"""
+    source = (source_lang or "").lower().replace("_", "-").split("-", 1)[0]
+    target = (target_lang or "").lower().replace("_", "-").split("-", 1)[0]
+    if source == "zh" and target == "en":
+        return length_flags(
+            sources,
+            targets,
+            too_short=0.5,
+            too_long=6.0,
+            min_source_chars=8,
+        )
+    return length_flags(sources, targets)
