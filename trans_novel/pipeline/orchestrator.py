@@ -3,7 +3,7 @@
 单章翻译流水线（章内批次**串行**，逐批刷新滚动上下文与术语快照；跨章亦串行传递梗概）：
   每批：渲染上下文（含前一批刚译出的译文）→ 翻译（对齐保证）→ 润色（可选）→
         术语/称呼/固定表达实时抽取入库 → 立即供下一批参照。
-  章末：跨段标点规范化 → 全章术语兜底抽取 → 回译抽检 → 写 TM → 落盘标记 done。
+  章末：跨段标点规范化 → EPUB 注释定位 → 全章术语兜底抽取 → 回译抽检 → 落盘标记 done。
 翻译前先预扫源文建立全书理解（逐章梗概+全书概览，fast 档并行），作恒定前缀注入每章翻译。
 
 全书翻译完成后，独立 Review 阶段使用最终术语库按章并行审校；候选问题进入
@@ -25,6 +25,11 @@ from threading import Lock
 from typing import Any
 
 from ..agents.analyzer import Analyzer
+from ..agents.annotation_aligner import (
+    AnnotationAligner,
+    AnnotationUnit,
+    target_digest,
+)
 from ..agents.polisher import Polisher
 from ..agents.review_fixer import (
     ProvisionalPatch,
@@ -44,6 +49,7 @@ from ..agents.translator import Translator
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..ingest.models import Chapter, Segment
 from ..ingest.segmenter import batch_segments, load_document
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
@@ -360,6 +366,7 @@ class Orchestrator:
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
+        self.annotation_aligner = AnnotationAligner(self.client, config)
 
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
@@ -408,6 +415,7 @@ class Orchestrator:
             self.backtrans,
             self.polisher,
             self.extractor,
+            self.annotation_aligner,
         ):
             ag.src = resolved
 
@@ -1105,6 +1113,165 @@ class Orchestrator:
                 progress(completed, len(pending), "翻译章节标题")
 
     # ── 单章 ──────────────────────────────────────────────────────────────
+    def _align_chapter_annotations(
+        self,
+        ci: int,
+        chapter: Chapter,
+        store: RunStore,
+        *,
+        progress: ProgressFn | None = None,
+    ) -> None:
+        """在最终译文中定位 EPUB 注释链接，并把稳定 placement 写回首段。
+
+        超长段会被切成一个带 anchor 的首段和若干 ``cont`` 续段；解析元数据
+        只存在首段，因此这里先按 anchor 合并完整 source/target。模型只能插入
+        控制标记，不能改写译文；异常或校验失败由 ``AnnotationAligner`` 生成
+        确定性 fallback，writer 至少能在段末恢复可点击链接。
+        """
+        annotated: list[tuple[Segment, AnnotationUnit]] = []
+        segments = chapter.text_segments
+        for position, segment in enumerate(segments):
+            metadata = segment.meta.get("epub_annotations")
+            if not isinstance(metadata, dict):
+                continue
+            raw_items = metadata.get("items")
+            if not isinstance(raw_items, list) or not raw_items:
+                continue
+
+            source_parts = [segment.source]
+            target_parts = [segment.target or ""]
+            cursor = position + 1
+            while cursor < len(segments) and segments[cursor].cont:
+                source_parts.append(segments[cursor].source)
+                target_parts.append(segments[cursor].target or "")
+                cursor += 1
+            source = "".join(source_parts)
+            target = "".join(target_parts)
+            if not target:
+                continue
+
+            expected_ids = {
+                str(item.get("id"))
+                for item in raw_items
+                if isinstance(item, dict) and item.get("id")
+            }
+            placements = metadata.get("placements")
+            placement_ids = {
+                str(item.get("id"))
+                for item in placements or []
+                if isinstance(item, dict) and item.get("id")
+            }
+            if (
+                metadata.get("target_digest") == target_digest(target)
+                and expected_ids
+                and placement_ids == expected_ids
+            ):
+                continue
+
+            items = tuple(dict(item) for item in raw_items if isinstance(item, dict))
+            if not items:
+                continue
+            anchor = segment.anchor or f"segment-{segment.index}"
+            annotated.append(
+                (
+                    segment,
+                    AnnotationUnit(
+                        unit_id=f"ch{ci}:{anchor}",
+                        source=source,
+                        target=target,
+                        items=items,
+                    ),
+                )
+            )
+
+        if not annotated:
+            return
+        if not self.config.pipeline.annotation_alignment:
+            store.log_event(
+                "annotation_alignment_skipped",
+                chapter=ci,
+                units=len(annotated),
+                reason="disabled",
+            )
+            return
+
+        label = "定位注释链接"
+        total = len(annotated)
+        completed = 0
+        if progress:
+            progress(0, total, label)
+        segment_by_unit = {unit.unit_id: segment for segment, unit in annotated}
+        # 一次请求可安全携带多个短段。字符预算限制输出体积，unit 上限避免
+        # 极短脚注让 JSON 数组无限膨胀；尤利西斯这类万条链接不会退化成
+        # 每段一次 API 调用。
+        batch_char_budget = max(8_000, self.config.segment.max_chars_per_batch * 4)
+        unit_batches: list[list[AnnotationUnit]] = []
+        current_batch: list[AnnotationUnit] = []
+        current_chars = 0
+        for _segment, unit in annotated:
+            unit_chars = len(unit.source) + len(unit.target) + len(unit.items) * 64
+            if current_batch and (
+                current_chars + unit_chars > batch_char_budget or len(current_batch) >= 64
+            ):
+                unit_batches.append(current_batch)
+                current_batch = []
+                current_chars = 0
+            current_batch.append(unit)
+            current_chars += unit_chars
+        if current_batch:
+            unit_batches.append(current_batch)
+
+        fallback_units = 0
+        failed_units = 0
+        max_workers = min(self.config.pipeline.annotation_concurrency, len(unit_batches))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_units = {
+                executor.submit(self.annotation_aligner.align_units, units): units
+                for units in unit_batches
+            }
+            for future in as_completed(future_to_units):
+                units = future_to_units[future]
+                try:
+                    results = future.result()
+                except Exception as error:  # noqa: BLE001 - 单段失败由 writer 安全降级
+                    failed_units += len(units)
+                    store.log_event(
+                        "annotation_alignment_failed",
+                        chapter=ci,
+                        unit_ids=[unit.unit_id for unit in units],
+                        error=type(error).__name__,
+                        detail=str(error),
+                    )
+                else:
+                    batch_changed = False
+                    for result in results:
+                        segment = segment_by_unit.get(result.unit_id)
+                        if segment is None:
+                            failed_units += 1
+                            continue
+                        metadata = segment.meta["epub_annotations"]
+                        metadata["target_digest"] = result.target_digest
+                        metadata["placements"] = [dict(item) for item in result.placements]
+                        fallback_units += int(result.used_fallback)
+                        batch_changed = True
+                    if batch_changed:
+                        # 每个已完成批次立即原子落盘，长书被中断时无需重新
+                        # 支付此前已完成的定位调用。
+                        store.save_chapter(chapter)
+                completed += len(units)
+                if progress:
+                    progress(completed, total, label)
+
+        store.save_chapter(chapter)
+        store.log_event(
+            "annotation_alignment_completed",
+            chapter=ci,
+            units=total,
+            batches=len(unit_batches),
+            fallback_units=fallback_units,
+            failed_units=failed_units,
+        )
+
     def _translate_chapter(
         self,
         ci: int,
@@ -1245,6 +1412,10 @@ class Orchestrator:
             if retained:
                 context.recent_targets[-retained:] = normalized_targets[-retained:]
             self._update_translation_history(translation_history, ci, 0, text_segs)
+
+        # 注释位置依赖最终字符序列，必须晚于润色和章级标点处理；此后只写
+        # 元数据，不再改变 target。无注释章节会立即返回，不产生模型调用。
+        self._align_chapter_annotations(ci, chapter, store, progress=progress)
 
         # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
         # 最终 Review 会在全书翻译完成后读取此时已经稳定的最终术语库。

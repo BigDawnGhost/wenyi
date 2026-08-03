@@ -173,8 +173,10 @@ flowchart TD
         F --> G[Extract terms and refresh the glossary]
         G --> H{More batches?}
         H -- Yes --> E
-        H -- No --> I[Normalize punctuation and run chapter-level term extraction]
-        I --> J[Check backtranslation samples and persist the final chapter]
+        H -- No --> I[Normalize punctuation]
+        I --> IA[Align EPUB annotation links<br/>Skipped when none exist]
+        IA --> IB[Run chapter-level fallback term extraction]
+        IB --> J[Check backtranslation samples and persist the final chapter]
     end
 
     J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
