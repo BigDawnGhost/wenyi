@@ -57,8 +57,7 @@ pipeline:
   rolling_context_segments: 6 # 注入的前文译文尾段数
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-  annotation_alignment: false # 译后定位 EPUB 注释链接；关闭时仅译文侧退化为段末标记
-  annotation_concurrency: 4 # 注释定位并发数（只处理实际含注释的段落）
+  annotation_alignment: true # 逐段定位 EPUB 注释链接；关闭时仅译文侧退化为段末标记
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
   review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
   review_agent_loop: true # 初审发现候选后，使用强档按需取证并复核
@@ -131,8 +130,7 @@ class PipelineConfig(BaseModel):
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
     book_understanding: bool = True
     prescan_concurrency: int = 4  # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-    annotation_alignment: bool = False  # 译文定稿后定位 EPUB 注释链接
-    annotation_concurrency: int = Field(default=4, ge=1)  # 只并发处理含注释的段落
+    annotation_alignment: bool = True  # 每个含注释逻辑段定稿后串行定位链接
     review_concurrency: int = 4  # 最终审校连续分块并发数（结果按原块序合并，1=串行）
     review_output_retries: int = Field(
         default=2,
