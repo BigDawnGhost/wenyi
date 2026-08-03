@@ -48,6 +48,7 @@ pipeline:
     true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译（让译者对全书有理解）；
     # fast 档免思考，全书概览为恒定前缀可命中缓存复用；关掉省去预扫成本
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
+  annotation_alignment: true # 每个含注释逻辑段译完后串行定位链接；关闭时仅译文侧退化为段末标记
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
   review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
   review_agent_loop: true # 初审发现候选后，使用强档按需取证并复核

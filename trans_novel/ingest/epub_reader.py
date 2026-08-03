@@ -16,6 +16,7 @@ import posixpath
 import re
 import xml.etree.ElementTree as ET
 import zipfile
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, UnicodeDammit
 from bs4.element import Comment, NavigableString, Tag
@@ -45,6 +46,14 @@ _BLOCK_CANDIDATE_TAGS = _BLOCK_TAGS | {"div"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
+_ANNOTATION_META_KEY = "epub_annotations"
+_ANNOTATION_ID_ATTR = "data-tn-annotation-id"
+_ANNOTATION_MARKER_ONLY = re.compile(r"^[\d\s*＊※†‡\[\]()〔〕（）{}↩↵←↑↓.·:：\-]+$")
+_ANNOTATION_HINT = re.compile(
+    r"(?:^|[^a-z0-9])(?:note|noteref|footnote|endnote|fn|jpref|jpnote|ref|key)"
+    r"(?:[-_]?\d+)?(?:$|[^a-z0-9])",
+    re.IGNORECASE,
+)
 _ATOMIC_INLINE_TAGS = {
     "audio",
     "canvas",
@@ -67,9 +76,14 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
     roots: list[Tag] = []
     seen: set[int] = set()
     for candidate in block.find_all(True):
+        if candidate.has_attr(_ANNOTATION_ID_ATTR):
+            # 注释根由 ``epub_annotations`` 单独恢复，不能再作为普通内联
+            # 节点记录一份。其内部的图片等原子节点仍需独立记录，否则范围
+            # 链接重建正文时会把这些节点一并清空。
+            continue
         is_atomic = candidate.name in _ATOMIC_INLINE_TAGS
         is_empty_anchor = (
-            candidate.name == "a"
+            candidate.name in {"a", "span"}
             and not candidate.get_text(strip=True)
             and (candidate.has_attr("id") or candidate.has_attr("name"))
         )
@@ -82,6 +96,7 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
             isinstance(parent, Tag)
             and parent is not block
             and parent.name not in _BLOCK_TAGS
+            and not parent.has_attr(_ANNOTATION_ID_ATTR)
             and not parent.get_text(strip=True)
         ):
             root = parent
@@ -92,18 +107,208 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
     return roots
 
 
-def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
+def _is_internal_link(link: Tag) -> bool:
+    """判断链接是否指向 EPUB 包内资源，而非 Web、邮件或脚本地址。"""
+    raw_href = link.get("href")
+    if not isinstance(raw_href, str) or not raw_href.strip():
+        return False
+    parsed = urlsplit(raw_href.strip())
+    return not parsed.scheme and not parsed.netloc
+
+
+def _nearest_marker_wrapper(link: Tag, block: Tag) -> Tag | None:
+    """返回 link 与当前翻译块之间最近的 ``sup``/``sub`` 包装。"""
+    parent = link.parent
+    while isinstance(parent, Tag):
+        if parent is block:
+            return parent if parent.name in {"sup", "sub"} else None
+        if parent.name in {"sup", "sub"}:
+            return parent
+        parent = parent.parent
+    return None
+
+
+def _has_annotation_hint(link: Tag, marker: Tag, marker_text: str) -> bool:
+    """根据 fragment 与语义属性判断编号是否确为注释，而非数学上标。"""
+    decorated = bool(re.search(r"[^\d\s.·:\-]", marker_text))
+    parsed = urlsplit(str(link.get("href", "")))
+    attrs: list[str] = [parsed.fragment]
+    for node in (link, marker):
+        for key in ("id", "class", "role", "rel", "epub:type"):
+            value = node.get(key)
+            if isinstance(value, list):
+                attrs.extend(str(item) for item in value)
+            elif value is not None:
+                attrs.append(str(value))
+    hint = " ".join(attrs)
+    short_numbered_fragment = bool(re.fullmatch(r"[a-zA-Z]?[\-_]?\d+", parsed.fragment))
+    return decorated or bool(_ANNOTATION_HINT.search(hint)) or short_numbered_fragment
+
+
+def _range_marker_node(link: Tag) -> Tag | None:
+    """识别范围链接末尾的高置信度注释号，避免误删语义上下标。
+
+    ``H<sub>2</sub>O``、``CO<sub>2</sub>`` 和公式指数都是正文，不能因为
+    使用 ``sup/sub`` 就从送译文本中删除。第一版只接受位于链接末尾、文字
+    形似编号，并且 href/id/class/语义属性或装饰符提供注释线索的节点。
+    """
+    significant = [
+        child
+        for child in link.children
+        if not (
+            isinstance(child, NavigableString)
+            and not isinstance(child, Comment)
+            and not str(child).strip()
+        )
+    ]
+    if not significant:
+        return None
+    candidate = significant[-1]
+    if not isinstance(candidate, Tag) or candidate.name not in {"sup", "sub"}:
+        return None
+    marker_text = candidate.get_text("", strip=True)
+    if not marker_text or not _ANNOTATION_MARKER_ONLY.fullmatch(marker_text):
+        return None
+
+    # 数字下标几乎总是化学式或数学正文；只有带括号、星号、箭头等明显
+    # 注释装饰时才允许把 sub 当标记。
+    decorated = bool(re.search(r"[^\d\s.·:\-]", marker_text))
+    if candidate.name == "sub" and not decorated:
+        return None
+    return candidate if _has_annotation_hint(link, candidate, marker_text) else None
+
+
+def _semantic_link_text(link: Tag, marker_node: Tag | None = None) -> str:
+    """返回链接正文，只排除已确认的末尾注释号。"""
+    parts: list[str] = []
+
+    def collect(parent: Tag) -> None:
+        for child in parent.children:
+            if isinstance(child, Tag):
+                if child is marker_node or child.name in {"rt", "rp"}:
+                    continue
+                collect(child)
+            elif isinstance(child, NavigableString) and not isinstance(child, Comment):
+                parts.append(str(child))
+
+    collect(link)
+    return re.sub(r"[ \t\r\n\f\v]+", " ", "".join(parts)).strip()
+
+
+def _annotation_roots(block: Tag, anchor: str) -> dict[int, dict[str, object]]:
+    """识别段内链接，给其 DOM 根节点编号并返回临时提取规格。"""
+    # ``block`` 自身若是普通 a（典型为 ``li > a``），writer 替换其子文字时
+    # 天然保留 href，无需再请求模型定位。只有内部还带 sup/sub 注释号时才
+    # 记录自身，以免 clear() 一并删除标记结构。
+    links: list[Tag] = []
+    if block.name == "a" and block.has_attr("href") and block.find(["sup", "sub"]):
+        links.append(block)
+    links.extend(block.find_all("a", href=True))
+
+    roots: dict[int, dict[str, object]] = {}
+    ordinal = 0
+    for link in links:
+        if not _is_internal_link(link):
+            continue
+
+        marker_wrapper = _nearest_marker_wrapper(link, block)
+        if marker_wrapper is not None:
+            wrapper_text = marker_wrapper.get_text("", strip=True)
+            if not _has_annotation_hint(link, marker_wrapper, wrapper_text):
+                marker_wrapper = None
+        range_marker = None if marker_wrapper is not None else _range_marker_node(link)
+        semantic_text = _semantic_link_text(link, range_marker)
+        if not semantic_text and marker_wrapper is None:
+            # 纯图片链接及空锚点没有需要跨语言定位的正文。让既有原子内联
+            # 机制原样保留整个 ``a`` 外壳，避免把图片误当脚注并清空。
+            continue
+        marker_only = bool(
+            _ANNOTATION_MARKER_ONLY.fullmatch(semantic_text)
+            and _has_annotation_hint(link, link, semantic_text)
+        )
+        mode = "point" if marker_wrapper is not None or marker_only else "range"
+        root = marker_wrapper if mode == "point" and marker_wrapper is not None else link
+
+        # 一个结构根只记录一次。规范 XHTML 中不会嵌套 a，但此防线可避免
+        # 损坏文档让同一 sup/sub 被多个链接重复编号。
+        if id(root) in roots:
+            continue
+
+        annotation_id = f"{anchor}_annotation_{ordinal}"
+        ordinal += 1
+        if mode == "point":
+            marker_text = root.get_text("", strip=True)
+        else:
+            marker_text = range_marker.get_text("", strip=True) if range_marker is not None else ""
+        root[_ANNOTATION_ID_ATTR] = annotation_id
+        roots[id(root)] = {
+            "id": annotation_id,
+            "mode": mode,
+            "marker_text": marker_text,
+            "marker_node_ids": {id(range_marker)} if range_marker is not None else set(),
+            "root": root,
+        }
+    return roots
+
+
+def _normalize_html_text(
+    raw_text: str,
+    offsets: list[int],
+) -> tuple[str, list[int]]:
+    """折叠 HTML 排版空白，并把原始字符边界映射到规范化文本。"""
+    output: list[str] = []
+    boundary_map = [0] * (len(raw_text) + 1)
+    for index, char in enumerate(raw_text):
+        boundary_map[index] = len(output)
+        if char in " \t\r\n\f\v":
+            if not output or output[-1] != " ":
+                output.append(" ")
+        else:
+            output.append(char)
+    boundary_map[len(raw_text)] = len(output)
+
+    collapsed = "".join(output)
+    leading = len(collapsed) - len(collapsed.lstrip())
+    text = collapsed.strip()
+    mapped = [
+        min(max(boundary_map[min(max(offset, 0), len(raw_text))] - leading, 0), len(text))
+        for offset in offsets
+    ]
+    return text, mapped
+
+
+def _segment_content(
+    block: Tag,
+    anchor: str,
+    annotation_roots: dict[int, dict[str, object]] | None = None,
+) -> tuple[str, dict[str, object]]:
     """提取可翻译文本，并给内联非文本节点写入稳定 ID 和位置元数据。
 
     XHTML 源码中的排版空白按浏览器规则折叠。``br`` 已在选择翻译
     目标时拆成独立视觉行，因此不会进入单个 Segment 的文本。
     """
+    annotations = annotation_roots or {}
+    marker_node_ids: set[int] = set()
+    for annotation in annotations.values():
+        raw_marker_ids = annotation.get("marker_node_ids")
+        if isinstance(raw_marker_ids, set):
+            marker_node_ids.update(
+                marker_id for marker_id in raw_marker_ids if isinstance(marker_id, int)
+            )
     roots = _preserved_inline_roots(block)
     root_ids = {id(node) for node in roots}
     text_parts: list[str] = []
-    preserved_nodes: list[tuple[str, Tag]] = []
+    preserved_nodes: list[tuple[Tag, int]] = []
+    annotation_events: dict[str, tuple[int, int]] = {}
+    raw_length = 0
 
-    def walk(parent: Tag) -> None:
+    def append_text(value: str) -> None:
+        """追加原始文字，并维护 DOM 边界对应的字符位置。"""
+        nonlocal raw_length
+        text_parts.append(value)
+        raw_length += len(value)
+
+    def walk(parent: Tag, *, inside_range: bool = False) -> None:
         """递归收集正文文本节点，并记录需保留节点的源文偏移。"""
         for child in parent.children:
             if isinstance(child, Tag):
@@ -112,37 +317,75 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
                     # 保留在模板中，但不要把 ``漢字（かんじ）`` 拆成
                     # 可翻译源文里的 ``漢字（）``。
                     continue
+                if inside_range and id(child) in marker_node_ids:
+                    # range 链接的注释号属于结构标记，不进入待译文字。
+                    continue
+                annotation = annotations.get(id(child))
+                if annotation is not None:
+                    annotation_id = str(annotation["id"])
+                    start = raw_length
+                    if annotation["mode"] == "range":
+                        walk(child, inside_range=True)
+                    annotation_events[annotation_id] = (start, raw_length)
                 if id(child) in root_ids:
-                    marker = f"\ue000tn-inline-{len(preserved_nodes)}\ue001"
-                    preserved_nodes.append((marker, child))
-                    text_parts.append(marker)
+                    preserved_nodes.append((child, raw_length))
+                elif annotation is not None:
+                    continue
                 else:
-                    walk(child)
+                    walk(child, inside_range=inside_range)
             elif isinstance(child, NavigableString) and not isinstance(child, Comment):
-                text_parts.append(str(child))
+                value = str(child)
+                if (
+                    inside_range
+                    and isinstance(child.next_sibling, Tag)
+                    and id(child.next_sibling) in marker_node_ids
+                ):
+                    # range 注释号通常位于链接末尾。源码为缩进而留在
+                    # sup/sub 前的换行不是正文，去掉标记时也去掉该尾空白。
+                    value = value.rstrip(" \t\r\n\f\v")
+                if inside_range and not value.strip():
+                    previous = child.previous_sibling
+                    has_later_text = any(
+                        sibling.get_text(strip=True)
+                        if isinstance(sibling, Tag)
+                        else isinstance(sibling, NavigableString) and bool(str(sibling).strip())
+                        for sibling in child.next_siblings
+                    )
+                    if (
+                        isinstance(previous, Tag)
+                        and id(previous) in marker_node_ids
+                        and not has_later_text
+                    ):
+                        # 注释号之后、range 链接闭合前的缩进同样不是正文。
+                        continue
+                append_text(value)
 
-    walk(block)
-    # 普通源码换行只是 HTML 排版空白，按浏览器规则折叠。
-    raw_text = re.sub(r"[ \t\r\n\f\v]+", " ", "".join(text_parts))
+    block_annotation = annotations.get(id(block))
+    if block_annotation is not None:
+        annotation_id = str(block_annotation["id"])
+        if block_annotation["mode"] == "range":
+            walk(block, inside_range=True)
+        annotation_events[annotation_id] = (0, raw_length)
+    else:
+        walk(block)
 
-    node_offsets: list[tuple[Tag, int]] = []
-    for marker, node in preserved_nodes:
-        offset = raw_text.find(marker)
-        if offset < 0:  # pragma: no cover - marker 由本函数写入
-            continue
-        raw_text = raw_text[:offset] + raw_text[offset + len(marker) :]
-        node_offsets.append((node, offset))
-
-    text = raw_text.strip()
+    raw_text = "".join(text_parts)
+    event_offsets = [offset for _node, offset in preserved_nodes]
+    ordered_annotations = list(annotations.values())
+    for annotation in ordered_annotations:
+        start, end = annotation_events.get(str(annotation["id"]), (raw_length, raw_length))
+        event_offsets.extend((start, end))
+    text, normalized_offsets = _normalize_html_text(raw_text, event_offsets)
     if not text:
         return "", {}
 
-    leading = len(raw_text) - len(raw_text.lstrip())
     source_length = len(text)
     nodes: list[dict[str, object]] = []
-    for index, (node, raw_offset) in enumerate(node_offsets):
+    offset_cursor = 0
+    for index, (node, _raw_offset) in enumerate(preserved_nodes):
         inline_id = f"{anchor}_inline_{index}"
-        offset = min(max(raw_offset - leading, 0), source_length)
+        offset = normalized_offsets[offset_cursor]
+        offset_cursor += 1
         placement = "before" if offset == 0 else "after" if offset == source_length else "inline"
         node[_INLINE_ID_ATTR] = inline_id
         nodes.append(
@@ -160,6 +403,27 @@ def _segment_content(block: Tag, anchor: str) -> tuple[str, dict[str, object]]:
             "version": 1,
             "source_length": source_length,
             "nodes": nodes,
+        }
+    annotation_items: list[dict[str, object]] = []
+    for annotation in ordered_annotations:
+        start = normalized_offsets[offset_cursor]
+        end = normalized_offsets[offset_cursor + 1]
+        offset_cursor += 2
+        annotation_items.append(
+            {
+                "id": annotation["id"],
+                "mode": annotation["mode"],
+                "source_start": start,
+                "source_end": end,
+                "source_text": text[start:end],
+                "marker_text": annotation["marker_text"],
+            }
+        )
+    if annotation_items:
+        meta[_ANNOTATION_META_KEY] = {
+            "version": 1,
+            "source_length": source_length,
+            "items": annotation_items,
         }
     return text, meta
 
@@ -359,21 +623,50 @@ def annotate_epub_resource(
     heading_title_parts: list[str] = []
     idx = 0
     for el in _translation_targets(soup, skip_navigation=skip_navigation):
+        anchor = f"tn{resource_index}_{idx}"
+        annotations = _annotation_roots(el, anchor)
+        protected_annotation_nodes: set[int] = set()
+        range_annotation_roots: set[int] = set()
+        for annotation in annotations.values():
+            root = annotation.get("root")
+            if not isinstance(root, Tag):
+                continue
+            protected_annotation_nodes.add(id(root))
+            if annotation.get("mode") == "point":
+                protected_annotation_nodes.update(id(node) for node in root.find_all(True))
+                continue
+            range_annotation_roots.add(id(root))
+            raw_marker_ids = annotation.get("marker_node_ids")
+            marker_ids = raw_marker_ids if isinstance(raw_marker_ids, set) else set()
+            for node in root.find_all(True):
+                if id(node) in marker_ids or any(
+                    id(parent) in marker_ids for parent in node.parents if parent is not root
+                ):
+                    protected_annotation_nodes.add(id(node))
         # 带文字的内联 id/name 包装会在回填纯译文时被拍平。先把它
         # 改成同位置的空锚点，便可复用现有内联非文本节点恢复机制。
         for descendant in list(el.find_all(True)):
             if not descendant.get_text(strip=True):
                 continue
+            if id(descendant) in protected_annotation_nodes:
+                # point 根、range 根及其已确认的注释号必须保留属性；range
+                # 内其它语义包装仍按普通规则把 id/name 迁成空锚点，writer
+                # 才能在清空源文节点后恢复这些跳转目标。
+                continue
             anchor_attrs = {
                 key: descendant.attrs.pop(key) for key in ("id", "name") if key in descendant.attrs
             }
             if anchor_attrs:
-                marker = soup.new_tag("a")
+                # HTML 不允许 a 内再嵌套 a；范围链接内部的跳转目标改用
+                # 等价的空 span，保留 id/name 而不破坏外层链接结构。
+                inside_range_link = any(
+                    id(parent) in range_annotation_roots for parent in descendant.parents
+                )
+                marker = soup.new_tag("span" if inside_range_link else "a")
                 marker.attrs.update(anchor_attrs)
                 descendant.insert_before(marker)
 
-        anchor = f"tn{resource_index}_{idx}"
-        text, meta = _segment_content(el, anchor)
+        text, meta = _segment_content(el, anchor, annotations)
         if not text:
             continue
         el["data-tn-id"] = anchor
@@ -704,7 +997,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         source_path=os.path.abspath(path),
         chapters=chapters,
         meta={
-            "epub_schema": 3,
+            "epub_schema": 4,
             "opf_path": opf_path,
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,

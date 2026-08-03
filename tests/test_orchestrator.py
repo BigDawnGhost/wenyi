@@ -15,10 +15,11 @@ from tests.sample_data import write_sample_txt
 from trans_novel.agents.reviewer import ReviewOutputError
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
+from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
-from trans_novel.pipeline.runstore import STATUS_DONE, STATUS_PENDING
+from trans_novel.pipeline.runstore import STATUS_DONE, STATUS_PENDING, RunStore
 
 
 def _translated_para_count(calls) -> int:
@@ -115,6 +116,227 @@ class MeteredFakeClient(FakeClient):
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_annotation_alignment_merges_continuations_and_persists_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.source_lang = "en"
+            cfg.pipeline.annotation_alignment = True
+
+            def handler(messages, tier, json_mode):
+                if "align EPUB annotation markers" in messages[0]["content"]:
+                    self.assertEqual(tier, "cheap")
+                    return json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "unit_id": "ch0:tn0_0",
+                                    "marked_target": "阿尔法⟪tn0_0_annotation_0⟫ 贝塔",
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                return routing_handler(messages, tier, json_mode)
+
+            chapter = Chapter(
+                index=0,
+                segments=[
+                    Segment(
+                        index=0,
+                        source="Alpha ",
+                        target="阿尔法 ",
+                        anchor="tn0_0",
+                        meta={
+                            "epub_annotations": {
+                                "version": 1,
+                                "source_length": len("Alpha beta"),
+                                "items": [
+                                    {
+                                        "id": "tn0_0_annotation_0",
+                                        "mode": "point",
+                                        "source_start": 5,
+                                        "source_end": 5,
+                                        "source_text": "",
+                                        "marker_text": "1",
+                                    }
+                                ],
+                            }
+                        },
+                    ),
+                    Segment(index=1, source="beta", target="贝塔", cont=True),
+                ],
+            )
+            store = RunStore(os.path.join(directory, "state", "book"))
+            client = FakeClient(handler=handler)
+            orch = Orchestrator(cfg, client=client)
+
+            orch._align_annotations_after_batch(
+                0,
+                chapter,
+                0,
+                2,
+                store,
+            )
+
+            saved = store.load_chapter(0)
+            metadata = saved.segments[0].meta["epub_annotations"]
+            self.assertEqual(metadata["placements"][0]["target_start"], len("阿尔法"))
+            self.assertEqual(metadata["placements"][0]["target_end"], len("阿尔法"))
+            self.assertEqual(metadata["placements"][0]["status"], "aligned")
+            self.assertTrue(metadata["target_digest"])
+            calls = [
+                call
+                for call in client.calls
+                if "align EPUB annotation markers" in call["messages"][0]["content"]
+            ]
+            self.assertEqual(len(calls), 1)
+
+    def test_annotation_alignment_waits_for_final_continuation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.source_lang = "en"
+            cfg.pipeline.annotation_alignment = True
+            requested: list[str] = []
+
+            def handler(messages, tier, json_mode):
+                if "align EPUB annotation markers" in messages[0]["content"]:
+                    requested.append(messages[-1]["content"])
+                    return json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "unit_id": "ch0:tn0_0",
+                                    "marked_target": "甲⟪tn0_0_annotation_0⟫乙",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                return routing_handler(messages, tier, json_mode)
+
+            chapter = Chapter(
+                index=0,
+                segments=[
+                    Segment(
+                        index=0,
+                        source="Alpha ",
+                        target="甲",
+                        anchor="tn0_0",
+                        meta={
+                            "epub_annotations": {
+                                "version": 1,
+                                "source_length": len("Alpha beta"),
+                                "items": [
+                                    {
+                                        "id": "tn0_0_annotation_0",
+                                        "mode": "point",
+                                        "source_start": 5,
+                                        "source_end": 5,
+                                        "source_text": "",
+                                        "marker_text": "1",
+                                    }
+                                ],
+                            }
+                        },
+                    ),
+                    Segment(index=1, source="beta", target=None, cont=True),
+                ],
+            )
+            store = RunStore(os.path.join(directory, "state", "book"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+
+            orch._align_annotations_after_batch(0, chapter, 0, 1, store)
+            self.assertEqual(requested, [])
+
+            chapter.segments[1].target = "乙"
+            orch._align_annotations_after_batch(0, chapter, 1, 1, store)
+
+            self.assertEqual(len(requested), 1)
+            self.assertIn('"immutable_target": "甲乙"', requested[0])
+            saved = store.load_chapter(0)
+            self.assertEqual(
+                saved.segments[0].meta["epub_annotations"]["placements"][0]["target_start"],
+                1,
+            )
+
+    def test_annotation_alignment_processes_multiple_segments_sequentially(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.source_lang = "en"
+            cfg.pipeline.annotation_alignment = True
+            requested_units: list[str] = []
+
+            def annotation_meta(annotation_id: str) -> dict:
+                return {
+                    "epub_annotations": {
+                        "version": 1,
+                        "source_length": 1,
+                        "items": [
+                            {
+                                "id": annotation_id,
+                                "mode": "point",
+                                "source_start": 1,
+                                "source_end": 1,
+                                "source_text": "",
+                                "marker_text": "1",
+                            }
+                        ],
+                    }
+                }
+
+            def handler(messages, tier, json_mode):
+                if "align EPUB annotation markers" not in messages[0]["content"]:
+                    return routing_handler(messages, tier, json_mode)
+                user = messages[-1]["content"]
+                if '"unit_id": "ch0:a"' in user:
+                    unit_id, target, annotation_id = "ch0:a", "甲", "a_note"
+                else:
+                    unit_id, target, annotation_id = "ch0:b", "乙", "b_note"
+                requested_units.append(unit_id)
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "unit_id": unit_id,
+                                "marked_target": f"{target}⟪{annotation_id}⟫",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+
+            chapter = Chapter(
+                index=0,
+                segments=[
+                    Segment(
+                        index=0,
+                        source="A",
+                        target="甲",
+                        anchor="a",
+                        meta=annotation_meta("a_note"),
+                    ),
+                    Segment(
+                        index=1,
+                        source="B",
+                        target="乙",
+                        anchor="b",
+                        meta=annotation_meta("b_note"),
+                    ),
+                ],
+            )
+            store = RunStore(os.path.join(directory, "state", "book"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+
+            orch._align_annotations_after_batch(0, chapter, 0, 2, store)
+
+            self.assertEqual(requested_units, ["ch0:a", "ch0:b"])
+            saved = store.load_chapter(0)
+            for segment in saved.segments:
+                self.assertEqual(
+                    segment.meta["epub_annotations"]["placements"][0]["target_start"],
+                    1,
+                )
+
     def test_prepare_retries_after_analysis_failure(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")

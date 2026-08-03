@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -24,13 +25,14 @@ from trans_novel.assemble.report import build_report
 from trans_novel.assemble.writer import (
     _inject_bilingual_style,
     _render_chapter_html,
+    _render_segments_html,
     _rewrite_html_document,
     assemble,
 )
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest.epub_reader import annotate_epub_resource
-from trans_novel.ingest.models import Chapter
+from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.ingest.segmenter import load_document
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
@@ -249,7 +251,7 @@ class TestAssembleEpub(unittest.TestCase):
         assert isinstance(heading, Tag)
         self.assertEqual(heading.get_text(), "章节")
 
-    def test_epub_render_flattens_textual_inline_markup(self):
+    def test_epub_render_flattens_markup_but_preserves_internal_link(self):
         html = """<html><body>
 <p><em>Hello</em> <a href="note.xhtml">world</a></p>
 <p><ruby>漢字<rt>かんじ</rt></ruby>です</p>
@@ -268,11 +270,386 @@ class TestAssembleEpub(unittest.TestCase):
         rendered = BeautifulSoup(_render_chapter_html(chapter), "html.parser")
         paragraphs = rendered.find_all("p")
 
-        self.assertEqual(paragraphs[0].get_text(), "你好世界")
+        self.assertEqual(paragraphs[0].get_text().replace("↩", ""), "你好世界")
         self.assertEqual(paragraphs[1].get_text(), "汉字如此")
         self.assertIsNone(paragraphs[0].find("em"))
-        self.assertIsNone(paragraphs[0].find("a"))
+        link = paragraphs[0].find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "note.xhtml")
+        self.assertEqual(link.get_text(), "↩")
         self.assertIsNone(paragraphs[1].find("ruby"))
+
+    def test_epub_render_restores_point_annotation_link_at_aligned_offset(self):
+        target = "你好，世界"
+        template = """<html><body><p data-tn-id="tn1_0">Hello<sup
+data-tn-annotation-id="ann-0"><a class="noteref" href="notes.xhtml#n1"
+id="ref-1">1</a></sup> world</p></body></html>"""
+        segment = Segment(
+            index=0,
+            source="Hello world",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": 11,
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "point",
+                            "source_start": 5,
+                            "source_end": 5,
+                            "source_text": "",
+                            "marker_text": "1",
+                        }
+                    ],
+                    "target_digest": hashlib.sha256(target.encode()).hexdigest(),
+                    "placements": [
+                        {
+                            "id": "ann-0",
+                            "target_start": 2,
+                            "target_end": 2,
+                            "status": "aligned",
+                            "method": "model",
+                        }
+                    ],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, [segment]),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        reference = paragraph.find("a")
+        self.assertIsInstance(reference, Tag)
+        assert isinstance(reference, Tag)
+        self.assertEqual(reference.get("href"), "notes.xhtml#n1")
+        self.assertEqual(reference.get("id"), "ref-1")
+        self.assertIn("noteref", reference.get("class", []))
+        self.assertEqual(reference.parent.name, "sup")
+        self.assertEqual(paragraph.get_text().replace("1", ""), target)
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_epub_render_restores_range_annotation_around_target_phrase(self):
+        source_phrase = "border tunnel"
+        target_phrase = "国境隧道"
+        target = "火车穿过国境隧道后停下。"
+        start = target.index(target_phrase)
+        end = start + len(target_phrase)
+        template = """<html><body><p data-tn-id="tn1_0"><a class="cyu"
+data-tn-annotation-id="ann-0" href="notes.xhtml#note-1" id="ref-1">border
+tunnel<sup class="key" id="key-1">〔＊1〕</sup></a> opens.</p></body></html>"""
+        segment = Segment(
+            index=0,
+            source="border tunnel opens.",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": 20,
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "range",
+                            "source_start": 0,
+                            "source_end": len(source_phrase),
+                            "source_text": source_phrase,
+                            "marker_text": "〔＊1〕",
+                        }
+                    ],
+                    "target_digest": hashlib.sha256(target.encode()).hexdigest(),
+                    "placements": [
+                        {
+                            "id": "ann-0",
+                            "target_start": start,
+                            "target_end": end,
+                            "status": "aligned",
+                            "method": "model",
+                        }
+                    ],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, [segment]),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        link = paragraph.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "notes.xhtml#note-1")
+        self.assertEqual(link.get("id"), "ref-1")
+        self.assertIn("cyu", link.get("class", []))
+        marker = link.find("sup")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        self.assertEqual(marker.get("id"), "key-1")
+        self.assertIn("key", marker.get("class", []))
+        self.assertEqual(link.get_text().replace("〔＊1〕", ""), target_phrase)
+        self.assertEqual(paragraph.get_text().replace("〔＊1〕", ""), target)
+        self.assertNotIn(source_phrase, paragraph.get_text())
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_epub_render_keeps_image_inside_restored_range_link(self):
+        html = """<html><body><p>See <a href="#figure"><span id="semantic-id">linked
+<img src="thumb.png"/> phrase</span><sup id="ref-mark">*</sup></a> now.</p></body></html>"""
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        segment = segments[0]
+        segment.target = "请看链接短语。"
+        phrase = "链接短语"
+        start = segment.target.index(phrase)
+        item = segment.meta["epub_annotations"]["items"][0]
+        segment.meta["epub_annotations"].update(
+            {
+                "target_digest": hashlib.sha256(segment.target.encode()).hexdigest(),
+                "placements": [
+                    {
+                        "id": item["id"],
+                        "target_start": start,
+                        "target_end": start + len(phrase),
+                        "status": "aligned",
+                        "method": "llm_markers",
+                    }
+                ],
+            }
+        )
+
+        rendered = BeautifulSoup(_render_segments_html(template, [segment]), "html.parser")
+
+        link = rendered.find("a", href="#figure")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertIn(phrase, link.get_text())
+        self.assertIsNotNone(link.find("img", src="thumb.png"))
+        self.assertIsNotNone(rendered.find(id="semantic-id"))
+        self.assertIsNotNone(link.find("sup", id="ref-mark"))
+        self.assertEqual(rendered.find("p").get_text().replace("*", ""), segment.target)
+
+    def test_epub_render_degrades_stale_range_to_clickable_end_marker(self):
+        target = "列车驶过隧道。"
+        template = """<html><body><p data-tn-id="tn1_0"><a class="cyu"
+data-tn-annotation-id="ann-0" href="notes.xhtml#note-1">border tunnel
+<sup id="key-1">〔＊1〕</sup></a> opens.</p></body></html>"""
+        segment = Segment(
+            index=0,
+            source="border tunnel opens.",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": 20,
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "range",
+                            "source_start": 0,
+                            "source_end": 13,
+                            "source_text": "border tunnel",
+                            "marker_text": "〔＊1〕",
+                        }
+                    ],
+                    "target_digest": "stale",
+                    "placements": [
+                        {
+                            "id": "ann-0",
+                            "target_start": 0,
+                            "target_end": 2,
+                            "status": "aligned",
+                            "method": "model",
+                        }
+                    ],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, [segment]),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        link = paragraph.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "notes.xhtml#note-1")
+        self.assertEqual(link.get_text(), "〔＊1〕")
+        self.assertEqual(paragraph.get_text().replace("〔＊1〕", ""), target)
+        self.assertNotIn("border tunnel", paragraph.get_text())
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_epub_render_keeps_untranslated_annotation_at_source_position(self):
+        html = """<html><body><p>Before<sup><a class="noteref"
+href="#n1" id="ref-1">1</a></sup> after.</p></body></html>"""
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, segments),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        reference = paragraph.find("a", href="#n1")
+        self.assertIsInstance(reference, Tag)
+        assert isinstance(reference, Tag)
+        self.assertEqual(reference.get("id"), "ref-1")
+        self.assertEqual(paragraph.get_text(), "Before1 after.")
+        self.assertLess(str(paragraph).index("<sup"), str(paragraph).index(" after."))
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+        self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
+
+    def test_bilingual_source_keeps_annotation_at_original_position(self):
+        html = """<html><body><p>See <a class="annotated" href="#note-1"
+id="ref-1">border tunnel<sup class="key" id="key-1">〔＊1〕</sup></a>
+now.</p></body></html>"""
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        segments[0].target = "请看国境隧道。"
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, segments, bilingual=True, source_lang="en"),
+            "html.parser",
+        )
+
+        target = rendered.find("p", class_=None)
+        source = rendered.find("p", class_="tn-source")
+        self.assertIsInstance(target, Tag)
+        self.assertIsInstance(source, Tag)
+        assert isinstance(target, Tag)
+        assert isinstance(source, Tag)
+        source_reference = source.find("a", href="#note-1")
+        target_reference = target.find("a", href="#note-1")
+        self.assertIsInstance(source_reference, Tag)
+        self.assertIsInstance(target_reference, Tag)
+        assert isinstance(source_reference, Tag)
+        assert isinstance(target_reference, Tag)
+        self.assertEqual(source_reference.get_text().replace("〔＊1〕", ""), "border tunnel")
+        self.assertEqual(
+            source.get_text().replace("\n", " ").split(), ["See", "border", "tunnel〔＊1〕", "now."]
+        )
+        self.assertIsNone(source_reference.get("id"))
+        self.assertEqual(target_reference.get("id"), "ref-1")
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_epub_render_merges_fresh_nodes_with_persisted_alignment(self):
+        target = "译文"
+        template = """<html><body><p data-tn-id="tn1_0">source<sup
+data-tn-annotation-id="ann-0"><a href="notes.xhtml#n1">1</a></sup></p>
+</body></html>"""
+        segment = Segment(
+            index=0,
+            source="source",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "target_digest": hashlib.sha256(target.encode()).hexdigest(),
+                    "placements": [
+                        {
+                            "id": "ann-0",
+                            "target_start": 2,
+                            "target_end": 2,
+                            "status": "aligned",
+                            "method": "model",
+                        }
+                    ],
+                }
+            },
+        )
+        fresh_meta = {
+            "tn1_0": {
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": 6,
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "point",
+                            "source_start": 6,
+                            "source_end": 6,
+                            "source_text": "",
+                            "marker_text": "1",
+                        }
+                    ],
+                }
+            }
+        }
+
+        rendered = BeautifulSoup(
+            _render_segments_html(
+                template,
+                [segment],
+                render_meta_by_anchor=fresh_meta,
+            ),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text().replace("1", ""), target)
+        link = paragraph.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "notes.xhtml#n1")
+
+    def test_epub_render_keeps_marker_when_link_is_translation_block(self):
+        template = """<html><body><ul><li><a data-tn-id="tn1_0"
+data-tn-annotation-id="ann-0" href="chapter.xhtml#part">Chapter
+<sup id="note-ref">1</sup></a></li></ul></body></html>"""
+        segment = Segment(
+            index=0,
+            source="Chapter",
+            target="章节",
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": 7,
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "range",
+                            "source_start": 0,
+                            "source_end": 7,
+                            "source_text": "Chapter",
+                            "marker_text": "1",
+                        }
+                    ],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, [segment]),
+            "html.parser",
+        )
+
+        link = rendered.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "chapter.xhtml#part")
+        self.assertEqual(link.get_text().replace("1", "").strip(), "章节")
+        marker = link.find("sup")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        self.assertEqual(marker.get("id"), "note-ref")
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
     def test_rewrite_html_honors_declared_encoding_and_emits_utf8(self):
         source = (
