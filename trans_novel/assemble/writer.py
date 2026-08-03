@@ -357,18 +357,40 @@ def _bilingual_source(source: str, target: str) -> str:
     return source if (source.strip() and source != target) else ""
 
 
-def _japanese_ruby_source(element: Tag, source_lang: str) -> str:
-    """日语双语原文保留 ruby 注音，并拍平其它文本内联标签。"""
+def _bilingual_source_markup(element: Tag, source_lang: str) -> str:
+    """为双语原文保留注释链接，以及日语原文的 ruby 注音。
+
+    原文注释在源 EPUB 中已经拥有准确位置，无需复用译文定位结果。这里只
+    保留注释根及其后代；其它普通内联标签仍拍平成干净文本。克隆节点中的
+    ``id``/``name`` 会移除，避免与译文侧保留的原节点产生重复锚点。
+    """
     normalized_lang = source_lang.strip().replace("_", "-").lower()
-    if not (normalized_lang == "ja" or normalized_lang.startswith("ja-")):
-        return ""
-    if element.find("ruby") is None:
+    keep_ruby = normalized_lang == "ja" or normalized_lang.startswith("ja-")
+    has_annotation = (
+        element.has_attr(_ANNOTATION_ID_ATTR)
+        or element.find(True, attrs={_ANNOTATION_ID_ATTR: True}) is not None
+    )
+    if not has_annotation and (not keep_ruby or element.find("ruby") is None):
         return ""
 
     fragment = BeautifulSoup(str(element), "html.parser")
     root = fragment.find(element.name)
     if not isinstance(root, Tag):
         return ""
+
+    root_is_annotation = root.has_attr(_ANNOTATION_ID_ATTR)
+    retained: set[int] = set()
+    for annotation in root.find_all(True, attrs={_ANNOTATION_ID_ATTR: True}):
+        retained.add(id(annotation))
+        retained.update(id(descendant) for descendant in annotation.find_all(True))
+    if root_is_annotation:
+        retained.add(id(root))
+        retained.update(id(descendant) for descendant in root.find_all(True))
+    if keep_ruby:
+        for ruby in root.find_all("ruby"):
+            retained.add(id(ruby))
+            retained.update(id(descendant) for descendant in ruby.find_all(True))
+
     for comment in list(root.find_all(string=lambda node: isinstance(node, Comment))):
         comment.extract()
     for tag in list(
@@ -391,9 +413,13 @@ def _japanese_ruby_source(element: Tag, source_lang: str) -> str:
         )
     ):
         tag.decompose()
-    ruby_tags = {"ruby", "rb", "rt", "rp", "rtc", "br"}
+
+    if not keep_ruby:
+        for tag in list(root.find_all(["rt", "rp"])):
+            tag.decompose()
+
     for tag in list(root.find_all(True)):
-        if tag.name not in ruby_tags:
+        if id(tag) not in retained:
             tag.unwrap()
             continue
         for attr in (
@@ -405,11 +431,20 @@ def _japanese_ruby_source(element: Tag, source_lang: str) -> str:
             _LINE_WRAPPER_ATTR,
         ):
             tag.attrs.pop(attr, None)
-    return root.decode_contents()
+    for attr in (
+        "id",
+        "name",
+        "data-tn-id",
+        _INLINE_ID_ATTR,
+        _ANNOTATION_ID_ATTR,
+        _LINE_WRAPPER_ATTR,
+    ):
+        root.attrs.pop(attr, None)
+    return str(root) if root_is_annotation else root.decode_contents()
 
 
 def _append_source(soup: BeautifulSoup, element: Tag, source: str, markup: str) -> None:
-    """向双语原文块写入纯文本，或写入已净化的日语 ruby 片段。"""
+    """向双语原文块写入纯文本，或写入已净化的注释/ruby 片段。"""
     if not markup:
         element.append(source)
         return
@@ -548,10 +583,15 @@ def _annotation_restorations(
             and str(status or "").lower() not in rejected
             and str(method or "").lower() not in rejected
         )
-        if mode == "point" and usable and start == end:
+        if not usable:
+            fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
+            continue
+        assert isinstance(start, int) and not isinstance(start, bool)
+        assert isinstance(end, int) and not isinstance(end, bool)
+        if mode == "point" and start == end:
             points.append((start, order, root))
             continue
-        if mode == "range" and usable and start < end:
+        if mode == "range" and start < end:
             markers = _range_marker_nodes(root, marker_text)
             pending_ranges.append((start, end, order, root, markers, marker_text))
             continue
@@ -816,14 +856,15 @@ def _render_segments_html(
             if bilingual and kind_by_anchor.get(anchor) != KIND_HEADING
             else ""
         )
-        source_markup = _japanese_ruby_source(el, source_lang) if src else ""
+        source_markup = _bilingual_source_markup(el, source_lang) if src else ""
         line_wrapper = el.has_attr(_LINE_WRAPPER_ATTR)
         stored_meta = stored_meta_by_anchor.get(anchor, {})
         fresh_meta = (
             render_meta_by_anchor.get(anchor, {}) if render_meta_by_anchor is not None else {}
         )
         render_meta = _merge_epub_render_meta(stored_meta, fresh_meta)
-        _replace_block_content(soup, el, text, render_meta)
+        if text != src_by_anchor.get(anchor, ""):
+            _replace_block_content(soup, el, text, render_meta)
         del el["data-tn-id"]
         if not src:
             continue
@@ -865,6 +906,8 @@ def _render_segments_html(
         wrapper.unwrap()
     for node in soup.find_all(True, attrs={_ANNOTATION_ID_ATTR: True}):
         node.attrs.pop(_ANNOTATION_ID_ATTR, None)
+    for node in soup.find_all(True, attrs={_INLINE_ID_ATTR: True}):
+        node.attrs.pop(_INLINE_ID_ATTR, None)
     return str(soup)
 
 

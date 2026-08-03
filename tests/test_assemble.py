@@ -492,6 +492,60 @@ data-tn-annotation-id="ann-0" href="notes.xhtml#note-1">border tunnel
         self.assertNotIn("border tunnel", paragraph.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
+    def test_epub_render_keeps_untranslated_annotation_at_source_position(self):
+        html = """<html><body><p>Before<sup><a class="noteref"
+href="#n1" id="ref-1">1</a></sup> after.</p></body></html>"""
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, segments),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        reference = paragraph.find("a", href="#n1")
+        self.assertIsInstance(reference, Tag)
+        assert isinstance(reference, Tag)
+        self.assertEqual(reference.get("id"), "ref-1")
+        self.assertEqual(paragraph.get_text(), "Before1 after.")
+        self.assertLess(str(paragraph).index("<sup"), str(paragraph).index(" after."))
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+        self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
+
+    def test_bilingual_source_keeps_annotation_at_original_position(self):
+        html = """<html><body><p>See <a class="annotated" href="#note-1"
+id="ref-1">border tunnel<sup class="key" id="key-1">〔＊1〕</sup></a>
+now.</p></body></html>"""
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        segments[0].target = "请看国境隧道。"
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, segments, bilingual=True, source_lang="en"),
+            "html.parser",
+        )
+
+        target = rendered.find("p", class_=None)
+        source = rendered.find("p", class_="tn-source")
+        self.assertIsInstance(target, Tag)
+        self.assertIsInstance(source, Tag)
+        assert isinstance(target, Tag)
+        assert isinstance(source, Tag)
+        source_reference = source.find("a", href="#note-1")
+        target_reference = target.find("a", href="#note-1")
+        self.assertIsInstance(source_reference, Tag)
+        self.assertIsInstance(target_reference, Tag)
+        assert isinstance(source_reference, Tag)
+        assert isinstance(target_reference, Tag)
+        self.assertEqual(source_reference.get_text().replace("〔＊1〕", ""), "border tunnel")
+        self.assertEqual(
+            source.get_text().replace("\n", " ").split(), ["See", "border", "tunnel〔＊1〕", "now."]
+        )
+        self.assertIsNone(source_reference.get("id"))
+        self.assertEqual(target_reference.get("id"), "ref-1")
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
     def test_epub_render_merges_fresh_nodes_with_persisted_alignment(self):
         target = "译文"
         template = """<html><body><p data-tn-id="tn1_0">source<sup

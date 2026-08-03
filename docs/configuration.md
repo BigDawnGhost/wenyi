@@ -188,7 +188,7 @@ pipeline:
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `annotation_alignment`: after polishing and punctuation processing, locate EPUB footnote/endnote links in the final translated text. Segments without internal links do not call the model. When disabled, links are still preserved as clickable end-of-paragraph markers.
+- `annotation_alignment`: after polishing and punctuation processing, locate EPUB footnote/endnote links in the final translated text. Segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions.
 - `annotation_concurrency`: concurrency limit for annotated-text alignment batches; set it to `1` for sequential work.
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.

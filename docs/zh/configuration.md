@@ -201,7 +201,7 @@ pipeline:
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
-- `annotation_alignment`：EPUB 中存在脚注、尾注等内部链接时，在润色和标点处理完成后定位链接在译文中的位置；不含注释的段落不会调用模型。关闭后仍保留链接，但统一退化为段末可点击标记。
+- `annotation_alignment`：EPUB 中存在脚注、尾注等内部链接时，在润色和标点处理完成后定位链接在译文中的位置；不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。
 - `annotation_concurrency`：含注释段落的定位并发数；设为 `1` 时串行执行。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
 - `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
