@@ -330,6 +330,28 @@ class TestRollingContext(unittest.TestCase):
         )
         self.assertEqual(ctx.max_recent_keep, 100)
 
+    def test_render_min_chars_extends_backward(self):
+        """字数预算不足时向前多取更早段：2 段才 2 字符，预算 10 → 取回 10 段。"""
+        ctx = RollingContext(recent_targets=["a"] * 40, max_recent_keep=40)
+        rendered = ctx.render(2, min_chars=10)
+        self.assertEqual(len(rendered.split("\n")), 10)
+
+    def test_render_min_chars_zero_is_legacy_behavior(self):
+        """min_chars=0 与旧纯段数行为逐字节一致。"""
+        ctx = RollingContext(recent_targets=["a", "b", "c"])
+        self.assertEqual(ctx.render(2), "b\nc")
+        self.assertEqual(ctx.render(2, min_chars=0), "b\nc")
+
+    def test_render_min_chars_stops_at_buffer_end(self):
+        """buffer 用尽即停：只有 2 段存货时预算再大也只能取 2 段。"""
+        ctx = RollingContext(recent_targets=["a", "bb"], max_recent_keep=2)
+        self.assertEqual(ctx.render(1, min_chars=100), "a\nbb")
+
+    def test_render_min_chars_satisfied_by_recent_segments(self):
+        """最近 N 段已达预算时不向前扩展。"""
+        ctx = RollingContext(recent_targets=["a" * 100, "b" * 100, "c" * 100])
+        self.assertEqual(ctx.render(2, min_chars=150), "b" * 100 + "\n" + "c" * 100)
+
 
 if __name__ == "__main__":
     unittest.main()

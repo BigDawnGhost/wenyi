@@ -9,12 +9,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 _DEFAULT_CONFIG_YAML = """\
-# trans-novel 配置（多语言小说 → 中文）
+# trans-novel 配置（非中文小说 → 中文；中文小说 → 英文）
 # 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
 
 language:
-  source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
-  target: zh # 译文语言
+  source: auto # auto 由模型识别；中译英可设为 zh
+  target: zh # zh=非中文→简体中文；en=中文→国际英文
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
@@ -55,6 +55,12 @@ pipeline:
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
   consistency_qa: false # 全书跨章一致性收尾扫描
   rolling_context_segments: 6 # 注入的前文译文尾段数
+  # 前文译文的字符预算下限：不足时向前多取更早段（上限=滚动上下文 buffer）；
+  # 对话密集章 6 段太短时自动加深。0=纯按段数（旧行为）。
+  rolling_context_min_chars: 1500
+  # 首译长度门：译文/原文字符比明显过短的段自动单段重译一次（重译仍短则保留原译）；
+  # 润色后异常变短的段回退润色前译文。false=关闭（只靠审校兜底）
+  translate_length_gate: true
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
@@ -73,7 +79,7 @@ honorific:
   # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
+# ── 标点规范化（按目标语言清理明显不合规范的标点）──────────────────────────
 punctuation:
   normalize: true
 
@@ -83,8 +89,8 @@ paths:
 
 # ── 双语输出 ───────────────────────────────────────────────────────────────
 output:
-  mono: true # 产出单语中文版（<书名>.zh.epub）
-  bilingual: false # 产出原文与译文对照版（<书名>.zh-bi.epub）
+  mono: true # 产出单语译本（<书名>.<目标语言>.epub）
+  bilingual: false # 产出原文与译文对照版（<书名>.<目标语言>-bi.epub）
   bilingual_order: target_first # target_first=译文在上；source_first=原文在上
   bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示
   about_page: true # 在书末附加“关于此翻译”说明页
@@ -125,6 +131,12 @@ class PipelineConfig(BaseModel):
     backtranslate_sample: float = 0.0
     consistency_qa: bool = False
     rolling_context_segments: int = 6
+    # 前文译文注入的字符预算下限：最近 N 段总量不足时向前扩展（上限=滚动上下文 buffer，默认 40 段）；
+    # 对话密集章 6 段过短时自动加深，避免代词/称谓上下文断崖。0=纯按段数（旧行为）。
+    rolling_context_min_chars: int = 1500
+    # 首译长度门（零模型成本的兜底）：译文/原文字符比明显过短的段自动定向重译一次，
+    # 重译仍短或失败则保守保留原译；润色后异常变短的段零成本回退润色前译文。
+    translate_length_gate: bool = True
     # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
     book_understanding: bool = True
@@ -161,13 +173,13 @@ class OutputConfig(BaseModel):
 
 class Config(BaseModel):
     source_lang: str = "auto"  # auto | ja | en | …（auto 时由模型检测）
-    target_lang: str = "zh"
+    target_lang: str = "zh"  # zh | en（en 目前仅支持中文源文本）
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     honorific_strategy: str = "keep_style"
-    punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
+    punctuation_normalize: bool = True  # 按目标语言执行保守的标点规范化
     state_dir: str = "state"
 
     @staticmethod

@@ -361,6 +361,21 @@ class TestDefaultOutBilingual(unittest.TestCase):
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
             self.assertEqual(os.path.dirname(out), os.path.join(directory, "output"))
 
+    def test_english_suffixes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            mono = _default_out(source, "epub", "", target_lang="en")
+            bilingual = _default_out(
+                source,
+                "epub",
+                "",
+                bilingual=True,
+                target_lang="en",
+            )
+
+            self.assertEqual(os.path.basename(mono), "novel.en.epub")
+            self.assertEqual(os.path.basename(bilingual), "novel.en-bi.epub")
+
 
 class TestOutputConfigParsing(unittest.TestCase):
     def test_defaults(self):

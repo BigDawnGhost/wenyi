@@ -57,6 +57,7 @@
 - **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点
 - **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
 - **双语对照输出** — 可选原文译文对照版，原文视觉淡化，支持深色模式
+- **中译英** — 将中文小说翻译为一致的国际英文，并按出版惯例处理人名和文化术语
 
 ---
 
@@ -82,13 +83,21 @@ uv sync
 export DEEPSEEK_API_KEY=sk-...
 ```
 
+默认方向为非中文源文本译成简体中文。中译英请设置：
+
+```yaml
+language:
+  source: zh # 也可使用 auto
+  target: en
+```
+
 ### 一键翻译
 
 ```bash
 uv run trans-novel translate book.epub
 ```
 
-解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
+解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。目标语言决定默认文件后缀：中文为 `output/book.zh.epub`，英文为 `output/book.en.epub`。
 
 ### 分步工作流
 
@@ -148,7 +157,7 @@ uv run trans-novel review book.epub
 | EPUB、FB2、TXT、Markdown、HTML、PDF | EPUB（单语 / 双语）、TXT、HTML、Markdown |
 
 - PDF 输入首次需 `MINERU_API_KEY` 调用外部转换服务，转换后的 HTML 缓存复用。
-- EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
+- EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排源书会转为横排以适配译文阅读。
 - 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
 
 ---
@@ -200,7 +209,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 憧憬与不足
 
-本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入依赖外部 MinerU 服务。当前译文管线主要针对简体中文输出优化，不支持其他目标语言。
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入依赖外部 MinerU 服务。当前正式支持“非中文源语言→简体中文”和“中文→国际英文”，其他目标语言组合会被拒绝。
 
 未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
 

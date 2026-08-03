@@ -15,9 +15,17 @@ class RollingContext:
     recent_targets: list[str] = field(default_factory=list)
     max_recent_keep: int = 40  # 最多保留多少段尾部译文
 
-    def render(self, n_recent: int) -> str:
-        """返回最近 n_recent 段译文（纯文本，模板自带【前文译文】标题）。"""
+    def render(self, n_recent: int, *, min_chars: int = 0) -> str:
+        """返回最近译文尾巴：先取最近 n_recent 段；若配置 min_chars 且总量不足，
+        向前扩展更早段直至达到字符预算或 buffer 用尽。min_chars=0 与旧行为完全一致。"""
         tail = self.recent_targets[-n_recent:] if n_recent > 0 else []
+        total = sum(len(t) for t in tail)
+        if min_chars > 0:
+            i = len(self.recent_targets) - len(tail)
+            while total < min_chars and i > 0:
+                i -= 1
+                tail.insert(0, self.recent_targets[i])
+                total += len(self.recent_targets[i])
         return "\n".join(tail)
 
     def add_targets(self, targets: list[str]) -> None:

@@ -12,7 +12,14 @@ language:
   target: zh
 ```
 
-`source: auto` asks the model to identify the source language. You may instead use an ISO 639-1 code such as `ja`, `en`, `ko`, `ru`, `fr`, `de`, or `es`. The current translation pipeline is primarily designed for Simplified Chinese output.
+`source: auto` asks the model to identify the source language. You may instead use an ISO 639-1 code such as `zh`, `ja`, `en`, `ko`, `ru`, `fr`, `de`, or `es`.
+
+Supported directions are:
+
+- non-Chinese source languages to Simplified Chinese (`target: zh`);
+- Chinese to international English (`source: zh` or `auto`, `target: en`).
+
+An English target detected with a non-Chinese source, identical source and target languages, and other target languages are rejected before translation. A state directory is bound to its original direction; use a different `paths.state_dir` for a fresh direction.
 
 ## Model provider
 
@@ -165,6 +172,8 @@ pipeline:
   backtranslate_sample: 0
   consistency_qa: false
   rolling_context_segments: 6
+  rolling_context_min_chars: 1500
+  translate_length_gate: true
   book_understanding: true
   prescan_concurrency: 4
   review_concurrency: 4
@@ -184,6 +193,8 @@ pipeline:
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
 - `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
+- `rolling_context_min_chars`: minimum character budget for the rolling context; when the most recent segments fall short, earlier segments are pulled in until the budget is met (bounded by the retained buffer). `0` restores pure segment-count behavior.
+- `translate_length_gate`: length-ratio guard on first-pass translation. Abnormally short segments are retranslated once individually (kept unchanged if still short); segments that polish abnormally shortens revert to their pre-polish translation. No extra model calls in normal runs.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
@@ -219,8 +230,8 @@ output:
   about_page: true
 ```
 
-- `mono`: produce the monolingual Chinese edition as `<book-name>.zh.epub`.
-- `bilingual`: produce a source-and-translation edition as `<book-name>.zh-bi.epub`.
+- `mono`: produce the monolingual edition as `<book-name>.<target>.epub`.
+- `bilingual`: produce a source-and-translation edition as `<book-name>.<target>-bi.epub`.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
@@ -247,5 +258,5 @@ paths:
 - `max_chars_per_batch`: approximate source-character budget for one model translation request.
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
-- `punctuation.normalize`: normalize output to common full-width Simplified Chinese punctuation.
+- `punctuation.normalize`: normalize output punctuation for the target language. Chinese uses common full-width Simplified Chinese punctuation; English conservatively converts obvious residual CJK punctuation without rewriting spacing or apostrophes.
 - `state_dir`: location of checkpoints, chapter files, the glossary database, usage data, and reports.

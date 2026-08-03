@@ -277,6 +277,7 @@ def _default_out(
     title: str | None = None,
     *,
     bilingual: bool = False,
+    target_lang: str = "zh",
 ) -> str:
     """Return the default export path under the input file's ``output`` folder."""
     ext = _OUT_EXT.get(out_format, ".epub")
@@ -286,7 +287,9 @@ def _default_out(
         # 保留给显式调用方使用；默认 assemble 不传书名译名。
         return os.path.join(output_dir, _sanitize_filename(title) + ext)
     base, _ = os.path.splitext(source_path)
-    suffix = ".zh-bi" if bilingual else ".zh"
+    lang = (target_lang or "zh").strip().lower().replace("_", "-").split("-", 1)[0]
+    lang = "zh" if lang == "cn" else lang
+    suffix = f".{lang}{'-bi' if bilingual else ''}"
     return os.path.join(
         output_dir,
         f"{os.path.basename(base)}{suffix}{ext}",
@@ -1823,12 +1826,26 @@ def assemble(
         raise ValueError(f"不支持的输出格式：{out_format}（支持 {supported}）")
 
     m = store.load_manifest()
+    raw_target_lang = m.get("target_lang", "zh")
+    target_lang = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
     if out_format == "txt":
-        out_path = out_path or _default_out(source_path, "txt", "", bilingual=bilingual)
+        out_path = out_path or _default_out(
+            source_path,
+            "txt",
+            "",
+            bilingual=bilingual,
+            target_lang=target_lang,
+        )
         _ensure_parent_dir(out_path)
         return _assemble_text(store, out_path, bilingual=bilingual, order=order)
     if out_format == "html":
-        out_path = out_path or _default_out(source_path, "html", "", bilingual=bilingual)
+        out_path = out_path or _default_out(
+            source_path,
+            "html",
+            "",
+            bilingual=bilingual,
+            target_lang=target_lang,
+        )
         _ensure_parent_dir(out_path)
         return _assemble_html(
             store,
@@ -1839,11 +1856,23 @@ def assemble(
             preserve_source_style=preserve_source_style,
         )
     if out_format == "markdown":
-        out_path = out_path or _default_out(source_path, "markdown", "", bilingual=bilingual)
+        out_path = out_path or _default_out(
+            source_path,
+            "markdown",
+            "",
+            bilingual=bilingual,
+            target_lang=target_lang,
+        )
         _ensure_parent_dir(out_path)
         return _assemble_markdown(store, out_path, bilingual=bilingual, order=order)
     if out_format == "pdf":
-        out_path = out_path or _default_out(source_path, "pdf", "", bilingual=bilingual)
+        out_path = out_path or _default_out(
+            source_path,
+            "pdf",
+            "",
+            bilingual=bilingual,
+            target_lang=target_lang,
+        )
         _ensure_parent_dir(out_path)
         return _assemble_pdf(
             store,
@@ -1854,7 +1883,13 @@ def assemble(
             order=order,
             preserve_source_style=preserve_source_style,
         )
-    out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
+    out_path = out_path or _default_out(
+        source_path,
+        "epub",
+        "",
+        bilingual=bilingual,
+        target_lang=target_lang,
+    )
     _ensure_parent_dir(out_path)
     if m["fmt"] == "epub":
         result = _assemble_epub(

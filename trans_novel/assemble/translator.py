@@ -34,7 +34,11 @@ class Translator(Agent):
             "translator_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(self.src, self.config.honorific_strategy),
+            lang_guidance=langprofile.translate_guidance(
+                self.src,
+                self.config.honorific_strategy,
+                tgt=self.tgt,
+            ),
         )
         user = prompts.render(
             "translator_user",

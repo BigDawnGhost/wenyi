@@ -48,7 +48,13 @@ from ..ingest.segmenter import batch_segments, load_document
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
-from ..postprocess.punct import normalize_zh_segments
+from ..postprocess.punct import (
+    normalize_en,
+    normalize_en_segments,
+    normalize_zh,
+    normalize_zh_segments,
+)
+from . import checks
 from .context import RollingContext
 from .review_evidence import BookEvidenceIndex
 from .review_run import ReviewOutcome, ReviewRunStore
@@ -109,6 +115,19 @@ def _normalize_lang(code: str) -> str:
     return c[:2] if c[:2].isalpha() else ""
 
 
+def _validate_direction(source: str, target: str) -> None:
+    """验证当前支持矩阵；source 为空表示尚待自动检测。"""
+    if source and target and source == target:
+        raise ValueError(
+            f"源语言与目标语言相同（{source}），无需翻译；"
+            "请修改 config.yaml 中的 language.source 或 language.target。"
+        )
+    if target not in {"zh", "en"}:
+        raise ValueError(f"暂不支持目标语言 {target!r}；language.target 目前仅支持 zh 或 en。")
+    if target == "en" and source and source != "zh":
+        raise ValueError(f"暂不支持 {source}→en；英文目标目前仅支持中文源文本（zh→en）。")
+
+
 def _resume_batches(segments, max_chars: int) -> list[list]:
     """按字符预算分批后，再沿“已完成/待翻译”边界切开。
 
@@ -135,6 +154,9 @@ def _resume_batches(segments, max_chars: int) -> list[list]:
 class _BatchResult:
     targets: list[str]
     bt_samples: list[tuple[str, str]] = field(default_factory=list)
+    # 首译长度门的修复记录：[{"index", "reason", "action"}, ...]
+    # action ∈ retranslated / retry_still_flagged / retry_failed / reported / polish_reverted
+    length_fixes: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -349,6 +371,10 @@ def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
 class Orchestrator:
     def __init__(self, config: Config, client: LLMClient | None = None):
         """初始化共享 LLM 客户端、用量检查点和各流水线 Agent。"""
+        _validate_direction(
+            _normalize_lang(config.source_lang),
+            _normalize_lang(config.target_lang),
+        )
         self.config = config
         self.client = client or build_client(config)
         # client 的统计是进程内累计；checkpoint 用于每次落盘时只提取新增部分。
@@ -362,9 +388,29 @@ class Orchestrator:
         self.extractor = GlossaryExtractor(self.client, config)
 
     def _punctuation_enabled(self) -> bool:
-        """判断当前目标语言是否应启用中文标点规范化。"""
-        target = (self.config.target_lang or "").lower().replace("_", "-")
-        return self.config.punctuation_normalize and (target == "zh" or target.startswith("zh-"))
+        """判断当前目标语言是否有确定性的标点规范化规则。"""
+        target = _normalize_lang(self.config.target_lang)
+        return self.config.punctuation_normalize and target in {"zh", "en"}
+
+    def _normalize_target_segments(
+        self,
+        texts: list[str],
+        continuations: list[bool] | None = None,
+    ) -> list[str]:
+        """按目标语言规范化一组译文标点。"""
+        if not self._punctuation_enabled():
+            return list(texts)
+        if _normalize_lang(self.config.target_lang) == "en":
+            return normalize_en_segments(texts)
+        return normalize_zh_segments(texts, continuations)
+
+    def _normalize_target(self, text: str) -> str:
+        """按目标语言规范化单段译文标点。"""
+        if not self._punctuation_enabled():
+            return text
+        if _normalize_lang(self.config.target_lang) == "en":
+            return normalize_en(text)
+        return normalize_zh(text)
 
     def _flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
         """把当前 client 尚未落盘的用量增量合并到本书 usage.json。"""
@@ -389,17 +435,13 @@ class Orchestrator:
         return cumulative
 
     # ── 语言解析 ────────────────────────────────────────────────────────────
-    def _apply_language(self, lang: str) -> None:
-        """把解析出的源语言应用到 config 与各 agent（auto 检测后调用）。"""
-        resolved = lang or self.config.source_lang
-        source = _normalize_lang(resolved)
-        target = _normalize_lang(self.config.target_lang)
-        if source and target and source == target:
-            raise ValueError(
-                f"源语言与目标语言相同（{source}），无需翻译；"
-                "请修改 config.yaml 中的 language.source 或 language.target。"
-            )
-        self.config.source_lang = resolved
+    def _apply_language(self, lang: str, target_lang: str | None = None) -> None:
+        """校验翻译方向，并把源/目标语言同步到 config 与全部 agent。"""
+        source = _normalize_lang(lang or self.config.source_lang)
+        target = _normalize_lang(target_lang or self.config.target_lang)
+        _validate_direction(source, target)
+        self.config.source_lang = source
+        self.config.target_lang = target
         for ag in (
             self.analyzer,
             self.synopsizer,
@@ -409,7 +451,23 @@ class Orchestrator:
             self.polisher,
             self.extractor,
         ):
-            ag.src = resolved
+            ag.src = source
+            ag.tgt = target
+
+    def _assert_resume_direction(self, manifest: dict[str, Any]) -> None:
+        """拒绝把已有状态用于不同的显式翻译方向。"""
+        run_source = _normalize_lang(str(manifest.get("source_lang") or ""))
+        run_target = _normalize_lang(str(manifest.get("target_lang") or ""))
+        configured_source = _normalize_lang(self.config.source_lang)
+        configured_target = _normalize_lang(self.config.target_lang)
+        source_changed = configured_source and configured_source != run_source
+        target_changed = configured_target and configured_target != run_target
+        if source_changed or target_changed:
+            raise ValueError(
+                f"现有状态属于 {run_source}→{run_target}，当前配置为 "
+                f"{configured_source or 'auto'}→{configured_target}；"
+                "不能在同一状态目录切换翻译方向，请为新方向配置独立的 paths.state_dir。"
+            )
 
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
     def _locate_existing_store(
@@ -442,6 +500,7 @@ class Orchestrator:
         )
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
+        self._assert_resume_direction(store.load_manifest())
         return store
 
     def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
@@ -457,6 +516,7 @@ class Orchestrator:
             store = RunStore(run_dir)
             with store.lock():
                 if store.exists():
+                    self._assert_resume_direction(store.load_manifest())
                     store.log_event(
                         "run_resumed",
                         input_path=input_path,
@@ -497,6 +557,7 @@ class Orchestrator:
     ) -> RunStore:
         """恢复已有状态；新运行分阶段写入，并以 manifest 原子提交完成标志。"""
         if store.exists():
+            self._assert_resume_direction(store.load_manifest())
             store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
             return store  # 已有进度 → 直接续跑，不重置（语言在 run() 里按 manifest 应用）
 
@@ -509,11 +570,13 @@ class Orchestrator:
                 store.log_event("language_detection_failed", source_lang=doc.source_lang)
                 raise RuntimeError(
                     "自动识别源语言失败：请检查模型配置，或在 config.yaml 的 "
-                    "language.source 指定 ISO 639-1 语言代码（如 ja/en/ko/ru/fr/de/es）。"
+                    "language.source 指定 ISO 639-1 语言代码（如 zh/ja/en/ko/ru/fr/de/es）。"
                 )
             doc.source_lang = detected
             store.log_event("language_detected", source_lang=doc.source_lang)
-        self._apply_language(doc.source_lang)
+        self._apply_language(doc.source_lang, doc.target_lang)
+        doc.source_lang = self.config.source_lang
+        doc.target_lang = self.config.target_lang
 
         manifest = store.stage_document(doc)
         glossary = GlossaryStore(store.glossary_path)
@@ -636,7 +699,10 @@ class Orchestrator:
         store = self.prepare(input_path, progress=progress)
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+            self._apply_language(
+                manifest.get("source_lang") or self.config.source_lang,
+                manifest.get("target_lang") or self.config.target_lang,
+            )
             try:
                 self._build_understanding(store, progress=progress)
                 store.log_event(
@@ -657,7 +723,10 @@ class Orchestrator:
     ) -> RunStore:
         """恢复语言和上下文，依次翻译章节并持续保存用量与进度。"""
         manifest = store.load_manifest()
-        self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+        self._apply_language(
+            manifest.get("source_lang") or self.config.source_lang,
+            manifest.get("target_lang") or self.config.target_lang,
+        )
         chapter_indices = {chapter.get("index") for chapter in manifest.get("chapters", [])}
         if only_chapter is not None and only_chapter not in chapter_indices:
             available = sorted(index for index in chapter_indices if isinstance(index, int))
@@ -1189,7 +1258,10 @@ class Orchestrator:
                     progress(done, total, label)
                 continue
 
-            ctx_text = context.render(self.config.pipeline.rolling_context_segments)
+            ctx_text = context.render(
+                self.config.pipeline.rolling_context_segments,
+                min_chars=self.config.pipeline.rolling_context_min_chars,
+            )
             res = self._process_batch(
                 b, term_snapshot, ctx_text, style, book_synopsis, chapter_digest
             )
@@ -1203,6 +1275,7 @@ class Orchestrator:
                 polished=self.config.pipeline.polish,
                 punctuation_normalized=self._punctuation_enabled(),
                 backtranslate_sample_count=len(res.bt_samples),
+                length_fixes=res.length_fixes,
                 segments=[
                     {"index": batch_start + i, "source": s.source, "target": t}
                     for i, (s, t) in enumerate(zip(b, res.targets))
@@ -1233,7 +1306,7 @@ class Orchestrator:
         # 标点在章级统一处理，直引号状态才能跨批次、跨段保持连续。
         if self._punctuation_enabled():
             translated = [segment.target or "" for segment in text_segs]
-            normalized_targets = normalize_zh_segments(
+            normalized_targets = self._normalize_target_segments(
                 translated,
                 [segment.cont for segment in text_segs],
             )
@@ -1339,7 +1412,7 @@ class Orchestrator:
         )
         return summary
 
-    # ── 只读全书 Agent Review ───────────────────────────────────────────────
+    # ── 只读全书 Agent Review ──────────────────────────────────────────
 
     def _review_round(
         self,
@@ -2572,12 +2645,15 @@ class Orchestrator:
         book_synopsis: str = "",
         chapter_digest: str = "",
     ) -> _BatchResult:
-        """单个批次：整批翻译 → 润色。
+        """单个批次：整批翻译 → 首译长度门 → 润色（含零成本回退）。
 
         每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
         全书概览/本章梗概作为恒定前缀注入，让译者把握全局。
         标点规范化在章末统一执行，以维持跨段引号状态。
         LLM 审校不在翻译批内做；全书完成后由独立 Review 阶段统一执行。
+        首译长度门（translate_length_gate）：字符比明显过短的段定向重译一次
+        （重译仍短/失败则保守保留原译，不循环）；过长只记录不改；润色后
+        异常变短的段零成本回退润色前译文。
         """
         sources = [s.source for s in batch]
         targets = self.translator.translate_batch(
@@ -2589,9 +2665,79 @@ class Orchestrator:
             chapter_digest=chapter_digest,
         )
 
+        length_fixes: list[dict] = []
+        gate_on = self.config.pipeline.translate_length_gate
+        if gate_on:
+            for flag in checks.length_flags_for_direction(
+                sources, targets, self.config.source_lang, self.config.target_lang
+            ):
+                if flag.reason == "too_long":
+                    length_fixes.append(
+                        {"index": flag.index, "reason": "too_long", "action": "reported"}
+                    )
+                    continue
+                # too_short / empty：单段定向重译（复用 translate_batch 的重试与对齐兜底，
+                # 上下文与术语快照同本批，保证重译与原批风格一致）
+                try:
+                    new_t = self.translator.translate_batch(
+                        [sources[flag.index]],
+                        glossary_terms=terms,
+                        style=style,
+                        context=ctx_text,
+                        book_synopsis=book_synopsis,
+                        chapter_digest=chapter_digest,
+                    )[0]
+                except Exception:  # noqa: BLE001 — 重译失败不阻断，保留原译
+                    length_fixes.append(
+                        {
+                            "index": flag.index,
+                            "reason": flag.reason,
+                            "action": "retry_failed",
+                        }
+                    )
+                    continue
+                still_flagged = any(
+                    f.reason in ("too_short", "empty")
+                    for f in checks.length_flags_for_direction(
+                        [sources[flag.index]], [new_t], self.config.source_lang, self.config.target_lang
+                    )
+                )
+                if still_flagged:
+                    # 重译仍短：源段可能本就特殊（名单/拟声词），保守保留原译
+                    length_fixes.append(
+                        {
+                            "index": flag.index,
+                            "reason": flag.reason,
+                            "action": "retry_still_flagged",
+                        }
+                    )
+                else:
+                    targets[flag.index] = new_t
+                    length_fixes.append(
+                        {
+                            "index": flag.index,
+                            "reason": flag.reason,
+                            "action": "retranslated",
+                        }
+                    )
+
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
             if len(polished) == len(targets):
+                if gate_on:
+                    # 零成本回退：润色导致某段异常变短时退回润色前译文（不发 LLM 调用）
+                    dropped = {
+                        f.index
+                        for f in checks.length_flags_for_direction(
+                            sources, polished, self.config.source_lang, self.config.target_lang
+                        )
+                        if f.reason in ("too_short", "empty")
+                    }
+                    for i in sorted(dropped):
+                        polished[i] = targets[i]
+                        length_fixes.append(
+                            {"index": i, "reason": "too_short", "action": "polish_reverted"}
+                        )
                 targets = polished
 
         bt_samples: list[tuple[str, str]] = []
@@ -2601,7 +2747,9 @@ class Orchestrator:
                 if random.random() < rate:
                     bt_samples.append((s, t or ""))
 
-        return _BatchResult(targets=targets, bt_samples=bt_samples)
+        return _BatchResult(
+            targets=targets, bt_samples=bt_samples, length_fixes=length_fixes
+        )
 
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
     ALL_STEPS = ("translate", "review", "qa", "report", "assemble")
@@ -2616,7 +2764,10 @@ class Orchestrator:
         store = self._locate_existing_store(input_path, progress=progress)
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+            self._apply_language(
+                manifest.get("source_lang") or self.config.source_lang,
+                manifest.get("target_lang") or self.config.target_lang,
+            )
             terms = GlossaryStore.load_terms_readonly(store.glossary_path)
             outcome = self._run_review_session(
                 store,
@@ -2663,7 +2814,10 @@ class Orchestrator:
         else:
             store = self.prepare(input_path, progress=progress)
             m = store.load_manifest()
-            self._apply_language(m.get("source_lang") or self.config.source_lang)
+            self._apply_language(
+                m.get("source_lang") or self.config.source_lang,
+                m.get("target_lang") or self.config.target_lang,
+            )
         with store.lock():
             return self._finish_steps_locked(
                 store,

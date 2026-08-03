@@ -39,7 +39,7 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 ## Input and output
 
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, and PDF.
-- Default output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
+- Default output: a monolingual `<book-name>.<target>.epub` under the source file's `output/` directory. The bilingual `<book-name>.<target>-bi.epub` is optional (`target` is `zh` or `en`).
 - `--format txt|html|markdown|pdf`: export the selected format. Every input format still produces EPUB by default.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
@@ -118,8 +118,10 @@ uv run trans-novel status book.epub
 Changing polishing settings does not automatically rerun translation batches that
 are already complete. Review is different: every `review` invocation rechecks the
 complete translated book and creates a new timestamped read-only review run.
-Use a new state directory or remove the corresponding state only when you
-intentionally want a fresh translation.
+Source and target languages cannot be changed inside an existing state directory;
+configure a different `paths.state_dir` when starting another direction. Use a new
+state directory or remove the corresponding state only when you intentionally want
+a fresh translation.
 
 ## Independent stages and glossary management
 
