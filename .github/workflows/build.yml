@@ -27,13 +27,6 @@ jobs:
             binary: ./dist/wenyi.exe
             archive: ./dist/wenyi-windows-x64.zip
             expected_machine: "8664"
-          - name: Windows ARM64
-            runner: windows-11-arm
-            python_arch: arm64
-            artifact: wenyi-windows-arm64
-            binary: ./dist/wenyi.exe
-            archive: ./dist/wenyi-windows-arm64.zip
-            expected_machine: "AA64"
           - name: Linux x64
             runner: ubuntu-latest
             python_arch: x64

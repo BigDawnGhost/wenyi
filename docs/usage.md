@@ -20,8 +20,8 @@ Whenever the program starts, it checks for `config.yaml` in the current director
 
 ## Windows
 
-Releases provide `wenyi-windows-x64.zip` and `wenyi-windows-arm64.zip`. Download
-the archive matching your processor and verify it against `SHA256SUMS.txt`.
+Windows releases provide `wenyi-windows-x64.zip`. Verify the archive against
+`SHA256SUMS.txt` before running it.
 
 When using a packaged `wenyi.exe`, set the API key in PowerShell:
 

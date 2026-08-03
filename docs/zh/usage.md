@@ -19,8 +19,8 @@ uv run trans-novel translate book.epub
 
 ## Windows
 
-Release 提供 `wenyi-windows-x64.zip` 和 `wenyi-windows-arm64.zip`。请下载与
-处理器架构匹配的压缩包，并使用 `SHA256SUMS.txt` 校验文件。
+Windows Release 提供 `wenyi-windows-x64.zip`，运行前请使用
+`SHA256SUMS.txt` 校验文件。
 
 使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
 
