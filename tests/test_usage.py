@@ -136,7 +136,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 reasoning_content,
             )
 
-    def test_complete_json_uses_final_json_from_reasoning_content(self):
+    def test_complete_json_rejects_mixed_reasoning_content(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
 
         reasoning_content = (
@@ -150,12 +150,10 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         )
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
-            self.assertEqual(
+            with self.assertRaisesRegex(RuntimeError, "reasoning_content.*合法 JSON"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}],
-                ),
-                {"translations": ["越过山口……"]},
-            )
+                )
 
     def test_complete_json_rejects_reasoning_content_after_length_finish(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
@@ -200,7 +198,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         response = _make_response(
             content,
             None,
-            reasoning_content='{"translations":["reasoning"]}',
+            reasoning_content="这是一段明显不是 JSON 的推理文本",
         )
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):

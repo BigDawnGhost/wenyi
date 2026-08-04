@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from abc import abstractmethod
@@ -242,7 +243,14 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
             if json_mode and not content:
                 if str(getattr(choice, "finish_reason", "")).lower() == "length":
                     raise RuntimeError("OpenAI-compatible 响应因达到 token 上限而截断")
-                content = getattr(message, "reasoning_content", None) or ""
+                reasoning_content = getattr(message, "reasoning_content", None)
+                try:
+                    json.loads(reasoning_content)
+                except (TypeError, json.JSONDecodeError) as error:
+                    raise RuntimeError(
+                        "OpenAI-compatible json_mode 响应的 reasoning_content 不是合法 JSON"
+                    ) from error
+                content = reasoning_content
             return content
 
         return _call()
