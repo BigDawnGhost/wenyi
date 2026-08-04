@@ -18,6 +18,7 @@ from wenyi_core.assemble.writer import (
 )
 from wenyi_core.cli import app
 from wenyi_core.config import Config
+from wenyi_core.ingest.epub_reader import annotate_epub_resource
 from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -89,6 +90,58 @@ class TestRenderChapterHtmlBilingual(unittest.TestCase):
         html = _render_chapter_html(ch)  # 默认单语，不应引入 tn-source
         self.assertNotIn("tn-source", html)
         self.assertNotIn("data-tn-id", html)
+
+    def test_japanese_source_keeps_ruby_in_bilingual_output(self):
+        title, segments, template = annotate_epub_resource(
+            "<html><body><p><ruby>漢字<rt>かんじ</rt></ruby>です</p></body></html>",
+            0,
+            "chapter.xhtml",
+        )
+        segments[0].target = "是汉字"
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="chapter.xhtml",
+            template=template,
+        )
+
+        soup = BeautifulSoup(
+            _render_chapter_html(chapter, bilingual=True, source_lang="ja"),
+            "html.parser",
+        )
+        paragraphs = soup.find_all("p")
+        source = _required_tag(soup.find("p", class_="tn-source"))
+        ruby = _required_tag(source.find("ruby"))
+
+        self.assertEqual(paragraphs[0].get_text(), "是汉字")
+        self.assertTrue(ruby.get_text().startswith("漢字"))
+        self.assertEqual(_required_tag(ruby.find("rt")).get_text(), "かんじ")
+        self.assertIn("です", source.get_text())
+
+    def test_non_japanese_source_still_flattens_ruby(self):
+        title, segments, template = annotate_epub_resource(
+            "<html><body><p><ruby>漢字<rt>かんじ</rt></ruby>です</p></body></html>",
+            0,
+            "chapter.xhtml",
+        )
+        segments[0].target = "Chinese characters"
+        chapter = Chapter(
+            index=0,
+            title=title,
+            segments=segments,
+            href="chapter.xhtml",
+            template=template,
+        )
+
+        soup = BeautifulSoup(
+            _render_chapter_html(chapter, bilingual=True, source_lang="en"),
+            "html.parser",
+        )
+        source = _required_tag(soup.find("p", class_="tn-source"))
+
+        self.assertEqual(source.get_text(), "漢字です")
+        self.assertIsNone(source.find("ruby"))
 
     def test_preserve_source_style_reuses_block_style_without_dim_class(self):
         ch = _chapter_with_template()
@@ -212,11 +265,14 @@ class TestBuildEpubFromChaptersBilingual(unittest.TestCase):
             out = assemble(store, txt, out_format="epub", bilingual=True)
             self.assertTrue(zipfile.is_zipfile(out))
             with zipfile.ZipFile(out) as z:
+                opf_name = next(name for name in z.namelist() if name.endswith(".opf"))
+                opf = z.read(opf_name).decode("utf-8")
                 xhtml_names = [
                     n for n in z.namelist() if n.endswith(".xhtml") and n.startswith("EPUB/")
                 ]
                 self.assertTrue(xhtml_names)
                 bodies = {n: z.read(n).decode("utf-8") for n in xhtml_names}
+            self.assertIn("<dc:title>novel-wenyi-zh-bi</dc:title>", opf)
             all_html = "\n".join(bodies.values())
             self.assertIn("tn-source", all_html)
             self.assertIn("译0", all_html)  # 译文仍在（fake 翻译器返回 译N）
@@ -292,14 +348,18 @@ class TestAssembleTextBilingual(unittest.TestCase):
 
 class TestDefaultOutBilingual(unittest.TestCase):
     def test_bilingual_suffix(self):
-        out = _default_out("/tmp/novel.txt", "epub", "", bilingual=True)
-        self.assertEqual(os.path.basename(out), "novel.zh-bi.epub")
-        self.assertEqual(os.path.dirname(out), "/tmp/output")
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            out = _default_out(source, "epub", "", bilingual=True)
+            self.assertEqual(os.path.basename(out), "novel.zh-bi.epub")
+            self.assertEqual(os.path.dirname(out), os.path.join(directory, "output"))
 
     def test_mono_suffix_unchanged(self):
-        out = _default_out("/tmp/novel.txt", "epub", "")
-        self.assertEqual(os.path.basename(out), "novel.zh.epub")
-        self.assertEqual(os.path.dirname(out), "/tmp/output")
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            out = _default_out(source, "epub", "")
+            self.assertEqual(os.path.basename(out), "novel.zh.epub")
+            self.assertEqual(os.path.dirname(out), os.path.join(directory, "output"))
 
 
 class TestOutputConfigParsing(unittest.TestCase):

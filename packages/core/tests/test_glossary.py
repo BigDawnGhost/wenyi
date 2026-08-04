@@ -68,6 +68,10 @@ class TestGlossary(unittest.TestCase):
         self.assertTrue(source_matches_text("ANN", "ann opened the door."))
         self.assertFalse(source_matches_text("Ann", "Anna opened the door."))
 
+    def test_cyrillic_source_match_respects_word_boundaries(self):
+        self.assertTrue(source_matches_text("гад", "Этот гад снова пришёл."))
+        self.assertFalse(source_matches_text("гад", "Этот гадкий человек снова пришёл."))
+
     def test_appellation_does_not_match_bare_name_alias(self):
         self.store.upsert_term(
             GlossaryTerm(
@@ -81,6 +85,60 @@ class TestGlossary(unittest.TestCase):
         hits = self.store.terms_in_text("「夏帆ちゃん」と母親が言った。")
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].source, "夏帆ちゃん")
+
+    def test_recurring_terms_require_two_full_text_occurrences(self):
+        terms = [
+            GlossaryTerm(source="唯一术语", target="Unique"),
+            GlossaryTerm(source="重复术语", target="Repeated"),
+            GlossaryTerm(
+                source="AliasCanonical",
+                target="Alias",
+                aliases=["别名"],
+            ),
+            GlossaryTerm(
+                source="夏帆ちゃん",
+                target="小夏帆",
+                type=TYPE_APPELLATION,
+                aliases=["夏帆"],
+            ),
+        ]
+        corpus = "唯一术语。重复术语再次成为重复术语。别名先来，别名再来。夏帆出现两次，夏帆。"
+
+        recurring = GlossaryStore.recurring_terms(terms, corpus)
+
+        self.assertEqual(
+            {term.source for term in recurring},
+            {"重复术语", "AliasCanonical"},
+        )
+
+        overlapping_alias = GlossaryTerm(
+            source="夏帆",
+            target="Kaho",
+            aliases=["夏帆ちゃん"],
+        )
+        self.assertEqual(
+            GlossaryStore.recurring_terms(
+                [overlapping_alias],
+                "夏帆ちゃん只在全文出现一次。",
+            ),
+            [],
+        )
+
+        cyrillic = GlossaryTerm(source="гад", target="畜生")
+        self.assertEqual(
+            GlossaryStore.recurring_terms(
+                [cyrillic],
+                "Один гад ушёл, но гадкий человек остался гадким.",
+            ),
+            [],
+        )
+        self.assertEqual(
+            GlossaryStore.recurring_terms(
+                [cyrillic],
+                "Один гад ушёл, затем другой гад пришёл.",
+            ),
+            [cyrillic],
+        )
 
     def test_conflict_keeps_current_until_resolved(self):
         self.store.upsert_term(GlossaryTerm(source="堀北", target="堀北"), chapter=0)

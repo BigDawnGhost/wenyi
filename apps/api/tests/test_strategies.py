@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
+from wenyi_api.strategies import PRESET_TEMPLATES, builtin_template_definition, strategy_to_config
 from wenyi_core.config import Config
-
-from wenyi_api.strategies import (PRESET_TEMPLATES, builtin_template_definition,
-                                  strategy_to_config)
 
 
 def _base() -> Config:

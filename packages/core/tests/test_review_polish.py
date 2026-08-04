@@ -15,6 +15,7 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.models import Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.review_run import ReviewRunStore
 from wenyi_core.pipeline.runstore import RunStore
 
 
@@ -62,6 +63,39 @@ class TestReviewer(unittest.TestCase):
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
         self.assertEqual(client.calls[-1]["tier"], "cheap")  # 审校走廉价档
+
+    def test_reviewer_drops_fields_outside_the_initial_issue_contract(self):
+        """廉价初审不能绕过强档 Agent 注入跨块一致性 claim。"""
+        issues = [
+            {
+                "index": 0,
+                "type": "terminology",
+                "detail": "人名译法不符",
+                "suggestion": "改用术语表译名",
+                "consistency": {
+                    "kind": "term",
+                    "subject_source": "綾小路",
+                    "proposed_value": "绫小路",
+                },
+                "unexpected": "drop me",
+            }
+        ]
+        reviewer = Reviewer(
+            FakeClient(handler=lambda m, t, j: _review_response(issues, 1)),
+            _cfg(),
+        )
+
+        self.assertEqual(
+            reviewer.review(["綾小路"], ["绫小路"]),
+            [
+                {
+                    "index": 0,
+                    "type": "terminology",
+                    "detail": "人名译法不符",
+                    "suggestion": "改用术语表译名",
+                }
+            ],
+        )
 
     def test_reviewer_rejects_invalid_outer_schema(self):
         reviewer = Reviewer(
@@ -111,6 +145,7 @@ class TestReviewer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             store = RunStore(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=client, storage=store)
+            debug = ReviewRunStore(d)
             issues = orch._review_chapter(
                 [
                     Segment(index=0, source="源文0", target="译文0"),
@@ -118,8 +153,9 @@ class TestReviewer(unittest.TestCase):
                 ],
                 [],
                 chapter_index=3,
+                debug=debug,
             )
-            with open(store.event_log_path, "r", encoding="utf-8") as file:
+            with open(debug.path("events.jsonl"), encoding="utf-8") as file:
                 events = [json.loads(line) for line in file]
 
         self.assertEqual(issues, [])
@@ -142,6 +178,27 @@ class TestReviewer(unittest.TestCase):
             ReviewOutputError,
             "invalid_issue_suggestion",
         ):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_valid_json_with_boolean_index_is_rejected(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: _review_response(
+                    [
+                        {
+                            "index": True,
+                            "type": "missing",
+                            "detail": "错误索引",
+                            "suggestion": "补译",
+                        }
+                    ],
+                    1,
+                )
+            ),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
             reviewer.review(["あ"], ["甲"])
 
     def test_malformed_chunk_is_recursively_split_and_logged(self):
@@ -175,12 +232,14 @@ class TestReviewer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             store = RunStore(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=client, storage=store)
+            debug = ReviewRunStore(d)
             issues = orch._review_chapter(
                 segments,
                 [],
                 chapter_index=7,
+                debug=debug,
             )
-            with open(store.event_log_path, "r", encoding="utf-8") as file:
+            with open(debug.path("events.jsonl"), encoding="utf-8") as file:
                 events = [json.loads(line) for line in file]
 
         self.assertEqual([item["index"] for item in issues], [0, 1, 2, 3])

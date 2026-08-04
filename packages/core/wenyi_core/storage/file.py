@@ -42,6 +42,13 @@ class FileStorage:
         return self._run.source_dir
 
     @property
+    def reviews_dir(self) -> str:
+        return self._run.reviews_dir
+
+    def chapter_path(self, ci: int) -> str:
+        return self._run.chapter_path(ci)
+
+    @property
     def glossary_path(self) -> str:
         return self._run.glossary_path
 
@@ -140,6 +147,9 @@ class FileStorage:
             return None
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def load_latest_review_result(self) -> Optional[dict]:
+        return self._run.load_latest_review_result()
 
     def save_usage(self, data: dict) -> None:
         self._run.save_usage(data)

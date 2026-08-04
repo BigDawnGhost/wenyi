@@ -12,6 +12,14 @@ wenyi-core = { workspace = true }
 wenyi-cli = { workspace = true }
 wenyi-api = { workspace = true }
 
+[project.optional-dependencies]
+pdf-output = [
+    "weasyprint>=69.0",
+]
+pdf-output-lite = [
+    "fpdf2>=2.8.5",
+]
+
 [dependency-groups]
 dev = [
     "ruff>=0.6",

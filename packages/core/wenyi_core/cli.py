@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from importlib.metadata import version as package_version
 from typing import Any, Protocol
 
 import typer
@@ -106,6 +107,36 @@ glossary_app = typer.Typer(
 console = Console()
 
 
+class _RichProgressBridge:
+    """把流水线的阶段进度映射到同一个 Rich 任务。"""
+
+    def __init__(self, progress: Progress, initial_description: str) -> None:
+        self.progress = progress
+        self.task = progress.add_task(initial_description, total=None)
+
+    def __call__(self, done: int, total: int, label: str) -> None:
+        """刷新当前阶段的标题与计数，避免阶段切换产生多行进度条。"""
+        if total > 0:
+            self.progress.update(
+                self.task,
+                completed=done,
+                total=total,
+                description=label,
+            )
+            return
+        # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
+        # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
+        self.progress.remove_task(self.task)
+        self.task = self.progress.add_task(label, total=None)
+
+
+def _version_callback(value: bool) -> None:
+    """打印由 Git 标签生成的已安装包版本并立即退出。"""
+    if value:
+        console.print(package_version("wenyi-core"))
+        raise typer.Exit()
+
+
 class _ManifestStore(Protocol):
     def load_manifest(self) -> dict[str, Any]:
         """返回运行目录中的 manifest 数据。"""
@@ -121,8 +152,16 @@ def _root(
         "-c",
         help="配置文件路径；文件不存在时自动创建",
     ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="显示版本号并退出",
+    ),
 ):
     """记录全局配置路径，并在子命令运行前校验模型凭据。"""
+    del version
     _CONFIG["path"] = config
     command = ctx.invoked_subcommand
     should_validate = (
@@ -160,9 +199,18 @@ def _require_input_file(input_path: str) -> None:
 def _validate_output_format(fmt: str) -> str:
     """规范化并校验用户可选择的输出格式。"""
     normalized = fmt.strip().lower()
-    allowed = {"epub", "txt", "html", "markdown"}
+    allowed = {"epub", "txt", "html", "markdown", "pdf"}
     if normalized not in allowed:
-        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown）[/]")
+        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown / pdf）[/]")
+        raise typer.Exit(2)
+    return normalized
+
+
+def _validate_pdf_engine(engine: str) -> str:
+    """规范化并校验 PDF 渲染引擎。"""
+    normalized = engine.strip().lower()
+    if normalized not in {"weasyprint", "fpdf2"}:
+        console.print(f"[red]不支持的 PDF 引擎：{engine}（可选 weasyprint / fpdf2）[/]")
         raise typer.Exit(2)
     return normalized
 
@@ -196,6 +244,7 @@ def _translate_impl(
     chapter: int | None = None,
     fmt: str = "epub",
     out: str | None = None,
+    pdf_engine: str = "weasyprint",
     polish: bool | None = None,
     review: bool | None = None,
     qa: bool | None = None,
@@ -209,6 +258,7 @@ def _translate_impl(
             chapter=chapter,
             fmt=fmt,
             out=out,
+            pdf_engine=pdf_engine,
             polish=polish,
             review=review,
             qa=qa,
@@ -226,6 +276,7 @@ def _translate_impl_or_raise(
     chapter: int | None = None,
     fmt: str = "epub",
     out: str | None = None,
+    pdf_engine: str = "weasyprint",
     polish: bool | None = None,
     review: bool | None = None,
     qa: bool | None = None,
@@ -237,6 +288,7 @@ def _translate_impl_or_raise(
 
     _require_input_file(input_path)
     fmt = _validate_output_format(fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     config = _load_config()
     if polish is not None:
         config.pipeline.polish = polish
@@ -275,18 +327,7 @@ def _translate_impl_or_raise(
         TimeElapsedColumn(),
         console=console,
     ) as prog:
-        task = prog.add_task("准备中…", total=None)
-
-        def cb(done: int, total: int, label: str) -> None:
-            """把编排器的通用进度回调同步到 Rich 任务。"""
-            nonlocal task
-            if total > 0:
-                prog.update(task, completed=done, total=total, description=label)
-                return
-            # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
-            # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
-            prog.remove_task(task)
-            task = prog.add_task(label, total=None)
+        cb = _RichProgressBridge(prog, "准备中…")
 
         if chapter is not None:
             try:
@@ -304,17 +345,26 @@ def _translate_impl_or_raise(
             out_format=fmt,
             out_path=out,
             do_qa=qa,
+            pdf_engine=pdf_engine,
         )
 
     s = result["report"]["summary"]
     console.print(
         f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
-        f"审校 {s.get('chapters_reviewed', 0)}/{s['chapters_total']} 章，"
         f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
     )
     _print_usage({"usage": result["storage"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
+    if result.get("review_dir"):
+        review_result = result.get("review_result") or {}
+        review_summary = review_result.get("summary") or {}
+        console.print(
+            f"审校结果：{review_result.get('termination', 'unknown')}，"
+            f"问题 {review_summary.get('issue_count', 0)} 项，"
+            f"修改建议 {review_summary.get('change_count', 0)} 项。"
+        )
+        console.print(f"审校目录：{result['review_dir']}")
 
 
 def _prepare_impl(input_path: str) -> None:
@@ -409,12 +459,17 @@ def translate(
     fmt: str = typer.Option(
         "epub",
         "--format",
-        help="最终导出格式：epub / txt / html / markdown",
+        help="最终导出格式：epub / txt / html / markdown / pdf",
     ),
     out: str | None = typer.Option(
         None,
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
+    ),
+    pdf_engine: str = typer.Option(
+        "weasyprint",
+        "--pdf-engine",
+        help="PDF 渲染引擎：weasyprint（默认）/ fpdf2",
     ),
     polish: bool | None = typer.Option(
         None,
@@ -448,6 +503,7 @@ def translate(
         chapter=chapter,
         fmt=fmt,
         out=out,
+        pdf_engine=pdf_engine,
         polish=polish,
         review=review,
         qa=qa,
@@ -470,19 +526,12 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
-    force: bool = typer.Option(False, "--force", help="忽略审校摘要，强制重新审校全部章节"),
-    fix: bool | None = typer.Option(
-        None,
-        "--fix/--no-fix",
-        help="覆盖 pipeline.autofix_severe；开启后串行修复漏译和误译",
-    ),
 ):
-    """使用最终术语库审校完整译文；结果按章保存，可断点续审。"""
+    """全量运行取证、影子修订与盲复审；不修改正式正文。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input)
     config = _load_config()
-    autofix = config.pipeline.autofix_severe if fix is None else fix
     orch = Orchestrator(config)
 
     try:
@@ -494,39 +543,21 @@ def review(
             TimeElapsedColumn(),
             console=console,
         ) as prog:
-            task = prog.add_task("准备全书审校…", total=None)
-
-            def cb(done: int, total: int, label: str) -> None:
-                """把全书审校进度同步到 Rich 任务。"""
-                nonlocal task
-                if total > 0:
-                    prog.update(
-                        task,
-                        completed=done,
-                        total=total,
-                        description=label,
-                    )
-                    return
-                prog.remove_task(task)
-                task = prog.add_task(label, total=None)
-
-            result = orch.run_review(
-                input,
-                progress=cb,
-                force=force,
-                autofix=autofix,
-            )
+            cb = _RichProgressBridge(prog, "准备全书审校…")
+            result = orch.run_review(input, progress=cb)
     except (IngestError, ImportError, OSError, ValueError) as error:
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
 
-    issues = result["review_issues"]
+    review_result = result["review_result"]
+    summary = review_result["summary"]
     console.print(
-        f"[bold green]全书审校完成[/]：发现 {len(issues)} 项问题"
-        f"{'，已按配置尝试修复严重项' if autofix else ''}。"
+        f"[bold green]全书 Agent 审校完成[/]：{review_result['termination']}，"
+        f"仍有 {summary['issue_count']} 项问题，"
+        f"生成 {summary['change_count']} 项修改建议。"
     )
-    console.print(f"状态目录：{result['store'].run_dir}")
-    _print_usage({"usage": result["store"].load_usage() or {}})
+    console.print("审校结果为只读建议，正式章节译文未修改。")
+    console.print(f"审校目录：{result['review_dir']}")
 
 
 # ── 查询 / 细粒度命令 ──────────────────────────────────────────────────────
@@ -544,7 +575,7 @@ def status(
         raise typer.Exit(1)
     m = store.load_manifest()
     console.print(f"《{m['title']}》（{m['fmt']}）  {m['source_lang']}→{m['target_lang']}")
-    table = Table("", "#", "章节", "翻译", "审校")
+    table = Table("", "#", "章节", "翻译")
     for c in m["chapters"]:
         mark = "✓" if c["status"] == STATUS_DONE else "·"
         table.add_row(
@@ -552,7 +583,6 @@ def status(
             str(c["index"]),
             c["title"],
             c["status"],
-            str(c.get("review_status", "pending")),
         )
     console.print(table)
     g = GlossaryStore(store.glossary_path)
@@ -651,7 +681,12 @@ def assemble(
     fmt: str = typer.Option(
         "epub",
         "--format",
-        help="导出格式：epub / txt / html / markdown",
+        help="导出格式：epub / txt / html / markdown / pdf",
+    ),
+    pdf_engine: str = typer.Option(
+        "weasyprint",
+        "--pdf-engine",
+        help="PDF 渲染引擎：weasyprint（默认）/ fpdf2",
     ),
     mono: bool | None = typer.Option(
         None,
@@ -670,6 +705,7 @@ def assemble(
 
     config = _load_config()
     fmt = _validate_output_format(fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     store = _runstore_for(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
@@ -688,6 +724,7 @@ def assemble(
                 out_format=fmt,
                 bilingual=False,
                 about_page=config.output.about_page,
+                pdf_engine=pdf_engine,
             )
         )
     if do_bilingual:
@@ -702,6 +739,7 @@ def assemble(
                 order=config.output.bilingual_order,
                 preserve_source_style=(config.output.bilingual_preserve_source_style),
                 about_page=config.output.about_page,
+                pdf_engine=pdf_engine,
             )
         )
     for path in paths:
@@ -737,25 +775,24 @@ def qa(
 def report(
     input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
 ) -> None:
-    """根据当前章节、审校和术语状态重新生成 report.json，不调用模型。"""
+    """根据当前章节和术语状态重新生成 report.json，不调用模型。"""
     from .assemble.report import build_report
-    from .glossary.store import GlossaryStore
+    from .storage import FileStorage
 
     config = _load_config()
     store = _runstore_for(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
-    g = GlossaryStore(store.glossary_path)
-    rep = build_report(store, g)
-    g.close()
+    storage = FileStorage(store.run_dir, create=False)
+    rep = build_report(storage)
+    storage.close()
     store.save_report(rep)
     s = rep["summary"]
     console.print(f"QA 报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
-        f"待裁决冲突 {s['open_conflicts']}  审校问题 {s['review_issues']}  "
-        f"回译疑点 {s['backtranslation_issues']}"
+        f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"
     )
 
 

@@ -83,11 +83,10 @@ class TestTranslatorAlignment(unittest.TestCase):
 
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_chapter_digest_precedes_dynamic_glossary(self):
-        for template in (prompts.TRANSLATOR_USER, prompts.TRANSLATOR_FIX_USER):
-            self.assertLess(
-                template.template.index("【本章梗概】"),
-                template.template.index("【专有名词对照表】"),
-            )
+        self.assertLess(
+            prompts.TRANSLATOR_USER.template.index("【本章梗概】"),
+            prompts.TRANSLATOR_USER.template.index("【专有名词对照表】"),
+        )
 
 
 class TestChecks(unittest.TestCase):

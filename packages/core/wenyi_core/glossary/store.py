@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -117,25 +120,108 @@ def _match_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold()
 
 
-def source_matches_text(source: str, text: str) -> bool:
-    """判断术语原文是否出现在文本中，并避免拉丁词命中更长单词。
+_WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
 
-    CJK 等不以空格分词的语言沿用规范化子串匹配；纯 ASCII 名称额外检查
-    字母数字边界，避免 ``Ann`` 错误命中 ``Anna``。
+
+def _source_pattern(key: str) -> re.Pattern[str] | None:
+    """为空格分词文字构造边界正则；连续书写文字返回 None 使用子串匹配。"""
+    if key.isascii():
+        return re.compile(rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])")
+
+    letters = [char for char in key if char.isalpha()]
+    if not letters or not all(
+        any(script in unicodedata.name(char, "") for script in _WORD_BOUNDARY_SCRIPTS)
+        for char in letters
+    ):
+        return None
+
+    left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
+    right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
+    return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
+
+
+def source_matches_text(source: str, text: str) -> bool:
+    """判断术语原文是否出现，并避免空格分词文字命中更长单词。
+
+    CJK 等连续书写文字沿用规范化子串匹配；ASCII、拉丁、希腊和西里尔文字
+    检查单词边界，避免 ``Ann`` 命中 ``Anna``、``гад`` 命中 ``гадкий``。
     """
     key = _match_text(source).strip()
     if not key:
         return False
     normalized_text = _match_text(text)
-    if key.isascii():
-        return (
-            re.search(
-                rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])",
-                normalized_text,
-            )
-            is not None
-        )
+    if pattern := _source_pattern(key):
+        return pattern.search(normalized_text) is not None
     return key in normalized_text
+
+
+def term_match_sources(term: GlossaryTerm) -> list[str]:
+    """返回术语在源文中的允许匹配写法。
+
+    称谓、敬称、口癖和固定表达只按完整 source 匹配，避免其裸名 alias
+    把带语气/场景的派生译法注入普通称呼；其它实体可同时匹配 aliases。
+    """
+    if term.type in _SOURCE_ONLY_TYPES:
+        return [term.source]
+    return [term.source, *term.aliases]
+
+
+def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
+    """返回术语在已规范化文本中的非重叠命中区间。"""
+    key = _match_text(source).strip()
+    if not key:
+        return []
+    if pattern := _source_pattern(key):
+        return [match.span() for match in pattern.finditer(normalized_text)]
+
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while (index := normalized_text.find(key, start)) != -1:
+        end = index + len(key)
+        spans.append((index, end))
+        start = end
+    return spans
+
+
+def _merged_occurrence_count(spans: set[tuple[int, int]]) -> int:
+    """把 source 与 alias 在同一处产生的重叠命中合并为一次正文提及。"""
+    count = 0
+    active_end = -1
+    for start, end in sorted(spans):
+        if start >= active_end:
+            count += 1
+            active_end = end
+        else:
+            active_end = max(active_end, end)
+    return count
+
+
+class GlossaryOccurrenceMatcher:
+    """复用一份规范化全文，按 source/alias 判断术语是否重复出现。"""
+
+    def __init__(self, text: str):
+        self.normalized_text = _match_text(text)
+
+    def recurring_terms(
+        self,
+        terms: list[GlossaryTerm],
+        *,
+        min_occurrences: int = 2,
+    ) -> list[GlossaryTerm]:
+        """筛出 source/alias 在全文累计出现至少指定次数的术语。"""
+        if min_occurrences <= 1:
+            return GlossaryStore.terms_in(terms, self.normalized_text)
+
+        recurring: list[GlossaryTerm] = []
+        for term in terms:
+            raw_keys = term_match_sources(term)
+            keys = {normalized for key in raw_keys if (normalized := _match_text(key).strip())}
+            spans: set[tuple[int, int]] = set()
+            for key in keys:
+                spans.update(_source_occurrence_spans(key, self.normalized_text))
+            if _merged_occurrence_count(spans) >= min_occurrences:
+                recurring.append(term)
+        return recurring
 
 
 class GlossaryStore:
@@ -166,6 +252,54 @@ class GlossaryStore:
     def close(self) -> None:
         """关闭底层 SQLite 连接。"""
         self.conn.close()
+
+    @classmethod
+    def load_terms_readonly(cls, db_path: str) -> list[GlossaryTerm]:
+        """从临时文件快照读取术语，不触碰正式数据库及其 WAL 锁文件。
+
+        ``immutable=1`` 虽不会创建 ``-shm``，却会忽略尚未 checkpoint 的
+        已提交 WAL。这里把数据库和现存 WAL 复制到临时目录，再让 SQLite
+        在副本上恢复完整视图；副本产生的 ``-shm``/checkpoint 也不会污染
+        书籍的正式状态目录。
+        """
+        with tempfile.TemporaryDirectory(prefix="wenyi-glossary-review-") as directory:
+            snapshot_path = f"{directory}/glossary.db"
+            wal_path = f"{db_path}-wal"
+            snapshot_wal_path = f"{snapshot_path}-wal"
+
+            def signature(path: str) -> tuple[int, int, int, int] | None:
+                """返回足以发现复制期间文件变化的轻量签名。"""
+                try:
+                    stat = os.stat(path)
+                except FileNotFoundError:
+                    return None
+                return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+            # DB 与 WAL 是两个文件，不能把一次顺序 copy 当作原子快照。复制前后
+            # 签名一致才接受；若恰逢 checkpoint/写入则丢弃副本并重试。
+            for _attempt in range(5):
+                before = signature(db_path), signature(wal_path)
+                try:
+                    shutil.copy2(db_path, snapshot_path)
+                    if before[1] is not None:
+                        shutil.copy2(wal_path, snapshot_wal_path)
+                    elif os.path.exists(snapshot_wal_path):
+                        os.unlink(snapshot_wal_path)
+                except FileNotFoundError:
+                    continue
+                after = signature(db_path), signature(wal_path)
+                if before == after:
+                    break
+            else:
+                raise RuntimeError("术语库在只读快照期间持续变化，请稍后重试 Review")
+
+            conn = sqlite3.connect(snapshot_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute("SELECT * FROM glossary ORDER BY type, source").fetchall()
+                return [GlossaryTerm.from_row(row) for row in rows]
+            finally:
+                conn.close()
 
     # ── 术语 ──────────────────────────────────────────────────────────────
     def get_term(self, source: str) -> GlossaryTerm | None:
@@ -281,12 +415,27 @@ class GlossaryStore:
         for term in terms:
             # 称谓/口癖/固定表达是带语气或场景的派生写法，不能因为 alias
             # 命中裸名就把派生译法注入到普通称呼处。
-            keys = (
-                [term.source] if term.type in _SOURCE_ONLY_TYPES else [term.source] + term.aliases
-            )
+            keys = term_match_sources(term)
             if any(source_matches_text(k, normalized_text) for k in keys):
                 out.append(term)
         return out
+
+    @staticmethod
+    def recurring_terms(
+        terms: list[GlossaryTerm],
+        text: str,
+        *,
+        min_occurrences: int = 2,
+    ) -> list[GlossaryTerm]:
+        """筛出 source/alias 在全文累计出现至少指定次数的术语。
+
+        称谓、敬称、口癖和固定表达只按 source 统计，避免裸名 alias 让派生表达
+        被误判为高频。其它类型会合并 source 与去重后的 aliases 出现次数。
+        """
+        return GlossaryOccurrenceMatcher(text).recurring_terms(
+            terms,
+            min_occurrences=min_occurrences,
+        )
 
     def terms_in_text(self, text: str) -> list[GlossaryTerm]:
         """返回 source 或任一别名在 text 中出现的术语（注入翻译 prompt 用）。"""

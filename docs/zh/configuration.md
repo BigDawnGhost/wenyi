@@ -174,7 +174,6 @@ DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应�
 ```yaml
 pipeline:
   review: false
-  autofix_severe: false
   polish: true
   backtranslate_sample: 0
   consistency_qa: false
@@ -183,25 +182,41 @@ pipeline:
   prescan_concurrency: 4
   review_concurrency: 4
   review_output_retries: 2
+  review_agent_loop: true
+  review_agent_tier: strong
+  review_agent_max_evidence_rounds: 2
+  review_conflict_arbitration: true
+  review_fix_loop: true
+  review_fix_max_rounds: 2
+  review_clean_confirmations: 2
   glossary_scope: chapter
 ```
 
-- `review`：默认关闭；开启后在全书翻译完成时自动执行独立的最终审校阶段。关闭时仍可显式调用 `trans-novel review`。
-- `autofix_severe`：最终审校时自动重译并采纳通过校验的漏译、误译等严重问题。
+- `review`：默认关闭；开启后在全书翻译完成时自动执行取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `backtranslate_sample`：回译抽检比例，`0` 为关闭。
 - `consistency_qa`：全书完成后进行跨章术语、人称、语气和标点检查。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
-- `review_concurrency`：使用最终术语库审校连续分块的并发数；设为 `1` 时串行审校。
+- `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
 - `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
+- `review_agent_loop`：原有 Reviewer 提示词在成功叶块中发现候选后，允许 Agent Loop 选择性请求证据，再确认、驳回或细化这些候选。
+- `review_agent_tier`：取证循环、跨块仲裁和临时 Review Fixer 所用的模型档位，默认 `strong`。
+- `review_agent_max_evidence_rounds`：每个 Agent Loop 最多允许的选择性取证轮数，范围为 `0` 到 `2`；用完后必须给出最终结论。
+- `review_conflict_arbitration`：所有块结束后，同一术语、人称或固定表达的一致性建议若互相矛盾，再执行只给建议、不修改数据的终局仲裁。
+- `review_fix_loop`：针对确认的问题在本次运行的影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。
+- `review_fix_max_rounds`：最多生成的临时 Fix 轮数，范围为 `0` 到 `4`；它不是 Review 总轮数。
+- `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
-命令行的 `--polish`、`--no-polish`、`--qa`、`--no-qa` 会覆盖对应配置。
+`translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`、
+`--qa`、`--no-qa` 会覆盖对应配置。
 
-可使用 `trans-novel review INPUT` 独立执行最终审校。`--force` 会重新审校已检查的
-译文，`--fix` 或 `--no-fix` 会在当次运行中覆盖 `autofix_severe`。
+可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
+译文。Review 只会修改本次运行的影子译文，不会把替换写入正式翻译状态；统一
+结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
+本次 Review 用量既保存为目录内增量，也会计入本书累计用量。
 
 ## 输出
 
