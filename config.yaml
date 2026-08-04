@@ -12,7 +12,7 @@ llm:
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
   timeout: 600
-  max_retries: 4
+  max_retries: 4 # Wenyi 统一执行的瞬时错误重试次数；SDK 内置重试已关闭
   tiers:
     strong:
       model: deepseek-v4-pro

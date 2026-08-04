@@ -59,6 +59,8 @@ llm:
         thinking: false
 ```
 
+`max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；仅连接/超时、HTTP 408/409/429 和 5xx 等瞬时错误会重试，每次等待都会写入本书的 `events.jsonl`。
+
 用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
 运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
 `options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`

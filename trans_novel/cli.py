@@ -763,7 +763,9 @@ def qa(
     _apply_store_languages(config, store)
     g = GlossaryStore(store.glossary_path)
     try:
-        issues = ConsistencyChecker(build_client(config), config).check(store, g)
+        client = build_client(config)
+        client.set_event_sink(store.log_event)
+        issues = ConsistencyChecker(client, config).check(store, g)
     finally:
         g.close()
     console.print(f"一致性问题 {len(issues)} 项：")

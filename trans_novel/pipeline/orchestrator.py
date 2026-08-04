@@ -369,6 +369,10 @@ class Orchestrator:
         self.extractor = GlossaryExtractor(self.client, config)
         self.annotation_aligner = AnnotationAligner(self.client, config)
 
+    def _bind_llm_events(self, store: RunStore) -> None:
+        """把 provider 重试事件实时写入当前书籍的追加式事件日志。"""
+        self.client.set_event_sink(store.log_event)
+
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
         target = (self.config.target_lang or "").lower().replace("_", "-")
@@ -451,6 +455,7 @@ class Orchestrator:
         )
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
+        self._bind_llm_events(store)
         return store
 
     def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
@@ -464,6 +469,7 @@ class Orchestrator:
             pdf_title = os.path.splitext(os.path.basename(input_path))[0]
             run_dir = os.path.join(self.config.state_dir, slugify(pdf_title))
             store = RunStore(run_dir)
+            self._bind_llm_events(store)
             with store.lock():
                 if store.exists():
                     store.log_event(
@@ -494,6 +500,7 @@ class Orchestrator:
         )
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
+        self._bind_llm_events(store)
         with store.lock():
             return self._prepare_locked(doc, store, input_path, progress)
 
