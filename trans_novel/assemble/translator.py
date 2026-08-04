@@ -12,6 +12,7 @@ from __future__ import annotations
 from ..agents import langprofile, prompts
 from ..agents.base import Agent
 from ..glossary.store import GlossaryTerm
+from ..llm.json_parser import JsonParseError
 
 
 class AlignmentError(Exception):
@@ -49,8 +50,12 @@ class Translator(Agent):
             n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
         )
-        # 不传 default：调用失败照常抛出，由 translate_batch 的重试/兜底逻辑处理
-        items = self._ask_json(system, user, tier="strong", key="translations")
+        # Provider 瞬时错误只由传输层重试；这里仅把成功响应中的 JSON
+        # 协议错误归入对齐恢复，避免 401/403/5xx 被业务层再次放大。
+        try:
+            items = self._ask_json(system, user, tier="strong", key="translations")
+        except JsonParseError as error:
+            raise AlignmentError("模型返回的译文 JSON 无法解析") from error
         if not isinstance(items, list):
             raise AlignmentError("模型未返回译文数组")
         if len(items) != n:
@@ -95,9 +100,8 @@ class Translator(Agent):
                     book_synopsis,
                     chapter_digest,
                 )
-            except Exception:  # noqa: BLE001, S112
-                # 对齐错误和短暂 provider 异常都应进入同一有限重试路径；
-                # 最终逐段兜底仍失败时会保留原异常作为 cause。
+            except AlignmentError:
+                # 只恢复模型输出协议/对齐错误；传输错误已由 provider 统一处理。
                 continue
 
         # 兜底：逐段翻译。任一段仍失败时显式中断，保留已落盘

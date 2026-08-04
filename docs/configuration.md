@@ -58,6 +58,8 @@ llm:
         thinking: false
 ```
 
+`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries only transient transport failures, HTTP 408/409/429, and 5xx responses; each wait is recorded in the book's `events.jsonl`.
+
 Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
 
 The selected provider owns and validates the contents of `options`. In the example above, `thinking` and `reasoning_effort` are DeepSeek-specific and do not belong to the common LLM interface.

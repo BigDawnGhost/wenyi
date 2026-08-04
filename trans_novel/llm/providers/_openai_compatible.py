@@ -9,15 +9,10 @@ from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from ...config import LLMConfig, TierConfig
 from ..base import LLMClient, Messages
+from ..retrying import RetryReporter, provider_retry
 from ..tiers import resolve_tier
 from ..usage import (
     UsageSample,
@@ -177,6 +172,8 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
                     api_key=api_key or "no-key",
                     base_url=self.base_url,
                     timeout=self.cfg.timeout,
+                    # 重试由 Wenyi 统一分类、退避和记录，禁止 SDK 再叠一层。
+                    max_retries=0,
                 )
         return self._client
 
@@ -225,12 +222,15 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         )
         client = self._ensure_client()
 
-        @retry(
-            stop=stop_after_attempt(self.cfg.max_retries + 1),
-            wait=wait_exponential(multiplier=1, max=30),
-            retry=retry_if_exception_type(Exception),
-            reraise=True,
+        reporter = RetryReporter(
+            provider=self.provider_name,
+            tier=tier,
+            stage=stage,
+            max_attempts=max(1, self.cfg.max_retries + 1),
+            emit=self._emit_event,
         )
+
+        @provider_retry(self.cfg.max_retries, reporter)
         def _call() -> str:
             """执行一次实际请求；异常交由 tenacity 重试装饰器处理。"""
             response = client.chat.completions.create(**kwargs)

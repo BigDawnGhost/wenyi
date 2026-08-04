@@ -6,7 +6,9 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from google.genai.errors import ClientError, ServerError
 from pydantic import ValidationError
 
 from trans_novel.config import Config, LLMConfig, TierConfig
@@ -17,7 +19,6 @@ from trans_novel.llm.providers.gemini import (
     convert_messages_to_gemini,
     extract_gemini_usage,
     get_api_key_from_env,
-    is_retryable_gemini_error,
 )
 
 
@@ -103,23 +104,6 @@ def test_extract_gemini_usage():
     assert sample.cache_miss_tokens == 70
 
 
-def test_is_retryable_gemini_error():
-    """测试重试逻辑异常过滤器。"""
-    err_429 = SimpleNamespace(code=429)
-    assert is_retryable_gemini_error(err_429) is True
-
-    err_503 = SimpleNamespace(code=503)
-    assert is_retryable_gemini_error(err_503) is True
-
-    err_400 = SimpleNamespace(code=400)
-    assert is_retryable_gemini_error(err_400) is False
-
-    class TimeoutError(Exception):
-        pass
-
-    assert is_retryable_gemini_error(TimeoutError("Connection timeout")) is True
-
-
 def test_gemini_client_validate_credentials():
     """测试客户端凭据校验。"""
     cfg = LLMConfig(provider="gemini", api_key_env="TEST_MISSING_ENV_KEY")
@@ -194,6 +178,60 @@ def test_gemini_client_complete_and_usage():
     summary = client.usage_summary()
     assert summary["totals"]["prompt_tokens"] == 80
     assert summary["totals"]["completion_tokens"] == 25
+
+
+def test_gemini_client_retries_server_error_and_records_wait():
+    """Gemini 5xx 使用统一策略重试，并发送等待事件。"""
+    cfg = LLMConfig(
+        provider="gemini",
+        max_retries=1,
+        tiers={"strong": TierConfig(model="gemini-3.6-flash")},
+    )
+    request = httpx.Request("POST", "https://example.invalid")
+    failure_response = httpx.Response(
+        503,
+        request=request,
+        headers={"retry-after-ms": "0"},
+    )
+    failure = ServerError(503, {"message": "unavailable"}, failure_response)
+    success = SimpleNamespace(
+        text="ok",
+        candidates=[SimpleNamespace(finish_reason="STOP")],
+        usage_metadata=None,
+    )
+    sdk = MagicMock()
+    sdk.models.generate_content.side_effect = [failure, success]
+    client = GeminiClient(cfg)
+    client._client = sdk
+    events = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    assert client.complete([{"role": "user", "content": "test"}]) == "ok"
+    assert sdk.models.generate_content.call_count == 2
+    assert [item["event"] for item in events] == ["llm_retry_wait"]
+    assert events[0]["reason"] == "http_503"
+
+
+def test_gemini_client_does_not_retry_client_error():
+    """Gemini 永久 4xx 错误立即向上抛出。"""
+    cfg = LLMConfig(
+        provider="gemini",
+        max_retries=4,
+        tiers={"strong": TierConfig(model="gemini-3.6-flash")},
+    )
+    failure = ClientError(401, {"message": "unauthorized"})
+    sdk = MagicMock()
+    sdk.models.generate_content.side_effect = failure
+    client = GeminiClient(cfg)
+    client._client = sdk
+    events = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    with pytest.raises(ClientError):
+        client.complete([{"role": "user", "content": "test"}])
+
+    assert sdk.models.generate_content.call_count == 1
+    assert events == []
 
 
 def test_gemini_client_json_mode():
