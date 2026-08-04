@@ -19,6 +19,9 @@ uv run trans-novel translate book.epub
 
 ## Windows
 
+Windows Release 提供 `wenyi-windows-x64.zip`，运行前请使用
+`SHA256SUMS.txt` 校验文件。
+
 使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
 
 ```powershell
@@ -34,6 +37,35 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 也可把 `language.source` 设为已知的语言代码，避免调用模型自动识别源语言。
+
+## Linux
+
+Release 提供 `wenyi-linux-x64.tar.gz` 和 `wenyi-linux-arm64.tar.gz`。请下载与
+处理器架构匹配的压缩包，使用 `SHA256SUMS.txt` 校验后执行：
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # x64 系统请改用 wenyi-linux-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+## macOS
+
+Release 分别提供适用于 Apple Silicon 的 `wenyi-macos-arm64.tar.gz` 和适用于
+Intel Mac 的 `wenyi-macos-x64.tar.gz` 终端程序。下载与处理器匹配的压缩包，先用
+`SHA256SUMS.txt` 核对文件，再执行：
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # Intel Mac 请改用 wenyi-macos-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+这些命令行程序由 PyInstaller 做 ad-hoc 签名，但没有使用 Apple 开发者证书完成
+notarization。macOS 仍可能隔离下载的程序；确认校验和无误后，如系统提示拦截，
+可在 **系统设置 → 隐私与安全性** 中批准运行。
 
 ## 输入与输出
 

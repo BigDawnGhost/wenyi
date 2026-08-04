@@ -59,6 +59,8 @@ llm:
         thinking: false
 ```
 
+`max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；仅连接/超时、HTTP 408/409/429 和 5xx 等瞬时错误会重试，每次等待都会写入本书的 `events.jsonl`。
+
 用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
 运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
 `options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
@@ -180,6 +182,7 @@ pipeline:
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
+  annotation_alignment: true
   review_concurrency: 4
   review_output_retries: 2
   review_agent_loop: true
@@ -199,6 +202,7 @@ pipeline:
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
+- `annotation_alignment`：默认开启。EPUB 中存在脚注、尾注等内部链接时，每个含注释的逻辑段在翻译、润色和标点定稿后立即串行调用一次模型定位；超长续段会先重新合并，不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
 - `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
 - `review_agent_loop`：原有 Reviewer 提示词在成功叶块中发现候选后，允许 Agent Loop 选择性请求证据，再确认、驳回或细化这些候选。

@@ -80,6 +80,21 @@ class TestTranslatorAlignment(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "第 0 段失败"):
             translator.translate_batch(["あ"])
 
+    def test_provider_failure_is_not_retried_by_alignment_layer(self):
+        """传输异常只由 provider 重试，翻译对齐层不得再次放大请求。"""
+
+        def fail_provider(messages, tier, json_mode):
+            del messages, tier, json_mode
+            raise RuntimeError("provider unavailable")
+
+        client = FakeClient(handler=fail_provider)
+        translator = Translator(client, self._config())
+
+        with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
+            translator.translate_batch(["あ", "い"])
+
+        self.assertEqual(len(client.calls), 1)
+
 
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_chapter_digest_precedes_dynamic_glossary(self):

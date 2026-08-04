@@ -170,11 +170,13 @@ flowchart TD
     subgraph T[Translate chapter by chapter]
         E[Inject context and translate a batch]
         E --> F[Polish and persist translations]
-        F --> G[Extract terms and refresh the glossary]
+        F --> FA[Immediately align annotated EPUB paragraphs<br/>Sequential; skipped when disabled or absent]
+        FA --> G[Extract terms and refresh the glossary]
         G --> H{More batches?}
         H -- Yes --> E
-        H -- No --> I[Normalize punctuation and run chapter-level term extraction]
-        I --> J[Check backtranslation samples and persist the final chapter]
+        H -- No --> I[Normalize remaining punctuation]
+        I --> IB[Run chapter-level fallback term extraction]
+        IB --> J[Check backtranslation samples and persist the final chapter]
     end
 
     J --> K[Optional parallel whole-book review<br/>Using the completed glossary]

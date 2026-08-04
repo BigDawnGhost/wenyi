@@ -58,6 +58,8 @@ llm:
         thinking: false
 ```
 
+`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries only transient transport failures, HTTP 408/409/429, and 5xx responses; each wait is recorded in the book's `events.jsonl`.
+
 Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
 
 The selected provider owns and validates the contents of `options`. In the example above, `thinking` and `reasoning_effort` are DeepSeek-specific and do not belong to the common LLM interface.
@@ -167,6 +169,7 @@ pipeline:
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
+  annotation_alignment: true
   review_concurrency: 4
   review_output_retries: 2
   review_agent_loop: true
@@ -186,6 +189,7 @@ pipeline:
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
+- `annotation_alignment`: enabled by default. After each annotated logical paragraph has been fully translated and polished, finalize its punctuation and immediately locate EPUB footnote/endnote links with one sequential model call. Split continuations are rejoined first, and segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions.
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.
 - `review_agent_loop`: after the unchanged initial Reviewer finds candidates in a successful leaf chunk, let an Agent Loop selectively request evidence and confirm, dismiss, or refine those candidates.
