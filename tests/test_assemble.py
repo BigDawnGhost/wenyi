@@ -94,6 +94,38 @@ def _write_vertical_epub(path: str) -> None:
         zf.writestr("OEBPS/ch1.xhtml", ch1)
 
 
+def _write_linked_notes_epub(path: str) -> None:
+    """写入正文与注释分处两个 XHTML、且具有双向 fragment 链接的 EPUB。"""
+    container = """<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Linked Notes</dc:title><dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="body" href="text/body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="notes/notes.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="body"/><itemref idref="notes"/></spine>
+</package>"""
+    body = """<html xmlns="http://www.w3.org/1999/xhtml"><body>
+<p><a href="../notes/notes.xhtml#note-1">border tunnel
+<sup id="key-1">1</sup></a> opens.</p></body></html>"""
+    notes = """<html xmlns="http://www.w3.org/1999/xhtml"><body>
+<p id="note-1"><a href="../text/body.xhtml#key-1">1 border tunnel</a>:
+the long tunnel at the border.</p></body></html>"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        archive.writestr("META-INF/container.xml", container)
+        archive.writestr("OEBPS/content.opf", opf)
+        archive.writestr("OEBPS/text/body.xhtml", body)
+        archive.writestr("OEBPS/notes/notes.xhtml", notes)
+
+
 def _config(state_dir: str):
     return Config.from_dict(
         {
@@ -331,8 +363,11 @@ id="ref-1">1</a></sup> world</p></body></html>"""
         assert isinstance(reference, Tag)
         self.assertEqual(reference.get("href"), "notes.xhtml#n1")
         self.assertEqual(reference.get("id"), "ref-1")
-        self.assertIn("noteref", reference.get("class", []))
-        self.assertEqual(reference.parent.name, "sup")
+        self.assertIn("noteref", reference.get_attribute_list("class"))
+        reference_parent = reference.parent
+        self.assertIsInstance(reference_parent, Tag)
+        assert isinstance(reference_parent, Tag)
+        self.assertEqual(reference_parent.name, "sup")
         self.assertEqual(paragraph.get_text().replace("1", ""), target)
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
@@ -391,12 +426,12 @@ tunnel<sup class="key" id="key-1">〔＊1〕</sup></a> opens.</p></body></html>"
         assert isinstance(link, Tag)
         self.assertEqual(link.get("href"), "notes.xhtml#note-1")
         self.assertEqual(link.get("id"), "ref-1")
-        self.assertIn("cyu", link.get("class", []))
+        self.assertIn("cyu", link.get_attribute_list("class"))
         marker = link.find("sup")
         self.assertIsInstance(marker, Tag)
         assert isinstance(marker, Tag)
         self.assertEqual(marker.get("id"), "key-1")
-        self.assertIn("key", marker.get("class", []))
+        self.assertIn("key", marker.get_attribute_list("class"))
         self.assertEqual(link.get_text().replace("〔＊1〕", ""), target_phrase)
         self.assertEqual(paragraph.get_text().replace("〔＊1〕", ""), target)
         self.assertNotIn(source_phrase, paragraph.get_text())
@@ -435,7 +470,10 @@ tunnel<sup class="key" id="key-1">〔＊1〕</sup></a> opens.</p></body></html>"
         self.assertIsNotNone(link.find("img", src="thumb.png"))
         self.assertIsNotNone(rendered.find(id="semantic-id"))
         self.assertIsNotNone(link.find("sup", id="ref-mark"))
-        self.assertEqual(rendered.find("p").get_text().replace("*", ""), segment.target)
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text().replace("*", ""), segment.target)
 
     def test_epub_render_degrades_stale_range_to_clickable_end_marker(self):
         target = "列车驶过隧道。"
@@ -526,7 +564,7 @@ now.</p></body></html>"""
             "html.parser",
         )
 
-        target = rendered.find("p", class_=None)
+        target = rendered.select_one("p:not([class])")
         source = rendered.find("p", class_="tn-source")
         self.assertIsInstance(target, Tag)
         self.assertIsInstance(source, Tag)
@@ -542,9 +580,93 @@ now.</p></body></html>"""
         self.assertEqual(
             source.get_text().replace("\n", " ").split(), ["See", "border", "tunnel〔＊1〕", "now."]
         )
+        self.assertEqual(source.get("id"), "tn-source-tn0_0")
         self.assertIsNone(source_reference.get("id"))
         self.assertEqual(target_reference.get("id"), "ref-1")
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_bilingual_internal_links_stay_with_their_language(self):
+        """同 XHTML 的原文和译文分别使用自己的脚注跳转闭环。"""
+        html = """<html><body>
+<p id="body"><a id="ref-1" href="#note-1">border tunnel
+<sup id="key-1">1</sup></a> opens.</p>
+<p id="note-1"><a href="#key-1">1 border tunnel</a>: a note.</p>
+</body></html>"""
+        for order in ("target_first", "source_first"):
+            with self.subTest(order=order):
+                _title, segments, template = annotate_epub_resource(
+                    html,
+                    0,
+                    "body.xhtml",
+                )
+                segments[0].target = "国境隧道开启了。"
+                segments[1].target = "国境隧道：一条注释。"
+                rendered = BeautifulSoup(
+                    _render_segments_html(
+                        template,
+                        segments,
+                        bilingual=True,
+                        order=order,
+                        source_lang="en",
+                        resource_href="body.xhtml",
+                    ),
+                    "html.parser",
+                )
+
+                target_body = rendered.find("p", id="body")
+                target_note = rendered.find("p", id="note-1")
+                source_body = rendered.find("p", id="tn-source-tn0_0")
+                source_note = rendered.find("p", id="tn-source-tn0_1")
+                for node in (target_body, target_note, source_body, source_note):
+                    self.assertIsInstance(node, Tag)
+                assert isinstance(target_body, Tag)
+                assert isinstance(target_note, Tag)
+                assert isinstance(source_body, Tag)
+                assert isinstance(source_note, Tag)
+
+                self.assertIsNotNone(target_body.find("a", href="#note-1"))
+                self.assertIsNotNone(target_note.find("a", href="#key-1"))
+                self.assertIsNotNone(source_body.find("a", href="#tn-source-tn0_1"))
+                self.assertIsNotNone(source_note.find("a", href="#tn-source-tn0_0"))
+                ids = [str(node["id"]) for node in rendered.find_all(id=True)]
+                self.assertEqual(len(ids), len(set(ids)))
+                for link in rendered.find_all("a", href=True):
+                    href = link.get("href")
+                    if isinstance(href, str) and href.startswith("#"):
+                        self.assertIn(href[1:], ids)
+
+    def test_bilingual_source_anchor_avoids_existing_id_collision(self):
+        """原书已有 synthetic ID 同名项时，为原文锚点稳定追加序号。"""
+        html = """<html><body>
+<span id="tn-source-tn0_0"></span>
+<p id="body"><a data-tn-annotation-id="ref" href="#note-1">body</a></p>
+<p id="note-1"><a data-tn-annotation-id="back" href="#body">note</a></p>
+</body></html>"""
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        segments[0].target = "正文"
+        segments[1].target = "注释"
+
+        rendered = BeautifulSoup(
+            _render_segments_html(
+                template,
+                segments,
+                bilingual=True,
+                source_lang="en",
+                resource_href="body.xhtml",
+            ),
+            "html.parser",
+        )
+
+        source_body = rendered.find("p", id="tn-source-tn0_0-2")
+        source_note = rendered.find("p", id="tn-source-tn0_1")
+        self.assertIsInstance(source_body, Tag)
+        self.assertIsInstance(source_note, Tag)
+        assert isinstance(source_body, Tag)
+        assert isinstance(source_note, Tag)
+        self.assertIsNotNone(source_body.find("a", href="#tn-source-tn0_1"))
+        self.assertIsNotNone(source_note.find("a", href="#tn-source-tn0_0-2"))
+        ids = [str(node["id"]) for node in rendered.find_all(id=True)]
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_epub_render_merges_fresh_nodes_with_persisted_alignment(self):
         target = "译文"
@@ -571,7 +693,7 @@ data-tn-annotation-id="ann-0"><a href="notes.xhtml#n1">1</a></sup></p>
                 }
             },
         )
-        fresh_meta = {
+        fresh_meta: dict[str, dict[str, object]] = {
             "tn1_0": {
                 "epub_annotations": {
                     "version": 1,
@@ -887,6 +1009,70 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
         self.assertIsInstance(source, Tag)
         assert isinstance(source, Tag)
         self.assertIsNone(source.find("img"))
+
+    def test_bilingual_cross_file_links_only_rewrite_source_fragments(self):
+        """跨 XHTML 脚注保留相对路径，并分别闭合原文和译文链接。"""
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "linked-notes.epub")
+            output_path = os.path.join(directory, "linked-notes-bi.epub")
+            _write_linked_notes_epub(source_path)
+            document = load_document(source_path, "en", "zh")
+            store = RunStore(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                for segment in chapter.segments:
+                    segment.target = f"译文 {chapter.index}-{segment.index}"
+                store.save_chapter(chapter)
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+
+            assemble(
+                store,
+                source_path,
+                out_path=output_path,
+                out_format="epub",
+                bilingual=True,
+                about_page=False,
+            )
+
+            with zipfile.ZipFile(output_path) as archive:
+                body = BeautifulSoup(
+                    archive.read("OEBPS/text/body.xhtml"),
+                    "html.parser",
+                )
+                notes = BeautifulSoup(
+                    archive.read("OEBPS/notes/notes.xhtml"),
+                    "html.parser",
+                )
+
+        body_target = body.select_one("p:not([class])")
+        notes_target = notes.select_one("p:not([class])")
+        body_source = body.find("p", class_="tn-source")
+        notes_source = notes.find("p", class_="tn-source")
+        for node in (body_target, notes_target, body_source, notes_source):
+            self.assertIsInstance(node, Tag)
+        assert isinstance(body_target, Tag)
+        assert isinstance(notes_target, Tag)
+        assert isinstance(body_source, Tag)
+        assert isinstance(notes_source, Tag)
+
+        self.assertIsNotNone(body_target.find("a", href="../notes/notes.xhtml#note-1"))
+        self.assertIsNotNone(notes_target.find("a", href="../text/body.xhtml#key-1"))
+        body_source_id = str(body_source.get("id"))
+        notes_source_id = str(notes_source.get("id"))
+        self.assertIsNotNone(
+            body_source.find(
+                "a",
+                href=f"../notes/notes.xhtml#{notes_source_id}",
+            )
+        )
+        self.assertIsNotNone(
+            notes_source.find(
+                "a",
+                href=f"../text/body.xhtml#{body_source_id}",
+            )
+        )
 
     def test_epub_template_rebuild(self):
         with tempfile.TemporaryDirectory() as d:
