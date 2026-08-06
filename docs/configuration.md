@@ -64,9 +64,9 @@ Configured tiers override the corresponding provider defaults; omitted tiers con
 
 The selected provider owns and validates the contents of `options`. In the example above, `thinking` and `reasoning_effort` are DeepSeek-specific and do not belong to the common LLM interface.
 
-### OpenAI and OpenRouter
+### OpenAI, OpenRouter and OrcaRouter
 
-OpenAI and OpenRouter have dedicated providers that select their own default Base URL, API key environment variable, request fields, and reasoning format. Their model tiers must be configured explicitly:
+OpenAI, OpenRouter and OrcaRouter have dedicated providers that select their own default Base URL, API key environment variable, request fields, and reasoning format. Their model tiers must be configured explicitly:
 
 ```yaml
 llm:
@@ -89,6 +89,37 @@ llm:
 ```
 
 The OpenAI provider reads `OPENAI_API_KEY`; OpenRouter reads `OPENROUTER_API_KEY`. Both providers allow `base_url` and `api_key_env` to override their defaults.
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible model routing
+gateway. Set `provider: orcarouter` to use it with its default endpoint:
+
+```yaml
+llm:
+  provider: orcarouter
+  tiers:
+    strong:
+      model: anthropic/claude-opus-4.6
+      options:
+        thinking: true
+        reasoning_effort: high
+    cheap:
+      model: deepseek/deepseek-v4-flash
+      options:
+        thinking: true
+        reasoning_effort: medium
+    fast:
+      model: deepseek/deepseek-v4-flash
+      options:
+        thinking: false
+```
+
+The OrcaRouter provider reads `ORCAROUTER_API_KEY` and defaults to
+`https://api.orcarouter.ai/v1`. Unlike OpenRouter, it uses the **flat
+top-level** `reasoning_effort` field (the OpenAI dialect) rather than a nested
+`reasoning` block, so the reasoning style is fixed to `openai` and there is no
+`reasoning_style` setting to choose. Model ids may be namespaced (for example
+`openai/gpt-5.5` or `deepseek/deepseek-v4-flash`) or a router alias such as
+`orcarouter/auto`.
 
 ### Google Gemini
 

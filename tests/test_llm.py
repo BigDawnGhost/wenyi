@@ -204,6 +204,52 @@ class TestProviderRequestKwargs(unittest.TestCase):
             {"reasoning": {"enabled": False}},
         )
 
+    def test_orcarouter_dialect_flat_reasoning_effort(self):
+        from trans_novel.config import Config
+        from trans_novel.llm.factory import build_client
+        from trans_novel.llm.providers._openai_compatible import ResolvedTier
+        from trans_novel.llm.providers.openai_compatible import (
+            OpenAICompatibleTierOptions,
+        )
+        from trans_novel.llm.providers.orcarouter import OrcaRouterClient
+
+        cfg = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "orcarouter",
+                    # OrcaRouter 方言固定为 openai，这里配置成 openrouter 应被覆盖
+                    "reasoning_style": "openrouter",
+                    "tiers": {"strong": {"model": "openai/gpt-5.5"}},
+                }
+            }
+        )
+        client = build_client(cfg)
+        self.assertIsInstance(client, OrcaRouterClient)
+        self.assertEqual(client.reasoning_style, "openai")
+        self.assertEqual(client.base_url, "https://api.orcarouter.ai/v1")
+        self.assertEqual(client.api_key_env, "ORCAROUTER_API_KEY")
+        self.assertTrue(client.requires_api_key)
+
+        enabled = ResolvedTier(
+            model="openai/gpt-5.5",
+            options=OpenAICompatibleTierOptions(thinking=True, reasoning_effort="high"),
+        )
+        kwargs = client._build_request_kwargs(
+            enabled, self.messages, json_mode=False, max_tokens=None
+        )
+        self.assertEqual(kwargs["reasoning_effort"], "high")
+        self.assertNotIn("extra_body", kwargs)
+
+        disabled = ResolvedTier(
+            model="openai/gpt-5.5",
+            options=OpenAICompatibleTierOptions(thinking=False),
+        )
+        disabled_kwargs = client._build_request_kwargs(
+            disabled, self.messages, json_mode=False, max_tokens=None
+        )
+        self.assertEqual(disabled_kwargs["reasoning_effort"], "none")
+        self.assertNotIn("reasoning", disabled_kwargs.get("extra_body", {}))
+
     def test_openai_dialect(self):
         from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openai import (
@@ -392,11 +438,13 @@ class TestProviderFactory(unittest.TestCase):
             OpenAICompatibleClient,
         )
         from trans_novel.llm.providers.openrouter import OpenRouterClient
+        from trans_novel.llm.providers.orcarouter import OrcaRouterClient
         from trans_novel.llm.providers.vllm import VLLMClient
 
         cases = (
             ("openai", OpenAIClient, None),
             ("openrouter", OpenRouterClient, None),
+            ("orcarouter", OrcaRouterClient, None),
             ("openai-compatible", OpenAICompatibleClient, "https://example.test/v1"),
             ("ollama", OllamaClient, None),
             ("vllm", VLLMClient, None),
