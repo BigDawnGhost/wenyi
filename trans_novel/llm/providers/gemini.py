@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Any
+from contextlib import suppress
+from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -128,6 +129,24 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
     )
 
 
+def _gemini_chunk_text(chunk: Any, candidate: Any) -> str:
+    """读取一个 Generate Content 流式响应块中的文本增量。"""
+    try:
+        text = getattr(chunk, "text", None)
+    except (AttributeError, ValueError):
+        text = None
+    if isinstance(text, str):
+        return text
+
+    content = getattr(candidate, "content", None)
+    parts = getattr(content, "parts", []) if content else []
+    return "".join(
+        str(part_text)
+        for part in parts
+        if (part_text := getattr(part, "text", None)) is not None
+    )
+
+
 def get_api_key_from_env(custom_env: str | None = None) -> tuple[str | None, str]:
     """按照优先级获取 Gemini API Key:
     1. custom_env (如果指定)
@@ -200,6 +219,49 @@ class GeminiClient(LLMClient):
                 self._client = genai.Client(**kwargs)
         return self._client
 
+    def _consume_stream(
+        self,
+        stream: Any,
+        record_usage: Callable[[UsageSample | None], None],
+    ) -> tuple[str, UsageSample | None]:
+        """消费 Gemini 响应流，并在流结束后仅记录最终累计 usage。"""
+        pieces: list[str] = []
+        latest_sample: UsageSample | None = None
+        saw_candidate = False
+        try:
+            for chunk in stream:
+                sample = extract_gemini_usage(getattr(chunk, "usage_metadata", None))
+                if sample is not None:
+                    latest_sample = sample
+
+                candidates = getattr(chunk, "candidates", None) or []
+                if not candidates:
+                    # 最后的 usage-only chunk 可以没有 candidates。
+                    continue
+                saw_candidate = True
+                candidate = candidates[0]
+                finish_reason = str(getattr(candidate, "finish_reason", ""))
+                if "SAFETY" in finish_reason.upper() or "BLOCK" in finish_reason.upper():
+                    raise RuntimeError(
+                        "Gemini API 响应被安全拦截"
+                        f"（finish_reason={finish_reason}）"
+                    )
+                pieces.append(_gemini_chunk_text(chunk, candidate))
+
+            if not saw_candidate:
+                raise RuntimeError("Gemini API 未返回任何候选结果（candidates 为空）")
+        except Exception:
+            record_usage(latest_sample)
+            raise
+        else:
+            record_usage(latest_sample)
+            return "".join(pieces), latest_sample
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                with suppress(Exception):
+                    close()
+
     def complete(
         self,
         messages: Messages,
@@ -212,6 +274,18 @@ class GeminiClient(LLMClient):
         """调用 Gemini 模型并支持重试、JSON 模式与用量归因。"""
         tier_config: ResolvedTier[GeminiTierOptions] = resolve_tier(self.tiers, tier)
         client = self._ensure_client()
+        started_at = self.performance.now()
+        final_sample: UsageSample | None = None
+        accumulated_prompt_tokens = 0
+        accumulated_total_tokens = 0
+
+        def account_usage(sample: UsageSample | None) -> None:
+            """把一次 HTTP 尝试的最终 usage 快照记入累计账本。"""
+            nonlocal accumulated_prompt_tokens, accumulated_total_tokens
+            self.usage.record(tier, sample, stage)
+            if sample is not None:
+                accumulated_prompt_tokens += sample.prompt_tokens
+                accumulated_total_tokens += sample.total_tokens
 
         system_instruction, contents = convert_messages_to_gemini(messages)
 
@@ -261,6 +335,16 @@ class GeminiClient(LLMClient):
 
         @provider_retry(self.cfg.max_retries, reporter)
         def _call() -> str:
+            nonlocal accumulated_prompt_tokens, accumulated_total_tokens, final_sample
+            if self.cfg.stream:
+                stream = client.models.generate_content_stream(
+                    model=tier_config.model,
+                    contents=contents,
+                    config=config_kwargs,
+                )
+                text, final_sample = self._consume_stream(stream, account_usage)
+                return text
+
             response = client.models.generate_content(
                 model=tier_config.model,
                 contents=contents,
@@ -269,7 +353,8 @@ class GeminiClient(LLMClient):
 
             # 统计用量
             sample = extract_gemini_usage(getattr(response, "usage_metadata", None))
-            self.usage.record(tier, sample, stage)
+            account_usage(sample)
+            final_sample = sample
 
             # 检查响应有效性与安全拦截
             candidates = getattr(response, "candidates", None)
@@ -295,7 +380,27 @@ class GeminiClient(LLMClient):
 
             return text or ""
 
-        return _call()
+        def record_performance(completion_tokens: int) -> None:
+            """统一记录成功或已产生计费用量的失败逻辑调用。"""
+            self.performance.record(
+                provider="gemini",
+                model=tier_config.model,
+                tier=tier,
+                stage=stage,
+                completion_tokens=completion_tokens,
+                prompt_tokens=accumulated_prompt_tokens,
+                total_tokens=accumulated_total_tokens,
+                started_at=started_at,
+            )
+
+        try:
+            result = _call()
+        except Exception:
+            if accumulated_total_tokens > 0:
+                record_performance(0)
+            raise
+        record_performance(final_sample.completion_tokens if final_sample else 0)
+        return result
 
     def complete_json(
         self,

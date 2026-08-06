@@ -39,6 +39,7 @@ llm:
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
+  stream: false
   timeout: 600
   max_retries: 4
   tiers:
@@ -59,6 +60,14 @@ llm:
 ```
 
 `max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries only transient transport failures, HTTP 408/409/429, and 5xx responses; each wait is recorded in the book's `events.jsonl`.
+
+Set `llm.stream: true` to receive model responses incrementally from DeepSeek,
+OpenAI-compatible providers, or Gemini. Wenyi assembles the chunks in memory and
+only hands a complete response to the translation and JSON-validation pipeline, so
+the one-line progress display remains intact. If a stream disconnects midway, its
+partial text is discarded and the whole request follows the existing retry policy.
+Streaming usage snapshots are recorded once from the final chunk and continue to
+drive token totals, throughput, and ETA estimates.
 
 Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
 

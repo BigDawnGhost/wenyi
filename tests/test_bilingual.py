@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
@@ -476,9 +477,29 @@ class TestCliBilingualFlags(unittest.TestCase):
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch(
+                "trans_novel.pipeline.token_budget.estimate_translation_tokens",
+                return_value=SimpleNamespace(
+                    resumed=False,
+                    total_tokens=1000,
+                    lower_total_tokens=700,
+                    upper_total_tokens=1400,
+                    prompt_tokens=700,
+                    completion_tokens=300,
+                    pending_characters=500,
+                    pending_batches=1,
+                    calls=3,
+                    basis="测试估算",
+                    stages=(SimpleNamespace(stage="正文翻译"),),
+                    conditional_notes=(),
+                ),
+            ),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(app, ["translate", "input.txt", "--no-mono", "--bilingual"])
+            result = CliRunner().invoke(
+                app,
+                ["translate", "input.txt", "--no-mono", "--bilingual", "--yes"],
+            )
 
         self.assertEqual(result.exit_code, 0, result.output)
         flat = result.output.replace("\n", "")

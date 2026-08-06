@@ -178,6 +178,16 @@ def test_gemini_client_complete_and_usage():
     summary = client.usage_summary()
     assert summary["totals"]["prompt_tokens"] == 80
     assert summary["totals"]["completion_tokens"] == 25
+    performance = client.performance_summary()
+    assert performance.total_calls == 1
+    assert performance.total_completion_tokens == 25
+    assert performance.total_prompt_tokens == 80
+    assert performance.total_tokens == 105
+    assert performance.samples[0].provider == "gemini"
+    assert performance.samples[0].model == "gemini-3.6-flash"
+    assert performance.samples[0].stage == "translation"
+    assert performance.samples[0].prompt_tokens == 80
+    assert performance.samples[0].total_tokens == 105
 
 
 def test_gemini_client_retries_server_error_and_records_wait():
@@ -258,6 +268,11 @@ def test_gemini_client_json_mode():
 
     config_arg = mock_client_instance.models.generate_content.call_args.kwargs["config"]
     assert config_arg.get("response_mime_type") == "application/json"
+    performance = client.performance_summary()
+    assert performance.total_calls == 1
+    assert performance.total_completion_tokens == 0
+    assert performance.total_tokens == 0
+    assert performance.token_rate is None
 
 
 def test_gemini_client_safety_block():
@@ -281,6 +296,7 @@ def test_gemini_client_safety_block():
 
     with pytest.raises(RuntimeError, match="安全拦截"):
         client.complete([{"role": "user", "content": "unsafe content"}])
+    assert client.performance_summary().total_calls == 0
 
 
 def test_factory_build_client_gemini():

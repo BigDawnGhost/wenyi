@@ -88,7 +88,7 @@ export DEEPSEEK_API_KEY=sk-...
 uv run trans-novel translate book.epub
 ```
 
-解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
+在任何模型调用前，命令会先显示预计输入、输出和总 Token 预算，并以“否”为默认答案询问是否继续；无人值守运行可传 `--yes` 或 `-y`，预算仍会显示。确认后，程序会解析书籍、检测源语言、预扫全书、翻译所有章节并组装输出。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
 
 ### 分步工作流
 

@@ -129,12 +129,19 @@ uv run trans-novel translate book.pdf
 uv run trans-novel translate book.epub --polish --review --qa
 uv run trans-novel translate book.epub --no-polish --no-review --no-qa
 
+# 无人值守：仍展示预算，但跳过交互确认
+uv run trans-novel translate book.epub --yes
+
 # 同时生成单语和双语版 / 仅生成双语版
 uv run trans-novel translate book.epub --bilingual
 uv run trans-novel translate book.epub --no-mono --bilingual
 ```
 
 `prepare` 会解析书籍、识别语言、生成风格指南和初始术语表，并完成配置中启用的全书预扫，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
+
+每次 `translate` 在发起第一个 LLM 请求前，都会只读解析源文和已有断点，展示本次新增的预计输入 Token、输出 Token、总量、参考区间、待译字符/批次和预计调用次数，然后以默认答案“否”询问是否开始。拒绝时不会创建翻译流水线或调用模型。自动化和无人值守运行可传 `--yes`（或 `-y`）跳过提问，但预算仍会打印。断点续跑只估算尚未完成的工作；扫描版 PDF 在没有文本层时按页数粗估。模型重试、翻译对齐恢复，以及审校发现问题后才触发的取证、修订和盲审不会冒充确定成本，界面会单独提示这些条件分支。
+
+`translate`、`prepare` 和 `review` 的单行进度条会同时显示已用时间、当前阶段 ETA、全程 ETA、有效 `tok/s`，以及本次命令的“已用 / 预计总 token”。启动时 ETA 显示“计算中”，首个带 token usage 的模型响应返回后开始动态估算；缺失 usage 时，时间会回退到已完成工作量的墙钟速度，但不会伪造 token 预算。预计总 token 按各阶段实际 `total_tokens / 工作量` 外推，并会随网络响应、断点续跑、实际触发的 EPUB 注释定位和动态审校分支重新校准。这里的 `tok/s` 包含请求等待、生成、重试与退避时间，并非服务端纯解码速度。无法可靠估算的本地导出阶段显示“收尾中”。
 
 ## 中断与续跑
 

@@ -22,6 +22,7 @@ llm:
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
+  stream: false # true=流式接收模型响应；仍会拼接完整内容后再交给翻译/JSON 校验
   timeout: 600
   max_retries: 4
   tiers:
@@ -109,6 +110,7 @@ class LLMConfig(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
     reasoning_style: ReasoningStyle = "none"
+    stream: bool = False
     timeout: int = 600
     max_retries: int = 4
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
@@ -205,6 +207,7 @@ class Config(BaseModel):
             base_url=llm_raw.get("base_url"),
             api_key_env=llm_raw.get("api_key_env"),
             reasoning_style=llm_raw.get("reasoning_style", "none"),
+            stream=bool(llm_raw.get("stream", False)),
             timeout=llm_raw.get("timeout", 600),
             max_retries=llm_raw.get("max_retries", 4),
             tiers=tiers,

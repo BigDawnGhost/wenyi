@@ -131,12 +131,19 @@ uv run trans-novel translate book.pdf
 uv run trans-novel translate book.epub --polish --review --qa
 uv run trans-novel translate book.epub --no-polish --no-review --no-qa
 
+# Unattended use: still print the budget, but skip the interactive confirmation
+uv run trans-novel translate book.epub --yes
+
 # Produce both editions, or only the bilingual edition
 uv run trans-novel translate book.epub --bilingual
 uv run trans-novel translate book.epub --no-mono --bilingual
 ```
 
 `prepare` parses the book, detects its language, generates the style guide and initial glossary, and completes the configured whole-book prescan without translating any body text. Run `translate` with the same source file to continue from the saved state.
+
+Before the first LLM request, every `translate` command read-only parses the source and any existing checkpoint, then shows the estimated incremental prompt, completion, and total tokens, a reference range, pending characters/batches, and approximate call count. The confirmation defaults to “no”; declining exits before the translation pipeline is constructed or a model is called. Pass `--yes` (or `-y`) for automation or unattended runs; the estimate is still printed. Resumed runs estimate only unfinished work. A scanned PDF without a text layer falls back to a page-count estimate. Retries, alignment recovery, and issue-dependent review evidence/fix/blind-review branches are identified separately instead of being presented as certain spend.
+
+The single-line progress display for `translate`, `prepare`, and `review` includes elapsed time, current-stage ETA, whole-run ETA, effective `tok/s`, and the current command's used / estimated-total tokens. ETA starts as “calculating” and becomes available after the first model response with token usage; when usage is unavailable, time falls back to observed wall-clock work speed without inventing a token budget. Estimated total tokens are extrapolated from each stage's observed `total_tokens / work` and recalibrated as responses, resume scope, dynamically triggered EPUB annotation alignment, and review branches change. The displayed `tok/s` includes request latency, generation, retries, and backoff rather than claiming pure server-side decoding speed. Unmeasurable local export work is shown as “finishing”.
 
 ## Interrupting and resuming
 

@@ -21,6 +21,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.llm.provider, "deepseek")
             self.assertEqual(cfg.llm.base_url, "https://api.deepseek.com")
             self.assertEqual(cfg.llm.api_key_env, "DEEPSEEK_API_KEY")
+            self.assertFalse(cfg.llm.stream)
             self.assertEqual(set(cfg.llm.tiers), {"strong", "cheap", "fast"})
             self.assertEqual(cfg.llm.tiers["strong"].model, "deepseek-v4-pro")
             self.assertEqual(cfg.llm.tiers["cheap"].model, "deepseek-v4-flash")
@@ -31,6 +32,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertIn("# trans-novel 配置", generated)
             self.assertIn("  base_url: https://api.deepseek.com", generated)
             self.assertIn("  api_key_env: DEEPSEEK_API_KEY", generated)
+            self.assertIn("  stream: false", generated)
             self.assertIn("  tiers:\n", generated)
             self.assertIn("output:\n", generated)
             self.assertTrue(cfg.output.mono)
@@ -101,6 +103,10 @@ class TestConfigFileCreation(unittest.TestCase):
         )
 
         self.assertEqual(cfg.llm.reasoning_style, "deepseek")
+
+    def test_stream_option_is_loaded_and_defaults_off(self):
+        self.assertFalse(Config.from_dict({}).llm.stream)
+        self.assertTrue(Config.from_dict({"llm": {"stream": True}}).llm.stream)
 
 
 if __name__ == "__main__":

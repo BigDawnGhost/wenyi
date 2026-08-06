@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import typer
@@ -27,6 +28,23 @@ class FakeStore:
 
     def load_usage(self):
         return None
+
+
+def _fake_token_estimate(total: int = 1000):
+    return SimpleNamespace(
+        resumed=False,
+        total_tokens=total,
+        lower_total_tokens=int(total * 0.7),
+        upper_total_tokens=int(total * 1.4),
+        prompt_tokens=int(total * 0.7),
+        completion_tokens=int(total * 0.3),
+        pending_characters=500,
+        pending_batches=1,
+        calls=3,
+        basis="测试估算",
+        stages=(SimpleNamespace(stage="正文翻译"),),
+        conditional_notes=(),
+    )
 
 
 class TestCliConfig(unittest.TestCase):
@@ -186,11 +204,16 @@ class TestCliConfig(unittest.TestCase):
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch(
+                "trans_novel.pipeline.token_budget.estimate_translation_tokens",
+                return_value=_fake_token_estimate(),
+            ),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(app, ["translate", "input.txt"])
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--yes"])
 
         self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("翻译前 Token 预算", result.output)
         self.assertTrue(captured["polish"])
         self.assertFalse(captured["review"])
         self.assertIsNone(captured["run_all"]["do_qa"])
@@ -228,6 +251,10 @@ class TestCliConfig(unittest.TestCase):
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch(
+                "trans_novel.pipeline.token_budget.estimate_translation_tokens",
+                return_value=_fake_token_estimate(),
+            ),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
             result = CliRunner().invoke(
@@ -238,6 +265,7 @@ class TestCliConfig(unittest.TestCase):
                     "--no-polish",
                     "--review",
                     "--qa",
+                    "--yes",
                 ],
             )
 
@@ -245,6 +273,33 @@ class TestCliConfig(unittest.TestCase):
         self.assertFalse(captured["polish"])
         self.assertTrue(captured["review"])
         self.assertTrue(captured["run_all"]["do_qa"])
+
+    def test_translate_budget_rejection_exits_before_orchestrator_creation(self):
+        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+
+        with (
+            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.pipeline.orchestrator.Orchestrator") as orchestrator,
+            patch(
+                "trans_novel.pipeline.token_budget.estimate_translation_tokens",
+                return_value=_fake_token_estimate(12_345),
+            ) as estimate,
+            patch("trans_novel.cli.os.path.isfile", return_value=True),
+        ):
+            result = CliRunner().invoke(
+                app,
+                ["translate", "input.txt"],
+                input="n\n",
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("翻译前 Token 预算", result.output)
+        self.assertIn("12.3k tok", result.output)
+        self.assertIn("Confirm start translation?", result.output)
+        self.assertNotIn("确认开始翻译", result.output)
+        self.assertIn("尚未发起任何 LLM 请求", result.output)
+        estimate.assert_called_once()
+        orchestrator.assert_not_called()
 
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
@@ -457,7 +512,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("DEEPSEEK_API_KEY", result.output)
         self.assertNotIn("输入文件不存在", result.output)
         self.assertNotIn("Traceback", result.output)
-        isfile.assert_not_called()
+        self.assertNotIn((missing,), [call.args for call in isfile.call_args_list])
 
     def test_assemble_skips_api_preflight(self):
         cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
@@ -494,9 +549,13 @@ class TestCliConfig(unittest.TestCase):
                         "trans_novel.pipeline.orchestrator.Orchestrator",
                         FakeOrchestrator,
                     ),
+                    patch(
+                        "trans_novel.pipeline.token_budget.estimate_translation_tokens",
+                        return_value=_fake_token_estimate(),
+                    ),
                     patch("trans_novel.cli.os.path.isfile", return_value=True),
                 ):
-                    result = CliRunner().invoke(app, ["translate", "input.pdf"])
+                    result = CliRunner().invoke(app, ["translate", "input.pdf", "--yes"])
 
                 self.assertEqual(result.exit_code, 1, result.output)
                 self.assertIn(str(error), result.output)
@@ -526,9 +585,16 @@ class TestCliConfig(unittest.TestCase):
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch(
+                "trans_novel.pipeline.token_budget.estimate_translation_tokens",
+                side_effect=ValueError("章节编号 9 不存在；可用范围：0–1"),
+            ),
             patch("trans_novel.cli.os.path.isfile", return_value=True),
         ):
-            result = CliRunner().invoke(app, ["translate", "input.txt", "--chapter", "9"])
+            result = CliRunner().invoke(
+                app,
+                ["translate", "input.txt", "--chapter", "9", "--yes"],
+            )
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("章节编号 9 不存在", result.output)

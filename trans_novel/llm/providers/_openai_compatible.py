@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import threading
 from abc import abstractmethod
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar
 
 from pydantic import BaseModel
 
@@ -129,6 +130,36 @@ def normalize_openai_usage(usage: Any) -> UsageSample | None:
     )
 
 
+def _read_attr(value: Any, name: str, default: Any = None) -> Any:
+    """同时读取 SDK 对象和兼容端点可能返回的字典。"""
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _openai_delta_text(chunk: Any) -> str:
+    """提取一个 Chat Completions 流式 chunk 的可见文本增量。"""
+    choices = _read_attr(chunk, "choices") or []
+    if not choices:
+        return ""
+    delta = _read_attr(choices[0], "delta")
+    content = _read_attr(delta, "content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    pieces: list[str] = []
+    for part in content:
+        if isinstance(part, str):
+            pieces.append(part)
+            continue
+        text = _read_attr(part, "text")
+        if isinstance(text, str):
+            pieces.append(text)
+    return "".join(pieces)
+
+
 class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
     """所有 OpenAI Chat Completions 兼容 provider 的共用客户端。"""
 
@@ -191,6 +222,39 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         """标准 OpenAI 兼容响应默认使用嵌套缓存明细。"""
         return normalize_openai_usage(usage)
 
+    def _consume_stream(
+        self,
+        stream: Any,
+        record_usage: Callable[[UsageSample | None], None],
+    ) -> tuple[str, UsageSample | None]:
+        """消费一次响应流；失败时不返回任何已拼接的半成品。"""
+        pieces: list[str] = []
+        latest_sample: UsageSample | None = None
+        saw_choice = False
+        try:
+            for chunk in stream:
+                sample = self._normalize_usage(_read_attr(chunk, "usage"))
+                if sample is not None:
+                    # 流式 usage 通常是累计快照，只保留最后一个，不能逐块相加。
+                    latest_sample = sample
+                choices = _read_attr(chunk, "choices") or []
+                if choices:
+                    saw_choice = True
+                pieces.append(_openai_delta_text(chunk))
+            if not saw_choice:
+                raise RuntimeError("OpenAI-compatible API 未返回任何候选结果")
+        except Exception:
+            record_usage(latest_sample)
+            raise
+        else:
+            record_usage(latest_sample)
+            return "".join(pieces), latest_sample
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                with suppress(Exception):
+                    close()
+
     @abstractmethod
     def _build_request_kwargs(
         self,
@@ -220,7 +284,24 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
             json_mode=json_mode,
             max_tokens=max_tokens,
         )
+        kwargs["stream"] = self.cfg.stream
+        if self.cfg.stream:
+            stream_options = kwargs.setdefault("stream_options", {})
+            if isinstance(stream_options, dict):
+                stream_options.setdefault("include_usage", True)
         client = self._ensure_client()
+        started_at = self.performance.now()
+        final_sample: UsageSample | None = None
+        accumulated_prompt_tokens = 0
+        accumulated_total_tokens = 0
+
+        def account_usage(sample: UsageSample | None) -> None:
+            """把一次 HTTP 尝试的最终 usage 快照记入累计账本。"""
+            nonlocal accumulated_prompt_tokens, accumulated_total_tokens
+            self.usage.record(tier, sample, stage)
+            if sample is not None:
+                accumulated_prompt_tokens += sample.prompt_tokens
+                accumulated_total_tokens += sample.total_tokens
 
         reporter = RetryReporter(
             provider=self.provider_name,
@@ -233,9 +314,34 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         @provider_retry(self.cfg.max_retries, reporter)
         def _call() -> str:
             """执行一次实际请求；异常交由 tenacity 重试装饰器处理。"""
+            nonlocal accumulated_prompt_tokens, accumulated_total_tokens, final_sample
             response = client.chat.completions.create(**kwargs)
+            if self.cfg.stream:
+                text, final_sample = self._consume_stream(response, account_usage)
+                return text
             sample = self._normalize_usage(getattr(response, "usage", None))
-            self.usage.record(tier, sample, stage)
+            account_usage(sample)
+            final_sample = sample
             return response.choices[0].message.content or ""
 
-        return _call()
+        def record_performance(completion_tokens: int) -> None:
+            """统一记录成功或已产生计费用量的失败逻辑调用。"""
+            self.performance.record(
+                provider=self.provider_name,
+                model=tier_config.model,
+                tier=tier,
+                stage=stage,
+                completion_tokens=completion_tokens,
+                prompt_tokens=accumulated_prompt_tokens,
+                total_tokens=accumulated_total_tokens,
+                started_at=started_at,
+            )
+
+        try:
+            result = _call()
+        except Exception:
+            if accumulated_total_tokens > 0:
+                record_performance(0)
+            raise
+        record_performance(final_sample.completion_tokens if final_sample else 0)
+        return result

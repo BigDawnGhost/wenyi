@@ -11,6 +11,7 @@ llm:
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
+  stream: false # true=流式接收模型响应；仍会拼接完整内容后再交给翻译/JSON 校验
   timeout: 600
   max_retries: 4 # Wenyi 统一执行的瞬时错误重试次数；SDK 内置重试已关闭
   tiers:

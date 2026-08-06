@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib.metadata import version as package_version
+from math import ceil, isfinite
 from typing import Any, Protocol
 
 import typer
@@ -18,11 +19,14 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    ProgressColumn,
     SpinnerColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 from typer.core import TyperGroup
 
 from .config import Config
@@ -107,12 +111,159 @@ glossary_app = typer.Typer(
 console = Console()
 
 
+def _format_eta(seconds: float) -> str:
+    """æŠŠåŠ¨æ€ç§’æ•°åŽ‹ç¼©ä¸ºé€‚åˆå•è¡Œè¿›åº¦æ¡çš„å‘ä¸Šå–æ•´è¡¨ç¤ºã€‚"""
+    if not isfinite(seconds):
+        return "--"
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return "<1m"
+    minutes = ceil(seconds / 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, remainder = divmod(minutes, 60)
+    return f"{hours}h{remainder:02d}m" if remainder else f"{hours}h"
+
+
+def _format_tokens(tokens: float) -> str:
+    """æŠŠ token æ•°åŽ‹ç¼©æˆé€‚åˆå•è¡Œè¿›åº¦æ¡çš„ k/M/B è¡¨ç¤ºã€‚"""
+    if not isfinite(tokens):
+        return "--"
+    value = max(0.0, tokens)
+    if value < 1_000:
+        return str(ceil(value))
+    if value < 1_000_000:
+        return f"{value / 1_000:.1f}k"
+    if value < 1_000_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    return f"{value / 1_000_000_000:.2f}B"
+
+
+def _print_translation_token_estimate(estimate: Any) -> None:
+    """åœ¨çœŸæ­£è°ƒç”¨æ¨¡åž‹å‰å±•ç¤ºæœ¬æ¬¡å‘½ä»¤çš„é™æ€ Token é¢„ç®—ã€‚"""
+    scope = "æ–­ç‚¹å‰©ä½™" if bool(getattr(estimate, "resumed", False)) else "æœ¬æ¬¡æ–°å¢ž"
+    total = float(getattr(estimate, "total_tokens", 0) or 0)
+    lower = float(getattr(estimate, "lower_total_tokens", 0) or 0)
+    upper = float(getattr(estimate, "upper_total_tokens", 0) or 0)
+    prompt = float(getattr(estimate, "prompt_tokens", 0) or 0)
+    completion = float(getattr(estimate, "completion_tokens", 0) or 0)
+    pending_chars = int(getattr(estimate, "pending_characters", 0) or 0)
+    pending_batches = int(getattr(estimate, "pending_batches", 0) or 0)
+    calls = int(getattr(estimate, "calls", 0) or 0)
+    basis = str(getattr(estimate, "basis", "æœ¬åœ°ä¼°ç®—") or "æœ¬åœ°ä¼°ç®—")
+
+    console.print("[bold]ç¿»è¯‘å‰ Token é¢„ç®—ï¼ˆç²—ä¼°ï¼‰[/]")
+    console.print(
+        f"  {scope}ï¼šâ‰ˆ[bold cyan]{_format_tokens(total)} tok[/] "
+        f"ï¼ˆè¾“å…¥â‰ˆ{_format_tokens(prompt)} / è¾“å‡ºâ‰ˆ{_format_tokens(completion)}ï¼‰"
+    )
+    console.print(
+        f"  å‚è€ƒåŒºé—´ï¼š{_format_tokens(lower)}â€“{_format_tokens(upper)} tok Â· "
+        f"å¾…è¯‘ {pending_chars:,} å­—ç¬¦/{pending_batches} æ‰¹ Â· çº¦ {calls} æ¬¡æ¨¡åž‹è°ƒç”¨"
+    )
+    stage_names = [
+        str(getattr(stage, "stage", ""))
+        for stage in getattr(estimate, "stages", ())
+        if getattr(stage, "stage", "")
+    ]
+    if stage_names:
+        console.print(f"  å·²è®¡å…¥ï¼š{'ã€'.join(stage_names)}")
+    console.print(f"  ä¾æ®ï¼š{basis}ï¼›å®žé™…ç”¨é‡ä¼šéšæ¨¡åž‹åˆ†è¯ã€ä¸Šä¸‹æ–‡å’Œæ¡ä»¶åˆ†æ”¯å˜åŒ–ã€‚")
+    for note in getattr(estimate, "conditional_notes", ()):
+        console.print(f"  [dim]Â· {note}[/]")
+
+
+def _confirm_translation(estimate: Any, *, assume_yes: bool) -> None:
+    """å±•ç¤ºé¢„ç®—å¹¶åœ¨æœªä¼  ``--yes`` æ—¶è¦æ±‚æ˜¾å¼ç¡®è®¤ã€‚"""
+    _print_translation_token_estimate(estimate)
+    if float(getattr(estimate, "total_tokens", 0) or 0) <= 0:
+        console.print("[green]å½“å‰æ–­ç‚¹æ²¡æœ‰é¢„è®¡æ–°å¢žçš„æ¨¡åž‹ Tokenï¼Œç»§ç»­æ‰§è¡Œæœ¬åœ°æ”¶å°¾ã€‚[/]")
+        return
+    if assume_yes:
+        return
+    try:
+        confirmed = typer.confirm("Confirm start translation?", default=False)
+    except typer.Abort:
+        console.print("[yellow]æœªæ”¶åˆ°ç¡®è®¤ï¼Œå·²å–æ¶ˆï¼›è‡ªåŠ¨åŒ–è¿è¡Œè¯·æ˜¾å¼ä¼ å…¥ --yesã€‚[/]")
+        raise typer.Exit(1) from None
+    if not confirmed:
+        console.print("[yellow]å·²å–æ¶ˆï¼Œå°šæœªå‘èµ·ä»»ä½• LLM è¯·æ±‚ã€‚[/]")
+        raise typer.Exit()
+
+
+def _format_token_budget(used: Any, estimated_total: Any) -> str | None:
+    """æ ¼å¼åŒ–å½“å‰å‘½ä»¤å·²ç”¨ token ä¸ŽåŠ¨æ€é¢„è®¡æ€»é‡ã€‚"""
+    used_value = float(used) if isinstance(used, (int, float)) else 0.0
+    total_value = (
+        float(estimated_total) if isinstance(estimated_total, (int, float)) else None
+    )
+    if not isfinite(used_value) or used_value < 0:
+        used_value = 0.0
+    if total_value is not None and (not isfinite(total_value) or total_value < 0):
+        total_value = None
+    if used_value <= 0 and total_value is None:
+        return None
+    if total_value is None:
+        return f"Token å·²ç”¨ {_format_tokens(used_value)} / æ€»--"
+    return f"Token å·²ç”¨ {_format_tokens(used_value)} / æ€»â‰ˆ{_format_tokens(max(used_value, total_value))}"
+
+
+class _ETAColumn(ProgressColumn):
+    """æ¸²æŸ“é˜¶æ®µ/å…¨ç¨‹ ETAã€æœ‰æ•ˆ tok/s ä¸Žé¢„è®¡æ€» tokenã€‚"""
+
+    def __init__(self, estimate: Callable[[], Any] | None) -> None:
+        super().__init__()
+        self._estimate = estimate
+
+    def render(self, task: Task) -> Text:  # noqa: ARG002 - Rich å›ºå®šæŽ¥å£
+        if self._estimate is None:
+            return Text("é¢„è®¡ï¼šè®¡ç®—ä¸­", style="progress.remaining")
+        try:
+            estimate = self._estimate()
+        except Exception:  # noqa: BLE001 - è¿›åº¦å±•ç¤ºç»ä¸èƒ½ä¸­æ–­ä¸»æµç¨‹
+            return Text("é¢„è®¡ï¼šè®¡ç®—ä¸­", style="progress.remaining")
+
+        stage = getattr(estimate, "stage_remaining_seconds", None)
+        overall = getattr(estimate, "overall_remaining_seconds", None)
+        rate = getattr(estimate, "token_rate", None)
+        finishing = bool(getattr(estimate, "finishing", False))
+        token_budget = _format_token_budget(
+            getattr(estimate, "used_tokens", 0),
+            getattr(estimate, "estimated_total_tokens", None),
+        )
+
+        if finishing and stage is None and overall is None:
+            text = "é¢„è®¡ï¼šæ”¶å°¾ä¸­"
+            if token_budget:
+                text += f" Â· {token_budget}"
+            return Text(text, style="progress.remaining")
+        if stage is None and overall is None:
+            text = "é¢„è®¡ï¼šè®¡ç®—ä¸­"
+            if token_budget:
+                text += f" Â· {token_budget}"
+            return Text(text, style="progress.remaining")
+        stage_text = _format_eta(stage) if stage is not None else "--"
+        overall_text = _format_eta(overall) if overall is not None else "--"
+        prefix = f"é¢„è®¡ï¼šé˜¶æ®µâ‰ˆ{stage_text} / å…¨ç¨‹â‰ˆ{overall_text}"
+        rate_text = (
+            f"{rate:.1f} tok/s"
+            if isinstance(rate, (int, float)) and isfinite(rate) and rate > 0
+            else "-- tok/s"
+        )
+        parts = [prefix, rate_text]
+        if token_budget:
+            parts.append(token_budget)
+        return Text(" Â· ".join(parts), style="progress.remaining")
+
+
 class _RichProgressBridge:
     """æŠŠæµæ°´çº¿çš„é˜¶æ®µè¿›åº¦æ˜ å°„åˆ°åŒä¸€ä¸ª Rich ä»»åŠ¡ã€‚"""
 
     def __init__(self, progress: Progress, initial_description: str) -> None:
         self.progress = progress
         self.task = progress.add_task(initial_description, total=None)
+        task = next(item for item in progress.tasks if item.id == self.task)
+        self._started_at = task.start_time
 
     def __call__(self, done: int, total: int, label: str) -> None:
         """åˆ·æ–°å½“å‰é˜¶æ®µçš„æ ‡é¢˜ä¸Žè®¡æ•°ï¼Œé¿å…é˜¶æ®µåˆ‡æ¢äº§ç”Ÿå¤šè¡Œè¿›åº¦æ¡ã€‚"""
@@ -125,9 +276,12 @@ class _RichProgressBridge:
             )
             return
         # Rich çš„ update(total=None) è¡¨ç¤ºâ€œä¸ä¿®æ”¹ totalâ€ï¼Œæ— æ³•ä»Žä¸Šä¸€é˜¶æ®µçš„
-        # ç¡®å®šæ€»æ•°åˆ‡å›žæ»šåŠ¨æ¨¡å¼ï¼›é‡å»ºä»»åŠ¡ä»¥æ¸…é™¤æ®‹ç•™çš„ç« èŠ‚/æ®µè½è®¡æ•°ã€‚
+        # ç¡®å®šæ€»æ•°åˆ‡å›žæ»šåŠ¨æ¨¡å¼ï¼›é‡å»ºä»»åŠ¡ä»¥æ¸…é™¤æ®‹ç•™è®¡æ•°ï¼ŒåŒæ—¶ç»§æ‰¿å‘½ä»¤èµ·ç‚¹ï¼Œ
+        # è®©â€œå·²ç”¨â€æ—¶é—´ä¸ä¼šåœ¨é˜¶æ®µåˆ‡æ¢æ—¶å½’é›¶ã€‚
         self.progress.remove_task(self.task)
         self.task = self.progress.add_task(label, total=None)
+        task = next(item for item in self.progress.tasks if item.id == self.task)
+        task.start_time = self._started_at
 
 
 def _version_callback(value: bool) -> None:
@@ -235,576 +389,8 @@ def _apply_store_languages(config: Config, store: _ManifestStore) -> None:
     if isinstance(source_lang, str) and source_lang:
         config.source_lang = source_lang
     if isinstance(target_lang, str) and target_lang:
-        config.target_lang = target_lang
-
-
-def _translate_impl(
-    input_path: str,
-    *,
-    chapter: int | None = None,
-    fmt: str = "epub",
-    out: str | None = None,
-    pdf_engine: str = "weasyprint",
-    polish: bool | None = None,
-    review: bool | None = None,
-    qa: bool | None = None,
-    mono: bool | None = None,
-    bilingual: bool | None = None,
-) -> None:
-    """æ‰§è¡Œä¸€é”®ç¿»è¯‘æµç¨‹ï¼Œå¹¶æŠŠé¢„æœŸçš„è¾“å…¥/é…ç½®é”™è¯¯è½¬æˆç®€æ´ CLI æç¤ºã€‚"""
-    try:
-        _translate_impl_or_raise(
-            input_path,
-            chapter=chapter,
-            fmt=fmt,
-            out=out,
-            pdf_engine=pdf_engine,
-            polish=polish,
-            review=review,
-            qa=qa,
-            mono=mono,
-            bilingual=bilingual,
-        )
-    except (IngestError, ImportError, OSError, ValueError) as error:
-        console.print(f"[red]é”™è¯¯ï¼š{error}[/]")
-        raise typer.Exit(1) from None
-
-
-def _translate_impl_or_raise(
-    input_path: str,
-    *,
-    chapter: int | None = None,
-    fmt: str = "epub",
-    out: str | None = None,
-    pdf_engine: str = "weasyprint",
-    polish: bool | None = None,
-    review: bool | None = None,
-    qa: bool | None = None,
-    mono: bool | None = None,
-    bilingual: bool | None = None,
-) -> None:
-    """æ‰§è¡Œç¿»è¯‘å¹¶ä¿ç•™åŽŸå¼‚å¸¸ï¼Œç”± ``_translate_impl`` è½¬ä¸º CLI é”™è¯¯ã€‚"""
-    from .pipeline.orchestrator import Orchestrator
-
-    _require_input_file(input_path)
-    fmt = _validate_output_format(fmt)
-    pdf_engine = _validate_pdf_engine(pdf_engine)
-    config = _load_config()
-    if polish is not None:
-        config.pipeline.polish = polish
-    if review is not None:
-        config.pipeline.review = review
-    if mono is not None:
-        config.output.mono = mono
-    if bilingual is not None:
-        config.output.bilingual = bilingual
-    if chapter is not None:
-        ignored: list[str] = []
-        if fmt != "epub":
-            ignored.append("--format")
-        if out is not None:
-            ignored.append("--out")
-        if review is not None:
-            ignored.append("--review/--no-review")
-        if qa is not None:
-            ignored.append("--qa/--no-qa")
-        if mono is not None:
-            ignored.append("--mono/--no-mono")
-        if bilingual is not None:
-            ignored.append("--bilingual/--no-bilingual")
-        if ignored:
-            raise ValueError(
-                "--chapter åªç¿»è¯‘å¹¶ä¿å­˜æŒ‡å®šç« èŠ‚ï¼Œä¸èƒ½åŒæ—¶ä½¿ç”¨æ”¶å°¾é€‰é¡¹ï¼š" + "ã€".join(ignored)
-            )
-
-    orch = Orchestrator(config)
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as prog:
-        cb = _RichProgressBridge(prog, "å‡†å¤‡ä¸­â€¦")
-
-        if chapter is not None:
-            try:
-                store = orch.run(input_path, only_chapter=chapter, progress=cb)
-            except ValueError as error:
-                console.print(f"[red]{error}[/]")
-                raise typer.Exit(2) from error
-            console.print(f"[green]å·²ç¿»ç¬¬ {chapter} ç« [/]ï¼ŒçŠ¶æ€ç›®å½•ï¼š{store.run_dir}")
-            _print_usage({"usage": store.load_usage() or {}})
-            return
-
-        result = orch.run_all(
-            input_path,
-            progress=cb,
-            out_format=fmt,
-            out_path=out,
-            do_qa=qa,
-            pdf_engine=pdf_engine,
-        )
-
-    s = result["report"]["summary"]
-    console.print(
-        f"[bold green]å®Œæˆ[/]ï¼š{s['chapters_done']}/{s['chapters_total']} ç« ï¼Œ"
-        f"æœ¯è¯­ {s['terms']}ï¼Œä¸€è‡´æ€§é—®é¢˜ {len(result['qa_issues'])} é¡¹ã€‚"
-    )
-    _print_usage({"usage": result["store"].load_usage() or {}})
-    for path in result.get("outputs") or [result["output"]]:
-        console.print(f"è¯‘æ–‡ï¼š[bold]{path}[/]")
-    if result.get("review_dir"):
-        review_result = result.get("review_result") or {}
-        review_summary = review_result.get("summary") or {}
-        console.print(
-            f"å®¡æ ¡ç»“æžœï¼š{review_result.get('termination', 'unknown')}ï¼Œ"
-            f"é—®é¢˜ {review_summary.get('issue_count', 0)} é¡¹ï¼Œ"
-            f"ä¿®æ”¹å»ºè®® {review_summary.get('change_count', 0)} é¡¹ã€‚"
-        )
-        console.print(f"å®¡æ ¡ç›®å½•ï¼š{result['review_dir']}")
-
-
-def _prepare_impl(input_path: str) -> None:
-    """å®Œæˆè¯‘å‰å‡†å¤‡å¹¶åœæ­¢ï¼Œä¸ç”Ÿæˆæ­£æ–‡è¯‘æ–‡æˆ–è¾“å‡ºæ–‡ä»¶ã€‚"""
-    from .pipeline.orchestrator import Orchestrator
-
-    try:
-        _require_input_file(input_path)
-        config = _load_config()
-        orch = Orchestrator(config)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as prog:
-            task = prog.add_task("å‡†å¤‡ä¸­â€¦", total=None)
-
-            def cb(done: int, total: int, label: str) -> None:
-                """æŠŠè¯‘å‰å‡†å¤‡è¿›åº¦åŒæ­¥åˆ° Rich ä»»åŠ¡ã€‚"""
-                nonlocal task
-                if total > 0:
-                    prog.update(task, completed=done, total=total, description=label)
-                    return
-                prog.remove_task(task)
-                task = prog.add_task(label, total=None)
-
-            store = orch.prepare_for_translation(input_path, progress=cb)
-    except (IngestError, ImportError, OSError, ValueError) as error:
-        console.print(f"[red]é”™è¯¯ï¼š{error}[/]")
-        raise typer.Exit(1) from None
-
-    manifest = store.load_manifest()
-    chapters = manifest.get("chapters", [])
-    analysis = store.load_analysis() or {}
-    digests = sum(
-        bool(store.load_chapter(item["index"]).meta.get("source_digest")) for item in chapters
-    )
-    console.print(
-        f"[bold green]å‡†å¤‡å®Œæˆ[/]ï¼šè§£æž {len(chapters)} ç« ï¼Œ"
-        f"é¢„æ‰« {digests}/{len(chapters)} ç« ï¼Œ"
-        f"å…¨ä¹¦æ¦‚è§ˆ{' å·²ç”Ÿæˆ' if analysis.get('book_synopsis') else ' æœªç”Ÿæˆ'}ã€‚"
-    )
-    console.print(f"çŠ¶æ€ç›®å½•ï¼š[bold]{store.run_dir}[/]")
-    console.print("è¿è¡Œ translate å¹¶ä¼ å…¥åŒä¸€æºæ–‡ä»¶å³å¯ç»§ç»­å®Œæˆå…¨ä¹¦ç¿»è¯‘ã€‚")
-    _print_usage({"usage": store.load_usage() or {}})
-
-
-def _print_usage(report: dict) -> None:
-    """æ‰“å°æœ¬ä¹¦ç´¯è®¡ token ç”¨é‡ä¸Žåˆ†æ¡£ç¼“å­˜å‘½ä¸­çŽ‡ï¼ˆæ— æ•°æ®æ—¶é™é»˜è·³è¿‡ï¼‰ã€‚"""
-    usage = report.get("usage") or {}
-    totals = usage.get("totals") or {}
-    if not totals.get("total_tokens"):
-        return
-    console.print(
-        f"ç”¨é‡ï¼ˆæœ¬ä¹¦ç´¯è®¡ï¼‰ï¼š{totals['total_tokens']:,} tok"
-        f"ï¼ˆæç¤º {totals['prompt_tokens']:,} / ç”Ÿæˆ {totals['completion_tokens']:,}ï¼‰ï¼Œ"
-        f"ç¼“å­˜å‘½ä¸­çŽ‡ {totals.get('cache_hit_rate', 0.0):.1%}"
-        f"ï¼ˆå‘½ä¸­ {totals['cache_hit_tokens']:,} / æœªå‘½ä¸­ {totals['cache_miss_tokens']:,} tokï¼‰"
-    )
-    for tier, v in sorted(usage.get("by_tier", {}).items()):
-        console.print(
-            f"  Â· {tier}ï¼š{v['total_tokens']:,} tokï¼Œ{v['calls']} æ¬¡è°ƒç”¨ï¼Œ"
-            f"ç¼“å­˜å‘½ä¸­çŽ‡ {v['cache_hit_rate']:.1%}"
-        )
-    for stage, v in sorted(
-        (usage.get("by_stage") or {}).items(),
-        key=lambda item: -item[1]["total_tokens"],
-    ):
-        console.print(
-            f"  Â· é˜¶æ®µ {stage}ï¼š{v['total_tokens']:,} tok"
-            f"ï¼ˆæç¤º {v['prompt_tokens']:,} / ç”Ÿæˆ {v['completion_tokens']:,}ï¼‰ï¼Œ"
-            f"{v['calls']} æ¬¡è°ƒç”¨ï¼Œç¼“å­˜å‘½ä¸­çŽ‡ {v['cache_hit_rate']:.1%}"
-        )
-
-
-# â”€â”€ ä¸€é”®å®Œæ•´æµç¨‹ / è¯‘å‰å‡†å¤‡ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-@app.command(rich_help_panel="ä¸»è¦æµç¨‹")
-def translate(
-    input: str = typer.Argument(
-        ...,
-        help="å¾…ç¿»è¯‘ä¹¦ç±ï¼ˆEPUB / FB2 / TXT / Markdown / HTML / PDFï¼‰",
-    ),
-    chapter: int | None = typer.Option(
-        None,
-        "--chapter",
-        min=0,
-        help="ä»…ç¿»è¯‘å¹¶ä¿å­˜æŒ‡å®šç« èŠ‚ï¼ˆä»Ž 0 èµ·ï¼‰ï¼›ä¸æ‰§è¡Œå®¡æ ¡ã€QAã€æŠ¥å‘Šå’Œå¯¼å‡º",
-    ),
-    fmt: str = typer.Option(
-        "epub",
-        "--format",
-        help="æœ€ç»ˆå¯¼å‡ºæ ¼å¼ï¼šepub / txt / html / markdown / pdf",
-    ),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="å•è¯­ç‰ˆè¾“å‡ºè·¯å¾„ï¼›é»˜è®¤å†™å…¥æºæ–‡ä»¶æ—çš„ output ç›®å½•",
-    ),
-    pdf_engine: str = typer.Option(
-        "weasyprint",
-        "--pdf-engine",
-        help="PDF æ¸²æŸ“å¼•æ“Žï¼šweasyprintï¼ˆé»˜è®¤ï¼‰/ fpdf2",
-    ),
-    polish: bool | None = typer.Option(
-        None,
-        "--polish/--no-polish",
-        help="è¦†ç›– pipeline.polishï¼ŒæŽ§åˆ¶ç¿»è¯‘åŽæ˜¯å¦æ¶¦è‰²",
-    ),
-    review: bool | None = typer.Option(
-        None,
-        "--review/--no-review",
-        help="è¦†ç›– pipeline.reviewï¼ŒæŽ§åˆ¶å…¨ä¹¦ç¿»è¯‘åŽæ˜¯å¦æ‰§è¡Œæœ€ç»ˆå®¡æ ¡",
-    ),
-    qa: bool | None = typer.Option(
-        None,
-        "--qa/--no-qa",
-        help="è¦†ç›– pipeline.consistency_qaï¼ŒæŽ§åˆ¶æ˜¯å¦æ‰§è¡Œè·¨ç« ä¸€è‡´æ€§æ‰«æ",
-    ),
-    mono: bool | None = typer.Option(
-        None,
-        "--mono/--no-mono",
-        help="è¦†ç›– output.monoï¼ŒæŽ§åˆ¶æ˜¯å¦ç”Ÿæˆå•è¯­ç‰ˆ",
-    ),
-    bilingual: bool | None = typer.Option(
-        None,
-        "--bilingual/--no-bilingual",
-        help="è¦†ç›– output.bilingualï¼ŒæŽ§åˆ¶æ˜¯å¦ç”ŸæˆåŽŸæ–‡è¯‘æ–‡å¯¹ç…§ç‰ˆ",
-    ),
-):
-    """ä¸€é”®å®Œæˆå‡†å¤‡ã€ç¿»è¯‘ã€å¯é€‰å®¡æ ¡/QAã€æŠ¥å‘Šå’Œå¯¼å‡ºï¼›ä¸­æ–­åŽåŽŸå‘½ä»¤ç»­è·‘ã€‚"""
-    _translate_impl(
-        input,
-        chapter=chapter,
-        fmt=fmt,
-        out=out,
-        pdf_engine=pdf_engine,
-        polish=polish,
-        review=review,
-        qa=qa,
-        mono=mono,
-        bilingual=bilingual,
-    )
-
-
-@app.command(rich_help_panel="ä¸»è¦æµç¨‹")
-def prepare(
-    input: str = typer.Argument(
-        ...,
-        help="å¾…å‡†å¤‡ä¹¦ç±ï¼ˆEPUB / FB2 / TXT / Markdown / HTML / PDFï¼‰",
-    ),
-) -> None:
-    """åªè§£æžä¹¦ç±ã€è¯†åˆ«è¯­è¨€ã€åˆ†æžé£Žæ ¼å’Œæœ¯è¯­å¹¶é¢„æ‰«å…¨ä¹¦ï¼Œä¸ç¿»è¯‘æ­£æ–‡ã€‚"""
-    _prepare_impl(input)
-
-
-@app.command(rich_help_panel="è´¨é‡æ£€æŸ¥")
-def review(
-    input: str = typer.Argument(..., help="å…¨ä¹¦æ­£æ–‡å·²ç»ç¿»è¯‘å®Œæˆçš„æºæ–‡ä»¶"),
-):
-    """å…¨é‡è¿è¡Œå–è¯ã€å½±å­ä¿®è®¢ä¸Žç›²å¤å®¡ï¼›ä¸ä¿®æ”¹æ­£å¼æ­£æ–‡ã€‚"""
-    from .pipeline.orchestrator import Orchestrator
-
-    _require_input_file(input)
-    config = _load_config()
-    orch = Orchestrator(config)
-
-    try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as prog:
-            cb = _RichProgressBridge(prog, "å‡†å¤‡å…¨ä¹¦å®¡æ ¡â€¦")
-            result = orch.run_review(input, progress=cb)
-    except (IngestError, ImportError, OSError, ValueError) as error:
-        console.print(f"[red]é”™è¯¯ï¼š{error}[/]")
-        raise typer.Exit(1) from None
-
-    review_result = result["review_result"]
-    summary = review_result["summary"]
-    console.print(
-        f"[bold green]å…¨ä¹¦ Agent å®¡æ ¡å®Œæˆ[/]ï¼š{review_result['termination']}ï¼Œ"
-        f"ä»æœ‰ {summary['issue_count']} é¡¹é—®é¢˜ï¼Œ"
-        f"ç”Ÿæˆ {summary['change_count']} é¡¹ä¿®æ”¹å»ºè®®ã€‚"
-    )
-    console.print("å®¡æ ¡ç»“æžœä¸ºåªè¯»å»ºè®®ï¼Œæ­£å¼ç« èŠ‚è¯‘æ–‡æœªä¿®æ”¹ã€‚")
-    console.print(f"å®¡æ ¡ç›®å½•ï¼š{result['review_dir']}")
-
-
-# â”€â”€ æŸ¥è¯¢ / ç»†ç²’åº¦å‘½ä»¤ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-@app.command(rich_help_panel="çŠ¶æ€ä¸Žè¾“å‡º")
-def status(
-    input: str = typer.Argument(..., help="å·²å»ºç«‹ç¿»è¯‘çŠ¶æ€çš„æºæ–‡ä»¶"),
-) -> None:
-    """æŸ¥çœ‹å„ç« è¿›åº¦ä¸Žæœ¯è¯­åº“ç»Ÿè®¡ã€‚"""
-    from .glossary.store import GlossaryStore
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ prepare æˆ– translateã€‚[/]")
-        raise typer.Exit(1)
-    m = store.load_manifest()
-    console.print(f"ã€Š{m['title']}ã€‹ï¼ˆ{m['fmt']}ï¼‰  {m['source_lang']}â†’{m['target_lang']}")
-    table = Table("", "#", "ç« èŠ‚", "ç¿»è¯‘")
-    for c in m["chapters"]:
-        mark = "âœ“" if c["status"] == STATUS_DONE else "Â·"
-        table.add_row(
-            mark,
-            str(c["index"]),
-            c["title"],
-            c["status"],
-        )
-    console.print(table)
-    g = GlossaryStore(store.glossary_path)
-    console.print("æœ¯è¯­åº“ï¼š", g.stats())
-    g.close()
-
-
-@glossary_app.command("list")
-def glossary_list(
-    input: str = typer.Argument(..., help="å·²å»ºç«‹ç¿»è¯‘çŠ¶æ€çš„æºæ–‡ä»¶"),
-) -> None:
-    """åˆ—å‡ºå½“å‰ä¹¦ç±æœ¯è¯­åº“ä¸­çš„å›ºå®šè¯‘åå’ŒçŠ¶æ€ã€‚"""
-    from .glossary.store import GlossaryStore
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ prepare æˆ– translateã€‚[/]")
-        raise typer.Exit(1)
-    g = GlossaryStore(store.glossary_path)
-    try:
-        table = Table("åŽŸæ–‡", "è¯‘æ–‡", "ç±»åž‹", "çŠ¶æ€")
-        for term in g.all_terms():
-            table.add_row(
-                term.source,
-                term.target,
-                f"{term.type}{'/' + term.gender if term.gender else ''}",
-                term.status,
-            )
-        console.print(table)
-    finally:
-        g.close()
-
-
-@glossary_app.command("conflicts")
-def glossary_conflicts(
-    input: str = typer.Argument(..., help="å·²å»ºç«‹ç¿»è¯‘çŠ¶æ€çš„æºæ–‡ä»¶"),
-) -> None:
-    """åˆ—å‡ºæ¨¡åž‹æŠ½å–è¿‡ç¨‹ä¸­å‘çŽ°çš„æœªè£å®šè¯‘åå†²çªã€‚"""
-    from .glossary.store import GlossaryStore
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ translate æˆ– prepareã€‚[/]")
-        raise typer.Exit(1)
-    glossary = GlossaryStore(store.glossary_path)
-    try:
-        conflicts = glossary.open_conflicts()
-        if not conflicts:
-            console.print("æ²¡æœ‰å¾…è£å®šçš„æœ¯è¯­å†²çªã€‚")
-            return
-        for conflict in conflicts:
-            console.print(
-                f"  {conflict['source']}: çŽ°æœ‰ã€Œ{conflict['existing_target']}ã€ vs "
-                f"æè®®ã€Œ{conflict['proposed_target']}ã€"
-                f"ï¼ˆç¬¬ {conflict['chapter']} ç« ï¼‰"
-            )
-    finally:
-        glossary.close()
-
-
-@glossary_app.command("resolve")
-def glossary_resolve(
-    input: str = typer.Argument(..., help="å·²å»ºç«‹ç¿»è¯‘çŠ¶æ€çš„æºæ–‡ä»¶"),
-    source: str = typer.Argument(..., help="éœ€è¦è£å®šçš„åŽŸæ–‡æœ¯è¯­"),
-    target: str = typer.Argument(..., help="ä»ŠåŽç»Ÿä¸€é‡‡ç”¨çš„ç›®æ ‡è¯­è¨€è¯‘å"),
-) -> None:
-    """æŠŠä¸€ä¸ªå·²æœ‰æœ¯è¯­è£å®šä¸ºæŒ‡å®šè¯‘åï¼Œå¹¶å…³é—­å¯¹åº”å†²çªã€‚"""
-    from .glossary import resolver
-    from .glossary.store import GlossaryStore
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ translate æˆ– prepareã€‚[/]")
-        raise typer.Exit(1)
-    glossary = GlossaryStore(store.glossary_path)
-    try:
-        if not resolver.resolve(glossary, source, target):
-            console.print(f"[red]æœ¯è¯­ä¸å­˜åœ¨ï¼š{source}[/]")
-            raise typer.Exit(1)
-        console.print(f"å·²è£å®š {source} â†’ {target}")
-    finally:
-        glossary.close()
-
-
-@app.command(rich_help_panel="çŠ¶æ€ä¸Žè¾“å‡º")
-def assemble(
-    input: str = typer.Argument(..., help="å·²å®Œæˆæˆ–éƒ¨åˆ†å®Œæˆç¿»è¯‘çš„æºæ–‡ä»¶"),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="å•è¯­ç‰ˆè¾“å‡ºè·¯å¾„ï¼›é»˜è®¤å†™å…¥æºæ–‡ä»¶æ—çš„ output ç›®å½•",
-    ),
-    fmt: str = typer.Option(
-        "epub",
-        "--format",
-        help="å¯¼å‡ºæ ¼å¼ï¼šepub / txt / html / markdown / pdf",
-    ),
-    pdf_engine: str = typer.Option(
-        "weasyprint",
-        "--pdf-engine",
-        help="PDF æ¸²æŸ“å¼•æ“Žï¼šweasyprintï¼ˆé»˜è®¤ï¼‰/ fpdf2",
-    ),
-    mono: bool | None = typer.Option(
-        None,
-        "--mono/--no-mono",
-        help="è¦†ç›– output.monoï¼ŒæŽ§åˆ¶æ˜¯å¦ç”Ÿæˆå•è¯­ç‰ˆ",
-    ),
-    bilingual: bool | None = typer.Option(
-        None,
-        "--bilingual/--no-bilingual",
-        help="è¦†ç›– output.bilingualï¼ŒæŽ§åˆ¶æ˜¯å¦ç”ŸæˆåŽŸæ–‡è¯‘æ–‡å¯¹ç…§ç‰ˆ",
-    ),
-):
-    """ä»Žå·²æœ‰çŠ¶æ€é‡æ–°ç”Ÿæˆè¯‘æ–‡æ–‡ä»¶ï¼Œä¸è°ƒç”¨æ¨¡åž‹æˆ–é‡æ–°ç¿»è¯‘ã€‚"""
-    from .assemble.writer import assemble as do_assemble
-    from .assemble.writer import bilingual_out_path
-
-    config = _load_config()
-    fmt = _validate_output_format(fmt)
-    pdf_engine = _validate_pdf_engine(pdf_engine)
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ prepare æˆ– translateã€‚[/]")
-        raise typer.Exit(1)
-    do_mono = config.output.mono if mono is None else mono
-    do_bilingual = config.output.bilingual if bilingual is None else bilingual
-    if not do_mono and not do_bilingual:
-        do_mono = True  # å…œåº•ï¼šè‡³å°‘äº§ä¸€ä¸ªå•è¯­äº§ç‰©
-    paths: list[str] = []
-    if do_mono:
-        paths.append(
-            do_assemble(
-                store,
-                input,
-                out_path=out,
-                out_format=fmt,
-                bilingual=False,
-                about_page=config.output.about_page,
-                pdf_engine=pdf_engine,
-            )
-        )
-    if do_bilingual:
-        bi_out = bilingual_out_path(out) if out else None
-        paths.append(
-            do_assemble(
-                store,
-                input,
-                out_path=bi_out,
-                out_format=fmt,
-                bilingual=True,
-                order=config.output.bilingual_order,
-                preserve_source_style=(config.output.bilingual_preserve_source_style),
-                about_page=config.output.about_page,
-                pdf_engine=pdf_engine,
-            )
-        )
-    for path in paths:
-        console.print(f"å·²ç”Ÿæˆè¯‘æ–‡ï¼š[bold]{path}[/]")
-
-
-@app.command(rich_help_panel="è´¨é‡æ£€æŸ¥")
-def qa(
-    input: str = typer.Argument(..., help="å·²å®Œæˆç¿»è¯‘çš„æºæ–‡ä»¶"),
-) -> None:
-    """è°ƒç”¨æ¨¡åž‹æ‰§è¡Œå…¨ä¹¦è·¨ç« ä¸€è‡´æ€§æ‰«æï¼ŒåªæŠ¥å‘Šé—®é¢˜è€Œä¸ä¿®æ”¹æ­£æ–‡ã€‚"""
-    from .agents.consistency import ConsistencyChecker
-    from .glossary.store import GlossaryStore
-    from .llm.factory import build_client
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ prepare æˆ– translateã€‚[/]")
-        raise typer.Exit(1)
-    _apply_store_languages(config, store)
-    g = GlossaryStore(store.glossary_path)
-    try:
-        client = build_client(config)
-        client.set_event_sink(store.log_event)
-        issues = ConsistencyChecker(client, config).check(store, g)
-    finally:
-        g.close()
-    console.print(f"ä¸€è‡´æ€§é—®é¢˜ {len(issues)} é¡¹ï¼š")
-    for it in issues:
-        console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
-
-
-@app.command(rich_help_panel="çŠ¶æ€ä¸Žè¾“å‡º")
-def report(
-    input: str = typer.Argument(..., help="å·²å»ºç«‹ç¿»è¯‘çŠ¶æ€çš„æºæ–‡ä»¶"),
-) -> None:
-    """æ ¹æ®å½“å‰ç« èŠ‚å’Œæœ¯è¯­çŠ¶æ€é‡æ–°ç”Ÿæˆ report.jsonï¼Œä¸è°ƒç”¨æ¨¡åž‹ã€‚"""
-    from .assemble.report import build_report
-    from .glossary.store import GlossaryStore
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]å°šæ— è¿›åº¦ã€‚å…ˆè¿è¡Œ prepare æˆ– translateã€‚[/]")
-        raise typer.Exit(1)
-    g = GlossaryStore(store.glossary_path)
-    rep = build_report(store, g)
-    g.close()
-    store.save_report(rep)
-    s = rep["summary"]
-    console.print(f"QA æŠ¥å‘Šå·²å†™å…¥ {store.report_path}")
-    console.print(
-        f"  ç« èŠ‚ {s['chapters_done']}/{s['chapters_total']}  æœ¯è¯­ {s['terms']}  "
-        f"å¾…è£å†³å†²çª {s['open_conflicts']}  å›žè¯‘ç–‘ç‚¹ {s['backtranslation_issues']}"
-    )
-
-
-app.add_typer(glossary_app, name="glossary", rich_help_panel="æœ¯è¯­åº“")
-
-
-def main() -> None:
-    """å¯åŠ¨ Typer å‘½ä»¤è¡Œåº”ç”¨ã€‚"""
-    app()
-
-
-if __name__ == "__main__":
-    main()
+        config.target_lang = taÛnô¶‰žËkºwµçh€€€€¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‹ž*Ûšžn»–öW¾òim‰½±‘uíÍÑ½É”¹ÉÕ¹}‘¥Éõl½tˆ¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð ‹¢þC¢†0ÑÉ…¹Í±…Ñ”ƒ–æÛ’òƒ–—–B3’âšêCšZ’îÛ–6Ï–>¿žîŸžî·–º3š"C–£’æ›žþï¢¾GŽˆ¤4(€€€}ÁÉ¥¹Ñ}ÕÍ…”¡ì‰ÕÍ…”ˆèÍÑ½É”¹±½…‘}ÕÍ…” ¤½Èíõô¤4(4(4)‘•˜}ÁÉ¥¹Ñ}ÕÍ…”¡É•Á½ÉÐè‘¥Ð¤€´ø9½¹”è4(€€€€ˆˆ‹š&O–6Ãšr³’æ›žÒ¿¢º„Ñ½­•¸ƒžR£¦?’â;–"š†žòO–¶c–F÷’â·ž:¾ò#š^ƒšVÃš6»š^Û¦vg¦îc¢ÞÏ¢þ¾ò'Žˆˆˆ4(€€€ÕÍ…”€ôÉ•Á½ÉÐ¹•Ð ‰ÕÍ…”ˆ¤½Èíô4(€€€Ñ½Ñ…±Ì€ôÕÍ…”¹•Ð ‰Ñ½Ñ…±Ìˆ¤½Èíô4(€€€¥˜¹½ÐÑ½Ñ…±Ì¹•Ð ‰Ñ½Ñ…±}Ñ½­•¹Ìˆ¤è4(€€€€€€€É•ÑÕÉ¸4(€€€½¹Í½±”¹ÁÉ¥¹Ð 4(€€€€€€€˜‹žR£¦?¾ò#šr³’æ›žÒ¿¢º‡¾ò'¾òiíÑ½Ñ…±ÍlÑ½Ñ…±}Ñ½­•¹Ìtè±ôÑ½¬ˆ4(€€€€€€€˜‹¾ò#š>Cž’èíÑ½Ñ…±ÍlÁÉ½µÁÑ}Ñ½­•¹Ìtè±ô€¼ƒžRš"@íÑ½Ñ…±Íl½µÁ±•Ñ¥½¹}Ñ½­•¹Ìtè±÷¾ò'¾ò0ˆ4(€€€€€€€˜‹žòO–¶c–F÷’â·ž:íÑ½Ñ…±Ì¹•Ð …¡•}¡¥Ñ}É…Ñ”œ°€À¸À¤è¸Ä•ôˆ4(€€€€€€€˜‹¾ò#–F÷’â´íÑ½Ñ…±Íl…¡•}¡¥Ñ}Ñ½­•¹Ìtè±ô€¼ƒšr«–F÷’â´íÑ½Ñ…±Íl…¡•}µ¥ÍÍ}Ñ½­•¹Ìtè±ôÑ½¯¾ò$ˆ4(€€€€¤4(€€€™½ÈÑ¥•È°Ø¥¸Í½ÉÑ•¡ÕÍ…”¹•Ð ‰‰å}Ñ¥•Èˆ°íô¤¹¥Ñ•µÌ ¤¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð 4(€€€€€€€€€€€˜ˆ€ƒ
+ÜíÑ¥•É÷¾òiíÙlÑ½Ñ…±}Ñ½­•¹Ìtè±ôÑ½¯¾ò1íÙl…±±Ìuôƒš²‡¢ÂžR£¾ò0ˆ4(€€€€€€€€€€€˜‹žòO–¶c–F÷’â·ž:íÙl…¡•}¡¥Ñ}É…Ñ”tè¸Ä•ôˆ4(€€€€€€€€¤4(€€€™½ÈÍÑ…”°Ø¥¸Í½ÉÑ• 4(€€€€€€€€¡ÕÍ…”¹•Ð ‰‰å}ÍÑ…”ˆ¤½Èíô¤¹¥Ñ•µÌ ¤°4(€€€€€€€­•äõ±…µ‰‘„¥Ñ•´è€µ¥Ñ•µlÅul‰Ñ½Ñ…±}Ñ½­•¹Ì‰t°4(€€€€¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð 4(€€€€€€€€€€€˜ˆ€ƒ
+Üƒ¦bÛšºÔíÍÑ…•÷¾òiíÙlÑ½Ñ…±}Ñ½­•¹Ìtè±ôÑ½¬ˆ4(€€€€€€€€€€€˜‹¾ò#š>Cž’èíÙlÁÉ½µÁÑ}Ñ½­•¹Ìtè±ô€¼ƒžRš"@íÙl½µÁ±•Ñ¥½¹}Ñ½­•¹Ìtè±÷¾ò'¾ò0ˆ4(€€€€€€€€€€€˜‰íÙl…±±Ìuôƒš²‡¢ÂžR£¾ò3žòO–¶c–F÷’â·ž:íÙl…¡•}¡¥Ñ}É…Ñ”tè¸Ä•ôˆ4(€€€€€€€€¤4(4(4(ŒƒŠRŠR ƒ’â¦R»–º3šVÓšÖž¢,€¼ƒ¢¾G–&7––’ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR 4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹’âï¢ššÖž¢,ˆ¤4)‘•˜ÑÉ…¹Í±…Ñ” (€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð 4(€€€€€€€€¸¸¸°4(€€€€€€€¡•±Àô‹–úžþï¢¾G’æ›žÆ7¾ò!AU€¼È€¼QaP€¼5…É­‘½Ý¸€¼!Q50€¼A¾ò$ˆ°4(€€€€¤°4(€€€¡…ÁÑ•Èè¥¹Ðð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µ¡…ÁÑ•Èˆ°4(€€€€€€€µ¥¸ôÀ°4(€€€€€€€¡•±Àô‹’îžþï¢¾G–æÛ’þw–¶cš2–ºkž®ƒ¢*¾ò#’î8€Àƒ¢Öß¾ò'¾òo’â7š&Ÿ¢†3–º‡š‚‡ŽEŽš*—–F+–J3–¾ó–èˆ°4(€€€€¤°4(€€€™µÐèÍÑÈ€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€€‰•ÁÕˆˆ°4(€€€€€€€€ˆ´µ™½Éµ…Ðˆ°4(€€€€€€€¡•±Àô‹šržî#–¾ó–ëš‚ó–ò?¾òi•ÁÕˆ€¼ÑáÐ€¼¡Ñµ°€¼µ…É­‘½Ý¸€¼Á‘˜ˆ°4(€€€€¤°4(€€€½ÕÐèÍÑÈð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µ½ÕÐˆ°4(€€€€€€€¡•±Àô‹–6W¢¾·ž&#¢úO–ë¢Þ¿–ú¾òo¦îc¢º“–g–—šêCšZ’îÛš^žj½ÕÑÁÕÐƒžn»–öTˆ°4(€€€€¤°4(€€€Á‘™}•¹¥¹”èÍÑÈ€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€€‰Ý•…ÍåÁÉ¥¹Ðˆ°4(€€€€€€€€ˆ´µÁ‘˜µ•¹¥¹”ˆ°4(€€€€€€€¡•±Àô‰AƒšâËš~O–òWšN;¾òiÝ•…ÍåÁÉ¥¹Ó¾ò#¦îc¢º“¾ò$¼™Á‘˜Èˆ°4(€€€€¤°4(€€€Á½±¥Í è‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µÁ½±¥Í ¼´µ¹¼µÁ½±¥Í ˆ°4(€€€€€€€¡•±Àô‹¢šžnXÁ¥Á•±¥¹”¹Á½±¥Í£¾ò3š:Ÿ–"Ûžþï¢¾G–B;šb¿–B›šÚ›¢&Èˆ°4(€€€€¤°4(€€€É•Ù¥•Üè‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µÉ•Ù¥•Ü¼´µ¹¼µÉ•Ù¥•Üˆ°4(€€€€€€€¡•±Àô‹¢šžnXÁ¥Á•±¥¹”¹É•Ù¥•ß¾ò3š:Ÿ–"Û–£’æ›žþï¢¾G–B;šb¿–B›š&Ÿ¢†3šržî#–º‡š‚„ˆ°4(€€€€¤°4(€€€Å„è‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µÅ„¼´µ¹¼µÅ„ˆ°4(€€€€€€€¡•±Àô‹¢šžnXÁ¥Á•±¥¹”¹½¹Í¥ÍÑ•¹å}Å‡¾ò3š:Ÿ–"Ûšb¿–B›š&Ÿ¢†3¢Þ£ž®ƒ’â¢ÓšŸš&¯š><ˆ°4(€€€€¤°4(€€€µ½¹¼è‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µµ½¹¼¼´µ¹¼µµ½¹¼ˆ°4(€€€€€€€¡•±Àô‹¢šžnX½ÕÑÁÕÐ¹µ½¹¿¾ò3š:Ÿ–"Ûšb¿–B›žRš"C–6W¢¾·ž& ˆ°4(€€€€¤°4(€€€‰¥±¥¹Õ…°è‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ (€€€€€€€9½¹”°4(€€€€€€€€ˆ´µ‰¥±¥¹Õ…°¼´µ¹¼µ‰¥±¥¹Õ…°ˆ°4(€€€€€€€¡•±Àô‹¢šžnX½ÕÑÁÕÐ¹‰¥±¥¹Õ…³¾ò3š:Ÿ–"Ûšb¿–B›žRš"C–:šZ¢¾GšZ–¾çžŸž& ˆ°(€€€€¤°(€€€å•Ìè‰½½°€ôÑåÁ•È¹=ÁÑ¥½¸ (€€€€€€€…±Í”°(€€€€€€€€ˆ´µå•Ìˆ°(€€€€€€€€ˆµäˆ°(€€€€€€€¡•±Àô‹–ÆWž’ë¦Š¢º„Q½­•¸ƒ–B;žnÓš:—–ò–ž/¾ò3’úo¢«–*£–2[š"[š^ƒ’êë–ó–º#¢þC¢†3’öÿžR ˆ°(€€€€¤°(¤è(€€€€ˆˆ‹’â¦R»–º3š"C––’Žžþï¢¾GŽ–>¿¦'–º‡š‚„½EŽš*—–F+–J3–¾ó–ë¾òo’â·šZ·–B;–:–F÷’î“žî·¢ÞGŽˆˆˆ4(€€€}ÑÉ…¹Í±…Ñ•}¥µÁ° 4(€€€€€€€¥¹ÁÕÐ°4(€€€€€€€¡…ÁÑ•Èõ¡…ÁÑ•È°4(€€€€€€€™µÐõ™µÐ°4(€€€€€€€½ÕÐõ½ÕÐ°4(€€€€€€€Á‘™}•¹¥¹”õÁ‘™}•¹¥¹”°4(€€€€€€€Á½±¥Í õÁ½±¥Í °4(€€€€€€€É•Ù¥•ÜõÉ•Ù¥•Ü°4(€€€€€€€Å„õÅ„°4(€€€€€€€µ½¹¼õµ½¹¼°(€€€€€€€‰¥±¥¹Õ…°õ‰¥±¥¹Õ…°°(€€€€€€€…ÍÍÕµ•}å•Ìõå•Ì°(€€€€¤(4(4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹’âï¢ššÖž¢,ˆ¤4)‘•˜ÁÉ•Á…É” 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð 4(€€€€€€€€¸¸¸°4(€€€€€€€¡•±Àô‹–ú––’’æ›žÆ7¾ò!AU€¼È€¼QaP€¼5…É­‘½Ý¸€¼!Q50€¼A¾ò$ˆ°4(€€€€¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹–>«¢žšzC’æ›žÆ7Ž¢¾–"¯¢¾·¢¢Ž–"šzC¦Ž;š‚ó–J3šr¿¢¾·–æÛ¦Šš&¯–£’æ›¾ò3’â7žþï¢¾Gš¶šZŽˆˆˆ4(€€€}ÁÉ•Á…É•}¥µÁ°¡¥¹ÁÕÐ¤4(4(4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹¢Ò£¦?šŽš~”ˆ¤4)‘•˜É•Ù¥•Ü 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–£’æ›š¶šZ–ÞËžî?žþï¢¾G–º3š"CžjšêCšZ’îØˆ¤°4(¤è4(€€€€ˆˆ‹–£¦?¢þC¢†3–>[¢¾Ž–öÇ–¶C’þ»¢º‹’â;žnË–’7–º‡¾òo’â7’þ»šRçš¶–ò?š¶šZŽˆˆˆ4(€€€™É½´€¹Á¥Á•±¥¹”¹½É¡•ÍÑÉ…Ñ½È¥µÁ½ÉÐ=É¡•ÍÑÉ…Ñ½È4(4(€€€}É•ÅÕ¥É•}¥¹ÁÕÑ}™¥±”¡¥¹ÁÕÐ¤4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€½É €ô=É¡•ÍÑÉ…Ñ½È¡½¹™¥œ¤4(4(€€€ÑÉäè4(€€€€€€€Ý¥Ñ AÉ½É•ÍÌ 4(€€€€€€€€€€€MÁ¥¹¹•É½±Õµ¸ ¤°4(€€€€€€€€€€€Q•áÑ½±Õµ¸ ‰mÁÉ½É•ÍÌ¹‘•ÍÉ¥ÁÑ¥½¹uíÑ…Í¬¹‘•ÍÉ¥ÁÑ¥½¹ôˆ¤°4(€€€€€€€€€€€	…É½±Õµ¸ ¤°4(€€€€€€€€€€€5½™9½µÁ±•Ñ•½±Õµ¸ ¤°4(€€€€€€€€€€€Q•áÑ½±Õµ¸ ‹–ÞËžR ˆ¤°4(€€€€€€€€€€€Q¥µ•±…ÁÍ•‘½±Õµ¸ ¤°4(€€€€€€€€€€€}Q½±Õµ¸¡•Ñ…ÑÑÈ¡½É °€‰ÁÉ½É•ÍÍ}•ÍÑ¥µ…Ñ”ˆ°9½¹”¤¤°4(€€€€€€€€€€€½¹Í½±”õ½¹Í½±”°4(€€€€€€€€¤…ÌÁÉ½œè4(€€€€€€€€€€€ˆ€ô}I¥¡AÉ½É•ÍÍ	É¥‘”¡ÁÉ½œ°€‹––’–£’æ›–º‡š‚‡Š˜ˆ¤4(€€€€€€€€€€€É•ÍÕ±Ð€ô½É ¹ÉÕ¹}É•Ù¥•Ü¡¥¹ÁÕÐ°ÁÉ½É•ÍÌõˆ¤4(€€€•á•ÁÐ€¡%¹•ÍÑÉÉ½È°%µÁ½ÉÑÉÉ½È°=MÉÉ½È°Y…±Õ•ÉÉ½È¤…Ì•ÉÉ½Èè4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‰mÉ•‘w¦Rg¢¾¿¾òií•ÉÉ½Éõl½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤™É½´9½¹”4(4(€€€É•Ù¥•Ý}É•ÍÕ±Ð€ôÉ•ÍÕ±Ñl‰É•Ù¥•Ý}É•ÍÕ±Ð‰t4(€€€ÍÕµµ…Éä€ôÉ•Ù¥•Ý}É•ÍÕ±Ñl‰ÍÕµµ…Éä‰t4(€€€½¹Í½±”¹ÁÉ¥¹Ð 4(€€€€€€€˜‰m‰½±É••¹w–£’æ˜•¹Ðƒ–º‡š‚‡–º3š"Al½w¾òiíÉ•Ù¥•Ý}É•ÍÕ±ÑlÑ•Éµ¥¹…Ñ¥½¸u÷¾ò0ˆ4(€€€€€€€˜‹’î7šr$íÍÕµµ…Éål¥ÍÍÕ•}½Õ¹Ðuôƒ¦†ç¦^»¦Šc¾ò0ˆ4(€€€€€€€˜‹žRš"@íÍÕµµ…Éål¡…¹•}½Õ¹Ðuôƒ¦†ç’þ»šRç–îë¢º»Žˆ4(€€€€¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð ‹–º‡š‚‡žîOšzs’âë–>«¢¾ï–îë¢º»¾ò3š¶–ò?ž®ƒ¢*¢¾GšZšr«’þ»šRçŽˆ¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‹–º‡š‚‡žn»–öW¾òiíÉ•ÍÕ±ÑlÉ•Ù¥•Ý}‘¥Èuôˆ¤4(4(4(ŒƒŠRŠR ƒš~—¢¾ˆ€¼ƒžîžÊK–ê›–F÷’îƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR 4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹ž*Ûš’â;¢úO–èˆ¤4)‘•˜ÍÑ…ÑÕÌ 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–îëž®/žþï¢¾Gž*ÛšžjšêCšZ’îØˆ¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹š~—žr/–Bž®ƒ¢þo–ê›’â;šr¿¢¾·–êOžî¢º‡Žˆˆˆ4(€€€™É½´€¹±½ÍÍ…Éä¹ÍÑ½É”¥µÁ½ÉÐ±½ÍÍ…ÉåMÑ½É”4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÁÉ•Á…É”ƒš"XÑÉ…¹Í±…Ñ—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€´€ôÍÑ½É”¹±½…‘}µ…¹¥™•ÍÐ ¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‹Ž)íµlÑ¥Ñ±”u÷Ž/¾ò!íµl™µÐu÷¾ò$€íµlÍ½ÕÉ•}±…¹œu÷ŠIíµlÑ…É•Ñ}±…¹œuôˆ¤4(€€€Ñ…‰±”€ôQ…‰±” ˆˆ°€ˆŒˆ°€‹ž®ƒ¢*ˆ°€‹žþï¢¾Dˆ¤4(€€€™½ÈŒ¥¸µl‰¡…ÁÑ•ÉÌ‰tè4(€€€€€€€µ…É¬€ô€‹ŠrLˆ¥˜l‰ÍÑ…ÑÕÌ‰t€ôôMQQUM}=9•±Í”€‹
+Üˆ4(€€€€€€€Ñ…‰±”¹…‘‘}É½Ü 4(€€€€€€€€€€€µ…É¬°4(€€€€€€€€€€€ÍÑÈ¡l‰¥¹‘•à‰t¤°4(€€€€€€€€€€€l‰Ñ¥Ñ±”‰t°4(€€€€€€€€€€€l‰ÍÑ…ÑÕÌ‰t°4(€€€€€€€€¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð¡Ñ…‰±”¤4(€€€œ€ô±½ÍÍ…ÉåMÑ½É”¡ÍÑ½É”¹±½ÍÍ…Éå}Á…Ñ ¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð ‹šr¿¢¾·–êO¾òhˆ°œ¹ÍÑ…ÑÌ ¤¤4(€€€œ¹±½Í” ¤4(4(4)±½ÍÍ…Éå}…ÁÀ¹½µµ…¹ ‰±¥ÍÐˆ¤4)‘•˜±½ÍÍ…Éå}±¥ÍÐ 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–îëž®/žþï¢¾Gž*ÛšžjšêCšZ’îØˆ¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹–"_–ë–öO–&7’æ›žÆ7šr¿¢¾·–êO’â·žj–në–ºk¢¾G–B7–J3ž*ÛšŽˆˆˆ4(€€€™É½´€¹±½ÍÍ…Éä¹ÍÑ½É”¥µÁ½ÉÐ±½ÍÍ…ÉåMÑ½É”4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÁÉ•Á…É”ƒš"XÑÉ…¹Í±…Ñ—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€œ€ô±½ÍÍ…ÉåMÑ½É”¡ÍÑ½É”¹±½ÍÍ…Éå}Á…Ñ ¤4(€€€ÑÉäè4(€€€€€€€Ñ…‰±”€ôQ…‰±” ‹–:šZˆ°€‹¢¾GšZˆ°€‹žÆï–z,ˆ°€‹ž*Ûšˆ¤4(€€€€€€€™½ÈÑ•É´¥¸œ¹…±±}Ñ•ÉµÌ ¤è4(€€€€€€€€€€€Ñ…‰±”¹…‘‘}É½Ü 4(€€€€€€€€€€€€€€€Ñ•É´¹Í½ÕÉ”°4(€€€€€€€€€€€€€€€Ñ•É´¹Ñ…É•Ð°4(€€€€€€€€€€€€€€€˜‰íÑ•É´¹ÑåÁ•õìœ¼œ€¬Ñ•É´¹•¹‘•È¥˜Ñ•É´¹•¹‘•È•±Í”€œôˆ°4(€€€€€€€€€€€€€€€Ñ•É´¹ÍÑ…ÑÕÌ°4(€€€€€€€€€€€€¤4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð¡Ñ…‰±”¤4(€€€™¥¹…±±äè4(€€€€€€€œ¹±½Í” ¤4(4(4)±½ÍÍ…Éå}…ÁÀ¹½µµ…¹ ‰½¹™±¥ÑÌˆ¤4)‘•˜±½ÍÍ…Éå}½¹™±¥ÑÌ 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–îëž®/žþï¢¾Gž*ÛšžjšêCšZ’îØˆ¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹–"_–ëš¢‡–z/š*÷–>[¢þž¢/’â·–>Gž:Ãžjšr«¢Ž–ºk¢¾G–B7–ËžªŽˆˆˆ4(€€€™É½´€¹±½ÍÍ…Éä¹ÍÑ½É”¥µÁ½ÉÐ±½ÍÍ…ÉåMÑ½É”4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÑÉ…¹Í±…Ñ”ƒš"XÁÉ•Á…É—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€±½ÍÍ…Éä€ô±½ÍÍ…ÉåMÑ½É”¡ÍÑ½É”¹±½ÍÍ…Éå}Á…Ñ ¤4(€€€ÑÉäè4(€€€€€€€½¹™±¥ÑÌ€ô±½ÍÍ…Éä¹½Á•¹}½¹™±¥ÑÌ ¤4(€€€€€€€¥˜¹½Ð½¹™±¥ÑÌè4(€€€€€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‹šÊ‡šr'–ú¢Ž–ºkžjšr¿¢¾·–ËžªŽˆ¤4(€€€€€€€€€€€É•ÑÕÉ¸4(€€€€€€€™½È½¹™±¥Ð¥¸½¹™±¥ÑÌè4(€€€€€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð 4(€€€€€€€€€€€€€€€˜ˆ€í½¹™±¥ÑlÍ½ÕÉ”uôèƒž:Ãšr'Ž1í½¹™±¥Ñl•á¥ÍÑ¥¹}Ñ…É•Ðu÷Ž4ÙÌ€ˆ4(€€€€€€€€€€€€€€€˜‹š>C¢º»Ž1í½¹™±¥ÑlÁÉ½Á½Í•‘}Ñ…É•Ðu÷Ž4ˆ4(€€€€€€€€€€€€€€€˜‹¾ò#ž²°í½¹™±¥Ñl¡…ÁÑ•Èuôƒž®ƒ¾ò$ˆ4(€€€€€€€€€€€€¤4(€€€™¥¹…±±äè4(€€€€€€€±½ÍÍ…Éä¹±½Í” ¤4(4(4)±½ÍÍ…Éå}…ÁÀ¹½µµ…¹ ‰É•Í½±Ù”ˆ¤4)‘•˜±½ÍÍ…Éå}É•Í½±Ù” 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–îëž®/žþï¢¾Gž*ÛšžjšêCšZ’îØˆ¤°4(€€€Í½ÕÉ”èÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹¦r¢š¢Ž–ºkžj–:šZšr¿¢¾´ˆ¤°4(€€€Ñ…É•ÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹’î+–B;žî’â¦žR£žjžn»š‚¢¾·¢¢¢¾G–B4ˆ¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹š*+’â’â«–ÞËšr'šr¿¢¾·¢Ž–ºk’âëš2–ºk¢¾G–B7¾ò3–æÛ–Ï¦^·–¾ç–êS–ËžªŽˆˆˆ4(€€€™É½´€¹±½ÍÍ…Éä¥µÁ½ÉÐÉ•Í½±Ù•È4(€€€™É½´€¹±½ÍÍ…Éä¹ÍÑ½É”¥µÁ½ÉÐ±½ÍÍ…ÉåMÑ½É”4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÑÉ…¹Í±…Ñ”ƒš"XÁÉ•Á…É—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€±½ÍÍ…Éä€ô±½ÍÍ…ÉåMÑ½É”¡ÍÑ½É”¹±½ÍÍ…Éå}Á…Ñ ¤4(€€€ÑÉäè4(€€€€€€€¥˜¹½ÐÉ•Í½±Ù•È¹É•Í½±Ù”¡±½ÍÍ…Éä°Í½ÕÉ”°Ñ…É•Ð¤è4(€€€€€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‰mÉ•‘wšr¿¢¾·’â7–¶c–r£¾òiíÍ½ÕÉ•õl½tˆ¤4(€€€€€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‹–ÞË¢Ž–ºhíÍ½ÕÉ•ôƒŠHíÑ…É•Ñôˆ¤4(€€€™¥¹…±±äè4(€€€€€€€±½ÍÍ…Éä¹±½Í” ¤4(4(4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹ž*Ûš’â;¢úO–èˆ¤4)‘•˜…ÍÍ•µ‰±” 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–º3š"Cš"[¦£–"–º3š"Cžþï¢¾GžjšêCšZ’îØˆ¤°4(€€€½ÕÐèÍÑÈð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µ½ÕÐˆ°4(€€€€€€€¡•±Àô‹–6W¢¾·ž&#¢úO–ë¢Þ¿–ú¾òo¦îc¢º“–g–—šêCšZ’îÛš^žj½ÕÑÁÕÐƒžn»–öTˆ°4(€€€€¤°4(€€€™µÐèÍÑÈ€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€€‰•ÁÕˆˆ°4(€€€€€€€€ˆ´µ™½Éµ…Ðˆ°4(€€€€€€€¡•±Àô‹–¾ó–ëš‚ó–ò?¾òi•ÁÕˆ€¼ÑáÐ€¼¡Ñµ°€¼µ…É­‘½Ý¸€¼Á‘˜ˆ°4(€€€€¤°4(€€€Á‘™}•¹¥¹”èÍÑÈ€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€€‰Ý•…ÍåÁÉ¥¹Ðˆ°4(€€€€€€€€ˆ´µÁ‘˜µ•¹¥¹”ˆ°4(€€€€€€€¡•±Àô‰AƒšâËš~O–òWšN;¾òiÝ•…ÍåÁÉ¥¹Ó¾ò#¦îc¢º“¾ò$¼™Á‘˜Èˆ°4(€€€€¤°4(€€€µ½¹¼è‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µµ½¹¼¼´µ¹¼µµ½¹¼ˆ°4(€€€€€€€¡•±Àô‹¢šžnX½ÕÑÁÕÐ¹µ½¹¿¾ò3š:Ÿ–"Ûšb¿–B›žRš"C–6W¢¾·ž& ˆ°4(€€€€¤°4(€€€‰¥±¥¹Õ…°è‰½½°ð9½¹”€ôÑåÁ•È¹=ÁÑ¥½¸ 4(€€€€€€€9½¹”°4(€€€€€€€€ˆ´µ‰¥±¥¹Õ…°¼´µ¹¼µ‰¥±¥¹Õ…°ˆ°4(€€€€€€€¡•±Àô‹¢šžnX½ÕÑÁÕÐ¹‰¥±¥¹Õ…³¾ò3š:Ÿ–"Ûšb¿–B›žRš"C–:šZ¢¾GšZ–¾çžŸž& ˆ°4(€€€€¤°4(¤è4(€€€€ˆˆ‹’î;–ÞËšr'ž*Ûš¦7šZÃžRš"C¢¾GšZšZ’îÛ¾ò3’â7¢ÂžR£š¢‡–z/š"[¦7šZÃžþï¢¾GŽˆˆˆ4(€€€™É½´€¹…ÍÍ•µ‰±”¹ÝÉ¥Ñ•È¥µÁ½ÉÐ…ÍÍ•µ‰±”…Ì‘½}…ÍÍ•µ‰±”4(€€€™É½´€¹…ÍÍ•µ‰±”¹ÝÉ¥Ñ•È¥µÁ½ÉÐ‰¥±¥¹Õ…±}½ÕÑ}Á…Ñ 4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€™µÐ€ô}Ù…±¥‘…Ñ•}½ÕÑÁÕÑ}™½Éµ…Ð¡™µÐ¤4(€€€Á‘™}•¹¥¹”€ô}Ù…±¥‘…Ñ•}Á‘™}•¹¥¹”¡Á‘™}•¹¥¹”¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÁÉ•Á…É”ƒš"XÑÉ…¹Í±…Ñ—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€‘½}µ½¹¼€ô½¹™¥œ¹½ÕÑÁÕÐ¹µ½¹¼¥˜µ½¹¼¥Ì9½¹”•±Í”µ½¹¼4(€€€‘½}‰¥±¥¹Õ…°€ô½¹™¥œ¹½ÕÑÁÕÐ¹‰¥±¥¹Õ…°¥˜‰¥±¥¹Õ…°¥Ì9½¹”•±Í”‰¥±¥¹Õ…°4(€€€¥˜¹½Ð‘½}µ½¹¼…¹¹½Ð‘½}‰¥±¥¹Õ…°è4(€€€€€€€‘½}µ½¹¼€ôQÉÕ”€€Œƒ–s–êW¾òk¢Ï–ÂG’êŸ’â’â«–6W¢¾·’êŸž&¤4(€€€Á…Ñ¡Ìè±¥ÍÑmÍÑÉt€ômt4(€€€¥˜‘½}µ½¹¼è4(€€€€€€€Á…Ñ¡Ì¹…ÁÁ•¹ 4(€€€€€€€€€€€‘½}…ÍÍ•µ‰±” 4(€€€€€€€€€€€€€€€ÍÑ½É”°4(€€€€€€€€€€€€€€€¥¹ÁÕÐ°4(€€€€€€€€€€€€€€€½ÕÑ}Á…Ñ õ½ÕÐ°4(€€€€€€€€€€€€€€€½ÕÑ}™½Éµ…Ðõ™µÐ°4(€€€€€€€€€€€€€€€‰¥±¥¹Õ…°õ…±Í”°4(€€€€€€€€€€€€€€€…‰½ÕÑ}Á…”õ½¹™¥œ¹½ÕÑÁÕÐ¹…‰½ÕÑ}Á…”°4(€€€€€€€€€€€€€€€Á‘™}•¹¥¹”õÁ‘™}•¹¥¹”°4(€€€€€€€€€€€€¤4(€€€€€€€€¤4(€€€¥˜‘½}‰¥±¥¹Õ…°è4(€€€€€€€‰¥}½ÕÐ€ô‰¥±¥¹Õ…±}½ÕÑ}Á…Ñ ¡½ÕÐ¤¥˜½ÕÐ•±Í”9½¹”4(€€€€€€€Á…Ñ¡Ì¹…ÁÁ•¹ 4(€€€€€€€€€€€‘½}…ÍÍ•µ‰±” 4(€€€€€€€€€€€€€€€ÍÑ½É”°4(€€€€€€€€€€€€€€€¥¹ÁÕÐ°4(€€€€€€€€€€€€€€€½ÕÑ}Á…Ñ õ‰¥}½ÕÐ°4(€€€€€€€€€€€€€€€½ÕÑ}™½Éµ…Ðõ™µÐ°4(€€€€€€€€€€€€€€€‰¥±¥¹Õ…°õQÉÕ”°4(€€€€€€€€€€€€€€€½É‘•Èõ½¹™¥œ¹½ÕÑÁÕÐ¹‰¥±¥¹Õ…±}½É‘•È°4(€€€€€€€€€€€€€€€ÁÉ•Í•ÉÙ•}Í½ÕÉ•}ÍÑå±”ô¡½¹™¥œ¹½ÕÑÁÕÐ¹‰¥±¥¹Õ…±}ÁÉ•Í•ÉÙ•}Í½ÕÉ•}ÍÑå±”¤°4(€€€€€€€€€€€€€€€…‰½ÕÑ}Á…”õ½¹™¥œ¹½ÕÑÁÕÐ¹…‰½ÕÑ}Á…”°4(€€€€€€€€€€€€€€€Á‘™}•¹¥¹”õÁ‘™}•¹¥¹”°4(€€€€€€€€€€€€¤4(€€€€€€€€¤4(€€€™½ÈÁ…Ñ ¥¸Á…Ñ¡Ìè4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‹–ÞËžRš"C¢¾GšZ¾òim‰½±‘uíÁ…Ñ¡õl½tˆ¤4(4(4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹¢Ò£¦?šŽš~”ˆ¤4)‘•˜Å„ 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–º3š"Cžþï¢¾GžjšêCšZ’îØˆ¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹¢ÂžR£š¢‡–z/š&Ÿ¢†3–£’æ›¢Þ£ž®ƒ’â¢ÓšŸš&¯š>?¾ò3–>«š*—–F+¦^»¦Šc¢3’â7’þ»šRçš¶šZŽˆˆˆ4(€€€™É½´€¹…•¹ÑÌ¹½¹Í¥ÍÑ•¹ä¥µÁ½ÉÐ½¹Í¥ÍÑ•¹å¡•­•È4(€€€™É½´€¹±½ÍÍ…Éä¹ÍÑ½É”¥µÁ½ÉÐ±½ÍÍ…ÉåMÑ½É”4(€€€™É½´€¹±±´¹™…Ñ½Éä¥µÁ½ÉÐ‰Õ¥±‘}±¥•¹Ð4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÁÉ•Á…É”ƒš"XÑÉ…¹Í±…Ñ—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€}…ÁÁ±å}ÍÑ½É•}±…¹Õ…•Ì¡½¹™¥œ°ÍÑ½É”¤4(€€€œ€ô±½ÍÍ…ÉåMÑ½É”¡ÍÑ½É”¹±½ÍÍ…Éå}Á…Ñ ¤4(€€€ÑÉäè4(€€€€€€€±¥•¹Ð€ô‰Õ¥±‘}±¥•¹Ð¡½¹™¥œ¤4(€€€€€€€±¥•¹Ð¹Í•Ñ}•Ù•¹Ñ}Í¥¹¬¡ÍÑ½É”¹±½}•Ù•¹Ð¤4(€€€€€€€¥ÍÍÕ•Ì€ô½¹Í¥ÍÑ•¹å¡•­•È¡±¥•¹Ð°½¹™¥œ¤¹¡•¬¡ÍÑ½É”°œ¤4(€€€™¥¹…±±äè4(€€€€€€€œ¹±½Í” ¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‹’â¢ÓšŸ¦^»¦Š`í±•¸¡¥ÍÍÕ•Ì¥ôƒ¦†ç¾òhˆ¤4(€€€™½È¥Ð¥¸¥ÍÍÕ•Ìè4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜ˆ€mí¥Ð¹•Ð ÑåÁ”œ¥õtí¥Ð¹•Ð ‘•Ñ…¥°œ¥ô€€¡í¥Ð¹•Ð Ý¡•É”œ°€œœ¥ô¤ˆ¤4(4(4)…ÁÀ¹½µµ…¹¡É¥¡}¡•±Á}Á…¹•°ô‹ž*Ûš’â;¢úO–èˆ¤4)‘•˜É•Á½ÉÐ 4(€€€¥¹ÁÕÐèÍÑÈ€ôÑåÁ•È¹ÉÕµ•¹Ð ¸¸¸°¡•±Àô‹–ÞË–îëž®/žþï¢¾Gž*ÛšžjšêCšZ’îØˆ¤°4(¤€´ø9½¹”è4(€€€€ˆˆ‹š‚çš6»–öO–&7ž®ƒ¢*–J3šr¿¢¾·ž*Ûš¦7šZÃžRš"@É•Á½ÉÐ¹©Í½»¾ò3’â7¢ÂžR£š¢‡–z/Žˆˆˆ4(€€€™É½´€¹…ÍÍ•µ‰±”¹É•Á½ÉÐ¥µÁ½ÉÐ‰Õ¥±‘}É•Á½ÉÐ4(€€€™É½´€¹±½ÍÍ…Éä¹ÍÑ½É”¥µÁ½ÉÐ±½ÍÍ…ÉåMÑ½É”4(4(€€€½¹™¥œ€ô}±½…‘}½¹™¥œ ¤4(€€€ÍÑ½É”€ô}ÉÕ¹ÍÑ½É•}™½È¡½¹™¥œ°¥¹ÁÕÐ¤4(€€€¥˜¹½ÐÍÑ½É”¹•á¥ÍÑÌ ¤è4(€€€€€€€½¹Í½±”¹ÁÉ¥¹Ð ‰må•±±½Ýw–Âkš^ƒ¢þo–ê›Ž–#¢þC¢†0ÁÉ•Á…É”ƒš"XÑÉ…¹Í±…Ñ—Ž	l½tˆ¤4(€€€€€€€É…¥Í”ÑåÁ•È¹á¥Ð Ä¤4(€€€œ€ô±½ÍÍ…ÉåMÑ½É”¡ÍÑ½É”¹±½ÍÍ…Éå}Á…Ñ ¤4(€€€É•À€ô‰Õ¥±‘}É•Á½ÉÐ¡ÍÑ½É”°œ¤4(€€€œ¹±½Í” ¤4(€€€ÍÑ½É”¹Í…Ù•}É•Á½ÉÐ¡É•À¤4(€€€Ì€ôÉ•Ál‰ÍÕµµ…Éä‰t4(€€€½¹Í½±”¹ÁÉ¥¹Ð¡˜‰Eƒš*—–F+–ÞË–g–”íÍÑ½É”¹É•Á½ÉÑ}Á…Ñ¡ôˆ¤4(€€€½¹Í½±”¹ÁÉ¥¹Ð 4(€€€€€€€˜ˆ€ƒž®ƒ¢*íÍl¡…ÁÑ•ÉÍ}‘½¹”uô½íÍl¡…ÁÑ•ÉÍ}Ñ½Ñ…°uô€ƒšr¿¢¾´íÍlÑ•ÉµÌuô€€ˆ4(€€€€€€€˜‹–ú¢Ž–Ï–ËžªíÍl½Á•¹}½¹™±¥ÑÌuô€ƒ–n{¢¾GžZGž
+äíÍl‰…­ÑÉ…¹Í±…Ñ¥½¹}¥ÍÍÕ•Ìuôˆ4(€€€€¤4(4(4)…ÁÀ¹…‘‘}ÑåÁ•È¡±½ÍÍ…Éå}…ÁÀ°¹…µ”ô‰±½ÍÍ…Éäˆ°É¥¡}¡•±Á}Á…¹•°ô‹šr¿¢¾·–êLˆ¤4(4(4)‘•˜µ…¥¸ ¤€´ø9½¹”è4(€€€€ˆˆ‹–B¿–* QåÁ•Èƒ–F÷’î“¢†3–êSžR£Žˆˆˆ4(€€€…ÁÀ ¤4(4(4)¥˜}}¹…µ•}|€ôô€‰}}µ…¥¹}|ˆè4(€€€µ…¥¸ ¤4(

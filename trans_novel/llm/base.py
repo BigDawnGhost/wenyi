@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .json_parser import parse_json_loose
+from .performance import PerformanceSnapshot, PerformanceTracker
 from .usage import UsageTracker
 
 Messages = list[dict[str, str]]
@@ -20,8 +21,9 @@ class LLMClient(ABC):
     """所有 provider 实现此接口。"""
 
     def __init__(self) -> None:
-        """为 provider 初始化独立的用量统计器和可选事件出口。"""
+        """为 provider 初始化线程安全的用量、性能统计器和可选事件出口。"""
         self.usage = UsageTracker()
+        self.performance = PerformanceTracker()
         self._event_sink: EventSink | None = None
         self._event_sink_lock = threading.Lock()
 
@@ -44,6 +46,10 @@ class LLMClient(ABC):
     def usage_summary(self) -> dict[str, Any]:
         """返回累计 token 用量快照（totals + by_tier + cache_hit_rate）。"""
         return self.usage.summary()
+
+    def performance_summary(self) -> PerformanceSnapshot:
+        """返回当前进程最近的调用性能；该数据不会写入 usage.json。"""
+        return self.performance.snapshot()
 
     def validate_credentials(self) -> None:
         """校验 provider 调用所需凭据；本地或测试 provider 默认免检。"""

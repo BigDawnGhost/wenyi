@@ -40,6 +40,7 @@ llm:
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
+  stream: false
   timeout: 600
   max_retries: 4
   tiers:
@@ -60,6 +61,12 @@ llm:
 ```
 
 `max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；仅连接/超时、HTTP 408/409/429 和 5xx 等瞬时错误会重试，每次等待都会写入本书的 `events.jsonl`。
+
+将 `llm.stream` 设为 `true`，即可让 DeepSeek、OpenAI-compatible 系列或 Gemini
+以流式方式返回响应。文译会先在内存中拼接所有 chunk，得到完整响应后才交给翻译与
+JSON 校验，因此现有单行进度显示不会被原始输出冲乱。若连接在中途断开，本次半成品
+会被丢弃，并按现有重试策略重新发起完整请求。流式 usage 只取最终累计快照记录一次，
+仍会用于 token 总量、吞吐速度和 ETA 估算。
 
 用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
 运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。

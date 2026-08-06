@@ -88,7 +88,7 @@ export DEEPSEEK_API_KEY=sk-...
 uv run trans-novel translate book.epub
 ```
 
-This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
+Before any model call, the command prints an estimated prompt/completion/total Token budget and asks for confirmation (default: no). Pass `--yes` or `-y` for unattended runs; the estimate is still shown. After confirmation, Wenyi parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
 
 ### Step-by-step workflow
 
