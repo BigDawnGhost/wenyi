@@ -21,6 +21,10 @@ def build_client(config: Config) -> LLMClient:
         from .providers.openrouter import OpenRouterClient
 
         return OpenRouterClient(config.llm)
+    if provider == "orcarouter":
+        from .providers.orcarouter import OrcaRouterClient
+
+        return OrcaRouterClient(config.llm)
     if provider == "openai-compatible":
         from .providers.openai_compatible import OpenAICompatibleClient
 
@@ -43,6 +47,6 @@ def build_client(config: Config) -> LLMClient:
         return FakeClient()
     raise ValueError(
         f"未知 provider：{provider}"
-        "（支持 deepseek / openai / openrouter / openai-compatible / "
+        "（支持 deepseek / openai / openrouter / orcarouter / openai-compatible / "
         "ollama / vllm / gemini / fake）"
     )

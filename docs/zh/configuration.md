@@ -66,10 +66,10 @@ llm:
 `options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
 只属于 DeepSeek，不会进入通用 LLM 抽象层。
 
-### OpenAI 与 OpenRouter
+### OpenAI、OpenRouter 与 OrcaRouter
 
-OpenAI 和 OpenRouter 分别维护独立 provider，会自动选择各自的 Base URL、API Key
-环境变量和思考参数格式。模型档位需要显式配置：
+OpenAI、OpenRouter 和 OrcaRouter 分别维护独立 provider，会自动选择各自的 Base
+URL、API Key 环境变量和思考参数格式。模型档位需要显式配置：
 
 ```yaml
 llm:
@@ -92,6 +92,36 @@ llm:
 ```
 
 `openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+
+[OrcaRouter](https://www.orcarouter.ai) 是 OpenAI 兼容的多模型路由网关。把
+`provider` 设为 `orcarouter` 即可使用其默认端点：
+
+```yaml
+llm:
+  provider: orcarouter
+  tiers:
+    strong:
+      model: anthropic/claude-opus-4.6
+      options:
+        thinking: true
+        reasoning_effort: high
+    cheap:
+      model: deepseek/deepseek-v4-flash
+      options:
+        thinking: true
+        reasoning_effort: medium
+    fast:
+      model: deepseek/deepseek-v4-flash
+      options:
+        thinking: false
+```
+
+OrcaRouter provider 默认读取 `ORCAROUTER_API_KEY`，Base URL 默认为
+`https://api.orcarouter.ai/v1`。与 OpenRouter 不同，OrcaRouter 使用**扁平的顶层**
+`reasoning_effort` 字段（OpenAI 方言），而非嵌套的 `reasoning` 块，因此推理方言
+固定为 `openai`，无需配置 `reasoning_style`。模型 id 可以是命名空间形式（如
+`openai/gpt-5.5`、`deepseek/deepseek-v4-flash`），也可以是路由别名
+`orcarouter/auto`。
 
 ### Google Gemini
 
