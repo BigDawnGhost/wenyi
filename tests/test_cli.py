@@ -69,64 +69,6 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(cfg.source_lang, "ru")
         self.assertEqual(cfg.target_lang, "en")
 
-    def test_qa_binds_retry_events_to_book_log(self):
-        """独立 QA 的 provider 重试事件也必须写入当前书籍日志。"""
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
-        recorded: list[tuple[str, dict[str, object]]] = []
-
-        class Store:
-            glossary_path = "glossary.db"
-
-            @staticmethod
-            def exists():
-                return True
-
-            @staticmethod
-            def load_manifest():
-                return {"source_lang": "en", "target_lang": "zh"}
-
-            @staticmethod
-            def log_event(event, **data):
-                recorded.append((event, data))
-
-        class Client:
-            sink = None
-
-            def set_event_sink(self, sink):
-                self.sink = sink
-
-        class Glossary:
-            def __init__(self, path):
-                self.path = path
-
-            def close(self):
-                pass
-
-        client = Client()
-
-        class Checker:
-            def __init__(self, configured_client, config):
-                del config
-                self.client = configured_client
-
-            def check(self, store, glossary):
-                del store, glossary
-                self.client.sink("llm_retry_wait", reason="http_502")
-                return []
-
-        with (
-            patch("trans_novel.cli._load_config", return_value=cfg),
-            patch("trans_novel.cli._runstore_for", return_value=Store()),
-            patch("trans_novel.llm.factory.build_client", return_value=client),
-            patch("trans_novel.glossary.store.GlossaryStore", Glossary),
-            patch("trans_novel.agents.consistency.ConsistencyChecker", Checker),
-            patch("trans_novel.cli._validate_api_configuration"),
-        ):
-            result = CliRunner().invoke(app, ["qa", "input.epub"])
-
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(recorded, [("llm_retry_wait", {"reason": "http_502"})])
-
     def test_every_cli_start_checks_default_config(self):
         runner = CliRunner()
         with patch.object(Config, "create_default_file", return_value=True) as create:
@@ -157,7 +99,7 @@ class TestCliConfig(unittest.TestCase):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"polish": True, "consistency_qa": False},
+                "pipeline": {"polish": True},
             }
         )
         captured = {}
@@ -177,8 +119,6 @@ class TestCliConfig(unittest.TestCase):
                             "terms": 0,
                         }
                     },
-                    "audit": [],
-                    "qa_issues": [],
                     "output": "out.epub",
                     "store": FakeStore(),
                 }
@@ -193,13 +133,12 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["polish"])
         self.assertFalse(captured["review"])
-        self.assertIsNone(captured["run_all"]["do_qa"])
 
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"polish": True, "consistency_qa": False},
+                "pipeline": {"polish": True},
             }
         )
         captured = {}
@@ -219,8 +158,6 @@ class TestCliConfig(unittest.TestCase):
                             "terms": 0,
                         }
                     },
-                    "audit": [],
-                    "qa_issues": [],
                     "output": "out.epub",
                     "store": FakeStore(),
                 }
@@ -237,14 +174,12 @@ class TestCliConfig(unittest.TestCase):
                     "input.txt",
                     "--no-polish",
                     "--review",
-                    "--qa",
                 ],
             )
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertFalse(captured["polish"])
         self.assertTrue(captured["review"])
-        self.assertTrue(captured["run_all"]["do_qa"])
 
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
@@ -306,12 +241,12 @@ class TestCliConfig(unittest.TestCase):
         ):
             result = CliRunner().invoke(
                 app,
-                ["translate", "input.txt", "--chapter", "0", "--qa"],
+                ["translate", "input.txt", "--chapter", "0", "--review"],
             )
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("--chapter 只翻译并保存指定章节", result.output)
-        self.assertIn("--qa/--no-qa", result.output)
+        self.assertIn("--review/--no-review", result.output)
 
     def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
         result = CliRunner().invoke(app, ["--help"])
@@ -321,7 +256,6 @@ class TestCliConfig(unittest.TestCase):
             "translate",
             "prepare",
             "review",
-            "qa",
             "report",
             "assemble",
             "status",
@@ -344,7 +278,6 @@ class TestCliConfig(unittest.TestCase):
             "translate",
             "prepare",
             "review",
-            "qa",
         ):
             with self.subTest(command=command):
                 with patch(

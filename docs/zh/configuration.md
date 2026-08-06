@@ -178,7 +178,6 @@ pipeline:
   review: false
   polish: true
   backtranslate_sample: 0
-  consistency_qa: false
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
@@ -198,7 +197,6 @@ pipeline:
 - `review`：默认关闭；开启后在全书翻译完成时自动执行取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `backtranslate_sample`：回译抽检比例，`0` 为关闭。
-- `consistency_qa`：全书完成后进行跨章术语、人称、语气和标点检查。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
@@ -214,8 +212,8 @@ pipeline:
 - `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
-`translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`、
-`--qa`、`--no-qa` 会覆盖对应配置。
+`translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`
+会覆盖对应配置。
 
 可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
 译文。Review 只会修改本次运行的影子译文，不会把替换写入正式翻译状态；统一

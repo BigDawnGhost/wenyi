@@ -9,7 +9,7 @@
 
 全书翻译完成后，独立 Review 阶段使用最终术语库按章并行审校；候选问题进入
 有界 Agent Loop 按需检索全书证据，跨块矛盾建议再统一仲裁。结果写入独立的
-正式 Review 目录，不改正文；run_all 随后仍以正式章节执行一致性 QA、报告和导出。
+正式 Review 目录，不改正文；run_all 随后仍以正式章节生成报告和导出。
 进度回调 progress(done_segments, total_segments, label) 与 UI 无关，每批完成即触发。
 """
 
@@ -564,7 +564,6 @@ class Orchestrator:
                     "review": self.config.pipeline.review,
                     "polish": self.config.pipeline.polish,
                     "backtranslate_sample": self.config.pipeline.backtranslate_sample,
-                    "consistency_qa": self.config.pipeline.consistency_qa,
                     "book_understanding": self.config.pipeline.book_understanding,
                     "review_concurrency": self.config.pipeline.review_concurrency,
                     "review_output_retries": (self.config.pipeline.review_output_retries),
@@ -2844,7 +2843,7 @@ class Orchestrator:
         return _BatchResult(targets=targets, bt_samples=bt_samples)
 
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
-    ALL_STEPS = ("translate", "review", "qa", "report", "assemble")
+    ALL_STEPS = ("translate", "review", "report", "assemble")
 
     def run_review(
         self,
@@ -2895,7 +2894,6 @@ class Orchestrator:
                 "review_changes": reviewed["review_changes"],
                 "review_result": reviewed["review_result"],
                 "review_dir": reviewed["review_dir"],
-                "qa_issues": [],
             }
 
         if "translate" in steps:
@@ -2928,21 +2926,17 @@ class Orchestrator:
         out_path: str | None,
         pdf_engine: str,
     ) -> dict[str, Any]:
-        """在书级锁内执行 QA、报告和导出收尾步骤并返回结果汇总。"""
-        from ..agents.consistency import ConsistencyChecker
+        """在书级锁内执行审校、报告和导出收尾步骤并返回结果汇总。"""
         from ..assemble.report import build_report
         from ..assemble.writer import assemble, bilingual_out_path
 
         store.log_event("run_steps_started", steps=run_steps_input, input_path=input_path)
 
-        glossary = (
-            GlossaryStore(store.glossary_path) if {"qa", "report"}.intersection(steps) else None
-        )
+        glossary = GlossaryStore(store.glossary_path) if "report" in steps else None
         review_issues: list[dict] = []
         review_changes: list[dict] = []
         review_result: dict[str, Any] | None = None
         review_dir: str | None = None
-        qa_issues: list[dict] = []
         report: dict[str, Any] | None = None
         try:
             if "review" in steps:
@@ -2962,18 +2956,6 @@ class Orchestrator:
                 review_result = outcome.result
                 review_dir = outcome.run_dir
 
-            if "qa" in steps:
-                if glossary is None:  # pragma: no cover - 由 needs 条件保证
-                    raise RuntimeError("QA 需要术语库")
-                if progress:
-                    progress(0, 0, "一致性 QA…")
-                qa_issues = ConsistencyChecker(self.client, self.config).check(store, glossary)
-                store.log_event(
-                    "consistency_qa_finished",
-                    issue_count=len(qa_issues),
-                    issues=qa_issues,
-                )
-
             self._flush_usage(store, scope="pipeline")
             if "report" in steps:
                 if glossary is None:  # pragma: no cover - 由 needs 条件保证
@@ -2981,7 +2963,6 @@ class Orchestrator:
                 if progress:
                     progress(0, 0, "生成报告…")
                 report = build_report(store, glossary)
-                report["consistency_issues"] = qa_issues
                 store.save_report(report)
                 store.log_event("report_saved", path=store.report_path)
         finally:
@@ -3030,7 +3011,6 @@ class Orchestrator:
             "run_steps_finished",
             steps=run_steps_input,
             outputs=outputs,
-            qa_issue_count=len(qa_issues),
         )
         return {
             "store": store,
@@ -3041,7 +3021,6 @@ class Orchestrator:
             "review_changes": review_changes,
             "review_result": review_result,
             "review_dir": review_dir,
-            "qa_issues": qa_issues,
         }
 
     def run_all(
@@ -3051,15 +3030,12 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str = "epub",
         out_path: str | None = None,
-        do_qa: bool | None = None,
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
-        """翻译 → 最终审校 → 一致性 QA → 报告 → 回填，返回结果汇总。"""
+        """翻译 → 最终审校 → 报告 → 回填，返回结果汇总。"""
         steps = {"translate", "report", "assemble"}
         if self.config.pipeline.review:
             steps.add("review")
-        if do_qa if do_qa is not None else self.config.pipeline.consistency_qa:
-            steps.add("qa")
         return self.run_steps(
             input_path,
             steps,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 import unittest
@@ -1350,39 +1349,6 @@ class TestReport(unittest.TestCase):
             self.assertNotIn("low_confidence_terms", report)
             self.assertNotIn("chapters_reviewed", s)
             self.assertNotIn("review_issues", report)
-
-
-class TestConsistency(unittest.TestCase):
-    def test_consistency_reports_issues(self):
-        from trans_novel.agents.consistency import ConsistencyChecker
-
-        with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt")
-            write_sample_txt(txt)
-            store, cfg = _run(txt, os.path.join(d, "state"))
-
-            def handler(messages, tier, json_mode):
-                if "一致性审查员" in messages[0]["content"]:
-                    return json.dumps(
-                        {
-                            "issues": [
-                                {
-                                    "type": "terminology",
-                                    "detail": "X 译法不一致",
-                                    "where": "第1章",
-                                }
-                            ]
-                        },
-                        ensure_ascii=False,
-                    )
-                return "{}"
-
-            g = GlossaryStore(store.glossary_path)
-            checker = ConsistencyChecker(FakeClient(handler=handler), cfg)
-            issues = checker.check(store, g)
-            g.close()
-            self.assertEqual(len(issues), 1)
-            self.assertEqual(issues[0]["type"], "terminology")
 
 
 if __name__ == "__main__":

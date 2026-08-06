@@ -165,7 +165,6 @@ pipeline:
   review: false
   polish: true
   backtranslate_sample: 0
-  consistency_qa: false
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
@@ -185,7 +184,6 @@ pipeline:
 - `review`: disabled by default; when enabled, automatically run the evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
-- `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
@@ -201,9 +199,8 @@ pipeline:
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
-The command-line flags `--polish`, `--no-polish`, `--review`, `--no-review`,
-`--qa`, and `--no-qa` override the corresponding configuration values for a
-`translate` run.
+The command-line flags `--polish`, `--no-polish`, `--review`, and `--no-review`
+override the corresponding configuration values for a `translate` run.
 
 Run final review independently with `trans-novel review INPUT`. Each invocation
 reviews the complete translated book from the beginning. Review may modify only a

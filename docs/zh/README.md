@@ -42,7 +42,7 @@
 | 逐段翻译，彼此孤立，缺乏上下文 | 全书预扫 + 逐章梗概 + 滚动上下文 |
 | 术语靠人工事后整理 | 翻译中实时抽取专有名词，自动检测译法冲突，立即影响后续批次 |
 | 一次性翻译，中断即作废 | 批次检查点 + 章节状态记录，任意中断后重新执行同一命令即可续跑 |
-| 模型直出，无系统性质控 | 翻译 → 润色 → 章末回译抽检 → 最终审校 → 跨章一致性 QA |
+| 模型直出，无系统性质控 | 翻译 → 润色 → 章末回译抽检 → 取证式全书审校 |
 
 文译为**长文本**设计 —— 长篇小说、社科专著、纪实文学……
 
@@ -52,7 +52,7 @@
 
 - **全书理解** — 翻译前预扫源文，生成逐章梗概和全书概览，注入每批翻译上下文
 - **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
-- **多阶段质量保证** — 可选润色（强档模型重译）、全书最终 AI 审校、回译抽检、跨章一致性 QA
+- **多阶段质量保证** — 可选润色（强档模型重译）、回译抽检和取证式全书 AI 审校
 - **断点续跑** — 批次级检查点、章节状态记录和原子状态写入；任意中断后重新执行同一命令即可续跑
 - **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点
 - **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
@@ -102,10 +102,7 @@ uv run trans-novel translate book.epub
 # 3. 独立审校 — 基于最终术语库的逐章审校
 uv run trans-novel review book.epub
 
-# 4. 一致性 QA
-uv run trans-novel qa book.epub
-
-# 5. 查看进度
+# 4. 查看进度
 uv run trans-novel status book.epub
 ```
 
@@ -120,11 +117,11 @@ uv run trans-novel translate book.epub
 ### 命令行覆盖
 
 ```bash
-uv run trans-novel translate book.epub --polish --review --qa     # 启用全部质量阶段
-uv run trans-novel translate book.epub --no-polish                 # 关闭润色
-uv run trans-novel translate book.epub --bilingual                 # 同时生成双语版
-uv run trans-novel translate book.epub --chapter 0                 # 仅翻译第一章（索引从 0 开始）
-uv run trans-novel translate book.epub --format txt                # 导出为纯文本
+uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
+uv run trans-novel translate book.epub --no-polish                # 关闭润色
+uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
+uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
+uv run trans-novel translate book.epub --format txt               # 导出为纯文本
 ```
 
 最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在全书翻译完成、
@@ -179,8 +176,7 @@ flowchart TD
     N -- 是 --> O[基于同一固定快照<br/>生成临时影子修订]
     O --> K
     N -- 否或达到停止条件 --> P[保存只读问题<br/>与修改建议]
-    P --> L[可选跨章一致性 QA]
-    L --> M[生成报告并组装所选格式]
+    P --> M[生成报告并组装所选格式]
 ```
 
 启用全书理解时，预扫阶段按可配置并发数并行执行，并且幂等可续跑——已完成的梗概会跨运行复用。翻译过程中，每批获得最新的术语快照和已译上下文，确保代词、术语和语气跨章一致。
