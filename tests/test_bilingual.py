@@ -241,7 +241,6 @@ def _config(state_dir: str, output: dict | None = None):
             "review": True,
             "polish": False,
             "backtranslate_sample": 0.0,
-            "consistency_qa": False,
         },
         "paths": {"state_dir": state_dir},
     }
@@ -467,7 +466,6 @@ class TestCliBilingualFlags(unittest.TestCase):
             def run_all(self, input_path, **kwargs):
                 return {
                     "report": {"summary": {"chapters_done": 1, "chapters_total": 1, "terms": 0}},
-                    "qa_issues": [],
                     "output": "novel.zh.epub",
                     "outputs": ["novel.zh.epub", "novel.zh-bi.epub"],
                     "store": FakeStore(),

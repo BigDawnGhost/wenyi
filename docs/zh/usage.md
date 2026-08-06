@@ -125,9 +125,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# 覆盖配置中的润色、最终审校与一致性 QA 开关
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# 覆盖配置中的润色与最终审校开关
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # 同时生成单语和双语版 / 仅生成双语版
 uv run trans-novel translate book.epub --bilingual
@@ -156,7 +156,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -170,5 +169,5 @@ uv run trans-novel assemble book.epub
 `state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
 本书累计 `usage.json`；`report.json` 只保存简短的只读审校摘要。
 
-`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型
-的情况下重新导出已有译文。
+`report` 汇总当前翻译状态和只读 Review 结果，不会修改正文；`assemble` 可在
+不重新调用模型的情况下重新导出已有译文。

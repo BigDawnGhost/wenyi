@@ -127,9 +127,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# Override polishing, final review, and whole-book QA settings
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# Override polishing and final review settings
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # Produce both editions, or only the bilingual edition
 uv run trans-novel translate book.epub --bilingual
@@ -160,7 +160,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -179,5 +178,6 @@ delta, an event stream, and internal round traces to
 to the book's cumulative `usage.json`; `report.json` contains only a compact
 read-only review summary.
 
-`qa` and `report` collect problems without modifying translated text. `assemble`
-rebuilds output from existing state without calling the model again.
+`report` summarizes the current translation and read-only Review result without
+modifying translated text. `assemble` rebuilds output from existing state without
+calling the model again.

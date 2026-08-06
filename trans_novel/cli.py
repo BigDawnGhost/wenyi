@@ -1,7 +1,7 @@
 """命令行入口（Typer + Rich）。
 
 ``translate`` 保持一键完整流程并天然支持断点续跑；``prepare``、``review``、
-``qa``、``report`` 与 ``assemble`` 提供可单独执行的阶段入口。
+``report`` 与 ``assemble`` 提供可单独执行的阶段入口。
 """
 
 from __future__ import annotations
@@ -247,7 +247,6 @@ def _translate_impl(
     pdf_engine: str = "weasyprint",
     polish: bool | None = None,
     review: bool | None = None,
-    qa: bool | None = None,
     mono: bool | None = None,
     bilingual: bool | None = None,
 ) -> None:
@@ -261,7 +260,6 @@ def _translate_impl(
             pdf_engine=pdf_engine,
             polish=polish,
             review=review,
-            qa=qa,
             mono=mono,
             bilingual=bilingual,
         )
@@ -279,7 +277,6 @@ def _translate_impl_or_raise(
     pdf_engine: str = "weasyprint",
     polish: bool | None = None,
     review: bool | None = None,
-    qa: bool | None = None,
     mono: bool | None = None,
     bilingual: bool | None = None,
 ) -> None:
@@ -306,8 +303,6 @@ def _translate_impl_or_raise(
             ignored.append("--out")
         if review is not None:
             ignored.append("--review/--no-review")
-        if qa is not None:
-            ignored.append("--qa/--no-qa")
         if mono is not None:
             ignored.append("--mono/--no-mono")
         if bilingual is not None:
@@ -344,14 +339,12 @@ def _translate_impl_or_raise(
             progress=cb,
             out_format=fmt,
             out_path=out,
-            do_qa=qa,
             pdf_engine=pdf_engine,
         )
 
     s = result["report"]["summary"]
     console.print(
-        f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
-        f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
+        f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，术语 {s['terms']}。"
     )
     _print_usage({"usage": result["store"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
@@ -454,7 +447,7 @@ def translate(
         None,
         "--chapter",
         min=0,
-        help="仅翻译并保存指定章节（从 0 起）；不执行审校、QA、报告和导出",
+        help="仅翻译并保存指定章节（从 0 起）；不执行审校、报告和导出",
     ),
     fmt: str = typer.Option(
         "epub",
@@ -481,11 +474,6 @@ def translate(
         "--review/--no-review",
         help="覆盖 pipeline.review，控制全书翻译后是否执行最终审校",
     ),
-    qa: bool | None = typer.Option(
-        None,
-        "--qa/--no-qa",
-        help="覆盖 pipeline.consistency_qa，控制是否执行跨章一致性扫描",
-    ),
     mono: bool | None = typer.Option(
         None,
         "--mono/--no-mono",
@@ -497,7 +485,7 @@ def translate(
         help="覆盖 output.bilingual，控制是否生成原文译文对照版",
     ),
 ):
-    """一键完成准备、翻译、可选审校/QA、报告和导出；中断后原命令续跑。"""
+    """一键完成准备、翻译、可选审校、报告和导出；中断后原命令续跑。"""
     _translate_impl(
         input,
         chapter=chapter,
@@ -506,7 +494,6 @@ def translate(
         pdf_engine=pdf_engine,
         polish=polish,
         review=review,
-        qa=qa,
         mono=mono,
         bilingual=bilingual,
     )
@@ -746,33 +733,6 @@ def assemble(
         console.print(f"已生成译文：[bold]{path}[/]")
 
 
-@app.command(rich_help_panel="质量检查")
-def qa(
-    input: str = typer.Argument(..., help="已完成翻译的源文件"),
-) -> None:
-    """调用模型执行全书跨章一致性扫描，只报告问题而不修改正文。"""
-    from .agents.consistency import ConsistencyChecker
-    from .glossary.store import GlossaryStore
-    from .llm.factory import build_client
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
-        raise typer.Exit(1)
-    _apply_store_languages(config, store)
-    g = GlossaryStore(store.glossary_path)
-    try:
-        client = build_client(config)
-        client.set_event_sink(store.log_event)
-        issues = ConsistencyChecker(client, config).check(store, g)
-    finally:
-        g.close()
-    console.print(f"一致性问题 {len(issues)} 项：")
-    for it in issues:
-        console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
-
-
 @app.command(rich_help_panel="状态与输出")
 def report(
     input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
@@ -791,7 +751,7 @@ def report(
     g.close()
     store.save_report(rep)
     s = rep["summary"]
-    console.print(f"QA 报告已写入 {store.report_path}")
+    console.print(f"翻译报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
         f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"

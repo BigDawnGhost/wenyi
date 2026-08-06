@@ -8,7 +8,7 @@
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
   glossary.db       术语库 + 译法冲突记录
-  report.json       QA 报告
+  report.json       翻译报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
   reviews/          每次只读全书 Review 的正式结果与逐轮记录
 """
