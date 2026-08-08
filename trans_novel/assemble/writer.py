@@ -1738,6 +1738,34 @@ def _normalize_html_for_fpdf(html: str, *, base_dir: str) -> str:
                 except (ImportError, OSError, AttributeError):
                     natural_width = 0
             image["width"] = str(min(natural_width or 340, 340))
+    # fpdf2's HTML parser assumes every <a> tag has href and raises KeyError
+    # for source books that use anchor tags solely as styling wrappers.
+    for anchor in list(body.find_all("a")):
+        href = anchor.get("href")
+        if not isinstance(href, str) or not href.strip():
+            anchor.unwrap()
+    # fpdf2's table renderer can fail on narrow cells in scanned/manual-style
+    # books ("Not enough horizontal space to render a single character").
+    # Flatten each source table to readable row paragraphs rather than letting
+    # one malformed table abort the entire PDF export.
+    for table in list(body.find_all("table")):
+        rows: list[str] = []
+        for row in table.find_all("tr"):
+            cells = [
+                cell.get_text(" ", strip=True)
+                for cell in row.find_all(["th", "td"], recursive=False)
+            ]
+            cells = [cell for cell in cells if cell]
+            if cells:
+                rows.append(" | ".join(cells))
+        if rows:
+            for row_text in rows:
+                paragraph = soup.new_tag("p")
+                paragraph.string = row_text
+                table.insert_before(paragraph)
+            table.decompose()
+        else:
+            table.unwrap()
     for element in list(body.find_all(["div", "section", "article", "main", "header", "footer"])):
         element.unwrap()
     return body.decode_contents()
