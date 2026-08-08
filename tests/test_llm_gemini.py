@@ -105,14 +105,15 @@ def test_extract_gemini_usage():
 
 def test_is_retryable_gemini_error():
     """测试重试逻辑异常过滤器。"""
-    err_429 = SimpleNamespace(code=429)
-    assert is_retryable_gemini_error(err_429) is True
 
-    err_503 = SimpleNamespace(code=503)
-    assert is_retryable_gemini_error(err_503) is True
+    class GeminiStatusError(Exception):
+        def __init__(self, code: int) -> None:
+            super().__init__(f"Gemini HTTP {code}")
+            self.code = code
 
-    err_400 = SimpleNamespace(code=400)
-    assert is_retryable_gemini_error(err_400) is False
+    assert is_retryable_gemini_error(GeminiStatusError(429)) is True
+    assert is_retryable_gemini_error(GeminiStatusError(503)) is True
+    assert is_retryable_gemini_error(GeminiStatusError(400)) is False
 
     class TimeoutError(Exception):
         pass

@@ -133,7 +133,7 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
     )
 
 
-def is_retryable_gemini_error(exc: Exception) -> bool:
+def is_retryable_gemini_error(exc: BaseException) -> bool:
     """判断是否为可重试的 Gemini 错误（429 限流、5xx 服务端错误或网络超时/连接错误）。"""
     status_code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if status_code is not None:
