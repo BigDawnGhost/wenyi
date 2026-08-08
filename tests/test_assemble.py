@@ -370,6 +370,59 @@ id="ref-1">1</a></sup> world</p></body></html>"""
         self.assertEqual(paragraph.get_text().replace("1", ""), target)
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
+    def test_epub_render_restores_css_superscript_annotation_wrapper(self):
+        target = "巴门尼德留下了一份遗产。"
+        template = """<html><body><p data-tn-id="tn1_0">Parmenides left a legacy.<span
+class="superscript" data-tn-annotation-id="ann-0"><a class="nounder"
+href="intro.html#intronotes_1" id="intronotes1">1</a></span></p></body></html>"""
+        segment = Segment(
+            index=0,
+            source="Parmenides left a legacy.",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": len("Parmenides left a legacy."),
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "point",
+                            "source_start": len("Parmenides left a legacy."),
+                            "source_end": len("Parmenides left a legacy."),
+                            "source_text": "",
+                            "marker_text": "1",
+                        }
+                    ],
+                    "target_digest": hashlib.sha256(target.encode()).hexdigest(),
+                    "placements": [
+                        {
+                            "id": "ann-0",
+                            "target_start": len(target),
+                            "target_end": len(target),
+                            "status": "aligned",
+                            "method": "model",
+                        }
+                    ],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(_render_segments_html(template, [segment]), "html.parser")
+
+        marker = rendered.select_one("span.superscript")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        link = marker.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "intro.html#intronotes_1")
+        self.assertEqual(link.get("id"), "intronotes1")
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text().replace("1", ""), target)
+
     def test_epub_render_restores_range_annotation_around_target_phrase(self):
         source_phrase = "border tunnel"
         target_phrase = "国境隧道"

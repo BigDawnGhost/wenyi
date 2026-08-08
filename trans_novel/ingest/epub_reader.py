@@ -117,12 +117,35 @@ def _is_internal_link(link: Tag) -> bool:
 
 
 def _nearest_marker_wrapper(link: Tag, block: Tag) -> Tag | None:
-    """返回 link 与当前翻译块之间最近的 ``sup``/``sub`` 包装。"""
+    """返回 link 与当前翻译块之间最近的语义上下标包装。
+
+    除原生 ``sup``/``sub`` 外，一些 EPUB 用带明确 class 或内联样式的
+    ``span`` 配合 CSS 实现角标。此处只接受清晰声明上下标的包装，普通
+    ``span`` 仍会按正文处理。
+    """
+
+    def is_marker_wrapper(node: Tag) -> bool:
+        if node.name in {"sup", "sub"}:
+            return True
+        if node.name != "span":
+            return False
+        classes = {
+            str(value).strip().lower()
+            for value in node.get_attribute_list("class")
+            if str(value).strip()
+        }
+        if classes & {"sup", "super", "superscript", "sub", "subscript"}:
+            return True
+        style = node.get("style")
+        return isinstance(style, str) and bool(
+            re.search(r"(?:^|;)\s*vertical-align\s*:\s*(?:super|sub)\b", style, re.IGNORECASE)
+        )
+
     parent = link.parent
     while isinstance(parent, Tag):
         if parent is block:
-            return parent if parent.name in {"sup", "sub"} else None
-        if parent.name in {"sup", "sub"}:
+            return parent if is_marker_wrapper(parent) else None
+        if is_marker_wrapper(parent):
             return parent
         parent = parent.parent
     return None
@@ -142,7 +165,19 @@ def _has_annotation_hint(link: Tag, marker: Tag, marker_text: str) -> bool:
                 attrs.append(str(value))
     hint = " ".join(attrs)
     short_numbered_fragment = bool(re.fullmatch(r"[a-zA-Z]?[\-_]?\d+", parsed.fragment))
-    return decorated or bool(_ANNOTATION_HINT.search(hint)) or short_numbered_fragment
+    numbered_note_fragment = bool(
+        re.search(
+            r"(?:notes?|footnotes?|endnotes?|fn)[\-_]?\d+$",
+            parsed.fragment,
+            re.IGNORECASE,
+        )
+    )
+    return (
+        decorated
+        or bool(_ANNOTATION_HINT.search(hint))
+        or short_numbered_fragment
+        or numbered_note_fragment
+    )
 
 
 def _range_marker_node(link: Tag) -> Tag | None:
