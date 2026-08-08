@@ -58,7 +58,7 @@ llm:
         thinking: false
 ```
 
-`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries only transient transport failures, HTTP 408/409/429, and 5xx responses; each wait is recorded in the book's `events.jsonl`.
+`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries transient transport failures, HTTP 408/409/429 and 5xx responses, plus empty model responses; each wait is recorded in the book's `events.jsonl`.
 
 Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
 
@@ -137,6 +137,18 @@ llm:
 - `openai`: `reasoning_effort`, with `none` sent when reasoning is disabled
 - `openrouter`: `reasoning.effort`, with `reasoning.enabled: false` sent when disabled
 - `none`: no conversion, for endpoints that rely on model defaults or custom request fields
+
+By default Wenyi trusts only the standard `content` response field and retries an empty response. Set `json_response_fallback: reasoning_content` on each applicable tier only for endpoints known to place the final JSON answer in `reasoning_content`; Wenyi then accepts that field only when it contains one complete JSON value.
+
+```yaml
+llm:
+  provider: openai-compatible
+  tiers:
+    strong:
+      model: provider-model-name
+      options:
+        json_response_fallback: reasoning_content
+```
 
 `request_overrides` is an escape hatch for provider-specific fields that Wenyi does not know about. Its contents are merged recursively into the raw top-level request body after the selected reasoning dialect is generated. For example, an endpoint using `enable_thinking: true` can be configured as follows:
 

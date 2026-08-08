@@ -59,7 +59,7 @@ llm:
         thinking: false
 ```
 
-`max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；仅连接/超时、HTTP 408/409/429 和 5xx 等瞬时错误会重试，每次等待都会写入本书的 `events.jsonl`。
+`max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；连接/超时、HTTP 408/409/429、5xx 瞬时错误以及模型空响应会重试，每次等待都会写入本书的 `events.jsonl`。
 
 用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
 运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
@@ -141,6 +141,21 @@ llm:
 - `openai`：`reasoning_effort`，关闭时发送 `none`；
 - `openrouter`：`reasoning.effort`，关闭时发送 `reasoning.enabled: false`；
 - `none`：不转换，适合依赖模型默认行为或使用自定义请求字段。
+
+默认情况下，Wenyi 只信任标准 `content` 字段，并对空响应发起重试。只有
+确认端点会把最终 JSON 放进 `reasoning_content` 时，才应在实际使用的每个
+档位设置 `json_response_fallback: reasoning_content`；启用后也只接受完整、
+合法的单个 JSON 值。
+
+```yaml
+llm:
+  provider: openai-compatible
+  tiers:
+    strong:
+      model: provider-model-name
+      options:
+        json_response_fallback: reasoning_content
+```
 
 `request_overrides` 是未知中转协议的兜底入口，其内容会作为原始顶层请求体
 字段发送，并在方言生成的字段之后递归合并。例如中转站使用

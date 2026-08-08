@@ -26,6 +26,10 @@ _MAX_WAIT_SECONDS = 30.0
 _FALLBACK_WAIT = wait_random_exponential(multiplier=1, max=_MAX_WAIT_SECONDS)
 
 
+class EmptyResponseError(RuntimeError):
+    """模型未在标准响应字段返回任何可用文字。"""
+
+
 def _exception_chain(error: Any) -> Iterator[Any]:
     """沿异常因果链迭代，并防止异常链中的循环引用。"""
     current = error
@@ -110,6 +114,9 @@ def retry_reason(error: Any) -> str | None:
         return None
 
     chain = list(_exception_chain(error))
+    if any(isinstance(item, EmptyResponseError) for item in chain):
+        return "empty_response"
+
     permanent_types = (
         httpx.InvalidURL,
         httpx.LocalProtocolError,
@@ -281,6 +288,7 @@ def provider_retry(max_retries: int, reporter: RetryReporter):
 
 
 __all__ = [
+    "EmptyResponseError",
     "RetryReporter",
     "error_status_code",
     "is_retryable_provider_error",
