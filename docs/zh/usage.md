@@ -19,6 +19,9 @@ uv run trans-novel translate book.epub
 
 ## Windows
 
+Windows Release 提供 `wenyi-windows-x64.zip`，运行前请使用
+`SHA256SUMS.txt` 校验文件。
+
 使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
 
 ```powershell
@@ -34,6 +37,35 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 也可把 `language.source` 设为已知的语言代码，避免调用模型自动识别源语言。
+
+## Linux
+
+Release 提供 `wenyi-linux-x64.tar.gz` 和 `wenyi-linux-arm64.tar.gz`。请下载与
+处理器架构匹配的压缩包，使用 `SHA256SUMS.txt` 校验后执行：
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # x64 系统请改用 wenyi-linux-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+## macOS
+
+Release 分别提供适用于 Apple Silicon 的 `wenyi-macos-arm64.tar.gz` 和适用于
+Intel Mac 的 `wenyi-macos-x64.tar.gz` 终端程序。下载与处理器匹配的压缩包，先用
+`SHA256SUMS.txt` 核对文件，再执行：
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # Intel Mac 请改用 wenyi-macos-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+这些命令行程序由 PyInstaller 做 ad-hoc 签名，但没有使用 Apple 开发者证书完成
+notarization。macOS 仍可能隔离下载的程序；确认校验和无误后，如系统提示拦截，
+可在 **系统设置 → 隐私与安全性** 中批准运行。
 
 ## 输入与输出
 
@@ -93,9 +125,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# 覆盖配置中的润色、最终审校与一致性 QA 开关
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# 覆盖配置中的润色与最终审校开关
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # 同时生成单语和双语版 / 仅生成双语版
 uv run trans-novel translate book.epub --bilingual
@@ -124,7 +156,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -138,5 +169,5 @@ uv run trans-novel assemble book.epub
 `state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
 本书累计 `usage.json`；`report.json` 只保存简短的只读审校摘要。
 
-`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型
-的情况下重新导出已有译文。
+`report` 汇总当前翻译状态和只读 Review 结果，不会修改正文；`assemble` 可在
+不重新调用模型的情况下重新导出已有译文。

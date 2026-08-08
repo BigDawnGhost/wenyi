@@ -221,6 +221,8 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
             _make_response('{"translations":["正确响应"]}', None),
         ]
         stub = _ClientStub(responses)
+        events: list[dict[str, Any]] = []
+        client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
 
         with patch.object(client, "_ensure_client", return_value=stub):
             self.assertEqual(
@@ -231,6 +233,8 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 '{"translations":["正确响应"]}',
             )
         self.assertEqual(stub.chat.completions._idx, 2)
+        self.assertEqual([event["event"] for event in events], ["llm_retry_wait"])
+        self.assertEqual(events[0]["reason"], "empty_response")
 
     def test_json_mode_prefers_content_when_both_fields_exist(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient

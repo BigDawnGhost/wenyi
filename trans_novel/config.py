@@ -53,10 +53,10 @@ pipeline:
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
-  consistency_qa: false # 全书跨章一致性收尾扫描
   rolling_context_segments: 6 # 注入的前文译文尾段数
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
+  annotation_alignment: true # 逐段定位 EPUB 注释链接；关闭时仅译文侧退化为段末标记
   review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
   review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
   review_agent_loop: true # 初审发现候选后，使用强档按需取证并复核
@@ -123,12 +123,12 @@ class PipelineConfig(BaseModel):
     align_retry_limit: int = 2  # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
     polish: bool = True  # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
     backtranslate_sample: float = 0.0
-    consistency_qa: bool = False
     rolling_context_segments: int = 6
     # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
     book_understanding: bool = True
     prescan_concurrency: int = 4  # 预扫逐章梗概的并发线程数（各章独立，1=串行）
+    annotation_alignment: bool = True  # 每个含注释逻辑段定稿后串行定位链接
     review_concurrency: int = 4  # 最终审校连续分块并发数（结果按原块序合并，1=串行）
     review_output_retries: int = Field(
         default=2,

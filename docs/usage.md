@@ -20,6 +20,9 @@ Whenever the program starts, it checks for `config.yaml` in the current director
 
 ## Windows
 
+Windows releases provide `wenyi-windows-x64.zip`. Verify the archive against
+`SHA256SUMS.txt` before running it.
+
 When using a packaged `wenyi.exe`, set the API key in PowerShell:
 
 ```powershell
@@ -35,6 +38,35 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 You may also set `language.source` to a known ISO language code to avoid an additional model call for language detection.
+
+## Linux
+
+Releases provide `wenyi-linux-x64.tar.gz` and `wenyi-linux-arm64.tar.gz`. Download
+the archive matching your processor, verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # use wenyi-linux-x64.tar.gz on x64 systems
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+## macOS
+
+Releases provide separate terminal executables for Apple Silicon (`wenyi-macos-arm64.tar.gz`)
+and Intel (`wenyi-macos-x64.tar.gz`) Macs. Download the archive matching your processor,
+verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # use wenyi-macos-x64.tar.gz on Intel Macs
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+These command-line executables are ad-hoc signed by PyInstaller but are not notarized with an
+Apple Developer certificate. macOS may quarantine a downloaded build; after verifying the
+checksum, approve it in **System Settings → Privacy & Security** if prompted.
 
 ## Input and output
 
@@ -95,9 +127,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# Override polishing, final review, and whole-book QA settings
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# Override polishing and final review settings
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # Produce both editions, or only the bilingual edition
 uv run trans-novel translate book.epub --bilingual
@@ -128,7 +160,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -147,5 +178,6 @@ delta, an event stream, and internal round traces to
 to the book's cumulative `usage.json`; `report.json` contains only a compact
 read-only review summary.
 
-`qa` and `report` collect problems without modifying translated text. `assemble`
-rebuilds output from existing state without calling the model again.
+`report` summarizes the current translation and read-only Review result without
+modifying translated text. `assemble` rebuilds output from existing state without
+calling the model again.

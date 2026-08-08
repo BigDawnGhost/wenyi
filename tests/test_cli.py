@@ -99,7 +99,7 @@ class TestCliConfig(unittest.TestCase):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"polish": True, "consistency_qa": False},
+                "pipeline": {"polish": True},
             }
         )
         captured = {}
@@ -119,8 +119,6 @@ class TestCliConfig(unittest.TestCase):
                             "terms": 0,
                         }
                     },
-                    "audit": [],
-                    "qa_issues": [],
                     "output": "out.epub",
                     "store": FakeStore(),
                 }
@@ -135,13 +133,12 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["polish"])
         self.assertFalse(captured["review"])
-        self.assertIsNone(captured["run_all"]["do_qa"])
 
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
-                "pipeline": {"polish": True, "consistency_qa": False},
+                "pipeline": {"polish": True},
             }
         )
         captured = {}
@@ -161,8 +158,6 @@ class TestCliConfig(unittest.TestCase):
                             "terms": 0,
                         }
                     },
-                    "audit": [],
-                    "qa_issues": [],
                     "output": "out.epub",
                     "store": FakeStore(),
                 }
@@ -179,14 +174,12 @@ class TestCliConfig(unittest.TestCase):
                     "input.txt",
                     "--no-polish",
                     "--review",
-                    "--qa",
                 ],
             )
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertFalse(captured["polish"])
         self.assertTrue(captured["review"])
-        self.assertTrue(captured["run_all"]["do_qa"])
 
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
@@ -248,12 +241,12 @@ class TestCliConfig(unittest.TestCase):
         ):
             result = CliRunner().invoke(
                 app,
-                ["translate", "input.txt", "--chapter", "0", "--qa"],
+                ["translate", "input.txt", "--chapter", "0", "--review"],
             )
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("--chapter 只翻译并保存指定章节", result.output)
-        self.assertIn("--qa/--no-qa", result.output)
+        self.assertIn("--review/--no-review", result.output)
 
     def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
         result = CliRunner().invoke(app, ["--help"])
@@ -263,7 +256,6 @@ class TestCliConfig(unittest.TestCase):
             "translate",
             "prepare",
             "review",
-            "qa",
             "report",
             "assemble",
             "status",
@@ -286,7 +278,6 @@ class TestCliConfig(unittest.TestCase):
             "translate",
             "prepare",
             "review",
-            "qa",
         ):
             with self.subTest(command=command):
                 with patch(
