@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +24,7 @@ class OpenAICompatibleTierOptions(BaseModel):
 
     thinking: bool = False
     reasoning_effort: str = "high"
+    json_response_fallback: Literal["none", "reasoning_content"] = "none"
     request_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -98,6 +99,17 @@ class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleTierOpti
             tiers=tiers,
             requires_api_key=requires_api_key,
         )
+
+    def _json_response_fallback(
+        self,
+        tier_config: ResolvedTier[OpenAICompatibleTierOptions],
+        message: Any,
+    ) -> str | None:
+        """仅按档位显式配置读取非标准 ``reasoning_content`` JSON。"""
+        if tier_config.options.json_response_fallback != "reasoning_content":
+            return None
+        value = getattr(message, "reasoning_content", None)
+        return value if isinstance(value, str) else None
 
     def _build_request_kwargs(
         self,

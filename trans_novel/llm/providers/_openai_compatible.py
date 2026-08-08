@@ -31,6 +31,10 @@ OptionsT = TypeVar("OptionsT", bound=BaseModel)
 _JSON_MODE_INSTRUCTION = "Output must be valid json."
 
 
+class EmptyResponseError(RuntimeError):
+    """兼容端点未在标准 ``content`` 字段返回任何可用文字。"""
+
+
 @dataclass(frozen=True)
 class ResolvedTier(Generic[OptionsT]):
     """provider 已补全并校验的运行时档位。"""
@@ -195,6 +199,14 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         """标准 OpenAI 兼容响应默认使用嵌套缓存明细。"""
         return normalize_openai_usage(usage)
 
+    def _json_response_fallback(
+        self,
+        tier_config: ResolvedTier[OptionsT],
+        message: Any,
+    ) -> str | None:
+        """返回显式启用的 JSON 响应备用字段；默认不信任任何非标准字段。"""
+        return None
+
     @abstractmethod
     def _build_request_kwargs(
         self,
@@ -239,18 +251,21 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
             self.usage.record(tier, sample, stage)
             choice = response.choices[0]
             message = choice.message
-            content = message.content or ""
-            if json_mode and not content:
+            raw_content = getattr(message, "content", None)
+            content = raw_content if isinstance(raw_content, str) else ""
+            if not content.strip():
                 if str(getattr(choice, "finish_reason", "")).lower() == "length":
                     raise RuntimeError("OpenAI-compatible 响应因达到 token 上限而截断")
-                reasoning_content = getattr(message, "reasoning_content", None)
+                fallback = self._json_response_fallback(tier_config, message) if json_mode else None
+                if fallback is None or not fallback.strip():
+                    raise EmptyResponseError(f"{self.provider_name} 响应的 content 为空")
                 try:
-                    json.loads(reasoning_content)
-                except (TypeError, json.JSONDecodeError) as error:
-                    raise RuntimeError(
-                        "OpenAI-compatible json_mode 响应的 reasoning_content 不是合法 JSON"
+                    json.loads(fallback)
+                except json.JSONDecodeError as error:
+                    raise EmptyResponseError(
+                        f"{self.provider_name} 配置的 JSON 备用响应不是合法 JSON"
                     ) from error
-                content = reasoning_content
+                content = fallback
             return content
 
         return _call()

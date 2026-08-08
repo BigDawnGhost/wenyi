@@ -16,7 +16,10 @@ from tests.sample_data import write_sample_txt
 from trans_novel.agents.base import Agent
 from trans_novel.config import Config, LLMConfig, TierConfig
 from trans_novel.llm.factory import build_client
-from trans_novel.llm.providers._openai_compatible import normalize_openai_usage
+from trans_novel.llm.providers._openai_compatible import (
+    EmptyResponseError,
+    normalize_openai_usage,
+)
 from trans_novel.llm.providers.deepseek import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
@@ -106,12 +109,17 @@ def _minimal_deepseek_cfg() -> LLMConfig:
     )
 
 
-def _minimal_openai_compatible_cfg() -> LLMConfig:
+def _minimal_openai_compatible_cfg(
+    *,
+    max_retries: int = 0,
+    reasoning_fallback: bool = False,
+) -> LLMConfig:
+    options = {"json_response_fallback": "reasoning_content"} if reasoning_fallback else {}
     return LLMConfig(
         provider="openai-compatible",
         base_url="x",
-        max_retries=0,
-        tiers={"strong": TierConfig(model="m")},
+        max_retries=max_retries,
+        tiers={"strong": TierConfig(model="m", options=options)},
     )
 
 
@@ -120,7 +128,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
 
         reasoning_content = '{"translations":["译文"]}'
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -142,7 +150,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         reasoning_content = (
             '示例：{"translations":["翻译后的中文"]}\n最终输出：{"translations":["越过山口……"]}'
         )
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -150,7 +158,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         )
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
-            with self.assertRaisesRegex(RuntimeError, "reasoning_content.*合法 JSON"):
+            with self.assertRaisesRegex(EmptyResponseError, "备用响应不是合法 JSON"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}],
                 )
@@ -158,7 +166,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
     def test_complete_json_rejects_reasoning_content_after_length_finish(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
 
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -172,10 +180,10 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                     [{"role": "user", "content": "translate"}],
                 )
 
-    def test_plain_mode_does_not_fall_back_to_reasoning_content(self):
+    def test_plain_mode_retries_empty_content_instead_of_using_reasoning(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
 
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -183,18 +191,52 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         )
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            with self.assertRaisesRegex(EmptyResponseError, "content 为空"):
+                client.complete(
+                    [{"role": "user", "content": "translate"}],
+                )
+
+    def test_enabled_json_fallback_retries_when_reasoning_content_is_blank(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        response = _make_response("", None, reasoning_content=" \n ")
+
+        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+            with self.assertRaisesRegex(EmptyResponseError, "content 为空"):
+                client.complete_json(
+                    [{"role": "user", "content": "translate"}],
+                )
+
+    def test_default_json_mode_retries_empty_content_without_reading_reasoning(self):
+        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
+
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(max_retries=1))
+        responses = [
+            _make_response(
+                " \n ",
+                None,
+                reasoning_content='{"translations":["错误的推理内容"]}',
+            ),
+            _make_response('{"translations":["正确响应"]}', None),
+        ]
+        stub = _ClientStub(responses)
+
+        with patch.object(client, "_ensure_client", return_value=stub):
             self.assertEqual(
                 client.complete(
                     [{"role": "user", "content": "translate"}],
+                    json_mode=True,
                 ),
-                "",
+                '{"translations":["正确响应"]}',
             )
+        self.assertEqual(stub.chat.completions._idx, 2)
 
     def test_json_mode_prefers_content_when_both_fields_exist(self):
         from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
 
         content = '{"translations":["content"]}'
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg())
+        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             content,
             None,

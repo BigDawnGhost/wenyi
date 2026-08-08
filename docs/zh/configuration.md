@@ -140,6 +140,21 @@ llm:
 - `openrouter`：`reasoning.effort`，关闭时发送 `reasoning.enabled: false`；
 - `none`：不转换，适合依赖模型默认行为或使用自定义请求字段。
 
+默认情况下，Wenyi 只信任标准 `content` 字段，并对空响应发起重试。只有
+确认端点会把最终 JSON 放进 `reasoning_content` 时，才应在实际使用的每个
+档位设置 `json_response_fallback: reasoning_content`；启用后也只接受完整、
+合法的单个 JSON 值。
+
+```yaml
+llm:
+  provider: openai-compatible
+  tiers:
+    strong:
+      model: provider-model-name
+      options:
+        json_response_fallback: reasoning_content
+```
+
 `request_overrides` 是未知中转协议的兜底入口，其内容会作为原始顶层请求体
 字段发送，并在方言生成的字段之后递归合并。例如中转站使用
 `enable_thinking: true` 时可以这样配置：
