@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 import unittest
@@ -370,6 +369,59 @@ id="ref-1">1</a></sup> world</p></body></html>"""
         self.assertEqual(reference_parent.name, "sup")
         self.assertEqual(paragraph.get_text().replace("1", ""), target)
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_epub_render_restores_css_superscript_annotation_wrapper(self):
+        target = "巴门尼德留下了一份遗产。"
+        template = """<html><body><p data-tn-id="tn1_0">Parmenides left a legacy.<span
+class="superscript" data-tn-annotation-id="ann-0"><a class="nounder"
+href="intro.html#intronotes_1" id="intronotes1">1</a></span></p></body></html>"""
+        segment = Segment(
+            index=0,
+            source="Parmenides left a legacy.",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": len("Parmenides left a legacy."),
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "point",
+                            "source_start": len("Parmenides left a legacy."),
+                            "source_end": len("Parmenides left a legacy."),
+                            "source_text": "",
+                            "marker_text": "1",
+                        }
+                    ],
+                    "target_digest": hashlib.sha256(target.encode()).hexdigest(),
+                    "placements": [
+                        {
+                            "id": "ann-0",
+                            "target_start": len(target),
+                            "target_end": len(target),
+                            "status": "aligned",
+                            "method": "model",
+                        }
+                    ],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(_render_segments_html(template, [segment]), "html.parser")
+
+        marker = rendered.select_one("span.superscript")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        link = marker.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "intro.html#intronotes_1")
+        self.assertEqual(link.get("id"), "intronotes1")
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text().replace("1", ""), target)
 
     def test_epub_render_restores_range_annotation_around_target_phrase(self):
         source_phrase = "border tunnel"
@@ -1350,39 +1402,6 @@ class TestReport(unittest.TestCase):
             self.assertNotIn("low_confidence_terms", report)
             self.assertNotIn("chapters_reviewed", s)
             self.assertNotIn("review_issues", report)
-
-
-class TestConsistency(unittest.TestCase):
-    def test_consistency_reports_issues(self):
-        from trans_novel.agents.consistency import ConsistencyChecker
-
-        with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt")
-            write_sample_txt(txt)
-            store, cfg = _run(txt, os.path.join(d, "state"))
-
-            def handler(messages, tier, json_mode):
-                if "一致性审查员" in messages[0]["content"]:
-                    return json.dumps(
-                        {
-                            "issues": [
-                                {
-                                    "type": "terminology",
-                                    "detail": "X 译法不一致",
-                                    "where": "第1章",
-                                }
-                            ]
-                        },
-                        ensure_ascii=False,
-                    )
-                return "{}"
-
-            g = GlossaryStore(store.glossary_path)
-            checker = ConsistencyChecker(FakeClient(handler=handler), cfg)
-            issues = checker.check(store, g)
-            g.close()
-            self.assertEqual(len(issues), 1)
-            self.assertEqual(issues[0]["type"], "terminology")
 
 
 if __name__ == "__main__":

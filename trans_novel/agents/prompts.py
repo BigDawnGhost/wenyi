@@ -380,12 +380,6 @@ $numbered_target
 输出 JSON：{"backtranslations":[...]}。\
 """)
 
-CONSISTENCY_SYSTEM = Template("""\
-你是全书一致性审查员。给定专有名词对照表和若干章节译文摘要，检查：
-术语译法是否前后统一、同一人物代词性别是否一致、语气文体是否漂移、标点是否统一为简体中文规范。
-仅输出 JSON：{"issues":[{"type":"terminology/pronoun/tone/punctuation","detail":"...","where":"章节线索"}]}。\
-""")
-
 CHAPTER_DIGEST_SYSTEM = Template("""\
 你是小说章节梗概员。阅读给定的$src_label单章原文，用简体中文写出该章梗概（不超过 200 字）：
 交代本章关键情节推进、登场人物及其处境、重要信息或转折，去除细枝末节。只输出梗概正文，不要解释。\
@@ -438,7 +432,6 @@ _DEFAULTS = {
     "glossary_history_user": GLOSSARY_HISTORY_USER,
     "backtranslate_system": BACKTRANSLATE_SYSTEM,
     "backtranslate_user": BACKTRANSLATE_USER,
-    "consistency_system": CONSISTENCY_SYSTEM,
     "chapter_digest_system": CHAPTER_DIGEST_SYSTEM,
     "chapter_digest_user": CHAPTER_DIGEST_USER,
     "book_synopsis_system": BOOK_SYNOPSIS_SYSTEM,

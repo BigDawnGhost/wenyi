@@ -1,7 +1,7 @@
 """命令行入口（Typer + Rich）。
 
 ``translate`` 保持一键完整流程并天然支持断点续跑；``prepare``、``review``、
-``qa``、``report`` 与 ``assemble`` 提供可单独执行的阶段入口。
+``report`` 与 ``assemble`` 提供可单独执行的阶段入口。
 """
 
 from __future__ import annotations
@@ -221,10 +221,24 @@ def _runstore_for(config: Config, input_path: str) -> RunStore:
     if os.path.splitext(input_path)[1].lower() == ".pdf":
         title = os.path.splitext(os.path.basename(input_path))[0]
         run_dir = os.path.join(config.state_dir, slugify(title))
-        return RunStore(run_dir, create=False)
-    doc = load_document(input_path, config.source_lang, config.target_lang)
-    run_dir = os.path.join(config.state_dir, slugify(doc.title))
-    return RunStore(run_dir, create=False)
+        store = RunStore(run_dir, create=False)
+    else:
+        doc = load_document(input_path, config.source_lang, config.target_lang)
+        run_dir = os.path.join(config.state_dir, slugify(doc.title))
+        store = RunStore(run_dir, create=False)
+    if store.exists():
+        with store.lock():
+            store.ensure_source_identity(input_path)
+    return store
+
+
+def _runstore_for_cli(config: Config, input_path: str) -> RunStore:
+    """为状态类 CLI 定位状态，并把身份错误转换为简洁提示。"""
+    try:
+        return _runstore_for(config, input_path)
+    except (IngestError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
 
 
 def _apply_store_languages(config: Config, store: _ManifestStore) -> None:
@@ -247,7 +261,6 @@ def _translate_impl(
     pdf_engine: str = "weasyprint",
     polish: bool | None = None,
     review: bool | None = None,
-    qa: bool | None = None,
     mono: bool | None = None,
     bilingual: bool | None = None,
 ) -> None:
@@ -261,7 +274,6 @@ def _translate_impl(
             pdf_engine=pdf_engine,
             polish=polish,
             review=review,
-            qa=qa,
             mono=mono,
             bilingual=bilingual,
         )
@@ -279,7 +291,6 @@ def _translate_impl_or_raise(
     pdf_engine: str = "weasyprint",
     polish: bool | None = None,
     review: bool | None = None,
-    qa: bool | None = None,
     mono: bool | None = None,
     bilingual: bool | None = None,
 ) -> None:
@@ -306,8 +317,6 @@ def _translate_impl_or_raise(
             ignored.append("--out")
         if review is not None:
             ignored.append("--review/--no-review")
-        if qa is not None:
-            ignored.append("--qa/--no-qa")
         if mono is not None:
             ignored.append("--mono/--no-mono")
         if bilingual is not None:
@@ -344,14 +353,12 @@ def _translate_impl_or_raise(
             progress=cb,
             out_format=fmt,
             out_path=out,
-            do_qa=qa,
             pdf_engine=pdf_engine,
         )
 
     s = result["report"]["summary"]
     console.print(
-        f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，"
-        f"术语 {s['terms']}，一致性问题 {len(result['qa_issues'])} 项。"
+        f"[bold green]完成[/]：{s['chapters_done']}/{s['chapters_total']} 章，术语 {s['terms']}。"
     )
     _print_usage({"usage": result["store"].load_usage() or {}})
     for path in result.get("outputs") or [result["output"]]:
@@ -454,7 +461,7 @@ def translate(
         None,
         "--chapter",
         min=0,
-        help="仅翻译并保存指定章节（从 0 起）；不执行审校、QA、报告和导出",
+        help="仅翻译并保存指定章节（从 0 起）；不执行审校、报告和导出",
     ),
     fmt: str = typer.Option(
         "epub",
@@ -481,11 +488,6 @@ def translate(
         "--review/--no-review",
         help="覆盖 pipeline.review，控制全书翻译后是否执行最终审校",
     ),
-    qa: bool | None = typer.Option(
-        None,
-        "--qa/--no-qa",
-        help="覆盖 pipeline.consistency_qa，控制是否执行跨章一致性扫描",
-    ),
     mono: bool | None = typer.Option(
         None,
         "--mono/--no-mono",
@@ -497,7 +499,7 @@ def translate(
         help="覆盖 output.bilingual，控制是否生成原文译文对照版",
     ),
 ):
-    """一键完成准备、翻译、可选审校/QA、报告和导出；中断后原命令续跑。"""
+    """一键完成准备、翻译、可选审校、报告和导出；中断后原命令续跑。"""
     _translate_impl(
         input,
         chapter=chapter,
@@ -506,7 +508,6 @@ def translate(
         pdf_engine=pdf_engine,
         polish=polish,
         review=review,
-        qa=qa,
         mono=mono,
         bilingual=bilingual,
     )
@@ -569,7 +570,7 @@ def status(
     from .glossary.store import GlossaryStore
 
     config = _load_config()
-    store = _runstore_for(config, input)
+    store = _runstore_for_cli(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
@@ -598,7 +599,7 @@ def glossary_list(
     from .glossary.store import GlossaryStore
 
     config = _load_config()
-    store = _runstore_for(config, input)
+    store = _runstore_for_cli(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
         raise typer.Exit(1)
@@ -625,7 +626,7 @@ def glossary_conflicts(
     from .glossary.store import GlossaryStore
 
     config = _load_config()
-    store = _runstore_for(config, input)
+    store = _runstore_for_cli(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 translate 或 prepare。[/]")
         raise typer.Exit(1)
@@ -656,7 +657,7 @@ def glossary_resolve(
     from .glossary.store import GlossaryStore
 
     config = _load_config()
-    store = _runstore_for(config, input)
+    store = _runstore_for_cli(config, input)
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 translate 或 prepare。[/]")
         raise typer.Exit(1)
@@ -700,77 +701,30 @@ def assemble(
     ),
 ):
     """从已有状态重新生成译文文件，不调用模型或重新翻译。"""
-    from .assemble.writer import assemble as do_assemble
-    from .assemble.writer import bilingual_out_path
+    from .llm.providers.fake import FakeClient
+    from .pipeline.orchestrator import Orchestrator
 
     config = _load_config()
     fmt = _validate_output_format(fmt)
     pdf_engine = _validate_pdf_engine(pdf_engine)
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
-        raise typer.Exit(1)
-    do_mono = config.output.mono if mono is None else mono
-    do_bilingual = config.output.bilingual if bilingual is None else bilingual
-    if not do_mono and not do_bilingual:
-        do_mono = True  # 兜底：至少产一个单语产物
-    paths: list[str] = []
-    if do_mono:
-        paths.append(
-            do_assemble(
-                store,
-                input,
-                out_path=out,
-                out_format=fmt,
-                bilingual=False,
-                about_page=config.output.about_page,
-                pdf_engine=pdf_engine,
-            )
+    _require_input_file(input)
+    if mono is not None:
+        config.output.mono = mono
+    if bilingual is not None:
+        config.output.bilingual = bilingual
+    try:
+        result = Orchestrator(config, client=FakeClient()).run_assemble(
+            input,
+            out_format=fmt,
+            out_path=out,
+            pdf_engine=pdf_engine,
         )
-    if do_bilingual:
-        bi_out = bilingual_out_path(out) if out else None
-        paths.append(
-            do_assemble(
-                store,
-                input,
-                out_path=bi_out,
-                out_format=fmt,
-                bilingual=True,
-                order=config.output.bilingual_order,
-                preserve_source_style=(config.output.bilingual_preserve_source_style),
-                about_page=config.output.about_page,
-                pdf_engine=pdf_engine,
-            )
-        )
+    except (IngestError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
+    paths = result["outputs"]
     for path in paths:
         console.print(f"已生成译文：[bold]{path}[/]")
-
-
-@app.command(rich_help_panel="质量检查")
-def qa(
-    input: str = typer.Argument(..., help="已完成翻译的源文件"),
-) -> None:
-    """调用模型执行全书跨章一致性扫描，只报告问题而不修改正文。"""
-    from .agents.consistency import ConsistencyChecker
-    from .glossary.store import GlossaryStore
-    from .llm.factory import build_client
-
-    config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
-        raise typer.Exit(1)
-    _apply_store_languages(config, store)
-    g = GlossaryStore(store.glossary_path)
-    try:
-        client = build_client(config)
-        client.set_event_sink(store.log_event)
-        issues = ConsistencyChecker(client, config).check(store, g)
-    finally:
-        g.close()
-    console.print(f"一致性问题 {len(issues)} 项：")
-    for it in issues:
-        console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
 
 
 @app.command(rich_help_panel="状态与输出")
@@ -778,20 +732,20 @@ def report(
     input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
 ) -> None:
     """根据当前章节和术语状态重新生成 report.json，不调用模型。"""
-    from .assemble.report import build_report
-    from .glossary.store import GlossaryStore
+    from .llm.providers.fake import FakeClient
+    from .pipeline.orchestrator import Orchestrator
 
     config = _load_config()
-    store = _runstore_for(config, input)
-    if not store.exists():
-        console.print("[yellow]尚无进度。先运行 prepare 或 translate。[/]")
-        raise typer.Exit(1)
-    g = GlossaryStore(store.glossary_path)
-    rep = build_report(store, g)
-    g.close()
-    store.save_report(rep)
+    _require_input_file(input)
+    try:
+        result = Orchestrator(config, client=FakeClient()).run_report(input)
+    except (IngestError, OSError, ValueError) as error:
+        console.print(f"[red]错误：{error}[/]")
+        raise typer.Exit(1) from None
+    store = result["store"]
+    rep = result["report"]
     s = rep["summary"]
-    console.print(f"QA 报告已写入 {store.report_path}")
+    console.print(f"翻译报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
         f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"

@@ -15,7 +15,11 @@ from openai import APIConnectionError, APITimeoutError
 
 from trans_novel.config import Config, LLMConfig, TierConfig
 from trans_novel.llm.providers.deepseek import DeepSeekClient
-from trans_novel.llm.retrying import is_retryable_provider_error, retry_reason
+from trans_novel.llm.retrying import (
+    EmptyResponseError,
+    is_retryable_provider_error,
+    retry_reason,
+)
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
@@ -95,6 +99,13 @@ def test_only_transient_transport_errors_are_retryable():
     assert retry_reason(httpx.UnsupportedProtocol("bad scheme")) is None
     assert retry_reason(httpx.InvalidURL("bad url")) is None
     assert retry_reason(RuntimeError("application failure")) is None
+
+
+def test_empty_model_response_is_retryable():
+    error = EmptyResponseError("content is empty")
+
+    assert is_retryable_provider_error(error)
+    assert retry_reason(error) == "empty_response"
 
 
 def test_openai_sdk_retry_is_disabled():

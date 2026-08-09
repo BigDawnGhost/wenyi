@@ -421,6 +421,60 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(link.get("id"), "jpref1")
         self.assertNotIn("epub_inline", segments[0].meta)
 
+    def test_epub_css_superscript_annotation_preserves_wrapper(self):
+        html = """<html><body><p>Parmenides left a legacy.<span
+        class="superscript"><a class="nounder" href="intro.html#intronotes_1"
+        id="intronotes1">1</a></span></p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "intro.html")
+
+        self.assertEqual(segments[0].source, "Parmenides left a legacy.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "point")
+        self.assertEqual(item["source_start"], len(segments[0].source))
+        self.assertEqual(item["source_end"], len(segments[0].source))
+        self.assertEqual(item["marker_text"], "1")
+        rendered = BeautifulSoup(template, "html.parser")
+        marker = rendered.select_one("span.superscript[data-tn-annotation-id]")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        link = marker.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "intro.html#intronotes_1")
+        self.assertEqual(link.get("id"), "intronotes1")
+
+    def test_epub_note_backlink_number_is_excluded_from_note_body(self):
+        html = """<html><body><p><a class="nounder"
+        href="intro.html#intronotes33" id="intronotes_33">33</a>
+        The word “things” prejudges the question.</p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "intro.html")
+
+        self.assertEqual(segments[0].source, "The word “things” prejudges the question.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "point")
+        self.assertEqual(item["source_start"], 0)
+        self.assertEqual(item["source_end"], 0)
+        self.assertEqual(item["marker_text"], "33")
+        rendered = BeautifulSoup(template, "html.parser")
+        marker = rendered.select_one("a[data-tn-annotation-id]")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        self.assertEqual(marker.get("href"), "intro.html#intronotes33")
+        self.assertEqual(marker.get("id"), "intronotes_33")
+
+    def test_epub_plain_number_link_is_not_treated_as_note_marker(self):
+        html = '<html><body><p>See <a href="#section33">33</a> for details.</p></body></html>'
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "See 33 for details.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "range")
+        self.assertEqual(item["source_text"], "33")
+        self.assertEqual(item["marker_text"], "")
+
     def test_epub_range_annotation_keeps_phrase_but_excludes_marker(self):
         html = """<html><body><p><a id="ref-1" href="#note-1">国境の長いトンネル
         <sup id="mark-1">〔＊１〕</sup></a>を抜けると雪国であった。</p></body></html>"""

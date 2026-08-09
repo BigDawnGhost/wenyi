@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from abc import abstractmethod
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 
 from ...config import LLMConfig, TierConfig
 from ..base import LLMClient, Messages
-from ..retrying import RetryReporter, provider_retry
+from ..retrying import EmptyResponseError, RetryReporter, provider_retry
 from ..tiers import resolve_tier
 from ..usage import (
     UsageSample,
@@ -191,6 +192,14 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         """标准 OpenAI 兼容响应默认使用嵌套缓存明细。"""
         return normalize_openai_usage(usage)
 
+    def _json_response_fallback(
+        self,
+        tier_config: ResolvedTier[OptionsT],
+        message: Any,
+    ) -> str | None:
+        """返回显式启用的 JSON 响应备用字段；默认不信任任何非标准字段。"""
+        return None
+
     @abstractmethod
     def _build_request_kwargs(
         self,
@@ -236,6 +245,23 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
             response = client.chat.completions.create(**kwargs)
             sample = self._normalize_usage(getattr(response, "usage", None))
             self.usage.record(tier, sample, stage)
-            return response.choices[0].message.content or ""
+            choice = response.choices[0]
+            message = choice.message
+            raw_content = getattr(message, "content", None)
+            content = raw_content if isinstance(raw_content, str) else ""
+            if not content.strip():
+                if str(getattr(choice, "finish_reason", "")).lower() == "length":
+                    raise RuntimeError("OpenAI-compatible 响应因达到 token 上限而截断")
+                fallback = self._json_response_fallback(tier_config, message) if json_mode else None
+                if fallback is None or not fallback.strip():
+                    raise EmptyResponseError(f"{self.provider_name} 响应的 content 为空")
+                try:
+                    json.loads(fallback)
+                except json.JSONDecodeError as error:
+                    raise EmptyResponseError(
+                        f"{self.provider_name} 配置的 JSON 备用响应不是合法 JSON"
+                    ) from error
+                content = fallback
+            return content
 
         return _call()

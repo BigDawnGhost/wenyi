@@ -77,7 +77,6 @@ def _config(state_dir: str):
                 "review": True,
                 "polish": True,
                 "backtranslate_sample": 0.0,
-                "consistency_qa": True,
             },
             "paths": {"state_dir": state_dir},
         }
@@ -2167,7 +2166,6 @@ class TestGlossaryScope(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             cfg.pipeline.polish = False
             cfg.pipeline.review = False
-            cfg.pipeline.consistency_qa = False
             cfg.pipeline.book_understanding = False
             cfg.segment.max_chars_per_batch = 10
 
@@ -2190,7 +2188,6 @@ class TestGlossaryScope(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             cfg.pipeline.polish = False
             cfg.pipeline.review = False
-            cfg.pipeline.consistency_qa = False
             cfg.pipeline.book_understanding = False
             cfg.segment.max_chars_per_batch = 8
 
@@ -2279,7 +2276,6 @@ class TestGlossaryScope(unittest.TestCase):
                 )
             cfg = _config(os.path.join(d, "state"))
             cfg.pipeline.polish = False
-            cfg.pipeline.consistency_qa = False
             cfg.pipeline.book_understanding = False
             cfg.segment.max_chars_per_batch = 200
 
@@ -2342,12 +2338,6 @@ class TestProgressLabels(unittest.TestCase):
         self.assertEqual(Orchestrator._chapter_progress_label("第一章", 1), "第一章")
         self.assertEqual(Orchestrator._chapter_progress_label("", 1), "章节 2")
 
-    def test_consistency_label_prefers_real_title(self):
-        from trans_novel.agents.consistency import ConsistencyChecker
-
-        self.assertEqual(ConsistencyChecker._chapter_label("第一章", 1), "第一章")
-        self.assertEqual(ConsistencyChecker._chapter_label("", 1), "章节 2")
-
     def test_progress_covers_preparation_and_output_stages(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
@@ -2358,7 +2348,7 @@ class TestProgressLabels(unittest.TestCase):
 
             orch.run_steps(
                 txt,
-                {"translate", "qa", "report", "assemble"},
+                {"translate", "report", "assemble"},
                 progress=lambda done, total, label: events.append((done, total, label)),
             )
 
@@ -2370,7 +2360,6 @@ class TestProgressLabels(unittest.TestCase):
                 "生成全书概览…",
                 "翻译章节标题…",
                 "翻译完成",
-                "一致性 QA…",
                 "生成报告…",
                 "回填译文…",
             ]

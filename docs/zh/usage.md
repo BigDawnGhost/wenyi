@@ -90,7 +90,9 @@ export MINERU_API_KEY=...
 uv run trans-novel translate book.pdf
 ```
 
-MinerU 转换生成的 HTML 会保存到 `state/<书名>/source/converted.html`。
+MinerU 转换生成的 HTML 会保存到
+`state/<书名>/source/<源文件 SHA-256>/converted.html`。按内容隔离缓存，可避免
+初始化中断后把另一份 PDF 的转换结果误用于当前文件。
 后续运行会直接复用该文件，也可人工修正后再续跑。
 
 #### PDF 导出
@@ -115,6 +117,25 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
 Windows。
 
+## 单次运行指标
+
+`state/<书名>/usage.json` 继续保存这本书跨续跑累计的 token 总账。`translate`、
+`prepare`、`review`、`assemble` 和 `report` 会各自生成一份
+`state/<书名>/run_metrics/<run-id>.json`，记录：
+
+- 输入文件 SHA-256、配置、程序包和 Git 提交的指纹；
+- 指定章节、输出格式、PDF 引擎等本次调用参数；
+- 本次请求的阶段、成功或失败状态，以及各阶段墙钟耗时；
+- 仅由本次命令新增的模型调用数与 token；
+- 命令结束时已完成的章节数和正文段数。
+
+每次续跑都会新建一条记录，因此不同分支的全新运行可以公平比较，不会把历史
+成本混在一起。账本不保存完整源文件路径或书籍正文；敏感配置值会被遮蔽，失败
+时也只记录异常类型。
+
+新 manifest 使用 `source_sha256`，不再保存源文件绝对路径。若同名状态目录记录的
+哈希与当前输入不一致，Wenyi 会拒绝续跑；旧版本生成的 manifest 需要重新建立。
+
 ## 常用命令
 
 ```bash
@@ -125,9 +146,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# 覆盖配置中的润色、最终审校与一致性 QA 开关
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# 覆盖配置中的润色与最终审校开关
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # 同时生成单语和双语版 / 仅生成双语版
 uv run trans-novel translate book.epub --bilingual
@@ -156,7 +177,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -170,5 +190,5 @@ uv run trans-novel assemble book.epub
 `state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
 本书累计 `usage.json`；`report.json` 只保存简短的只读审校摘要。
 
-`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型
-的情况下重新导出已有译文。
+`report` 汇总当前翻译状态和只读 Review 结果，不会修改正文；`assemble` 可在
+不重新调用模型的情况下重新导出已有译文。

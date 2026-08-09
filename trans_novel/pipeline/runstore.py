@@ -7,17 +7,20 @@
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
+  run_metrics/      每次顶层运行独立的耗时、用量和版本账本
   glossary.db       术语库 + 译法冲突记录
-  report.json       QA 报告
+  report.json       翻译报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
   reviews/          每次只读全书 Review 的正式结果与逐轮记录
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -33,6 +36,15 @@ def slugify(name: str) -> str:
     """把书名转换为适合作为状态目录名的稳定短名。"""
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     return s or "book"
+
+
+def source_sha256(path: str) -> str:
+    """流式计算源文件 SHA-256，避免把整本书一次性读入内存。"""
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class RunStore:
@@ -84,6 +96,11 @@ class RunStore:
         return os.path.join(self.run_dir, "manifest.json")
 
     @property
+    def initialization_path(self) -> str:
+        """返回未完成初始化使用的临时源身份文件。"""
+        return os.path.join(self.run_dir, ".initializing.json")
+
+    @property
     def context_path(self) -> str:
         """返回滚动上下文文件路径。"""
         return os.path.join(self.run_dir, "context.json")
@@ -107,6 +124,11 @@ class RunStore:
     def usage_path(self) -> str:
         """返回本书累计 token 用量文件路径。"""
         return os.path.join(self.run_dir, "usage.json")
+
+    @property
+    def run_metrics_dir(self) -> str:
+        """返回每次运行独立指标账本的目录。"""
+        return os.path.join(self.run_dir, "run_metrics")
 
     @property
     def event_log_path(self) -> str:
@@ -147,17 +169,83 @@ class RunStore:
         """判断运行状态是否已完成初始化并写入 manifest。"""
         return os.path.isfile(self.manifest_path)
 
+    def begin_initialization(self, source_hash: str) -> None:
+        """清理未完成初始化的派生状态，并记录本次源内容身份。
+
+        PDF 转换缓存按哈希隔离且代价较高，因此保留 ``source/``；同一源文件
+        的失败运行指标和事件也保留。章节、术语、分析等可变派生物一律重建，
+        防止上次在 manifest 提交前失败时留下的数据污染新任务。
+        """
+        if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
+            raise ValueError("源文件 SHA-256 格式无效")
+
+        previous_hash: str | None = None
+        if os.path.isfile(self.initialization_path):
+            try:
+                marker = self._read_json(self.initialization_path)
+            except (OSError, json.JSONDecodeError, TypeError):
+                marker = None
+            if isinstance(marker, dict) and isinstance(marker.get("source_sha256"), str):
+                previous_hash = marker["source_sha256"]
+
+        shutil.rmtree(self.chapters_dir, ignore_errors=True)
+        os.makedirs(self.chapters_dir, exist_ok=True)
+        for path in (
+            self.analysis_path,
+            self.context_path,
+            self.glossary_path,
+            f"{self.glossary_path}-wal",
+            f"{self.glossary_path}-shm",
+            f"{self.glossary_path}-journal",
+            self.report_path,
+            self.usage_path,
+            f"{self.manifest_path}.tmp",
+        ):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+        if previous_hash != source_hash:
+            shutil.rmtree(self.reviews_dir, ignore_errors=True)
+            shutil.rmtree(self.run_metrics_dir, ignore_errors=True)
+            try:
+                os.remove(self.event_log_path)
+            except FileNotFoundError:
+                pass
+
+        self._batch_glossary_event_cache = None
+        self._write_json(
+            self.initialization_path,
+            {"source_sha256": source_hash},
+        )
+
+    def finish_initialization(self) -> None:
+        """在 manifest 已成功提交后清除临时初始化身份。"""
+        try:
+            os.remove(self.initialization_path)
+        except FileNotFoundError:
+            pass
+
     # ── manifest ──────────────────────────────────────────────────────────
-    def stage_document(self, doc: Document) -> dict:
+    def stage_document(
+        self,
+        doc: Document,
+        *,
+        source_hash: str | None = None,
+    ) -> dict:
         """写入初始章节文件并返回 manifest 内容，但不提前写 manifest。
 
         manifest 是一次运行初始化完成的标志，由调用方在分析、术语库
         和上下文都已落盘后最后保存。
         """
+        digest = source_hash or source_sha256(doc.source_path)
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("源文件 SHA-256 格式无效")
         manifest = {
             "title": doc.title,
             "fmt": doc.fmt,
-            "source_path": doc.source_path,
+            "source_sha256": digest,
             "source_lang": doc.source_lang,
             "target_lang": doc.target_lang,
             "meta": doc.meta,
@@ -175,6 +263,30 @@ class RunStore:
         for c in doc.chapters:
             self.save_chapter(c)
         return manifest
+
+    def ensure_source_identity(
+        self,
+        input_path: str,
+        *,
+        actual_sha256: str | None = None,
+    ) -> str:
+        """校验输入内容属于当前状态；缺少内容身份的旧状态直接拒绝。"""
+        actual = actual_sha256 or source_sha256(input_path)
+        if not re.fullmatch(r"[0-9a-f]{64}", actual):
+            raise ValueError("源文件 SHA-256 格式无效")
+
+        manifest = self.load_manifest()
+        expected = manifest.get("source_sha256")
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(
+                "现有翻译状态缺少有效的 source_sha256；请删除该状态目录并重新建立翻译状态。"
+            )
+        if expected != actual:
+            raise ValueError(
+                "输入文件内容与现有翻译状态不一致（状态目录同名）；请使用原始源文件，"
+                "或移走该状态目录后重新建立。"
+            )
+        return actual
 
     def save_manifest(self, manifest: dict) -> None:
         """原子保存书籍清单和章节状态。"""
@@ -253,6 +365,27 @@ class RunStore:
             if isinstance(result, dict):
                 return result
         return None
+
+    def save_run_metric(self, record: dict[str, Any]) -> str:
+        """按 run_id 原子保存一次运行指标并返回文件路径。"""
+        run_id = record.get("run_id")
+        if not isinstance(run_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", run_id
+        ):
+            raise ValueError("run_id 只能包含字母、数字、点、下划线、加号和连字符")
+        path = os.path.join(self.run_metrics_dir, f"{run_id}.json")
+        self._write_json(path, record)
+        return path
+
+    def load_run_metrics(self) -> list[dict[str, Any]]:
+        """按文件名顺序读取全部单次运行账本。"""
+        if not os.path.isdir(self.run_metrics_dir):
+            return []
+        return [
+            self._read_json(os.path.join(self.run_metrics_dir, name))
+            for name in sorted(os.listdir(self.run_metrics_dir))
+            if name.endswith(".json")
+        ]
 
     # ── 批次恢复检查点 ────────────────────────────────────────────────────
     @staticmethod

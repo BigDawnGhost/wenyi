@@ -58,7 +58,7 @@ llm:
         thinking: false
 ```
 
-`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries only transient transport failures, HTTP 408/409/429, and 5xx responses; each wait is recorded in the book's `events.jsonl`.
+`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries transient transport failures, HTTP 408/409/429 and 5xx responses, plus empty model responses; each wait is recorded in the book's `events.jsonl`.
 
 Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
 
@@ -138,6 +138,18 @@ llm:
 - `openrouter`: `reasoning.effort`, with `reasoning.enabled: false` sent when disabled
 - `none`: no conversion, for endpoints that rely on model defaults or custom request fields
 
+By default Wenyi trusts only the standard `content` response field and retries an empty response. Set `json_response_fallback: reasoning_content` on each applicable tier only for endpoints known to place the final JSON answer in `reasoning_content`; Wenyi then accepts that field only when it contains one complete JSON value.
+
+```yaml
+llm:
+  provider: openai-compatible
+  tiers:
+    strong:
+      model: provider-model-name
+      options:
+        json_response_fallback: reasoning_content
+```
+
 `request_overrides` is an escape hatch for provider-specific fields that Wenyi does not know about. Its contents are merged recursively into the raw top-level request body after the selected reasoning dialect is generated. For example, an endpoint using `enable_thinking: true` can be configured as follows:
 
 ```yaml
@@ -165,7 +177,6 @@ pipeline:
   review: false
   polish: true
   backtranslate_sample: 0
-  consistency_qa: false
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
@@ -185,7 +196,6 @@ pipeline:
 - `review`: disabled by default; when enabled, automatically run the evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
-- `consistency_qa`: run a final cross-chapter check of terminology, references, voice, and punctuation.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
@@ -201,9 +211,8 @@ pipeline:
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
-The command-line flags `--polish`, `--no-polish`, `--review`, `--no-review`,
-`--qa`, and `--no-qa` override the corresponding configuration values for a
-`translate` run.
+The command-line flags `--polish`, `--no-polish`, `--review`, and `--no-review`
+override the corresponding configuration values for a `translate` run.
 
 Run final review independently with `trans-novel review INPUT`. Each invocation
 reviews the complete translated book from the beginning. Review may modify only a

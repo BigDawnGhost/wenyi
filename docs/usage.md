@@ -91,7 +91,9 @@ export MINERU_API_KEY=...
 uv run trans-novel translate book.pdf
 ```
 
-MinerU's converted HTML is saved at `state/<book>/source/converted.html`.
+MinerU's converted HTML is saved at
+`state/<book>/source/<source-sha256>/converted.html`. The content-addressed
+directory prevents an interrupted run from reusing another PDF's conversion.
 Later runs reuse this file, and you may correct it manually before resuming.
 
 #### PDF output
@@ -117,6 +119,27 @@ Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
 
+## Per-run metrics
+
+`state/<book>/usage.json` remains the cumulative token total for the book.
+`translate`, `prepare`, `review`, `assemble`, and `report` each write an independent
+`state/<book>/run_metrics/<run-id>.json` record with:
+
+- the input SHA-256, configuration, package, and Git revision fingerprints;
+- invocation options such as a selected chapter, output format, and PDF engine;
+- requested stages, completion or failure status, and per-stage wall time;
+- only the LLM calls and tokens added by that invocation; and
+- ending chapter and segment completion counts.
+
+Every resume creates a new record, so clean runs from different branches can be
+compared without mixing their costs. Records omit the full source path and book
+text, redact sensitive option values, and store only an exception type on
+failure.
+
+New manifests store `source_sha256` instead of an absolute source path. Wenyi
+rejects a same-title state directory when its recorded hash does not match the
+current input. Manifests created by older versions must be rebuilt.
+
 ## Common commands
 
 ```bash
@@ -127,9 +150,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# Override polishing, final review, and whole-book QA settings
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# Override polishing and final review settings
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # Produce both editions, or only the bilingual edition
 uv run trans-novel translate book.epub --bilingual
@@ -160,7 +183,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -179,5 +201,6 @@ delta, an event stream, and internal round traces to
 to the book's cumulative `usage.json`; `report.json` contains only a compact
 read-only review summary.
 
-`qa` and `report` collect problems without modifying translated text. `assemble`
-rebuilds output from existing state without calling the model again.
+`report` summarizes the current translation and read-only Review result without
+modifying translated text. `assemble` rebuilds output from existing state without
+calling the model again.

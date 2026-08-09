@@ -264,13 +264,19 @@ def _materialize_html_resources(
     return rewritten
 
 
-def _template_resource_source(manifest: dict, source_path: str) -> str:
+def _template_resource_source(
+    store: RunStore,
+    manifest: dict,
+    source_path: str,
+) -> str:
     """Return the HTML file whose directory resolves template media references."""
-    raw_meta = manifest.get("meta")
-    meta = raw_meta if isinstance(raw_meta, dict) else {}
-    converted_html_path = meta.get("converted_html_path")
-    if manifest.get("fmt") == "pdf" and isinstance(converted_html_path, str):
-        return converted_html_path
+    if manifest.get("fmt") == "pdf":
+        from ..ingest.pdf_reader import pdf_cache_html_path
+
+        source_hash = manifest.get("source_sha256")
+        if not isinstance(source_hash, str):
+            raise ValueError("PDF manifest 缺少有效的 source_sha256")
+        return pdf_cache_html_path(store.source_dir, source_hash)
     return source_path
 
 
@@ -1579,7 +1585,7 @@ def _assemble_html(
 </html>"""
     full_html = _materialize_html_resources(
         full_html,
-        source_path=_template_resource_source(m, source_path),
+        source_path=_template_resource_source(store, m, source_path),
         out_path=out_path,
     )
 
@@ -1738,6 +1744,50 @@ def _normalize_html_for_fpdf(html: str, *, base_dir: str) -> str:
                 except (ImportError, OSError, AttributeError):
                     natural_width = 0
             image["width"] = str(min(natural_width or 340, 340))
+    # fpdf2's HTML parser assumes every <a> tag has href and raises KeyError
+    # for source books that use anchor tags solely as styling wrappers. Keep any
+    # id/name metadata on a neutral span instead of deleting it during cleanup;
+    # fpdf2 does not guarantee that such metadata becomes a live PDF destination.
+    for anchor in list(body.find_all("a")):
+        href = anchor.get("href")
+        if not isinstance(href, str) or not href.strip():
+            anchor.attrs.pop("href", None)
+            if anchor.get("id") or anchor.get("name"):
+                anchor.name = "span"
+            else:
+                anchor.unwrap()
+    # fpdf2's table renderer can fail on narrow cells in scanned/manual-style
+    # books ("Not enough horizontal space to render a single character").
+    # Remove only the table structure, from the innermost table outward. Moving
+    # the existing nodes instead of calling get_text() preserves links, images,
+    # emphasis and explicit line breaks.
+    for table in reversed(list(body.find_all("table"))):
+        if table.parent is None:
+            continue
+        rows = [row for row in table.find_all("tr") if row.find_parent("table") is table]
+        for row in rows:
+            cells = row.find_all(["th", "td"], recursive=False)
+            for index, cell in enumerate(cells):
+                if index:
+                    cell.insert_before(" | ")
+                if cell.name == "th":
+                    strong = soup.new_tag("strong")
+                    for child in list(cell.contents):
+                        strong.append(child.extract())
+                    cell.append(strong)
+                cell.unwrap()
+            row.append(soup.new_tag("br"))
+            row.unwrap()
+        caption = table.find("caption", recursive=False)
+        if isinstance(caption, Tag):
+            caption.append(soup.new_tag("br"))
+            caption.unwrap()
+        for column in list(table.find_all(["col", "colgroup"])):
+            column.decompose()
+        for structural in list(table.find_all(["thead", "tbody", "tfoot", "tr", "th", "td"])):
+            if structural.parent is not None:
+                structural.unwrap()
+        table.unwrap()
     for element in list(body.find_all(["div", "section", "article", "main", "header", "footer"])):
         element.unwrap()
     return body.decode_contents()
@@ -2166,7 +2216,7 @@ def _build_epub_from_html_templates(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
-    resource_source = _template_resource_source(manifest, source_path)
+    resource_source = _template_resource_source(store, manifest, source_path)
 
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")

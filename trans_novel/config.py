@@ -53,7 +53,6 @@ pipeline:
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
-  consistency_qa: false # 全书跨章一致性收尾扫描
   rolling_context_segments: 6 # 注入的前文译文尾段数
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
@@ -124,7 +123,6 @@ class PipelineConfig(BaseModel):
     align_retry_limit: int = 2  # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
     polish: bool = True  # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
     backtranslate_sample: float = 0.0
-    consistency_qa: bool = False
     rolling_context_segments: int = 6
     # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
     # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
