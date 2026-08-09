@@ -16,6 +16,7 @@ from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
 from trans_novel.agents.base import Agent
 from trans_novel.config import Config, LLMConfig, TierConfig
+from trans_novel.ingest.models import Chapter, Document, Segment
 from trans_novel.llm.factory import build_client
 from trans_novel.llm.providers._openai_compatible import (
     EmptyResponseError,
@@ -1128,6 +1129,45 @@ class TestPerRunMetrics(unittest.TestCase):
 
 
 class TestRunStoreLock(unittest.TestCase):
+    def test_annotation_context_registry_is_stored_outside_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "book.epub")
+            with open(source_path, "wb") as source:
+                source.write(b"epub")
+            registry = {
+                "version": 1,
+                "contexts": {
+                    "notes.xhtml#n1": {
+                        "source_blocks": ["A note."],
+                    }
+                },
+            }
+            document = Document(
+                title="Book",
+                source_lang="en",
+                target_lang="zh",
+                fmt="epub",
+                source_path=source_path,
+                chapters=[
+                    Chapter(
+                        index=0,
+                        segments=[Segment(index=0, source="Body")],
+                    )
+                ],
+                meta={
+                    "epub_schema": 5,
+                    "epub_annotation_contexts": registry,
+                },
+            )
+            store = RunStore(os.path.join(directory, "state", "book"))
+
+            manifest = store.stage_document(document, source_hash="a" * 64)
+
+            self.assertNotIn("epub_annotation_contexts", manifest["meta"])
+            self.assertEqual(store.load_annotation_contexts(), registry)
+            store.begin_initialization("b" * 64)
+            self.assertIsNone(store.load_annotation_contexts())
+
     def test_second_store_waits_for_first_store_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = os.path.join(directory, "state", "book")

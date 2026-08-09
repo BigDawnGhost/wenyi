@@ -18,7 +18,8 @@ from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.usage import UsageSample
-from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
+from trans_novel.pipeline.context import RollingContext
+from trans_novel.pipeline.orchestrator import Orchestrator, _BatchResult, _normalize_lang
 from trans_novel.pipeline.runstore import STATUS_DONE, STATUS_PENDING, RunStore
 
 
@@ -115,6 +116,252 @@ class MeteredFakeClient(FakeClient):
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_annotation_contexts_follow_continuation_offsets_and_deduplicate(self):
+        segments = [
+            Segment(
+                index=0,
+                source="abc",
+                anchor="tn0_0",
+                meta={
+                    "epub_annotations": {
+                        "version": 1,
+                        "source_length": 6,
+                        "items": [
+                            {
+                                "id": "point-boundary",
+                                "mode": "point",
+                                "source_start": 3,
+                                "source_end": 3,
+                                "source_text": "",
+                                "marker_text": "1",
+                                "target_key": "notes.xhtml#n1",
+                                "relation": "noteref",
+                            },
+                            {
+                                "id": "point-duplicate",
+                                "mode": "point",
+                                "source_start": 1,
+                                "source_end": 1,
+                                "source_text": "",
+                                "marker_text": "1",
+                                "target_key": "notes.xhtml#n1",
+                                "relation": "noteref",
+                            },
+                            {
+                                "id": "range-across-pieces",
+                                "mode": "range",
+                                "source_start": 2,
+                                "source_end": 5,
+                                "source_text": "cde",
+                                "marker_text": "",
+                                "target_key": "notes.xhtml#n2",
+                                "relation": "noteref",
+                            },
+                            {
+                                "id": "ordinary-link",
+                                "mode": "range",
+                                "source_start": 0,
+                                "source_end": 3,
+                                "source_text": "abc",
+                                "marker_text": "",
+                                "target_key": "chapter.xhtml#part-2",
+                                "relation": "internal_link",
+                            },
+                        ],
+                    }
+                },
+            ),
+            Segment(index=1, source="def", cont=True),
+        ]
+        registry = {
+            "version": 1,
+            "contexts": {
+                "notes.xhtml#n1": {"source_blocks": ["First note."]},
+                "notes.xhtml#n2": {"source_blocks": ["Second", "note."]},
+                "chapter.xhtml#part-2": {"source_blocks": ["Not a note."]},
+            },
+        }
+
+        contexts = Orchestrator._annotation_contexts_for_segments(segments, registry)
+
+        self.assertEqual(
+            [item["target_key"] for item in contexts[0]],
+            ["notes.xhtml#n1", "notes.xhtml#n2"],
+        )
+        self.assertEqual(
+            [item["target_key"] for item in contexts[1]],
+            ["notes.xhtml#n2"],
+        )
+        self.assertEqual(contexts[0][1]["source"], "Second\n\nnote.")
+
+    def test_annotation_context_points_cover_logical_ends_and_reject_stale_length(self):
+        metadata = {
+            "version": 1,
+            "source_length": 4,
+            "items": [
+                {
+                    "id": "at-start",
+                    "mode": "point",
+                    "source_start": 0,
+                    "source_end": 0,
+                    "target_key": "notes.xhtml#start",
+                    "relation": "noteref",
+                },
+                {
+                    "id": "at-end",
+                    "mode": "point",
+                    "source_start": 4,
+                    "source_end": 4,
+                    "target_key": "notes.xhtml#end",
+                    "relation": "noteref",
+                },
+            ],
+        }
+        segments = [
+            Segment(
+                index=0,
+                source="ab",
+                anchor="tn0_0",
+                meta={"epub_annotations": metadata},
+            ),
+            Segment(index=1, source="cd", cont=True),
+        ]
+        registry = {
+            "version": 1,
+            "contexts": {
+                "notes.xhtml#start": {"source_blocks": ["Start note"]},
+                "notes.xhtml#end": {"source_blocks": ["End note"]},
+            },
+        }
+
+        contexts = Orchestrator._annotation_contexts_for_segments(segments, registry)
+
+        self.assertEqual(
+            [[item["target_key"] for item in piece] for piece in contexts],
+            [["notes.xhtml#start"], ["notes.xhtml#end"]],
+        )
+        metadata["source_length"] = 5
+        self.assertEqual(
+            Orchestrator._annotation_contexts_for_segments(segments, registry),
+            [[], []],
+        )
+
+    def test_resume_batch_from_continuation_receives_absolute_annotation_slice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.polish = False
+            cfg.pipeline.annotation_alignment = False
+            cfg.segment.max_chars_per_batch = 6
+            chapter = Chapter(
+                index=0,
+                segments=[
+                    Segment(
+                        index=0,
+                        source="aa",
+                        target="既译",
+                        anchor="tn0_0",
+                        meta={
+                            "epub_annotations": {
+                                "version": 1,
+                                "source_length": 6,
+                                "items": [
+                                    {
+                                        "id": "second-piece",
+                                        "mode": "point",
+                                        "source_start": 3,
+                                        "source_end": 3,
+                                        "target_key": "notes.xhtml#n2",
+                                        "relation": "noteref",
+                                    },
+                                    {
+                                        "id": "third-piece",
+                                        "mode": "point",
+                                        "source_start": 5,
+                                        "source_end": 5,
+                                        "target_key": "notes.xhtml#n3",
+                                        "relation": "noteref",
+                                    },
+                                ],
+                            }
+                        },
+                    ),
+                    Segment(index=1, source="bb", cont=True),
+                    Segment(index=2, source="cc", cont=True),
+                ],
+            )
+            registry = {
+                "version": 1,
+                "contexts": {
+                    "notes.xhtml#n2": {"source_blocks": ["Note two"]},
+                    "notes.xhtml#n3": {"source_blocks": ["Note three"]},
+                },
+            }
+            store = RunStore(os.path.join(directory, "state", "book"))
+            store.save_chapter(chapter)
+            store.save_manifest(
+                {
+                    "title": "Book",
+                    "fmt": "epub",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "chapters": [{"index": 0, "title": "", "status": "pending"}],
+                }
+            )
+            glossary = GlossaryStore(store.glossary_path)
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            captured: list[list[list[dict[str, str]]]] = []
+
+            def process(batch, *args, annotation_contexts=None, **kwargs):
+                captured.append(annotation_contexts)
+                return _BatchResult(targets=[f"译{segment.source}" for segment in batch])
+
+            try:
+                with (
+                    patch.object(orch, "_process_batch", side_effect=process),
+                    patch.object(
+                        orch,
+                        "_extract_batch_glossary",
+                        return_value={
+                            "inserted": 0,
+                            "conflict": 0,
+                            "unchanged": 0,
+                            "updated": 0,
+                        },
+                    ),
+                    patch.object(
+                        orch.extractor,
+                        "extract_and_store",
+                        return_value={
+                            "inserted": 0,
+                            "conflict": 0,
+                            "unchanged": 0,
+                            "updated": 0,
+                        },
+                    ),
+                ):
+                    orch._translate_chapter(
+                        0,
+                        store,
+                        glossary,
+                        RollingContext(),
+                        "",
+                        translation_history={},
+                        source_corpus="aabbcc",
+                        annotation_context_registry=registry,
+                    )
+            finally:
+                glossary.close()
+
+            self.assertEqual(
+                captured,
+                [
+                    [
+                        [{"target_key": "notes.xhtml#n2", "source": "Note two"}],
+                        [{"target_key": "notes.xhtml#n3", "source": "Note three"}],
+                    ]
+                ],
+            )
+
     def test_annotation_alignment_merges_continuations_and_persists_offsets(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg = _config(os.path.join(directory, "state"))

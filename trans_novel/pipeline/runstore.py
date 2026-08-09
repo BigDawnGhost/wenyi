@@ -4,6 +4,7 @@
   manifest.json     书籍元信息 + 各章状态
   chapters/ch{n}.json  各章（含 source/target 的 Segment）
   source/           输入预处理缓存（例如 PDF 转换后的 HTML）
+  annotation_contexts.json  EPUB 注释目标的去重源文索引
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
@@ -106,6 +107,11 @@ class RunStore:
         return os.path.join(self.run_dir, "context.json")
 
     @property
+    def annotation_contexts_path(self) -> str:
+        """返回 EPUB 注释辅助上下文索引路径。"""
+        return os.path.join(self.run_dir, "annotation_contexts.json")
+
+    @property
     def analysis_path(self) -> str:
         """返回全书风格分析文件路径。"""
         return os.path.join(self.run_dir, "analysis.json")
@@ -192,6 +198,7 @@ class RunStore:
         os.makedirs(self.chapters_dir, exist_ok=True)
         for path in (
             self.analysis_path,
+            self.annotation_contexts_path,
             self.context_path,
             self.glossary_path,
             f"{self.glossary_path}-wal",
@@ -242,13 +249,23 @@ class RunStore:
         digest = source_hash or source_sha256(doc.source_path)
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("源文件 SHA-256 格式无效")
+        document_meta = dict(doc.meta)
+        annotation_contexts = document_meta.pop("epub_annotation_contexts", None)
+        if isinstance(annotation_contexts, dict) and annotation_contexts:
+            self.save_annotation_contexts(annotation_contexts)
+        else:
+            try:
+                os.remove(self.annotation_contexts_path)
+            except FileNotFoundError:
+                pass
+
         manifest = {
             "title": doc.title,
             "fmt": doc.fmt,
             "source_sha256": digest,
             "source_lang": doc.source_lang,
             "target_lang": doc.target_lang,
-            "meta": doc.meta,
+            "meta": document_meta,
             "chapters": [
                 {
                     "index": c.index,
@@ -327,6 +344,18 @@ class RunStore:
     def load_context(self) -> dict | None:
         """读取滚动上下文；文件尚不存在时返回 None。"""
         return self._read_json(self.context_path) if os.path.isfile(self.context_path) else None
+
+    def save_annotation_contexts(self, data: dict) -> None:
+        """原子保存 EPUB 注释目标的去重源文索引。"""
+        self._write_json(self.annotation_contexts_path, data)
+
+    def load_annotation_contexts(self) -> dict | None:
+        """读取 EPUB 注释辅助上下文；非 EPUB 或尚无索引时返回 None。"""
+        return (
+            self._read_json(self.annotation_contexts_path)
+            if os.path.isfile(self.annotation_contexts_path)
+            else None
+        )
 
     def save_analysis(self, data: dict) -> None:
         """原子保存全书分析和概览数据。"""

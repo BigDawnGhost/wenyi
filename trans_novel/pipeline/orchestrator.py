@@ -987,6 +987,7 @@ class Orchestrator:
 
         total, done = self._progress_counts(store, progress_chapters)
         translation_history, source_corpus = self._load_translation_inputs(store)
+        annotation_context_registry = store.load_annotation_contexts()
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
@@ -1005,6 +1006,7 @@ class Orchestrator:
                         book_synopsis,
                         translation_history=translation_history,
                         source_corpus=source_corpus,
+                        annotation_context_registry=annotation_context_registry,
                         progress=progress,
                         done=done,
                         total=total,
@@ -1604,6 +1606,116 @@ class Orchestrator:
         ):
             self._align_segment_annotation(ci, chapter, logical_start, store)
 
+    @staticmethod
+    def _annotation_contexts_for_segments(
+        segments: list[Segment],
+        registry: dict[str, Any] | None,
+    ) -> list[list[dict[str, str]]]:
+        """按源文偏移把书级注释原文分配给对应的实际翻译切片。
+
+        EPUB 布局元数据只保存在一个逻辑段的首片；超长段的 ``cont``
+        续片没有独立 metadata。这里使用首片记录的原始字符偏移和各切片
+        累计边界，把 point 注释分给所在切片、range 注释分给所有相交
+        切片。相同目标在同一切片只注入一次。
+        """
+        assigned: list[list[dict[str, str]]] = [[] for _ in segments]
+        if not isinstance(registry, dict):
+            return assigned
+        raw_contexts = registry.get("contexts")
+        if not isinstance(raw_contexts, dict):
+            return assigned
+
+        position = 0
+        while position < len(segments):
+            logical_start = position
+            logical_end = logical_start + 1
+            while logical_end < len(segments) and segments[logical_end].cont:
+                logical_end += 1
+            logical_segments = segments[logical_start:logical_end]
+
+            boundaries: list[tuple[int, int]] = []
+            cursor = 0
+            for segment in logical_segments:
+                end = cursor + len(segment.source)
+                boundaries.append((cursor, end))
+                cursor = end
+
+            metadata = logical_segments[0].meta.get("epub_annotations")
+            raw_items = metadata.get("items") if isinstance(metadata, dict) else None
+            items = raw_items if isinstance(raw_items, list) else []
+            source_length = metadata.get("source_length") if isinstance(metadata, dict) else None
+            if items and (
+                not isinstance(source_length, int)
+                or isinstance(source_length, bool)
+                or source_length != cursor
+            ):
+                position = logical_end
+                continue
+            seen_by_piece: list[set[str]] = [set() for _ in logical_segments]
+
+            for raw_item in items:
+                if not isinstance(raw_item, dict) or raw_item.get("relation") != "noteref":
+                    continue
+                target_key = raw_item.get("target_key")
+                if not isinstance(target_key, str) or not target_key:
+                    continue
+                record = raw_contexts.get(target_key)
+                if not isinstance(record, dict):
+                    continue
+                raw_blocks = record.get("source_blocks")
+                blocks = (
+                    [block for block in raw_blocks if isinstance(block, str) and block.strip()]
+                    if isinstance(raw_blocks, list)
+                    else []
+                )
+                if not blocks:
+                    continue
+                note = {
+                    "target_key": target_key,
+                    "source": "\n\n".join(blocks),
+                }
+
+                start = raw_item.get("source_start")
+                end = raw_item.get("source_end")
+                if (
+                    not isinstance(start, int)
+                    or isinstance(start, bool)
+                    or not isinstance(end, int)
+                    or isinstance(end, bool)
+                    or not 0 <= start <= end <= cursor
+                ):
+                    continue
+
+                piece_indices: list[int]
+                if raw_item.get("mode") == "range" and start < end:
+                    piece_indices = [
+                        index
+                        for index, (piece_start, piece_end) in enumerate(boundaries)
+                        if start < piece_end and end > piece_start
+                    ]
+                else:
+                    # 边界上的 point 归前片；位置 0 归首片。
+                    piece_index = 0
+                    if start > 0:
+                        piece_index = next(
+                            (
+                                index
+                                for index, (_piece_start, piece_end) in enumerate(boundaries)
+                                if start <= piece_end
+                            ),
+                            len(boundaries) - 1,
+                        )
+                    piece_indices = [piece_index]
+
+                for piece_index in piece_indices:
+                    if target_key in seen_by_piece[piece_index]:
+                        continue
+                    seen_by_piece[piece_index].add(target_key)
+                    assigned[logical_start + piece_index].append(note)
+
+            position = logical_end
+        return assigned
+
     def _translate_chapter(
         self,
         ci: int,
@@ -1615,6 +1727,7 @@ class Orchestrator:
         *,
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
         source_corpus: str,
+        annotation_context_registry: dict[str, Any] | None,
         progress: ProgressFn | None = None,
         done: int = 0,
         total: int = 0,
@@ -1627,6 +1740,10 @@ class Orchestrator:
             store.log_event("chapter_skipped", chapter=ci, reason="empty")
             return done
         chapter_digest = chapter.meta.get("source_digest", "")
+        annotation_contexts = self._annotation_contexts_for_segments(
+            text_segs,
+            annotation_context_registry,
+        )
 
         batches = _resume_batches(text_segs, self.config.segment.max_chars_per_batch)
         label = self._chapter_progress_label(chapter.title, ci)
@@ -1702,7 +1819,13 @@ class Orchestrator:
 
             ctx_text = context.render(self.config.pipeline.rolling_context_segments)
             res = self._process_batch(
-                b, term_snapshot, ctx_text, style, book_synopsis, chapter_digest
+                b,
+                term_snapshot,
+                ctx_text,
+                style,
+                book_synopsis,
+                chapter_digest,
+                annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
             )
             for s, t in zip(b, res.targets):
                 s.target = t
@@ -3102,6 +3225,7 @@ class Orchestrator:
         style: str,
         book_synopsis: str = "",
         chapter_digest: str = "",
+        annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> _BatchResult:
         """单个批次：整批翻译 → 润色。
 
@@ -3118,6 +3242,7 @@ class Orchestrator:
             context=ctx_text,
             book_synopsis=book_synopsis,
             chapter_digest=chapter_digest,
+            annotation_contexts=annotation_contexts,
         )
 
         if self.config.pipeline.polish:
