@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
+from inspect import signature
 from threading import Lock
 from typing import Any, Iterator
 
@@ -63,7 +64,7 @@ from .context import RollingContext
 from .metrics import RunMetricsRecorder
 from .review_evidence import BookEvidenceIndex
 from .review_run import ReviewOutcome, ReviewRunStore
-from .runstore import STATUS_DONE, RunStore, slugify
+from .runstore import STATUS_DONE, RunStore, slugify, source_sha256
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -71,10 +72,14 @@ ProgressFn = Callable[[int, int, str], None]
 def _record_run_metrics(
     operation: str,
     requested_steps: list[str],
+    *,
+    invocation_fields: tuple[str, ...] = (),
 ) -> Callable:
     """为固定入口添加单次运行账本，同时允许入口之间安全嵌套。"""
 
     def decorator(func: Callable) -> Callable:
+        call_signature = signature(func)
+
         @wraps(func)
         def wrapped(
             self: Orchestrator,
@@ -82,10 +87,14 @@ def _record_run_metrics(
             *args: Any,
             **kwargs: Any,
         ) -> Any:
+            bound = call_signature.bind(self, input_path, *args, **kwargs)
+            bound.apply_defaults()
+            invocation = {name: bound.arguments.get(name) for name in invocation_fields}
             with self._run_metrics_session(
                 input_path,
                 operation=operation,
                 requested_steps=requested_steps,
+                invocation=invocation,
             ):
                 return func(self, input_path, *args, **kwargs)
 
@@ -97,6 +106,8 @@ def _record_run_metrics(
 def _record_pipeline_metrics(func: Callable) -> Callable:
     """为动态步骤集合建立单条顶层流水线账本。"""
 
+    call_signature = signature(func)
+
     @wraps(func)
     def wrapped(
         self: Orchestrator,
@@ -106,10 +117,22 @@ def _record_pipeline_metrics(func: Callable) -> Callable:
         **kwargs: Any,
     ) -> Any:
         normalized_steps = set(steps)
+        bound = call_signature.bind(
+            self,
+            input_path,
+            normalized_steps,
+            *args,
+            **kwargs,
+        )
+        bound.apply_defaults()
         with self._run_metrics_session(
             input_path,
             operation="pipeline",
             requested_steps=sorted(normalized_steps),
+            invocation={
+                "out_format": bound.arguments["out_format"],
+                "pdf_engine": bound.arguments["pdf_engine"],
+            },
         ):
             return func(
                 self,
@@ -467,6 +490,7 @@ class Orchestrator:
         *,
         operation: str,
         requested_steps: list[str],
+        invocation: dict[str, Any] | None = None,
     ) -> Iterator[RunMetricsRecorder | None]:
         """为一次顶层操作建立账本；嵌套入口复用同一记录。"""
         active = self._active_run_metrics
@@ -484,6 +508,7 @@ class Orchestrator:
                 input_path=input_path,
                 config=self.config,
                 client=self.client,
+                invocation=invocation,
             )
         except Exception as metrics_error:
             warnings.warn(
@@ -550,6 +575,45 @@ class Orchestrator:
                     stacklevel=2,
                 )
 
+    def _capture_metrics_state(self, store: RunStore) -> None:
+        """在书锁内冻结结束状态，防止等待进程污染本次账本。"""
+        if self._active_run_metrics is None:
+            return
+        try:
+            self._active_run_metrics.capture_state(store)
+        except Exception as metrics_error:
+            warnings.warn(
+                f"无法捕获单次运行结束状态：{type(metrics_error).__name__}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    def _source_sha256(self, input_path: str) -> str:
+        """在状态消费边界重新计算源文件哈希，不能信任锁外指标快照。"""
+        if self._active_run_metrics is not None:
+            verified = self._active_run_metrics.verify_input_sha256(input_path)
+            if verified is not None:
+                return verified
+        digest = source_sha256(input_path)
+        if self._active_run_metrics is not None:
+            self._active_run_metrics.input["sha256"] = digest
+        return digest
+
+    def _initial_source_sha256(self, input_path: str) -> str:
+        """取得解析前内容快照；有指标时复用其启动快照以少读一次文件。"""
+        if self._active_run_metrics is not None:
+            initial = self._active_run_metrics.input.get("sha256")
+            if isinstance(initial, str):
+                return initial
+        return source_sha256(input_path)
+
+    def _ensure_store_source(self, store: RunStore, input_path: str) -> str:
+        """校验候选状态确实属于当前输入文件。"""
+        return store.ensure_source_identity(
+            input_path,
+            actual_sha256=self._source_sha256(input_path),
+        )
+
     # ── 语言解析 ────────────────────────────────────────────────────────────
     def _apply_language(self, lang: str) -> None:
         """把解析出的源语言应用到 config 与各 agent（auto 检测后调用）。"""
@@ -573,6 +637,17 @@ class Orchestrator:
             self.annotation_aligner,
         ):
             ag.src = resolved
+            ag.tgt = self.config.target_lang
+
+    def _apply_manifest_languages(self, manifest: dict[str, Any]) -> None:
+        """从既有状态恢复源语言和目标语言，再同步给全部 agent。"""
+        target = manifest.get("target_lang")
+        if isinstance(target, str) and target:
+            self.config.target_lang = target
+        source = manifest.get("source_lang")
+        self._apply_language(
+            source if isinstance(source, str) and source else self.config.source_lang
+        )
 
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
     def _locate_existing_store(
@@ -605,6 +680,8 @@ class Orchestrator:
         )
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
+        with store.lock():
+            self._ensure_store_source(store, input_path)
         self._bind_llm_events(store)
         self._attach_metrics_store(store)
         return store
@@ -624,6 +701,7 @@ class Orchestrator:
             self._attach_metrics_store(store)
             with store.lock():
                 if store.exists():
+                    self._ensure_store_source(store, input_path)
                     store.log_event(
                         "run_resumed",
                         input_path=input_path,
@@ -632,17 +710,30 @@ class Orchestrator:
                     return store
                 if progress:
                     progress(0, 0, "解析文档…")
+                source_hash = self._initial_source_sha256(input_path)
+                # 转换失败也要留下同源初始化标记，确保重试保留失败运行账本。
+                store.begin_initialization(source_hash)
                 doc = load_document(
                     input_path,
                     self.config.source_lang,
                     self.config.target_lang,
                     split_segments=self.config.segment.max_chars_per_segment,
                     cache_dir=store.source_dir,
+                    source_hash=source_hash,
                 )
-                return self._prepare_locked(doc, store, input_path, progress)
+                if self._source_sha256(input_path) != source_hash:
+                    raise ValueError("PDF 在解析期间发生变化；请确认文件稳定后重试。")
+                return self._prepare_locked(
+                    doc,
+                    store,
+                    input_path,
+                    progress,
+                    source_hash=source_hash,
+                )
 
         if progress:
             progress(0, 0, "解析文档…")
+        source_hash = self._initial_source_sha256(input_path)
         # 超长段按句拆分（max_chars_per_segment），续段标 cont 供回填并回
         doc = load_document(
             input_path,
@@ -650,12 +741,20 @@ class Orchestrator:
             self.config.target_lang,
             split_segments=self.config.segment.max_chars_per_segment,
         )
+        if self._source_sha256(input_path) != source_hash:
+            raise ValueError("源文件在解析期间发生变化；请确认文件稳定后重试。")
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
         self._bind_llm_events(store)
         self._attach_metrics_store(store)
         with store.lock():
-            return self._prepare_locked(doc, store, input_path, progress)
+            return self._prepare_locked(
+                doc,
+                store,
+                input_path,
+                progress,
+                source_hash=source_hash,
+            )
 
     def _prepare_locked(
         self,
@@ -663,11 +762,17 @@ class Orchestrator:
         store: RunStore,
         input_path: str,
         progress: ProgressFn | None,
+        *,
+        source_hash: str | None = None,
     ) -> RunStore:
         """恢复已有状态；新运行分阶段写入，并以 manifest 原子提交完成标志。"""
         if store.exists():
+            self._ensure_store_source(store, input_path)
             store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
             return store  # 已有进度 → 直接续跑，不重置（语言在 run() 里按 manifest 应用）
+
+        initialization_hash = source_hash or self._source_sha256(input_path)
+        store.begin_initialization(initialization_hash)
 
         # 新建：auto 时只使用模型检测主要语言；失败则要求用户显式指定。
         if self.config.source_lang in ("auto", "", None):
@@ -684,7 +789,10 @@ class Orchestrator:
             store.log_event("language_detected", source_lang=doc.source_lang)
         self._apply_language(doc.source_lang)
 
-        manifest = store.stage_document(doc)
+        manifest = store.stage_document(
+            doc,
+            source_hash=initialization_hash,
+        )
         glossary = GlossaryStore(store.glossary_path)
         try:
             if progress:
@@ -704,6 +812,7 @@ class Orchestrator:
             # manifest 是初始化完成标志，必须最后原子落盘。
             manifest["initialized"] = True
             store.save_manifest(manifest)
+            store.finish_initialization()
             store.log_event(
                 "run_initialized",
                 input_path=input_path,
@@ -778,7 +887,11 @@ class Orchestrator:
             parts.append(f"【{tag}】\n{chunk}")
         return "\n\n".join(parts)
 
-    @_record_run_metrics("translate", ["translate"])
+    @_record_run_metrics(
+        "translate",
+        ["translate"],
+        invocation_fields=("only_chapter",),
+    )
     def run(
         self,
         input_path: str,
@@ -794,11 +907,13 @@ class Orchestrator:
             progress=progress,
         )
         with store.lock():
-            return self._run_locked(
+            result = self._run_locked(
                 store,
                 only_chapter=only_chapter,
                 progress=progress,
             )
+            self._capture_metrics_state(store)
+            return result
 
     @_record_run_metrics("prepare", ["prepare", "understanding"])
     def prepare_for_translation(
@@ -820,7 +935,7 @@ class Orchestrator:
         )
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+            self._apply_manifest_languages(manifest)
             try:
                 self._measure_stage_call(
                     "understanding",
@@ -835,6 +950,7 @@ class Orchestrator:
                 )
             finally:
                 self._flush_usage(store, scope="prepare")
+            self._capture_metrics_state(store)
         return store
 
     def _run_locked(
@@ -846,7 +962,7 @@ class Orchestrator:
     ) -> RunStore:
         """恢复语言和上下文，依次翻译章节并持续保存用量与进度。"""
         manifest = store.load_manifest()
-        self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+        self._apply_manifest_languages(manifest)
         chapter_indices = {chapter.get("index") for chapter in manifest.get("chapters", [])}
         if only_chapter is not None and only_chapter not in chapter_indices:
             available = sorted(index for index in chapter_indices if isinstance(index, int))
@@ -2144,7 +2260,7 @@ class Orchestrator:
         debug.start(
             reviewed_content_digest=reviewed_content_digest,
             metadata={
-                "source_path": manifest.get("source_path"),
+                "source_sha256": manifest.get("source_sha256"),
                 "title": manifest.get("title"),
                 "source_lang": self.config.source_lang,
                 "target_lang": self.config.target_lang,
@@ -3037,7 +3153,7 @@ class Orchestrator:
         )
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+            self._apply_manifest_languages(manifest)
             terms = GlossaryStore.load_terms_readonly(store.glossary_path)
             outcome = self._measure_stage_call(
                 "review",
@@ -3046,6 +3162,7 @@ class Orchestrator:
                 terms,
                 progress=progress,
             )
+            self._capture_metrics_state(store)
         return {
             "store": store,
             "review_issues": outcome.issues,
@@ -3053,6 +3170,77 @@ class Orchestrator:
             "review_result": outcome.result,
             "review_dir": outcome.run_dir,
         }
+
+    def _run_existing_steps(
+        self,
+        input_path: str,
+        steps: set[str],
+        *,
+        progress: ProgressFn | None,
+        out_format: str = "epub",
+        out_path: str | None = None,
+        pdf_engine: str = "weasyprint",
+    ) -> dict[str, Any]:
+        """仅从既有状态执行本地收尾阶段，不创建新的翻译任务。"""
+        store = self._measure_stage_call(
+            "prepare",
+            self._locate_existing_store,
+            input_path,
+            progress=progress,
+        )
+        with store.lock():
+            manifest = store.load_manifest()
+            self._apply_manifest_languages(manifest)
+            result = self._finish_steps_locked(
+                store,
+                input_path=input_path,
+                steps=steps,
+                run_steps_input=sorted(steps),
+                progress=progress,
+                out_format=out_format,
+                out_path=out_path,
+                pdf_engine=pdf_engine,
+            )
+            self._capture_metrics_state(store)
+            return result
+
+    @_record_run_metrics("report", ["report"])
+    def run_report(
+        self,
+        input_path: str,
+        *,
+        progress: ProgressFn | None = None,
+    ) -> dict[str, Any]:
+        """从既有状态重新生成报告，并记录独立运行指标。"""
+        return self._run_existing_steps(
+            input_path,
+            {"report"},
+            progress=progress,
+        )
+
+    @_record_run_metrics(
+        "assemble",
+        ["assemble"],
+        invocation_fields=("out_format", "pdf_engine"),
+    )
+    def run_assemble(
+        self,
+        input_path: str,
+        *,
+        out_format: str = "epub",
+        out_path: str | None = None,
+        pdf_engine: str = "weasyprint",
+        progress: ProgressFn | None = None,
+    ) -> dict[str, Any]:
+        """从既有状态重新导出成品，并记录格式与 PDF 引擎。"""
+        return self._run_existing_steps(
+            input_path,
+            {"assemble"},
+            progress=progress,
+            out_format=out_format,
+            out_path=out_path,
+            pdf_engine=pdf_engine,
+        )
 
     @_record_pipeline_metrics
     def run_steps(
@@ -3091,9 +3279,9 @@ class Orchestrator:
                 progress=progress,
             )
             m = store.load_manifest()
-            self._apply_language(m.get("source_lang") or self.config.source_lang)
+            self._apply_manifest_languages(m)
         with store.lock():
-            return self._finish_steps_locked(
+            result = self._finish_steps_locked(
                 store,
                 input_path=input_path,
                 steps=steps,
@@ -3103,6 +3291,8 @@ class Orchestrator:
                 out_path=out_path,
                 pdf_engine=pdf_engine,
             )
+            self._capture_metrics_state(store)
+            return result
 
     def _finish_steps_locked(
         self,
@@ -3160,6 +3350,7 @@ class Orchestrator:
                     store,
                     glossary,
                 )
+                assert report is not None
                 store.save_report(report)
                 store.log_event("report_saved", path=store.report_path)
         finally:
@@ -3169,6 +3360,8 @@ class Orchestrator:
 
         outputs: list[str] = []
         if "assemble" in steps:
+            # 导出会重新读取源书模板；在读取前后都验证，避免运行期间替换文件。
+            self._ensure_store_source(store, input_path)
             if progress:
                 progress(0, 0, "回填译文…")
             out_cfg = self.config.output
@@ -3206,6 +3399,7 @@ class Orchestrator:
                         pdf_engine=pdf_engine,
                     )
                 )
+            self._ensure_store_source(store, input_path)
             store.log_event("assembled", outputs=outputs, out_format=out_format)
 
         store.log_event(

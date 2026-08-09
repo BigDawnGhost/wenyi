@@ -13,10 +13,12 @@ from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..config import Config
 from ..llm.base import LLMClient
 from ..llm.usage import usage_delta
+from .runstore import source_sha256
 
 if TYPE_CHECKING:
     from .runstore import RunStore
@@ -51,8 +53,7 @@ def _now_iso() -> str:
 
 def _safe_value(value: Any, *, key: str = "") -> Any:
     """把配置值转换为可序列化数据，并隐藏可能的凭据。"""
-    normalized_key = key.lower().replace("-", "_")
-    if normalized_key == "token" or any(part in normalized_key for part in _SENSITIVE_KEY_PARTS):
+    if _is_sensitive_key(key):
         return "<redacted>"
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -66,6 +67,12 @@ def _safe_value(value: Any, *, key: str = "") -> Any:
     return f"<{type(value).__name__}>"
 
 
+def _is_sensitive_key(key: str) -> bool:
+    """判断配置键是否可能承载凭据。"""
+    normalized = key.lower().replace("-", "_")
+    return normalized == "token" or any(part in normalized for part in _SENSITIVE_KEY_PARTS)
+
+
 def _fingerprint(data: Any) -> str:
     """计算规范 JSON 的 SHA-256，用于比较输入和配置是否相同。"""
     encoded = json.dumps(
@@ -77,8 +84,40 @@ def _fingerprint(data: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _safe_base_url(
+    value: str | None,
+    *,
+    include_path: bool = False,
+) -> str | None:
+    """保留端点身份所需部分，同时去掉 URL 中可能携带的凭据和查询参数。"""
+    if not value:
+        return value
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        if parsed.port is not None:
+            hostname = f"{hostname}:{parsed.port}"
+        path = parsed.path if include_path else ""
+        query = ""
+        if include_path:
+            safe_query = sorted(
+                (key, item_value)
+                for key, item_value in parse_qsl(parsed.query, keep_blank_values=True)
+                if not _is_sensitive_key(key)
+            )
+            query = urlencode(safe_query)
+        return urlunsplit((parsed.scheme, hostname, path, query, ""))
+    except ValueError:
+        # 非法端口等畸形 URL 也不能原样写入账本。
+        return "<invalid-url>"
+
+
 def config_identity(config: Config) -> dict[str, Any]:
     """提取影响翻译结果的非敏感配置，并给出稳定指纹。"""
+    base_url = config.llm.base_url
+    endpoint_identity = _safe_base_url(base_url, include_path=True)
     summary = {
         "language": {
             "source": config.source_lang,
@@ -86,6 +125,11 @@ def config_identity(config: Config) -> dict[str, Any]:
         },
         "llm": {
             "provider": config.llm.provider,
+            "base_url": _safe_base_url(base_url),
+            "base_url_fingerprint": (
+                _fingerprint(endpoint_identity) if endpoint_identity else None
+            ),
+            "reasoning_style": config.llm.reasoning_style,
             "timeout": config.llm.timeout,
             "max_retries": config.llm.max_retries,
             "tiers": {
@@ -107,6 +151,23 @@ def config_identity(config: Config) -> dict[str, Any]:
 
 def input_identity(input_path: str) -> dict[str, Any]:
     """记录输入文件的名称、大小和内容指纹，不保存完整路径或正文。"""
+    identity, _signature = _capture_input_identity(input_path)
+    return identity
+
+
+def _source_signature(path: Path) -> tuple[int, int, int, int, int] | None:
+    """返回用于发现普通文件替换/改写的廉价稳定签名。"""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _capture_input_identity(
+    input_path: str,
+) -> tuple[dict[str, Any], tuple[int, int, int, int, int] | None]:
+    """一次性捕获输入身份和签名；哈希期间变化时不返回可复用签名。"""
     path = Path(input_path)
     identity: dict[str, Any] = {
         "name": path.name,
@@ -114,18 +175,18 @@ def input_identity(input_path: str) -> dict[str, Any]:
         "exists": path.is_file(),
     }
     if not identity["exists"]:
-        return identity
+        return identity, None
 
-    digest = hashlib.sha256()
+    before = _source_signature(path)
     try:
-        with path.open("rb") as source:
-            while chunk := source.read(1024 * 1024):
-                digest.update(chunk)
-        identity["size_bytes"] = path.stat().st_size
-        identity["sha256"] = digest.hexdigest()
+        if before is not None:
+            identity["size_bytes"] = before[2]
+        identity["sha256"] = source_sha256(str(path))
     except OSError:
         identity["readable"] = False
-    return identity
+        return identity, None
+    after = _source_signature(path)
+    return identity, after if before == after else None
 
 
 def _git_output(repo_root: Path, *args: str) -> str | None:
@@ -167,7 +228,6 @@ def _state_summary(store: RunStore) -> dict[str, int]:
     summary = {
         "chapters_total": len(chapters),
         "chapters_translated": sum(item.get("status") == "done" for item in chapters),
-        "chapters_reviewed": sum(item.get("review_status") == "done" for item in chapters),
         "segments_total": 0,
         "segments_translated": 0,
     }
@@ -191,6 +251,7 @@ class RunMetricsRecorder:
     config: dict[str, Any]
     code: dict[str, Any]
     usage_before: dict[str, Any]
+    invocation: dict[str, Any] = field(default_factory=dict)
     run_id: str = field(
         default_factory=lambda: (
             f"run-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%f%z')}-"
@@ -204,6 +265,11 @@ class RunMetricsRecorder:
     _stage_started: dict[str, float] = field(default_factory=dict)
     _stage_depth: dict[str, int] = field(default_factory=dict)
     _finished: bool = False
+    _input_signature: tuple[int, int, int, int, int] | None = field(
+        default=None,
+        repr=False,
+    )
+    _state_snapshot: dict[str, Any] | None = field(default=None, repr=False)
 
     @classmethod
     def start(
@@ -214,16 +280,42 @@ class RunMetricsRecorder:
         input_path: str,
         config: Config,
         client: LLMClient,
+        invocation: dict[str, Any] | None = None,
     ) -> RunMetricsRecorder:
-        """在任何模型调用之前抓取本次运行的基线。"""
+        """在任何模型调用之前抓取本次运行的基线和非配置参数。"""
+        started_at = _now_iso()
+        started = time.perf_counter()
+        input_info, input_signature = _capture_input_identity(input_path)
         return cls(
             operation=operation,
             requested_steps=list(requested_steps),
-            input=input_identity(input_path),
+            input=input_info,
             config=config_identity(config),
             code=code_identity(),
             usage_before=client.usage_summary(),
+            invocation=_safe_value(invocation or {}),
+            started_at=started_at,
+            _started=started,
+            _input_signature=input_signature,
         )
+
+    def verify_input_sha256(self, input_path: str) -> str | None:
+        """廉价确认源文件未变；签名改变时重新哈希并与启动快照比较。"""
+        expected = self.input.get("sha256")
+        if not isinstance(expected, str):
+            return None
+        path = Path(input_path)
+        current_signature = _source_signature(path)
+        if self._input_signature is not None and current_signature == self._input_signature:
+            return expected
+
+        refreshed, signature = _capture_input_identity(input_path)
+        actual = refreshed.get("sha256")
+        if not isinstance(actual, str) or actual != expected:
+            raise ValueError("源文件在本次命令执行期间发生变化；请确认文件稳定后重试。")
+        self._input_signature = signature
+        self.input.update(refreshed)
+        return actual
 
     def attach_store(self, store: RunStore) -> None:
         """绑定状态目录；只接受本次操作实际使用的第一本书。"""
@@ -232,6 +324,14 @@ class RunMetricsRecorder:
             return
         if self._store.run_dir != store.run_dir:
             raise ValueError("一次运行账本不能跨越多个书籍状态目录")
+
+    def capture_state(self, store: RunStore) -> None:
+        """在业务书锁仍持有时冻结本次运行的结束状态。"""
+        self.attach_store(store)
+        try:
+            self._state_snapshot = _state_summary(store)
+        except (OSError, KeyError, TypeError, ValueError):
+            self._state_snapshot = {"available": False}
 
     @contextmanager
     def stage(self, name: str) -> Iterator[None]:
@@ -268,10 +368,9 @@ class RunMetricsRecorder:
             "run_id": self.run_id,
             "operation": self.operation,
             "requested_steps": self.requested_steps,
+            "invocation": self.invocation,
             "status": status,
             "started_at": self.started_at,
-            "finished_at": _now_iso(),
-            "duration_seconds": round(time.perf_counter() - self._started, 6),
             "stage_seconds": {
                 name: round(seconds, 6) for name, seconds in sorted(self._stage_seconds.items())
             },
@@ -280,10 +379,15 @@ class RunMetricsRecorder:
             "code": self.code,
             "usage": usage_delta(client.usage_summary(), self.usage_before),
         }
-        try:
-            record["state"] = _state_summary(self._store)
-        except (OSError, KeyError, TypeError, ValueError):
-            record["state"] = {"available": False}
+        if self._state_snapshot is not None:
+            record["state"] = self._state_snapshot
+        else:
+            try:
+                record["state"] = _state_summary(self._store)
+            except (OSError, KeyError, TypeError, ValueError):
+                record["state"] = {"available": False}
         if error is not None:
             record["error"] = {"type": type(error).__name__}
+        record["finished_at"] = _now_iso()
+        record["duration_seconds"] = round(time.perf_counter() - self._started, 6)
         return self._store.save_run_metric(record)

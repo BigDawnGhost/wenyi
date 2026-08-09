@@ -264,13 +264,19 @@ def _materialize_html_resources(
     return rewritten
 
 
-def _template_resource_source(manifest: dict, source_path: str) -> str:
+def _template_resource_source(
+    store: RunStore,
+    manifest: dict,
+    source_path: str,
+) -> str:
     """Return the HTML file whose directory resolves template media references."""
-    raw_meta = manifest.get("meta")
-    meta = raw_meta if isinstance(raw_meta, dict) else {}
-    converted_html_path = meta.get("converted_html_path")
-    if manifest.get("fmt") == "pdf" and isinstance(converted_html_path, str):
-        return converted_html_path
+    if manifest.get("fmt") == "pdf":
+        from ..ingest.pdf_reader import pdf_cache_html_path
+
+        source_hash = manifest.get("source_sha256")
+        if not isinstance(source_hash, str):
+            raise ValueError("PDF manifest 缺少有效的 source_sha256")
+        return pdf_cache_html_path(store.source_dir, source_hash)
     return source_path
 
 
@@ -1579,7 +1585,7 @@ def _assemble_html(
 </html>"""
     full_html = _materialize_html_resources(
         full_html,
-        source_path=_template_resource_source(m, source_path),
+        source_path=_template_resource_source(store, m, source_path),
         out_path=out_path,
     )
 
@@ -2166,7 +2172,7 @@ def _build_epub_from_html_templates(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
-    resource_source = _template_resource_source(manifest, source_path)
+    resource_source = _template_resource_source(store, manifest, source_path)
 
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")
