@@ -91,7 +91,9 @@ export MINERU_API_KEY=...
 uv run trans-novel translate book.pdf
 ```
 
-MinerU's converted HTML is saved at `state/<book>/source/converted.html`.
+MinerU's converted HTML is saved at
+`state/<book>/source/<source-sha256>/converted.html`. The content-addressed
+directory prevents an interrupted run from reusing another PDF's conversion.
 Later runs reuse this file, and you may correct it manually before resuming.
 
 #### PDF output
@@ -116,6 +118,27 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
+
+## Per-run metrics
+
+`state/<book>/usage.json` remains the cumulative token total for the book.
+`translate`, `prepare`, `review`, `assemble`, and `report` each write an independent
+`state/<book>/run_metrics/<run-id>.json` record with:
+
+- the input SHA-256, configuration, package, and Git revision fingerprints;
+- invocation options such as a selected chapter, output format, and PDF engine;
+- requested stages, completion or failure status, and per-stage wall time;
+- only the LLM calls and tokens added by that invocation; and
+- ending chapter and segment completion counts.
+
+Every resume creates a new record, so clean runs from different branches can be
+compared without mixing their costs. Records omit the full source path and book
+text, redact sensitive option values, and store only an exception type on
+failure.
+
+New manifests store `source_sha256` instead of an absolute source path. Wenyi
+rejects a same-title state directory when its recorded hash does not match the
+current input. Manifests created by older versions must be rebuilt.
 
 ## Common commands
 

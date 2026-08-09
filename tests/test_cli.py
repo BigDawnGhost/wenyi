@@ -405,6 +405,86 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("输入文件不存在", result.output)
         self.assertNotIn("DEEPSEEK_API_KEY", result.output)
 
+    def test_assemble_uses_local_orchestrator_entry(self):
+        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        captured = {}
+
+        class FakeOrchestrator:
+            def __init__(self, config, client=None):
+                del client
+                captured["mono"] = config.output.mono
+                captured["bilingual"] = config.output.bilingual
+
+            def run_assemble(self, input_path, **kwargs):
+                captured["input"] = input_path
+                captured["kwargs"] = kwargs
+                return {"outputs": ["out.pdf"]}
+
+        with (
+            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch("trans_novel.cli.os.path.isfile", return_value=True),
+        ):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "assemble",
+                    "input.epub",
+                    "--format",
+                    "pdf",
+                    "--pdf-engine",
+                    "fpdf2",
+                    "--no-mono",
+                    "--bilingual",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertFalse(captured["mono"])
+        self.assertTrue(captured["bilingual"])
+        self.assertEqual(captured["input"], "input.epub")
+        self.assertEqual(captured["kwargs"]["out_format"], "pdf")
+        self.assertEqual(captured["kwargs"]["pdf_engine"], "fpdf2")
+        self.assertIn("out.pdf", result.output)
+
+    def test_report_uses_local_orchestrator_entry(self):
+        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        captured = {}
+
+        class ReportStore:
+            report_path = "state/book/report.json"
+
+        class FakeOrchestrator:
+            def __init__(self, config, client=None):
+                del client
+                captured["config"] = config
+
+            def run_report(self, input_path):
+                captured["input"] = input_path
+                return {
+                    "store": ReportStore(),
+                    "report": {
+                        "summary": {
+                            "chapters_done": 2,
+                            "chapters_total": 2,
+                            "terms": 3,
+                            "open_conflicts": 0,
+                            "backtranslation_issues": 0,
+                        }
+                    },
+                }
+
+        with (
+            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch("trans_novel.cli.os.path.isfile", return_value=True),
+        ):
+            result = CliRunner().invoke(app, ["report", "input.epub"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(captured["input"], "input.epub")
+        self.assertIn("state/book/report.json", result.output)
+
     def test_translate_expected_errors_are_printed_without_traceback(self):
         cfg = Config.from_dict({"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}})
 
@@ -487,6 +567,28 @@ class TestCliConfig(unittest.TestCase):
             self.assertEqual(result.exit_code, 1, result.output)
             self.assertIn("尚无进度", result.output)
             self.assertFalse(os.path.exists(state_dir))
+
+    def test_state_commands_print_source_identity_errors(self):
+        commands = (
+            ["status", "book.epub"],
+            ["glossary", "list", "book.epub"],
+            ["glossary", "conflicts", "book.epub"],
+            ["glossary", "resolve", "book.epub", "source", "target"],
+        )
+        for args in commands:
+            with self.subTest(args=args):
+                with (
+                    patch("trans_novel.cli.os.path.isfile", return_value=True),
+                    patch(
+                        "trans_novel.cli._runstore_for",
+                        side_effect=ValueError("输入文件内容与现有状态不一致"),
+                    ),
+                ):
+                    result = CliRunner().invoke(app, args)
+
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("错误：输入文件内容与现有状态不一致", result.output)
+                self.assertNotIn("Traceback", result.output)
 
 
 class TestWindowsConsoleEncoding(unittest.TestCase):
