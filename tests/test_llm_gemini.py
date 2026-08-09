@@ -166,6 +166,10 @@ def test_gemini_client_complete_and_usage():
 
     client = GeminiClient(cfg)
     client._client = mock_client_instance
+    activity = []
+    client.set_activity_sink(
+        lambda event, **data: activity.append({"event": event, **data})
+    )
 
     res = client.complete([{"role": "user", "content": "test"}], stage="translation")
 
@@ -178,6 +182,12 @@ def test_gemini_client_complete_and_usage():
     summary = client.usage_summary()
     assert summary["totals"]["prompt_tokens"] == 80
     assert summary["totals"]["completion_tokens"] == 25
+    assert [item["event"] for item in activity] == [
+        "request_started",
+        "request_finished",
+    ]
+    assert activity[0]["request_id"] == activity[1]["request_id"]
+    assert activity[1]["status"] == "success"
 
 
 def test_gemini_client_retries_server_error_and_records_wait():
@@ -278,9 +288,18 @@ def test_gemini_client_safety_block():
 
     client = GeminiClient(cfg)
     client._client = mock_client_instance
+    activity = []
+    client.set_activity_sink(
+        lambda event, **data: activity.append({"event": event, **data})
+    )
 
     with pytest.raises(RuntimeError, match="安全拦截"):
         client.complete([{"role": "user", "content": "unsafe content"}])
+    assert [item["event"] for item in activity] == [
+        "request_started",
+        "request_finished",
+    ]
+    assert activity[-1]["status"] == "failed"
 
 
 def test_factory_build_client_gemini():

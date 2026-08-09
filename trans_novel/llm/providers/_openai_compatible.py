@@ -213,29 +213,35 @@ class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
         stage: str | None = None,
     ) -> str:
         """按指定档位调用兼容接口，自动重试并记录标准化用量。"""
-        tier_config = resolve_tier(self.tiers, tier)
-        kwargs = self._build_request_kwargs(
-            tier_config,
-            messages,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
-        )
-        client = self._ensure_client()
+        with self.request_activity(stage=stage, tier=tier) as request_id:
+            tier_config = resolve_tier(self.tiers, tier)
+            kwargs = self._build_request_kwargs(
+                tier_config,
+                messages,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+            )
+            client = self._ensure_client()
 
-        reporter = RetryReporter(
-            provider=self.provider_name,
-            tier=tier,
-            stage=stage,
-            max_attempts=max(1, self.cfg.max_retries + 1),
-            emit=self._emit_event,
-        )
+            reporter = RetryReporter(
+                provider=self.provider_name,
+                tier=tier,
+                stage=stage,
+                max_attempts=max(1, self.cfg.max_retries + 1),
+                emit=self._emit_event,
+                activity_emit=lambda event, **data: self._emit_activity(
+                    event,
+                    request_id=request_id,
+                    **data,
+                ),
+            )
 
-        @provider_retry(self.cfg.max_retries, reporter)
-        def _call() -> str:
-            """执行一次实际请求；异常交由 tenacity 重试装饰器处理。"""
-            response = client.chat.completions.create(**kwargs)
-            sample = self._normalize_usage(getattr(response, "usage", None))
-            self.usage.record(tier, sample, stage)
-            return response.choices[0].message.content or ""
+            @provider_retry(self.cfg.max_retries, reporter)
+            def _call() -> str:
+                """执行一次实际请求；异常交由 tenacity 重试装饰器处理。"""
+                response = client.chat.completions.create(**kwargs)
+                sample = self._normalize_usage(getattr(response, "usage", None))
+                self.usage.record(tier, sample, stage)
+                return response.choices[0].message.content or ""
 
-        return _call()
+            return _call()

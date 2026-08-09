@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import math
 import os
+import re
 import sys
+import threading
 from collections.abc import Sequence
 from importlib.metadata import version as package_version
 from typing import Any, Protocol
@@ -18,11 +21,14 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    ProgressColumn,
     SpinnerColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 from typer.core import TyperGroup
 
 from .config import Config
@@ -107,27 +113,287 @@ glossary_app = typer.Typer(
 console = Console()
 
 
+_LLM_STAGE_LABELS = {
+    "language_detect": "Detecting language",
+    "Analyzer": "Analyzing book style",
+    "Synopsizer": "Building book understanding",
+    "Translator": "Translating text",
+    "Polisher": "Polishing translation",
+    "GlossaryExtractor": "Extracting glossary terms",
+    "AnnotationAligner": "Aligning annotations",
+    "BackTranslator": "Back-translating samples",
+    "title_translate": "Translating chapter titles",
+    "Reviewer": "Reviewing translation",
+    "ReviewAgent": "Investigating review issues",
+    "ReviewArbiter": "Arbitrating review conflicts",
+    "ReviewFixer": "Drafting review fixes",
+    "ConsistencyChecker": "Checking consistency",
+}
+
+
+def _llm_stage_label(stage: object) -> str:
+    """把内部用量归因 stage 转成短小、可读的英文业务步骤。"""
+    if not isinstance(stage, str) or not stage.strip():
+        return "Model request"
+    normalized = stage.strip()
+    mapped = _LLM_STAGE_LABELS.get(normalized)
+    if mapped:
+        return mapped
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", normalized)
+    words = re.sub(r"[_-]+", " ", words).strip()
+    return words[:1].upper() + words[1:] if words else "Model request"
+
+
+class _ConditionalProgressColumn(ProgressColumn):
+    """在汇总行隐藏进度专用列，使未知全程 ETA 保持紧凑。"""
+
+    def __init__(self, inner: ProgressColumn) -> None:
+        super().__init__(table_column=inner.get_table_column())
+        self.inner = inner
+
+    def render(self, task: Task):
+        if not task.fields.get("show_progress", True):
+            return Text("")
+        return self.inner(task)
+
+
+class _EstimatedRemainingColumn(ProgressColumn):
+    """显示带作用域标签的紧凑 ETA；无可靠样本时明确标记为计算中。"""
+
+    max_refresh = 0.5
+
+    def render(self, task: Task) -> Text:
+        label = str(task.fields.get("eta_label") or "阶段剩余")
+        remaining = task.time_remaining
+        if task.total is None or remaining is None:
+            value = "计算中"
+        else:
+            seconds = max(0, math.ceil(remaining))
+            minutes, seconds = divmod(seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            value = (
+                f"{hours}:{minutes:02d}:{seconds:02d}"
+                if hours
+                else f"{minutes:02d}:{seconds:02d}"
+            )
+        return Text(f"{label} {value}", style="progress.remaining")
+
+
+def _new_progress() -> Progress:
+    """创建所有模型命令共用的 Rich 进度展示。"""
+    return Progress(
+        _ConditionalProgressColumn(SpinnerColumn()),
+        TextColumn("[progress.description]{task.description}"),
+        _ConditionalProgressColumn(BarColumn()),
+        _ConditionalProgressColumn(MofNCompleteColumn()),
+        _ConditionalProgressColumn(TimeElapsedColumn()),
+        _EstimatedRemainingColumn(),
+        console=console,
+    )
+
+
 class _RichProgressBridge:
     """把流水线的阶段进度映射到同一个 Rich 任务。"""
 
-    def __init__(self, progress: Progress, initial_description: str) -> None:
+    def __init__(
+        self,
+        progress: Progress,
+        initial_description: str,
+        *,
+        overall_predictable: bool = False,
+    ) -> None:
         self.progress = progress
-        self.task = progress.add_task(initial_description, total=None)
+        self._lock = threading.RLock()
+        self._base_description = initial_description
+        self._overall_predictable = overall_predictable
+        self._nested_translation = False
+        self._activity_sequence = 0
+        self._activities: dict[str, dict[str, Any]] = {}
+        self.task = progress.add_task(
+            self._stage_description(),
+            total=None,
+            eta_label="阶段剩余",
+            show_progress=True,
+        )
+        self.overall_task = progress.add_task(
+            "全程",
+            total=None,
+            eta_label="全程剩余",
+            show_progress=False,
+        )
+
+    def _task(self, task_id: int) -> Task:
+        return next(task for task in self.progress.tasks if task.id == task_id)
+
+    def _activity_status(self) -> str:
+        if not self._activities:
+            return "LLM: idle"
+        active = list(self._activities.values())
+        retrying = [item for item in active if item.get("retry")]
+        primary = max(retrying or active, key=lambda item: int(item["sequence"]))
+        stage = primary.get("stage")
+        tier = str(primary.get("tier") or "unknown")
+        same_group = [
+            item
+            for item in active
+            if item.get("stage") == stage and str(item.get("tier") or "unknown") == tier
+        ]
+        label = _llm_stage_label(stage)
+        retry = primary.get("retry")
+        if isinstance(retry, dict):
+            status = (
+                f"LLM: Retrying {label} [{tier}] "
+                f"{retry.get('attempt', '?')}/{retry.get('max_attempts', '?')} "
+                f"in {float(retry.get('wait_seconds', 0.0)):.1f}s"
+            )
+        else:
+            status = f"LLM: {label} [{tier}]"
+        if len(same_group) > 1:
+            status += f" ×{len(same_group)}"
+        others = len(active) - len(same_group)
+        if others:
+            status += f" (+{others} other request{'s' if others != 1 else ''})"
+        return status
+
+    def _stage_description(self) -> str:
+        return f"{self._base_description} · {self._activity_status()}"
+
+    def _refresh_stage_description(self) -> None:
+        self.progress.update(self.task, description=self._stage_description())
+
+    def on_llm_activity(self, event: str, **data: Any) -> None:
+        """聚合并发模型请求，并只刷新当前阶段标题。"""
+        request_id = data.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            return
+        with self._lock:
+            if event == "request_started":
+                self._activity_sequence += 1
+                self._activities[request_id] = {
+                    "stage": data.get("stage"),
+                    "tier": data.get("tier"),
+                    "sequence": self._activity_sequence,
+                }
+            elif event == "request_retry_wait":
+                activity = self._activities.get(request_id)
+                if activity is not None:
+                    self._activity_sequence += 1
+                    activity["sequence"] = self._activity_sequence
+                    activity["retry"] = {
+                        "attempt": data.get("attempt"),
+                        "max_attempts": data.get("max_attempts"),
+                        "wait_seconds": data.get("wait_seconds", 0.0),
+                    }
+            elif event == "request_finished":
+                self._activities.pop(request_id, None)
+            else:
+                return
+            self._refresh_stage_description()
+
+    def close(self) -> None:
+        """释放仅属于当前 Rich 上下文的瞬时请求状态。"""
+        with self._lock:
+            self._activities.clear()
+
+    def _reset_stage(self, done: int, total: int, label: str) -> None:
+        self._base_description = label
+        self.progress.reset(
+            self.task,
+            total=total,
+            completed=done,
+            description=self._stage_description(),
+            eta_label="阶段剩余",
+            show_progress=True,
+        )
+
+    def update_translation(
+        self,
+        chapter_done: int,
+        chapter_total: int,
+        overall_done: int,
+        overall_total: int,
+        label: str,
+    ) -> None:
+        """同时更新当前章节和全书正文的双层进度。"""
+        with self._lock:
+            stage_task = self._task(self.task)
+            if (
+                not self._nested_translation
+                or label != self._base_description
+                or stage_task.total != chapter_total
+                or chapter_done < stage_task.completed
+            ):
+                self._reset_stage(chapter_done, chapter_total, label)
+            else:
+                self.progress.update(
+                    self.task,
+                    completed=chapter_done,
+                    total=chapter_total,
+                    description=self._stage_description(),
+                )
+
+            overall_task = self._task(self.overall_task)
+            description = "全程" if self._overall_predictable else "全程计算中（正文）"
+            eta_label = "全程剩余" if self._overall_predictable else "正文剩余"
+            if (
+                not self._nested_translation
+                or overall_task.total != overall_total
+                or overall_done < overall_task.completed
+            ):
+                self.progress.reset(
+                    self.overall_task,
+                    total=overall_total,
+                    completed=overall_done,
+                    description=description,
+                    eta_label=eta_label,
+                    show_progress=True,
+                )
+            else:
+                self.progress.update(
+                    self.overall_task,
+                    completed=overall_done,
+                    total=overall_total,
+                    description=description,
+                    eta_label=eta_label,
+                    show_progress=True,
+                )
+            self._nested_translation = True
 
     def __call__(self, done: int, total: int, label: str) -> None:
         """刷新当前阶段的标题与计数，避免阶段切换产生多行进度条。"""
-        if total > 0:
-            self.progress.update(
-                self.task,
-                completed=done,
-                total=total,
-                description=label,
+        with self._lock:
+            if self._nested_translation:
+                self._nested_translation = False
+            self._base_description = label
+            if total > 0:
+                task = self._task(self.task)
+                if task.total != total or done < task.completed:
+                    self._reset_stage(done, total, label)
+                else:
+                    self.progress.update(
+                        self.task,
+                        completed=done,
+                        total=total,
+                        description=self._stage_description(),
+                    )
+                return
+            # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
+            # 确定总数切回滚动模式；重建任务以清除残留的阶段计数和测速样本。
+            self.progress.remove_task(self.task)
+            self.task = self.progress.add_task(
+                self._stage_description(),
+                total=None,
+                eta_label="阶段剩余",
+                show_progress=True,
             )
-            return
-        # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
-        # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
-        self.progress.remove_task(self.task)
-        self.task = self.progress.add_task(label, total=None)
+
+
+def _close_progress_activity(client: object, bridge: _RichProgressBridge) -> None:
+    """在 Rich 上下文结束前解除客户端对桥接器的引用。"""
+    set_activity_sink = getattr(client, "set_activity_sink", None)
+    if callable(set_activity_sink):
+        set_activity_sink(None)
+    bridge.close()
 
 
 def _version_callback(value: bool) -> None:
@@ -319,34 +585,37 @@ def _translate_impl_or_raise(
 
     orch = Orchestrator(config)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as prog:
-        cb = _RichProgressBridge(prog, "准备中…")
-
-        if chapter is not None:
-            try:
-                store = orch.run(input_path, only_chapter=chapter, progress=cb)
-            except ValueError as error:
-                console.print(f"[red]{error}[/]")
-                raise typer.Exit(2) from error
-            console.print(f"[green]已翻第 {chapter} 章[/]，状态目录：{store.run_dir}")
-            _print_usage({"usage": store.load_usage() or {}})
-            return
-
-        result = orch.run_all(
-            input_path,
-            progress=cb,
-            out_format=fmt,
-            out_path=out,
-            do_qa=qa,
-            pdf_engine=pdf_engine,
+    qa_enabled = qa if qa is not None else config.pipeline.consistency_qa
+    overall_predictable = chapter is not None or (
+        not config.pipeline.review and not qa_enabled
+    )
+    with _new_progress() as prog:
+        cb = _RichProgressBridge(
+            prog,
+            "准备中…",
+            overall_predictable=overall_predictable,
         )
+        try:
+            if chapter is not None:
+                try:
+                    store = orch.run(input_path, only_chapter=chapter, progress=cb)
+                except ValueError as error:
+                    console.print(f"[red]{error}[/]")
+                    raise typer.Exit(2) from error
+                console.print(f"[green]已翻第 {chapter} 章[/]，状态目录：{store.run_dir}")
+                _print_usage({"usage": store.load_usage() or {}})
+                return
+
+            result = orch.run_all(
+                input_path,
+                progress=cb,
+                out_format=fmt,
+                out_path=out,
+                do_qa=qa,
+                pdf_engine=pdf_engine,
+            )
+        finally:
+            _close_progress_activity(getattr(orch, "client", None), cb)
 
     s = result["report"]["summary"]
     console.print(
@@ -375,26 +644,12 @@ def _prepare_impl(input_path: str) -> None:
         _require_input_file(input_path)
         config = _load_config()
         orch = Orchestrator(config)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as prog:
-            task = prog.add_task("准备中…", total=None)
-
-            def cb(done: int, total: int, label: str) -> None:
-                """把译前准备进度同步到 Rich 任务。"""
-                nonlocal task
-                if total > 0:
-                    prog.update(task, completed=done, total=total, description=label)
-                    return
-                prog.remove_task(task)
-                task = prog.add_task(label, total=None)
-
-            store = orch.prepare_for_translation(input_path, progress=cb)
+        with _new_progress() as prog:
+            cb = _RichProgressBridge(prog, "准备中…")
+            try:
+                store = orch.prepare_for_translation(input_path, progress=cb)
+            finally:
+                _close_progress_activity(getattr(orch, "client", None), cb)
     except (IngestError, ImportError, OSError, ValueError) as error:
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
@@ -535,16 +790,12 @@ def review(
     orch = Orchestrator(config)
 
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as prog:
+        with _new_progress() as prog:
             cb = _RichProgressBridge(prog, "准备全书审校…")
-            result = orch.run_review(input, progress=cb)
+            try:
+                result = orch.run_review(input, progress=cb)
+            finally:
+                _close_progress_activity(getattr(orch, "client", None), cb)
     except (IngestError, ImportError, OSError, ValueError) as error:
         console.print(f"[red]错误：{error}[/]")
         raise typer.Exit(1) from None
@@ -765,7 +1016,15 @@ def qa(
     try:
         client = build_client(config)
         client.set_event_sink(store.log_event)
-        issues = ConsistencyChecker(client, config).check(store, g)
+        with _new_progress() as prog:
+            cb = _RichProgressBridge(prog, "一致性 QA…")
+            set_activity_sink = getattr(client, "set_activity_sink", None)
+            if callable(set_activity_sink):
+                set_activity_sink(cb.on_llm_activity)
+            try:
+                issues = ConsistencyChecker(client, config).check(store, g)
+            finally:
+                _close_progress_activity(client, cb)
     finally:
         g.close()
     console.print(f"一致性问题 {len(issues)} 项：")

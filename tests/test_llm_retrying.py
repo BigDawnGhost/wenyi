@@ -123,7 +123,11 @@ def test_transient_error_retries_once_and_records_wait_event():
     )
     client._client = stub
     events: list[dict[str, Any]] = []
+    activity: list[dict[str, Any]] = []
     client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_activity_sink(
+        lambda event, **data: activity.append({"event": event, **data})
+    )
 
     assert client.complete([{"role": "user", "content": "x"}], stage="Translator") == "ok"
     assert stub.completions.calls == 2
@@ -135,6 +139,19 @@ def test_transient_error_retries_once_and_records_wait_event():
     assert events[0]["wait_source"] == "server"
     assert events[0]["stage"] == "Translator"
     assert events[0]["request_id"] == "req-test"
+    assert [item["event"] for item in activity] == [
+        "request_started",
+        "request_retry_wait",
+        "request_finished",
+    ]
+    assert len({item["request_id"] for item in activity}) == 1
+    assert activity[1]["stage"] == "Translator"
+    assert activity[1]["tier"] == "strong"
+    assert activity[1]["attempt"] == 2
+    assert activity[1]["max_attempts"] == 2
+    assert activity[1]["wait_seconds"] == 0
+    assert activity[1]["reason"] == "http_502"
+    assert activity[-1]["status"] == "success"
 
 
 def test_retry_exhaustion_is_recorded_and_reraises_last_error():
@@ -167,13 +184,22 @@ def test_permanent_error_is_not_retried_or_reported_as_exhaustion():
     stub = _ClientStub([_HttpError(401)])
     client._client = stub
     events: list[dict[str, Any]] = []
+    activity: list[dict[str, Any]] = []
     client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_activity_sink(
+        lambda event, **data: activity.append({"event": event, **data})
+    )
 
     with pytest.raises(_HttpError):
         client.complete([{"role": "user", "content": "x"}])
 
     assert stub.completions.calls == 1
     assert events == []
+    assert [item["event"] for item in activity] == [
+        "request_started",
+        "request_finished",
+    ]
+    assert activity[-1]["status"] == "failed"
 
 
 def test_orchestrator_retry_sink_writes_book_event_log():
@@ -181,11 +207,26 @@ def test_orchestrator_retry_sink_writes_book_event_log():
         store = RunStore(directory)
         client = DeepSeekClient(_config(max_retries=0))
         orchestrator = Orchestrator(Config(), client=client)
-        orchestrator._bind_llm_events(store)
+        activity = []
+
+        class ProgressBridge:
+            @staticmethod
+            def on_llm_activity(event, **data):
+                activity.append({"event": event, **data})
+
+        orchestrator._bind_llm_events(store, ProgressBridge())
 
         client._emit_event("llm_retry_wait", reason="http_502", wait_seconds=1.0)
+        client._emit_activity("request_started", request_id="llm-test")
 
         with open(store.event_log_path, encoding="utf-8") as file:
-            event = json.loads(file.readline())
+            events = [json.loads(line) for line in file]
+        assert len(events) == 1
+        event = events[0]
         assert event["event"] == "llm_retry_wait"
         assert event["reason"] == "http_502"
+        assert activity == [{"event": "request_started", "request_id": "llm-test"}]
+
+        orchestrator._bind_llm_events(store)
+        client._emit_activity("request_started", request_id="not-forwarded")
+        assert len(activity) == 1

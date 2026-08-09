@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from trans_novel.llm.json_parser import parse_json_loose, parse_json_result
@@ -65,6 +67,105 @@ class TestFakeClient(unittest.TestCase):
         self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "hello")
         self.assertEqual(c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"])
         self.assertEqual(len(c.calls), 2)
+
+    def test_activity_lifecycle_reports_success_and_failure(self):
+        events = []
+
+        def failing_handler(messages, tier, json_mode):
+            del messages, tier, json_mode
+            raise RuntimeError("provider failed")
+
+        client = FakeClient()
+        client.set_activity_sink(
+            lambda event, **data: events.append({"event": event, **data})
+        )
+        self.assertEqual(
+            client.complete(
+                [{"role": "user", "content": "x"}],
+                tier="fast",
+                stage="Synopsizer",
+            ),
+            "",
+        )
+        self.assertEqual(
+            [event["event"] for event in events],
+            ["request_started", "request_finished"],
+        )
+        self.assertEqual(events[0]["request_id"], events[1]["request_id"])
+        self.assertEqual(events[0]["stage"], "Synopsizer")
+        self.assertEqual(events[0]["tier"], "fast")
+        self.assertEqual(events[1]["status"], "success")
+
+        events.clear()
+        client.handler = failing_handler
+        with self.assertRaisesRegex(RuntimeError, "provider failed"):
+            client.complete(
+                [{"role": "user", "content": "x"}],
+                tier="strong",
+                stage="Translator",
+            )
+        self.assertEqual(
+            [event["event"] for event in events],
+            ["request_started", "request_finished"],
+        )
+        self.assertEqual(events[-1]["status"], "failed")
+
+    def test_concurrent_activity_uses_unique_request_ids(self):
+        barrier = threading.Barrier(2)
+        events = []
+        event_lock = threading.Lock()
+
+        def handler(messages, tier, json_mode):
+            del messages, tier, json_mode
+            barrier.wait(timeout=2)
+            return "ok"
+
+        def sink(event, **data):
+            with event_lock:
+                events.append({"event": event, **data})
+
+        clients = [FakeClient(handler=handler), FakeClient(handler=handler)]
+        for client in clients:
+            client.set_activity_sink(sink)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(
+                pool.map(
+                    lambda item: item[0].complete(
+                        [{"role": "user", "content": item[1]}],
+                        stage=item[1],
+                    ),
+                    zip(clients, ["Analyzer", "Synopsizer"]),
+                )
+            )
+
+        self.assertEqual(results, ["ok", "ok"])
+        started = [event for event in events if event["event"] == "request_started"]
+        finished = [event for event in events if event["event"] == "request_finished"]
+        self.assertEqual(len({event["request_id"] for event in started}), 2)
+        self.assertEqual(
+            {event["request_id"] for event in started},
+            {event["request_id"] for event in finished},
+        )
+
+    def test_activity_sink_failure_does_not_change_result_or_original_error(self):
+        def broken_sink(event, **data):
+            del event, data
+            raise RuntimeError("UI unavailable")
+
+        client = FakeClient()
+        client.set_activity_sink(broken_sink)
+        self.assertEqual(client.complete([{"role": "user", "content": "x"}]), "")
+
+        original = ValueError("original provider failure")
+
+        def failing_handler(messages, tier, json_mode):
+            del messages, tier, json_mode
+            raise original
+
+        client.handler = failing_handler
+        with self.assertRaises(ValueError) as raised:
+            client.complete([{"role": "user", "content": "x"}])
+        self.assertIs(raised.exception, original)
 
 
 class TestParseJsonLooseRepairs(unittest.TestCase):

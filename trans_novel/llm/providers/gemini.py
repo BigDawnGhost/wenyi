@@ -210,6 +210,27 @@ class GeminiClient(LLMClient):
         stage: str | None = None,
     ) -> str:
         """调用 Gemini 模型并支持重试、JSON 模式与用量归因。"""
+        with self.request_activity(stage=stage, tier=tier) as request_id:
+            return self._complete_with_activity(
+                messages,
+                tier=tier,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+                stage=stage,
+                request_id=request_id,
+            )
+
+    def _complete_with_activity(
+        self,
+        messages: Messages,
+        *,
+        tier: str,
+        json_mode: bool,
+        max_tokens: int | None,
+        stage: str | None,
+        request_id: str,
+    ) -> str:
+        """在已建立活动生命周期的上下文中执行 Gemini 请求。"""
         tier_config: ResolvedTier[GeminiTierOptions] = resolve_tier(self.tiers, tier)
         client = self._ensure_client()
 
@@ -257,6 +278,11 @@ class GeminiClient(LLMClient):
             stage=stage,
             max_attempts=max(1, self.cfg.max_retries + 1),
             emit=self._emit_event,
+            activity_emit=lambda event, **data: self._emit_activity(
+                event,
+                request_id=request_id,
+                **data,
+            ),
         )
 
         @provider_retry(self.cfg.max_retries, reporter)

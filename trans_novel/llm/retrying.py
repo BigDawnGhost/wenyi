@@ -193,6 +193,7 @@ class RetryReporter:
     stage: str | None
     max_attempts: int
     emit: Callable[..., None]
+    activity_emit: Callable[..., None] | None = None
 
     def _error_fields(self, error: Any) -> dict[str, Any]:
         """生成不含请求正文、响应正文和密钥的安全错误字段。"""
@@ -222,6 +223,16 @@ class RetryReporter:
             **fields,
         }
         self.emit("llm_retry_wait", **payload)
+        if self.activity_emit is not None:
+            self.activity_emit(
+                "request_retry_wait",
+                stage=self.stage,
+                tier=self.tier,
+                attempt=retry_state.attempt_number + 1,
+                max_attempts=self.max_attempts,
+                wait_seconds=round(wait_seconds, 3),
+                reason=fields["reason"],
+            )
         _LOGGER.warning(
             "LLM request retrying: provider=%s stage=%s tier=%s attempt=%s/%s "
             "wait=%.3fs reason=%s error=%s request_id=%s",
