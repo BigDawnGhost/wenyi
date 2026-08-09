@@ -4,6 +4,7 @@
   manifest.json     书籍元信息 + 各章状态
   chapters/ch{n}.json  各章（含 source/target 的 Segment）
   source/           输入预处理缓存（例如 PDF 转换后的 HTML）
+  annotation_contexts.json  EPUB 注释目标的去重源文索引
   context.json      滚动上下文（梗概 + 前文尾段）
   analysis.json     全局分析结果
   usage.json        本书跨 translate/resume 累计的 LLM token 用量
@@ -23,6 +24,7 @@ import re
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -61,10 +63,10 @@ class RunStore:
         os.makedirs(self.chapters_dir, exist_ok=True)
 
     @contextmanager
-    def lock(self) -> Iterator[None]:
-        """Serialize mutations for one book across independent processes."""
+    def _file_lock(self, filename: str) -> Iterator[None]:
+        """用状态目录内的指定锁文件串行化跨进程操作。"""
         self.ensure_dirs()
-        lock_path = os.path.join(self.run_dir, ".run.lock")
+        lock_path = os.path.join(self.run_dir, filename)
         with open(lock_path, "a+b") as lock_file:
             if os.name == "nt":  # pragma: no cover - Windows-specific
                 import msvcrt
@@ -89,6 +91,30 @@ class RunStore:
                 finally:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    @contextmanager
+    def lock(self) -> Iterator[None]:
+        """串行化同一本书的翻译、审校和报告等长时间运行。"""
+        with self._file_lock(".run.lock"):
+            yield
+
+    @contextmanager
+    def state_lock(self) -> Iterator[None]:
+        """短暂冻结 manifest 与章节文件，供原子落盘或一致快照使用。"""
+        with self._file_lock(".state.lock"):
+            yield
+
+    @contextmanager
+    def event_lock(self) -> Iterator[None]:
+        """串行化 JSONL 事件追加，避免并发命令交错写入同一行。"""
+        with self._file_lock(".events.lock"):
+            yield
+
+    @contextmanager
+    def assemble_lock(self) -> Iterator[None]:
+        """串行化同一本书的产物写入，但不阻塞仍在进行的正文翻译。"""
+        with self._file_lock(".assemble.lock"):
+            yield
+
     # ── 路径 ──────────────────────────────────────────────────────────────
     @property
     def manifest_path(self) -> str:
@@ -104,6 +130,11 @@ class RunStore:
     def context_path(self) -> str:
         """返回滚动上下文文件路径。"""
         return os.path.join(self.run_dir, "context.json")
+
+    @property
+    def annotation_contexts_path(self) -> str:
+        """返回 EPUB 注释辅助上下文索引路径。"""
+        return os.path.join(self.run_dir, "annotation_contexts.json")
 
     @property
     def analysis_path(self) -> str:
@@ -192,6 +223,7 @@ class RunStore:
         os.makedirs(self.chapters_dir, exist_ok=True)
         for path in (
             self.analysis_path,
+            self.annotation_contexts_path,
             self.context_path,
             self.glossary_path,
             f"{self.glossary_path}-wal",
@@ -242,13 +274,23 @@ class RunStore:
         digest = source_hash or source_sha256(doc.source_path)
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("源文件 SHA-256 格式无效")
+        document_meta = dict(doc.meta)
+        annotation_contexts = document_meta.pop("epub_annotation_contexts", None)
+        if isinstance(annotation_contexts, dict) and annotation_contexts:
+            self.save_annotation_contexts(annotation_contexts)
+        else:
+            try:
+                os.remove(self.annotation_contexts_path)
+            except FileNotFoundError:
+                pass
+
         manifest = {
             "title": doc.title,
             "fmt": doc.fmt,
             "source_sha256": digest,
             "source_lang": doc.source_lang,
             "target_lang": doc.target_lang,
-            "meta": doc.meta,
+            "meta": document_meta,
             "chapters": [
                 {
                     "index": c.index,
@@ -272,10 +314,16 @@ class RunStore:
     ) -> str:
         """校验输入内容属于当前状态；缺少内容身份的旧状态直接拒绝。"""
         actual = actual_sha256 or source_sha256(input_path)
+        with self.state_lock():
+            self._validate_source_identity(self.load_manifest(), actual)
+        return actual
+
+    @staticmethod
+    def _validate_source_identity(manifest: dict, actual: str) -> None:
+        """校验已读取 manifest 的源内容身份。"""
         if not re.fullmatch(r"[0-9a-f]{64}", actual):
             raise ValueError("源文件 SHA-256 格式无效")
 
-        manifest = self.load_manifest()
         expected = manifest.get("source_sha256")
         if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise ValueError(
@@ -286,11 +334,36 @@ class RunStore:
                 "输入文件内容与现有翻译状态不一致（状态目录同名）；请使用原始源文件，"
                 "或移走该状态目录后重新建立。"
             )
-        return actual
+
+    def create_export_snapshot(self, *, actual_sha256: str) -> ExportSnapshotStore:
+        """在短状态锁内冻结导出所需的 manifest 和全部章节。"""
+        with self.state_lock():
+            manifest = self.load_manifest()
+            self._validate_source_identity(manifest, actual_sha256)
+            chapter_entries = manifest.get("chapters")
+            if not isinstance(chapter_entries, list):
+                raise ValueError("翻译状态中的章节清单格式无效")
+
+            chapters: dict[int, Chapter] = {}
+            for entry in chapter_entries:
+                if not isinstance(entry, dict):
+                    raise ValueError("翻译状态中的章节条目格式无效")
+                chapter_index = entry.get("index")
+                if not isinstance(chapter_index, int) or isinstance(chapter_index, bool):
+                    raise ValueError("翻译状态中的章节编号无效")
+                if chapter_index in chapters:
+                    raise ValueError(f"翻译状态包含重复章节编号：{chapter_index}")
+                chapter = self.load_chapter(chapter_index)
+                if chapter.index != chapter_index:
+                    raise ValueError(f"章节文件索引不匹配：{chapter_index}")
+                chapters[chapter_index] = chapter
+
+        return ExportSnapshotStore(self.run_dir, manifest, chapters)
 
     def save_manifest(self, manifest: dict) -> None:
         """原子保存书籍清单和章节状态。"""
-        self._write_json(self.manifest_path, manifest)
+        with self.state_lock():
+            self._write_json(self.manifest_path, manifest)
 
     def load_manifest(self) -> dict:
         """读取书籍清单和章节状态。"""
@@ -298,12 +371,13 @@ class RunStore:
 
     def set_chapter_status(self, ci: int, status: str) -> None:
         """更新指定章节状态并原子保存整份 manifest。"""
-        manifest = self.load_manifest()
-        for c in manifest["chapters"]:
-            if c["index"] == ci:
-                c["status"] = status
-                break
-        self.save_manifest(manifest)
+        with self.state_lock():
+            manifest = self.load_manifest()
+            for c in manifest["chapters"]:
+                if c["index"] == ci:
+                    c["status"] = status
+                    break
+            self._write_json(self.manifest_path, manifest)
 
     def pending_chapters(self) -> list[int]:
         """返回尚未标记完成的章节索引。"""
@@ -313,7 +387,19 @@ class RunStore:
     # ── 章 ────────────────────────────────────────────────────────────────
     def save_chapter(self, chapter: Chapter) -> None:
         """原子保存一个章节的源文、译文和阶段元数据。"""
-        self._write_json(self.chapter_path(chapter.index), chapter.to_dict())
+        with self.state_lock():
+            self._write_json(self.chapter_path(chapter.index), chapter.to_dict())
+
+    def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
+        """在同一状态锁内发布最终章节内容及其 manifest 状态。"""
+        with self.state_lock():
+            self._write_json(self.chapter_path(chapter.index), chapter.to_dict())
+            manifest = self.load_manifest()
+            for entry in manifest["chapters"]:
+                if entry["index"] == chapter.index:
+                    entry["status"] = status
+                    break
+            self._write_json(self.manifest_path, manifest)
 
     def load_chapter(self, ci: int) -> Chapter:
         """读取并校验指定章节状态。"""
@@ -327,6 +413,18 @@ class RunStore:
     def load_context(self) -> dict | None:
         """读取滚动上下文；文件尚不存在时返回 None。"""
         return self._read_json(self.context_path) if os.path.isfile(self.context_path) else None
+
+    def save_annotation_contexts(self, data: dict) -> None:
+        """原子保存 EPUB 注释目标的去重源文索引。"""
+        self._write_json(self.annotation_contexts_path, data)
+
+    def load_annotation_contexts(self) -> dict | None:
+        """读取 EPUB 注释辅助上下文；非 EPUB 或尚无索引时返回 None。"""
+        return (
+            self._read_json(self.annotation_contexts_path)
+            if os.path.isfile(self.annotation_contexts_path)
+            else None
+        )
 
     def save_analysis(self, data: dict) -> None:
         """原子保存全书分析和概览数据。"""
@@ -428,8 +526,9 @@ class RunStore:
             "event": event,
             **data,
         }
-        with open(self.event_log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        with self.event_lock():
+            with open(self.event_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
         if event == "batch_glossary_extracted" and self._batch_glossary_event_cache is not None:
             chapter = data.get("chapter")
             start = data.get("start_index")
@@ -438,3 +537,31 @@ class RunStore:
                 self._batch_glossary_event_cache.setdefault(chapter, set()).add(
                     self.batch_glossary_key(start, count)
                 )
+
+
+class ExportSnapshotStore(RunStore):
+    """导出专用的内存只读状态；源资源仍引用正式状态目录。"""
+
+    def __init__(
+        self,
+        run_dir: str,
+        manifest: dict,
+        chapters: dict[int, Chapter],
+    ) -> None:
+        super().__init__(run_dir, create=False)
+        self._snapshot_manifest = deepcopy(manifest)
+        self._snapshot_chapters = {
+            index: Chapter.from_dict(chapter.to_dict()) for index, chapter in chapters.items()
+        }
+
+    def load_manifest(self) -> dict:
+        """返回冻结 manifest 的独立副本。"""
+        return deepcopy(self._snapshot_manifest)
+
+    def load_chapter(self, ci: int) -> Chapter:
+        """返回冻结章节的独立副本，防止一次渲染污染后续输出。"""
+        try:
+            chapter = self._snapshot_chapters[ci]
+        except KeyError as error:
+            raise FileNotFoundError(f"快照中不存在章节：{ci}") from error
+        return Chapter.from_dict(chapter.to_dict())

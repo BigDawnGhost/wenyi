@@ -203,4 +203,6 @@ read-only review summary.
 
 `report` summarizes the current translation and read-only Review result without
 modifying translated text. `assemble` rebuilds output from existing state without
-calling the model again.
+calling the model again. If another terminal is still translating, export uses a
+consistent snapshot of the batches already persisted when the command starts; run
+it again to include batches completed afterward.

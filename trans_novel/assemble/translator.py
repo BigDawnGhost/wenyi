@@ -20,6 +20,40 @@ class AlignmentError(Exception):
 
 
 class Translator(Agent):
+    @staticmethod
+    def _validate_annotation_contexts(
+        sources: list[str],
+        annotation_contexts: list[list[dict[str, str]]] | None,
+    ) -> list[list[dict[str, str]]]:
+        """校验逐段注释资料，并裁剪为提示词实际使用的稳定字段。"""
+        if annotation_contexts is None:
+            return [[] for _ in sources]
+        if not isinstance(annotation_contexts, list) or len(annotation_contexts) != len(sources):
+            actual = len(annotation_contexts) if isinstance(annotation_contexts, list) else "非列表"
+            raise ValueError(f"注释上下文数量不匹配：期望 {len(sources)} 组，实际 {actual} 组")
+
+        normalized: list[list[dict[str, str]]] = []
+        for segment_index, items in enumerate(annotation_contexts):
+            if not isinstance(items, list):
+                raise ValueError(f"第 {segment_index} 段的注释上下文必须是列表")
+            segment_items: list[dict[str, str]] = []
+            for item_index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    raise ValueError(f"第 {segment_index} 段第 {item_index} 条注释上下文必须是对象")
+                target_key = item.get("target_key")
+                source = item.get("source")
+                if not isinstance(target_key, str) or not target_key.strip():
+                    raise ValueError(
+                        f"第 {segment_index} 段第 {item_index} 条注释上下文缺少有效 target_key"
+                    )
+                if not isinstance(source, str):
+                    raise ValueError(
+                        f"第 {segment_index} 段第 {item_index} 条注释上下文缺少字符串 source"
+                    )
+                segment_items.append({"target_key": target_key, "source": source})
+            normalized.append(segment_items)
+        return normalized
+
     def _call_batch(
         self,
         sources: list[str],
@@ -28,6 +62,7 @@ class Translator(Agent):
         context: str,
         book_synopsis: str = "",
         chapter_digest: str = "",
+        annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> list[str]:
         """调用一次批量翻译，并严格校验输出类型、数量和非空性。"""
         n = len(sources)
@@ -44,6 +79,9 @@ class Translator(Agent):
             style=style or "（无）",
             book_synopsis=book_synopsis or "（无）",
             glossary=prompts.render_glossary(glossary_terms),
+            annotation_contexts=prompts.render_annotation_contexts(
+                annotation_contexts or [[] for _ in sources]
+            ),
             chapter_digest=chapter_digest or "（无）",
             context=context or "（无）",
             n=n,
@@ -65,11 +103,24 @@ class Translator(Agent):
         return items
 
     def _translate_one(
-        self, source, glossary_terms, style, context, book_synopsis, chapter_digest
+        self,
+        source,
+        glossary_terms,
+        style,
+        context,
+        book_synopsis,
+        chapter_digest,
+        annotation_context,
     ) -> str:
         """借用批量协议翻译单段，作为批量对齐失败后的最终兜底。"""
         out = self._call_batch(
-            [source], glossary_terms, style, context, book_synopsis, chapter_digest
+            [source],
+            glossary_terms,
+            style,
+            context,
+            book_synopsis,
+            chapter_digest,
+            [annotation_context],
         )
         return out[0]
 
@@ -82,10 +133,12 @@ class Translator(Agent):
         context: str = "",
         book_synopsis: str = "",
         chapter_digest: str = "",
+        annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> list[str]:
         """翻译一批源段，返回与之等长的译文列表。"""
         glossary_terms = glossary_terms or []
         n = len(sources)
+        annotation_contexts = self._validate_annotation_contexts(sources, annotation_contexts)
         if n == 0:
             return []
 
@@ -99,6 +152,7 @@ class Translator(Agent):
                     context,
                     book_synopsis,
                     chapter_digest,
+                    annotation_contexts,
                 )
             except AlignmentError:
                 # 只恢复模型输出协议/对齐错误；传输错误已由 provider 统一处理。
@@ -117,6 +171,7 @@ class Translator(Agent):
                         context,
                         book_synopsis,
                         chapter_digest,
+                        annotation_contexts[index],
                     )
                 )
             except Exception as error:
