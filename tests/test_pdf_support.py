@@ -12,7 +12,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 
-from trans_novel.assemble.writer import assemble
+from trans_novel.assemble.writer import _normalize_html_for_fpdf, assemble
 from trans_novel.cli import _runstore_for
 from trans_novel.config import Config
 from trans_novel.ingest.errors import MinerUError
@@ -420,6 +420,66 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
         self.assertEqual(writes[0]["font_family"], "WenyiCJK")
         self.assertIn("<img", str(writes[0]["html"]))
         self.assertNotIn("<style", str(writes[0]["html"]))
+
+    def test_fpdf_normalizer_preserves_named_anchor_metadata(self):
+        normalized = _normalize_html_for_fpdf(
+            """<html><body><p>
+            <a class="decorative">plain</a>
+            <a id="note-1" name="note-1">target</a>
+            <a href="#note-1">jump</a>
+            </p></body></html>""",
+            base_dir=".",
+        )
+        rendered = BeautifulSoup(normalized, "html.parser")
+
+        self.assertIsNone(rendered.find("a", class_="decorative"))
+        destination = rendered.find("span", id="note-1")
+        self.assertIsNotNone(destination)
+        assert destination is not None
+        self.assertEqual(destination.get("name"), "note-1")
+        link = rendered.find("a", href="#note-1")
+        self.assertIsNotNone(link)
+        assert link is not None
+        self.assertEqual(link.get_text(strip=True), "jump")
+
+    def test_fpdf_normalizer_flattens_nested_tables_without_losing_rich_content(self):
+        normalized = _normalize_html_for_fpdf(
+            """<html><body><table><caption>Details</caption><tr>
+            <th>Outer</th><td><img src="chart.png"/><a href="#note">caption</a>
+            <table><tr><td><em>inner</em></td></tr></table></td>
+            </tr></table></body></html>""",
+            base_dir=".",
+        )
+        rendered = BeautifulSoup(normalized, "html.parser")
+
+        self.assertIsNone(rendered.find("table"))
+        self.assertIsNone(rendered.find("tr"))
+        self.assertIsNone(rendered.find("td"))
+        text = rendered.get_text(" ", strip=True)
+        self.assertEqual(text.count("Details"), 1)
+        self.assertEqual(text.count("Outer"), 1)
+        self.assertEqual(text.count("inner"), 1)
+        self.assertIsNotNone(rendered.find("em", string="inner"))
+        image = rendered.find("img")
+        self.assertIsNotNone(image)
+        assert image is not None
+        self.assertEqual(image.get("src"), os.path.abspath("chart.png"))
+        self.assertEqual(image.get("width"), "340")
+        self.assertIsNotNone(rendered.find("a", href="#note"))
+
+    def test_fpdf_normalizer_preserves_image_only_table_cells(self):
+        normalized = _normalize_html_for_fpdf(
+            '<html><body><table><tr><td><img src="chart.png"/></td></tr></table></body></html>',
+            base_dir=".",
+        )
+        rendered = BeautifulSoup(normalized, "html.parser")
+
+        self.assertIsNone(rendered.find("table"))
+        image = rendered.find("img")
+        self.assertIsNotNone(image)
+        assert image is not None
+        self.assertEqual(image.get("src"), os.path.abspath("chart.png"))
+        self.assertEqual(image.get("width"), "340")
 
     def test_html_export_has_one_head_and_translated_content(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -62,21 +62,23 @@ class TestTranslatorAlignment(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(single_calls), 3)
 
-    def test_empty_per_segment_fallback_preserves_source_after_retries(self):
+    def test_empty_per_segment_fallback_is_rejected(self):
         client = FakeClient(
             handler=lambda messages, tier, json_mode: json.dumps({"translations": []})
         )
         translator = Translator(client, self._config())
 
-        self.assertEqual(translator.translate_batch(["あ", "い"]), ["あ", "い"])
+        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+            translator.translate_batch(["あ", "い"])
 
-    def test_non_string_translation_preserves_source_after_retries(self):
+    def test_non_string_translation_is_rejected(self):
         client = FakeClient(
             handler=lambda messages, tier, json_mode: json.dumps({"translations": [None]})
         )
         translator = Translator(client, self._config())
 
-        self.assertEqual(translator.translate_batch(["あ"]), ["あ"])
+        with self.assertRaisesRegex(Exception, "第 0 段失败"):
+            translator.translate_batch(["あ"])
 
     def test_provider_failure_is_not_retried_by_alignment_layer(self):
         """传输异常只由 provider 重试，翻译对齐层不得再次放大请求。"""

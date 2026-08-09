@@ -67,29 +67,11 @@ class Translator(Agent):
     def _translate_one(
         self, source, glossary_terms, style, context, book_synopsis, chapter_digest
     ) -> str:
-        """翻译单段；反复收到空译文时保留源文，避免整书永久卡死。"""
-        empty_response_errors = {
-            "模型返回了空译文或非字符串译文",
-            "译文数量不匹配：期望 1 段，实际 0 段",
-        }
-        attempts = max(3, self.config.pipeline.align_retry_limit + 1)
-        last_error: AlignmentError | None = None
-        for _ in range(attempts):
-            try:
-                out = self._call_batch(
-                    [source], glossary_terms, style, context, book_synopsis, chapter_digest
-                )
-                return out[0]
-            except AlignmentError as error:
-                # 只有模型明确给出空内容才允许保留原文。网络/服务端异常仍应中断，
-                # 以免误把整章未翻译内容标记为已完成。
-                if str(error) not in empty_response_errors:
-                    raise
-                last_error = error
-
-        if isinstance(source, str) and source.strip():
-            return source
-        raise last_error or AlignmentError("模型返回了空译文或非字符串译文")
+        """借用批量协议翻译单段，作为批量对齐失败后的最终兜底。"""
+        out = self._call_batch(
+            [source], glossary_terms, style, context, book_synopsis, chapter_digest
+        )
+        return out[0]
 
     def translate_batch(
         self,

@@ -1739,33 +1739,49 @@ def _normalize_html_for_fpdf(html: str, *, base_dir: str) -> str:
                     natural_width = 0
             image["width"] = str(min(natural_width or 340, 340))
     # fpdf2's HTML parser assumes every <a> tag has href and raises KeyError
-    # for source books that use anchor tags solely as styling wrappers.
+    # for source books that use anchor tags solely as styling wrappers. Keep any
+    # id/name metadata on a neutral span instead of deleting it during cleanup;
+    # fpdf2 does not guarantee that such metadata becomes a live PDF destination.
     for anchor in list(body.find_all("a")):
         href = anchor.get("href")
         if not isinstance(href, str) or not href.strip():
-            anchor.unwrap()
+            anchor.attrs.pop("href", None)
+            if anchor.get("id") or anchor.get("name"):
+                anchor.name = "span"
+            else:
+                anchor.unwrap()
     # fpdf2's table renderer can fail on narrow cells in scanned/manual-style
     # books ("Not enough horizontal space to render a single character").
-    # Flatten each source table to readable row paragraphs rather than letting
-    # one malformed table abort the entire PDF export.
-    for table in list(body.find_all("table")):
-        rows: list[str] = []
-        for row in table.find_all("tr"):
-            cells = [
-                cell.get_text(" ", strip=True)
-                for cell in row.find_all(["th", "td"], recursive=False)
-            ]
-            cells = [cell for cell in cells if cell]
-            if cells:
-                rows.append(" | ".join(cells))
-        if rows:
-            for row_text in rows:
-                paragraph = soup.new_tag("p")
-                paragraph.string = row_text
-                table.insert_before(paragraph)
-            table.decompose()
-        else:
-            table.unwrap()
+    # Remove only the table structure, from the innermost table outward. Moving
+    # the existing nodes instead of calling get_text() preserves links, images,
+    # emphasis and explicit line breaks.
+    for table in reversed(list(body.find_all("table"))):
+        if table.parent is None:
+            continue
+        rows = [row for row in table.find_all("tr") if row.find_parent("table") is table]
+        for row in rows:
+            cells = row.find_all(["th", "td"], recursive=False)
+            for index, cell in enumerate(cells):
+                if index:
+                    cell.insert_before(" | ")
+                if cell.name == "th":
+                    strong = soup.new_tag("strong")
+                    for child in list(cell.contents):
+                        strong.append(child.extract())
+                    cell.append(strong)
+                cell.unwrap()
+            row.append(soup.new_tag("br"))
+            row.unwrap()
+        caption = table.find("caption", recursive=False)
+        if isinstance(caption, Tag):
+            caption.append(soup.new_tag("br"))
+            caption.unwrap()
+        for column in list(table.find_all(["col", "colgroup"])):
+            column.decompose()
+        for structural in list(table.find_all(["thead", "tbody", "tfoot", "tr", "th", "td"])):
+            if structural.parent is not None:
+                structural.unwrap()
+        table.unwrap()
     for element in list(body.find_all(["div", "section", "article", "main", "header", "footer"])):
         element.unwrap()
     return body.decode_contents()
