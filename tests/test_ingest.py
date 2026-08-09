@@ -387,6 +387,33 @@ class TestSplitLongSegments(unittest.TestCase):
         self.assertEqual(chunks[1].split()[0], "charlie")
 
 
+def _write_annotation_context_epub(path: str, *, notes_in_spine: bool) -> None:
+    notes_itemref = '<itemref idref="notes"/>' if notes_in_spine else ""
+    opf = f"""<package><metadata><title>Annotation Context</title></metadata>
+    <manifest>
+      <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+      <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>
+    </manifest><spine><itemref idref="body"/>{notes_itemref}</spine></package>"""
+    body = """<html><body>
+    <p>Alpha<sup id="ref-1"><a epub:type="noteref"
+    href="notes.xhtml#note-1">1</a></sup>.</p>
+    <p>Beta <a href="notes.xhtml#note-1">linked phrase</a>.</p>
+    </body></html>"""
+    notes = """<html><body><aside epub:type="footnote" id="note-1">
+    <p><a epub:type="backlink" href="body.xhtml#ref-1">1</a>
+    First explanation.</p><p>Second explanation.</p>
+    </aside></body></html>"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+        )
+        archive.writestr("content.opf", opf)
+        archive.writestr("body.xhtml", body)
+        archive.writestr("notes.xhtml", notes)
+
+
 class TestEpubIngest(unittest.TestCase):
     def test_epub_point_annotation_is_excluded_from_source(self):
         html = """<html><body><p>Buck Mulligan<sup id="note-wrap"><a
@@ -407,6 +434,9 @@ class TestEpubIngest(unittest.TestCase):
                     "source_end": len("Buck Mulligan"),
                     "source_text": "",
                     "marker_text": "2",
+                    "raw_href": "notes.xhtml#jpnote1",
+                    "target_key": "notes.xhtml#jpnote1",
+                    "relation": "noteref",
                 }
             ],
         )
@@ -457,12 +487,25 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(item["source_start"], 0)
         self.assertEqual(item["source_end"], 0)
         self.assertEqual(item["marker_text"], "33")
+        self.assertEqual(item["relation"], "backlink")
         rendered = BeautifulSoup(template, "html.parser")
         marker = rendered.select_one("a[data-tn-annotation-id]")
         self.assertIsInstance(marker, Tag)
         assert isinstance(marker, Tag)
         self.assertEqual(marker.get("href"), "intro.html#intronotes33")
         self.assertEqual(marker.get("id"), "intronotes_33")
+
+    def test_epub_arrow_backlink_is_excluded_from_note_body(self):
+        html = """<html><body><p id="note-1">An explanatory note.
+        <a href="body.xhtml#ref-1">⤶</a></p></body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "notes.xhtml")
+
+        self.assertEqual(segments[0].source, "An explanatory note.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "point")
+        self.assertEqual(item["relation"], "backlink")
+        self.assertEqual(item["target_key"], "body.xhtml#ref-1")
 
     def test_epub_plain_number_link_is_not_treated_as_note_marker(self):
         html = '<html><body><p>See <a href="#section33">33</a> for details.</p></body></html>'
@@ -474,6 +517,89 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(item["mode"], "range")
         self.assertEqual(item["source_text"], "33")
         self.assertEqual(item["marker_text"], "")
+        self.assertEqual(item["raw_href"], "#section33")
+        self.assertEqual(item["target_key"], "body.xhtml#section33")
+        self.assertEqual(item["relation"], "internal_link")
+
+    def test_epub_short_number_links_remain_ordinary_inline_ranges(self):
+        html = """<html><body><p>Read <a href="#1">1</a>,
+        <a href="#ref1">reference 1</a>, <a href="#key1">key 1</a>,
+        and <a href="#n2">number 2</a>.</p>
+        <h2 id="1">Part One</h2><h2 id="ref1">Reference One</h2>
+        <h2 id="key1">Key One</h2><h2 id="n2">Number Two</h2></body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Read 1, reference 1, key 1, and number 2.")
+        items = segments[0].meta["epub_annotations"]["items"]
+        self.assertEqual(
+            [item["mode"] for item in items],
+            ["range", "range", "range", "range"],
+        )
+        self.assertEqual(
+            [item["relation"] for item in items],
+            ["internal_link", "internal_link", "internal_link", "internal_link"],
+        )
+        self.assertEqual(
+            [item["source_text"] for item in items],
+            ["1", "reference 1", "key 1", "number 2"],
+        )
+
+    def test_epub_inline_list_note_keeps_body_and_excludes_backlink_number(self):
+        html = """<html><body><p>Body<sup><a id="ref1" href="#n1">1</a></sup>.</p>
+        <ol><li id="n1"><a href="#ref1">1</a> Full note text.</li></ol>
+        </body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual([segment.source for segment in segments], ["Body.", "Full note text."])
+        reference = segments[0].meta["epub_annotations"]["items"][0]
+        backlink = segments[1].meta["epub_annotations"]["items"][0]
+        self.assertEqual((reference["mode"], reference["relation"]), ("point", "noteref"))
+        self.assertEqual((backlink["mode"], backlink["relation"]), ("point", "backlink"))
+
+    def test_epub_short_note_number_at_end_is_a_backlink(self):
+        html = """<html><body><p>Body<sup><a id="ref2" href="#n2">2</a></sup>.</p>
+        <ol><li id="n2">Full note text. <a href="#ref2">2</a></li></ol>
+        </body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual([segment.source for segment in segments], ["Body.", "Full note text."])
+        backlink = segments[1].meta["epub_annotations"]["items"][0]
+        self.assertEqual((backlink["mode"], backlink["relation"]), ("point", "backlink"))
+
+    def test_epub_inline_list_note_becomes_annotation_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "inline-list-note.epub")
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+                )
+                archive.writestr(
+                    "content.opf",
+                    """<package><metadata><title>Inline Note</title></metadata><manifest>
+                    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="body"/></spine></package>""",
+                )
+                archive.writestr(
+                    "body.xhtml",
+                    """<html><body><p>Body<sup><a id="ref1" href="#n1">1</a></sup>.</p>
+                    <ol><li id="n1"><a href="#ref1">1</a> Full note text.</li></ol>
+                    <p>Read <a href="#1">1</a>, <a href="#ref2">reference 2</a>,
+                    and <a href="#key2">key 2</a>.</p><h2 id="1">Part One</h2>
+                    <h2 id="ref2">Reference Two</h2><h2 id="key2">Key Two</h2>
+                    </body></html>""",
+                )
+
+            document = load_document(path, "en", "zh")
+
+        contexts = document.meta["epub_annotation_contexts"]["contexts"]
+        self.assertEqual(set(contexts), {"body.xhtml#n1"})
+        context = contexts["body.xhtml#n1"]
+        self.assertEqual(context["source_blocks"], ["Full note text."])
 
     def test_epub_range_annotation_keeps_phrase_but_excludes_marker(self):
         html = """<html><body><p><a id="ref-1" href="#note-1">国境の長いトンネル
@@ -489,6 +615,7 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(item["source_end"], len("国境の長いトンネル"))
         self.assertEqual(item["source_text"], "国境の長いトンネル")
         self.assertEqual(item["marker_text"], "〔＊１〕")
+        self.assertEqual(item["relation"], "noteref")
         rendered = BeautifulSoup(template, "html.parser")
         link = rendered.select_one("a[data-tn-annotation-id]")
         self.assertIsInstance(link, Tag)
@@ -596,6 +723,99 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(first.source, "Body.")
         self.assertIn("epub_annotations", first.meta)
         self.assertNotIn("epub_inline", first.meta)
+        self.assertEqual(
+            first.meta["epub_annotations"]["items"][0]["target_key"], "body.xhtml#note-1"
+        )
+        self.assertEqual(
+            document.meta["epub_annotation_contexts"],
+            {
+                "version": 1,
+                "contexts": {
+                    "body.xhtml#note-1": {
+                        "target_key": "body.xhtml#note-1",
+                        "resource_href": "body.xhtml",
+                        "fragment": "note-1",
+                        "source_blocks": ["A note."],
+                        "segment_anchors": ["tn0_1"],
+                    }
+                },
+            },
+        )
+
+    def test_epub_annotation_context_collects_cross_spine_note_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "cross-spine-notes.epub")
+            _write_annotation_context_epub(path, notes_in_spine=True)
+
+            document = load_document(path, "en", "zh")
+
+        body = document.chapters[0]
+        first_item = body.segments[0].meta["epub_annotations"]["items"][0]
+        second_item = body.segments[1].meta["epub_annotations"]["items"][0]
+        self.assertEqual(first_item["raw_href"], "notes.xhtml#note-1")
+        self.assertEqual(first_item["target_key"], "notes.xhtml#note-1")
+        self.assertEqual(first_item["relation"], "noteref")
+        # 没有 marker 的普通范围链接，只有在目标具有显式 note 语义后才升级。
+        self.assertEqual(second_item["relation"], "noteref")
+        context = document.meta["epub_annotation_contexts"]["contexts"]["notes.xhtml#note-1"]
+        self.assertEqual(
+            context["source_blocks"],
+            ["First explanation.", "Second explanation."],
+        )
+        self.assertEqual(context["segment_anchors"], ["tn1_0", "tn1_1"])
+
+        backlink = document.chapters[1].segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(backlink["relation"], "backlink")
+        self.assertNotIn(
+            backlink["target_key"], document.meta["epub_annotation_contexts"]["contexts"]
+        )
+
+    def test_epub_annotation_context_collects_implicit_note_ancestor_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "implicit-note-container.epub")
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+                )
+                archive.writestr(
+                    "content.opf",
+                    """<package><metadata><title>Implicit Note</title></metadata><manifest>
+                    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="body"/></spine></package>""",
+                )
+                archive.writestr(
+                    "body.xhtml",
+                    """<html><body><p>Body<sup><a id="ref1" href="#anchor1">1</a></sup>.</p>
+                    <div class="footnote"><a id="anchor1"></a>
+                    <p>First explanation.</p><p>Second explanation.</p></div>
+                    </body></html>""",
+                )
+
+            document = load_document(path, "en", "zh")
+
+        context = document.meta["epub_annotation_contexts"]["contexts"]["body.xhtml#anchor1"]
+        self.assertEqual(
+            context["source_blocks"],
+            ["First explanation.", "Second explanation."],
+        )
+
+    def test_epub_annotation_context_reads_non_spine_manifest_note(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "non-spine-notes.epub")
+            _write_annotation_context_epub(path, notes_in_spine=False)
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(len(document.chapters), 1)
+        context = document.meta["epub_annotation_contexts"]["contexts"]["notes.xhtml#note-1"]
+        self.assertEqual(
+            context["source_blocks"],
+            ["First explanation.", "Second explanation."],
+        )
+        self.assertEqual(len(context["segment_anchors"]), 2)
+        self.assertTrue(all(anchor.startswith("tn") for anchor in context["segment_anchors"]))
 
     def test_nav_without_epub_type_uses_first_navigation_list(self):
         nav = """<html><body><nav><h1>Contents</h1><ol>

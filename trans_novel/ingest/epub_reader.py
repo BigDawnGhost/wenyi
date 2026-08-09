@@ -48,12 +48,20 @@ _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
 _ANNOTATION_META_KEY = "epub_annotations"
 _ANNOTATION_ID_ATTR = "data-tn-annotation-id"
-_ANNOTATION_MARKER_ONLY = re.compile(r"^[\d\s*＊※†‡\[\]()〔〕（）{}↩↵←↑↓.·:：\-]+$")
+_ANNOTATION_MARKER_ONLY = re.compile(r"^[\d\s*＊※†‡\[\]()〔〕（）{}↩↵←↑↓⤶.·:：\-]+$")
 _ANNOTATION_HINT = re.compile(
-    r"(?:^|[^a-z0-9])(?:note|noteref|footnote|endnote|fn|jpref|jpnote|ref|key)"
+    r"(?:^|[^a-z0-9])(?:note|noteref|footnote|endnote|fn|jpref|jpnote)"
     r"(?:[-_]?\d+)?(?:$|[^a-z0-9])",
     re.IGNORECASE,
 )
+_NOTE_TARGET_HINT = re.compile(
+    r"(?:^|[^a-z0-9])(?:note|footnote|endnote|fn)(?:[-_]?\d+)?(?:$|[^a-z0-9])",
+    re.IGNORECASE,
+)
+_SHORT_NOTE_IDENTITY = re.compile(r"^n[-_]?\d+$", re.IGNORECASE)
+_NOTEREF_SEMANTICS = {"noteref", "doc-noteref"}
+_BACKLINK_SEMANTICS = {"backlink", "doc-backlink"}
+_NOTE_BODY_SEMANTICS = {"footnote", "endnote", "rearnote", "doc-footnote", "doc-endnote"}
 _ATOMIC_INLINE_TAGS = {
     "audio",
     "canvas",
@@ -116,6 +124,142 @@ def _is_internal_link(link: Tag) -> bool:
     return not parsed.scheme and not parsed.netloc
 
 
+def _semantic_tokens(node: Tag) -> set[str]:
+    """返回 EPUB/ARIA/HTML 链接语义 token 的小写集合。"""
+    tokens: set[str] = set()
+    for key in ("epub:type", "role", "rel"):
+        value = node.get(key)
+        values = value if isinstance(value, list) else [value]
+        for raw in values:
+            if raw is None:
+                continue
+            for token in str(raw).split():
+                normalized = token.strip().lower()
+                if normalized:
+                    tokens.add(normalized)
+                    # 某些制作工具会写 ``z3998:footnote`` 一类前缀值。
+                    tokens.add(normalized.rsplit(":", 1)[-1])
+    return tokens
+
+
+def _inside_note_body(node: Tag) -> bool:
+    """判断节点是否位于显式 footnote/endnote 语义容器中。"""
+    for parent in (node, *node.parents):
+        if isinstance(parent, Tag) and _semantic_tokens(parent) & _NOTE_BODY_SEMANTICS:
+            return True
+    return False
+
+
+def _has_note_identity(node: Tag) -> bool:
+    """判断节点的 id/name/class 是否明确表示脚注正文。"""
+    identity: list[str] = []
+    for key in ("id", "name", "class"):
+        value = node.get(key)
+        if isinstance(value, list):
+            identity.extend(str(item) for item in value)
+        elif value is not None:
+            identity.append(str(value))
+    return bool(_NOTE_TARGET_HINT.search(" ".join(identity)))
+
+
+def _has_short_note_identity(node: Tag) -> bool:
+    """判断节点 id/name 是否为仅在强结构证据下采用的 ``n1`` 型注释名。"""
+    return any(
+        isinstance(node.get(key), str) and bool(_SHORT_NOTE_IDENTITY.fullmatch(str(node.get(key))))
+        for key in ("id", "name")
+    )
+
+
+def _implicit_note_body_scope(node: Tag) -> Tag | None:
+    """返回以稳定命名标识、但缺少 EPUB 语义的最近注释容器。"""
+    for parent in (node, *node.parents):
+        if (
+            isinstance(parent, Tag)
+            and parent.name in {"aside", "li", "dd", "p", "div", "section"}
+            and _has_note_identity(parent)
+        ):
+            return parent
+    return None
+
+
+def _short_note_body_scope(node: Tag) -> Tag | None:
+    """返回 ``n1`` 型容器；调用方还须提供角标或回链结构证据。"""
+    for parent in (node, *node.parents):
+        if (
+            isinstance(parent, Tag)
+            and parent.name in {"aside", "li", "dd", "p"}
+            and _has_short_note_identity(parent)
+        ):
+            return parent
+    return None
+
+
+def _inside_implicit_note_body(node: Tag) -> bool:
+    """判断节点是否位于以稳定命名标识、但缺少 EPUB 语义的注释容器。"""
+    if _implicit_note_body_scope(node) is not None:
+        return True
+    short_scope = _short_note_body_scope(node)
+    if short_scope is None or not _ANNOTATION_MARKER_ONLY.fullmatch(node.get_text("", strip=True)):
+        return False
+    before, after = _surrounding_text(short_scope, node)
+    return bool(before.strip()) != bool(after.strip())
+
+
+def _surrounding_text(block: Tag, node: Tag) -> tuple[str, str]:
+    """返回节点在当前翻译块之前和之后的可见文字，用于识别段首回链。"""
+
+    def text_of(value: object) -> str:
+        if isinstance(value, Comment):
+            return ""
+        if isinstance(value, NavigableString):
+            return str(value)
+        if isinstance(value, Tag):
+            return value.get_text(" ", strip=False)
+        return ""
+
+    before: list[str] = []
+    after: list[str] = []
+    cursor: Tag = node
+    while cursor is not block and isinstance(cursor.parent, Tag):
+        before.extend(text_of(sibling) for sibling in cursor.previous_siblings)
+        after.extend(text_of(sibling) for sibling in cursor.next_siblings)
+        cursor = cursor.parent
+    return "".join(before), "".join(after)
+
+
+def _annotation_relation(
+    link: Tag,
+    block: Tag,
+    *,
+    marker_wrapper: Tag | None,
+    range_marker: Tag | None,
+    marker_only: bool,
+) -> str:
+    """把需保结构的内部链接区分为正向注释、回链和普通链接。"""
+    semantics = _semantic_tokens(link)
+    if semantics & _BACKLINK_SEMANTICS:
+        return "backlink"
+    if semantics & _NOTEREF_SEMANTICS:
+        return "noteref"
+    if _inside_note_body(link):
+        return "backlink"
+    if marker_only and _inside_implicit_note_body(link):
+        return "backlink"
+    if marker_only and re.fullmatch(r"[↩↵←↑↓⤶\s]+", link.get_text("", strip=True)):
+        return "backlink"
+
+    # 常见脚注正文以一个裸编号回到正文，随后才是解释文字。它没有 sup/sub
+    # 包装，且位于块首；保守地将其视为 backlink，避免把正文反向注入注释。
+    if marker_wrapper is None and marker_only and link is not block:
+        before, after = _surrounding_text(block, link)
+        if not before.strip() and after.strip():
+            return "backlink"
+
+    if marker_wrapper is not None or range_marker is not None or marker_only:
+        return "noteref"
+    return "internal_link"
+
+
 def _nearest_marker_wrapper(link: Tag, block: Tag) -> Tag | None:
     """返回 link 与当前翻译块之间最近的语义上下标包装。
 
@@ -151,8 +295,14 @@ def _nearest_marker_wrapper(link: Tag, block: Tag) -> Tag | None:
     return None
 
 
-def _has_annotation_hint(link: Tag, marker: Tag, marker_text: str) -> bool:
-    """根据 fragment 与语义属性判断编号是否确为注释，而非数学上标。"""
+def _has_annotation_hint(
+    link: Tag,
+    marker: Tag,
+    marker_text: str,
+    *,
+    allow_short_n: bool = False,
+) -> bool:
+    """根据明确注释线索判断编号是否确为注释，而非普通内部跳转。"""
     decorated = bool(re.search(r"[^\d\s.·:\-]", marker_text))
     parsed = urlsplit(str(link.get("href", "")))
     attrs: list[str] = [parsed.fragment]
@@ -164,7 +314,6 @@ def _has_annotation_hint(link: Tag, marker: Tag, marker_text: str) -> bool:
             elif value is not None:
                 attrs.append(str(value))
     hint = " ".join(attrs)
-    short_numbered_fragment = bool(re.fullmatch(r"[a-zA-Z]?[\-_]?\d+", parsed.fragment))
     numbered_note_fragment = bool(
         re.search(
             r"(?:notes?|footnotes?|endnotes?|fn)[\-_]?\d+$",
@@ -172,11 +321,12 @@ def _has_annotation_hint(link: Tag, marker: Tag, marker_text: str) -> bool:
             re.IGNORECASE,
         )
     )
+    short_n_fragment = allow_short_n and bool(_SHORT_NOTE_IDENTITY.fullmatch(parsed.fragment))
     return (
         decorated
         or bool(_ANNOTATION_HINT.search(hint))
-        or short_numbered_fragment
         or numbered_note_fragment
+        or short_n_fragment
     )
 
 
@@ -210,7 +360,11 @@ def _range_marker_node(link: Tag) -> Tag | None:
     decorated = bool(re.search(r"[^\d\s.·:\-]", marker_text))
     if candidate.name == "sub" and not decorated:
         return None
-    return candidate if _has_annotation_hint(link, candidate, marker_text) else None
+    return (
+        candidate
+        if _has_annotation_hint(link, candidate, marker_text, allow_short_n=True)
+        else None
+    )
 
 
 def _semantic_link_text(link: Tag, marker_node: Tag | None = None) -> str:
@@ -230,7 +384,11 @@ def _semantic_link_text(link: Tag, marker_node: Tag | None = None) -> str:
     return re.sub(r"[ \t\r\n\f\v]+", " ", "".join(parts)).strip()
 
 
-def _annotation_roots(block: Tag, anchor: str) -> dict[int, dict[str, object]]:
+def _annotation_roots(
+    block: Tag,
+    anchor: str,
+    resource_href: str,
+) -> dict[int, dict[str, object]]:
     """识别段内链接，给其 DOM 根节点编号并返回临时提取规格。"""
     # ``block`` 自身若是普通 a（典型为 ``li > a``），writer 替换其子文字时
     # 天然保留 href，无需再请求模型定位。只有内部还带 sup/sub 注释号时才
@@ -249,7 +407,12 @@ def _annotation_roots(block: Tag, anchor: str) -> dict[int, dict[str, object]]:
         marker_wrapper = _nearest_marker_wrapper(link, block)
         if marker_wrapper is not None:
             wrapper_text = marker_wrapper.get_text("", strip=True)
-            if not _has_annotation_hint(link, marker_wrapper, wrapper_text):
+            if not _has_annotation_hint(
+                link,
+                marker_wrapper,
+                wrapper_text,
+                allow_short_n=True,
+            ):
                 marker_wrapper = None
         range_marker = None if marker_wrapper is not None else _range_marker_node(link)
         semantic_text = _semantic_link_text(link, range_marker)
@@ -257,12 +420,24 @@ def _annotation_roots(block: Tag, anchor: str) -> dict[int, dict[str, object]]:
             # 纯图片链接及空锚点没有需要跨语言定位的正文。让既有原子内联
             # 机制原样保留整个 ``a`` 外壳，避免把图片误当脚注并清空。
             continue
+        marker_shaped = bool(_ANNOTATION_MARKER_ONLY.fullmatch(semantic_text))
         marker_only = bool(
-            _ANNOTATION_MARKER_ONLY.fullmatch(semantic_text)
-            and _has_annotation_hint(link, link, semantic_text)
+            marker_shaped
+            and (
+                _has_annotation_hint(link, link, semantic_text) or _inside_implicit_note_body(link)
+            )
         )
         mode = "point" if marker_wrapper is not None or marker_only else "range"
         root = marker_wrapper if mode == "point" and marker_wrapper is not None else link
+        raw_href = str(link.get("href") or "")
+        resolved = resolve_epub_href(resource_href, raw_href)
+        relation = _annotation_relation(
+            link,
+            block,
+            marker_wrapper=marker_wrapper,
+            range_marker=range_marker,
+            marker_only=marker_only,
+        )
 
         # 一个结构根只记录一次。规范 XHTML 中不会嵌套 a，但此防线可避免
         # 损坏文档让同一 sup/sub 被多个链接重复编号。
@@ -280,6 +455,9 @@ def _annotation_roots(block: Tag, anchor: str) -> dict[int, dict[str, object]]:
             "id": annotation_id,
             "mode": mode,
             "marker_text": marker_text,
+            "raw_href": raw_href,
+            "target_key": resolved.target_key,
+            "relation": relation,
             "marker_node_ids": {id(range_marker)} if range_marker is not None else set(),
             "root": root,
         }
@@ -452,6 +630,9 @@ def _segment_content(
                 "source_end": end,
                 "source_text": text[start:end],
                 "marker_text": annotation["marker_text"],
+                "raw_href": annotation["raw_href"],
+                "target_key": annotation["target_key"],
+                "relation": annotation["relation"],
             }
         )
     if annotation_items:
@@ -471,9 +652,24 @@ def _has_meaningful_descendant_block(element: Tag) -> bool:
 
 
 def _list_item_link_target(element: Tag) -> Tag | None:
-    """返回列表项自己的直接链接标签，避免回填时清空 ``li`` 和子列表。"""
+    """当直接链接是列表项唯一正文时返回它，避免清空 ``li`` 和子列表。"""
     link = element.find("a", recursive=False)
-    return link if isinstance(link, Tag) and link.get_text(strip=True) else None
+    if not isinstance(link, Tag) or not link.get_text(strip=True):
+        return None
+    for child in element.children:
+        if child is link or isinstance(child, Comment):
+            continue
+        if isinstance(child, NavigableString):
+            if str(child).strip():
+                return None
+            continue
+        if isinstance(child, Tag):
+            # 子列表/子正文块由自己的叶节点负责；它们不属于当前 li 的正文。
+            if child.name in _BLOCK_CANDIDATE_TAGS or child.name in {"ul", "ol", "dl"}:
+                continue
+            if child.get_text(strip=True):
+                return None
+    return link
 
 
 def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
@@ -624,6 +820,24 @@ def _parse_opf(zf: zipfile.ZipFile, opf_path: str) -> tuple[str, list[str], list
     return title, hrefs, toc_paths
 
 
+def _manifest_xhtml_hrefs(zf: zipfile.ZipFile, opf_path: str) -> list[str]:
+    """返回 OPF manifest 中全部 XHTML/HTML 资源，用于解析非 spine 注释。"""
+    root = ET.fromstring(zf.read(opf_path))
+    hrefs: list[str] = []
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1] != "item":
+            continue
+        raw_href = element.attrib.get("href", "").strip()
+        media_type = element.attrib.get("media-type", "").strip().lower()
+        path = urlsplit(raw_href).path.lower()
+        if "html" not in media_type and not path.endswith((".xhtml", ".html", ".htm")):
+            continue
+        href = _zip_href(opf_path, raw_href)
+        if href and href not in hrefs:
+            hrefs.append(href)
+    return hrefs
+
+
 def _decode_markup(data: bytes) -> str:
     """按 XML/HTML 声明与字节特征解码 XHTML，最后才使用 UTF-8 替换兜底。"""
     decoded = UnicodeDammit(data).unicode_markup
@@ -659,7 +873,7 @@ def annotate_epub_resource(
     idx = 0
     for el in _translation_targets(soup, skip_navigation=skip_navigation):
         anchor = f"tn{resource_index}_{idx}"
-        annotations = _annotation_roots(el, anchor)
+        annotations = _annotation_roots(el, anchor, href)
         protected_annotation_nodes: set[int] = set()
         range_annotation_roots: set[int] = set()
         for annotation in annotations.values():
@@ -784,6 +998,171 @@ def _fragment_anchor_map(template: str) -> dict[str, str | None]:
             if isinstance(value, str) and value:
                 mapping.setdefault(value, anchor)
     return mapping
+
+
+def _fragment_nodes(soup: BeautifulSoup, fragment: str) -> list[Tag]:
+    """返回 fragment 精确命中的唯一 DOM 节点列表，保留重复 ID 供判歧义。"""
+    nodes: list[Tag] = []
+    seen: set[int] = set()
+    for node in soup.find_all(True):
+        if node.get("id") != fragment and node.get("name") != fragment:
+            continue
+        if id(node) not in seen:
+            seen.add(id(node))
+            nodes.append(node)
+    return nodes
+
+
+def _semantic_note_scope(node: Tag) -> Tag | None:
+    """返回包含目标锚点的最近显式 footnote/endnote 语义容器。"""
+    for candidate in (node, *node.parents):
+        if isinstance(candidate, Tag) and _semantic_tokens(candidate) & _NOTE_BODY_SEMANTICS:
+            return candidate
+    return None
+
+
+def _note_context_scope(node: Tag, fragment: str) -> tuple[Tag, bool]:
+    """选择注释正文的 DOM 范围，并返回目标是否有明确注释身份。"""
+    semantic = _semantic_note_scope(node)
+    if semantic is not None:
+        return semantic, True
+
+    implicit = _implicit_note_body_scope(node)
+    if implicit is not None and (
+        implicit.has_attr("data-tn-id") or implicit.find(True, attrs={"data-tn-id": True})
+    ):
+        return implicit, True
+
+    short_scope = _short_note_body_scope(node)
+    if short_scope is not None and (
+        short_scope.has_attr("data-tn-id") or short_scope.find(True, attrs={"data-tn-id": True})
+    ):
+        # ``n1`` 本身不足以升级普通链接，但已确认的角标 noteref 可用它
+        # 取得整条列表注释，而不是只取编号锚点。
+        return short_scope, False
+
+    # 无语义标注的旧 EPUB 常把一条多段脚注包在 li/dd/aside 中；带明确
+    # note/fn 身份的 div/section 也可安全收集其全部正文块。
+    has_note_identity = bool(_NOTE_TARGET_HINT.search(fragment)) or _has_note_identity(node)
+    if node.name in {"aside", "li", "dd"} or (
+        node.name in {"div", "section"} and has_note_identity
+    ):
+        if node.has_attr("data-tn-id") or node.find(True, attrs={"data-tn-id": True}):
+            return node, False
+
+    if node.has_attr("data-tn-id"):
+        return node, False
+    parent = node.find_parent(attrs={"data-tn-id": True})
+    if isinstance(parent, Tag):
+        return parent, False
+    following = node.find_next(attrs={"data-tn-id": True})
+    return (following, False) if isinstance(following, Tag) else (node, False)
+
+
+def _scope_segment_anchors(scope: Tag) -> list[str]:
+    """按 DOM 顺序返回注释范围内的翻译块锚点。"""
+    candidates = [scope] if scope.has_attr("data-tn-id") else []
+    candidates.extend(scope.find_all(True, attrs={"data-tn-id": True}))
+    anchors: list[str] = []
+    for candidate in candidates:
+        raw_anchor = candidate.get("data-tn-id")
+        if isinstance(raw_anchor, str) and raw_anchor and raw_anchor not in anchors:
+            anchors.append(raw_anchor)
+    return anchors
+
+
+def _build_epub_annotation_contexts(
+    reference_resources: list[dict[str, object]],
+    lookup_resources: list[dict[str, object]],
+) -> dict[str, object]:
+    """解析正向注释引用，建立去重、不可变的源文上下文索引。"""
+    lookup_by_href = {
+        str(resource.get("href")): resource
+        for resource in lookup_resources
+        if isinstance(resource.get("href"), str) and resource.get("href")
+    }
+    soups: dict[str, BeautifulSoup] = {}
+    sources_by_href: dict[str, dict[str, str]] = {}
+    for href, resource in lookup_by_href.items():
+        template = resource.get("template")
+        if isinstance(template, str):
+            soups[href] = BeautifulSoup(template, "html.parser")
+        raw_segments = resource.get("segments")
+        segments = raw_segments if isinstance(raw_segments, list) else []
+        sources_by_href[href] = {
+            segment.anchor: segment.source
+            for segment in segments
+            if isinstance(segment, Segment) and isinstance(segment.anchor, str) and segment.anchor
+        }
+
+    contexts: dict[str, dict[str, object]] = {}
+    for resource in reference_resources:
+        raw_segments = resource.get("segments")
+        segments = raw_segments if isinstance(raw_segments, list) else []
+        for segment in segments:
+            if not isinstance(segment, Segment):
+                continue
+            raw_annotations = segment.meta.get(_ANNOTATION_META_KEY)
+            annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
+            raw_items = annotations.get("items")
+            items = raw_items if isinstance(raw_items, list) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                raw_href = item.get("raw_href")
+                if not isinstance(raw_href, str):
+                    continue
+                resolved = resolve_epub_href(segment.resource_href or "", raw_href)
+                if (
+                    resolved.external
+                    or not resolved.resource_href
+                    or not resolved.fragment
+                    or resolved.target_key != item.get("target_key")
+                ):
+                    continue
+                target_soup = soups.get(resolved.resource_href)
+                if target_soup is None:
+                    continue
+                target_nodes = _fragment_nodes(target_soup, resolved.fragment)
+                if len(target_nodes) != 1:
+                    # 重复 id/name 的损坏文档无法确定引用所有权，宁可不注入。
+                    continue
+                scope, semantic_note = _note_context_scope(target_nodes[0], resolved.fragment)
+                relation = item.get("relation")
+                if relation == "internal_link" and semantic_note:
+                    relation = "noteref"
+                    item["relation"] = relation
+                if relation != "noteref":
+                    continue
+
+                anchors = _scope_segment_anchors(scope)
+                source_map = sources_by_href.get(resolved.resource_href, {})
+                anchors = [anchor for anchor in anchors if anchor in source_map]
+                if not anchors:
+                    continue
+                # 自指链接不提供新信息，也不能作为自己的注释定义。
+                if (
+                    resolved.resource_href == segment.resource_href
+                    and isinstance(segment.anchor, str)
+                    and anchors == [segment.anchor]
+                ):
+                    continue
+                source_blocks = [
+                    source_map[anchor] for anchor in anchors if source_map[anchor].strip()
+                ]
+                if not source_blocks:
+                    continue
+                contexts.setdefault(
+                    resolved.target_key,
+                    {
+                        "target_key": resolved.target_key,
+                        "resource_href": resolved.resource_href,
+                        "fragment": resolved.fragment,
+                        "source_blocks": source_blocks,
+                        "segment_anchors": anchors,
+                    },
+                )
+    return {"version": 1, "contexts": contexts}
 
 
 def _logical_chapters(
@@ -992,6 +1371,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         names = set(zf.namelist())
         opf_path = _find_opf_path(zf)
         book_title, hrefs, toc_paths = _parse_opf(zf, opf_path)
+        manifest_xhtml_hrefs = _manifest_xhtml_hrefs(zf, opf_path)
         toc_entries = parse_toc_entries(zf, toc_paths)
 
         resources: list[dict[str, object]] = []
@@ -1016,6 +1396,34 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
                     "fragment_anchors": _fragment_anchor_map(template),
                 }
             )
+
+        # 注释正文有时只列在 manifest、没有 spine itemref。它不进入正式
+        # Chapter/回填资源，但仍可作为引用段的不可变源文辅助上下文。
+        auxiliary_resources: list[dict[str, object]] = []
+        spine_hrefs = {str(resource["href"]) for resource in resources}
+        for auxiliary_ordinal, href in enumerate(manifest_xhtml_hrefs):
+            if href in spine_hrefs or href not in names or href in toc_paths:
+                continue
+            html = _decode_markup(zf.read(href))
+            title, segments, template = annotate_epub_resource(
+                html,
+                len(hrefs) + auxiliary_ordinal,
+                href,
+                book_title=book_title,
+            )
+            auxiliary_resources.append(
+                {
+                    "index": len(hrefs) + auxiliary_ordinal,
+                    "href": href,
+                    "title": title,
+                    "segments": segments,
+                    "template": template,
+                }
+            )
+        annotation_contexts = _build_epub_annotation_contexts(
+            resources,
+            [*resources, *auxiliary_resources],
+        )
         chapters, split_strategy, split_toc_path = _logical_chapters(resources, toc_entries)
         # XHTML 模板和内联布局都可从原始 EPUB 确定性重建，不写入运行状态。
         # Segment.meta 中其它格式或后续阶段添加的信息仍原样保留。
@@ -1032,7 +1440,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         source_path=os.path.abspath(path),
         chapters=chapters,
         meta={
-            "epub_schema": 4,
+            "epub_schema": 5,
             "opf_path": opf_path,
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,
@@ -1041,5 +1449,6 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             ],
             "epub_split_strategy": split_strategy,
             "epub_split_toc_path": split_toc_path,
+            "epub_annotation_contexts": annotation_contexts,
         },
     )
