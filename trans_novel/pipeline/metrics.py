@@ -326,7 +326,7 @@ class RunMetricsRecorder:
             raise ValueError("一次运行账本不能跨越多个书籍状态目录")
 
     def capture_state(self, store: RunStore) -> None:
-        """在业务书锁仍持有时冻结本次运行的结束状态。"""
+        """从调用方保证一致的实时状态或只读快照冻结本次结束状态。"""
         self.attach_store(store)
         try:
             self._state_snapshot = _state_summary(store)

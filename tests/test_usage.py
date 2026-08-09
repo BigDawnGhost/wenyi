@@ -921,6 +921,115 @@ class TestPerRunMetrics(unittest.TestCase):
             )
             self.assertIn("assemble", by_operation["assemble"]["stage_seconds"])
 
+    def test_standalone_assemble_does_not_wait_for_active_translation_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            output = os.path.join(directory, "translated.txt")
+            write_sample_txt(source)
+            config = self._config(directory)
+            store = Orchestrator(
+                config,
+                client=_MeteredFakeClient(handler=routing_handler),
+            ).run_steps(source, {"translate"})["store"]
+            completed = threading.Event()
+            errors: list[BaseException] = []
+
+            def export() -> None:
+                try:
+                    Orchestrator(config, client=FakeClient()).run_assemble(
+                        source,
+                        out_format="txt",
+                        out_path=output,
+                    )
+                except BaseException as error:  # pragma: no cover - asserted below
+                    errors.append(error)
+                finally:
+                    completed.set()
+
+            with store.lock():
+                worker = threading.Thread(target=export)
+                worker.start()
+                completed_while_translation_locked = completed.wait(2)
+
+            worker.join(timeout=2)
+            self.assertTrue(completed_while_translation_locked)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertTrue(os.path.isfile(output))
+
+    def test_assemble_only_run_steps_does_not_wait_for_active_translation_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            output = os.path.join(directory, "translated.txt")
+            write_sample_txt(source)
+            config = self._config(directory)
+            store = Orchestrator(
+                config,
+                client=_MeteredFakeClient(handler=routing_handler),
+            ).run_steps(source, {"translate"})["store"]
+            completed = threading.Event()
+            errors: list[BaseException] = []
+
+            def export() -> None:
+                try:
+                    Orchestrator(config, client=FakeClient()).run_steps(
+                        source,
+                        {"assemble"},
+                        out_format="txt",
+                        out_path=output,
+                    )
+                except BaseException as error:  # pragma: no cover - asserted below
+                    errors.append(error)
+                finally:
+                    completed.set()
+
+            with store.lock():
+                worker = threading.Thread(target=export)
+                worker.start()
+                completed_while_translation_locked = completed.wait(2)
+
+            worker.join(timeout=2)
+            self.assertTrue(completed_while_translation_locked)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertTrue(os.path.isfile(output))
+
+    def test_standalone_assemble_waits_for_another_export_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            output = os.path.join(directory, "translated.txt")
+            write_sample_txt(source)
+            config = self._config(directory)
+            store = Orchestrator(
+                config,
+                client=_MeteredFakeClient(handler=routing_handler),
+            ).run_steps(source, {"translate"})["store"]
+            completed = threading.Event()
+            errors: list[BaseException] = []
+
+            def export() -> None:
+                try:
+                    Orchestrator(config, client=FakeClient()).run_assemble(
+                        source,
+                        out_format="txt",
+                        out_path=output,
+                    )
+                except BaseException as error:  # pragma: no cover - asserted below
+                    errors.append(error)
+                finally:
+                    completed.set()
+
+            with store.assemble_lock():
+                worker = threading.Thread(target=export)
+                worker.start()
+                self.assertFalse(completed.wait(0.1))
+
+            self.assertTrue(completed.wait(2))
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertTrue(os.path.isfile(output))
+
     def test_assemble_hashes_large_input_once_when_file_signature_is_stable(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "novel.txt")
@@ -1129,6 +1238,41 @@ class TestPerRunMetrics(unittest.TestCase):
 
 
 class TestRunStoreLock(unittest.TestCase):
+    def test_export_snapshot_is_immutable_and_returns_chapter_copies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "book.txt")
+            with open(source_path, "w", encoding="utf-8") as source:
+                source.write("source")
+            digest = source_sha256(source_path)
+            chapter = Chapter(
+                index=0,
+                segments=[Segment(index=0, source="source", target="old translation")],
+            )
+            document = Document(
+                title="Book",
+                source_lang="en",
+                target_lang="zh",
+                fmt="txt",
+                source_path=source_path,
+                chapters=[chapter],
+            )
+            store = RunStore(os.path.join(directory, "state", "book"))
+            manifest = store.stage_document(document, source_hash=digest)
+            store.save_manifest(manifest)
+
+            snapshot = store.create_export_snapshot(actual_sha256=digest)
+            live_chapter = store.load_chapter(0)
+            live_chapter.segments[0].target = "new translation"
+            store.save_chapter(live_chapter)
+            returned_chapter = snapshot.load_chapter(0)
+            returned_chapter.segments[0].target = "mutated caller copy"
+
+            self.assertEqual(
+                snapshot.load_chapter(0).segments[0].target,
+                "old translation",
+            )
+            self.assertEqual(store.load_chapter(0).segments[0].target, "new translation")
+
     def test_annotation_context_registry_is_stored_outside_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             source_path = os.path.join(directory, "book.epub")
@@ -1187,6 +1331,31 @@ class TestRunStoreLock(unittest.TestCase):
             self.assertTrue(entered.wait(1))
             worker.join(timeout=1)
             self.assertFalse(worker.is_alive())
+
+    def test_chapter_publish_waits_for_export_snapshot_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = os.path.join(directory, "state", "book")
+            snapshot_reader = RunStore(run_dir)
+            publisher = RunStore(run_dir)
+            completed = threading.Event()
+            chapter = Chapter(
+                index=0,
+                segments=[Segment(index=0, source="source", target="translation")],
+            )
+
+            def publish() -> None:
+                publisher.save_chapter(chapter)
+                completed.set()
+
+            with snapshot_reader.state_lock():
+                worker = threading.Thread(target=publish)
+                worker.start()
+                self.assertFalse(completed.wait(0.1))
+
+            self.assertTrue(completed.wait(1))
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(publisher.load_chapter(0).segments[0].target, "translation")
 
 
 if __name__ == "__main__":

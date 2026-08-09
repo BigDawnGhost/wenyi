@@ -576,7 +576,7 @@ class Orchestrator:
                 )
 
     def _capture_metrics_state(self, store: RunStore) -> None:
-        """在书锁内冻结结束状态，防止等待进程污染本次账本。"""
+        """从实时状态或导出快照冻结结束状态，防止后续进度污染账本。"""
         if self._active_run_metrics is None:
             return
         try:
@@ -680,8 +680,7 @@ class Orchestrator:
         )
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
-        with store.lock():
-            self._ensure_store_source(store, input_path)
+        self._ensure_store_source(store, input_path)
         self._bind_llm_events(store)
         self._attach_metrics_store(store)
         return store
@@ -1936,8 +1935,7 @@ class Orchestrator:
             )
 
         chapter.meta["backtranslation_issues"] = bt_issues
-        store.save_chapter(chapter)
-        store.set_chapter_status(ci, STATUS_DONE)
+        store.save_chapter_with_status(chapter, STATUS_DONE)
         store.log_event(
             "chapter_done",
             chapter=ci,
@@ -3357,15 +3355,48 @@ class Orchestrator:
         pdf_engine: str = "weasyprint",
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
-        """从既有状态重新导出成品，并记录格式与 PDF 引擎。"""
-        return self._run_existing_steps(
+        """从既有状态快照导出成品，不等待正在进行的整本翻译。"""
+        store = self._measure_stage_call(
+            "prepare",
+            self._locate_existing_store,
             input_path,
-            {"assemble"},
             progress=progress,
-            out_format=out_format,
-            out_path=out_path,
-            pdf_engine=pdf_engine,
         )
+        store.log_event("run_steps_started", steps=["assemble"], input_path=input_path)
+
+        with store.assemble_lock():
+            snapshot = self._measure_stage_call(
+                "prepare",
+                store.create_export_snapshot,
+                actual_sha256=self._source_sha256(input_path),
+            )
+            manifest = snapshot.load_manifest()
+            self._apply_manifest_languages(manifest)
+            self._capture_metrics_state(snapshot)
+            # 等待另一个导出期间源文件也可能变化，因此真正渲染前再次确认。
+            self._ensure_store_source(store, input_path)
+            outputs = self._assemble_outputs(
+                snapshot,
+                input_path=input_path,
+                progress=progress,
+                out_format=out_format,
+                out_path=out_path,
+                pdf_engine=pdf_engine,
+            )
+            # 原模板也属于导出输入；渲染后再次核验，避免把中途替换的源文件记为成功。
+            self._ensure_store_source(store, input_path)
+        store.log_event("assembled", outputs=outputs, out_format=out_format)
+        store.log_event("run_steps_finished", steps=["assemble"], outputs=outputs)
+        return {
+            "store": store,
+            "output": outputs[0] if outputs else None,
+            "outputs": outputs,
+            "report": None,
+            "review_issues": [],
+            "review_changes": [],
+            "review_result": None,
+            "review_dir": None,
+        }
 
     @_record_pipeline_metrics
     def run_steps(
@@ -3393,6 +3424,14 @@ class Orchestrator:
                 "review_result": reviewed["review_result"],
                 "review_dir": reviewed["review_dir"],
             }
+        if steps == {"assemble"}:
+            return self.run_assemble(
+                input_path,
+                out_format=out_format,
+                out_path=out_path,
+                pdf_engine=pdf_engine,
+                progress=progress,
+            )
 
         if "translate" in steps:
             store = self.run(input_path, progress=progress)
@@ -3419,6 +3458,60 @@ class Orchestrator:
             self._capture_metrics_state(store)
             return result
 
+    def _assemble_outputs(
+        self,
+        store: RunStore,
+        *,
+        input_path: str,
+        progress: ProgressFn | None,
+        out_format: str,
+        out_path: str | None,
+        pdf_engine: str,
+    ) -> list[str]:
+        """从给定实时状态或只读快照生成配置要求的全部产物。"""
+        from ..assemble.writer import assemble, bilingual_out_path
+
+        if progress:
+            progress(0, 0, "回填译文…")
+        out_cfg = self.config.output
+        do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
+        if not do_mono and not do_bilingual:
+            do_mono = True
+
+        outputs: list[str] = []
+        if do_mono:
+            outputs.append(
+                self._measure_stage_call(
+                    "assemble",
+                    assemble,
+                    store,
+                    input_path,
+                    out_path=out_path,
+                    out_format=out_format,
+                    bilingual=False,
+                    about_page=out_cfg.about_page,
+                    pdf_engine=pdf_engine,
+                )
+            )
+        if do_bilingual:
+            bi_out_path = bilingual_out_path(out_path) if out_path else None
+            outputs.append(
+                self._measure_stage_call(
+                    "assemble",
+                    assemble,
+                    store,
+                    input_path,
+                    out_path=bi_out_path,
+                    out_format=out_format,
+                    bilingual=True,
+                    order=out_cfg.bilingual_order,
+                    preserve_source_style=out_cfg.bilingual_preserve_source_style,
+                    about_page=out_cfg.about_page,
+                    pdf_engine=pdf_engine,
+                )
+            )
+        return outputs
+
     def _finish_steps_locked(
         self,
         store: RunStore,
@@ -3433,7 +3526,6 @@ class Orchestrator:
     ) -> dict[str, Any]:
         """在书级锁内执行审校、报告和导出收尾步骤并返回结果汇总。"""
         from ..assemble.report import build_report
-        from ..assemble.writer import assemble, bilingual_out_path
 
         store.log_event("run_steps_started", steps=run_steps_input, input_path=input_path)
 
@@ -3485,46 +3577,18 @@ class Orchestrator:
 
         outputs: list[str] = []
         if "assemble" in steps:
-            # 导出会重新读取源书模板；在读取前后都验证，避免运行期间替换文件。
-            self._ensure_store_source(store, input_path)
-            if progress:
-                progress(0, 0, "回填译文…")
-            out_cfg = self.config.output
-            do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
-            if not do_mono and not do_bilingual:
-                do_mono = True  # 兜底：mono/bilingual 都关时至少产一个单语产物
-            if do_mono:
-                outputs.append(
-                    self._measure_stage_call(
-                        "assemble",
-                        assemble,
-                        store,
-                        input_path,
-                        out_path=out_path,
-                        out_format=out_format,
-                        bilingual=False,
-                        about_page=out_cfg.about_page,
-                        pdf_engine=pdf_engine,
-                    )
+            with store.assemble_lock():
+                # 导出会重新读取源书模板；在读取前后都验证，避免运行期间替换文件。
+                self._ensure_store_source(store, input_path)
+                outputs = self._assemble_outputs(
+                    store,
+                    input_path=input_path,
+                    progress=progress,
+                    out_format=out_format,
+                    out_path=out_path,
+                    pdf_engine=pdf_engine,
                 )
-            if do_bilingual:
-                bi_out_path = bilingual_out_path(out_path) if out_path else None
-                outputs.append(
-                    self._measure_stage_call(
-                        "assemble",
-                        assemble,
-                        store,
-                        input_path,
-                        out_path=bi_out_path,
-                        out_format=out_format,
-                        bilingual=True,
-                        order=out_cfg.bilingual_order,
-                        preserve_source_style=(out_cfg.bilingual_preserve_source_style),
-                        about_page=out_cfg.about_page,
-                        pdf_engine=pdf_engine,
-                    )
-                )
-            self._ensure_store_source(store, input_path)
+                self._ensure_store_source(store, input_path)
             store.log_event("assembled", outputs=outputs, out_format=out_format)
 
         store.log_event(
