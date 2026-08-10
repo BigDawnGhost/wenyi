@@ -17,18 +17,9 @@ from tests.sample_data import write_sample_txt
 from trans_novel.agents.base import Agent
 from trans_novel.config import Config, LLMConfig, TierConfig
 from trans_novel.ingest.models import Chapter, Document, Segment
-from trans_novel.llm.factory import build_client
-from trans_novel.llm.providers._openai_compatible import (
-    EmptyResponseError,
-    normalize_openai_usage,
-)
-from trans_novel.llm.providers.deepseek import (
-    DEFAULT_API_KEY_ENV,
-    DEFAULT_BASE_URL,
-    DeepSeekClient,
-)
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.llm.providers.openai import OpenAIClient
+from trans_novel.llm.providers.universal import UniversalClient, normalize_openai_usage
+from trans_novel.llm.retrying import EmptyResponseError
 from trans_novel.llm.usage import (
     UsageSample,
     UsageTracker,
@@ -131,40 +122,37 @@ class _MeteredFakeClient(FakeClient):
         return result
 
 
-def _minimal_deepseek_cfg() -> LLMConfig:
+def _minimal_openai_cfg() -> LLMConfig:
     return LLMConfig(
-        provider="deepseek",
-        base_url="x",
-        api_key_env="X",
+        api_format="openai",
+        api_key="secret",
+        base_url="https://example.test/v1",
+        model="m1",
         timeout=1,
         max_retries=0,
-        tiers={
-            "strong": TierConfig(model="m1"),
-            "cheap": TierConfig(model="m2"),
-        },
+        tiers={"cheap": TierConfig(model="m2")},
     )
 
 
-def _minimal_openai_compatible_cfg(
+def _minimal_openai_fallback_cfg(
     *,
     max_retries: int = 0,
     reasoning_fallback: bool = False,
 ) -> LLMConfig:
-    options = {"json_response_fallback": "reasoning_content"} if reasoning_fallback else {}
     return LLMConfig(
-        provider="openai-compatible",
-        base_url="x",
+        api_format="openai",
+        api_key="secret",
+        base_url="https://example.test/v1",
+        model="m",
         max_retries=max_retries,
-        tiers={"strong": TierConfig(model="m", options=options)},
+        json_response_fallback=("reasoning_content" if reasoning_fallback else "none"),
     )
 
 
-class TestOpenAICompatibleReasoningContent(unittest.TestCase):
+class TestUniversalReasoningContent(unittest.TestCase):
     def test_json_mode_falls_back_to_reasoning_content_when_content_is_empty(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
         reasoning_content = '{"translations":["译文"]}'
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = UniversalClient(_minimal_openai_fallback_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -181,12 +169,10 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
             )
 
     def test_complete_json_rejects_mixed_reasoning_content(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
         reasoning_content = (
             '示例：{"translations":["翻译后的中文"]}\n最终输出：{"translations":["越过山口……"]}'
         )
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = UniversalClient(_minimal_openai_fallback_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -200,9 +186,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 )
 
     def test_complete_json_rejects_reasoning_content_after_length_finish(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = UniversalClient(_minimal_openai_fallback_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -217,9 +201,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 )
 
     def test_plain_mode_retries_empty_content_instead_of_using_reasoning(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = UniversalClient(_minimal_openai_fallback_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -233,9 +215,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 )
 
     def test_enabled_json_fallback_retries_when_reasoning_content_is_blank(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = UniversalClient(_minimal_openai_fallback_cfg(reasoning_fallback=True))
         response = _make_response("", None, reasoning_content=" \n ")
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
@@ -245,9 +225,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
                 )
 
     def test_default_json_mode_retries_empty_content_without_reading_reasoning(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(max_retries=1))
+        client = UniversalClient(_minimal_openai_fallback_cfg(max_retries=1))
         responses = [
             _make_response(
                 " \n ",
@@ -273,10 +251,8 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         self.assertEqual(events[0]["reason"], "empty_response")
 
     def test_json_mode_prefers_content_when_both_fields_exist(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
         content = '{"translations":["content"]}'
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = UniversalClient(_minimal_openai_fallback_cfg(reasoning_fallback=True))
         response = _make_response(
             content,
             None,
@@ -293,88 +269,27 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
             )
 
 
-class TestDeepSeekProviderDefaults(unittest.TestCase):
-    def test_provider_only_config_uses_deepseek_defaults(self):
-        client = build_client(Config.from_dict({"llm": {"provider": "deepseek"}}))
-        self.assertIsInstance(client, DeepSeekClient)
-        assert isinstance(client, DeepSeekClient)
-
-        self.assertEqual(client.base_url, DEFAULT_BASE_URL)
-        self.assertEqual(client.api_key_env, DEFAULT_API_KEY_ENV)
-        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
-        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
-        self.assertTrue(client.tiers["strong"].options.thinking)
-        self.assertFalse(client.tiers["fast"].options.thinking)
-
-    def test_explicit_config_overrides_provider_defaults(self):
-        client = DeepSeekClient(_minimal_deepseek_cfg())
-
-        self.assertEqual(client.base_url, "x")
-        self.assertEqual(client.api_key_env, "X")
-        self.assertEqual(client.tiers["strong"].model, "m1")
-
-    def test_partial_tier_override_keeps_other_provider_defaults(self):
-        client = DeepSeekClient(
-            LLMConfig(
-                tiers={
-                    "fast": TierConfig(
-                        model="custom-fast",
-                        options={"thinking": False},
-                    ),
-                }
-            )
-        )
-
-        self.assertEqual(client.tiers["fast"].model, "custom-fast")
-        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
-        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
-
-    def test_provider_option_can_be_overridden_without_repeating_model(self):
-        client = DeepSeekClient(
-            LLMConfig(
-                tiers={
-                    "fast": TierConfig(options={"thinking": True}),
-                }
-            )
-        )
-
-        self.assertEqual(client.tiers["fast"].model, "deepseek-v4-flash")
-        self.assertTrue(client.tiers["fast"].options.thinking)
-
-    def test_unknown_provider_option_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unknown_option"):
-            DeepSeekClient(
-                LLMConfig(
-                    tiers={
-                        "strong": TierConfig(options={"unknown_option": True}),
-                    }
-                )
-            )
-
-
-class TestDeepSeekUsageByTier(unittest.TestCase):
+class TestUniversalUsageByTier(unittest.TestCase):
     def test_records_usage_and_splits_by_tier(self):
-        cfg = _minimal_deepseek_cfg()
-        c = DeepSeekClient(cfg)
+        cfg = _minimal_openai_cfg()
+        c = UniversalClient(cfg)
         responses = [
             _make_response(
                 "strong-out",
-                _make_usage(
+                SimpleNamespace(
                     prompt_tokens=1000,
                     completion_tokens=200,
                     total_tokens=1200,
-                    prompt_cache_hit_tokens=800,
-                    prompt_cache_miss_tokens=200,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=800),
                 ),
             ),
             _make_response(
                 "cheap-out",
-                _make_usage(
+                SimpleNamespace(
                     prompt_tokens=500,
                     completion_tokens=100,
                     total_tokens=600,
-                    prompt_cache_hit_tokens=100,
-                    prompt_cache_miss_tokens=400,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=100),
                 ),
             ),
         ]
@@ -407,15 +322,7 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
 
 class TestOpenAIUsageNormalization(unittest.TestCase):
     def test_nested_cached_tokens_are_normalized(self):
-        cfg = LLMConfig(
-            provider="openai",
-            base_url="x",
-            api_key_env="X",
-            timeout=1,
-            max_retries=0,
-            tiers={"strong": TierConfig(model="m")},
-        )
-        client = OpenAIClient(cfg)
+        client = UniversalClient(_minimal_openai_cfg())
         usage = SimpleNamespace(
             prompt_tokens=100,
             completion_tokens=20,
@@ -472,8 +379,8 @@ class TestMissingUsage(unittest.TestCase):
         self.assertEqual(summary["by_stage"], {})
 
     def test_complete_with_none_usage_does_not_count(self):
-        cfg = _minimal_deepseek_cfg()
-        c = DeepSeekClient(cfg)
+        cfg = _minimal_openai_cfg()
+        c = UniversalClient(cfg)
         with patch.object(
             c,
             "_ensure_client",
@@ -487,8 +394,8 @@ class TestMissingUsage(unittest.TestCase):
         self.assertEqual(summary["by_stage"], {})
 
     def test_complete_with_missing_usage_attr_does_not_count(self):
-        cfg = _minimal_deepseek_cfg()
-        c = DeepSeekClient(cfg)
+        cfg = _minimal_openai_cfg()
+        c = UniversalClient(cfg)
         msg = SimpleNamespace(content="ok")
         choice = SimpleNamespace(message=msg)
         # 无 usage 属性
@@ -575,7 +482,7 @@ class TestUsageThreadSafety(unittest.TestCase):
 class TestAgentStageAttribution(unittest.TestCase):
     def test_agent_helpers_pass_class_name_as_stage(self):
         client = FakeClient()
-        agent = Agent(client, Config.from_dict({"llm": {"provider": "fake"}}))
+        agent = Agent(client, Config.from_dict({"llm": {"api_format": "fake"}}))
 
         agent._ask_text("system", "user", tier="strong")
         agent._ask_json("system", "user", tier="cheap", default=[])
@@ -623,7 +530,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
     def test_usage_accumulates_across_orchestrators_for_one_book(self):
         with tempfile.TemporaryDirectory() as d:
             store = RunStore(os.path.join(d, "state", "book"))
-            config = Config.from_dict({"llm": {"provider": "fake"}})
+            config = Config.from_dict({"llm": {"api_format": "fake"}})
 
             first_client = FakeClient()
             first = Orchestrator(config, client=first_client)
@@ -669,7 +576,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"api_format": "fake"},
                     "pipeline": {"book_understanding": False, "review": False},
                     "paths": {"state_dir": os.path.join(d, "state")},
                 }
@@ -702,16 +609,17 @@ class TestPerRunMetrics(unittest.TestCase):
             {
                 "language": {"source": "ja", "target": "zh"},
                 "llm": {
-                    "provider": "fake",
+                    "api_format": "fake",
                     "base_url": "https://example.invalid/v1",
-                    "reasoning_style": "openai",
+                    "model": "fake-default",
+                    "reasoning_effort": "high",
                     "tiers": {
                         "strong": {
                             "model": "fake-strong",
-                            "options": {
+                            "max_tokens": 1024,
+                            "temperature": 0.2,
+                            "request_overrides": {
                                 "api_token": "must-not-be-stored",
-                                "max_tokens": 1024,
-                                "temperature": 0.2,
                             },
                         }
                     },
@@ -761,15 +669,17 @@ class TestPerRunMetrics(unittest.TestCase):
                 "https://example.invalid",
             )
             self.assertEqual(
-                metric["config"]["summary"]["llm"]["reasoning_style"],
-                "openai",
+                metric["config"]["summary"]["llm"]["api_format"],
+                "fake",
             )
             self.assertEqual(
-                metric["config"]["summary"]["llm"]["tiers"]["strong"]["options"]["api_token"],
+                metric["config"]["summary"]["llm"]["tiers"]["strong"]["request_overrides"][
+                    "api_token"
+                ],
                 "<redacted>",
             )
             self.assertEqual(
-                metric["config"]["summary"]["llm"]["tiers"]["strong"]["options"]["max_tokens"],
+                metric["config"]["summary"]["llm"]["tiers"]["strong"]["max_tokens"],
                 1024,
             )
             self.assertNotIn("must-not-be-stored", json.dumps(metric))
@@ -783,12 +693,12 @@ class TestPerRunMetrics(unittest.TestCase):
             )
             self.assertNotIn("chapters_reviewed", metric["state"])
 
-    def test_config_fingerprint_tracks_base_url_and_reasoning_style(self):
+    def test_config_fingerprint_tracks_base_url_and_reasoning_effort(self):
         base = self._config("state")
         changed_url = base.model_copy(deep=True)
         changed_url.llm.base_url = "https://other.invalid/v1"
         changed_reasoning = base.model_copy(deep=True)
-        changed_reasoning.llm.reasoning_style = "deepseek"
+        changed_reasoning.llm.reasoning_effort = "medium"
         changed_path = base.model_copy(deep=True)
         changed_path.llm.base_url = "https://example.invalid/another-endpoint"
         changed_query = base.model_copy(deep=True)
@@ -1096,12 +1006,16 @@ class TestPerRunMetrics(unittest.TestCase):
                     data = file.read()
                 changed = data.replace("綾".encode(), "絢".encode(), 1)
                 self.assertEqual(len(changed), len(data))
-                with open(source, "wb") as file:
+
+                # 用原子替换模拟外部程序改写，跨平台都能改变文件身份签名。
+                replacement = f"{source}.replacement"
+                with open(replacement, "wb") as file:
                     file.write(changed)
                 os.utime(
-                    source,
+                    replacement,
                     ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
                 )
+                os.replace(replacement, source)
                 return locate(*args, **kwargs)
 
             with (

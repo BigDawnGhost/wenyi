@@ -23,7 +23,7 @@ def _cfg():
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
+                "api_format": "fake",
                 "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
             },
         }

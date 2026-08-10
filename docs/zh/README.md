@@ -54,7 +54,7 @@
 - **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
 - **多阶段质量保证** — 可选润色（强档模型重译）、回译抽检和取证式全书 AI 审校
 - **断点续跑** — 批次级检查点、章节状态记录和原子状态写入；任意中断后重新执行同一命令即可续跑
-- **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点
+- **通用 LLM API** — 一套配置接入 Anthropic Messages 或 OpenAI Chat Completions，也支持中转站、Gemini、Ollama 与 vLLM 兼容端点
 - **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
 - **双语对照输出** — 可选原文译文对照版，原文视觉淡化，支持深色模式
 
@@ -76,11 +76,23 @@ uv sync
 
 ### 配置
 
-设置 API 密钥：
+设置 API 密钥，并在 `config.yaml` 填写端点和模型：
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
+export LLM_API_KEY=sk-...
 ```
+
+```yaml
+llm:
+  api_format: openai # 或 anthropic
+  api_key_env: LLM_API_KEY
+  base_url: https://api.example.com/v1
+  model: provider-model-name
+```
+
+默认由 `strong`、`cheap`、`fast` 三档共用全局模型；只有需要差异时才为某档单独
+覆盖。Anthropic、OpenAI、Gemini 兼容端点、中转站与本地服务示例见
+[配置说明](configuration.md)。
 
 ### 一键翻译
 
@@ -188,7 +200,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 ## 文档
 
 - [使用指南](usage.md) — 安装、Windows 使用、输入输出、断点续跑和独立工作流阶段
-- [配置说明](configuration.md) — 模型提供商、源语言、流水线开关、切分与路径配置
+- [配置说明](configuration.md) — LLM API 格式、源语言、流水线开关、切分与路径配置
 - [翻译流程](pipeline.md) — 预扫、术语、上下文、润色、审校和断点续跑如何协作
 - [贡献指南](CONTRIBUTING.md) — 开发、测试和贡献要求
 

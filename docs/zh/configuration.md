@@ -14,177 +14,185 @@ language:
 
 `source: auto` 会调用模型识别源语言；也可以写死 ISO 639-1 代码，例如 `ja`、`en`、`ko`、`ru`、`fr`、`de`、`es`。目标语言目前为简体中文。
 
-## 模型
+## LLM API
+
+文译只保留一个通用生产客户端，通过两种文本协议访问模型：Anthropic Messages
+或 OpenAI Chat Completions。真实模型流程需要四项信息：
 
 ```yaml
 llm:
-  provider: deepseek
+  # anthropic | openai；大小写不敏感，也接受简写 a | oai
+  api_format: openai
+
+  # 二选一；同时出现时 api_key 优先
+  api_key_env: LLM_API_KEY
+  # api_key: sk-...
+
+  # 可填 SDK 基础地址，也可填完整操作地址
+  base_url: https://api.example.com/v1/chat/completions
+  model: provider-model-name
 ```
 
-只需选择模型提供商。DeepSeek provider 默认使用：
+直接填写的 `api_key` 会作为密文保存，配置对象展示时不会显示明文；仍建议优先
+使用环境变量，以免误把密钥提交到仓库。`api_format: fake` 仅供离线测试，不会
+发送网络请求。
 
-- `https://api.deepseek.com`；
-- `DEEPSEEK_API_KEY` 环境变量；
-- `deepseek-v4-pro` 作为 strong 档；
-- `deepseek-v4-flash` 作为 cheap 和 fast 档。
+PDF 输入首次解析会另外读取 `MINERU_API_KEY`，用于调用 MinerU 转换服务；它与
+LLM API 配置互相独立。
 
-API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
+只有真正构建模型客户端时才校验必填项。因此，默认配置里的 `base_url`、`model`
+尚未填写时，`--help`、`assemble`、`report` 等无需模型的命令仍可正常使用；模型
+流程会在第一次请求前一次性报告所有缺项。
 
-PDF 输入的首次解析另外读取 `MINERU_API_KEY`，用于调用 MinerU
-转换服务。该密钥与 LLM provider 配置无关，也不写入 `config.yaml`。
+### 可选请求参数与模型档位
 
-需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
+其余 LLM 字段均可省略。全局值同时用于 `strong`、`cheap`、`fast` 三档；某档只
+覆盖自己明确写出的字段：
 
 ```yaml
 llm:
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
+  api_format: openai
+  api_key_env: LLM_API_KEY
+  base_url: https://api.example.com/v1
+  model: provider-model-name
+
   timeout: 600
   max_retries: 4
+  max_tokens: 8192
+  max_tokens_field: max_tokens # OpenAI 可选 max_tokens | max_completion_tokens
+  temperature: 0.2
+  thinking: true
+  reasoning_effort: high
+  request_overrides:
+    metadata:
+      application: wenyi
+
   tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        reasoning_effort: high
-        thinking: true
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        reasoning_effort: high
-        thinking: true
     fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: false
+      model: provider-fast-model
+      thinking: false
+      request_overrides:
+        metadata:
+          workload: prescan
 ```
 
-`max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；连接/超时、HTTP 408/409/429、5xx 瞬时错误以及模型空响应会重试，每次等待都会写入本书的 `events.jsonl`。
+档位之间不再回退模型。上例中 `strong`、`cheap` 使用全局模型，只有 `fast` 使用
+自己的模型。合法档位名称只有 `strong`、`cheap`、`fast`；拼错或未知档位会明确
+报错，不会静默改用全局模型。全局与档位的 `request_overrides` 会递归合并，所以 fast 请求会同时
+得到 `metadata.application` 和 `metadata.workload`。
 
-用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
-运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
-`options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
-只属于 DeepSeek，不会进入通用 LLM 抽象层。
+`request_overrides` 用于中转站或厂商特有的原始请求字段，但不能改写客户端维护的
+`model`、`messages`、`stream`、凭据、输出 token 上限字段，以及 Anthropic 顶层
+`system` 等结构。显式调用参数、JSON 模式和调用方给出的 `max_tokens` 最终优先。
 
-### OpenAI 与 OpenRouter
+`max_retries` 是文译统一管理的额外尝试次数；两个 SDK 的内置重试均被关闭。连接、
+超时、HTTP 408/409/429 与 5xx 等瞬时故障才会重试，请求活动和每次等待都会写入
+本书的 `events.jsonl`。服务端给出的有效 `Retry-After`、`retry-after-ms` 会被完整
+遵守；只有文译自身的指数退避等待上限为 30 秒。
 
-OpenAI 和 OpenRouter 分别维护独立 provider，会自动选择各自的 Base URL、API Key
-环境变量和思考参数格式。模型档位需要显式配置：
+### Base URL 规范化
+
+`base_url` 必须是 HTTP(S) URL，不能带 query 或 fragment。基础地址和完整标准
+操作地址都可直接填写：
+
+- OpenAI 格式会先剥离末尾的 `/chat/completions` 再交给 SDK；
+- Anthropic 格式会先剥离末尾的 `/v1/messages`；
+- 其他自定义路径前缀原样保留，只移除末尾 `/`。
+
+例如 `https://api.example.com/v1` 与
+`https://api.example.com/v1/chat/completions` 会访问同一个 OpenAI 端点。
+
+### OpenAI Chat Completions 格式
+
+OpenAI 分支保留 system、user、assistant 消息并调用 `chat.completions.create`。
+JSON 模式会在提示词中加入 JSON 约束，同时发送
+`response_format: {type: json_object}`。`thinking: true` 会发送配置的
+`reasoning_effort`（未配置时为 `high`），`thinking: false` 则发送 `none`。
+
+输出上限默认使用兼容面更广的 `max_tokens`。端点或新版 OpenAI 模型要求新字段
+时，可设置 `max_tokens_field: max_completion_tokens`。
+
+常见的 OpenAI 格式配置如下：
 
 ```yaml
+# OpenAI
 llm:
-  provider: openrouter
-  tiers:
-    strong:
-      model: anthropic/claude-opus-4.6
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: openai/gpt-5-mini
-      options:
-        thinking: true
-        reasoning_effort: medium
-    fast:
-      model: google/gemini-3-flash
-      options:
-        thinking: false
-```
+  api_format: openai
+  api_key_env: OPENAI_API_KEY
+  base_url: https://api.openai.com/v1
+  model: your-openai-model
 
-`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
-
-### Google Gemini
-
-通过官方 `google-genai` SDK 原生支持 Google Gemini 模型，设置 `provider: gemini`（或 `provider: google`）。默认读取 `GEMINI_API_KEY`（或兼容 `GOOGLE_API_KEY`）环境变量：
-
-```yaml
+# Google Gemini 的 OpenAI 兼容端点
 llm:
-  provider: gemini
+  api_format: openai
   api_key_env: GEMINI_API_KEY
-  tiers:
-    strong:
-      model: gemini-3.6-flash
-    cheap:
-      model: gemini-3.6-flash
-    fast:
-      model: gemini-3.6-flash
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: your-gemini-model
+
+# OpenRouter（DeepSeek 和其他中转站使用相同结构）
+llm:
+  api_format: openai
+  api_key_env: OPENROUTER_API_KEY
+  base_url: https://openrouter.ai/api/v1
+  model: provider/model-name
+
+# 本地 Ollama；若服务端不鉴权，可填写任意非空 key
+llm:
+  api_format: openai
+  api_key: local
+  base_url: http://localhost:11434/v1
+  model: installed-model-name
 ```
 
-Gemini 专属配置还支持针对思考模型的 `thinking_level`（如 `low` / `high`）与 `thinking_budget` 参数。
+本地 vLLM 的常见地址为 `http://localhost:8000/v1`，DeepSeek API 基础地址为
+`https://api.deepseek.com`。文译不再内置任何厂商 URL、模型名或密钥环境变量名。
 
-### 其他 OpenAI 兼容端点
+### Anthropic Messages 格式
 
-任意兼容 Chat Completions 的端点可使用 `openai-compatible`：
+Anthropic 分支会把所有 system 消息合并到顶层 `system`，其余 user/assistant 消息
+保持顺序。JSON 模式只通过提示词约束，不发送 OpenAI 专属的 `response_format`。
+若没有配置输出上限，Anthropic 请求默认使用 `max_tokens: 8192`。
+
+`thinking: true` 映射为 adaptive thinking，`thinking: false` 映射为 disabled；
+`reasoning_effort` 映射到 `output_config.effort`。旧模型若要求固定思考预算，可用
+完整的厂商字段替换自动生成值：
 
 ```yaml
 llm:
-  provider: openai-compatible
+  api_format: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  base_url: https://api.anthropic.com
+  model: your-claude-model
+  request_overrides:
+    thinking:
+      type: enabled
+      budget_tokens: 8192
+```
+
+响应只会把最终 text block 拼接给翻译流水线，thinking、tool 等块会被忽略。
+Anthropic 的缓存写入/读取 token 与 OpenAI 的缓存 prompt token 都会归一到现有用量
+统计中。
+
+### 从旧 Provider 配置迁移
+
+默认情况下，文译只信任标准 `content` 字段，并对空响应发起重试。只有确认
+OpenAI 格式端点会把最终 JSON 放进 `reasoning_content` 时，才应在全局或实际
+使用的档位设置 `json_response_fallback: reasoning_content`。备用字段只会在
+JSON 模式读取，而且必须完整构成一个合法 JSON 值。
+
+```yaml
+llm:
+  api_format: openai
   base_url: https://api.example.com/v1
-  api_key_env: EXAMPLE_API_KEY
-  # deepseek | openai | openrouter | none
-  reasoning_style: deepseek
+  model: provider-model-name
   tiers:
     strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        reasoning_effort: high
-        request_overrides:
-          thinking:
-            budget: 8192
+      json_response_fallback: reasoning_content
 ```
 
-`reasoning_style` 把统一的 `thinking`、`reasoning_effort` 转换为中转站实际
-接受的请求格式：
-
-- `deepseek`：`thinking.type` 与 `reasoning_effort`；
-- `openai`：`reasoning_effort`，关闭时发送 `none`；
-- `openrouter`：`reasoning.effort`，关闭时发送 `reasoning.enabled: false`；
-- `none`：不转换，适合依赖模型默认行为或使用自定义请求字段。
-
-默认情况下，Wenyi 只信任标准 `content` 字段，并对空响应发起重试。只有
-确认端点会把最终 JSON 放进 `reasoning_content` 时，才应在实际使用的每个
-档位设置 `json_response_fallback: reasoning_content`；启用后也只接受完整、
-合法的单个 JSON 值。
-
-```yaml
-llm:
-  provider: openai-compatible
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        json_response_fallback: reasoning_content
-```
-
-`request_overrides` 是未知中转协议的兜底入口，其内容会作为原始顶层请求体
-字段发送，并在方言生成的字段之后递归合并。例如中转站使用
-`enable_thinking: true` 时可以这样配置：
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  reasoning_style: none
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        request_overrides:
-          enable_thinking: true
-```
-
-方言由中转站协议决定，而不是由实际模型名称决定。例如，中转站即使代理
-DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应选择
-`reasoning_style: openai`。
-
-本地 Ollama 和 vLLM 还可以分别使用 `ollama`、`vllm`，默认地址为
-`http://localhost:11434/v1` 和 `http://localhost:8000/v1`，默认不要求 API Key。
-两者同样需要配置实际部署的模型档位。Ollama 的 OpenAI 兼容接口可使用
-`reasoning_style: openai`；vLLM 是否支持思考开关取决于模型模板和服务端启动
-参数，必要时可通过 `request_overrides.chat_template_kwargs` 传入
-`enable_thinking`。
+原 `llm.provider`、`reasoning_style`、`tiers.*.options` 不是兼容别名；发现它们时
+文译会直接给出迁移示例。请改用 `api_format`、明确的 `base_url`、全局 `model` 和
+上面的扁平可选字段，只有真正的厂商扩展才放入 `request_overrides`。
 
 ## 流水线
 

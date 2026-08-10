@@ -14,161 +14,200 @@ language:
 
 `source: auto` asks the model to identify the source language. You may instead use an ISO 639-1 code such as `ja`, `en`, `ko`, `ru`, `fr`, `de`, or `es`. The current translation pipeline is primarily designed for Simplified Chinese output.
 
-## Model provider
+## LLM API
+
+Wenyi uses one universal client for two text protocols: Anthropic Messages and
+OpenAI Chat Completions. A real model run needs four pieces of information:
 
 ```yaml
 llm:
-  provider: deepseek
+  # anthropic | openai; the case-insensitive aliases a | oai also work
+  api_format: openai
+
+  # Choose either source. If both are present, api_key takes precedence.
+  api_key_env: LLM_API_KEY
+  # api_key: sk-...
+
+  # An SDK base URL or a complete operation URL is accepted.
+  base_url: https://api.example.com/v1/chat/completions
+  model: provider-model-name
 ```
 
-Selecting `deepseek` is enough for the built-in defaults:
+`api_key` is stored as a secret value and is redacted from configuration
+representations. An environment variable is still recommended so that a key is
+not committed accidentally. `api_format: fake` is reserved for offline tests and
+does not make network requests.
 
-- Base URL: `https://api.deepseek.com`
-- API key environment variable: `DEEPSEEK_API_KEY`
-- Strong tier: `deepseek-v4-pro`
-- Cheap and fast tiers: `deepseek-v4-flash`
+The first PDF import separately reads `MINERU_API_KEY` for the MinerU conversion
+service. That key is unrelated to the LLM API configuration.
 
-API keys are always read from environment variables so they are not accidentally committed with the configuration. Use `provider: fake` for offline tests that must not make network requests.
+Real-client validation is deferred until a command actually needs a model. Thus
+commands such as `--help`, `assemble`, and `report` remain usable while the
+generated `base_url` and `model` placeholders are still empty. A model workflow
+reports all missing required fields before its first request.
 
-The first PDF import also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`.
+### Optional request settings and model tiers
 
-Add the advanced fields only when you need a proxy, custom environment variable, timeout, retry policy, or model override:
+All other LLM fields are optional. Global values apply to `strong`, `cheap`, and
+`fast`; a tier overrides only the fields it declares:
 
 ```yaml
 llm:
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
+  api_format: openai
+  api_key_env: LLM_API_KEY
+  base_url: https://api.example.com/v1
+  model: provider-model-name
+
   timeout: 600
   max_retries: 4
+  max_tokens: 8192
+  max_tokens_field: max_tokens # max_tokens | max_completion_tokens (OpenAI only)
+  temperature: 0.2
+  thinking: true
+  reasoning_effort: high
+  request_overrides:
+    metadata:
+      application: wenyi
+
   tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        reasoning_effort: high
-        thinking: true
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        reasoning_effort: high
-        thinking: true
     fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: false
+      model: provider-fast-model
+      thinking: false
+      request_overrides:
+        metadata:
+          workload: prescan
 ```
 
-`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries transient transport failures, HTTP 408/409/429 and 5xx responses, plus empty model responses; each wait is recorded in the book's `events.jsonl`.
+There is no cross-tier model fallback. In this example, `strong` and `cheap` use
+the global model, while `fast` uses its exact override. Only `strong`, `cheap`,
+and `fast` are valid tier names; misspelled or unknown tiers fail explicitly
+instead of silently selecting the global model. Global and tier
+`request_overrides` are merged recursively, so both `metadata.application` and
+`metadata.workload` reach the fast request.
 
-Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
+`request_overrides` is the escape hatch for relay- or vendor-specific raw request
+fields. It cannot replace client-owned structure such as `model`, `messages`,
+`stream`, credentials, token-limit fields, or Anthropic's top-level `system`.
+Explicit call arguments, JSON mode, and a caller-provided `max_tokens` take final
+precedence.
 
-The selected provider owns and validates the contents of `options`. In the example above, `thinking` and `reasoning_effort` are DeepSeek-specific and do not belong to the common LLM interface.
+`max_retries` is the number of additional attempts managed by Wenyi. Both SDKs
+have their own retries disabled. Wenyi retries transient connection and timeout
+errors, HTTP 408/409/429, and 5xx responses; retry waits and request activity are
+recorded in the book's `events.jsonl`. Valid server `Retry-After` and
+`retry-after-ms` values are honored in full; only Wenyi's fallback exponential
+backoff is capped at 30 seconds.
 
-### OpenAI and OpenRouter
+### Base URL normalization
 
-OpenAI and OpenRouter have dedicated providers that select their own default Base URL, API key environment variable, request fields, and reasoning format. Their model tiers must be configured explicitly:
+`base_url` must use HTTP or HTTPS and cannot contain a query or fragment. Wenyi
+accepts either an SDK base address or a complete standard operation address:
+
+- OpenAI format strips a trailing `/chat/completions` before passing the URL to
+  the SDK.
+- Anthropic format strips a trailing `/v1/messages`.
+- Other custom path prefixes are preserved exactly, apart from trailing slashes.
+
+For example, both `https://api.example.com/v1` and
+`https://api.example.com/v1/chat/completions` select the same OpenAI endpoint.
+
+### OpenAI Chat Completions format
+
+The OpenAI branch preserves system, user, and assistant messages and calls
+`chat.completions.create`. JSON mode adds a JSON instruction to the prompt and
+sends `response_format: {type: json_object}`. `thinking: true` sends the selected
+`reasoning_effort` (defaulting to `high`), while `thinking: false` sends `none`.
+
+The default output-limit field is the widely compatible `max_tokens`. Set
+`max_tokens_field: max_completion_tokens` when an endpoint or newer OpenAI model
+requires that spelling.
+
+Common OpenAI-format examples are:
 
 ```yaml
+# OpenAI
 llm:
-  provider: openrouter
-  tiers:
-    strong:
-      model: anthropic/claude-opus-4.6
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: openai/gpt-5-mini
-      options:
-        thinking: true
-        reasoning_effort: medium
-    fast:
-      model: google/gemini-3-flash
-      options:
-        thinking: false
-```
+  api_format: openai
+  api_key_env: OPENAI_API_KEY
+  base_url: https://api.openai.com/v1
+  model: your-openai-model
 
-The OpenAI provider reads `OPENAI_API_KEY`; OpenRouter reads `OPENROUTER_API_KEY`. Both providers allow `base_url` and `api_key_env` to override their defaults.
-
-### Google Gemini
-
-Google Gemini is supported natively through the official `google-genai` SDK using `provider: gemini` (or `provider: google`). It reads `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) from environment variables:
-
-```yaml
+# Google Gemini through its OpenAI-compatible endpoint
 llm:
-  provider: gemini
+  api_format: openai
   api_key_env: GEMINI_API_KEY
-  tiers:
-    strong:
-      model: gemini-3.6-flash
-    cheap:
-      model: gemini-3.6-flash
-    fast:
-      model: gemini-3.6-flash
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: your-gemini-model
+
+# OpenRouter (DeepSeek and other relays use the same shape)
+llm:
+  api_format: openai
+  api_key_env: OPENROUTER_API_KEY
+  base_url: https://openrouter.ai/api/v1
+  model: provider/model-name
+
+# Local Ollama; use any non-empty key if the server does not authenticate
+llm:
+  api_format: openai
+  api_key: local
+  base_url: http://localhost:11434/v1
+  model: installed-model-name
 ```
 
-Gemini options also support `thinking_level` (e.g. `low`, `high`) or `thinking_budget` (in tokens) for Gemini reasoning models.
+A typical local vLLM address is `http://localhost:8000/v1`; DeepSeek's API base
+is `https://api.deepseek.com`. Wenyi no longer supplies vendor URLs, model names,
+or environment-variable names automatically.
 
-### Other OpenAI-compatible endpoints
+### Anthropic Messages format
 
-Use `openai-compatible` for any endpoint implementing OpenAI Chat Completions:
+The Anthropic branch moves all system-message content to the top-level `system`
+field and keeps the remaining user/assistant sequence. JSON mode constrains the
+prompt without sending the OpenAI-only `response_format` field. If no output
+limit is configured, Anthropic requests use `max_tokens: 8192`.
+
+`thinking: true` selects adaptive thinking and `thinking: false` selects disabled
+thinking. `reasoning_effort` maps to `output_config.effort`. For an older model
+that requires a fixed thinking budget, replace the generated thinking object with
+a complete vendor-specific value:
 
 ```yaml
 llm:
-  provider: openai-compatible
+  api_format: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  base_url: https://api.anthropic.com
+  model: your-claude-model
+  request_overrides:
+    thinking:
+      type: enabled
+      budget_tokens: 8192
+```
+
+Only final text blocks are returned to the translation pipeline; thinking and
+tool blocks are ignored. Anthropic cache creation/read tokens and OpenAI cached
+prompt tokens are normalized into Wenyi's existing usage statistics.
+
+### Migrating old provider configuration
+
+By default Wenyi trusts only the standard `content` response field and retries
+an empty response. For an OpenAI-format endpoint known to place the final JSON
+answer in `reasoning_content`, set `json_response_fallback: reasoning_content`
+globally or on the applicable tier. The fallback is read only in JSON mode and
+accepted only when the entire field is one valid JSON value.
+
+```yaml
+llm:
+  api_format: openai
   base_url: https://api.example.com/v1
-  api_key_env: EXAMPLE_API_KEY
-  # deepseek | openai | openrouter | none
-  reasoning_style: deepseek
+  model: provider-model-name
   tiers:
     strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        reasoning_effort: high
-        request_overrides:
-          thinking:
-            budget: 8192
+      json_response_fallback: reasoning_content
 ```
 
-`reasoning_style` converts the common `thinking` and `reasoning_effort` options into the request dialect accepted by the endpoint:
-
-- `deepseek`: `thinking.type` plus `reasoning_effort`
-- `openai`: `reasoning_effort`, with `none` sent when reasoning is disabled
-- `openrouter`: `reasoning.effort`, with `reasoning.enabled: false` sent when disabled
-- `none`: no conversion, for endpoints that rely on model defaults or custom request fields
-
-By default Wenyi trusts only the standard `content` response field and retries an empty response. Set `json_response_fallback: reasoning_content` on each applicable tier only for endpoints known to place the final JSON answer in `reasoning_content`; Wenyi then accepts that field only when it contains one complete JSON value.
-
-```yaml
-llm:
-  provider: openai-compatible
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        json_response_fallback: reasoning_content
-```
-
-`request_overrides` is an escape hatch for provider-specific fields that Wenyi does not know about. Its contents are merged recursively into the raw top-level request body after the selected reasoning dialect is generated. For example, an endpoint using `enable_thinking: true` can be configured as follows:
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  reasoning_style: none
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        request_overrides:
-          enable_thinking: true
-```
-
-Choose a reasoning dialect according to the endpoint protocol, not the underlying model name. A relay serving a DeepSeek model should still use `reasoning_style: openai` when that relay expects OpenAI reasoning fields.
-
-Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` providers. Their default addresses are `http://localhost:11434/v1` and `http://localhost:8000/v1`, and neither requires an API key by default. Both require explicit model tiers. Ollama's OpenAI-compatible endpoint may use `reasoning_style: openai`; vLLM reasoning support depends on the model template and server arguments. When necessary, pass `enable_thinking` through `request_overrides.chat_template_kwargs`.
+The former `llm.provider`, `reasoning_style`, and `tiers.*.options` fields are not
+compatible aliases. Wenyi rejects them with a migration example. Replace them
+with `api_format`, an explicit `base_url`, a global `model`, and the flat optional
+fields shown above. Put only true provider extensions under `request_overrides`.
 
 ## Pipeline
 

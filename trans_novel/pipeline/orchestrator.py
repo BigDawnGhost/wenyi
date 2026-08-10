@@ -145,6 +145,31 @@ def _record_pipeline_metrics(func: Callable) -> Callable:
     return wrapped
 
 
+def _report_translation_progress(
+    progress: ProgressFn | None,
+    *,
+    chapter_done: int,
+    chapter_total: int,
+    overall_done: int,
+    overall_total: int,
+    label: str,
+) -> None:
+    """向 Rich 桥报告双层进度，普通回调仍接收原有全书累计值。"""
+    if progress is None:
+        return
+    nested_update = getattr(progress, "update_translation", None)
+    if callable(nested_update):
+        nested_update(
+            chapter_done,
+            chapter_total,
+            overall_done,
+            overall_total,
+            label,
+        )
+        return
+    progress(overall_done, overall_total, label)
+
+
 # 语言名/代码 → ISO 639-1 两字母代码（模型检测结果归一化）
 _LANG_ALIASES = {
     "japanese": "ja",
@@ -452,9 +477,17 @@ class Orchestrator:
         self._active_run_metrics: RunMetricsRecorder | None = None
         self._run_metrics_suppressed = False
 
-    def _bind_llm_events(self, store: RunStore) -> None:
-        """把 provider 重试事件实时写入当前书籍的追加式事件日志。"""
+    def _bind_llm_events(
+        self,
+        store: RunStore,
+        progress: ProgressFn | None = None,
+    ) -> None:
+        """绑定正式重试日志，并把瞬时模型活动交给可选 UI 桥。"""
         self.client.set_event_sink(store.log_event)
+        activity_sink = getattr(progress, "on_llm_activity", None)
+        set_activity_sink = getattr(self.client, "set_activity_sink", None)
+        if callable(set_activity_sink):
+            set_activity_sink(activity_sink if callable(activity_sink) else None)
 
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
@@ -681,7 +714,7 @@ class Orchestrator:
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
         self._ensure_store_source(store, input_path)
-        self._bind_llm_events(store)
+        self._bind_llm_events(store, progress)
         self._attach_metrics_store(store)
         return store
 
@@ -696,7 +729,7 @@ class Orchestrator:
             pdf_title = os.path.splitext(os.path.basename(input_path))[0]
             run_dir = os.path.join(self.config.state_dir, slugify(pdf_title))
             store = RunStore(run_dir)
-            self._bind_llm_events(store)
+            self._bind_llm_events(store, progress)
             self._attach_metrics_store(store)
             with store.lock():
                 if store.exists():
@@ -744,7 +777,7 @@ class Orchestrator:
             raise ValueError("源文件在解析期间发生变化；请确认文件稳定后重试。")
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
-        self._bind_llm_events(store)
+        self._bind_llm_events(store, progress)
         self._attach_metrics_store(store)
         with store.lock():
             return self._prepare_locked(
@@ -1745,11 +1778,22 @@ class Orchestrator:
         )
 
         batches = _resume_batches(text_segs, self.config.segment.max_chars_per_batch)
+        chapter_done = sum(
+            len(batch)
+            for batch in batches
+            if all(segment.target and segment.target.strip() for segment in batch)
+        )
         label = self._chapter_progress_label(chapter.title, ci)
         # prepare() 的最后一个标签通常是“解析文档…”。续跑首批可能先恢复术语，
         # 若不在章首刷新，整个模型请求期间都会错误地显示成仍在解析源文件。
-        if progress:
-            progress(done, total, label)
+        _report_translation_progress(
+            progress,
+            chapter_done=chapter_done,
+            chapter_total=len(text_segs),
+            overall_done=done,
+            overall_total=total,
+            label=label,
+        )
         glossary_checkpoints = store.completed_batch_glossary_keys(ci)
         # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
         # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
@@ -1812,8 +1856,14 @@ class Orchestrator:
                     ],
                 )
                 seg_base += len(b)
-                if progress:
-                    progress(done, total, label)
+                _report_translation_progress(
+                    progress,
+                    chapter_done=chapter_done,
+                    chapter_total=len(text_segs),
+                    overall_done=done,
+                    overall_total=total,
+                    label=label,
+                )
                 continue
 
             ctx_text = context.render(self.config.pipeline.rolling_context_segments)
@@ -1865,9 +1915,16 @@ class Orchestrator:
                 ],
             )
             done += len(b)
+            chapter_done += len(b)
             seg_base += len(b)
-            if progress:
-                progress(done, total, label)
+            _report_translation_progress(
+                progress,
+                chapter_done=chapter_done,
+                chapter_total=len(text_segs),
+                overall_done=done,
+                overall_total=total,
+                label=label,
+            )
             # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
             self._extract_batch_glossary(
                 glossary,

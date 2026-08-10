@@ -118,25 +118,34 @@ def config_identity(config: Config) -> dict[str, Any]:
     """提取影响翻译结果的非敏感配置，并给出稳定指纹。"""
     base_url = config.llm.base_url
     endpoint_identity = _safe_base_url(base_url, include_path=True)
+
+    # Universal Provider 的全局参数和档位覆盖都可能改变模型输出，需完整入账。
+    llm_parameters = {
+        "model": config.llm.model,
+        "max_tokens": config.llm.max_tokens,
+        "max_tokens_field": config.llm.max_tokens_field,
+        "temperature": config.llm.temperature,
+        "thinking": config.llm.thinking,
+        "reasoning_effort": config.llm.reasoning_effort,
+        "json_response_fallback": config.llm.json_response_fallback,
+        "request_overrides": _safe_value(config.llm.request_overrides),
+    }
     summary = {
         "language": {
             "source": config.source_lang,
             "target": config.target_lang,
         },
         "llm": {
-            "provider": config.llm.provider,
+            "api_format": config.llm.api_format,
             "base_url": _safe_base_url(base_url),
             "base_url_fingerprint": (
                 _fingerprint(endpoint_identity) if endpoint_identity else None
             ),
-            "reasoning_style": config.llm.reasoning_style,
             "timeout": config.llm.timeout,
             "max_retries": config.llm.max_retries,
+            **llm_parameters,
             "tiers": {
-                name: {
-                    "model": tier.model,
-                    "options": _safe_value(tier.options),
-                }
+                name: _safe_value(tier.model_dump(mode="python"))
                 for name, tier in sorted(config.llm.tiers.items())
             },
         },

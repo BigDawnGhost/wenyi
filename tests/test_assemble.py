@@ -130,7 +130,7 @@ def _config(state_dir: str):
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
+                "api_format": "fake",
                 "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
             },
             "pipeline": {"review": True, "polish": True, "backtranslate_sample": 0.0},

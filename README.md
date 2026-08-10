@@ -54,7 +54,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
 - **Multi-stage quality** — optional polishing (strong model), backtranslation sampling, and an evidence-driven whole-book AI review
 - **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
-- **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
+- **Universal LLM API** — one configuration for Anthropic Messages or OpenAI Chat Completions, including compatible relays, Gemini, Ollama, and vLLM
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
 - **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support
 
@@ -76,11 +76,23 @@ uv sync
 
 ### Configuration
 
-Set your API key:
+Set your API key, then fill in the endpoint and model in `config.yaml`:
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
+export LLM_API_KEY=sk-...
 ```
+
+```yaml
+llm:
+  api_format: openai # or anthropic
+  api_key_env: LLM_API_KEY
+  base_url: https://api.example.com/v1
+  model: provider-model-name
+```
+
+The same global model is used for the `strong`, `cheap`, and `fast` tiers unless
+a tier overrides it. See the [configuration guide](docs/configuration.md) for
+Anthropic, OpenAI, Gemini-compatible, relay, and local endpoint examples.
 
 ### One-command translation
 
@@ -194,7 +206,7 @@ the book's voice. Its replacements remain temporary review suggestions.
 ## Documentation
 
 - [Usage guide](docs/usage.md) — installation, Windows setup, input/output, resumability, independent stages
-- [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
+- [Configuration](docs/configuration.md) — LLM API formats, languages, pipeline switches, segmentation, paths
 - [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
 - [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
 

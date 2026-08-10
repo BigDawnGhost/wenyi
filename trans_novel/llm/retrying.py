@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import ssl
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -11,7 +12,10 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
-from openai import APIConnectionError, APITimeoutError
+from anthropic import APIConnectionError as AnthropicAPIConnectionError
+from anthropic import APITimeoutError as AnthropicAPITimeoutError
+from openai import APIConnectionError as OpenAIAPIConnectionError
+from openai import APITimeoutError as OpenAIAPITimeoutError
 from tenacity import (
     RetryCallState,
     retry,
@@ -22,8 +26,8 @@ from tenacity import (
 
 _LOGGER = logging.getLogger(__name__)
 _RETRYABLE_STATUS_CODES = {408, 409, 429}
-_MAX_WAIT_SECONDS = 30.0
-_FALLBACK_WAIT = wait_random_exponential(multiplier=1, max=_MAX_WAIT_SECONDS)
+_MAX_FALLBACK_WAIT_SECONDS = 30.0
+_FALLBACK_WAIT = wait_random_exponential(multiplier=1, max=_MAX_FALLBACK_WAIT_SECONDS)
 
 
 class EmptyResponseError(RuntimeError):
@@ -127,13 +131,22 @@ def retry_reason(error: Any) -> str | None:
         return None
 
     for item in chain:
-        if isinstance(item, (TimeoutError, httpx.TimeoutException, APITimeoutError)):
+        if isinstance(
+            item,
+            (
+                TimeoutError,
+                httpx.TimeoutException,
+                AnthropicAPITimeoutError,
+                OpenAIAPITimeoutError,
+            ),
+        ):
             return "timeout"
         if isinstance(
             item,
             (
                 ConnectionError,
-                APIConnectionError,
+                AnthropicAPIConnectionError,
+                OpenAIAPIConnectionError,
                 httpx.NetworkError,
                 httpx.ProxyError,
                 httpx.RemoteProtocolError,
@@ -149,13 +162,16 @@ def is_retryable_provider_error(error: Any) -> bool:
 
 
 def _retry_after_seconds(error: Any) -> float | None:
-    """解析 Retry-After/retry-after-ms，并把等待限制在安全上限内。"""
+    """解析 Retry-After/retry-after-ms，并完整服从有效的服务端等待值。"""
     milliseconds = _header(error, "retry-after-ms")
     if milliseconds:
         try:
-            return min(_MAX_WAIT_SECONDS, max(0.0, float(milliseconds) / 1000))
+            seconds = float(milliseconds) / 1000
         except ValueError:
             pass
+        else:
+            if math.isfinite(seconds):
+                return max(0.0, seconds)
 
     value = _header(error, "retry-after")
     if not value:
@@ -170,7 +186,9 @@ def _retry_after_seconds(error: Any) -> float | None:
             seconds = (target - datetime.now(timezone.utc)).total_seconds()
         except (TypeError, ValueError, OverflowError):
             return None
-    return min(_MAX_WAIT_SECONDS, max(0.0, seconds))
+    if not math.isfinite(seconds):
+        return None
+    return max(0.0, seconds)
 
 
 def wait_for_provider_retry(retry_state: RetryCallState) -> float:
@@ -200,6 +218,7 @@ class RetryReporter:
     stage: str | None
     max_attempts: int
     emit: Callable[..., None]
+    activity_emit: Callable[..., None] | None = None
 
     def _error_fields(self, error: Any) -> dict[str, Any]:
         """生成不含请求正文、响应正文和密钥的安全错误字段。"""
@@ -229,6 +248,16 @@ class RetryReporter:
             **fields,
         }
         self.emit("llm_retry_wait", **payload)
+        if self.activity_emit is not None:
+            self.activity_emit(
+                "request_retry_wait",
+                stage=self.stage,
+                tier=self.tier,
+                attempt=retry_state.attempt_number + 1,
+                max_attempts=self.max_attempts,
+                wait_seconds=round(wait_seconds, 3),
+                reason=fields["reason"],
+            )
         _LOGGER.warning(
             "LLM request retrying: provider=%s stage=%s tier=%s attempt=%s/%s "
             "wait=%.3fs reason=%s error=%s request_id=%s",

@@ -14,6 +14,8 @@ from typer.testing import CliRunner
 from trans_novel.cli import (
     _apply_store_languages,
     _configure_windows_console,
+    _EstimatedRemainingColumn,
+    _llm_stage_label,
     _RichProgressBridge,
     _validate_pdf_engine,
     app,
@@ -30,7 +32,15 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
-    def test_progress_bridge_reuses_one_task_across_review_stages(self):
+    @staticmethod
+    def _stage_task(progress, bridge):
+        return next(task for task in progress.tasks if task.id == bridge.task)
+
+    @staticmethod
+    def _overall_task(progress, bridge):
+        return next(task for task in progress.tasks if task.id == bridge.overall_task)
+
+    def test_progress_bridge_reuses_stage_task_across_review_stages(self):
         progress = Progress(disable=True)
         bridge = _RichProgressBridge(progress, "准备全书审校…")
 
@@ -40,11 +50,119 @@ class TestCliConfig(unittest.TestCase):
         bridge(58, 58, "影子修订 R1")
         bridge(0, 6386, "全书盲审 R2")
 
-        self.assertEqual(len(progress.tasks), 1)
-        task = progress.tasks[0]
-        self.assertEqual(task.description, "全书盲审 R2")
+        self.assertEqual(len(progress.tasks), 2)
+        task = self._stage_task(progress, bridge)
+        self.assertEqual(task.description, "全书盲审 R2 · LLM: idle")
         self.assertEqual(task.completed, 0)
         self.assertEqual(task.total, 6386)
+        self.assertIsNone(self._overall_task(progress, bridge).total)
+
+    def test_llm_stage_labels_include_known_and_readable_fallbacks(self):
+        self.assertEqual(_llm_stage_label("Translator"), "Translating text")
+        self.assertEqual(_llm_stage_label("custom_stage"), "Custom stage")
+        self.assertEqual(_llm_stage_label("NewReviewAgent"), "New Review Agent")
+        self.assertEqual(_llm_stage_label(None), "Model request")
+
+    def test_progress_bridge_aggregates_concurrent_activity_and_returns_idle(self):
+        progress = Progress(disable=True)
+        bridge = _RichProgressBridge(progress, "预扫章节梗概")
+
+        bridge.on_llm_activity("request_started", request_id="r1", stage="Synopsizer", tier="fast")
+        bridge.on_llm_activity("request_started", request_id="r2", stage="Synopsizer", tier="fast")
+        bridge.on_llm_activity(
+            "request_started", request_id="r3", stage="Translator", tier="strong"
+        )
+        description = self._stage_task(progress, bridge).description
+        self.assertIn("LLM: Translating text [strong]", description)
+        self.assertIn("+2 other requests", description)
+
+        bridge.on_llm_activity(
+            "request_retry_wait",
+            request_id="r1",
+            stage="Synopsizer",
+            tier="fast",
+            attempt=2,
+            max_attempts=5,
+            wait_seconds=3.2,
+            reason="http_502",
+        )
+        description = self._stage_task(progress, bridge).description
+        self.assertIn(
+            "LLM: Retrying Building book understanding [fast] 2/5 in 3.2s ×2",
+            description,
+        )
+        self.assertIn("+1 other request", description)
+
+        for request_id in ("r2", "r1", "r3"):
+            bridge.on_llm_activity("request_finished", request_id=request_id)
+        self.assertTrue(self._stage_task(progress, bridge).description.endswith("LLM: idle"))
+
+    def test_activity_changes_do_not_change_counts_or_eta_samples(self):
+        clock = [0.0]
+        progress = Progress(disable=True, get_time=lambda: clock[0])
+        bridge = _RichProgressBridge(progress, "第一章")
+        bridge(0, 10, "第一章")
+        clock[0] = 5.0
+        bridge(2, 10, "第一章")
+        task = self._stage_task(progress, bridge)
+        completed = task.completed
+        samples = list(task._progress)
+
+        bridge.on_llm_activity(
+            "request_started", request_id="r1", stage="Translator", tier="strong"
+        )
+        bridge.on_llm_activity("request_finished", request_id="r1")
+
+        task = self._stage_task(progress, bridge)
+        self.assertEqual(task.completed, completed)
+        self.assertEqual(list(task._progress), samples)
+
+    def test_eta_is_calculated_and_stage_rollback_clears_speed(self):
+        clock = [0.0]
+        progress = Progress(disable=True, get_time=lambda: clock[0])
+        bridge = _RichProgressBridge(progress, "全书审校 R1")
+        eta = _EstimatedRemainingColumn()
+
+        bridge(0, 10, "全书审校 R1")
+        self.assertIn("计算中", eta.render(self._stage_task(progress, bridge)).plain)
+        clock[0] = 5.0
+        bridge(2, 10, "全书审校 R1")
+        clock[0] = 10.0
+        bridge(4, 10, "全书审校 R1")
+        self.assertEqual(
+            eta.render(self._stage_task(progress, bridge)).plain,
+            "阶段剩余 00:15",
+        )
+
+        bridge(0, 10, "全书盲审 R2")
+        self.assertIn("计算中", eta.render(self._stage_task(progress, bridge)).plain)
+
+    def test_translation_uses_local_stage_and_preserves_overall_progress(self):
+        progress = Progress(disable=True)
+        bridge = _RichProgressBridge(
+            progress,
+            "准备中…",
+            overall_predictable=True,
+        )
+
+        bridge.update_translation(2, 10, 12, 100, "第一章")
+        stage = self._stage_task(progress, bridge)
+        overall = self._overall_task(progress, bridge)
+        self.assertEqual((stage.completed, stage.total), (2, 10))
+        self.assertEqual((overall.completed, overall.total), (12, 100))
+        overall_task_id = bridge.overall_task
+
+        bridge.update_translation(0, 5, 20, 100, "第二章")
+        stage = self._stage_task(progress, bridge)
+        overall = self._overall_task(progress, bridge)
+        self.assertEqual((stage.completed, stage.total), (0, 5))
+        self.assertEqual(bridge.overall_task, overall_task_id)
+        self.assertEqual((overall.completed, overall.total), (20, 100))
+
+        bridge(0, 0, "翻译章节标题…")
+        overall = self._overall_task(progress, bridge)
+        self.assertEqual(bridge.overall_task, overall_task_id)
+        self.assertEqual((overall.completed, overall.total), (20, 100))
 
     def test_pdf_engine_validation_accepts_both_backends(self):
         self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")
@@ -98,7 +216,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
                 "pipeline": {"polish": True},
             }
         )
@@ -137,7 +255,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
                 "pipeline": {"polish": True},
             }
         )
@@ -184,7 +302,7 @@ class TestCliConfig(unittest.TestCase):
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         captured = {}
@@ -232,7 +350,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         with (
@@ -328,7 +446,7 @@ class TestCliConfig(unittest.TestCase):
     def test_review_command_runs_full_read_only_review(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         captured = {}
@@ -378,7 +496,16 @@ class TestCliConfig(unittest.TestCase):
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
-        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        cfg = Config.from_dict(
+            {
+                "llm": {
+                    "api_format": "openai",
+                    "api_key_env": "TEST_LLM_KEY",
+                    "base_url": "https://example.test/v1",
+                    "model": "test-model",
+                }
+            }
+        )
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.cli.os.path.isfile") as isfile,
@@ -387,13 +514,13 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("DEEPSEEK_API_KEY", result.output)
+        self.assertIn("TEST_LLM_KEY", result.output)
         self.assertNotIn("输入文件不存在", result.output)
         self.assertNotIn("Traceback", result.output)
         isfile.assert_not_called()
 
     def test_assemble_skips_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        cfg = Config.from_dict({"llm": {"api_format": "openai"}})
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.cli.os.path.isfile", return_value=False),
@@ -403,10 +530,10 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("输入文件不存在", result.output)
-        self.assertNotIn("DEEPSEEK_API_KEY", result.output)
+        self.assertNotIn("LLM 配置缺少必填项", result.output)
 
     def test_assemble_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
         captured = {}
 
         class FakeOrchestrator:
@@ -448,7 +575,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("out.pdf", result.output)
 
     def test_report_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
         captured = {}
 
         class ReportStore:
@@ -486,7 +613,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("state/book/report.json", result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}}})
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
@@ -516,7 +643,7 @@ class TestCliConfig(unittest.TestCase):
                 self.assertNotIn("Traceback", result.output)
 
     def test_translate_rejects_unknown_output_format_after_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
         with (
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
@@ -527,7 +654,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("不支持的输出格式", result.output)
 
     def test_translate_reports_out_of_range_chapter_without_traceback(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
 
         class FakeOrchestrator:
             def __init__(self, config):
@@ -556,7 +683,7 @@ class TestCliConfig(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"api_format": "fake"},
                     "paths": {"state_dir": state_dir},
                 }
             )
