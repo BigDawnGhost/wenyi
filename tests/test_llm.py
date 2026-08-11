@@ -78,9 +78,7 @@ class TestFakeClient(unittest.TestCase):
             raise RuntimeError("provider failed")
 
         client = FakeClient()
-        client.set_activity_sink(
-            lambda event, **data: events.append({"event": event, **data})
-        )
+        client.set_activity_sink(lambda event, **data: events.append({"event": event, **data}))
         self.assertEqual(
             client.complete(
                 [{"role": "user", "content": "x"}],
