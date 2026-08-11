@@ -10,6 +10,13 @@ from .patches import (
     StatePatch,
 )
 from .reducers import apply_state_patch, merge_unique_mapping
+from .repository import (
+    ArtifactCorruption,
+    ArtifactNotFound,
+    ArtifactStore,
+    ArtifactStoreError,
+    InvalidArtifactReference,
+)
 from .state import (
     ALLOWED_UPDATE_KEYS,
     OPTIONAL_STAGE_NAMES,
@@ -24,7 +31,12 @@ from .validation import validate_workflow_state
 
 __all__ = [
     "ALLOWED_UPDATE_KEYS",
+    "ArtifactCorruption",
+    "ArtifactNotFound",
+    "ArtifactStore",
+    "ArtifactStoreError",
     "InvalidStatePatch",
+    "InvalidArtifactReference",
     "MergeConflict",
     "OperationConflict",
     "OPTIONAL_STAGE_NAMES",
