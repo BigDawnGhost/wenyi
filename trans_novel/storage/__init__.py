@@ -1,7 +1,7 @@
-"""工作流产物的具体存储适配器。
+"""工作流产物与状态的具体存储适配器。
 
-该包只实现 ``workflow.repository`` 声明的持久化端口，不负责工作流状态提交、
-旧 ``RunStore`` 兼容或执行引擎选择。
+该包只实现 ``workflow.repository`` 声明的持久化端口，不负责旧 ``RunStore``
+兼容、CLI 接入或执行引擎选择。
 """
 
 from ..workflow.repository import (
@@ -11,6 +11,7 @@ from ..workflow.repository import (
     InvalidArtifactReference,
 )
 from .content_addressed_artifacts import ContentAddressedArtifactStore
+from .sqlite_workflows import SQLiteWorkflowRepository
 
 __all__ = [
     "ArtifactCorruption",
@@ -18,4 +19,5 @@ __all__ = [
     "ArtifactStoreError",
     "ContentAddressedArtifactStore",
     "InvalidArtifactReference",
+    "SQLiteWorkflowRepository",
 ]

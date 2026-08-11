@@ -1,20 +1,25 @@
-"""Framework-neutral persistence ports for immutable workflow artifacts.
+"""Framework-neutral persistence ports for workflow state and artifacts.
 
-The workflow domain identifies every stored payload with :class:`ArtifactRef`.
-Concrete stores may use a filesystem, object storage, or another backend, but
-backend paths, client objects, and open handles must never replace that stable
-reference in workflow state.
+Large payloads cross the boundary through :class:`ArtifactRef`; workflow
+snapshots and their domain-event outbox cross through :class:`WorkflowRepository`.
+Concrete adapters may use a filesystem, SQLite, object storage, or another
+backend, but backend paths, clients, connections, and open handles must never
+enter workflow state.
 
-This module deliberately defines contracts only.  It does not choose a storage
-layout, perform workflow commits, or depend on RunStore, a CLI, or a graph
-runtime.
+This module deliberately defines contracts only.  It does not depend on
+RunStore, a CLI, or a graph runtime, and it does not turn current JSONL logs
+into a second source of truth.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import BinaryIO, ContextManager, Protocol
 
-from ..domain.workflow import ArtifactRef
+from ..domain.workflow import ArtifactRef, WorkflowEvent
+from .patches import PatchApplication, StatePatch
+from .state import WorkflowState
 
 
 class ArtifactStoreError(Exception):
@@ -31,6 +36,54 @@ class ArtifactCorruption(ArtifactStoreError):
 
 class InvalidArtifactReference(ArtifactStoreError):
     """Raised when an ``ArtifactRef`` is malformed or unsupported by a store."""
+
+
+class WorkflowRepositoryError(Exception):
+    """Base class for failures reported by the workflow-repository boundary."""
+
+
+class WorkflowNotFound(WorkflowRepositoryError):
+    """Raised when no workflow snapshot exists for a valid workflow identity."""
+
+
+class WorkflowAlreadyExists(WorkflowRepositoryError):
+    """Raised when strict creation finds an existing workflow identity."""
+
+
+class WorkflowRepositoryCorruption(WorkflowRepositoryError):
+    """Raised when persisted state, operation history, and outbox disagree."""
+
+
+class WorkflowRepositoryBusy(WorkflowRepositoryError):
+    """Raised when a backend cannot acquire its write transaction before timeout."""
+
+
+class UnsupportedWorkflowRepositorySchema(WorkflowRepositoryError):
+    """Raised when an adapter finds a repository schema newer than it supports."""
+
+
+class OutboxLeaseLost(WorkflowRepositoryError):
+    """Raised when an event lease was replaced before its claimant acknowledged it."""
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedWorkflowEvent:
+    """Detached domain event plus the lease authority required to acknowledge it.
+
+    ``lease_token`` changes on every lease, including when the same worker
+    reclaims an expired event.  This prevents a delayed acknowledgement from
+    an older delivery attempt from confirming a newer claim (the ABA problem).
+    """
+
+    workflow_id: str
+    operation_id: str
+    committed_revision: int
+    event_index: int
+    event: WorkflowEvent
+    leased_by: str
+    lease_token: str
+    delivery_attempt: int
+    lease_expires_at_ms: int
 
 
 class ArtifactStore(Protocol):
@@ -107,10 +160,85 @@ class ArtifactStore(Protocol):
         ...
 
 
+class WorkflowRepository(Protocol):
+    """Port for durable workflow snapshots and their transactional event outbox.
+
+    State, operation history, and complete event payloads are one atomic commit.
+    Event leasing and acknowledgement are delivery metadata only: they must not
+    change ``WorkflowState`` or advance its revision.
+    """
+
+    def create(self, state: WorkflowState) -> WorkflowState:
+        """Strictly insert a pristine initial state and return a detached copy.
+
+        ``state`` must have revision zero and empty ``applied_operations`` and
+        ``claimed_event_ids`` ledgers.  Its source artifact must already be in
+        the artifact store.  Existing workflow identities raise
+        :class:`WorkflowAlreadyExists`; get-or-create policy belongs to the
+        application layer so identity conflicts are never hidden.
+        """
+        ...
+
+    def get(self, workflow_id: str) -> WorkflowState:
+        """Load, cross-check, and return a detached complete workflow snapshot."""
+        ...
+
+    def commit_patch(self, workflow_id: str, patch: StatePatch) -> PatchApplication:
+        """Apply ``patch`` and atomically commit state, operation, and outbox rows.
+
+        Every ``patch.created_artifacts`` reference must already have been
+        published by the artifact store; this transaction never performs blob
+        I/O.  A revision conflict may therefore leave an immutable unreferenced
+        artifact, which a later garbage collector may safely reclaim.
+
+        Reducer errors such as ``RevisionConflict`` and ``OperationConflict``
+        propagate unchanged.  Replaying an identical patch does not reset an
+        event's acknowledgement, lease, or delivery-attempt count.
+        """
+        ...
+
+    def claim_events(
+        self,
+        *,
+        lease_owner: str,
+        limit: int,
+        lease_seconds: float,
+    ) -> tuple[ClaimedWorkflowEvent, ...]:
+        """Lease pending or expired outbox events in stable enqueue order.
+
+        A process crash after this method returns only delays delivery until the
+        lease expires.  The consumer must call an ``append_if_absent`` event sink
+        keyed by ``(workflow_id, event_id)`` before acknowledging the claims.
+        Selection order is deterministic; parallel consumers may finish their
+        sink writes in a different order.
+        """
+        ...
+
+    def acknowledge_events(self, claims: Sequence[ClaimedWorkflowEvent]) -> None:
+        """Atomically acknowledge a batch after its idempotent sink has succeeded.
+
+        Repeating the same acknowledged claim token is a no-op.  Stale,
+        mismatched, expired, or superseded authority raises
+        :class:`OutboxLeaseLost`; a missing retained projection raises
+        :class:`WorkflowRepositoryCorruption`.  Either failure rolls back the
+        entire acknowledgement batch.
+        """
+        ...
+
+
 __all__ = [
     "ArtifactCorruption",
     "ArtifactNotFound",
     "ArtifactStore",
     "ArtifactStoreError",
+    "ClaimedWorkflowEvent",
     "InvalidArtifactReference",
+    "OutboxLeaseLost",
+    "UnsupportedWorkflowRepositorySchema",
+    "WorkflowAlreadyExists",
+    "WorkflowNotFound",
+    "WorkflowRepository",
+    "WorkflowRepositoryBusy",
+    "WorkflowRepositoryCorruption",
+    "WorkflowRepositoryError",
 ]
