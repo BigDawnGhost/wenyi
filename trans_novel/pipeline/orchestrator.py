@@ -55,11 +55,15 @@ from ..config import Config
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Segment
-from ..ingest.segmenter import batch_segments, load_document
+from ..ingest.segmenter import load_document
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
 from ..postprocess.punct import normalize_zh_segments
+from ..services.translation_batches import (
+    plan_contiguous_batches,
+    plan_resumable_batches,
+)
 from .context import RollingContext
 from .metrics import RunMetricsRecorder
 from .review_evidence import BookEvidenceIndex
@@ -222,26 +226,16 @@ def _normalize_lang(code: str) -> str:
     return c[:2] if c[:2].isalpha() else ""
 
 
-def _resume_batches(segments, max_chars: int) -> list[list]:
+def _resume_batches(segments: list[Segment], max_chars: int) -> list[list[Segment]]:
     """按字符预算分批后，再沿“已完成/待翻译”边界切开。
 
     用户调整批次预算时，新的批次可能同时包含已有译文和空译文。若直接重跑
     该混合批次会覆盖已确认内容；按完成状态分组可只补译缺失段。
     """
-    batches: list[list] = []
-    for raw_batch in batch_segments(segments, max_chars):
-        current: list = []
-        current_done: bool | None = None
-        for segment in raw_batch:
-            done = bool(segment.target and segment.target.strip())
-            if current and done != current_done:
-                batches.append(current)
-                current = []
-            current.append(segment)
-            current_done = done
-        if current:
-            batches.append(current)
-    return batches
+    return [
+        segments[plan.start_index : plan.stop_index]
+        for plan in plan_resumable_batches(segments, max_chars)
+    ]
 
 
 @dataclass
@@ -3257,20 +3251,12 @@ class Orchestrator:
         return [issue for chunk_issues in results for issue in chunk_issues]
 
     @staticmethod
-    def _pack_contiguous(segs, budget: int) -> list[list]:
+    def _pack_contiguous(segs: list[Segment], budget: int) -> list[list[Segment]]:
         """按源文字符预算把段保序打包成若干连续块。"""
-        chunks: list[list] = []
-        cur: list = []
-        size = 0
-        for s in segs:
-            if cur and size + len(s.source) > budget:
-                chunks.append(cur)
-                cur, size = [], 0
-            cur.append(s)
-            size += len(s.source)
-        if cur:
-            chunks.append(cur)
-        return chunks
+        return [
+            segs[plan.start_index : plan.stop_index]
+            for plan in plan_contiguous_batches(segs, budget)
+        ]
 
     def _process_batch(
         self,

@@ -165,7 +165,9 @@ class LLMConfig(BaseModel):
 
 
 class SegmentConfig(BaseModel):
-    max_chars_per_batch: int = 1800
+    # 批次规划必须有正预算；0 不代表“禁用批次”，会让旧算法退化成逐段调用。
+    max_chars_per_batch: int = Field(default=1800, gt=0)
+    # 段落拆分的 0 仍保留为显式关闭开关。
     max_chars_per_segment: int = 1200
 
 

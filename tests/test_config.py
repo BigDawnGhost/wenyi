@@ -167,6 +167,18 @@ class TestOtherConfigDefaults(unittest.TestCase):
         cfg = Config.from_dict({"output": {"about_page": False}})
         self.assertFalse(cfg.output.about_page)
 
+    def test_translation_batch_budget_must_be_positive(self):
+        """无效预算应在配置加载时失败，不能等到翻译中途才改变分批语义。"""
+        for value in (0, -1):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    ValidationError,
+                    "greater_than",
+                ),
+            ):
+                Config.from_dict({"segment": {"max_chars_per_batch": value}})
+
 
 if __name__ == "__main__":
     unittest.main()
