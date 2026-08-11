@@ -61,6 +61,11 @@ from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
 from ..postprocess.punct import normalize_zh_segments
 from ..services.document_sampling import sample_document_text
+from ..services.source_language import (
+    LanguageDetectionError,
+    ModelSourceLanguageDetector,
+    normalize_language_candidate,
+)
 from ..services.translation_batches import (
     plan_contiguous_batches,
     plan_resumable_batches,
@@ -175,56 +180,9 @@ def _report_translation_progress(
     progress(overall_done, overall_total, label)
 
 
-# 语言名/代码 → ISO 639-1 两字母代码（模型检测结果归一化）
-_LANG_ALIASES = {
-    "japanese": "ja",
-    "日语": "ja",
-    "日文": "ja",
-    "jp": "ja",
-    "jpn": "ja",
-    "english": "en",
-    "英语": "en",
-    "英文": "en",
-    "eng": "en",
-    "russian": "ru",
-    "俄语": "ru",
-    "俄文": "ru",
-    "rus": "ru",
-    "chinese": "zh",
-    "中文": "zh",
-    "汉语": "zh",
-    "zh-cn": "zh",
-    "zho": "zh",
-    "korean": "ko",
-    "韩语": "ko",
-    "韩文": "ko",
-    "kor": "ko",
-    "french": "fr",
-    "法语": "fr",
-    "法文": "fr",
-    "german": "de",
-    "德语": "de",
-    "德文": "de",
-    "spanish": "es",
-    "西班牙语": "es",
-    "西班牙文": "es",
-    "italian": "it",
-    "意大利语": "it",
-    "意大利文": "it",
-    "portuguese": "pt",
-    "葡萄牙语": "pt",
-    "葡萄牙文": "pt",
-}
-
-
 def _normalize_lang(code: str) -> str:
     """把模型返回的语言名或别名规整为 ISO 639-1 两字母代码。"""
-    c = (code or "").strip().lower()
-    if not c or c in {"auto", "unknown", "und", "uncertain", "mixed", "多语言", "未知"}:
-        return ""
-    if c in _LANG_ALIASES:
-        return _LANG_ALIASES[c]
-    return c[:2] if c[:2].isalpha() else ""
+    return normalize_language_candidate(code)
 
 
 def _resume_batches(segments: list[Segment], max_chars: int) -> list[list[Segment]]:
@@ -866,25 +824,10 @@ class Orchestrator:
         """用模型检测正文主要语言，返回 ISO 代码（如 ja/en/ru）。失败返回空串。"""
         # labeled=False：纯源文样本，防多点采样的中文标签污染语言检测
         sample = self._sample_text(doc, labeled=False)[:1500]
-        if not sample.strip():
-            return ""
-        system = (
-            "你是语言识别器。判断给定文本的主要自然语言，"
-            '仅输出 JSON：{"language":"<ISO 639-1 两字母代码，如 ja/en/ru/ko/fr/de/zh>"}。'
-            "无法判断时 language 置为空字符串。"
-        )
         try:
-            data = self.client.complete_json(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": sample},
-                ],
-                tier="cheap",
-                stage="language_detect",
-            )
-            code = (data.get("language") if isinstance(data, dict) else "") or ""
-            return _normalize_lang(str(code))
-        except Exception:  # noqa: BLE001 - provider errors mean detection failed
+            candidate = ModelSourceLanguageDetector(self.client).detect(sample)
+            return normalize_language_candidate(candidate)
+        except LanguageDetectionError:
             return ""
 
     @staticmethod

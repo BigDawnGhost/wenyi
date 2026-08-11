@@ -45,13 +45,24 @@ if loaded:
 def test_services_public_exports_are_explicit_and_documented() -> None:
     """服务包只公开稳定视图、冻结 DTO 和纯规划/采样函数。"""
     expected = {
+        "EmptyLanguageSample",
+        "InvalidLanguageDetection",
+        "LanguageDetectionError",
+        "LanguageDetectionUnavailable",
+        "LanguageJsonCompletion",
+        "LanguageResolution",
+        "ModelSourceLanguageDetector",
+        "SameSourceAndTargetLanguage",
         "SourceChapterView",
         "SourceDocumentView",
+        "SourceLanguageDetector",
         "SourceSegmentView",
         "TranslationBatchPlan",
         "TranslationSegmentView",
         "plan_contiguous_batches",
         "plan_resumable_batches",
+        "normalize_language_candidate",
+        "resolve_source_language",
         "sample_document_text",
     }
 
