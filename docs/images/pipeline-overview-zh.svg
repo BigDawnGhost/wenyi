@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 670" role="img" aria-labelledby="title desc">
+  <title id="title">文译翻译流水线总览</title>
+  <desc id="desc">从读取原书开始，依次建立全书理解、通过术语反馈逐章翻译、执行可选全书审校，最后生成报告并组装译本。</desc>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --text: #1f2937;
+      --muted: #64748b;
+      --line: #94a3b8;
+      --blue-fill: #eff6ff;
+      --blue-stroke: #93c5fd;
+      --amber-fill: #fff7ed;
+      --amber-stroke: #fdba74;
+      --green-fill: #f0fdf4;
+      --green-stroke: #86efac;
+      --purple-fill: #faf5ff;
+      --purple-stroke: #d8b4fe;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --text: #f1f5f9;
+        --muted: #cbd5e1;
+        --line: #64748b;
+        --blue-fill: #17243a;
+        --blue-stroke: #3b82f6;
+        --amber-fill: #30241c;
+        --amber-stroke: #c87832;
+        --green-fill: #172a23;
+        --green-stroke: #3b9b6d;
+        --purple-fill: #2a2033;
+        --purple-stroke: #9b6bc1;
+      }
+    }
+    text {
+      fill: var(--text);
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
+      text-anchor: middle;
+    }
+    .title { font-size: 24px; font-weight: 500; }
+    .label { font-size: 17px; font-weight: 500; }
+    .detail { fill: var(--muted); font-size: 13.5px; font-weight: 400; }
+    .group-label { fill: var(--muted); font-size: 15px; font-weight: 500; }
+    .node, .group { stroke-width: 1.5; }
+    .blue { fill: var(--blue-fill); stroke: var(--blue-stroke); }
+    .amber { fill: var(--amber-fill); stroke: var(--amber-stroke); }
+    .green { fill: var(--green-fill); stroke: var(--green-stroke); }
+    .purple { fill: var(--purple-fill); stroke: var(--purple-stroke); }
+    .flow-line { fill: none; stroke: var(--line); stroke-linecap: round; stroke-width: 1.6; }
+    .narrow-only { display: none; }
+    @media (max-width: 420px) {
+      .title { font-size: 32px; }
+      .label { font-size: 30px; transform: translateY(16px); }
+      .detail { display: none; }
+      .group-label { font-size: 30px; }
+      .wide-only { display: none; }
+      .narrow-only { display: inline; }
+      .group-title { display: none; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" fill="var(--line)"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="380" y="31">从原书到可读译本</text>
+
+  <g data-node="ingest">
+    <rect class="node blue" x="110" y="55" width="540" height="76" rx="14"/>
+    <text class="label" x="380" y="84">输入与解析</text>
+    <text class="detail" x="380" y="108">读取格式 · 拆分章节 · 识别语言</text>
+  </g>
+
+  <path class="flow-line" d="M380 131 V153" marker-end="url(#arrow)"/>
+
+  <g data-node="understanding">
+    <rect class="node blue" x="110" y="158" width="540" height="82" rx="14"/>
+    <text class="label" x="380" y="188">建立全书理解</text>
+    <text class="detail" x="380" y="213">风格指南 · 章节梗概 · 全书概览 · 初始术语</text>
+  </g>
+
+  <path class="flow-line" d="M380 240 V263" marker-end="url(#arrow)"/>
+
+  <rect class="group amber" x="60" y="268" width="640" height="170" rx="16"/>
+  <text class="group-label group-title wide-only" x="380" y="295">逐章、逐批翻译循环</text>
+  <text class="group-label group-title narrow-only" x="380" y="295">翻译循环</text>
+
+  <g data-node="translate">
+    <rect class="node amber" x="82" y="311" width="276" height="82" rx="13"/>
+    <text class="label wide-only" x="220" y="338">注入上下文并翻译</text>
+    <text class="label narrow-only" x="220" y="338">翻译</text>
+    <text class="detail" x="220" y="361">最近译文 · 相关术语</text>
+    <text class="detail" x="220" y="380">可选润色</text>
+  </g>
+
+  <path class="flow-line" d="M358 352 H397" marker-end="url(#arrow)"/>
+
+  <g data-node="persist">
+    <rect class="node amber" x="402" y="311" width="276" height="82" rx="13"/>
+    <text class="label wide-only" x="540" y="338">更新术语并保存</text>
+    <text class="label narrow-only" x="540" y="338">更新并保存</text>
+    <text class="detail" x="540" y="361">注释对齐 · 术语回流</text>
+    <text class="detail" x="540" y="380">批次检查点</text>
+  </g>
+
+  <text class="group-label wide-only" x="380" y="420">↺ 继续下一批或下一章</text>
+  <text class="group-label narrow-only" x="380" y="420">↺ 下一批 / 章</text>
+
+  <path class="flow-line" d="M380 438 V461" marker-end="url(#arrow)"/>
+
+  <g data-node="review">
+    <rect class="node green" x="110" y="466" width="540" height="80" rx="14"/>
+    <text class="label" x="380" y="496">可选全书审校</text>
+    <text class="detail" x="380" y="521">并发检查 · 按需取证 · 影子修订 · 盲复审</text>
+  </g>
+
+  <path class="flow-line" d="M380 546 V569" marker-end="url(#arrow)"/>
+
+  <g data-node="assemble">
+    <rect class="node purple" x="110" y="574" width="540" height="80" rx="14"/>
+    <text class="label" x="380" y="604">报告与组装</text>
+    <text class="detail" x="380" y="629">生成报告 · 输出 EPUB / TXT / HTML / Markdown</text>
+  </g>
+</svg>

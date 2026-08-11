@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 670" role="img" aria-labelledby="title desc">
+  <title id="title">Wenyi translation pipeline overview</title>
+  <desc id="desc">A five-stage flow from ingesting a source book through whole-book understanding, contextual translation with glossary feedback, optional review, and final assembly.</desc>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --text: #1f2937;
+      --muted: #64748b;
+      --line: #94a3b8;
+      --blue-fill: #eff6ff;
+      --blue-stroke: #93c5fd;
+      --amber-fill: #fff7ed;
+      --amber-stroke: #fdba74;
+      --green-fill: #f0fdf4;
+      --green-stroke: #86efac;
+      --purple-fill: #faf5ff;
+      --purple-stroke: #d8b4fe;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --text: #f1f5f9;
+        --muted: #cbd5e1;
+        --line: #64748b;
+        --blue-fill: #17243a;
+        --blue-stroke: #3b82f6;
+        --amber-fill: #30241c;
+        --amber-stroke: #c87832;
+        --green-fill: #172a23;
+        --green-stroke: #3b9b6d;
+        --purple-fill: #2a2033;
+        --purple-stroke: #9b6bc1;
+      }
+    }
+    text {
+      fill: var(--text);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-anchor: middle;
+    }
+    .title { font-size: 24px; font-weight: 500; }
+    .label { font-size: 17px; font-weight: 500; }
+    .detail { fill: var(--muted); font-size: 13.5px; font-weight: 400; }
+    .group-label { fill: var(--muted); font-size: 15px; font-weight: 500; }
+    .node, .group { stroke-width: 1.5; }
+    .blue { fill: var(--blue-fill); stroke: var(--blue-stroke); }
+    .amber { fill: var(--amber-fill); stroke: var(--amber-stroke); }
+    .green { fill: var(--green-fill); stroke: var(--green-stroke); }
+    .purple { fill: var(--purple-fill); stroke: var(--purple-stroke); }
+    .flow-line { fill: none; stroke: var(--line); stroke-linecap: round; stroke-width: 1.6; }
+    .narrow-only { display: none; }
+    @media (max-width: 420px) {
+      .title { font-size: 32px; }
+      .label { font-size: 30px; transform: translateY(16px); }
+      .detail { display: none; }
+      .group-label { font-size: 30px; }
+      .wide-only { display: none; }
+      .narrow-only { display: inline; }
+      .group-title { display: none; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" fill="var(--line)"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="380" y="31">From source book to readable translation</text>
+
+  <g data-node="ingest">
+    <rect class="node blue" x="110" y="55" width="540" height="76" rx="14"/>
+    <text class="label" x="380" y="84">Ingest and parse</text>
+    <text class="detail" x="380" y="108">Read the format · split chapters · detect language</text>
+  </g>
+
+  <path class="flow-line" d="M380 131 V153" marker-end="url(#arrow)"/>
+
+  <g data-node="understanding">
+    <rect class="node blue" x="110" y="158" width="540" height="82" rx="14"/>
+    <text class="label" x="380" y="188">Build whole-book understanding</text>
+    <text class="detail" x="380" y="213">Style guide · chapter digests · book synopsis · seed glossary</text>
+  </g>
+
+  <path class="flow-line" d="M380 240 V263" marker-end="url(#arrow)"/>
+
+  <rect class="group amber" x="60" y="268" width="640" height="170" rx="16"/>
+  <text class="group-label group-title wide-only" x="380" y="295">Chapter-by-chapter, batch-by-batch loop</text>
+  <text class="group-label group-title narrow-only" x="380" y="295">Translation loop</text>
+
+  <g data-node="translate">
+    <rect class="node amber" x="82" y="311" width="276" height="82" rx="13"/>
+    <text class="label wide-only" x="220" y="338">Translate with context</text>
+    <text class="label narrow-only" x="220" y="338">Translate</text>
+    <text class="detail" x="220" y="361">Recent context · relevant terms</text>
+    <text class="detail" x="220" y="380">Optional polish</text>
+  </g>
+
+  <path class="flow-line" d="M358 352 H397" marker-end="url(#arrow)"/>
+
+  <g data-node="persist">
+    <rect class="node amber" x="402" y="311" width="276" height="82" rx="13"/>
+    <text class="label wide-only" x="540" y="338">Update glossary &amp; save</text>
+    <text class="label narrow-only" x="540" y="338">Update &amp; save</text>
+    <text class="detail" x="540" y="361">Align annotations · update glossary</text>
+    <text class="detail" x="540" y="380">Save batch checkpoint</text>
+  </g>
+
+  <text class="group-label wide-only" x="380" y="420">↺ Continue with the next batch or chapter</text>
+  <text class="group-label narrow-only" x="380" y="420">↺ Next batch / chapter</text>
+
+  <path class="flow-line" d="M380 438 V461" marker-end="url(#arrow)"/>
+
+  <g data-node="review">
+    <rect class="node green" x="110" y="466" width="540" height="80" rx="14"/>
+    <text class="label" x="380" y="496">Optional whole-book review</text>
+    <text class="detail" x="380" y="521">Parallel checks · targeted evidence · shadow fixes · blind re-review</text>
+  </g>
+
+  <path class="flow-line" d="M380 546 V569" marker-end="url(#arrow)"/>
+
+  <g data-node="assemble">
+    <rect class="node purple" x="110" y="574" width="540" height="80" rx="14"/>
+    <text class="label" x="380" y="604">Report and assemble</text>
+    <text class="detail" x="380" y="629">Generate the report · export EPUB / TXT / HTML / Markdown</text>
+  </g>
+</svg>

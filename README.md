@@ -157,32 +157,12 @@ run usage, events, and internal round records are written under
 
 ## Translation pipeline
 
-```mermaid
-flowchart TD
-    A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Analyze style and seed the glossary]
-    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
-    D --> E
+<p align="center">
+  <img src="docs/images/pipeline-overview.svg" alt="Wenyi translation pipeline: ingest and parse, build whole-book understanding, translate with glossary feedback, optionally review, then assemble the output" width="760">
+</p>
 
-    subgraph T[Translate chapter by chapter]
-        E[Inject context and translate a batch]
-        E --> F[Polish and persist translations]
-        F --> FA[Immediately align annotated EPUB paragraphs<br/>Sequential; skipped when disabled or absent]
-        FA --> G[Extract terms and refresh the glossary]
-        G --> H{More batches?}
-        H -- Yes --> E
-        H -- No --> I[Normalize remaining punctuation]
-        I --> IB[Run chapter-level fallback term extraction]
-        IB --> J[Check backtranslation samples and persist the final chapter]
-    end
-
-    J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
-    K --> N{Confirmed issues and<br/>Fix budget remaining?}
-    N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
-    O --> K
-    N -- No or stopped --> P[Save read-only issues<br/>and modification suggestions]
-    P --> M[Generate the report and assemble the selected output]
-```
+See the [translation pipeline guide](docs/pipeline.md) for stage behavior,
+quality controls, review semantics, and resumability details.
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 The Review Fixer receives the same style brief, book synopsis, chapter digest,
