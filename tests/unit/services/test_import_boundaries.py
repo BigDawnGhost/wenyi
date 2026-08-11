@@ -17,11 +17,15 @@ import trans_novel.services
 
 forbidden = (
     "trans_novel.cli",
+    "trans_novel.ingest",
+    "trans_novel.ingest.models",
+    "trans_novel.llm",
     "trans_novel.pipeline.orchestrator",
     "trans_novel.pipeline.runstore",
     "trans_novel.storage",
     "trans_novel.storage.sqlite_workflows",
     "langgraph",
+    "pydantic",
 )
 loaded = [name for name in forbidden if name in sys.modules]
 if loaded:
@@ -39,12 +43,16 @@ if loaded:
 
 
 def test_services_public_exports_are_explicit_and_documented() -> None:
-    """首个服务块只公开稳定 DTO、最小端口和两个规划函数。"""
+    """服务包只公开稳定视图、冻结 DTO 和纯规划/采样函数。"""
     expected = {
+        "SourceChapterView",
+        "SourceDocumentView",
+        "SourceSegmentView",
         "TranslationBatchPlan",
         "TranslationSegmentView",
         "plan_contiguous_batches",
         "plan_resumable_batches",
+        "sample_document_text",
     }
 
     assert set(services.__all__) == expected

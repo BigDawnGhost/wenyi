@@ -60,6 +60,7 @@ from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
 from ..postprocess.punct import normalize_zh_segments
+from ..services.document_sampling import sample_document_text
 from ..services.translation_batches import (
     plan_contiguous_batches,
     plan_resumable_batches,
@@ -890,28 +891,7 @@ class Orchestrator:
     def _sample_text(doc, *, labeled: bool = True) -> str:
         """取风格分析样章。labeled=True 时多点采样（开头/中部/结尾各一段，带中文标注），
         让分析覆盖全书风格全貌；labeled=False 返回单段纯源文（语言检测用，不能混入中文标签）。"""
-        texts = ["\n".join(s.source for s in ch.text_segments) for ch in doc.chapters]
-        texts = [t for t in texts if len(t) > 200]
-        if not texts:  # 兜底：全书都是短章
-            joined = "\n".join(s.source for ch in doc.chapters[:2] for s in ch.text_segments)
-            return joined[:6000]
-        if not labeled:
-            return texts[0][:6000]
-        picks = [
-            (0, "开头样章"),
-            (len(texts) // 2, "中部样章"),
-            (len(texts) - 1, "结尾样章"),
-        ]
-        parts: list[str] = []
-        seen: set[int] = set()
-        for idx, tag in picks:
-            if idx in seen:  # 短书（1-2 章）去重，不重复取同一章
-                continue
-            seen.add(idx)
-            t = texts[idx]
-            chunk = t[-2800:] if tag == "结尾样章" else t[:2800]
-            parts.append(f"【{tag}】\n{chunk}")
-        return "\n\n".join(parts)
+        return sample_document_text(doc, labeled=labeled)
 
     @_record_run_metrics(
         "translate",
