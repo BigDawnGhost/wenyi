@@ -1,5 +1,17 @@
 """与编排框架、存储实现和用户界面无关的领域契约。"""
 
+from .normalized_document import (
+    NORMALIZED_DOCUMENT_MEDIA_TYPE,
+    NORMALIZED_DOCUMENT_SCHEMA_VERSION,
+    NormalizedChapterV1,
+    NormalizedDocumentCounts,
+    NormalizedDocumentV1,
+    NormalizedSegmentV1,
+    decode_normalized_document_v1,
+    encode_normalized_document_v1,
+    normalized_document_v1_counts,
+    validate_normalized_document_v1,
+)
 from .translation_batch import (
     TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
     TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION,
@@ -31,6 +43,12 @@ from .workflow import (
 __all__ = [
     "ArtifactRef",
     "FailureInfo",
+    "NORMALIZED_DOCUMENT_MEDIA_TYPE",
+    "NORMALIZED_DOCUMENT_SCHEMA_VERSION",
+    "NormalizedChapterV1",
+    "NormalizedDocumentCounts",
+    "NormalizedDocumentV1",
+    "NormalizedSegmentV1",
     "StageStatus",
     "TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE",
     "TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION",
@@ -41,13 +59,17 @@ __all__ = [
     "build_workflow_id",
     "build_translation_batch_key",
     "copy_json_value",
+    "decode_normalized_document_v1",
     "decode_translation_batch_artifact",
+    "encode_normalized_document_v1",
     "encode_translation_batch_artifact",
     "normalize_language_code",
+    "normalized_document_v1_counts",
     "parse_translation_batch_key",
     "validate_artifact_ref",
     "validate_failure_info",
     "validate_json_value",
+    "validate_normalized_document_v1",
     "validate_operation_id",
     "validate_sha256",
     "validate_translation_batch_artifact",
