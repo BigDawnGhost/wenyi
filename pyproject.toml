@@ -21,6 +21,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 新版工作流运行时是显式 extra；领域模型、旧 Orchestrator 和基础库导入不依赖它。
+langgraph-runtime = [
+    "langgraph>=1.2.11,<2",
+    "langgraph-checkpoint-sqlite>=3.1.1,<4",
+]
 pdf-output = [
     "weasyprint>=69.0",
 ]

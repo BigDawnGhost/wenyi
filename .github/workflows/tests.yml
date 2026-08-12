@@ -11,6 +11,28 @@ permissions:
   contents: read
 
 jobs:
+  legacy-without-langgraph:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install base project without graph extra
+        run: uv sync --locked --group dev --python 3.10
+
+      - name: Prove the legacy runtime does not require LangGraph
+        # 基础安装必须没有图框架；旧 CLI/Orchestrator 仍需独立导入并启动。
+        run: |
+          uv run --no-sync python -c "import importlib.util; assert importlib.util.find_spec('langgraph') is None"
+          uv run --no-sync python -c "from trans_novel.pipeline.orchestrator import Orchestrator; assert Orchestrator"
+          uv run --no-sync python -m trans_novel --help
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -27,7 +49,8 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install
-        run: uv sync --locked --group dev --python ${{ matrix.python-version }}
+        # 两个受支持的 Python 版本都真实导入并执行 LangGraph 合同测试。
+        run: uv sync --locked --group dev --extra langgraph-runtime --python ${{ matrix.python-version }}
 
       - name: Test
         run: uv run --no-sync pytest -q

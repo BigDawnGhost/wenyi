@@ -67,13 +67,15 @@ jobs:
           architecture: ${{ matrix.python_arch }}
 
       - name: Install build dependencies
-        run: python -m pip install . pyinstaller
+        # 单文件发行包同时支持 legacy 与新版后端；运行时路由仍保证只构造被选中的一侧。
+        run: python -m pip install ".[langgraph-runtime]" pyinstaller
 
       - name: Build single-file executable
         run: >
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
           --paths . --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
+          --collect-all langgraph
           --copy-metadata trans-novel
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
           --distpath dist trans_novel/__main__.py
