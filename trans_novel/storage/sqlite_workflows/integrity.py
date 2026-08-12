@@ -23,7 +23,7 @@ from ...workflow.repository import (
     WorkflowRepositoryCorruption,
 )
 from ...workflow.state import WorkflowState
-from .codec import canonical_event_bytes, decode_event, decode_state
+from .codec import canonical_event_bytes, decode_event, decode_state_with_source_version
 
 _LEASE_TOKEN_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
@@ -172,7 +172,10 @@ def _audit_snapshot_row(row: sqlite3.Row, *, requested_workflow_id: str) -> Work
     stored_workflow_id = _require_text(row["workflow_id"], field="snapshot.workflow_id")
     if stored_workflow_id != requested_workflow_id:
         raise WorkflowRepositoryCorruption("snapshot primary key changed during lookup")
-    state = decode_state(row["state_json"], row["state_sha256"])
+    state, source_schema_version = decode_state_with_source_version(
+        row["state_json"],
+        row["state_sha256"],
+    )
     schema_version = _require_int(
         row["workflow_schema_version"],
         minimum=1,
@@ -189,13 +192,16 @@ def _audit_snapshot_row(row: sqlite3.Row, *, requested_workflow_id: str) -> Work
         minimum=created_at_ms,
         field="snapshot.updated_at_ms",
     )
-    if (
-        state["workflow_id"] != stored_workflow_id
-        or state["schema_version"] != schema_version
-        or state["revision"] != revision
-    ):
+    if state["workflow_id"] != stored_workflow_id or state["revision"] != revision:
         raise WorkflowRepositoryCorruption(
-            "snapshot identity, schema, or revision column disagrees with state JSON"
+            "snapshot identity or revision column disagrees with state JSON"
+        )
+    # The redundant column proves the original canonical bytes.  A migrated
+    # in-memory view may differ, but the stored column may not claim another
+    # source schema merely because both source versions are supported.
+    if schema_version != source_schema_version:
+        raise WorkflowRepositoryCorruption(
+            "snapshot schema column disagrees with supported state migration"
         )
     return state
 

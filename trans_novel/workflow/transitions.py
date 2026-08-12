@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
+from ..domain.translation_batch import parse_translation_batch_key
 from ..domain.workflow import ArtifactRef, StageStatus, WorkflowPhase, WorkflowStatus
 from .patches import InvalidStatePatch
 from .state import WORKFLOW_STAGE_NAMES, GlossaryState, TitleTranslationState, WorkflowState
@@ -164,10 +165,72 @@ def _validate_book_and_translation_progress(
     if not old_completed <= new_completed:
         raise InvalidStatePatch("translation.completed_chapters 只能追加")
     _require_preserved_mapping(
+        current["translation"]["batch_artifacts"],
+        candidate["translation"]["batch_artifacts"],
+        field="translation.batch_artifacts",
+    )
+    _require_preserved_mapping(
         current["translation"]["chapter_artifacts"],
         candidate["translation"]["chapter_artifacts"],
         field="translation.chapter_artifacts",
     )
+
+    old_batches = current["translation"]["batch_artifacts"]
+    new_batches = candidate["translation"]["batch_artifacts"]
+    added_batches = set(new_batches) - set(old_batches)
+    newly_completed = new_completed - old_completed
+    chapter_finalized = bool(newly_completed)
+
+    # A normal translation node commits exactly one completed range and moves
+    # the cursor to its stop.  Chapter publication is a separate atomic patch,
+    # so a crash can never leave ambiguous batch-vs-chapter ownership.
+    if added_batches:
+        if len(added_batches) != 1:
+            raise InvalidStatePatch("普通翻译批次补丁每次必须恰好追加一个 batch_artifact")
+        if chapter_finalized:
+            raise InvalidStatePatch("章节 finalize 不能与新增 batch_artifact 位于同一补丁")
+        if current["cursor"]["phase"] != WorkflowPhase.TRANSLATE_CHAPTERS.value:
+            raise InvalidStatePatch("只有正文翻译阶段可以追加 batch_artifact")
+        if candidate["cursor"]["phase"] != WorkflowPhase.TRANSLATE_CHAPTERS.value:
+            raise InvalidStatePatch("批次补丁必须保留正文翻译 phase")
+        if (
+            current["status"] != WorkflowStatus.RUNNING.value
+            or candidate["status"] != WorkflowStatus.RUNNING.value
+            or current["translation"]["status"] != StageStatus.RUNNING.value
+            or candidate["translation"]["status"] != StageStatus.RUNNING.value
+        ):
+            raise InvalidStatePatch("批次补丁只能在 running 翻译阶段独立提交")
+        key = next(iter(added_batches))
+        chapter, start, stop = parse_translation_batch_key(key)
+        if chapter in old_completed:
+            raise InvalidStatePatch("已 finalize 章节不能再追加 batch_artifact")
+        old_cursor = current["cursor"]
+        new_cursor = candidate["cursor"]
+        if (
+            old_cursor["chapter_index"] != chapter
+            or old_cursor["segment_offset"] != start
+            or new_cursor["chapter_index"] != chapter
+            or new_cursor["segment_offset"] != stop
+        ):
+            raise InvalidStatePatch("批次补丁必须从当前游标范围起点推进到新增范围终点")
+
+    # Chapter publication is also one atomic recovery unit.  Accepting two
+    # chapters in one patch would let a faulty node jump over the per-chapter
+    # finalize boundary even though the resulting snapshot looks like a valid
+    # prefix.  The current cursor identifies the only chapter this patch owns.
+    if chapter_finalized:
+        current_chapter = current["cursor"]["chapter_index"]
+        if (
+            current["cursor"]["phase"] != WorkflowPhase.TRANSLATE_CHAPTERS.value
+            or current_chapter is None
+            or newly_completed != {current_chapter}
+        ):
+            raise InvalidStatePatch("章节 finalize 每次只能提交当前游标指向的一章")
+        added_chapter_artifacts = set(candidate["translation"]["chapter_artifacts"]) - set(
+            current["translation"]["chapter_artifacts"]
+        )
+        if added_chapter_artifacts != {str(current_chapter)}:
+            raise InvalidStatePatch("章节 finalize 必须同时提交当前章唯一的 chapter_artifact")
 
 
 def _validate_immutable_artifact_progress(

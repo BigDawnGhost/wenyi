@@ -62,6 +62,10 @@ class UnsupportedWorkflowRepositorySchema(WorkflowRepositoryError):
     """Raised when an adapter finds a repository schema newer than it supports."""
 
 
+class UnsupportedWorkflowStateSchema(WorkflowRepositoryError):
+    """Raised when a stored workflow snapshot has no lossless state migration."""
+
+
 class OutboxLeaseLost(WorkflowRepositoryError):
     """Raised when an event lease was replaced before its claimant acknowledged it."""
 
@@ -235,6 +239,7 @@ __all__ = [
     "InvalidArtifactReference",
     "OutboxLeaseLost",
     "UnsupportedWorkflowRepositorySchema",
+    "UnsupportedWorkflowStateSchema",
     "WorkflowAlreadyExists",
     "WorkflowNotFound",
     "WorkflowRepository",

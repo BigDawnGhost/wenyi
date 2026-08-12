@@ -10,6 +10,10 @@ import re
 from collections.abc import Mapping
 from enum import Enum
 
+from ..domain.translation_batch import (
+    TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    parse_translation_batch_key,
+)
 from ..domain.workflow import (
     StageStatus,
     WorkflowPhase,
@@ -126,10 +130,10 @@ def validate_understanding(stage: Mapping[str, object]) -> None:
 
 
 def validate_translation(stage: Mapping[str, object]) -> None:
-    """校验完成章节集合有序唯一，产物索引使用稳定章号。"""
+    """校验批次与完成章节账本均使用唯一、可排序的稳定键。"""
     _require_exact_keys(
         stage,
-        {"status", "completed_chapters", "chapter_artifacts"},
+        {"status", "batch_artifacts", "completed_chapters", "chapter_artifacts"},
         field="translation",
     )
     status = _validate_stage_status(stage, field="translation")
@@ -145,7 +149,18 @@ def validate_translation(stage: Mapping[str, object]) -> None:
         field="translation.chapter_artifacts",
         numeric_keys=True,
     )
-    if status == StageStatus.PENDING.value and (completed or stage["chapter_artifacts"]):
+    batches = _validate_artifact_mapping(
+        stage["batch_artifacts"],
+        field="translation.batch_artifacts",
+    )
+    for key, artifact in batches.items():
+        parse_translation_batch_key(key)
+        normalized = validate_artifact_ref(
+            require_mapping(artifact, field=f"translation.batch_artifacts.{key}")
+        )
+        if normalized["media_type"] != TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE:
+            raise ValueError("translation.batch_artifacts 必须引用 translation batch 专用媒体类型")
+    if status == StageStatus.PENDING.value and (batches or completed or stage["chapter_artifacts"]):
         raise ValueError("pending translation 不能包含完成章节或产物")
 
 

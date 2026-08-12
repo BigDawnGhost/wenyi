@@ -24,6 +24,7 @@ from trans_novel.storage.sqlite_workflows import repository as repository_module
 from trans_novel.workflow import (
     OperationConflict,
     StatePatch,
+    UnsupportedWorkflowStateSchema,
     WorkflowAlreadyExists,
     WorkflowNotFound,
     WorkflowRepositoryCorruption,
@@ -56,6 +57,30 @@ def _new_state(*, source_hash: str = "a" * 64) -> WorkflowState:
     )
 
 
+def _rewrite_snapshot_as_v1(database_path: Path, state: WorkflowState) -> None:
+    """Store canonical schema-v1 JSON while preserving repository DDL version 1."""
+    legacy = copy.deepcopy(state)
+    legacy["schema_version"] = 1
+    del legacy["translation"]["batch_artifacts"]
+    encoded = json.dumps(
+        legacy,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE workflow_snapshots
+            SET workflow_schema_version = 1, state_json = ?, state_sha256 = ?
+            WHERE workflow_id = ?
+            """,
+            (encoded, digest, state["workflow_id"]),
+        )
+
+
 def _start_patch(
     *,
     operation_id: str = "prepare:start",
@@ -82,6 +107,124 @@ def _start_patch(
             },
         ),
     )
+
+
+def test_repository_losslessly_reads_and_rewrites_safe_v1_state(tmp_path: Path) -> None:
+    """Pending/offset-zero v1 snapshots gain an empty batch ledger without DDL migration."""
+    database_path = tmp_path / "workflows.sqlite3"
+    repository = SQLiteWorkflowRepository(database_path)
+    original = repository.create(_new_state())
+    _rewrite_snapshot_as_v1(database_path, original)
+
+    migrated = repository.get(original["workflow_id"])
+
+    assert migrated["schema_version"] == 2
+    assert migrated["translation"]["batch_artifacts"] == {}
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        stored_version = connection.execute(
+            "SELECT workflow_schema_version FROM workflow_snapshots"
+        ).fetchone()[0]
+    assert stored_version == 1
+
+    # The next ordinary domain commit persists canonical v2 JSON and updates
+    # its redundant state-schema column in the existing repository tables.
+    committed = repository.commit_patch(original["workflow_id"], _start_patch())
+    assert committed.state["schema_version"] == 2
+    with sqlite3.connect(database_path) as connection:
+        assert (
+            connection.execute("SELECT workflow_schema_version FROM workflow_snapshots").fetchone()[
+                0
+            ]
+            == 2
+        )
+
+
+def test_repository_rejects_partial_v1_batch_progress_as_unsupported(tmp_path: Path) -> None:
+    """A v1 positive segment offset cannot be guessed and is not mislabeled corruption."""
+    database_path = tmp_path / "workflows.sqlite3"
+    repository = SQLiteWorkflowRepository(database_path)
+    original = repository.create(_new_state())
+    legacy = copy.deepcopy(original)
+    legacy["cursor"] = {
+        "phase": "translate_chapters",
+        "chapter_index": 0,
+        "segment_offset": 3,
+        "review_round": None,
+    }
+    _rewrite_snapshot_as_v1(database_path, legacy)
+
+    with pytest.raises(UnsupportedWorkflowStateSchema, match="segment_offset > 0"):
+        repository.get(original["workflow_id"])
+
+
+def test_repository_normalizes_safe_v1_unstarted_chapter_offset(tmp_path: Path) -> None:
+    """A v1 None offset at a selected chapter means the same empty prefix as v2 zero."""
+    database_path = tmp_path / "workflows.sqlite3"
+    repository = SQLiteWorkflowRepository(database_path)
+    original = repository.create(_new_state())
+    legacy = copy.deepcopy(original)
+    legacy.update(
+        {
+            "status": WorkflowStatus.RUNNING.value,
+            "cursor": {
+                "phase": "translate_chapters",
+                "chapter_index": 0,
+                "segment_offset": None,
+                "review_round": None,
+            },
+            "book": {
+                "document_artifact": _artifact(
+                    sha256="d" * 64,
+                    uri="artifact://documents/book.json",
+                ),
+                "chapter_count": 1,
+                "source_segment_count": 10,
+            },
+            "preparation": {
+                "status": StageStatus.COMPLETED.value,
+                "normalized_source": _artifact(
+                    sha256="e" * 64,
+                    uri="artifact://normalized/book.epub",
+                ),
+            },
+            "understanding": {**legacy["understanding"], "status": "skipped"},
+            "translation": {**legacy["translation"], "status": StageStatus.RUNNING.value},
+            "glossary": {**legacy["glossary"], "status": StageStatus.RUNNING.value},
+        }
+    )
+    _rewrite_snapshot_as_v1(database_path, legacy)
+
+    migrated = repository.get(original["workflow_id"])
+
+    assert migrated["schema_version"] == 2
+    assert migrated["cursor"]["segment_offset"] == 0
+    assert migrated["translation"]["batch_artifacts"] == {}
+
+
+@pytest.mark.parametrize(
+    ("json_version", "column_version"),
+    [(1, 2), (2, 1)],
+)
+def test_repository_rejects_state_json_and_schema_column_mismatch(
+    tmp_path: Path,
+    json_version: int,
+    column_version: int,
+) -> None:
+    """Migration never hides tampering in either redundant schema-version direction."""
+    database_path = tmp_path / "workflows.sqlite3"
+    repository = SQLiteWorkflowRepository(database_path)
+    state = repository.create(_new_state())
+    if json_version == 1:
+        _rewrite_snapshot_as_v1(database_path, state)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE workflow_snapshots SET workflow_schema_version = ?",
+            (column_version,),
+        )
+
+    with pytest.raises(WorkflowRepositoryCorruption, match="schema column"):
+        repository.get(state["workflow_id"])
 
 
 @contextmanager

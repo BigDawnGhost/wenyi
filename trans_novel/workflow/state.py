@@ -10,7 +10,7 @@ from typing import TypedDict
 
 from ..domain.workflow import ArtifactRef, FailureInfo
 
-WORKFLOW_SCHEMA_VERSION = 1
+WORKFLOW_SCHEMA_VERSION = 2
 
 # 阶段集合是验证器与 reducer 共享的唯一真相，避免两处规则随演进分叉。
 WORKFLOW_STAGE_NAMES = (
@@ -72,9 +72,11 @@ class UnderstandingState(TypedDict):
 
 
 class TranslationState(TypedDict):
-    """顺序翻译游标之外的章节完成集合。"""
+    """顺序批次恢复账本和正式章节完成集合。"""
 
     status: str
+    # 键为规范 ``chapter:start:stop`` 范围；引用指向不可变批次译文。
+    batch_artifacts: dict[str, ArtifactRef]
     completed_chapters: list[int]
     chapter_artifacts: dict[str, ArtifactRef]
 

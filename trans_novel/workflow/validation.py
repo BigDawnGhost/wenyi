@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ..domain.translation_batch import parse_translation_batch_key
 from ..domain.workflow import (
     StageStatus,
     WorkflowPhase,
@@ -316,6 +317,10 @@ def _validate_book_progress(
         raise ValueError("book.chapter_count 为零时 source_segment_count 也必须为零")
 
     completed = translation["completed_chapters"]
+    batches = require_mapping(
+        translation["batch_artifacts"],
+        field="translation.batch_artifacts",
+    )
     artifacts = require_mapping(
         translation["chapter_artifacts"],
         field="translation.chapter_artifacts",
@@ -323,6 +328,8 @@ def _validate_book_progress(
     assert isinstance(completed, list)  # 局部校验已收窄元素类型与顺序。
     if any(chapter >= chapter_count for chapter in completed):
         raise ValueError("translation.completed_chapters 不能超出 book.chapter_count")
+    if completed != list(range(len(completed))):
+        raise ValueError("translation.completed_chapters 必须是从第 0 章开始的连续前缀")
     if {int(key) for key in artifacts} != set(completed):
         raise ValueError("translation 完成章节必须与 chapter_artifacts 严格对应")
     if translation["status"] == StageStatus.COMPLETED.value and completed != list(
@@ -343,8 +350,78 @@ def _validate_book_progress(
         and chapter_index is None
     ):
         raise ValueError("非空书籍的翻译游标必须包含 cursor.chapter_index")
+    _validate_translation_batch_progress(
+        cursor=cursor,
+        chapter_count=chapter_count,
+        completed=completed,
+        batches=batches,
+        translation_status=translation["status"],
+    )
     if cursor["review_round"] is not None and cursor["review_round"] != review["round"]:
         raise ValueError("cursor.review_round 必须与 review.round 一致")
+
+
+def _validate_translation_batch_progress(
+    *,
+    cursor: Mapping[str, object],
+    chapter_count: int,
+    completed: list[object],
+    batches: Mapping[str, object],
+    translation_status: object,
+) -> None:
+    """Bind batch ranges to a single per-chapter contiguous recovery prefix."""
+    ranges_by_chapter: dict[int, list[tuple[int, int]]] = {}
+    for key in batches:
+        chapter, start, stop = parse_translation_batch_key(key)
+        if chapter >= chapter_count:
+            raise ValueError("translation.batch_artifacts 不能超出 book.chapter_count")
+        ranges_by_chapter.setdefault(chapter, []).append((start, stop))
+
+    # Sorting by start makes the check independent of JSON mapping order while
+    # still rejecting gaps, overlaps, and two forks beginning at one offset.
+    prefixes: dict[int, int] = {}
+    for chapter, ranges in ranges_by_chapter.items():
+        expected_start = 0
+        for start, stop in sorted(ranges):
+            if start != expected_start:
+                raise ValueError(
+                    "translation.batch_artifacts 每章必须形成从 0 开始、无间隙/重叠/分叉的连续前缀"
+                )
+            expected_start = stop
+        prefixes[chapter] = expected_start
+
+    completed_chapters = {int(chapter) for chapter in completed}
+    if any(chapter > len(completed_chapters) for chapter in ranges_by_chapter):
+        raise ValueError("translation.batch_artifacts 不能越过当前顺序翻译章节")
+
+    # Once a chapter is finalized its batch ledger is retained as recovery
+    # history, but only the current unfinished chapter may own a live prefix.
+    unfinished_batch_chapters = set(ranges_by_chapter) - completed_chapters
+    phase = cursor["phase"]
+    if phase == WorkflowPhase.TRANSLATE_CHAPTERS.value:
+        chapter_index = cursor["chapter_index"]
+        offset = cursor["segment_offset"]
+        if chapter_index is None:
+            if batches or offset is not None:
+                raise ValueError("空书翻译游标不能包含批次进度")
+            return
+        expected_chapter = len(completed_chapters)
+        if translation_status == StageStatus.COMPLETED.value or expected_chapter == chapter_count:
+            # Translation may finish before the parallel glossary branch.  In
+            # that interval the cursor remains on the final chapter because
+            # ``chapter_count`` itself is not a valid chapter coordinate.
+            expected_chapter = chapter_count - 1
+        if chapter_index != expected_chapter:
+            raise ValueError("翻译游标章节必须紧接 completed_chapters 连续前缀")
+        if unfinished_batch_chapters - {chapter_index}:
+            raise ValueError("只有当前翻译章节可以包含未完成批次")
+        expected_offset = prefixes.get(chapter_index, 0)
+        if offset != expected_offset:
+            raise ValueError("cursor.segment_offset 必须等于当前章节批次连续前缀末端")
+        return
+
+    if unfinished_batch_chapters:
+        raise ValueError("离开正文翻译阶段前必须正式完成所有含批次的章节")
 
 
 def _validate_completed_workflow(

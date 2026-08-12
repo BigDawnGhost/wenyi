@@ -7,8 +7,10 @@ import json
 
 import pytest
 
+from trans_novel.domain.translation_batch import TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE
 from trans_novel.domain.workflow import StageStatus, WorkflowPhase, WorkflowStatus
 from trans_novel.workflow import (
+    WORKFLOW_SCHEMA_VERSION,
     WORKFLOW_STATE_KEYS,
     new_workflow_state,
     validate_workflow_state,
@@ -31,6 +33,14 @@ def _source_artifact() -> dict[str, object]:
 def _artifact(uri: str) -> dict[str, object]:
     """为章节和导出切片构造独立 URI 的合法产物引用。"""
     return {**_source_artifact(), "uri": uri}
+
+
+def _batch_artifact(uri: str) -> dict[str, object]:
+    """Construct a reference whose media type proves it stores batch payload bytes."""
+    return {
+        **_artifact(uri),
+        "media_type": TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    }
 
 
 def _title_ids(chapter_count: int) -> list[str]:
@@ -77,6 +87,7 @@ def _enter_title_phase(state, *, chapter_count: int = 2) -> None:
     _enter_translation_phase(state, chapter_count=chapter_count)
     state["translation"] = {
         "status": StageStatus.COMPLETED.value,
+        "batch_artifacts": {},
         "completed_chapters": list(range(chapter_count)),
         "chapter_artifacts": {
             str(index): _artifact(f"artifact://chapters/{index}.json")
@@ -173,6 +184,7 @@ def test_factory_initializes_the_complete_json_schema() -> None:
     state = _state()
 
     assert set(state) == WORKFLOW_STATE_KEYS
+    assert state["schema_version"] == WORKFLOW_SCHEMA_VERSION == 2
     assert state["revision"] == 0
     assert state["status"] == WorkflowStatus.PENDING.value
     assert state["request"]["source_format"] == "epub"
@@ -180,6 +192,7 @@ def test_factory_initializes_the_complete_json_schema() -> None:
     assert state["request"]["target_lang"] == "zh-cn"
     assert state["exports"]["requested_formats"] == ["epub", "pdf"]
     assert state["claimed_event_ids"] == {}
+    assert state["translation"]["batch_artifacts"] == {}
     assert json.loads(json.dumps(state)) == state
 
 
@@ -538,11 +551,49 @@ def test_translation_progress_must_match_book_and_artifact_boundaries() -> None:
         validate_workflow_state(state)
 
     state["translation"]["chapter_artifacts"] = {"0": _artifact("artifact://chapters/0.json")}
+    state["cursor"]["chapter_index"] = 1
     validate_workflow_state(state)
 
     state["translation"]["completed_chapters"] = [2]
     state["translation"]["chapter_artifacts"] = {"2": _artifact("artifact://chapters/2.json")}
     with pytest.raises(ValueError, match="chapter_count"):
+        validate_workflow_state(state)
+
+
+def test_translation_batches_form_the_cursor_owned_contiguous_prefix() -> None:
+    """Current chapter recovery accepts adjacent ranges and rejects gaps or forks."""
+    state = _state()
+    _enter_translation_phase(state)
+    state["translation"]["batch_artifacts"] = {
+        "0:0:3": _batch_artifact("artifact://batches/0-0-3.json"),
+        "0:3:7": _batch_artifact("artifact://batches/0-3-7.json"),
+    }
+    state["cursor"]["segment_offset"] = 7
+    validate_workflow_state(state)
+
+    state["translation"]["batch_artifacts"]["0:8:9"] = _batch_artifact(
+        "artifact://batches/0-8-9.json"
+    )
+    state["cursor"]["segment_offset"] = 9
+    with pytest.raises(ValueError, match="无间隙/重叠/分叉"):
+        validate_workflow_state(state)
+
+
+def test_translation_batches_require_canonical_keys_and_dedicated_media_type() -> None:
+    """State cannot point at an ambiguously named range or another artifact schema."""
+    state = _state()
+    _enter_translation_phase(state)
+    state["translation"]["batch_artifacts"] = {
+        "0:00:1": _batch_artifact("artifact://batches/noncanonical.json")
+    }
+    state["cursor"]["segment_offset"] = 1
+    with pytest.raises(ValueError, match="canonical ASCII"):
+        validate_workflow_state(state)
+
+    state["translation"]["batch_artifacts"] = {
+        "0:0:1": _artifact("artifact://batches/wrong-media.json")
+    }
+    with pytest.raises(ValueError, match="专用媒体类型"):
         validate_workflow_state(state)
 
 
@@ -568,6 +619,7 @@ def test_completed_translation_requires_every_chapter_artifact() -> None:
     _enter_review_phase(state)
     state["translation"] = {
         "status": StageStatus.COMPLETED.value,
+        "batch_artifacts": {},
         "completed_chapters": [0],
         "chapter_artifacts": {"0": _artifact("artifact://chapters/0.json")},
     }

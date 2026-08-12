@@ -112,6 +112,7 @@ def new_workflow_state(
         },
         "translation": {
             "status": StageStatus.PENDING.value,
+            "batch_artifacts": {},
             "completed_chapters": [],
             "chapter_artifacts": {},
         },

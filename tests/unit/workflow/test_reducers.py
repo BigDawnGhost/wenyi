@@ -6,6 +6,7 @@ import copy
 
 import pytest
 
+from trans_novel.domain.translation_batch import TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE
 from trans_novel.domain.workflow import StageStatus, WorkflowPhase, WorkflowStatus
 from trans_novel.workflow import (
     InvalidStatePatch,
@@ -26,12 +27,13 @@ def _artifact(
     *,
     uri: str = "artifact://source/book.epub",
     sha256: str = SOURCE_HASH,
+    media_type: str = "application/epub+zip",
 ) -> dict[str, object]:
     """构造测试用内容寻址引用。"""
     return {
         "uri": uri,
         "sha256": sha256,
-        "media_type": "application/epub+zip",
+        "media_type": media_type,
         "size_bytes": 123,
     }
 
@@ -92,6 +94,7 @@ def _completed_updates(state) -> dict[str, object]:
         },
         "translation": {
             "status": StageStatus.COMPLETED.value,
+            "batch_artifacts": copy.deepcopy(state["translation"]["batch_artifacts"]),
             "completed_chapters": list(range(chapter_count)),
             "chapter_artifacts": {
                 str(index): _artifact(uri=f"artifact://chapters/{index}.json")
@@ -181,11 +184,39 @@ def _translation_running_state(*, chapter_count: int = 1):
 def _title_running_state(*, chapter_count: int = 1):
     """完成正文与术语快照，并进入具有显式输入账本的标题阶段。"""
     state = _translation_running_state(chapter_count=chapter_count)
+
+    # A chapter artifact is an independent crash-recovery boundary.  Finalize
+    # every chapter except the last before the phase-change patch, so fixtures
+    # exercise the same one-chapter transition required from real graph nodes.
+    for chapter_index in range(max(0, chapter_count - 1)):
+        completed = list(range(chapter_index + 1))
+        state = apply_state_patch(
+            state,
+            StatePatch(
+                operation_id=f"translation:finalize-chapter-{chapter_index}",
+                expected_revision=state["revision"],
+                updates={
+                    "cursor": {
+                        **state["cursor"],
+                        "chapter_index": chapter_index + 1,
+                        "segment_offset": 0,
+                    },
+                    "translation": {
+                        **state["translation"],
+                        "completed_chapters": completed,
+                        "chapter_artifacts": {
+                            str(index): _artifact(uri=f"artifact://chapters/{index}.json")
+                            for index in completed
+                        },
+                    },
+                },
+            ),
+        ).state
     return apply_state_patch(
         state,
         StatePatch(
             operation_id="titles:start",
-            expected_revision=4,
+            expected_revision=state["revision"],
             updates={
                 "cursor": {
                     "phase": WorkflowPhase.TRANSLATE_TITLES.value,
@@ -195,6 +226,7 @@ def _title_running_state(*, chapter_count: int = 1):
                 },
                 "translation": {
                     "status": StageStatus.COMPLETED.value,
+                    "batch_artifacts": copy.deepcopy(state["translation"]["batch_artifacts"]),
                     "completed_chapters": list(range(chapter_count)),
                     "chapter_artifacts": {
                         str(index): _artifact(uri=f"artifact://chapters/{index}.json")
@@ -226,7 +258,7 @@ def _review_running_state(*, chapter_count: int = 1):
         state,
         StatePatch(
             operation_id="review:start-round-1",
-            expected_revision=5,
+            expected_revision=state["revision"],
             updates={
                 "cursor": {
                     "phase": WorkflowPhase.REVIEW.value,
@@ -513,7 +545,12 @@ def test_completed_and_skipped_stages_are_terminal_for_normal_patches() -> None:
 
 
 def test_cursor_phase_and_translation_positions_can_only_move_forward() -> None:
+    """Batch checkpoints, rather than free cursor writes, own translation progress."""
     state = _translation_running_state(chapter_count=3)
+    first_batch = _artifact(
+        uri="artifact://batches/0-0-5.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
     positioned = apply_state_patch(
         state,
         StatePatch(
@@ -522,9 +559,13 @@ def test_cursor_phase_and_translation_positions_can_only_move_forward() -> None:
             updates={
                 "cursor": {
                     "phase": WorkflowPhase.TRANSLATE_CHAPTERS.value,
-                    "chapter_index": 1,
+                    "chapter_index": 0,
                     "segment_offset": 5,
                     "review_round": None,
+                },
+                "translation": {
+                    **state["translation"],
+                    "batch_artifacts": {"0:0:5": first_batch},
                 },
             },
         ),
@@ -540,18 +581,18 @@ def test_cursor_phase_and_translation_positions_can_only_move_forward() -> None:
         {
             "phase": WorkflowPhase.TRANSLATE_CHAPTERS.value,
             "chapter_index": 0,
-            "segment_offset": 0,
+            "segment_offset": 4,
             "review_round": None,
         },
         {
             "phase": WorkflowPhase.TRANSLATE_CHAPTERS.value,
             "chapter_index": 1,
-            "segment_offset": 4,
+            "segment_offset": 0,
             "review_round": None,
         },
     )
     for index, cursor in enumerate(backward_cursors):
-        with pytest.raises(InvalidStatePatch, match="cursor"):
+        with pytest.raises(InvalidStatePatch, match="cursor|游标"):
             apply_state_patch(
                 positioned.state,
                 StatePatch(
@@ -564,19 +605,148 @@ def test_cursor_phase_and_translation_positions_can_only_move_forward() -> None:
     next_chapter = apply_state_patch(
         positioned.state,
         StatePatch(
-            operation_id="translation:position-chapter-2",
+            operation_id="translation:finalize-chapter-0",
             expected_revision=5,
             updates={
                 "cursor": {
                     "phase": WorkflowPhase.TRANSLATE_CHAPTERS.value,
-                    "chapter_index": 2,
+                    "chapter_index": 1,
                     "segment_offset": 0,
                     "review_round": None,
-                }
+                },
+                "translation": {
+                    **positioned.state["translation"],
+                    "completed_chapters": [0],
+                    "chapter_artifacts": {
+                        "0": _artifact(uri="artifact://chapters/0.json"),
+                    },
+                },
             },
         ),
     )
+    assert next_chapter.state["cursor"]["chapter_index"] == 1
     assert next_chapter.state["cursor"]["segment_offset"] == 0
+
+
+def test_batch_patch_appends_exactly_one_range_and_cannot_finalize_chapter() -> None:
+    """One reducer commit has one crash-recovery meaning: batch or chapter, never both."""
+    state = _translation_running_state()
+    batch_zero = _artifact(
+        uri="artifact://batches/0-0-2.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
+    batch_one = _artifact(
+        uri="artifact://batches/0-2-4.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
+    with pytest.raises(InvalidStatePatch, match="恰好追加一个"):
+        apply_state_patch(
+            state,
+            StatePatch(
+                operation_id="translation:add-two-batches",
+                expected_revision=4,
+                updates={
+                    "cursor": {**state["cursor"], "segment_offset": 4},
+                    "translation": {
+                        **state["translation"],
+                        "batch_artifacts": {
+                            "0:0:2": batch_zero,
+                            "0:2:4": batch_one,
+                        },
+                    },
+                },
+            ),
+        )
+
+    with pytest.raises(InvalidStatePatch, match="finalize"):
+        apply_state_patch(
+            state,
+            StatePatch(
+                operation_id="translation:add-batch-and-finalize",
+                expected_revision=4,
+                updates={
+                    "cursor": {**state["cursor"], "segment_offset": 2},
+                    "translation": {
+                        **state["translation"],
+                        "batch_artifacts": {"0:0:2": batch_zero},
+                        "completed_chapters": [0],
+                        "chapter_artifacts": {
+                            "0": _artifact(uri="artifact://chapters/0.json"),
+                        },
+                    },
+                },
+            ),
+        )
+
+
+def test_chapter_finalize_commits_only_the_current_chapter() -> None:
+    """A valid prefix cannot hide a node that skipped two finalize boundaries."""
+    state = _translation_running_state(chapter_count=3)
+
+    with pytest.raises(InvalidStatePatch, match="每次只能提交当前游标指向的一章"):
+        apply_state_patch(
+            state,
+            StatePatch(
+                operation_id="translation:finalize-two-chapters",
+                expected_revision=4,
+                updates={
+                    "cursor": {
+                        **state["cursor"],
+                        "chapter_index": 2,
+                        "segment_offset": 0,
+                    },
+                    "translation": {
+                        **state["translation"],
+                        "completed_chapters": [0, 1],
+                        "chapter_artifacts": {
+                            "0": _artifact(uri="artifact://chapters/0.json"),
+                            "1": _artifact(uri="artifact://chapters/1.json"),
+                        },
+                    },
+                },
+            ),
+        )
+
+
+def test_finalized_chapter_rejects_late_batch_artifacts() -> None:
+    """The final-chapter cursor window cannot reopen an already published chapter."""
+    state = _translation_running_state()
+    finalized = apply_state_patch(
+        state,
+        StatePatch(
+            operation_id="translation:finalize-only-chapter",
+            expected_revision=state["revision"],
+            updates={
+                "translation": {
+                    **state["translation"],
+                    "completed_chapters": [0],
+                    "chapter_artifacts": {
+                        "0": _artifact(uri="artifact://chapters/0.json"),
+                    },
+                },
+            },
+        ),
+    )
+    late_batch = _artifact(
+        uri="artifact://batches/0-0-1.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
+
+    with pytest.raises(InvalidStatePatch, match="已 finalize 章节"):
+        apply_state_patch(
+            finalized.state,
+            StatePatch(
+                operation_id="translation:late-batch-after-finalize",
+                expected_revision=finalized.state["revision"],
+                updates={
+                    "cursor": {**finalized.state["cursor"], "segment_offset": 1},
+                    "translation": {
+                        **finalized.state["translation"],
+                        "batch_artifacts": {"0:0:1": late_batch},
+                    },
+                },
+            ),
+        )
 
 
 def test_committed_progress_and_counters_can_only_grow() -> None:
@@ -590,6 +760,7 @@ def test_committed_progress_and_counters_can_only_grow() -> None:
             updates={
                 "translation": {
                     "status": StageStatus.RUNNING.value,
+                    "batch_artifacts": {},
                     "completed_chapters": [0],
                     "chapter_artifacts": {"0": chapter},
                 },
@@ -611,6 +782,7 @@ def test_committed_progress_and_counters_can_only_grow() -> None:
                 updates={
                     "translation": {
                         "status": StageStatus.RUNNING.value,
+                        "batch_artifacts": {},
                         "completed_chapters": [],
                         "chapter_artifacts": {},
                     }
@@ -798,7 +970,7 @@ def test_title_progress_is_versioned_and_cannot_be_skipped() -> None:
         titles,
         StatePatch(
             operation_id="titles:commit-chapter-0",
-            expected_revision=5,
+            expected_revision=titles["revision"],
             updates={
                 "titles": {
                     **titles["titles"],
@@ -815,7 +987,7 @@ def test_title_progress_is_versioned_and_cannot_be_skipped() -> None:
             partial.state,
             StatePatch(
                 operation_id="titles:rewrite-revision-1",
-                expected_revision=6,
+                expected_revision=partial.state["revision"],
                 updates={
                     "titles": {
                         **partial.state["titles"],
@@ -830,7 +1002,7 @@ def test_title_progress_is_versioned_and_cannot_be_skipped() -> None:
             partial.state,
             StatePatch(
                 operation_id="review:start-before-titles-complete",
-                expected_revision=6,
+                expected_revision=partial.state["revision"],
                 updates={
                     "cursor": {
                         "phase": WorkflowPhase.REVIEW.value,
@@ -858,7 +1030,7 @@ def test_title_progress_and_snapshot_advance_as_one_atomic_unit() -> None:
         titles,
         StatePatch(
             operation_id="titles:commit-first",
-            expected_revision=5,
+            expected_revision=titles["revision"],
             updates={
                 "titles": {
                     **titles["titles"],
@@ -907,7 +1079,7 @@ def test_title_progress_and_snapshot_advance_as_one_atomic_unit() -> None:
                 first.state,
                 StatePatch(
                     operation_id=f"titles:invalid-atomic-unit-{index}",
-                    expected_revision=6,
+                    expected_revision=first.state["revision"],
                     updates={"titles": updates},
                 ),
             )
@@ -916,7 +1088,7 @@ def test_title_progress_and_snapshot_advance_as_one_atomic_unit() -> None:
         first.state,
         StatePatch(
             operation_id="titles:commit-second",
-            expected_revision=6,
+            expected_revision=first.state["revision"],
             updates={
                 "titles": {
                     **first.state["titles"],
@@ -1261,6 +1433,7 @@ def test_glossary_can_resume_after_parallel_chapter_translation_has_completed() 
             updates={
                 "translation": {
                     "status": StageStatus.COMPLETED.value,
+                    "batch_artifacts": {},
                     "completed_chapters": [0],
                     "chapter_artifacts": {
                         "0": _artifact(uri="artifact://chapters/0.json"),
