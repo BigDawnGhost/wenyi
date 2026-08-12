@@ -1062,3 +1062,161 @@ def test_text_reader_segments_cannot_inject_reconstruction_anchors() -> None:
             source_sha256=SOURCE_HASH,
             source_format="text",
         )
+
+
+@pytest.mark.parametrize(
+    ("placement", "offset"),
+    [
+        ("before", 1),
+        ("after", 0),
+        ("after", 3),
+        ("inline", 0),
+        ("inline", 4),
+    ],
+)
+def test_inline_placement_must_match_its_source_offset(
+    placement: str,
+    offset: int,
+) -> None:
+    """before/after/inline 必须分别绑定段首、段尾和严格内部偏移。"""
+    document = _format_document("html")
+    inline = document.chapters[0].segments[0].meta["epub_inline"]
+    assert isinstance(inline, dict)
+    nodes = inline["nodes"]
+    assert isinstance(nodes, list)
+    nodes[0]["placement"] = placement
+    nodes[0]["offset"] = offset
+
+    with pytest.raises(ValueError, match="metadata|meta|inline|placement|offset"):
+        normalized_document_v1_from_ingest(
+            document,
+            source_sha256=SOURCE_HASH,
+            source_format="html",
+        )
+
+
+def test_all_reader_inline_placement_forms_are_accepted() -> None:
+    """reader 的段首、段中和段尾三种合法节点位置均应跨过适配边界。"""
+    document = _format_document("html")
+    inline = document.chapters[0].segments[0].meta["epub_inline"]
+    assert isinstance(inline, dict)
+    inline["nodes"] = [
+        {"id": "tn0_0_inline_0", "tag": "img", "placement": "before", "offset": 0},
+        {"id": "tn0_0_inline_1", "tag": "img", "placement": "inline", "offset": 2},
+        {"id": "tn0_0_inline_2", "tag": "img", "placement": "after", "offset": 4},
+    ]
+
+    normalized_document_v1_from_ingest(
+        document,
+        source_sha256=SOURCE_HASH,
+        source_format="html",
+    )
+
+
+def test_point_annotation_requires_a_zero_length_source_range() -> None:
+    """point 注释是段落边界事件，不能伪装成覆盖正文字符的 range。"""
+    document = _format_document("epub")
+    annotations = document.chapters[0].segments[0].meta["epub_annotations"]
+    assert isinstance(annotations, dict)
+    items = annotations["items"]
+    assert isinstance(items, list)
+    items[0]["source_start"] = 0
+    items[0]["source_end"] = 1
+    items[0]["source_text"] = "本"
+
+    with pytest.raises(ValueError, match="metadata|meta|annotation|point|range"):
+        normalized_document_v1_from_ingest(
+            document,
+            source_sha256=SOURCE_HASH,
+            source_format="epub",
+        )
+
+
+@pytest.mark.parametrize("mode", ["point", "range"])
+def test_zero_length_annotation_range_remains_valid(mode: str) -> None:
+    """point 必须零长度；合同同时保留损坏但可表示的零长度 range。"""
+    document = _format_document("epub")
+    annotations = document.chapters[0].segments[0].meta["epub_annotations"]
+    assert isinstance(annotations, dict)
+    items = annotations["items"]
+    assert isinstance(items, list)
+    items[0]["mode"] = mode
+    items[0]["source_start"] = 2
+    items[0]["source_end"] = 2
+    items[0]["source_text"] = ""
+
+    normalized_document_v1_from_ingest(
+        document,
+        source_sha256=SOURCE_HASH,
+        source_format="epub",
+    )
+
+
+def test_inline_node_ids_must_be_unique_within_a_segment() -> None:
+    """重复内联 ID 会让 writer 多次命中同一 DOM 节点并静默丢失后续记录。"""
+    document = _format_document("html")
+    inline = document.chapters[0].segments[0].meta["epub_inline"]
+    assert isinstance(inline, dict)
+    inline["nodes"] = [
+        {"id": "duplicate", "tag": "img", "placement": "before", "offset": 0},
+        {"id": "duplicate", "tag": "img", "placement": "after", "offset": 4},
+    ]
+
+    with pytest.raises(ValueError, match="metadata|meta|inline|duplicate|unique"):
+        normalized_document_v1_from_ingest(
+            document,
+            source_sha256=SOURCE_HASH,
+            source_format="html",
+        )
+
+
+def test_annotation_item_ids_must_be_unique_within_a_segment() -> None:
+    """重复注释 ID 会把多个源项折叠为一个对齐/DOM 恢复身份。"""
+    document = _format_document("epub")
+    annotations = document.chapters[0].segments[0].meta["epub_annotations"]
+    assert isinstance(annotations, dict)
+    items = annotations["items"]
+    assert isinstance(items, list)
+    items.append(deepcopy(items[0]))
+
+    with pytest.raises(ValueError, match="metadata|meta|annotation|duplicate|unique"):
+        normalized_document_v1_from_ingest(
+            document,
+            source_sha256=SOURCE_HASH,
+            source_format="epub",
+        )
+
+
+def test_toc_path_and_node_index_pairs_must_be_unique() -> None:
+    """writer 以 toc_path+node_index 建索引，重复地址会 last-write-wins 回填错项。"""
+    document = _format_document("epub")
+    first = _toc_entry()
+    second = _toc_entry()
+    second["entry_id"] = "nav.xhtml:duplicate"
+    second["title"] = "Different source title"
+    document.meta["toc_entries"] = [first, second]
+
+    with pytest.raises(ValueError, match="metadata|meta|toc|duplicate|unique"):
+        normalized_document_v1_from_ingest(
+            document,
+            source_sha256=SOURCE_HASH,
+            source_format="epub",
+        )
+
+
+@pytest.mark.parametrize("duplicate_field", ["index", "href"])
+def test_epub_resource_addresses_must_be_unique(duplicate_field: str) -> None:
+    """资源 index/href 均由 reader 唯一分配，重复会在 writer 中覆盖或静默跳过。"""
+    document = _format_document("epub")
+    resources = document.meta["epub_resources"]
+    assert isinstance(resources, list)
+    duplicate = {"index": 1, "href": "second.xhtml"}
+    duplicate[duplicate_field] = resources[0][duplicate_field]
+    resources.append(duplicate)
+
+    with pytest.raises(ValueError, match="metadata|meta|resource|duplicate|unique"):
+        normalized_document_v1_from_ingest(
+            document,
+            source_sha256=SOURCE_HASH,
+            source_format="epub",
+        )

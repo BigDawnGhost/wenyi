@@ -302,9 +302,16 @@ def _validate_source_metadata_values(value: Mapping[str, Any], *, field: str) ->
             _native_string(image["id"], field=field, nonblank=True)
             _native_int(image["position"], field=field)
     if "epub_resources" in value:
-        for resource in _object_list(value["epub_resources"], _EPUB_RESOURCE_KEYS, field=field):
-            _native_int(resource["index"], field=field)
-            _package_path(resource["href"], field=field)
+        resources = _object_list(value["epub_resources"], _EPUB_RESOURCE_KEYS, field=field)
+        indexes: set[int] = set()
+        hrefs: set[str] = set()
+        for resource in resources:
+            index = _native_int(resource["index"], field=field)
+            href = _package_path(resource["href"], field=field)
+            if index in indexes or href in hrefs:
+                raise ValueError(f"{field} contains duplicate EPUB resource identities")
+            indexes.add(index)
+            hrefs.add(href)
 
 
 def _object_with_keys(value: object, keys: frozenset[str], *, field: str) -> Mapping[str, Any]:
@@ -374,15 +381,27 @@ def _validate_inline_metadata(value: Mapping[str, Any], *, field: str) -> None:
     nodes = _object_list(value["nodes"], _INLINE_NODE_KEYS, field=field)
     if not nodes:
         raise ValueError(f"{field} inline metadata must contain at least one node")
+    node_ids: set[str] = set()
     for node in nodes:
-        _native_string(node["id"], field=field, nonblank=True)
+        node_id = _native_string(node["id"], field=field, nonblank=True)
+        if node_id in node_ids:
+            raise ValueError(f"{field} contains duplicate inline node IDs")
+        node_ids.add(node_id)
         _native_string(node["tag"], field=field, nonblank=True)
-        _native_choice(
+        placement = _native_choice(
             node["placement"],
             choices=frozenset({"before", "inline", "after"}),
             field=field,
         )
-        _native_int(node["offset"], field=field, maximum=source_length)
+        offset = _native_int(node["offset"], field=field, maximum=source_length)
+        # The HTML annotator derives placement solely from the position in the
+        # logical source.  Keeping the three cases disjoint prevents a caller
+        # from smuggling contradictory reconstruction instructions.
+        expected_placement = (
+            "before" if offset == 0 else "after" if offset == source_length else "inline"
+        )
+        if placement != expected_placement:
+            raise ValueError(f"{field} inline placement disagrees with its source offset")
 
 
 def _validate_annotation_metadata(value: Mapping[str, Any], *, field: str) -> None:
@@ -393,9 +412,13 @@ def _validate_annotation_metadata(value: Mapping[str, Any], *, field: str) -> No
     items = _object_list(value["items"], _ANNOTATION_ITEM_KEYS, field=field)
     if not items:
         raise ValueError(f"{field} annotation metadata must contain at least one item")
+    annotation_ids: set[str] = set()
     for item in items:
-        _native_string(item["id"], field=field, nonblank=True)
-        _native_choice(
+        annotation_id = _native_string(item["id"], field=field, nonblank=True)
+        if annotation_id in annotation_ids:
+            raise ValueError(f"{field} contains duplicate annotation IDs")
+        annotation_ids.add(annotation_id)
+        mode = _native_choice(
             item["mode"],
             choices=frozenset({"point", "range"}),
             field=field,
@@ -404,6 +427,8 @@ def _validate_annotation_metadata(value: Mapping[str, Any], *, field: str) -> No
         end = _native_int(item["source_end"], field=field, maximum=source_length)
         if start > end:
             raise ValueError(f"{field} has a reversed annotation range")
+        if mode == "point" and start != end:
+            raise ValueError(f"{field} point annotation must have a zero-length range")
         for name in ("source_text", "marker_text", "raw_href", "target_key"):
             _native_string(item[name], field=field)
         if len(item["source_text"]) != end - start:
@@ -418,12 +443,17 @@ def _validate_annotation_metadata(value: Mapping[str, Any], *, field: str) -> No
 def _validate_toc_entries(value: object, *, field: str) -> None:
     """Validate parser-required TOC fields while allowing three reader-derived fields."""
     entries = _object_list(value, _TOC_KEYS, field=field, exact=False)
+    toc_node_keys: set[tuple[str, int]] = set()
     for entry in entries:
         if not _TOC_REQUIRED_KEYS <= set(entry):
             raise ValueError(f"{field} has an incomplete toc entry")
         _native_string(entry["entry_id"], field=field, nonblank=True)
-        _package_path(entry["toc_path"], field=field)
-        _native_int(entry["node_index"], field=field)
+        toc_path = _package_path(entry["toc_path"], field=field)
+        node_index = _native_int(entry["node_index"], field=field)
+        toc_node_key = (toc_path, node_index)
+        if toc_node_key in toc_node_keys:
+            raise ValueError(f"{field} contains duplicate TOC node identities")
+        toc_node_keys.add(toc_node_key)
         _native_int(entry["depth"], field=field)
         parent_index = entry["parent_index"]
         if parent_index is not None:
