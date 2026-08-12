@@ -79,6 +79,7 @@ def test_codec_rejects_noncanonical_or_non_utf8_bytes() -> None:
     ("mutation", "message"),
     [
         ({"schema_version": 2}, "schema_version"),
+        ({"schema_version": True}, "schema_version"),
         ({"workflow_id": "wf-not-a-digest"}, "workflow_id"),
         ({"document_sha256": "A" * 64}, "document_sha256"),
         ({"chapter_index": True}, "chapter_index"),

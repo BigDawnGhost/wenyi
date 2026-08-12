@@ -92,7 +92,12 @@ def validate_translation_batch_artifact(
         raise ValueError(
             f"translation batch artifact fields do not match: missing={missing}, extra={extra}"
         )
-    if value["schema_version"] != TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION:
+    # ``bool`` subclasses ``int`` in Python, so equality alone would accept
+    # ``True`` as schema version 1 and create a second non-canonical shape.
+    if (
+        type(value["schema_version"]) is not int
+        or value["schema_version"] != TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION
+    ):
         raise ValueError(
             "translation batch artifact supports only "
             f"schema_version={TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION}"
