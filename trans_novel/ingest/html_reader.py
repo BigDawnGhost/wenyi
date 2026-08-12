@@ -200,7 +200,10 @@ def read_html(
         source_path=os.path.abspath(path),
         chapters=chapters,
         meta={
-            "chapter_tags": list(chapter_tags) if chapter_tags else None,
+            # ``chapter_tags`` is usually a frozenset.  Sort it before the
+            # document crosses the ingest boundary so equivalent parser
+            # policies never depend on Python's randomized hash iteration.
+            "chapter_tags": sorted(chapter_tags) if chapter_tags else None,
             "head_html": head_html,
         },
     )
