@@ -10,6 +10,7 @@ import re
 from collections.abc import Mapping
 from enum import Enum
 
+from ..domain.source_format import validate_canonical_source_format
 from ..domain.translation_batch import (
     TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
     parse_translation_batch_key,
@@ -18,6 +19,7 @@ from ..domain.workflow import (
     StageStatus,
     WorkflowPhase,
     build_workflow_id,
+    build_workflow_id_v2,
     normalize_language_code,
     validate_artifact_ref,
     validate_operation_id,
@@ -32,6 +34,7 @@ def validate_request(request: Mapping[str, object], *, workflow_id: object) -> N
     _require_exact_keys(
         request,
         {
+            "identity_version",
             "source_sha256",
             "source_format",
             "source_lang",
@@ -41,6 +44,9 @@ def validate_request(request: Mapping[str, object], *, workflow_id: object) -> N
         },
         field="request",
     )
+    identity_version = request["identity_version"]
+    if type(identity_version) is not int or identity_version not in {1, 2}:
+        raise ValueError("request.identity_version 必须是原生整数 1 或 2")
     source_hash = validate_sha256(request["source_sha256"], field="request.source_sha256")
     profile_hash = validate_sha256(
         request["semantic_profile_hash"],
@@ -49,8 +55,13 @@ def validate_request(request: Mapping[str, object], *, workflow_id: object) -> N
     source_format = _require_non_empty_string(request["source_format"], field="source_format")
     source_lang = _require_non_empty_string(request["source_lang"], field="source_lang")
     target_lang = _require_non_empty_string(request["target_lang"], field="target_lang")
-    if source_format != source_format.lower().lstrip("."):
-        raise ValueError("request.source_format 必须是规范化的小写扩展名")
+    if identity_version == 1:
+        # Legacy identity ignored format, so migration must preserve every
+        # formerly valid normalized suffix without rewriting its request bytes.
+        if source_format != source_format.lower().lstrip("."):
+            raise ValueError("legacy request.source_format 必须是规范化的小写扩展名")
+    else:
+        validate_canonical_source_format(source_format, field="request.source_format")
     if source_lang != normalize_language_code(source_lang, field="request.source_lang"):
         raise ValueError("request.source_lang 必须是规范化语言代码")
     if target_lang != normalize_language_code(target_lang, field="request.target_lang"):
@@ -59,7 +70,23 @@ def validate_request(request: Mapping[str, object], *, workflow_id: object) -> N
     artifact = require_mapping(request["source_artifact"], field="request.source_artifact")
     if validate_artifact_ref(artifact)["sha256"] != source_hash:
         raise ValueError("request.source_artifact 与 source_sha256 不一致")
-    expected_id = build_workflow_id(source_hash, source_lang, target_lang, profile_hash)
+    # Rebuild the ID with the algorithm declared by the immutable request.  In
+    # particular, a migrated identity_version=1 state keeps its SQLite key.
+    if identity_version == 1:
+        expected_id = build_workflow_id(
+            source_hash,
+            source_lang,
+            target_lang,
+            profile_hash,
+        )
+    else:
+        expected_id = build_workflow_id_v2(
+            source_hash,
+            source_format,
+            source_lang,
+            target_lang,
+            profile_hash,
+        )
     if workflow_id != expected_id:
         raise ValueError("workflow_id 与不可变请求身份不一致")
 

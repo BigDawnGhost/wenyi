@@ -18,7 +18,7 @@ from typing import Iterator
 
 import pytest
 
-from trans_novel.domain.workflow import StageStatus, WorkflowStatus
+from trans_novel.domain.workflow import StageStatus, WorkflowStatus, build_workflow_id
 from trans_novel.storage.sqlite_workflows import SQLiteWorkflowRepository
 from trans_novel.storage.sqlite_workflows import repository as repository_module
 from trans_novel.workflow import (
@@ -57,11 +57,25 @@ def _new_state(*, source_hash: str = "a" * 64) -> WorkflowState:
     )
 
 
-def _rewrite_snapshot_as_v1(database_path: Path, state: WorkflowState) -> None:
-    """Store canonical schema-v1 JSON while preserving repository DDL version 1."""
+def _rewrite_snapshot_as_legacy(
+    database_path: Path,
+    state: WorkflowState,
+    *,
+    schema_version: int,
+) -> str:
+    """Rewrite all three projections as one true legacy-ID repository fixture."""
     legacy = copy.deepcopy(state)
-    legacy["schema_version"] = 1
-    del legacy["translation"]["batch_artifacts"]
+    legacy_id = build_workflow_id(
+        legacy["request"]["source_sha256"],
+        legacy["request"]["source_lang"],
+        legacy["request"]["target_lang"],
+        legacy["request"]["semantic_profile_hash"],
+    )
+    legacy["schema_version"] = schema_version
+    legacy["workflow_id"] = legacy_id
+    del legacy["request"]["identity_version"]
+    if schema_version == 1:
+        del legacy["translation"]["batch_artifacts"]
     encoded = json.dumps(
         legacy,
         ensure_ascii=False,
@@ -71,14 +85,36 @@ def _rewrite_snapshot_as_v1(database_path: Path, state: WorkflowState) -> None:
     ).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()
     with sqlite3.connect(database_path) as connection:
+        # Test sqlite3 handles default to foreign_keys=OFF.  Re-key children and
+        # parent in one transaction, then let public repository reads audit the
+        # resulting projections with normal foreign-key enforcement enabled.
+        connection.execute(
+            "UPDATE workflow_outbox SET workflow_id = ? WHERE workflow_id = ?",
+            (legacy_id, state["workflow_id"]),
+        )
+        connection.execute(
+            "UPDATE workflow_operations SET workflow_id = ? WHERE workflow_id = ?",
+            (legacy_id, state["workflow_id"]),
+        )
         connection.execute(
             """
             UPDATE workflow_snapshots
-            SET workflow_schema_version = 1, state_json = ?, state_sha256 = ?
+            SET workflow_id = ?, workflow_schema_version = ?, state_json = ?, state_sha256 = ?
             WHERE workflow_id = ?
             """,
-            (encoded, digest, state["workflow_id"]),
+            (legacy_id, schema_version, encoded, digest, state["workflow_id"]),
         )
+    return legacy_id
+
+
+def _rewrite_snapshot_as_v1(database_path: Path, state: WorkflowState) -> str:
+    """Store canonical schema-v1 JSON while preserving repository DDL version 1."""
+    return _rewrite_snapshot_as_legacy(database_path, state, schema_version=1)
+
+
+def _rewrite_snapshot_as_v2(database_path: Path, state: WorkflowState) -> str:
+    """Store canonical schema-v2 JSON using the frozen format-blind identity."""
+    return _rewrite_snapshot_as_legacy(database_path, state, schema_version=2)
 
 
 def _start_patch(
@@ -114,11 +150,13 @@ def test_repository_losslessly_reads_and_rewrites_safe_v1_state(tmp_path: Path) 
     database_path = tmp_path / "workflows.sqlite3"
     repository = SQLiteWorkflowRepository(database_path)
     original = repository.create(_new_state())
-    _rewrite_snapshot_as_v1(database_path, original)
+    legacy_id = _rewrite_snapshot_as_v1(database_path, original)
 
-    migrated = repository.get(original["workflow_id"])
+    migrated = repository.get(legacy_id)
 
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 3
+    assert migrated["workflow_id"] == legacy_id
+    assert migrated["request"]["identity_version"] == 1
     assert migrated["translation"]["batch_artifacts"] == {}
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
@@ -127,17 +165,67 @@ def test_repository_losslessly_reads_and_rewrites_safe_v1_state(tmp_path: Path) 
         ).fetchone()[0]
     assert stored_version == 1
 
-    # The next ordinary domain commit persists canonical v2 JSON and updates
+    # The next ordinary domain commit persists canonical v3 JSON and updates
     # its redundant state-schema column in the existing repository tables.
-    committed = repository.commit_patch(original["workflow_id"], _start_patch())
-    assert committed.state["schema_version"] == 2
+    committed = repository.commit_patch(legacy_id, _start_patch())
+    assert committed.state["schema_version"] == 3
+    assert committed.state["workflow_id"] == legacy_id
+    assert committed.state["request"]["identity_version"] == 1
     with sqlite3.connect(database_path) as connection:
         assert (
             connection.execute("SELECT workflow_schema_version FROM workflow_snapshots").fetchone()[
                 0
             ]
-            == 2
+            == 3
         )
+
+
+def test_repository_losslessly_reads_schema_v2_with_legacy_identity(tmp_path: Path) -> None:
+    """The v2 batch ledger survives while only the identity discriminator is added."""
+    database_path = tmp_path / "workflows.sqlite3"
+    repository = SQLiteWorkflowRepository(database_path)
+    current = repository.create(_new_state())
+    legacy_id = _rewrite_snapshot_as_v2(database_path, current)
+
+    migrated = repository.get(legacy_id)
+
+    assert migrated["schema_version"] == 3
+    assert migrated["workflow_id"] == legacy_id
+    assert migrated["request"]["identity_version"] == 1
+    assert migrated["translation"]["batch_artifacts"] == {}
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT workflow_id, workflow_schema_version FROM workflow_snapshots"
+        ).fetchone()
+        assert row == (legacy_id, 2)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_schema_v2_migration_preserves_operation_and_outbox_history(tmp_path: Path) -> None:
+    """Identity migration changes no committed business or delivery projection."""
+    database_path = tmp_path / "workflows.sqlite3"
+    repository = SQLiteWorkflowRepository(database_path)
+    current = repository.create(_new_state())
+    committed = repository.commit_patch(current["workflow_id"], _start_patch())
+    with _open_rows(database_path) as connection:
+        operation_before = dict(connection.execute("SELECT * FROM workflow_operations").fetchone())
+        outbox_before = dict(connection.execute("SELECT * FROM workflow_outbox").fetchone())
+
+    legacy_id = _rewrite_snapshot_as_v2(database_path, committed.state)
+    migrated = repository.get(legacy_id)
+
+    assert migrated["workflow_id"] == legacy_id
+    assert migrated["revision"] == committed.state["revision"] == 1
+    assert migrated["applied_operations"] == committed.state["applied_operations"]
+    assert migrated["claimed_event_ids"] == committed.state["claimed_event_ids"]
+    with _open_rows(database_path) as connection:
+        operation_after = dict(connection.execute("SELECT * FROM workflow_operations").fetchone())
+        outbox_after = dict(connection.execute("SELECT * FROM workflow_outbox").fetchone())
+
+    # Re-keying is the fixture's legacy-address conversion; every other byte,
+    # ordinal, fingerprint, revision, and delivery field must remain identical.
+    assert {**operation_after, "workflow_id": current["workflow_id"]} == operation_before
+    assert {**outbox_after, "workflow_id": current["workflow_id"]} == outbox_before
 
 
 def test_repository_rejects_partial_v1_batch_progress_as_unsupported(tmp_path: Path) -> None:
@@ -152,10 +240,10 @@ def test_repository_rejects_partial_v1_batch_progress_as_unsupported(tmp_path: P
         "segment_offset": 3,
         "review_round": None,
     }
-    _rewrite_snapshot_as_v1(database_path, legacy)
+    legacy_id = _rewrite_snapshot_as_v1(database_path, legacy)
 
     with pytest.raises(UnsupportedWorkflowStateSchema, match="segment_offset > 0"):
-        repository.get(original["workflow_id"])
+        repository.get(legacy_id)
 
 
 def test_repository_normalizes_safe_v1_unstarted_chapter_offset(tmp_path: Path) -> None:
@@ -193,18 +281,19 @@ def test_repository_normalizes_safe_v1_unstarted_chapter_offset(tmp_path: Path) 
             "glossary": {**legacy["glossary"], "status": StageStatus.RUNNING.value},
         }
     )
-    _rewrite_snapshot_as_v1(database_path, legacy)
+    legacy_id = _rewrite_snapshot_as_v1(database_path, legacy)
 
-    migrated = repository.get(original["workflow_id"])
+    migrated = repository.get(legacy_id)
 
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 3
+    assert migrated["request"]["identity_version"] == 1
     assert migrated["cursor"]["segment_offset"] == 0
     assert migrated["translation"]["batch_artifacts"] == {}
 
 
 @pytest.mark.parametrize(
     ("json_version", "column_version"),
-    [(1, 2), (2, 1)],
+    [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)],
 )
 def test_repository_rejects_state_json_and_schema_column_mismatch(
     tmp_path: Path,
@@ -216,7 +305,11 @@ def test_repository_rejects_state_json_and_schema_column_mismatch(
     repository = SQLiteWorkflowRepository(database_path)
     state = repository.create(_new_state())
     if json_version == 1:
-        _rewrite_snapshot_as_v1(database_path, state)
+        workflow_id = _rewrite_snapshot_as_v1(database_path, state)
+    elif json_version == 2:
+        workflow_id = _rewrite_snapshot_as_v2(database_path, state)
+    else:
+        workflow_id = state["workflow_id"]
     with sqlite3.connect(database_path) as connection:
         connection.execute(
             "UPDATE workflow_snapshots SET workflow_schema_version = ?",
@@ -224,7 +317,7 @@ def test_repository_rejects_state_json_and_schema_column_mismatch(
         )
 
     with pytest.raises(WorkflowRepositoryCorruption, match="schema column"):
-        repository.get(state["workflow_id"])
+        repository.get(workflow_id)
 
 
 @contextmanager
@@ -281,6 +374,22 @@ def test_create_rejects_a_valid_but_non_pristine_state(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="pristine|revision-zero"):
         repository.create(advanced)
+
+
+def test_create_rejects_a_handcrafted_legacy_identity_state(tmp_path: Path) -> None:
+    """Only migration may introduce identity_version=1; new admission cannot."""
+    repository = SQLiteWorkflowRepository(tmp_path / "workflows.sqlite3")
+    state = _new_state()
+    state["request"]["identity_version"] = 1
+    state["workflow_id"] = build_workflow_id(
+        state["request"]["source_sha256"],
+        state["request"]["source_lang"],
+        state["request"]["target_lang"],
+        state["request"]["semantic_profile_hash"],
+    )
+
+    with pytest.raises(ValueError, match="identity_version=2"):
+        repository.create(state)
 
 
 # Commit tests compare reducer output with all durable projections required for

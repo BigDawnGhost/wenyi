@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from ..domain.source_format import normalize_source_format
 from ..domain.workflow import (
     StageStatus,
     WorkflowPhase,
     WorkflowStatus,
-    build_workflow_id,
+    build_workflow_id_v2,
     normalize_language_code,
     validate_artifact_ref,
     validate_sha256,
@@ -36,14 +37,7 @@ def new_workflow_state(
 
     # 不可变身份输入先统一规范化；任何空值都在创建状态前失败。
     artifact = validate_artifact_ref(source_artifact)
-    normalized_source_format = (
-        _require_utf8_text(
-            source_format,
-            field="source_format",
-        )
-        .lower()
-        .lstrip(".")
-    )
+    normalized_source_format = normalize_source_format(source_format)
     normalized_source_lang = normalize_language_code(source_lang, field="source_lang")
     normalized_target_lang = normalize_language_code(target_lang, field="target_lang")
     profile_hash = validate_sha256(
@@ -74,14 +68,16 @@ def new_workflow_state(
     state: WorkflowState = {
         "schema_version": WORKFLOW_SCHEMA_VERSION,
         "revision": 0,
-        "workflow_id": build_workflow_id(
+        "workflow_id": build_workflow_id_v2(
             artifact["sha256"],
+            normalized_source_format,
             normalized_source_lang,
             normalized_target_lang,
             profile_hash,
         ),
         "status": WorkflowStatus.PENDING.value,
         "request": {
+            "identity_version": 2,
             "source_sha256": artifact["sha256"],
             "source_format": normalized_source_format,
             "source_lang": normalized_source_lang,

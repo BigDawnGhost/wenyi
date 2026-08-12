@@ -10,7 +10,7 @@ from typing import TypedDict
 
 from ..domain.workflow import ArtifactRef, FailureInfo
 
-WORKFLOW_SCHEMA_VERSION = 2
+WORKFLOW_SCHEMA_VERSION = 3
 
 # 阶段集合是验证器与 reducer 共享的唯一真相，避免两处规则随演进分叉。
 WORKFLOW_STAGE_NAMES = (
@@ -30,6 +30,9 @@ OPTIONAL_STAGE_NAMES = ("understanding", "review", "quality")
 class WorkflowRequestState(TypedDict):
     """创建工作流后不可修改的语义请求身份。"""
 
+    # Version 1 retains the legacy format-blind ID; version 2 binds the
+    # canonical source reader family into newly created workflow identities.
+    identity_version: int
     source_sha256: str
     source_format: str
     source_lang: str

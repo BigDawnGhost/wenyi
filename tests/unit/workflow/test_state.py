@@ -184,9 +184,10 @@ def test_factory_initializes_the_complete_json_schema() -> None:
     state = _state()
 
     assert set(state) == WORKFLOW_STATE_KEYS
-    assert state["schema_version"] == WORKFLOW_SCHEMA_VERSION == 2
+    assert state["schema_version"] == WORKFLOW_SCHEMA_VERSION == 3
     assert state["revision"] == 0
     assert state["status"] == WorkflowStatus.PENDING.value
+    assert state["request"]["identity_version"] == 2
     assert state["request"]["source_format"] == "epub"
     assert state["request"]["source_lang"] == "ja-jp"
     assert state["request"]["target_lang"] == "zh-cn"
@@ -205,6 +206,55 @@ def test_factory_does_not_share_nested_mutable_defaults() -> None:
 
     assert second["translation"]["completed_chapters"] == []
     assert second["exports"]["outputs"] == {}
+
+
+@pytest.mark.parametrize(
+    ("source_format", "expected"),
+    [(".TXT", "text"), ("markdown", "text"), (".HTM", "html"), ("xhtml", "html")],
+)
+def test_factory_canonicalizes_source_aliases_before_identity(
+    source_format: str,
+    expected: str,
+) -> None:
+    """Alias spelling does not fork either the persisted request or workflow ID."""
+    aliased = new_workflow_state(
+        source_artifact=_source_artifact(),
+        source_format=source_format,
+        source_lang="ja",
+        target_lang="zh",
+        semantic_profile_hash=PROFILE_HASH,
+    )
+    canonical = new_workflow_state(
+        source_artifact=_source_artifact(),
+        source_format=expected,
+        source_lang="ja",
+        target_lang="zh",
+        semantic_profile_hash=PROFILE_HASH,
+    )
+
+    assert aliased["request"]["source_format"] == expected
+    assert aliased["workflow_id"] == canonical["workflow_id"]
+
+
+@pytest.mark.parametrize("identity_version", [0, 3, True, "2"])
+def test_validator_rejects_unknown_or_non_native_identity_versions(
+    identity_version: object,
+) -> None:
+    """A v3 snapshot cannot choose an implicit or future identity algorithm."""
+    state = _state()
+    state["request"]["identity_version"] = identity_version
+
+    with pytest.raises(ValueError, match="identity_version"):
+        validate_workflow_state(state)
+
+
+def test_validator_rejects_legacy_identity_discriminator_on_a_new_id() -> None:
+    """Changing only the discriminator cannot downgrade a v2 identity."""
+    state = _state()
+    state["request"]["identity_version"] = 1
+
+    with pytest.raises(ValueError, match="workflow_id"):
+        validate_workflow_state(state)
 
 
 @pytest.mark.parametrize(

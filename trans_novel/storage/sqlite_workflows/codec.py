@@ -31,7 +31,7 @@ def encode_state(state: Mapping[str, object]) -> tuple[WorkflowState, bytes, str
 
 
 def decode_state(value: object, digest: object) -> WorkflowState:
-    """Verify stored bytes and migrate lossless schema-v1 snapshots in memory."""
+    """Verify stored bytes and apply all lossless state migrations in memory."""
     return decode_state_with_source_version(value, digest)[0]
 
 
@@ -55,7 +55,7 @@ def decode_state_with_source_version(
 
 
 def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade an old compact state only when no partial batch evidence is lost.
+    """Apply each lossless application-state migration in version order.
 
     SQLite ``user_version`` remains 1 because no table, index, or transactional
     guarantee changes.  This is an application JSON-schema migration applied
@@ -64,11 +64,28 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
     version = state.get("schema_version")
     if type(version) is not int:
         raise WorkflowRepositoryCorruption("persisted workflow schema_version is invalid")
-    if version == WORKFLOW_SCHEMA_VERSION:
-        return state
-    if version != 1:
+    if version < 1 or version > WORKFLOW_SCHEMA_VERSION:
         raise UnsupportedWorkflowStateSchema(
             f"workflow state schema {version} has no migration to {WORKFLOW_SCHEMA_VERSION}"
+        )
+
+    migrated = state
+    if version == 1:
+        migrated = _migrate_v1_to_v2(migrated)
+        version = 2
+    if version == 2:
+        migrated = _migrate_v2_to_v3(migrated)
+    return migrated
+
+
+def _migrate_v1_to_v2(state: dict[str, Any]) -> dict[str, Any]:
+    """Add the batch ledger only when no partial artifact identity is missing."""
+    request = state.get("request")
+    if not isinstance(request, dict):
+        raise WorkflowRepositoryCorruption("persisted workflow v1 request is invalid")
+    if "identity_version" in request:
+        raise WorkflowRepositoryCorruption(
+            "persisted workflow schema 1 unexpectedly contains identity_version"
         )
 
     cursor = state.get("cursor")
@@ -91,7 +108,7 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
     # Completed chapters are already protected by immutable chapter artifacts;
     # pending and offset-zero work has no durable partial range to reconstruct.
     migrated = cast(dict[str, Any], copy_json_value(state, field="workflow state v1"))
-    migrated["schema_version"] = WORKFLOW_SCHEMA_VERSION
+    migrated["schema_version"] = 2
     migrated_cursor = cast(dict[str, Any], migrated["cursor"])
     if (
         migrated_cursor.get("phase") == "translate_chapters"
@@ -104,6 +121,25 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
         migrated_cursor["segment_offset"] = 0
     migrated_translation = cast(dict[str, Any], migrated["translation"])
     migrated_translation["batch_artifacts"] = {}
+    return migrated
+
+
+def _migrate_v2_to_v3(state: dict[str, Any]) -> dict[str, Any]:
+    """Declare that a pre-v3 request uses the frozen format-blind ID algorithm."""
+    request = state.get("request")
+    if not isinstance(request, dict):
+        raise WorkflowRepositoryCorruption("persisted workflow v2 request is invalid")
+    if "identity_version" in request:
+        raise WorkflowRepositoryCorruption(
+            "persisted workflow schema 2 unexpectedly contains identity_version"
+        )
+
+    # Copy before adding the discriminator so callers never observe mutation of
+    # the verified source JSON object.  The workflow ID and SQLite key are kept.
+    migrated = cast(dict[str, Any], copy_json_value(state, field="workflow state v2"))
+    migrated["schema_version"] = 3
+    migrated_request = cast(dict[str, Any], migrated["request"])
+    migrated_request["identity_version"] = 1
     return migrated
 
 

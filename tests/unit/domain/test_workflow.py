@@ -10,6 +10,7 @@ from trans_novel.domain.workflow import (
     StageStatus,
     WorkflowStatus,
     build_workflow_id,
+    build_workflow_id_v2,
     copy_json_value,
     normalize_language_code,
     validate_artifact_ref,
@@ -70,6 +71,30 @@ def test_workflow_id_collapses_common_iso_language_aliases() -> None:
 
     assert build_workflow_id(SOURCE_HASH, "eng", "zho", PROFILE_HASH) == english
     assert build_workflow_id(SOURCE_HASH, "jpn", "zh", PROFILE_HASH) == japanese
+
+
+def test_legacy_workflow_id_is_frozen_and_disjoint_from_v2() -> None:
+    """Migration preserves the old key while new admission uses a new domain."""
+    legacy = build_workflow_id(SOURCE_HASH, "ja", "zh", PROFILE_HASH)
+    current = build_workflow_id_v2(SOURCE_HASH, "epub", "ja", "zh", PROFILE_HASH)
+
+    assert legacy == "wf-7f385d78ae18c40da26b4f306e71d3314d82a4ad60c01ee23a113368fcbc4822"
+    assert current == "wf-1fca253803cbe5a68dd050ccfc41695dc4f2a5f37709728dd7426cd8e6be3661"
+    assert current != legacy
+
+
+def test_v2_workflow_id_changes_with_canonical_source_format() -> None:
+    """Equal bytes parsed by different reader families cannot share recovery state."""
+    epub = build_workflow_id_v2(SOURCE_HASH, "epub", "ja", "zh", PROFILE_HASH)
+    text = build_workflow_id_v2(SOURCE_HASH, "text", "ja", "zh", PROFILE_HASH)
+
+    assert epub != text
+
+
+@pytest.mark.parametrize("source_format", ["txt", "markdown", "xhtml", "EPUB", ""])
+def test_v2_workflow_id_requires_a_canonical_source_format(source_format: str) -> None:
+    with pytest.raises(ValueError, match="source_format"):
+        build_workflow_id_v2(SOURCE_HASH, source_format, "ja", "zh", PROFILE_HASH)
 
 
 @pytest.mark.parametrize(

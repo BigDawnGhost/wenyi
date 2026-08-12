@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
+from .source_format import validate_canonical_source_format
 from .workflow import copy_json_value, normalize_language_code, validate_sha256
 
 # These constants version both the JSON shape and the media type stored in the
@@ -21,7 +22,6 @@ from .workflow import copy_json_value, normalize_language_code, validate_sha256
 NORMALIZED_DOCUMENT_SCHEMA_VERSION = 1
 NORMALIZED_DOCUMENT_MEDIA_TYPE = "application/vnd.wenyi.normalized-document.v1+json"
 
-_CANONICAL_SOURCE_FORMATS = frozenset({"epub", "fb2", "html", "pdf", "text"})
 _DOCUMENT_KEYS = frozenset(
     {
         "schema_version",
@@ -337,8 +337,9 @@ def _copy_stable_mapping(value: object, *, field: str) -> dict[str, Any]:
 
 def _validate_source_format(value: object) -> str:
     """Require an already-canonical reader-family name."""
-    source_format = _require_utf8_string(value, field="source_format")
-    if source_format not in _CANONICAL_SOURCE_FORMATS:
+    try:
+        source_format = validate_canonical_source_format(value)
+    except ValueError:
         raise ValueError("source_format must be a supported canonical reader family")
     return source_format
 

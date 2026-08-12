@@ -85,6 +85,10 @@ class SQLiteWorkflowRepository:
             raise ValueError(
                 "create accepts only revision-zero state with empty operation and event ledgers"
             )
+        # Legacy identity_version=1 exists only as an in-memory migration view.
+        # New rows must use the format-bound identity produced by the v3 factory.
+        if normalized["request"]["identity_version"] != 2:
+            raise ValueError("create accepts only workflow identity_version=2")
         workflow_id = _validate_workflow_id(normalized["workflow_id"])
         timestamp_ms = _now_ms()
 

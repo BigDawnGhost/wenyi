@@ -12,6 +12,11 @@ from .normalized_document import (
     normalized_document_v1_counts,
     validate_normalized_document_v1,
 )
+from .source_format import (
+    CANONICAL_SOURCE_FORMATS,
+    normalize_source_format,
+    validate_canonical_source_format,
+)
 from .translation_batch import (
     TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
     TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION,
@@ -30,6 +35,7 @@ from .workflow import (
     WorkflowPhase,
     WorkflowStatus,
     build_workflow_id,
+    build_workflow_id_v2,
     copy_json_value,
     normalize_language_code,
     validate_artifact_ref,
@@ -42,6 +48,7 @@ from .workflow import (
 
 __all__ = [
     "ArtifactRef",
+    "CANONICAL_SOURCE_FORMATS",
     "FailureInfo",
     "NORMALIZED_DOCUMENT_MEDIA_TYPE",
     "NORMALIZED_DOCUMENT_SCHEMA_VERSION",
@@ -57,6 +64,7 @@ __all__ = [
     "WorkflowPhase",
     "WorkflowStatus",
     "build_workflow_id",
+    "build_workflow_id_v2",
     "build_translation_batch_key",
     "copy_json_value",
     "decode_normalized_document_v1",
@@ -64,9 +72,11 @@ __all__ = [
     "encode_normalized_document_v1",
     "encode_translation_batch_artifact",
     "normalize_language_code",
+    "normalize_source_format",
     "normalized_document_v1_counts",
     "parse_translation_batch_key",
     "validate_artifact_ref",
+    "validate_canonical_source_format",
     "validate_failure_info",
     "validate_json_value",
     "validate_normalized_document_v1",

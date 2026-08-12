@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import Any, TypedDict
 
+from .source_format import validate_canonical_source_format
+
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _OPERATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 _LANGUAGE_CODE_PATTERN = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$")
@@ -148,6 +150,36 @@ def build_workflow_id(
     # 版本化前缀给未来身份算法升级留下明确迁移边界。
     identity = "\0".join(
         ("wenyi-workflow-v1", source, normalized_source, normalized_target, profile)
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"wf-{digest}"
+
+
+def build_workflow_id_v2(
+    source_sha256: str,
+    source_format: str,
+    source_lang: str,
+    target_lang: str,
+    semantic_profile_hash: str,
+) -> str:
+    """Build the v2 identity with the canonical source-reader family included."""
+    source = validate_sha256(source_sha256, field="source_sha256")
+    canonical_format = validate_canonical_source_format(source_format)
+    profile = validate_sha256(semantic_profile_hash, field="semantic_profile_hash")
+    normalized_source = normalize_language_code(source_lang, field="source_lang")
+    normalized_target = normalize_language_code(target_lang, field="target_lang")
+
+    # A new domain separator keeps v2 disjoint from the legacy format-blind
+    # identity even before the canonical format field is compared.
+    identity = "\0".join(
+        (
+            "wenyi-workflow-v2",
+            source,
+            canonical_format,
+            normalized_source,
+            normalized_target,
+            profile,
+        )
     )
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     return f"wf-{digest}"
@@ -295,6 +327,7 @@ __all__ = [
     "WorkflowPhase",
     "WorkflowStatus",
     "build_workflow_id",
+    "build_workflow_id_v2",
     "copy_json_value",
     "normalize_language_code",
     "validate_artifact_ref",
