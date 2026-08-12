@@ -49,6 +49,7 @@ from ..agents.review_loop import (
 from ..agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
 from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
+from ..application.publishing import PublishingOptions, assemble_outputs
 from ..application.review.models import (
     _review_conflict_records,
     _review_content_digest,
@@ -83,6 +84,8 @@ from .metrics import RunMetricsRecorder
 from .review_evidence import BookEvidenceIndex
 from .review_run import ReviewOutcome, ReviewRunStore
 from .runstore import STATUS_DONE, RunStore, slugify, source_sha256
+from .runtime import SourceIdentityRuntime
+from .understanding import build_legacy_understanding
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -228,6 +231,9 @@ class Orchestrator:
         self.annotation_aligner = AnnotationAligner(self.client, config)
         self._active_run_metrics: RunMetricsRecorder | None = None
         self._run_metrics_suppressed = False
+        # Lambda intentionally resolves the compatibility-level module symbol at call
+        # time, preserving existing tests and integrations that patch this hasher.
+        self._source_identity = SourceIdentityRuntime(lambda path: source_sha256(path))
 
     def _bind_llm_events(
         self,
@@ -375,25 +381,22 @@ class Orchestrator:
 
     def _source_sha256(self, input_path: str) -> str:
         """在状态消费边界重新计算源文件哈希，不能信任锁外指标快照。"""
-        if self._active_run_metrics is not None:
-            verified = self._active_run_metrics.verify_input_sha256(input_path)
-            if verified is not None:
-                return verified
-        digest = source_sha256(input_path)
-        if self._active_run_metrics is not None:
-            self._active_run_metrics.input["sha256"] = digest
-        return digest
+        return self._source_identity.verified_sha256(
+            input_path,
+            recorder=self._active_run_metrics,
+        )
 
     def _initial_source_sha256(self, input_path: str) -> str:
         """取得解析前内容快照；有指标时复用其启动快照以少读一次文件。"""
-        if self._active_run_metrics is not None:
-            initial = self._active_run_metrics.input.get("sha256")
-            if isinstance(initial, str):
-                return initial
-        return source_sha256(input_path)
+        return self._source_identity.initial_sha256(
+            input_path,
+            recorder=self._active_run_metrics,
+        )
 
     def _ensure_store_source(self, store: RunStore, input_path: str) -> str:
         """校验候选状态确实属于当前输入文件。"""
+        # Preserve the compatibility seam: subclasses and integrations may
+        # override ``_source_sha256`` to supply the invocation's verified digest.
         return store.ensure_source_identity(
             input_path,
             actual_sha256=self._source_sha256(input_path),
@@ -843,61 +846,15 @@ class Orchestrator:
         幂等、可续跑：已有梗概/概览则跳过。返回全书概览（注入各章翻译 prompt）。
         关闭 book_understanding 时直接返回空串。
         """
-        if not self.config.pipeline.book_understanding:
-            store.log_event("book_understanding_skipped", reason="disabled")
-            return ""
-        manifest = store.load_manifest()
-        chapters = manifest.get("chapters", [])
-
-        # 各章梗概相互独立 → 并行调用（LLM 调用进线程池；落盘全部在主线程，
-        # 保持原子写不竞争，且逐章增量落盘、续跑粒度不变）。已有梗概的章跳过（幂等）。
-        loaded = {
-            c.get("index", i): store.load_chapter(c.get("index", i)) for i, c in enumerate(chapters)
-        }
-        todo = [
-            (ci, "\n".join(s.source for s in ch.text_segments))
-            for ci, ch in loaded.items()
-            if not ch.meta.get("source_digest")
-        ]
-        if todo:
-            store.log_event(
-                "book_understanding_chapter_digest_started",
-                chapters=[ci for ci, _ in todo],
-                workers=max(1, self.config.pipeline.prescan_concurrency),
-            )
-            workers = max(1, self.config.pipeline.prescan_concurrency)
-            if progress:
-                progress(0, len(todo), "预扫章节梗概")
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs = {ex.submit(self.synopsizer.digest_chapter, src): ci for ci, src in todo}
-                for n_done, fut in enumerate(as_completed(futs), 1):
-                    ci = futs[fut]
-                    loaded[ci].meta["source_digest"] = fut.result()  # 失败时 _ask_text 已回退 ""
-                    store.save_chapter(loaded[ci])
-                    store.log_event(
-                        "book_understanding_chapter_digest_saved",
-                        chapter=ci,
-                        digest=loaded[ci].meta["source_digest"],
-                    )
-                    if progress:
-                        progress(n_done, len(todo), "预扫章节梗概")
-
-        # 按 manifest 章序组装（与并发完成顺序无关）
-        digests = [
-            loaded[c.get("index", i)].meta.get("source_digest", "") or ""
-            for i, c in enumerate(chapters)
-        ]
-
-        analysis = store.load_analysis() or {}
-        synopsis = analysis.get("book_synopsis", "")
-        if not synopsis and any(d.strip() for d in digests):
-            if progress:
-                progress(0, 0, "生成全书概览…")
-            synopsis = self.synopsizer.book_synopsis(digests, self.analyzer.style_brief(analysis))
-            analysis["book_synopsis"] = synopsis
-            store.save_analysis(analysis)
-            store.log_event("book_synopsis_saved", synopsis=synopsis)
-        return synopsis
+        return build_legacy_understanding(
+            store,
+            enabled=self.config.pipeline.book_understanding,
+            concurrency=self.config.pipeline.prescan_concurrency,
+            digest_chapter=self.synopsizer.digest_chapter,
+            summarize_book=self.synopsizer.book_synopsis,
+            style_brief=self.analyzer.style_brief,
+            progress=progress,
+        )
 
     # ── 章节标题 / 目录项翻译（书名保持原文）──────────────────────────────
     def _translate_titles(
@@ -3236,46 +3193,26 @@ class Orchestrator:
         """从给定实时状态或只读快照生成配置要求的全部产物。"""
         from ..assemble.writer import assemble, bilingual_out_path
 
-        if progress:
-            progress(0, 0, "回填译文…")
         out_cfg = self.config.output
-        do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
-        if not do_mono and not do_bilingual:
-            do_mono = True
-
-        outputs: list[str] = []
-        if do_mono:
-            outputs.append(
-                self._measure_stage_call(
-                    "assemble",
-                    assemble,
-                    store,
-                    input_path,
-                    out_path=out_path,
-                    out_format=out_format,
-                    bilingual=False,
-                    about_page=out_cfg.about_page,
-                    pdf_engine=pdf_engine,
-                )
-            )
-        if do_bilingual:
-            bi_out_path = bilingual_out_path(out_path) if out_path else None
-            outputs.append(
-                self._measure_stage_call(
-                    "assemble",
-                    assemble,
-                    store,
-                    input_path,
-                    out_path=bi_out_path,
-                    out_format=out_format,
-                    bilingual=True,
-                    order=out_cfg.bilingual_order,
-                    preserve_source_style=out_cfg.bilingual_preserve_source_style,
-                    about_page=out_cfg.about_page,
-                    pdf_engine=pdf_engine,
-                )
-            )
-        return outputs
+        # 锁、快照与 source hash 校验属于上层调用路径；服务只消费这里交给它的状态视图。
+        return assemble_outputs(
+            store,
+            input_path=input_path,
+            progress=progress,
+            out_format=out_format,
+            out_path=out_path,
+            pdf_engine=pdf_engine,
+            options=PublishingOptions(
+                mono=out_cfg.mono,
+                bilingual=out_cfg.bilingual,
+                bilingual_order=out_cfg.bilingual_order,
+                bilingual_preserve_source_style=out_cfg.bilingual_preserve_source_style,
+                about_page=out_cfg.about_page,
+            ),
+            renderer=assemble,
+            bilingual_path=bilingual_out_path,
+            stage_call=self._measure_stage_call,
+        )
 
     def _finish_steps_locked(
         self,
