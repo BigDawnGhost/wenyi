@@ -9,6 +9,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from ..application.review.models import build_conflict_groups as build_conflict_groups
 from ..config import Config
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
@@ -581,43 +582,6 @@ def normalize_review_issues(
         item["issue_id"] = f"review-{len(prepared) + 1:05d}"
         prepared.append(item)
     return prepared
-
-
-def build_conflict_groups(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """找出不同审校块对同一一致性主题提出的互斥值。"""
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for issue in issues:
-        consistency = issue.get("consistency")
-        if not isinstance(consistency, dict):
-            continue
-        key = _text(consistency.get("key"))
-        proposed = _text(consistency.get("proposed_value"))
-        if key and proposed:
-            grouped.setdefault(key, []).append(issue)
-
-    conflicts: list[dict[str, Any]] = []
-    for key, group in grouped.items():
-        chunks = {issue.get("_chunk_id") for issue in group}
-        values = {
-            _normalized(_text(issue.get("consistency", {}).get("proposed_value")))
-            for issue in group
-        }
-        values.discard("")
-        if len(chunks) < 2 or len(values) < 2:
-            continue
-        conflicts.append(
-            {
-                "consistency_key": key,
-                "issues": group,
-                "first_position": min(
-                    (issue.get("chapter", -1), issue.get("index", -1)) for issue in group
-                ),
-            }
-        )
-    conflicts.sort(key=lambda item: (item["first_position"], item["consistency_key"]))
-    for ordinal, conflict in enumerate(conflicts, 1):
-        conflict["conflict_id"] = f"review-conflict-{ordinal:04d}"
-    return conflicts
 
 
 def apply_review_arbitrations(
