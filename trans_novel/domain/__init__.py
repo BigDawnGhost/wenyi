@@ -1,5 +1,15 @@
 """与编排框架、存储实现和用户界面无关的领域契约。"""
 
+from .translation_batch import (
+    TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION,
+    TranslationBatchArtifact,
+    build_translation_batch_key,
+    decode_translation_batch_artifact,
+    encode_translation_batch_artifact,
+    parse_translation_batch_key,
+    validate_translation_batch_artifact,
+)
 from .workflow import (
     ArtifactRef,
     FailureInfo,
@@ -22,16 +32,24 @@ __all__ = [
     "ArtifactRef",
     "FailureInfo",
     "StageStatus",
+    "TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE",
+    "TRANSLATION_BATCH_ARTIFACT_SCHEMA_VERSION",
+    "TranslationBatchArtifact",
     "WorkflowEvent",
     "WorkflowPhase",
     "WorkflowStatus",
     "build_workflow_id",
+    "build_translation_batch_key",
     "copy_json_value",
+    "decode_translation_batch_artifact",
+    "encode_translation_batch_artifact",
     "normalize_language_code",
+    "parse_translation_batch_key",
     "validate_artifact_ref",
     "validate_failure_info",
     "validate_json_value",
     "validate_operation_id",
     "validate_sha256",
+    "validate_translation_batch_artifact",
     "validate_workflow_event",
 ]
