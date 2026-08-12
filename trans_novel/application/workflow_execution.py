@@ -24,14 +24,24 @@ _NON_EXECUTABLE_STATUSES = frozenset(
         WorkflowStatus.FAILED.value,
     }
 )
+_ACTIVE_STATUSES = frozenset(
+    {
+        WorkflowStatus.PENDING.value,
+        WorkflowStatus.RUNNING.value,
+    }
+)
 
 
 class WorkflowDidNotProgress(RuntimeError):
-    """Raised when an active phase returns without a durable state advance."""
+    """Raised when a runner returns without durably finishing or stopping its phase."""
 
 
 class UnsupportedWorkflowPhase(RuntimeError):
     """Raised when an active workflow has no registered phase runner."""
+
+
+class WorkflowObservationConflict(RuntimeError):
+    """Raised when a replay expectation contradicts authoritative workflow state."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,9 +63,11 @@ class WorkflowPhaseRunner(Protocol):
     """Application service that durably executes one currently selected phase.
 
     A runner receives the detached snapshot used for dispatch and the narrow
-    ports needed to publish artifacts, commit a compare-and-swap patch, and
-    report invocation-scoped observations.  It must return ``None`` and commit
-    progress through ``repository``; mutating ``state`` alone has no effect.
+    ports needed to publish artifacts, commit compare-and-swap patches, and
+    report invocation-scoped observations.  It may commit multiple internal
+    batches, but before returning it must leave the selected phase, pause/fail,
+    or complete the workflow.  It returns ``None``; mutating ``state`` alone
+    has no effect.
     """
 
     def __call__(
@@ -66,7 +78,7 @@ class WorkflowPhaseRunner(Protocol):
         artifacts: ArtifactStore,
         context: ExecutionContext,
     ) -> None:
-        """Execute and commit the phase selected by ``state.cursor.phase``."""
+        """Durably finish or stop the phase selected by ``state.cursor.phase``."""
         ...
 
 
@@ -121,6 +133,7 @@ def execute_current_phase(
     artifacts: ArtifactStore,
     context: ExecutionContext,
     runners: WorkflowPhaseRunners,
+    expected_observation: GraphObservation | None = None,
 ) -> GraphObservation:
     """Execute at most one active phase and return freshly committed progress.
 
@@ -128,13 +141,18 @@ def execute_current_phase(
     running workflows dispatch from their persisted cursor, allowing the
     preparation runner to perform the initial pending-to-running transition.
     After the runner returns, the repository is read again.  Every active runner
-    must commit at least one patch, so a revision that did not strictly increase
-    is rejected before a graph can spin around a no-op service.
+    must commit at least one patch and leave its selected phase unless it paused
+    or failed.  This keeps batch loops inside the application service instead of
+    turning each batch into a LangGraph recursion step.
     """
-    # The first load owns dispatch.  A checkpoint observation is only a wake-up
-    # hint and therefore never participates in selecting the phase runner.
+    # The first load owns dispatch.  A checkpoint observation may fence replay,
+    # but it never replaces the repository snapshot used to select the runner.
     state = repository.get(workflow_id)
     before = _observe(state)
+    if expected_observation is not None:
+        replay_result = _check_replay_expectation(before, expected_observation)
+        if replay_result is not None:
+            return replay_result
     if before.status in _NON_EXECUTABLE_STATUSES:
         return before
 
@@ -154,7 +172,50 @@ def execute_current_phase(
             f"workflow {workflow_id!r} did not advance active phase "
             f"{before.phase!r} beyond revision {before.revision}"
         )
+    if after.status in _ACTIVE_STATUSES and after.phase == before.phase:
+        raise WorkflowDidNotProgress(
+            f"workflow {workflow_id!r} remained active in phase {before.phase!r} "
+            f"after advancing to revision {after.revision}"
+        )
+    if (
+        after.status == WorkflowStatus.COMPLETED.value
+        and after.phase != WorkflowPhase.COMPLETE.value
+    ):
+        raise WorkflowDidNotProgress(
+            f"workflow {workflow_id!r} completed without entering phase "
+            f"{WorkflowPhase.COMPLETE.value!r}"
+        )
     return after
+
+
+def _check_replay_expectation(
+    actual: GraphObservation,
+    expected: GraphObservation,
+) -> GraphObservation | None:
+    """Fence node replay against a stale or contradictory graph checkpoint.
+
+    A newer repository revision proves the prior node attempt committed before
+    its checkpoint write, so replay becomes a read-only hydration.  An older
+    repository or different routing fields at the same revision cannot arise
+    from the repository contract and therefore fails closed.
+    """
+    if actual.workflow_id != expected.workflow_id:
+        raise WorkflowObservationConflict(
+            "expected observation belongs to a different workflow: "
+            f"{expected.workflow_id!r} != {actual.workflow_id!r}"
+        )
+    if actual.revision > expected.revision:
+        return actual
+    if actual.revision < expected.revision:
+        raise WorkflowObservationConflict(
+            f"workflow {actual.workflow_id!r} repository revision {actual.revision} "
+            f"is behind expected revision {expected.revision}"
+        )
+    if actual.status != expected.status or actual.phase != expected.phase:
+        raise WorkflowObservationConflict(
+            f"workflow {actual.workflow_id!r} routing changed without a revision advance"
+        )
+    return None
 
 
 def _observe(state: WorkflowState) -> GraphObservation:
@@ -171,6 +232,7 @@ __all__ = [
     "GraphObservation",
     "UnsupportedWorkflowPhase",
     "WorkflowDidNotProgress",
+    "WorkflowObservationConflict",
     "WorkflowPhaseRunner",
     "WorkflowPhaseRunners",
     "execute_current_phase",

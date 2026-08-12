@@ -15,6 +15,7 @@ from trans_novel.application.workflow_execution import (
     GraphObservation,
     UnsupportedWorkflowPhase,
     WorkflowDidNotProgress,
+    WorkflowObservationConflict,
     WorkflowPhaseRunners,
     execute_current_phase,
     hydrate,
@@ -81,6 +82,27 @@ class _RunnerProbe:
     ) -> None:
         self.calls.append((state, repository, artifacts, context))
         if self.commit:
+            cast(_RepositoryProbe, repository).commit_next()
+
+
+class _MultiCommitRunner:
+    """Commit internal batches before leaving the phase in one service call."""
+
+    def __init__(self, *, commits: int) -> None:
+        self.commits = commits
+        self.calls = 0
+
+    def __call__(
+        self,
+        state: WorkflowState,
+        *,
+        repository: WorkflowRepository,
+        artifacts: ArtifactStore,
+        context: ExecutionContext,
+    ) -> None:
+        del state, artifacts, context
+        self.calls += 1
+        for _ in range(self.commits):
             cast(_RepositoryProbe, repository).commit_next()
 
 
@@ -157,7 +179,7 @@ def test_non_executable_statuses_return_without_calling_any_runner(status: str) 
 )
 def test_each_active_phase_receives_the_detached_state_and_narrow_ports(phase: str) -> None:
     before = _state(phase=phase)
-    after = _state(revision=5, phase=phase)
+    after = _state(revision=5, status=WorkflowStatus.PAUSED.value, phase=phase)
     repository = _RepositoryProbe(before, after)
     artifacts = cast(ArtifactStore, object())
     context = ExecutionContext(run_id=f"phase:{phase}")
@@ -171,7 +193,7 @@ def test_each_active_phase_receives_the_detached_state_and_narrow_ports(phase: s
         runners=runners,
     )
 
-    assert observation == GraphObservation(before["workflow_id"], 5, "running", phase)
+    assert observation == GraphObservation(before["workflow_id"], 5, "paused", phase)
     assert repository.get_calls == [before["workflow_id"], before["workflow_id"]]
     selected = probes[phase]
     assert len(selected.calls) == 1
@@ -183,22 +205,72 @@ def test_each_active_phase_receives_the_detached_state_and_narrow_ports(phase: s
     assert all(not probe.calls for name, probe in probes.items() if name != phase)
 
 
-def test_pending_preparation_can_commit_the_initial_running_transition() -> None:
+def test_pending_preparation_cannot_return_after_only_starting_the_same_phase() -> None:
     before = _state(revision=0, status=WorkflowStatus.PENDING.value)
     after = _state(revision=1, status=WorkflowStatus.RUNNING.value)
     repository = _RepositoryProbe(before, after)
     runners, probes = _runners(WorkflowPhase.PREPARE.value, commit=True)
 
+    with pytest.raises(WorkflowDidNotProgress, match="remained active in phase 'prepare'"):
+        execute_current_phase(
+            before["workflow_id"],
+            repository=repository,
+            artifacts=cast(ArtifactStore, object()),
+            context=ExecutionContext(run_id="start"),
+            runners=runners,
+        )
+
+    assert len(probes[WorkflowPhase.PREPARE.value].calls) == 1
+
+
+def test_runner_can_commit_multiple_internal_batches_before_leaving_phase() -> None:
+    before = _state(revision=10, phase=WorkflowPhase.TRANSLATE_CHAPTERS.value)
+    internal_batch = _state(revision=11, phase=WorkflowPhase.TRANSLATE_CHAPTERS.value)
+    after = _state(revision=12, phase=WorkflowPhase.TRANSLATE_TITLES.value)
+    repository = _RepositoryProbe(before, internal_batch, after)
+    multi_commit = _MultiCommitRunner(commits=2)
+    runners, probes = _runners()
+    runners = WorkflowPhaseRunners(
+        prepare=probes[WorkflowPhase.PREPARE.value],
+        understand=probes[WorkflowPhase.UNDERSTAND.value],
+        translate_chapters=multi_commit,
+        translate_titles=probes[WorkflowPhase.TRANSLATE_TITLES.value],
+        review=probes[WorkflowPhase.REVIEW.value],
+        quality=probes[WorkflowPhase.QUALITY.value],
+        export=probes[WorkflowPhase.EXPORT.value],
+    )
+
     observation = execute_current_phase(
         before["workflow_id"],
         repository=repository,
         artifacts=cast(ArtifactStore, object()),
-        context=ExecutionContext(run_id="start"),
+        context=ExecutionContext(run_id="internal-batches"),
         runners=runners,
     )
 
-    assert observation == GraphObservation(before["workflow_id"], 1, "running", "prepare")
-    assert len(probes[WorkflowPhase.PREPARE.value].calls) == 1
+    assert observation == GraphObservation(
+        before["workflow_id"],
+        12,
+        "running",
+        "translate_titles",
+    )
+    assert multi_commit.calls == 1
+
+
+def test_revision_progress_without_leaving_active_phase_is_rejected() -> None:
+    before = _state(revision=20, phase=WorkflowPhase.REVIEW.value)
+    after = _state(revision=21, phase=WorkflowPhase.REVIEW.value)
+    repository = _RepositoryProbe(before, after)
+    runners, _ = _runners(WorkflowPhase.REVIEW.value, commit=True)
+
+    with pytest.raises(WorkflowDidNotProgress, match="remained active in phase 'review'"):
+        execute_current_phase(
+            before["workflow_id"],
+            repository=repository,
+            artifacts=cast(ArtifactStore, object()),
+            context=ExecutionContext(run_id="unfinished-phase"),
+            runners=runners,
+        )
 
 
 def test_runner_result_is_ignored_in_favor_of_the_post_commit_reload() -> None:
@@ -260,6 +332,66 @@ def test_same_revision_is_rejected_even_if_fake_repository_changes_routing_field
             context=ExecutionContext(run_id="boundary"),
             runners=runners,
         )
+
+
+def test_replay_fence_hydrates_newer_repository_without_running_next_phase() -> None:
+    expected = GraphObservation("wf-" + "a" * 64, 4, "running", "understand")
+    repository = _RepositoryProbe(_state(revision=5, phase=WorkflowPhase.TRANSLATE_CHAPTERS.value))
+    runners, probes = _runners()
+
+    observation = execute_current_phase(
+        expected.workflow_id,
+        repository=repository,
+        artifacts=cast(ArtifactStore, object()),
+        context=ExecutionContext(run_id="replay"),
+        runners=runners,
+        expected_observation=expected,
+    )
+
+    assert observation == GraphObservation(
+        expected.workflow_id,
+        5,
+        "running",
+        WorkflowPhase.TRANSLATE_CHAPTERS.value,
+    )
+    assert all(not probe.calls for probe in probes.values())
+    assert repository.get_calls == [expected.workflow_id]
+
+
+@pytest.mark.parametrize(
+    "actual",
+    [
+        _state(revision=3, phase=WorkflowPhase.UNDERSTAND.value),
+        _state(revision=4, phase=WorkflowPhase.REVIEW.value),
+        cast(
+            WorkflowState,
+            {
+                "workflow_id": "wf-" + "b" * 64,
+                "revision": 4,
+                "status": WorkflowStatus.RUNNING.value,
+                "cursor": {"phase": WorkflowPhase.UNDERSTAND.value},
+            },
+        ),
+    ],
+)
+def test_replay_fence_rejects_repository_regression_or_same_revision_conflict(
+    actual: WorkflowState,
+) -> None:
+    expected = GraphObservation("wf-" + "a" * 64, 4, "running", "understand")
+    repository = _RepositoryProbe(actual)
+    runners, probes = _runners()
+
+    with pytest.raises(WorkflowObservationConflict):
+        execute_current_phase(
+            expected.workflow_id,
+            repository=repository,
+            artifacts=cast(ArtifactStore, object()),
+            context=ExecutionContext(run_id="bad-replay"),
+            runners=runners,
+            expected_observation=expected,
+        )
+
+    assert all(not probe.calls for probe in probes.values())
 
 
 def test_active_complete_or_unknown_phase_fails_before_a_runner_call() -> None:
