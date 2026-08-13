@@ -1664,6 +1664,10 @@ def test_prepare_failure_cannot_smuggle_business_progress(started: bool) -> None
 def test_running_failure_cannot_advance_recovery_cursor() -> None:
     """失败边界不能把未成功提交的翻译批次伪装成恢复游标。"""
     running = _translation_running_state()
+    batch = _artifact(
+        uri="artifact://batches/0-0-5.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
 
     with pytest.raises(InvalidStatePatch, match="cursor 业务进度"):
         apply_state_patch(
@@ -1688,6 +1692,9 @@ def test_running_failure_cannot_advance_recovery_cursor() -> None:
                     "translation": {
                         **running["translation"],
                         "status": StageStatus.FAILED.value,
+                        # 让候选快照自身满足 cursor/batch 交叉约束，确保本测试
+                        # 真正命中相邻状态的失败控制边界，而非提前失败于形状校验。
+                        "batch_artifacts": {"0:0:5": batch},
                     },
                 },
             ),
@@ -1695,19 +1702,38 @@ def test_running_failure_cannot_advance_recovery_cursor() -> None:
 
 
 def test_running_failure_cannot_publish_uncommitted_batch_artifact() -> None:
-    """游标不变时也不能通过失败补丁认领尚未成功提交的 batch。"""
+    """游标不变时也不能通过失败补丁改写已提交 batch 引用。"""
     running = _translation_running_state()
-    batch = _artifact(
+    committed_batch = _artifact(
         uri="artifact://batches/0-0-5.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
+    positioned = apply_state_patch(
+        running,
+        StatePatch(
+            operation_id="translation:commit-batch-before-failure",
+            expected_revision=4,
+            updates={
+                "cursor": {**running["cursor"], "segment_offset": 5},
+                "translation": {
+                    **running["translation"],
+                    "batch_artifacts": {"0:0:5": committed_batch},
+                },
+            },
+        ),
+    ).state
+    rewritten_batch = _artifact(
+        uri="artifact://batches/0-0-5-rewritten.json",
+        sha256="c" * 64,
         media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
     )
 
     with pytest.raises(InvalidStatePatch, match="translation 业务内容"):
         apply_state_patch(
-            running,
+            positioned,
             StatePatch(
                 operation_id="translation:fail-with-batch-artifact",
-                expected_revision=4,
+                expected_revision=5,
                 updates={
                     "status": WorkflowStatus.FAILED.value,
                     "failure": {
@@ -1717,9 +1743,11 @@ def test_running_failure_cannot_publish_uncommitted_batch_artifact() -> None:
                         "details": {},
                     },
                     "translation": {
-                        **running["translation"],
+                        **positioned["translation"],
                         "status": StageStatus.FAILED.value,
-                        "batch_artifacts": {"0:0:5": batch},
+                        # 同键的新引用仍是一个自洽快照，但失败控制操作无权
+                        # 改写最后一次成功提交的业务内容。
+                        "batch_artifacts": {"0:0:5": rewritten_batch},
                     },
                 },
             ),
