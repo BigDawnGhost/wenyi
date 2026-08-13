@@ -77,7 +77,6 @@ def _running_patch(
                 "payload": {"phase": "prepare"},
             },
         ),
-        created_artifacts=(_artifact(uri="artifact://normalized/source.epub"),),
     )
 
 
@@ -298,7 +297,7 @@ def test_valid_patch_is_atomic_and_advances_revision_once() -> None:
     assert application.state["status"] == WorkflowStatus.RUNNING.value
     assert application.state["preparation"]["status"] == StageStatus.RUNNING.value
     assert application.events[0]["event_id"] == "prepare-started"
-    assert len(application.created_artifacts) == 1
+    assert application.created_artifacts == ()
     assert not application.duplicate
 
 
@@ -442,7 +441,13 @@ def test_event_ids_are_unique_within_and_across_operations() -> None:
         StatePatch(
             operation_id="events:first-owner",
             expected_revision=0,
-            updates={"status": WorkflowStatus.RUNNING.value},
+            updates={
+                "status": WorkflowStatus.RUNNING.value,
+                "preparation": {
+                    "status": StageStatus.RUNNING.value,
+                    "normalized_source": None,
+                },
+            },
             events=(event,),
         ),
     )
@@ -815,6 +820,10 @@ def test_empty_book_structure_is_frozen_once_document_is_bound() -> None:
             expected_revision=0,
             updates={
                 "status": WorkflowStatus.RUNNING.value,
+                "preparation": {
+                    "status": StageStatus.RUNNING.value,
+                    "normalized_source": None,
+                },
                 "book": {
                     "document_artifact": _artifact(uri="artifact://documents/empty.json"),
                     "chapter_count": 0,
@@ -1568,6 +1577,315 @@ def test_paused_and_failed_workflows_cannot_continue_business_progress() -> None
                 },
             ),
         )
+
+
+@pytest.mark.parametrize("started", [False, True], ids=["pending", "running"])
+def test_prepare_failure_cannot_smuggle_business_progress(started: bool) -> None:
+    """失败补丁只改变控制状态，保留最后一次成功提交的恢复事实。"""
+    current = _state()
+    if started:
+        current = apply_state_patch(current, _running_patch()).state
+
+    expected_revision = current["revision"]
+    failure = {
+        "code": "prepare_error",
+        "message": "source preparation failed",
+        "retryable": True,
+        "details": {},
+    }
+    failed_preparation = {
+        "status": StageStatus.FAILED.value,
+        "normalized_source": None,
+    }
+    invalid_progress = (
+        (
+            "book",
+            {
+                "book": {
+                    "document_artifact": _artifact(uri="artifact://documents/partial.json"),
+                    "chapter_count": 1,
+                    "source_segment_count": 1,
+                }
+            },
+            "book 业务进度",
+        ),
+        (
+            "accounting",
+            {
+                "accounting": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 0,
+                    "total_tokens": 1,
+                }
+            },
+            "accounting 业务进度",
+        ),
+        (
+            "preparation-payload",
+            {
+                "preparation": {
+                    "status": StageStatus.FAILED.value,
+                    "normalized_source": _artifact(uri="artifact://normalized/partial.epub"),
+                }
+            },
+            "preparation 业务内容",
+        ),
+        (
+            "future-stage-payload",
+            {
+                "exports": {
+                    "status": StageStatus.PENDING.value,
+                    "requested_formats": ["epub"],
+                    "outputs": {},
+                }
+            },
+            "exports 业务内容",
+        ),
+    )
+
+    for case, extra_updates, error_pattern in invalid_progress:
+        updates = {
+            "status": WorkflowStatus.FAILED.value,
+            "failure": failure,
+            "preparation": failed_preparation,
+            **extra_updates,
+        }
+        with pytest.raises(InvalidStatePatch, match=error_pattern):
+            apply_state_patch(
+                current,
+                StatePatch(
+                    operation_id=f"prepare:fail-with-{case}:{current['status']}",
+                    expected_revision=expected_revision,
+                    updates=updates,
+                ),
+            )
+
+
+def test_running_failure_cannot_advance_recovery_cursor() -> None:
+    """失败边界不能把未成功提交的翻译批次伪装成恢复游标。"""
+    running = _translation_running_state()
+
+    with pytest.raises(InvalidStatePatch, match="cursor 业务进度"):
+        apply_state_patch(
+            running,
+            StatePatch(
+                operation_id="translation:fail-with-cursor-progress",
+                expected_revision=4,
+                updates={
+                    "status": WorkflowStatus.FAILED.value,
+                    "failure": {
+                        "code": "translation_error",
+                        "message": "batch did not commit successfully",
+                        "retryable": True,
+                        "details": {},
+                    },
+                    "cursor": {
+                        "phase": WorkflowPhase.TRANSLATE_CHAPTERS.value,
+                        "chapter_index": 0,
+                        "segment_offset": 5,
+                        "review_round": None,
+                    },
+                    "translation": {
+                        **running["translation"],
+                        "status": StageStatus.FAILED.value,
+                    },
+                },
+            ),
+        )
+
+
+def test_running_failure_cannot_publish_uncommitted_batch_artifact() -> None:
+    """游标不变时也不能通过失败补丁认领尚未成功提交的 batch。"""
+    running = _translation_running_state()
+    batch = _artifact(
+        uri="artifact://batches/0-0-5.json",
+        media_type=TRANSLATION_BATCH_ARTIFACT_MEDIA_TYPE,
+    )
+
+    with pytest.raises(InvalidStatePatch, match="translation 业务内容"):
+        apply_state_patch(
+            running,
+            StatePatch(
+                operation_id="translation:fail-with-batch-artifact",
+                expected_revision=4,
+                updates={
+                    "status": WorkflowStatus.FAILED.value,
+                    "failure": {
+                        "code": "translation_error",
+                        "message": "batch did not commit successfully",
+                        "retryable": True,
+                        "details": {},
+                    },
+                    "translation": {
+                        **running["translation"],
+                        "status": StageStatus.FAILED.value,
+                        "batch_artifacts": {"0:0:5": batch},
+                    },
+                },
+            ),
+        )
+
+
+def test_prepare_failure_accepts_only_failure_summary_and_stage_status() -> None:
+    """合法失败保留 prepare 恢复位置，并可发布规范生命周期事件。"""
+    running = apply_state_patch(_state(), _running_patch()).state
+    failure = {
+        "code": "prepare_error",
+        "message": "source preparation failed",
+        "retryable": True,
+        "details": {},
+    }
+
+    application = apply_state_patch(
+        running,
+        StatePatch(
+            operation_id="prepare:fail-cleanly",
+            expected_revision=1,
+            updates={
+                "status": WorkflowStatus.FAILED.value,
+                "failure": failure,
+                "preparation": {
+                    "status": StageStatus.FAILED.value,
+                    "normalized_source": None,
+                },
+            },
+            events=(
+                {
+                    "event_id": "prepare-failed-cleanly",
+                    "event_type": "workflow.failed",
+                    "payload": {"code": failure["code"], "retryable": True},
+                },
+            ),
+        ),
+    )
+
+    assert application.state["cursor"] == running["cursor"]
+    assert application.state["book"] == running["book"]
+    assert application.state["accounting"] == running["accounting"]
+    assert application.state["preparation"]["status"] == StageStatus.FAILED.value
+
+
+def _failure_source_state(status: str):
+    """构造 pending/running/paused 三种合法的失败源快照。"""
+    state = _state()
+    if status == WorkflowStatus.PENDING.value:
+        return state
+    state = apply_state_patch(state, _running_patch()).state
+    if status == WorkflowStatus.PAUSED.value:
+        state = apply_state_patch(
+            state,
+            StatePatch(
+                operation_id="workflow:pause-before-failure-effects",
+                expected_revision=1,
+                updates={"status": WorkflowStatus.PAUSED.value},
+            ),
+        ).state
+    return state
+
+
+def _clean_failure_patch(state, *, events=(), created_artifacts=()) -> StatePatch:
+    """为控制效果矩阵构造只改变失败摘要与阶段状态的补丁。"""
+    revision = state["revision"]
+    return StatePatch(
+        operation_id=f"prepare:fail-effects:{state['status']}:{revision}",
+        expected_revision=revision,
+        updates={
+            "status": WorkflowStatus.FAILED.value,
+            "failure": {
+                "code": "prepare_error",
+                "message": "source preparation failed",
+                "retryable": True,
+                "details": {},
+            },
+            "preparation": {
+                **state["preparation"],
+                "status": StageStatus.FAILED.value,
+            },
+        },
+        events=events,
+        created_artifacts=created_artifacts,
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        WorkflowStatus.PENDING.value,
+        WorkflowStatus.RUNNING.value,
+        WorkflowStatus.PAUSED.value,
+    ],
+)
+def test_failure_control_effects_are_canonical_for_every_source_status(status: str) -> None:
+    """每种可失败状态都共享同一个事件和 created-artifact 边界。"""
+    state = _failure_source_state(status)
+    revision = state["revision"]
+    canonical_event = {
+        "event_id": f"prepare-failed-effects-{revision}",
+        "event_type": "workflow.failed",
+        "payload": {"code": "prepare_error", "retryable": True},
+    }
+
+    accepted = apply_state_patch(
+        state,
+        _clean_failure_patch(state, events=(canonical_event,)),
+    )
+    assert accepted.state["status"] == WorkflowStatus.FAILED.value
+
+    invalid_effects = (
+        (
+            "artifact",
+            (),
+            (_artifact(uri="artifact://normalized/orphan.epub"),),
+        ),
+        (
+            "business-event",
+            (
+                {
+                    "event_id": f"prepare-business-event-{revision}",
+                    "event_type": "preparation.parsed",
+                    "payload": {},
+                },
+            ),
+            (),
+        ),
+        (
+            "wrong-payload",
+            (
+                {
+                    **canonical_event,
+                    "event_id": f"prepare-wrong-payload-{revision}",
+                    "payload": {"code": "different", "retryable": True},
+                },
+            ),
+            (),
+        ),
+        (
+            "multiple-events",
+            (
+                canonical_event,
+                {
+                    **canonical_event,
+                    "event_id": f"prepare-failed-effects-extra-{revision}",
+                },
+            ),
+            (),
+        ),
+    )
+    for suffix, events, artifacts in invalid_effects:
+        patch = _clean_failure_patch(
+            state,
+            events=events,
+            created_artifacts=artifacts,
+        )
+        patch = StatePatch(
+            operation_id=f"{patch.operation_id}:{suffix}",
+            expected_revision=patch.expected_revision,
+            updates=patch.updates,
+            events=patch.events,
+            created_artifacts=patch.created_artifacts,
+        )
+        with pytest.raises(InvalidStatePatch):
+            apply_state_patch(state, patch)
 
 
 def test_non_retryable_failure_requires_a_separate_override_api() -> None:

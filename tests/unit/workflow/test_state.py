@@ -392,6 +392,22 @@ def test_pending_workflow_cannot_contain_accounting_activity() -> None:
         validate_workflow_state(state)
 
 
+@pytest.mark.parametrize(
+    "status",
+    [WorkflowStatus.RUNNING.value, WorkflowStatus.PAUSED.value],
+)
+def test_active_prepare_workflow_requires_preparation_to_be_running(status: str) -> None:
+    """顶层运行或暂停都必须建立在已启动 preparation 之上。"""
+    state = _state()
+    state["status"] = status
+
+    with pytest.raises(ValueError, match="preparation=pending"):
+        validate_workflow_state(state)
+
+    state["preparation"]["status"] = StageStatus.RUNNING.value
+    validate_workflow_state(state)
+
+
 def test_revision_and_operation_ledger_must_advance_together() -> None:
     """CAS revision 与幂等操作数量是一份提交历史的两个投影。"""
     revision_ahead = _state()
@@ -424,7 +440,7 @@ def test_each_runtime_phase_has_a_self_consistent_stage_snapshot(phase_builder: 
 
     # prepare 内部尚未产出文档；离开该阶段后统一绑定可恢复的 document artifact。
     if phase_builder == "prepare":
-        pass
+        state["preparation"]["status"] = StageStatus.RUNNING.value
     elif phase_builder == "understand":
         state["preparation"] = {
             "status": StageStatus.COMPLETED.value,
@@ -496,6 +512,10 @@ def test_each_runtime_phase_has_a_self_consistent_stage_snapshot(phase_builder: 
             lambda state: state.update(
                 {
                     "status": WorkflowStatus.RUNNING.value,
+                    "preparation": {
+                        "status": StageStatus.RUNNING.value,
+                        "normalized_source": None,
+                    },
                     "review": {
                         "status": StageStatus.RUNNING.value,
                         "round": 1,
@@ -778,6 +798,7 @@ def test_book_segment_counts_cannot_exist_without_a_document_artifact() -> None:
     """书籍结构必须作为同一份已发布 document artifact 的不可变元数据。"""
     state = _state()
     state["status"] = WorkflowStatus.RUNNING.value
+    state["preparation"]["status"] = StageStatus.RUNNING.value
     state["book"]["source_segment_count"] = 1
 
     with pytest.raises(ValueError, match="document_artifact"):

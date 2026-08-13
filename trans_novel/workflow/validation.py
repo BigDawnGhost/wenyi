@@ -278,8 +278,20 @@ def _validate_execution_lifecycle(
     if phase != WorkflowPhase.PREPARE.value and book["document_artifact"] is None:
         raise ValueError(f"cursor.phase={phase} 必须包含 book.document_artifact")
 
-    # failed 快照仍遵守阶段先决条件；翻译期的两个并行阶段均可能是失败源。
+    # prepare 是唯一允许顶层 pending 的 phase；一旦工作流开始或暂停，当前
+    # preparation 也必须已经进入 running，不能留下“已调度但尚未启动”的歧义快照。
     effective_requirements = dict(requirements)
+    if (
+        status
+        in {
+            WorkflowStatus.RUNNING.value,
+            WorkflowStatus.PAUSED.value,
+        }
+        and phase == WorkflowPhase.PREPARE.value
+    ):
+        effective_requirements["preparation"] = _RUNNING_ONLY
+
+    # failed 快照仍遵守阶段先决条件；翻译期的两个并行阶段均可能是失败源。
     if status == WorkflowStatus.FAILED.value:
         active_stage_names = _PHASE_ACTIVE_STAGE_NAMES[phase]
         if len(active_stage_names) == 1:

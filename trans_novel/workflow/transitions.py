@@ -409,6 +409,15 @@ def _validate_control_boundaries(current: WorkflowState, candidate: WorkflowStat
     """冻结暂停/失败快照；恢复操作只改变控制状态，不夹带新的业务进度。"""
     current_status = current["status"]
     next_status = candidate["status"]
+    if next_status == WorkflowStatus.FAILED.value and current_status in {
+        WorkflowStatus.PENDING.value,
+        WorkflowStatus.RUNNING.value,
+        WorkflowStatus.PAUSED.value,
+    }:
+        # 失败提交只记录 failure 摘要和失败阶段的 status。游标、书籍、用量及
+        # 各阶段 payload 必须停留在最后一次成功提交，恢复时才有唯一可信起点。
+        _require_status_only_stage_changes(current, candidate)
+        return
     if (
         current_status == WorkflowStatus.RUNNING.value
         and next_status == WorkflowStatus.PAUSED.value
@@ -418,9 +427,6 @@ def _validate_control_boundaries(current: WorkflowState, candidate: WorkflowStat
     if current_status == WorkflowStatus.PAUSED.value:
         if next_status == WorkflowStatus.RUNNING.value:
             _require_same_progress(current, candidate)
-            return
-        if next_status == WorkflowStatus.FAILED.value:
-            _require_status_only_stage_changes(current, candidate)
             return
     if current_status != WorkflowStatus.FAILED.value:
         return
@@ -468,4 +474,4 @@ def _require_status_only_stage_changes(
             old_stage["status"] != new_stage["status"]
             and new_stage["status"] != StageStatus.FAILED.value
         ):
-            raise InvalidStatePatch(f"暂停转失败时 {name} 只能保持原状态或标记 failed")
+            raise InvalidStatePatch(f"工作流转失败时 {name} 只能保持原状态或标记 failed")
