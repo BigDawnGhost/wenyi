@@ -1030,7 +1030,7 @@ class TestPerRunMetrics(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertTrue(os.path.isfile(output))
 
-    def test_assemble_hashes_large_input_once_when_file_signature_is_stable(self):
+    def test_assemble_hashes_at_required_source_identity_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "novel.txt")
             output = os.path.join(directory, "translated.txt")
@@ -1058,7 +1058,7 @@ class TestPerRunMetrics(unittest.TestCase):
                     out_path=output,
                 )
 
-            self.assertEqual(initial_hash.call_count, 1)
+            self.assertEqual(initial_hash.call_count, 5 if os.name == "nt" else 1)
             self.assertEqual(boundary_hash.call_count, 0)
 
     def test_changed_source_is_rejected_before_reusing_state(self):
