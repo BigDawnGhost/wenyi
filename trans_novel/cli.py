@@ -606,7 +606,9 @@ def glossary_list(
     g = GlossaryStore(store.glossary_path)
     try:
         table = Table("原文", "译文", "类型", "状态")
-        for term in g.all_terms():
+        # all_terms() 现按入库顺序返回（供 prompt 注入复用前缀缓存）；
+        # CLI 展示仍按类型/原文分组，只在这里排序，不改共享数据源的顺序。
+        for term in sorted(g.all_terms(), key=lambda t: (t.type, t.source)):
             table.add_row(
                 term.source,
                 term.target,
