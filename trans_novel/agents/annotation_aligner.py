@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
@@ -307,6 +308,98 @@ class AnnotationAligner(Agent):
         )
 
     def align_units(self, units: list[AnnotationUnit]) -> list[AnnotationAlignment]:
+        """Align multiple logical blocks, splitting multi-annotation blocks per item.
+
+        A block with N>1 annotations used to go through a single model call
+        that had to reproduce the whole immutable target byte-for-byte *and*
+        place all N markers correctly at once; any single mistake (even in one
+        unrelated marker) invalidated the whole block. That all-or-nothing
+        contract is why annotation-dense books (e.g. a heavily footnoted
+        classic where nearly every paragraph carries a note) tend to fall back
+        to paragraph-end placement far more than the per-annotation model
+        error rate would suggest.
+
+        Blocks with more than one annotation are instead split into one
+        independent, concurrently issued request per annotation: each request
+        only has to place a single marker, so a bad response only costs that
+        one note instead of every note sharing its paragraph. Concurrency
+        (bounded by ``pipeline.annotation_alignment_concurrency``) keeps
+        wall-clock time from growing with the number of notes per block.
+        Results preserve input order regardless of which path a block took.
+        """
+
+        if not units:
+            return []
+
+        results: list[AnnotationAlignment | None] = [None] * len(units)
+        direct_indices = [index for index, unit in enumerate(units) if len(unit.items) <= 1]
+        split_indices = [index for index, unit in enumerate(units) if len(unit.items) > 1]
+
+        if direct_indices:
+            direct_units = [units[index] for index in direct_indices]
+            for index, result in zip(direct_indices, self._align_batch(direct_units)):
+                results[index] = result
+
+        for index in split_indices:
+            results[index] = self._align_split_unit(units[index])
+
+        return [
+            result if result is not None else fallback_alignment(units[index])
+            for index, result in enumerate(results)
+        ]
+
+    def _align_split_unit(self, unit: AnnotationUnit) -> AnnotationAlignment:
+        """Align every annotation of one block through its own concurrent request.
+
+        Validates ids up front (same integrity check ``build_marked_source``
+        would otherwise raise on) so a corrupt item still degrades the whole
+        block deterministically instead of partially. Each well-formed item is
+        then aligned independently: a mistake in one annotation's response
+        never affects its siblings.
+        """
+
+        try:
+            _expected_markers(unit)
+        except AnnotationAlignmentError:
+            return fallback_alignment(unit)
+
+        workers = max(1, self.config.pipeline.annotation_alignment_concurrency)
+        placements_by_id: dict[str, dict[str, Any]] = {}
+        used_fallback = False
+        with ThreadPoolExecutor(max_workers=min(workers, len(unit.items))) as executor:
+            futures = {
+                executor.submit(self._align_single_item, unit, item): _item_id(item)
+                for item in unit.items
+            }
+            for future in as_completed(futures):
+                item_id = futures[future]
+                placement, item_used_fallback = future.result()
+                placements_by_id[item_id] = placement
+                used_fallback = used_fallback or item_used_fallback
+
+        placements = tuple(placements_by_id[_item_id(item)] for item in unit.items)
+        return AnnotationAlignment(
+            unit_id=unit.unit_id,
+            target_digest=target_digest(unit.target),
+            placements=placements,
+            used_fallback=used_fallback,
+        )
+
+    def _align_single_item(
+        self, unit: AnnotationUnit, item: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        """Align exactly one annotation against the unchanged immutable target."""
+
+        pseudo_unit = AnnotationUnit(
+            unit_id=unit.unit_id,
+            source=unit.source,
+            target=unit.target,
+            items=(item,),
+        )
+        [alignment] = self._align_batch([pseudo_unit])
+        return alignment.placements[0], alignment.used_fallback
+
+    def _align_batch(self, units: list[AnnotationUnit]) -> list[AnnotationAlignment]:
         """Align multiple logical blocks in one model call.
 
         Results preserve input order.  A missing, duplicate, or invalid response
