@@ -156,33 +156,34 @@ class TestPdfIngest(unittest.TestCase):
                 }
             )
 
-            with (
-                patch(
+            with patch("trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED", True):
+                with (
+                    patch(
+                        "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                        side_effect=RuntimeError("temporary outage"),
+                    ),
+                    self.assertRaises(MinerUError),
+                ):
+                    Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
+
+                def convert_fresh(_input: str, output: str, **_kwargs) -> None:
+                    os.makedirs(os.path.dirname(output), exist_ok=True)
+                    with open(output, "w", encoding="utf-8") as file:
+                        file.write(_HTML)
+
+                with patch(
                     "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
-                    side_effect=RuntimeError("temporary outage"),
-                ),
-                self.assertRaises(MinerUError),
-            ):
-                Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
+                    side_effect=convert_fresh,
+                ):
+                    store = Orchestrator(
+                        config,
+                        client=FakeClient(),
+                    ).prepare_for_translation(pdf_path)
 
-            def convert_fresh(_input: str, output: str, **_kwargs) -> None:
-                os.makedirs(os.path.dirname(output), exist_ok=True)
-                with open(output, "w", encoding="utf-8") as file:
-                    file.write(_HTML)
-
-            with patch(
-                "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
-                side_effect=convert_fresh,
-            ):
-                store = Orchestrator(
-                    config,
-                    client=FakeClient(),
-                ).prepare_for_translation(pdf_path)
-
-            self.assertEqual(
-                [metric["status"] for metric in store.load_run_metrics()],
-                ["failed", "completed"],
-            )
+                self.assertEqual(
+                    [metric["status"] for metric in store.load_run_metrics()],
+                    ["failed", "completed"],
+                )
 
     def test_orchestrator_uses_state_cache_and_resume_skips_pdf_parse(self):
         with tempfile.TemporaryDirectory() as directory:

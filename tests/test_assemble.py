@@ -582,6 +582,63 @@ data-tn-annotation-id="ann-0" href="notes.xhtml#note-1">border tunnel
         self.assertNotIn("border tunnel", paragraph.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
+    def test_epub_render_separates_multiple_fallback_markers_with_a_comma(self):
+        target = "正文内容。"
+        template = (
+            '<html><body><p data-tn-id="tn1_0">Foo'
+            '<a data-tn-annotation-id="ann-0" href="notes.xhtml#n1">11</a>'
+            " bar"
+            '<a data-tn-annotation-id="ann-1" href="notes.xhtml#n2">12</a>'
+            " baz.</p></body></html>"
+        )
+        segment = Segment(
+            index=0,
+            source="Foo bar baz.",
+            target=target,
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": len("Foo bar baz."),
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "point",
+                            "source_start": 3,
+                            "source_end": 3,
+                            "source_text": "",
+                            "marker_text": "11",
+                        },
+                        {
+                            "id": "ann-1",
+                            "mode": "point",
+                            "source_start": 7,
+                            "source_end": 7,
+                            "source_text": "",
+                            "marker_text": "12",
+                        },
+                    ],
+                    # 过期摘要强制两条注释都降级为段末回退标记。
+                    "target_digest": "stale",
+                    "placements": [],
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, [segment]),
+            "html.parser",
+        )
+
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        links = paragraph.find_all("a")
+        self.assertEqual([link.get_text() for link in links], ["11", "12"])
+        # 两个降级标记之间必须有顿号分隔，否则连写成无法轨读的 "1112"。
+        self.assertIn("11、12", paragraph.get_text())
+        self.assertNotIn("1112", paragraph.get_text())
+
     def test_epub_render_keeps_untranslated_annotation_at_source_position(self):
         html = """<html><body><p>Before<sup><a class="noteref"
 href="#n1" id="ref-1">1</a></sup> after.</p></body></html>"""

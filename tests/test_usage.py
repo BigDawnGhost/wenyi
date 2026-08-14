@@ -696,6 +696,19 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
 
 class TestPerRunMetrics(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # 产品默认关闭账本；本类显式打开以覆盖实现路径。
+        cls._run_metrics_enabled = patch(
+            "trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED",
+            True,
+        )
+        cls._run_metrics_enabled.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._run_metrics_enabled.stop()
+
     @staticmethod
     def _config(directory: str) -> Config:
         return Config.from_dict(
@@ -1030,7 +1043,7 @@ class TestPerRunMetrics(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertTrue(os.path.isfile(output))
 
-    def test_assemble_hashes_large_input_once_when_file_signature_is_stable(self):
+    def test_assemble_hashes_at_required_source_identity_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "novel.txt")
             output = os.path.join(directory, "translated.txt")
@@ -1058,7 +1071,7 @@ class TestPerRunMetrics(unittest.TestCase):
                     out_path=output,
                 )
 
-            self.assertEqual(initial_hash.call_count, 1)
+            self.assertEqual(initial_hash.call_count, 5 if os.name == "nt" else 1)
             self.assertEqual(boundary_hash.call_count, 0)
 
     def test_changed_source_is_rejected_before_reusing_state(self):

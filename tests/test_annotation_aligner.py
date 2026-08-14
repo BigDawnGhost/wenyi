@@ -50,6 +50,37 @@ def _point_unit(*, target: str = "你好世界") -> AnnotationUnit:
     )
 
 
+def _multi_item_unit(*, target: str = "你好世界，再见") -> AnnotationUnit:
+    return AnnotationUnit(
+        unit_id="tn2_0",
+        source="Hello world, goodbye",
+        target=target,
+        items=(
+            {
+                "id": "tn2_0_annotation_0",
+                "mode": "point",
+                "source_start": 5,
+                "source_end": 5,
+                "source_text": "",
+                "marker_text": "1",
+            },
+            {
+                "id": "tn2_0_annotation_1",
+                "mode": "point",
+                "source_start": 12,
+                "source_end": 12,
+                "source_text": "",
+                "marker_text": "2",
+            },
+        ),
+    )
+
+
+def _source_with_markers_of(messages: list[dict[str, str]]) -> str:
+    request = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
+    return request["items"][0]["source_with_markers"]
+
+
 def _range_unit() -> AnnotationUnit:
     return AnnotationUnit(
         unit_id="tn1_1",
@@ -310,6 +341,86 @@ class TestAnnotationAligner(unittest.TestCase):
         self.assertEqual(client.calls, [])
         self.assertEqual(len(results), 2)
         self.assertTrue(all(result.used_fallback for result in results))
+
+
+class TestAnnotationAlignerPerItemFanOut(unittest.TestCase):
+    """A block with >1 annotation must not bundle every marker into one call."""
+
+    def test_multi_item_block_issues_one_concurrent_request_per_annotation(self):
+        unit = _multi_item_unit()
+
+        def handler(messages, tier, json_mode):
+            source_with_markers = _source_with_markers_of(messages)
+            if "tn2_0_annotation_0" in source_with_markers:
+                marked = "你好⟪tn2_0_annotation_0⟫世界，再见"
+            else:
+                marked = "你好世界，⟪tn2_0_annotation_1⟫再见"
+            return json.dumps(
+                {"items": [{"unit_id": "tn2_0", "marked_target": marked}]},
+                ensure_ascii=False,
+            )
+
+        client = FakeClient(handler=handler)
+        result = AnnotationAligner(client, _config()).align_unit(unit)
+
+        # One independent request per annotation, not one request for the
+        # whole paragraph asking the model to place both markers at once.
+        self.assertEqual(len(client.calls), 2)
+        self.assertFalse(result.used_fallback)
+        self.assertEqual(
+            [placement["id"] for placement in result.placements],
+            ["tn2_0_annotation_0", "tn2_0_annotation_1"],
+        )
+        placements = {placement["id"]: placement for placement in result.placements}
+        self.assertEqual(placements["tn2_0_annotation_0"]["target_start"], 2)
+        self.assertEqual(placements["tn2_0_annotation_1"]["target_start"], 5)
+
+    def test_one_bad_annotation_response_does_not_sink_its_siblings(self):
+        """Splitting per item means a single mistake only costs that one note."""
+        unit = _multi_item_unit()
+
+        def handler(messages, tier, json_mode):
+            source_with_markers = _source_with_markers_of(messages)
+            if "tn2_0_annotation_0" in source_with_markers:
+                marked = "你好⟪tn2_0_annotation_0⟫世界，再见"
+                return json.dumps(
+                    {"items": [{"unit_id": "tn2_0", "marked_target": marked}]},
+                    ensure_ascii=False,
+                )
+            # Model drops the Chinese comma while copying the target: this
+            # single mistake must only cost annotation_1, not annotation_0.
+            marked = "你好世界再见⟪tn2_0_annotation_1⟫"
+            return json.dumps(
+                {"items": [{"unit_id": "tn2_0", "marked_target": marked}]},
+                ensure_ascii=False,
+            )
+
+        client = FakeClient(handler=handler)
+        result = AnnotationAligner(client, _config()).align_unit(unit)
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertTrue(result.used_fallback)
+        placements = {placement["id"]: placement for placement in result.placements}
+        self.assertEqual(placements["tn2_0_annotation_0"]["status"], "aligned")
+        self.assertEqual(placements["tn2_0_annotation_0"]["target_start"], 2)
+        self.assertEqual(placements["tn2_0_annotation_1"]["status"], "fallback")
+
+    def test_duplicate_ids_within_one_block_fall_back_without_calling_model(self):
+        unit = AnnotationUnit(
+            unit_id="tn3_0",
+            source="Hello world, goodbye",
+            target="你好世界，再见",
+            items=(
+                {"id": "dup", "mode": "point", "source_start": 5, "source_end": 5},
+                {"id": "dup", "mode": "point", "source_start": 12, "source_end": 12},
+            ),
+        )
+        client = FakeClient(handler=lambda messages, tier, json_mode: "should not be called")
+
+        result = AnnotationAligner(client, _config()).align_unit(unit)
+
+        self.assertEqual(client.calls, [])
+        self.assertTrue(result.used_fallback)
 
 
 if __name__ == "__main__":

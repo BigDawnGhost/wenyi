@@ -301,8 +301,16 @@ class BookEvidenceIndex:
         text_index = arguments.get("index")
         before = arguments.get("before", 2)
         after = arguments.get("after", 2)
-        values = (chapter, text_index, before, after)
-        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        if (
+            isinstance(chapter, bool)
+            or not isinstance(chapter, int)
+            or isinstance(text_index, bool)
+            or not isinstance(text_index, int)
+            or isinstance(before, bool)
+            or not isinstance(before, int)
+            or isinstance(after, bool)
+            or not isinstance(after, int)
+        ):
             return {"ok": False, "error": "invalid_segment_context_arguments"}
         if not 0 <= before <= 6 or not 0 <= after <= 6:
             return {"ok": False, "error": "context_limit_exceeded"}
@@ -354,6 +362,13 @@ class BookEvidenceIndex:
             return {"request_id": "", "ok": False, "error": "invalid_request_id"}
         if not isinstance(arguments, dict):
             return {"request_id": request_id, "ok": False, "error": "invalid_arguments"}
+        if not isinstance(tool, str):
+            return {
+                "request_id": request_id,
+                "tool": tool,
+                "ok": False,
+                "error": "unknown_tool",
+            }
         handlers = {
             "glossary_term": self.glossary_term,
             "term_occurrences": self.term_occurrences,

@@ -68,6 +68,9 @@ from .runstore import STATUS_DONE, RunStore, slugify, source_sha256
 
 ProgressFn = Callable[[int, int, str], None]
 
+# 单次运行账本（run_metrics/）暂不启用；完善后改为 True 即可放量。
+_RUN_METRICS_ENABLED = False
+
 
 def _record_run_metrics(
     operation: str,
@@ -497,7 +500,7 @@ class Orchestrator:
         if active is not None:
             yield active
             return
-        if self._run_metrics_suppressed:
+        if self._run_metrics_suppressed or not _RUN_METRICS_ENABLED:
             yield None
             return
 
@@ -1751,9 +1754,12 @@ class Orchestrator:
         if progress:
             progress(done, total, label)
         glossary_checkpoints = store.completed_batch_glossary_keys(ci)
-        # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
-        # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
+        # 章首读一次术语快照供后续真译注入 prompt。glossary_scope=chapter 时按本章
+        # 源文裁剪。之后仅在「术语库可能已变」且「下一批真要翻译」时惰性刷新：
+        # 正常 skip（译文与术语 checkpoint 都在）不抽、不刷；缺 checkpoint 的已译
+        # 批仍补抽并标记 stale，保证中途续跑不漏抽取、又不在纯 skip 上白刷整表。
         term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+        term_snapshot_stale = False
 
         # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
         # 不再并发，换取章内跨批的代词/术语/语气连贯。
@@ -1788,6 +1794,7 @@ class Orchestrator:
                         "skipped": 1,
                     }
                 else:
+                    # 译文在、术语 checkpoint 不在（旧状态/中断在抽取前）：补抽入库。
                     summary = self._extract_batch_glossary(
                         glossary,
                         store,
@@ -1798,7 +1805,7 @@ class Orchestrator:
                         source_corpus,
                     )
                     glossary_checkpoints.add(glossary_key)
-                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+                    term_snapshot_stale = True
                 store.log_event(
                     "batch_skipped",
                     chapter=ci,
@@ -1815,6 +1822,10 @@ class Orchestrator:
                 if progress:
                     progress(done, total, label)
                 continue
+
+            if term_snapshot_stale:
+                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+                term_snapshot_stale = False
 
             ctx_text = context.render(self.config.pipeline.rolling_context_segments)
             res = self._process_batch(
@@ -1880,7 +1891,8 @@ class Orchestrator:
             )
             self._update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
-            term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+            # 库可能已变；延迟到下一批真译前再刷，末批之后无需再刷。
+            term_snapshot_stale = True
 
         # 不含注释的段落在章末统一完成标点规范化。含注释逻辑段已在其
         # 最后一个续段译完时用同一函数定稿；此处重复处理是幂等的。

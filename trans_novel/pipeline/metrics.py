@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import time
 import uuid
@@ -306,7 +307,12 @@ class RunMetricsRecorder:
             return None
         path = Path(input_path)
         current_signature = _source_signature(path)
-        if self._input_signature is not None and current_signature == self._input_signature:
+        # Windows st_ctime is the creation time, so same-size rewrites can keep this signature.
+        if (
+            os.name != "nt"
+            and self._input_signature is not None
+            and current_signature == self._input_signature
+        ):
             return expected
 
         refreshed, signature = _capture_input_identity(input_path)
