@@ -15,26 +15,17 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
 import random
 import warnings
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from functools import wraps
 from inspect import signature
-from threading import Lock
 from typing import Any, Iterator
 
 from ..agents.analyzer import Analyzer
-from ..agents.annotation_aligner import (
-    AnnotationAligner,
-    AnnotationUnit,
-    target_digest,
-)
+from ..agents.annotation_aligner import AnnotationAligner
 from ..agents.polisher import Polisher
 from ..agents.review_fixer import (
     ProvisionalPatch,
@@ -51,20 +42,61 @@ from ..agents.review_loop import (
 from ..agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
 from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
+from ..application.publishing import PublishingOptions, assemble_outputs
+from ..application.review.models import (
+    _review_conflict_records,
+    _review_content_digest,
+    _review_net_changes,
+    _review_overlay_digest,
+    _review_public_issues,
+    _review_unresolved_conflict_records,
+    _review_unresolved_fallback_count,
+    _ReviewRoundResult,
+)
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Segment
-from ..ingest.segmenter import batch_segments, load_document
+from ..ingest.segmenter import load_document
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
-from ..postprocess.punct import normalize_zh_segments
+from ..services.document_sampling import sample_document_text
+from ..services.source_language import (
+    LanguageDetectionError,
+    ModelSourceLanguageDetector,
+    normalize_language_candidate,
+)
+from .annotations import (
+    align_legacy_annotations_after_batch,
+    align_legacy_segment_annotation,
+    annotation_contexts_for_segments,
+    completed_logical_starts_in_range,
+    sync_legacy_context_chapter_prefix,
+)
+from .chapter_translation import (
+    BatchResult,
+    TranslationPolicy,
+    extract_legacy_batch_glossary,
+    legacy_chapter_progress_label,
+    legacy_chapter_term_snapshot,
+    legacy_translation_progress_counts,
+    process_legacy_batch,
+    report_translation_progress,
+    resume_legacy_batches,
+    translate_legacy_chapter,
+    update_legacy_translation_history,
+)
 from .context import RollingContext
 from .metrics import RunMetricsRecorder
+from .preparation import build_legacy_preparation
+from .review_chapter import pack_legacy_review_chunks, review_legacy_chapter
 from .review_evidence import BookEvidenceIndex
 from .review_run import ReviewOutcome, ReviewRunStore
-from .runstore import STATUS_DONE, RunStore, slugify, source_sha256
+from .runstore import STATUS_DONE, RunStore, source_sha256
+from .runtime import SourceIdentityRuntime
+from .title_translation import translate_legacy_titles
+from .understanding import build_legacy_understanding
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -145,293 +177,42 @@ def _record_pipeline_metrics(func: Callable) -> Callable:
     return wrapped
 
 
-# 语言名/代码 → ISO 639-1 两字母代码（模型检测结果归一化）
-_LANG_ALIASES = {
-    "japanese": "ja",
-    "日语": "ja",
-    "日文": "ja",
-    "jp": "ja",
-    "jpn": "ja",
-    "english": "en",
-    "英语": "en",
-    "英文": "en",
-    "eng": "en",
-    "russian": "ru",
-    "俄语": "ru",
-    "俄文": "ru",
-    "rus": "ru",
-    "chinese": "zh",
-    "中文": "zh",
-    "汉语": "zh",
-    "zh-cn": "zh",
-    "zho": "zh",
-    "korean": "ko",
-    "韩语": "ko",
-    "韩文": "ko",
-    "kor": "ko",
-    "french": "fr",
-    "法语": "fr",
-    "法文": "fr",
-    "german": "de",
-    "德语": "de",
-    "德文": "de",
-    "spanish": "es",
-    "西班牙语": "es",
-    "西班牙文": "es",
-    "italian": "it",
-    "意大利语": "it",
-    "意大利文": "it",
-    "portuguese": "pt",
-    "葡萄牙语": "pt",
-    "葡萄牙文": "pt",
-}
+def _report_translation_progress(
+    progress: ProgressFn | None,
+    *,
+    chapter_done: int,
+    chapter_total: int,
+    overall_done: int,
+    overall_total: int,
+    label: str,
+) -> None:
+    """兼容旧模块级入口；实际双层进度逻辑位于旧正文翻译模块。"""
+    report_translation_progress(
+        progress,
+        chapter_done=chapter_done,
+        chapter_total=chapter_total,
+        overall_done=overall_done,
+        overall_total=overall_total,
+        label=label,
+    )
 
 
 def _normalize_lang(code: str) -> str:
     """把模型返回的语言名或别名规整为 ISO 639-1 两字母代码。"""
-    c = (code or "").strip().lower()
-    if not c or c in {"auto", "unknown", "und", "uncertain", "mixed", "多语言", "未知"}:
-        return ""
-    if c in _LANG_ALIASES:
-        return _LANG_ALIASES[c]
-    return c[:2] if c[:2].isalpha() else ""
+    return normalize_language_candidate(code)
 
 
-def _resume_batches(segments, max_chars: int) -> list[list]:
+def _resume_batches(segments, max_chars: int) -> list[list[Segment]]:
     """按字符预算分批后，再沿“已完成/待翻译”边界切开。
 
     用户调整批次预算时，新的批次可能同时包含已有译文和空译文。若直接重跑
     该混合批次会覆盖已确认内容；按完成状态分组可只补译缺失段。
     """
-    batches: list[list] = []
-    for raw_batch in batch_segments(segments, max_chars):
-        current: list = []
-        current_done: bool | None = None
-        for segment in raw_batch:
-            done = bool(segment.target and segment.target.strip())
-            if current and done != current_done:
-                batches.append(current)
-                current = []
-            current.append(segment)
-            current_done = done
-        if current:
-            batches.append(current)
-    return batches
+    return resume_legacy_batches(segments, max_chars)
 
 
-@dataclass
-class _BatchResult:
-    targets: list[str]
-    bt_samples: list[tuple[str, str]] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class _ReviewRoundResult:
-    """一次全书影子译文 Review 及冲突仲裁后的确定性结果。"""
-
-    issues: list[dict[str, Any]]
-    pre_arbitration_issues: list[dict[str, Any]]
-    arbitration_superseded: list[dict[str, Any]]
-    conflict_groups: list[dict[str, Any]]
-    residual_conflicts: list[dict[str, Any]]
-    fallback_agent_count: int
-
-
-def _review_overlay_digest(
-    chapters,
-    overrides: Mapping[tuple[int, int], str],
-) -> str:
-    """计算全书有效影子译文指纹，用于检测无进展与 A↔B 振荡。"""
-    payload = [
-        (
-            chapter.index,
-            text_index,
-            overrides.get((chapter.index, text_index), segment.target or ""),
-        )
-        for chapter in chapters
-        for text_index, segment in enumerate(chapter.text_segments)
-    ]
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _review_content_digest(chapters) -> str:
-    """计算本次 Review 实际读取的正式正文摘要。"""
-    payload = [
-        (
-            chapter.index,
-            text_index,
-            segment.index,
-            segment.anchor or "",
-            segment.kind,
-            segment.source,
-            segment.target or "",
-        )
-        for chapter in chapters
-        for text_index, segment in enumerate(chapter.text_segments)
-    ]
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _review_net_changes(
-    chapters,
-    overrides: Mapping[tuple[int, int], str],
-    patch_records: list[dict[str, Any]],
-    active_patches: Mapping[tuple[int, int], dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """把多轮影子补丁折叠成每段一条的最终修改建议。"""
-    baseline = {
-        (chapter.index, text_index): segment.target or ""
-        for chapter in chapters
-        for text_index, segment in enumerate(chapter.text_segments)
-    }
-    issue_keys_by_location: dict[tuple[int, int], set[str]] = {}
-    for patch in patch_records:
-        chapter = patch.get("chapter")
-        index = patch.get("index")
-        if (
-            not isinstance(chapter, int)
-            or isinstance(chapter, bool)
-            or not isinstance(index, int)
-            or isinstance(index, bool)
-            or patch.get("status") == "rejected_cycle"
-        ):
-            continue
-        keys = issue_keys_by_location.setdefault((chapter, index), set())
-        keys.update(str(key) for key in patch.get("issue_keys", []) if isinstance(key, str) and key)
-
-    changes: list[dict[str, Any]] = []
-    for location, suggested_target in sorted(overrides.items()):
-        if baseline.get(location) == suggested_target:
-            continue
-        active = active_patches.get(location) or {}
-        changes.append(
-            {
-                "chapter": location[0],
-                "index": location[1],
-                "suggested_target": suggested_target,
-                "issue_keys": sorted(issue_keys_by_location.get(location, set())),
-                "review_result": str(active.get("status") or "provisional"),
-            }
-        )
-    return changes
-
-
-def _review_public_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """裁剪内部审校字段，生成面向用户的稳定问题列表。"""
-    public: dict[str, dict[str, Any]] = {}
-    for issue in issues:
-        issue_key = issue.get("issue_key")
-        chapter = issue.get("chapter")
-        index = issue.get("index")
-        if (
-            not isinstance(issue_key, str)
-            or not issue_key
-            or not isinstance(chapter, int)
-            or isinstance(chapter, bool)
-            or not isinstance(index, int)
-            or isinstance(index, bool)
-        ):
-            continue
-        public[issue_key] = {
-            "issue_key": issue_key,
-            "chapter": chapter,
-            "index": index,
-            "type": str(issue.get("type") or ""),
-            "detail": str(issue.get("detail") or ""),
-            "suggestion": str(issue.get("suggestion") or ""),
-        }
-    return sorted(
-        public.values(),
-        key=lambda issue: (issue["chapter"], issue["index"], issue["issue_key"]),
-    )
-
-
-def _review_conflict_records(
-    groups: list[dict[str, Any]],
-    arbitrations: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """把冲突组及对应仲裁结果序列化为稳定的逐轮记录。"""
-    return [
-        {
-            "conflict_id": group["conflict_id"],
-            "consistency_key": group["consistency_key"],
-            "issue_ids": [issue["issue_id"] for issue in group["issues"]],
-            "proposals": [
-                {
-                    "issue_id": issue["issue_id"],
-                    "chapter": issue["chapter"],
-                    "index": issue["index"],
-                    "proposed_value": issue["consistency"]["proposed_value"],
-                }
-                for issue in group["issues"]
-            ],
-            "arbitration": arbitration,
-        }
-        for group, arbitration in zip(groups, arbitrations)
-    ]
-
-
-def _review_unresolved_conflict_records(
-    issues: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """从最终未解决问题重建冲突记录，避免被最后一轮空结果掩盖。"""
-    groups = build_conflict_groups(issues)
-    arbitrations: list[dict[str, Any]] = []
-    for group in groups:
-        issue_ids = [str(issue["issue_id"]) for issue in group["issues"]]
-        annotations = [
-            issue.get("arbitration")
-            for issue in group["issues"]
-            if isinstance(issue.get("arbitration"), dict)
-        ]
-        reasons = [
-            str(annotation.get("reason", "")).strip()
-            for annotation in annotations
-            if str(annotation.get("reason", "")).strip()
-        ]
-        evidence_refs = sorted(
-            {
-                str(ref)
-                for issue in group["issues"]
-                for ref in issue.get("evidence_refs", [])
-                if isinstance(ref, str) and ref
-            }
-        )
-        arbitrations.append(
-            {
-                "conflict_id": group["conflict_id"],
-                "consistency_key": group["consistency_key"],
-                "issue_ids": issue_ids,
-                "status": "unresolved",
-                "recommended_value": "",
-                "reason": reasons[-1] if reasons else "最终未解决问题仍包含互斥建议。",
-                "supported_issue_ids": issue_ids,
-                "rejected_issue_ids": [],
-                "evidence_refs": evidence_refs,
-            }
-        )
-    return _review_conflict_records(groups, arbitrations)
-
-
-def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
-    """统计最终未解决问题中仍由降级 Agent 产生的独立审校块。"""
-    return len(
-        {
-            str(issue.get("_chunk_id") or issue.get("issue_key") or issue.get("issue_id"))
-            for issue in issues
-            if issue.get("agent_fallback")
-        }
-    )
+# 保留历史导入名：外部测试与集成仍可从 orchestrator 导入批次结果类型。
+_BatchResult = BatchResult
 
 
 class Orchestrator:
@@ -451,10 +232,21 @@ class Orchestrator:
         self.annotation_aligner = AnnotationAligner(self.client, config)
         self._active_run_metrics: RunMetricsRecorder | None = None
         self._run_metrics_suppressed = False
+        # Lambda intentionally resolves the compatibility-level module symbol at call
+        # time, preserving existing tests and integrations that patch this hasher.
+        self._source_identity = SourceIdentityRuntime(lambda path: source_sha256(path))
 
-    def _bind_llm_events(self, store: RunStore) -> None:
-        """把 provider 重试事件实时写入当前书籍的追加式事件日志。"""
+    def _bind_llm_events(
+        self,
+        store: RunStore,
+        progress: ProgressFn | None = None,
+    ) -> None:
+        """绑定正式重试日志，并把瞬时模型活动交给可选 UI 桥。"""
         self.client.set_event_sink(store.log_event)
+        activity_sink = getattr(progress, "on_llm_activity", None)
+        set_activity_sink = getattr(self.client, "set_activity_sink", None)
+        if callable(set_activity_sink):
+            set_activity_sink(activity_sink if callable(activity_sink) else None)
 
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
@@ -590,25 +382,22 @@ class Orchestrator:
 
     def _source_sha256(self, input_path: str) -> str:
         """在状态消费边界重新计算源文件哈希，不能信任锁外指标快照。"""
-        if self._active_run_metrics is not None:
-            verified = self._active_run_metrics.verify_input_sha256(input_path)
-            if verified is not None:
-                return verified
-        digest = source_sha256(input_path)
-        if self._active_run_metrics is not None:
-            self._active_run_metrics.input["sha256"] = digest
-        return digest
+        return self._source_identity.verified_sha256(
+            input_path,
+            recorder=self._active_run_metrics,
+        )
 
     def _initial_source_sha256(self, input_path: str) -> str:
         """取得解析前内容快照；有指标时复用其启动快照以少读一次文件。"""
-        if self._active_run_metrics is not None:
-            initial = self._active_run_metrics.input.get("sha256")
-            if isinstance(initial, str):
-                return initial
-        return source_sha256(input_path)
+        return self._source_identity.initial_sha256(
+            input_path,
+            recorder=self._active_run_metrics,
+        )
 
     def _ensure_store_source(self, store: RunStore, input_path: str) -> str:
         """校验候选状态确实属于当前输入文件。"""
+        # Preserve the compatibility seam: subclasses and integrations may
+        # override ``_source_sha256`` to supply the invocation's verified digest.
         return store.ensure_source_identity(
             input_path,
             actual_sha256=self._source_sha256(input_path),
@@ -661,29 +450,10 @@ class Orchestrator:
         PDF 的状态目录直接取自文件名，因此可在调用 MinerU 前完成检查；其它
         格式仍需本地解析书名来得到与 ``prepare`` 相同的状态目录。
         """
-        if os.path.splitext(input_path)[1].lower() == ".pdf":
-            title = os.path.splitext(os.path.basename(input_path))[0]
-        else:
-            if progress:
-                progress(0, 0, "查找翻译进度…")
-            doc = load_document(
-                input_path,
-                self.config.source_lang,
-                self.config.target_lang,
-                split_segments=self.config.segment.max_chars_per_segment,
-            )
-            title = doc.title
-
-        store = RunStore(
-            os.path.join(self.config.state_dir, slugify(title)),
-            create=False,
+        return build_legacy_preparation(self, loader=load_document).locate_existing(
+            input_path,
+            progress=progress,
         )
-        if not store.exists():
-            raise ValueError("尚无翻译进度。请先运行 translate。")
-        self._ensure_store_source(store, input_path)
-        self._bind_llm_events(store)
-        self._attach_metrics_store(store)
-        return store
 
     def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
         """解析输入并定位状态目录；首次运行时在书级锁内完成初始化。
@@ -691,69 +461,10 @@ class Orchestrator:
         PDF 的状态目录可直接由文件名确定，因此续跑时先检查 manifest，
         避免重新调用外部转换服务；首次转换产生的 HTML 缓存在该状态目录中。
         """
-        if os.path.splitext(input_path)[1].lower() == ".pdf":
-            # PDF 的书名固定取文件名，首次解析前即可确定状态目录。
-            pdf_title = os.path.splitext(os.path.basename(input_path))[0]
-            run_dir = os.path.join(self.config.state_dir, slugify(pdf_title))
-            store = RunStore(run_dir)
-            self._bind_llm_events(store)
-            self._attach_metrics_store(store)
-            with store.lock():
-                if store.exists():
-                    self._ensure_store_source(store, input_path)
-                    store.log_event(
-                        "run_resumed",
-                        input_path=input_path,
-                        run_dir=store.run_dir,
-                    )
-                    return store
-                if progress:
-                    progress(0, 0, "解析文档…")
-                source_hash = self._initial_source_sha256(input_path)
-                # 转换失败也要留下同源初始化标记，确保重试保留失败运行账本。
-                store.begin_initialization(source_hash)
-                doc = load_document(
-                    input_path,
-                    self.config.source_lang,
-                    self.config.target_lang,
-                    split_segments=self.config.segment.max_chars_per_segment,
-                    cache_dir=store.source_dir,
-                    source_hash=source_hash,
-                )
-                if self._source_sha256(input_path) != source_hash:
-                    raise ValueError("PDF 在解析期间发生变化；请确认文件稳定后重试。")
-                return self._prepare_locked(
-                    doc,
-                    store,
-                    input_path,
-                    progress,
-                    source_hash=source_hash,
-                )
-
-        if progress:
-            progress(0, 0, "解析文档…")
-        source_hash = self._initial_source_sha256(input_path)
-        # 超长段按句拆分（max_chars_per_segment），续段标 cont 供回填并回
-        doc = load_document(
+        return build_legacy_preparation(self, loader=load_document).prepare(
             input_path,
-            self.config.source_lang,
-            self.config.target_lang,
-            split_segments=self.config.segment.max_chars_per_segment,
+            progress=progress,
         )
-        if self._source_sha256(input_path) != source_hash:
-            raise ValueError("源文件在解析期间发生变化；请确认文件稳定后重试。")
-        run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
-        store = RunStore(run_dir)
-        self._bind_llm_events(store)
-        self._attach_metrics_store(store)
-        with store.lock():
-            return self._prepare_locked(
-                doc,
-                store,
-                input_path,
-                progress,
-                source_hash=source_hash,
-            )
 
     def _prepare_locked(
         self,
@@ -765,126 +476,29 @@ class Orchestrator:
         source_hash: str | None = None,
     ) -> RunStore:
         """恢复已有状态；新运行分阶段写入，并以 manifest 原子提交完成标志。"""
-        if store.exists():
-            self._ensure_store_source(store, input_path)
-            store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
-            return store  # 已有进度 → 直接续跑，不重置（语言在 run() 里按 manifest 应用）
-
-        initialization_hash = source_hash or self._source_sha256(input_path)
-        store.begin_initialization(initialization_hash)
-
-        # 新建：auto 时只使用模型检测主要语言；失败则要求用户显式指定。
-        if self.config.source_lang in ("auto", "", None):
-            if progress:
-                progress(0, 0, "识别语言…")
-            detected = self._detect_language_ai(doc)
-            if not detected:
-                store.log_event("language_detection_failed", source_lang=doc.source_lang)
-                raise RuntimeError(
-                    "自动识别源语言失败：请检查模型配置，或在 config.yaml 的 "
-                    "language.source 指定 ISO 639-1 语言代码（如 ja/en/ko/ru/fr/de/es）。"
-                )
-            doc.source_lang = detected
-            store.log_event("language_detected", source_lang=doc.source_lang)
-        self._apply_language(doc.source_lang)
-
-        manifest = store.stage_document(
+        return build_legacy_preparation(self, loader=load_document).initialize_locked(
             doc,
-            source_hash=initialization_hash,
+            store,
+            input_path,
+            progress,
+            source_hash=source_hash,
         )
-        glossary = GlossaryStore(store.glossary_path)
-        try:
-            if progress:
-                progress(0, 0, "分析全书风格…")
-            sample = self._sample_text(doc)
-            analysis = self.analyzer.analyze(sample) if sample else {}
-            if analysis:
-                self.analyzer.seed_glossary(glossary, analysis)
-            store.save_analysis(analysis)
-            store.log_event("analysis_saved", has_analysis=bool(analysis))
-            store.save_context(
-                RollingContext(
-                    max_recent_keep=max(40, self.config.pipeline.rolling_context_segments)
-                ).to_dict()
-            )
-
-            # manifest 是初始化完成标志，必须最后原子落盘。
-            manifest["initialized"] = True
-            store.save_manifest(manifest)
-            store.finish_initialization()
-            store.log_event(
-                "run_initialized",
-                input_path=input_path,
-                run_dir=store.run_dir,
-                title=doc.title,
-                fmt=doc.fmt,
-                source_lang=doc.source_lang,
-                target_lang=doc.target_lang,
-                chapters=len(doc.chapters),
-                config={
-                    "review": self.config.pipeline.review,
-                    "polish": self.config.pipeline.polish,
-                    "backtranslate_sample": self.config.pipeline.backtranslate_sample,
-                    "book_understanding": self.config.pipeline.book_understanding,
-                    "review_concurrency": self.config.pipeline.review_concurrency,
-                    "review_output_retries": (self.config.pipeline.review_output_retries),
-                },
-            )
-        finally:
-            glossary.close()
-        return store
 
     def _detect_language_ai(self, doc) -> str:
         """用模型检测正文主要语言，返回 ISO 代码（如 ja/en/ru）。失败返回空串。"""
         # labeled=False：纯源文样本，防多点采样的中文标签污染语言检测
         sample = self._sample_text(doc, labeled=False)[:1500]
-        if not sample.strip():
-            return ""
-        system = (
-            "你是语言识别器。判断给定文本的主要自然语言，"
-            '仅输出 JSON：{"language":"<ISO 639-1 两字母代码，如 ja/en/ru/ko/fr/de/zh>"}。'
-            "无法判断时 language 置为空字符串。"
-        )
         try:
-            data = self.client.complete_json(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": sample},
-                ],
-                tier="cheap",
-                stage="language_detect",
-            )
-            code = (data.get("language") if isinstance(data, dict) else "") or ""
-            return _normalize_lang(str(code))
-        except Exception:  # noqa: BLE001 - provider errors mean detection failed
+            candidate = ModelSourceLanguageDetector(self.client).detect(sample)
+            return normalize_language_candidate(candidate)
+        except LanguageDetectionError:
             return ""
 
     @staticmethod
     def _sample_text(doc, *, labeled: bool = True) -> str:
         """取风格分析样章。labeled=True 时多点采样（开头/中部/结尾各一段，带中文标注），
         让分析覆盖全书风格全貌；labeled=False 返回单段纯源文（语言检测用，不能混入中文标签）。"""
-        texts = ["\n".join(s.source for s in ch.text_segments) for ch in doc.chapters]
-        texts = [t for t in texts if len(t) > 200]
-        if not texts:  # 兜底：全书都是短章
-            joined = "\n".join(s.source for ch in doc.chapters[:2] for s in ch.text_segments)
-            return joined[:6000]
-        if not labeled:
-            return texts[0][:6000]
-        picks = [
-            (0, "开头样章"),
-            (len(texts) // 2, "中部样章"),
-            (len(texts) - 1, "结尾样章"),
-        ]
-        parts: list[str] = []
-        seen: set[int] = set()
-        for idx, tag in picks:
-            if idx in seen:  # 短书（1-2 章）去重，不重复取同一章
-                continue
-            seen.add(idx)
-            t = texts[idx]
-            chunk = t[-2800:] if tag == "结尾样章" else t[:2800]
-            parts.append(f"【{tag}】\n{chunk}")
-        return "\n\n".join(parts)
+        return sample_document_text(doc, labeled=labeled)
 
     @_record_run_metrics(
         "translate",
@@ -1058,18 +672,8 @@ class Orchestrator:
         start_index: int,
         segments,
     ) -> None:
-        """把一批最新原译文写入内存位置索引。"""
-        for offset, segment in enumerate(segments):
-            target = (segment.target or "").strip()
-            if not target:
-                continue
-            segment_index = start_index + offset
-            history[(chapter, segment_index)] = TranslatedSegmentEvidence(
-                chapter=chapter,
-                segment=segment_index,
-                source=segment.source,
-                target=target,
-            )
+        """兼容旧私有入口；更新正文翻译证据的内存位置索引。"""
+        update_legacy_translation_history(history, chapter, start_index, segments)
 
     def _progress_counts(self, store: RunStore, chapter_indices: list[int]) -> tuple[int, int]:
         """按全书批次检查点计算进度，续跑从已有译文数量开始显示。
@@ -1077,15 +681,12 @@ class Orchestrator:
         只有整批译文齐全时才计入 done；不完整批次会整体重跑，提前计入其中
         个别已有段会导致完成数重复累加。
         """
-        total = 0
-        done = 0
-        for ci in chapter_indices:
-            segments = store.load_chapter(ci).text_segments
-            total += len(segments)
-            for batch in _resume_batches(segments, self.config.segment.max_chars_per_batch):
-                if all(segment.target and segment.target.strip() for segment in batch):
-                    done += len(batch)
-        return total, done
+        return legacy_translation_progress_counts(
+            store,
+            chapter_indices,
+            max_chars_per_batch=self.config.segment.max_chars_per_batch,
+            plan_batches=_resume_batches,
+        )
 
     # ── 全书理解预扫（源文逐章梗概 + 全书概览）────────────────────────────────
     def _build_understanding(self, store: RunStore, progress: ProgressFn | None = None) -> str:
@@ -1094,61 +695,15 @@ class Orchestrator:
         幂等、可续跑：已有梗概/概览则跳过。返回全书概览（注入各章翻译 prompt）。
         关闭 book_understanding 时直接返回空串。
         """
-        if not self.config.pipeline.book_understanding:
-            store.log_event("book_understanding_skipped", reason="disabled")
-            return ""
-        manifest = store.load_manifest()
-        chapters = manifest.get("chapters", [])
-
-        # 各章梗概相互独立 → 并行调用（LLM 调用进线程池；落盘全部在主线程，
-        # 保持原子写不竞争，且逐章增量落盘、续跑粒度不变）。已有梗概的章跳过（幂等）。
-        loaded = {
-            c.get("index", i): store.load_chapter(c.get("index", i)) for i, c in enumerate(chapters)
-        }
-        todo = [
-            (ci, "\n".join(s.source for s in ch.text_segments))
-            for ci, ch in loaded.items()
-            if not ch.meta.get("source_digest")
-        ]
-        if todo:
-            store.log_event(
-                "book_understanding_chapter_digest_started",
-                chapters=[ci for ci, _ in todo],
-                workers=max(1, self.config.pipeline.prescan_concurrency),
-            )
-            workers = max(1, self.config.pipeline.prescan_concurrency)
-            if progress:
-                progress(0, len(todo), "预扫章节梗概")
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs = {ex.submit(self.synopsizer.digest_chapter, src): ci for ci, src in todo}
-                for n_done, fut in enumerate(as_completed(futs), 1):
-                    ci = futs[fut]
-                    loaded[ci].meta["source_digest"] = fut.result()  # 失败时 _ask_text 已回退 ""
-                    store.save_chapter(loaded[ci])
-                    store.log_event(
-                        "book_understanding_chapter_digest_saved",
-                        chapter=ci,
-                        digest=loaded[ci].meta["source_digest"],
-                    )
-                    if progress:
-                        progress(n_done, len(todo), "预扫章节梗概")
-
-        # 按 manifest 章序组装（与并发完成顺序无关）
-        digests = [
-            loaded[c.get("index", i)].meta.get("source_digest", "") or ""
-            for i, c in enumerate(chapters)
-        ]
-
-        analysis = store.load_analysis() or {}
-        synopsis = analysis.get("book_synopsis", "")
-        if not synopsis and any(d.strip() for d in digests):
-            if progress:
-                progress(0, 0, "生成全书概览…")
-            synopsis = self.synopsizer.book_synopsis(digests, self.analyzer.style_brief(analysis))
-            analysis["book_synopsis"] = synopsis
-            store.save_analysis(analysis)
-            store.log_event("book_synopsis_saved", synopsis=synopsis)
-        return synopsis
+        return build_legacy_understanding(
+            store,
+            enabled=self.config.pipeline.book_understanding,
+            concurrency=self.config.pipeline.prescan_concurrency,
+            digest_chapter=self.synopsizer.digest_chapter,
+            summarize_book=self.synopsizer.book_synopsis,
+            style_brief=self.analyzer.style_brief,
+            progress=progress,
+        )
 
     # ── 章节标题 / 目录项翻译（书名保持原文）──────────────────────────────
     def _translate_titles(
@@ -1157,260 +712,15 @@ class Orchestrator:
         glossary: GlossaryStore,
         progress: ProgressFn | None = None,
     ) -> None:
-        """翻译所有逻辑章标题和 NCX/NAV 目录节点并写回 manifest。
-
-        目录节点若已定位到正文 heading Segment，直接复用完整译文，
-        使正文与目录严格一致；其它标题再分批调用标题翻译器。每批立即
-        落盘，续跑只处理尚未完成的项。书名始终保持原文。
-        """
-        from ..agents import prompts
-
-        m = store.load_manifest()
-        chapters = m.get("chapters", [])
-
-        # 标题压成单行，避免内嵌换行破坏 numbered 对齐
-        def _flat(s: object) -> str:
-            """把标题压缩为不含换行和连续空白的单行文本。"""
-            return " ".join(str(s or "").split())
-
-        raw_meta = m.get("meta")
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
-        raw_toc_entries = meta.get("toc_entries", [])
-        toc_entry_items = raw_toc_entries if isinstance(raw_toc_entries, list) else []
-        toc_entries = [
-            entry
-            for entry in toc_entry_items
-            if isinstance(entry, dict) and _flat(entry.get("title", ""))
-        ]
-
-        # 长 heading 可能在摄取后被拆成首段 + cont；按 anchor 重新并回完整
-        # 译文，且只允许 heading 被目录复用。
-        anchor_targets: dict[str, tuple[str, str, str]] = {}
-        loaded_chapters = {
-            chapter.get("index"): store.load_chapter(chapter["index"])
-            for chapter in chapters
-            if isinstance(chapter.get("index"), int)
-        }
-
-        def flush_anchor(
-            active_anchor: str | None,
-            active_kind: str,
-            complete: bool,
-            source_parts: list[str],
-            parts: list[str],
-        ) -> None:
-            """把一个 anchor 的续段译文合并进索引。"""
-            if active_anchor and active_kind == "heading" and complete and parts:
-                anchor_targets[active_anchor] = (
-                    active_kind,
-                    "".join(source_parts),
-                    "".join(parts),
-                )
-
-        for chapter in loaded_chapters.values():
-            active_anchor: str | None = None
-            active_kind = ""
-            parts: list[str] = []
-            source_parts: list[str] = []
-            complete = True
-
-            for segment in chapter.text_segments:
-                if segment.anchor:
-                    flush_anchor(
-                        active_anchor,
-                        active_kind,
-                        complete,
-                        source_parts,
-                        parts,
-                    )
-                    active_anchor = segment.anchor
-                    active_kind = segment.kind
-                    parts = [segment.target] if segment.target else []
-                    source_parts = [segment.source]
-                    complete = bool(segment.target and segment.target.strip())
-                elif segment.cont and active_anchor:
-                    source_parts.append(segment.source)
-                    if segment.target and segment.target.strip():
-                        parts.append(segment.target)
-                    else:
-                        complete = False
-                else:
-                    flush_anchor(
-                        active_anchor,
-                        active_kind,
-                        complete,
-                        source_parts,
-                        parts,
-                    )
-                    active_anchor = None
-                    active_kind = ""
-                    parts = []
-                    source_parts = []
-                    complete = True
-            flush_anchor(
-                active_anchor,
-                active_kind,
-                complete,
-                source_parts,
-                parts,
-            )
-
-        changed = False
-        for entry in toc_entries:
-            if entry.get("title_translated"):
-                continue
-            anchor = entry.get("segment_anchor")
-            linked = anchor_targets.get(anchor) if isinstance(anchor, str) else None
-            can_reuse = bool(linked and _flat(linked[1]) == _flat(entry.get("title")))
-            target = linked[2] if linked and can_reuse else ""
-            if target.strip():
-                entry["title_translated"] = target.strip()
-                changed = True
-
-        entry_by_id = {
-            entry.get("entry_id"): entry
-            for entry in toc_entries
-            if isinstance(entry.get("entry_id"), str)
-        }
-
-        def sync_chapter_titles() -> None:
-            """让逻辑 Chapter 复用其起始目录节点的同一译名。"""
-            nonlocal changed
-            for manifest_chapter in chapters:
-                if manifest_chapter.get("title_translated"):
-                    continue
-                entry = entry_by_id.get(manifest_chapter.get("toc_entry_id"))
-                translated = entry.get("title_translated") if isinstance(entry, dict) else None
-                if isinstance(translated, str) and translated.strip():
-                    manifest_chapter["title_translated"] = translated.strip()
-                    changed = True
-
-        sync_chapter_titles()
-
-        # spine 回退章没有 toc_entry_id；若章名就是首个 heading，同样复用
-        # 正文译文，避免独立翻译后与页内标题不一致。
-        for manifest_chapter in chapters:
-            if manifest_chapter.get("title_translated"):
-                continue
-            chapter = loaded_chapters.get(manifest_chapter.get("index"))
-            if chapter is None:
-                continue
-            first_heading = next(
-                (segment for segment in chapter.text_segments if segment.kind == "heading"),
-                None,
-            )
-            if (
-                first_heading is not None
-                and first_heading.anchor
-                and _flat(first_heading.source) == _flat(manifest_chapter.get("title"))
-            ):
-                target = anchor_targets.get(first_heading.anchor, ("", "", ""))[2]
-                if target.strip():
-                    manifest_chapter["title_translated"] = target.strip()
-                    changed = True
-
-        pending: list[dict[str, object]] = []
-        for entry in toc_entries:
-            if not entry.get("title_translated"):
-                pending.append({"record": entry, "source": _flat(entry.get("title"))})
-        for chapter in chapters:
-            if (
-                _flat(chapter.get("title"))
-                and not chapter.get("title_translated")
-                and not chapter.get("toc_entry_id")
-            ):
-                pending.append({"record": chapter, "source": _flat(chapter.get("title"))})
-
-        if changed:
-            store.save_manifest(m)
-        if not pending:
-            store.log_event("titles_skipped", reason="already_translated_or_reused")
-            return
-        if progress:
-            progress(0, len(pending), "翻译章节标题…")
-
-        # 目录可能有数百项；同时限制项数和字符数，避免 JSON 输出被截断。
-        batches: list[list[dict[str, object]]] = []
-        current: list[dict[str, object]] = []
-        current_chars = 0
-        for item in pending:
-            source = str(item["source"])
-            if current and (len(current) >= 40 or current_chars + len(source) > 4000):
-                batches.append(current)
-                current = []
-                current_chars = 0
-            current.append(item)
-            current_chars += len(source)
-        if current:
-            batches.append(current)
-
-        completed = 0
-        glossary_text = prompts.render_glossary(glossary.all_terms())
-        for batch_index, batch in enumerate(batches):
-            titles = [str(item["source"]) for item in batch]
-            system = prompts.render(
-                "title_translator_system",
-                src=self.config.source_lang,
-                tgt=self.config.target_lang,
-                n=len(titles),
-            )
-            user = prompts.render(
-                "title_translator_user",
-                src=self.config.source_lang,
-                tgt=self.config.target_lang,
-                glossary=glossary_text,
-                n=len(titles),
-                numbered_titles=prompts.numbered(titles),
-            )
-            try:
-                data = self.client.complete_json(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    tier="strong",
-                    stage="title_translate",
-                )
-            except Exception as error:
-                store.log_event(
-                    "titles_translation_failed",
-                    batch=batch_index,
-                    count=len(titles),
-                    error=repr(error),
-                )
-                raise
-            out = data.get("titles") if isinstance(data, dict) else data
-            if not isinstance(out, list) or len(out) != len(titles):
-                store.log_event(
-                    "titles_translation_rejected",
-                    batch=batch_index,
-                    reason="count_mismatch",
-                    expected=len(titles),
-                    actual=len(out) if isinstance(out, list) else None,
-                )
-                raise RuntimeError(
-                    "Chapter/TOC title translation returned an invalid number of items: "
-                    f"expected {len(titles)}, got "
-                    f"{len(out) if isinstance(out, list) else 'non-list'}"
-                )
-            translated = [str(title).strip() for title in out]
-            for item, target in zip(batch, translated):
-                record = item["record"]
-                if isinstance(record, dict):
-                    record["title_translated"] = target or item["source"]
-            sync_chapter_titles()
-            store.save_manifest(m)
-            store.log_event(
-                "titles_translated",
-                batch=batch_index,
-                titles=[
-                    {"source": source, "target": target}
-                    for source, target in zip(titles, translated)
-                ],
-            )
-            completed += len(batch)
-            if progress:
-                progress(completed, len(pending), "翻译章节标题")
+        """保留旧私有入口，并把依赖收窄后委托给旧版专属协调模块。"""
+        translate_legacy_titles(
+            store,
+            glossary,
+            complete_json=self.client.complete_json,
+            source_lang=self.config.source_lang,
+            target_lang=self.config.target_lang,
+            progress=progress,
+        )
 
     # ── 单章 ──────────────────────────────────────────────────────────────
     @staticmethod
@@ -1419,19 +729,8 @@ class Orchestrator:
         segments: list[Segment],
         end: int,
     ) -> None:
-        """用当前章已完成前缀刷新滚动上下文尾部。
-
-        注释逻辑段跨越批次时，最后一个续段完成后会同时定稿此前批次中的
-        target。这里把这些更新同步回内存上下文，确保下一批看到的也是最终
-        标点版本，而不是定位前的旧字符串。
-        """
-        prefix = segments[: max(0, min(end, len(segments)))]
-        if not prefix or any(not (segment.target and segment.target.strip()) for segment in prefix):
-            return
-        targets = [segment.target or "" for segment in prefix]
-        retained = min(len(targets), len(context.recent_targets))
-        if retained:
-            context.recent_targets[-retained:] = targets[-retained:]
+        """兼容旧私有入口；实际上下文尾部同步由 annotation adapter 执行。"""
+        sync_legacy_context_chapter_prefix(context, segments, end)
 
     @staticmethod
     def _completed_logical_starts_in_range(
@@ -1439,30 +738,8 @@ class Orchestrator:
         start: int,
         count: int,
     ) -> list[int]:
-        """返回最后一片落在当前批次内的逻辑原段起点，保持顺序并去重。
-
-        超长原段可能被切成首段和多个 ``cont`` 续段，且切分后的翻译批次
-        可能刚好从续段开始。向前追溯到首段，才能在最后一个续段译完时立即
-        合并完整 source/target 并执行一次注释定位。只在逻辑段末片属于当前
-        范围时返回，避免同一组续段跨多个批次时重复处理。
-        """
-        if count <= 0 or not segments:
-            return []
-        lower = max(0, start)
-        upper = min(len(segments), lower + count)
-        starts: list[int] = []
-        position = lower
-        while position < upper:
-            logical_start = position
-            while logical_start > 0 and segments[logical_start].cont:
-                logical_start -= 1
-            logical_end = logical_start
-            while logical_end + 1 < len(segments) and segments[logical_end + 1].cont:
-                logical_end += 1
-            if lower <= logical_end < upper:
-                starts.append(logical_start)
-            position = max(position + 1, logical_end + 1)
-        return starts
+        """兼容旧私有入口；返回当前半开批次内完成的逻辑段起点。"""
+        return completed_logical_starts_in_range(segments, start, count)
 
     def _align_segment_annotation(
         self,
@@ -1471,121 +748,15 @@ class Orchestrator:
         start_position: int,
         store: RunStore,
     ) -> None:
-        """串行定位一个已译完逻辑原段的 EPUB 注释链接。
-
-        超长段会被切成一个带 anchor 的首段和若干 ``cont`` 续段；解析元数据
-        只存在首段，因此必须等全部续段都有译文后再合并 source/target。中文
-        标点先在该逻辑段内定稿，保证 placement 的字符偏移不会在章末失效。
-
-        定位结果无论正常还是确定性 fallback 都会立即写回章节文件。没有注释
-        或译文尚不完整时直接返回，且不会调用模型。
-        """
-        segments = chapter.text_segments
-        if not 0 <= start_position < len(segments):
-            return
-        while start_position > 0 and segments[start_position].cont:
-            start_position -= 1
-        segment = segments[start_position]
-        metadata = segment.meta.get("epub_annotations")
-        if not isinstance(metadata, dict):
-            return
-        raw_items = metadata.get("items")
-        if not isinstance(raw_items, list) or not raw_items:
-            return
-
-        logical_segments = [segment]
-        cursor = start_position + 1
-        while cursor < len(segments) and segments[cursor].cont:
-            logical_segments.append(segments[cursor])
-            cursor += 1
-        if any(not (item.target and item.target.strip()) for item in logical_segments):
-            return
-
-        target_changed = False
-        if self._punctuation_enabled():
-            targets = [item.target or "" for item in logical_segments]
-            normalized = normalize_zh_segments(
-                targets,
-                [item.cont for item in logical_segments],
-            )
-            target_changed = normalized != targets
-            for item, value in zip(logical_segments, normalized):
-                item.target = value
-
-        source = "".join(item.source for item in logical_segments)
-        target = "".join(item.target or "" for item in logical_segments)
-        expected_ids = {
-            str(item.get("id")) for item in raw_items if isinstance(item, dict) and item.get("id")
-        }
-        placements = metadata.get("placements")
-        placement_ids = {
-            str(item.get("id"))
-            for item in placements or []
-            if isinstance(item, dict) and item.get("id")
-        }
-        if (
-            metadata.get("target_digest") == target_digest(target)
-            and expected_ids
-            and placement_ids == expected_ids
-        ):
-            if target_changed:
-                store.save_chapter(chapter)
-            return
-
-        items = tuple(dict(item) for item in raw_items if isinstance(item, dict))
-        if not items:
-            if target_changed:
-                store.save_chapter(chapter)
-            return
-        anchor = segment.anchor or f"segment-{segment.index}"
-        unit = AnnotationUnit(
-            unit_id=f"ch{ci}:{anchor}",
-            source=source,
-            target=target,
-            items=items,
-        )
-        if not self.config.pipeline.annotation_alignment:
-            store.log_event(
-                "annotation_alignment_skipped",
-                chapter=ci,
-                segment=segment.index,
-                anchor=segment.anchor,
-                unit_id=unit.unit_id,
-                reason="disabled",
-            )
-            if target_changed:
-                store.save_chapter(chapter)
-            return
-
-        try:
-            result = self.annotation_aligner.align_unit(unit)
-        except Exception as error:  # noqa: BLE001 - 单段失败由 writer 安全降级
-            if target_changed:
-                store.save_chapter(chapter)
-            store.log_event(
-                "annotation_alignment_failed",
-                chapter=ci,
-                segment=segment.index,
-                anchor=segment.anchor,
-                unit_id=unit.unit_id,
-                error=type(error).__name__,
-                detail=str(error),
-            )
-            return
-
-        metadata["target_digest"] = result.target_digest
-        metadata["placements"] = [dict(item) for item in result.placements]
-        # 每个逻辑段完成后立即原子落盘；长书被中断时不必重新支付已完成的
-        # 注释定位调用，也能在翻译尚未完成时导出查看当前效果。
-        store.save_chapter(chapter)
-        store.log_event(
-            "annotation_alignment_completed",
-            chapter=ci,
-            segment=segment.index,
-            anchor=segment.anchor,
-            unit_id=unit.unit_id,
-            annotations=len(items),
-            used_fallback=result.used_fallback,
+        """兼容旧私有入口；适配配置、aligner、事件与章节持久化。"""
+        align_legacy_segment_annotation(
+            ci,
+            chapter,
+            start_position,
+            store,
+            punctuation_enabled=self._punctuation_enabled,
+            alignment_enabled=lambda: self.config.pipeline.annotation_alignment,
+            align_unit=lambda unit: self.annotation_aligner.align_unit(unit),
         )
 
     def _align_annotations_after_batch(
@@ -1596,124 +767,24 @@ class Orchestrator:
         count: int,
         store: RunStore,
     ) -> None:
-        """按原文顺序串行处理当前批次触及且已完整翻译的注释段。"""
-        segments = chapter.text_segments
-        for logical_start in self._completed_logical_starts_in_range(
-            segments,
+        """兼容旧私有入口；保持逐逻辑段串行执行及副作用顺序。"""
+        align_legacy_annotations_after_batch(
+            ci,
+            chapter,
             start,
             count,
-        ):
-            self._align_segment_annotation(ci, chapter, logical_start, store)
+            store,
+            align_segment=self._align_segment_annotation,
+            completed_starts=self._completed_logical_starts_in_range,
+        )
 
     @staticmethod
     def _annotation_contexts_for_segments(
         segments: list[Segment],
         registry: dict[str, Any] | None,
     ) -> list[list[dict[str, str]]]:
-        """按源文偏移把书级注释原文分配给对应的实际翻译切片。
-
-        EPUB 布局元数据只保存在一个逻辑段的首片；超长段的 ``cont``
-        续片没有独立 metadata。这里使用首片记录的原始字符偏移和各切片
-        累计边界，把 point 注释分给所在切片、range 注释分给所有相交
-        切片。相同目标在同一切片只注入一次。
-        """
-        assigned: list[list[dict[str, str]]] = [[] for _ in segments]
-        if not isinstance(registry, dict):
-            return assigned
-        raw_contexts = registry.get("contexts")
-        if not isinstance(raw_contexts, dict):
-            return assigned
-
-        position = 0
-        while position < len(segments):
-            logical_start = position
-            logical_end = logical_start + 1
-            while logical_end < len(segments) and segments[logical_end].cont:
-                logical_end += 1
-            logical_segments = segments[logical_start:logical_end]
-
-            boundaries: list[tuple[int, int]] = []
-            cursor = 0
-            for segment in logical_segments:
-                end = cursor + len(segment.source)
-                boundaries.append((cursor, end))
-                cursor = end
-
-            metadata = logical_segments[0].meta.get("epub_annotations")
-            raw_items = metadata.get("items") if isinstance(metadata, dict) else None
-            items = raw_items if isinstance(raw_items, list) else []
-            source_length = metadata.get("source_length") if isinstance(metadata, dict) else None
-            if items and (
-                not isinstance(source_length, int)
-                or isinstance(source_length, bool)
-                or source_length != cursor
-            ):
-                position = logical_end
-                continue
-            seen_by_piece: list[set[str]] = [set() for _ in logical_segments]
-
-            for raw_item in items:
-                if not isinstance(raw_item, dict) or raw_item.get("relation") != "noteref":
-                    continue
-                target_key = raw_item.get("target_key")
-                if not isinstance(target_key, str) or not target_key:
-                    continue
-                record = raw_contexts.get(target_key)
-                if not isinstance(record, dict):
-                    continue
-                raw_blocks = record.get("source_blocks")
-                blocks = (
-                    [block for block in raw_blocks if isinstance(block, str) and block.strip()]
-                    if isinstance(raw_blocks, list)
-                    else []
-                )
-                if not blocks:
-                    continue
-                note = {
-                    "target_key": target_key,
-                    "source": "\n\n".join(blocks),
-                }
-
-                start = raw_item.get("source_start")
-                end = raw_item.get("source_end")
-                if (
-                    not isinstance(start, int)
-                    or isinstance(start, bool)
-                    or not isinstance(end, int)
-                    or isinstance(end, bool)
-                    or not 0 <= start <= end <= cursor
-                ):
-                    continue
-
-                piece_indices: list[int]
-                if raw_item.get("mode") == "range" and start < end:
-                    piece_indices = [
-                        index
-                        for index, (piece_start, piece_end) in enumerate(boundaries)
-                        if start < piece_end and end > piece_start
-                    ]
-                else:
-                    # 边界上的 point 归前片；位置 0 归首片。
-                    piece_index = 0
-                    if start > 0:
-                        piece_index = next(
-                            (
-                                index
-                                for index, (_piece_start, piece_end) in enumerate(boundaries)
-                                if start <= piece_end
-                            ),
-                            len(boundaries) - 1,
-                        )
-                    piece_indices = [piece_index]
-
-                for piece_index in piece_indices:
-                    if target_key in seen_by_piece[piece_index]:
-                        continue
-                    seen_by_piece[piece_index].add(target_key)
-                    assigned[logical_start + piece_index].append(note)
-
-            position = logical_end
-        return assigned
+        """兼容旧私有入口；按源文偏移生成逐物理切片的注释上下文。"""
+        return annotation_contexts_for_segments(segments, registry)
 
     def _translate_chapter(
         self,
@@ -1731,234 +802,54 @@ class Orchestrator:
         done: int = 0,
         total: int = 0,
     ) -> int:
-        """翻译、润色和抽取单章并落盘，返回更新后的完成段数。"""
-        chapter = store.load_chapter(ci)
-        text_segs = chapter.text_segments
-        if not text_segs:
-            store.set_chapter_status(ci, STATUS_DONE)
-            store.log_event("chapter_skipped", chapter=ci, reason="empty")
-            return done
-        chapter_digest = chapter.meta.get("source_digest", "")
-        annotation_contexts = self._annotation_contexts_for_segments(
-            text_segs,
-            annotation_context_registry,
+        """兼容旧私有入口；把旧 seam 注入正文翻译协调器后返回累计进度。"""
+        policy = TranslationPolicy(
+            max_chars_per_batch=self.config.segment.max_chars_per_batch,
         )
-
-        batches = _resume_batches(text_segs, self.config.segment.max_chars_per_batch)
-        label = self._chapter_progress_label(chapter.title, ci)
-        # prepare() 的最后一个标签通常是“解析文档…”。续跑首批可能先恢复术语，
-        # 若不在章首刷新，整个模型请求期间都会错误地显示成仍在解析源文件。
-        if progress:
-            progress(done, total, label)
-        glossary_checkpoints = store.completed_batch_glossary_keys(ci)
-        # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
-        # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
-        term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
-
-        # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
-        # 不再并发，换取章内跨批的代词/术语/语气连贯。
-        # 断点续跑（段/批级）：上次中断前已译完并落盘的批次，整批跳过、不重翻，只重建上下文。
-        bt_samples: list[tuple[str, str]] = []
-        seg_base = 0  # 当前批首段的章内段号（issue 批内下标 → 章内段号）
-        for b in batches:
-            batch_start = seg_base
-            glossary_key = store.batch_glossary_key(batch_start, len(b))
-            existing_targets = [s.target for s in b if s.target and s.target.strip()]
-            if len(existing_targets) == len(b):
-                # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
-                self._align_annotations_after_batch(
-                    ci,
-                    chapter,
-                    batch_start,
-                    len(b),
-                    store,
-                )
-                context.add_targets([s.target or "" for s in b])
-                self._sync_context_chapter_prefix(
-                    context,
-                    text_segs,
-                    batch_start + len(b),
-                )
-                if glossary_key in glossary_checkpoints:
-                    summary = {
-                        "inserted": 0,
-                        "conflict": 0,
-                        "unchanged": 0,
-                        "updated": 0,
-                        "skipped": 1,
-                    }
-                else:
-                    summary = self._extract_batch_glossary(
-                        glossary,
-                        store,
-                        ci,
-                        batch_start,
-                        b,
-                        translation_history,
-                        source_corpus,
-                    )
-                    glossary_checkpoints.add(glossary_key)
-                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
-                store.log_event(
-                    "batch_skipped",
-                    chapter=ci,
-                    start_index=batch_start,
-                    count=len(b),
-                    reason="already_translated",
-                    glossary_extraction=summary,
-                    segments=[
-                        {"index": seg_base + i, "source": s.source, "target": s.target}
-                        for i, s in enumerate(b)
-                    ],
-                )
-                seg_base += len(b)
-                if progress:
-                    progress(done, total, label)
-                continue
-
-            ctx_text = context.render(self.config.pipeline.rolling_context_segments)
-            res = self._process_batch(
-                b,
-                term_snapshot,
-                ctx_text,
-                style,
-                book_synopsis,
-                chapter_digest,
-                annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
-            )
-            for s, t in zip(b, res.targets):
-                s.target = t
-            bt_samples.extend(res.bt_samples)
-            # 增量持久化译文，下次中断从此批之后续跑。
-            store.save_chapter(chapter)
-            # 只处理当前批次触及的注释逻辑段。多个注释段严格按原文顺序
-            # 一段一次调用；若当前批只有超长段的前半部分，则等最后一个
-            # cont 续段译完后再合并定位。
-            self._align_annotations_after_batch(
-                ci,
-                chapter,
-                batch_start,
-                len(b),
-                store,
-            )
-            context.add_targets([s.target or "" for s in b])
-            self._sync_context_chapter_prefix(
-                context,
-                text_segs,
-                batch_start + len(b),
-            )
-            store.log_event(
-                "batch_translated",
-                chapter=ci,
-                start_index=batch_start,
-                count=len(b),
-                polished=self.config.pipeline.polish,
-                punctuation_normalized=self._punctuation_enabled(),
-                backtranslate_sample_count=len(res.bt_samples),
-                segments=[
-                    {
-                        "index": batch_start + i,
-                        "source": s.source,
-                        "target": s.target,
-                    }
-                    for i, s in enumerate(b)
-                ],
-            )
-            done += len(b)
-            seg_base += len(b)
-            if progress:
-                progress(done, total, label)
-            # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
-            self._extract_batch_glossary(
-                glossary,
-                store,
-                ci,
-                batch_start,
-                b,
-                translation_history,
-                source_corpus,
-            )
-            self._update_translation_history(translation_history, ci, batch_start, b)
-            glossary_checkpoints.add(glossary_key)
-            term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
-
-        # 不含注释的段落在章末统一完成标点规范化。含注释逻辑段已在其
-        # 最后一个续段译完时用同一函数定稿；此处重复处理是幂等的。
-        if self._punctuation_enabled():
-            translated = [segment.target or "" for segment in text_segs]
-            normalized_targets = normalize_zh_segments(
-                translated,
-                [segment.cont for segment in text_segs],
-            )
-            for segment, normalized in zip(text_segs, normalized_targets):
-                segment.target = normalized
-            # 当前章译文已在逐批处理中加入滚动上下文；同步替换其保留在尾部的
-            # 部分，确保下一章看到的是最终规范化版本。
-            retained = min(len(normalized_targets), len(context.recent_targets))
-            if retained:
-                context.recent_targets[-retained:] = normalized_targets[-retained:]
-            self._update_translation_history(translation_history, ci, 0, text_segs)
-
-        # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
-        # 最终 Review 会在全书翻译完成后读取此时已经稳定的最终术语库。
-        src_text = "\n".join(s.source for s in text_segs)
-        tgt_text = "\n".join(s.target or "" for s in text_segs)
-        chapter_glossary_summary = self.extractor.extract_and_store(
-            glossary,
-            src_text,
-            tgt_text,
+        return translate_legacy_chapter(
             ci,
-            history=translation_history.values(),
-            before=(ci, len(text_segs)),
+            store,
+            glossary,
+            context,
+            style,
+            book_synopsis,
+            policy=policy,
+            translation_history=translation_history,
             source_corpus=source_corpus,
+            annotation_context_registry=annotation_context_registry,
+            # 注入 bound methods，确保 monkeypatch 与子类覆写继续生效。
+            process_batch=self._process_batch,
+            term_snapshot=self._chapter_term_snapshot,
+            extract_batch_glossary=self._extract_batch_glossary,
+            align_after_batch=self._align_annotations_after_batch,
+            sync_context_chapter_prefix=self._sync_context_chapter_prefix,
+            update_translation_history=self._update_translation_history,
+            annotation_contexts_for_segments=self._annotation_contexts_for_segments,
+            chapter_progress_label=self._chapter_progress_label,
+            extract_chapter_glossary=self.extractor.extract_and_store,
+            backtranslation_check=self.backtrans.check,
+            polish_enabled=lambda: self.config.pipeline.polish,
+            punctuation_enabled=self._punctuation_enabled,
+            rolling_context_segments=lambda: self.config.pipeline.rolling_context_segments,
+            plan_batches=_resume_batches,
+            report_progress=_report_translation_progress,
+            progress=progress,
+            done=done,
+            total=total,
         )
-        store.log_event(
-            "chapter_glossary_extracted",
-            chapter=ci,
-            summary=chapter_glossary_summary,
-        )
-
-        # 回译抽检
-        bt_issues: list[dict] = []
-        if bt_samples:
-            srcs = [a for a, _ in bt_samples]
-            tgts = [b for _, b in bt_samples]
-            for it in self.backtrans.check(srcs, tgts):
-                it["chapter"] = ci
-                bt_issues.append(it)
-            store.log_event(
-                "chapter_backtranslation_checked",
-                chapter=ci,
-                sample_count=len(bt_samples),
-                issue_count=len(bt_issues),
-                issues=bt_issues,
-            )
-
-        chapter.meta["backtranslation_issues"] = bt_issues
-        store.save_chapter_with_status(chapter, STATUS_DONE)
-        store.log_event(
-            "chapter_done",
-            chapter=ci,
-            title=chapter.title,
-            segment_count=len(text_segs),
-            backtranslation_issue_count=len(bt_issues),
-        )
-        return done
 
     def _chapter_term_snapshot(self, glossary: GlossaryStore, text_segs) -> list:
-        """返回当前章节要注入的术语快照；实时入库后可重新调用刷新。"""
-        terms = glossary.all_terms()
-        if self.config.pipeline.glossary_scope != "chapter":
-            return terms
-        src_text = "\n".join(s.source for s in text_segs)
-        hit = {t.source for t in GlossaryStore.terms_in(terms, src_text)}
-        return [t for t in terms if t.source in hit]
+        """兼容旧私有入口；返回当前章节要注入的最新术语快照。"""
+        return legacy_chapter_term_snapshot(
+            glossary,
+            text_segs,
+            glossary_scope=self.config.pipeline.glossary_scope,
+        )
 
     @staticmethod
     def _chapter_progress_label(title: str, index: int) -> str:
-        """进度展示用章节名：优先用书内标题，避免内部序号与“第一章”等标题冲突。"""
-        title = (title or "").strip()
-        return title or f"章节 {index + 1}"
+        """兼容旧私有入口；优先使用书内标题。"""
+        return legacy_chapter_progress_label(title, index)
 
     def _extract_batch_glossary(
         self,
@@ -1970,26 +861,17 @@ class Orchestrator:
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
         source_corpus: str,
     ) -> dict[str, int]:
-        """每批译完/续跑跳过后即时抽取术语，供同章后续批次使用。"""
-        src_text = "\n".join(s.source for s in batch)
-        tgt_text = "\n".join(s.target or "" for s in batch)
-        summary = self.extractor.extract_and_store(
+        """兼容旧私有入口；提交批次术语后写入恢复检查点事件。"""
+        return extract_legacy_batch_glossary(
             glossary,
-            src_text,
-            tgt_text,
+            store,
             chapter,
-            history=translation_history.values(),
-            before=(chapter, start_index),
-            source_corpus=source_corpus,
+            start_index,
+            batch,
+            translation_history,
+            source_corpus,
+            extract_and_store=self.extractor.extract_and_store,
         )
-        store.log_event(
-            "batch_glossary_extracted",
-            chapter=chapter,
-            start_index=start_index,
-            count=len(batch),
-            summary=summary,
-        )
-        return summary
 
     # ── 只读全书 Agent Review ───────────────────────────────────────────────
 
@@ -2759,7 +1641,10 @@ class Orchestrator:
                 raise RuntimeError("Review loop finished without a review round")
 
             unresolved = effective_issues(latest)
-            final_conflicts = _review_unresolved_conflict_records(unresolved)
+            final_conflicts = _review_unresolved_conflict_records(
+                unresolved,
+                build_conflict_groups,
+            )
             final_residual_conflicts = [
                 record
                 for record in final_conflicts
@@ -2920,300 +1805,28 @@ class Orchestrator:
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
     ) -> list[dict]:
-        """把一章切成连续块并行审校，返回映射到章内段号的问题。
-
-        块 = 连续段序列（约 3 倍翻译批大小，减少调用次数与重复注入的输入 token）；
-        块内 reviewer 返回的 index 是块内下标，加块首段偏移映射回章内段号；
-        越界 index 直接丢弃（模型幻觉防御）。各块只读固定译文和术语快照，
-        可并行调用；结构化输出畸形时递归拆半，单段按配置有限重试；
-        结果始终按原块顺序合并，保持确定性。
-        """
-        budget = self.config.segment.max_chars_per_batch * 3
-        chunks = self._pack_contiguous(text_segs, budget)
-        if not chunks:
-            return []
-
-        jobs: list[tuple[int, list]] = []
-        base = 0
-        for chunk in chunks:
-            jobs.append((base, chunk))
-            base += len(chunk)
-
-        recovery_events: list[dict[str, Any]] = []
-        recovery_lock = Lock()
-
-        def record_recovery(event: str, **data: Any) -> None:
-            """线程安全地暂存恢复事件，待并行任务结束后由主线程写日志。"""
-            with recovery_lock:
-                recovery_events.append({"event": event, **data})
-
-        def review_once(chunk_base: int, chunk: list, *, attempt: int = 1) -> list[dict]:
-            """调用一次审校，并把合法块内索引映射为章内索引。"""
-            srcs = [s.source for s in chunk]
-            overrides = target_overrides or {}
-
-            def target_for(local_index: int, segment) -> str:
-                """读取本轮影子译文；无章位置时回退正式译文。"""
-                if chapter_index is None:
-                    return segment.target or ""
-                return overrides.get(
-                    (chapter_index, chunk_base + local_index),
-                    segment.target or "",
-                )
-
-            tgts = [target_for(local_index, segment) for local_index, segment in enumerate(chunk)]
-            local_issues: list[dict] = []
-            initial_trace: dict[str, Any] | None = None
-            initial_path = ""
-            if debug is not None:
-                round_prefix = f"r{review_round}-" if review_round is not None else ""
-                initial_id = (
-                    f"initial-{round_prefix}ch{chapter_index}-base{chunk_base}"
-                    f"-n{len(chunk)}-attempt{attempt}"
-                )
-                initial_path = f"initial/{initial_id}.json"
-                initial_trace = {
-                    "agent_id": initial_id,
-                    "chapter": chapter_index,
-                    "chunk_base": chunk_base,
-                    "segment_count": len(chunk),
-                    "attempt": attempt,
-                    "status": "running",
-                }
-                debug.write_json(initial_path, initial_trace)
-
-            def trace(event: str, data: dict[str, Any]) -> None:
-                """逐步保存初审完整请求、原始响应或服务错误。"""
-                if debug is None or initial_trace is None:
-                    return
-                initial_trace[event] = data
-                debug.write_json(initial_path, initial_trace)
-
-            try:
-                review_result = self.reviewer.review_result(
-                    srcs,
-                    tgts,
-                    terms,
-                    trace=trace if debug is not None else None,
-                )
-            except Exception as error:
-                if debug is not None and initial_trace is not None:
-                    initial_trace["status"] = "failed"
-                    initial_trace["error"] = {
-                        "type": type(error).__name__,
-                        "message": str(error),
-                    }
-                    debug.write_json(initial_path, initial_trace)
-                raise
-            if review_result.repaired:
-                record_recovery(
-                    "review_json_repaired",
-                    start_index=chunk_base,
-                    count=len(chunk),
-                )
-            for it in review_result.issues:
-                it = dict(it)
-                idx = it.get("index")
-                if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(chunk):
-                    it["index"] = idx
-                    local_issues.append(it)
-                else:
-                    raise ReviewOutputError("invalid_issue_index")
-            if debug is not None and initial_trace is not None:
-                initial_trace["status"] = "finished"
-                initial_trace["json_repaired"] = review_result.repaired
-                initial_trace["issues"] = local_issues
-                debug.write_json(initial_path, initial_trace)
-                if chapter_index is not None:
-                    debug.record_initial_issues(
-                        chapter=chapter_index,
-                        chunk_base=chunk_base,
-                        issues=local_issues,
-                    )
-
-            dismissed: list[dict[str, Any]] = []
-            fallback_reason = ""
-            if (
-                local_issues
-                and evidence is not None
-                and debug is not None
-                and self.config.pipeline.review_agent_loop
-                and chapter_index is not None
-            ):
-                outcome = ReviewAgentLoop(
-                    self.client,
-                    self.config,
-                    evidence,
-                    debug,
-                ).review_chunk(
-                    chapter=chapter_index,
-                    chunk_base=chunk_base,
-                    sources=srcs,
-                    targets=tgts,
-                    initial_issues=local_issues,
-                    review_round=review_round,
-                )
-                local_issues = outcome.issues
-                dismissed = outcome.dismissed
-                fallback_reason = outcome.fallback_reason
-                debug.record_dismissed(
-                    chapter=chapter_index,
-                    chunk_base=chunk_base,
-                    issues=dismissed,
-                )
-
-            round_prefix = f"r{review_round}-" if review_round is not None else ""
-            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
-            mapped: list[dict[str, Any]] = []
-            for issue in local_issues:
-                local_index = issue.get("index")
-                if (
-                    isinstance(local_index, int)
-                    and not isinstance(local_index, bool)
-                    and 0 <= local_index < len(chunk)
-                ):
-                    issue = dict(issue)
-                    issue["index"] = chunk_base + local_index
-                    issue["_chunk_id"] = chunk_id
-                    if fallback_reason:
-                        issue["fallback_reason"] = fallback_reason
-                    mapped.append(issue)
-            if debug is not None:
-                debug.log_event(
-                    "review_leaf_finished",
-                    chapter=chapter_index,
-                    chunk_base=chunk_base,
-                    segment_count=len(chunk),
-                    initial_issue_count=len(review_result.issues),
-                    final_issue_count=len(mapped),
-                    dismissed_count=len(dismissed),
-                    fallback=bool(fallback_reason),
-                )
-            return mapped
-
-        def review_adaptive(chunk_base: int, chunk: list) -> list[dict]:
-            """畸形输出时缩小请求；单段仍失败才进行有限同输入重试。"""
-            try:
-                return review_once(chunk_base, chunk)
-            except ReviewOutputError as error:
-                if len(chunk) > 1:
-                    mid = len(chunk) // 2
-                    record_recovery(
-                        "review_chunk_split",
-                        start_index=chunk_base,
-                        count=len(chunk),
-                        left_count=mid,
-                        right_count=len(chunk) - mid,
-                        reason=error.reason,
-                    )
-                    return review_adaptive(chunk_base, chunk[:mid]) + review_adaptive(
-                        chunk_base + mid, chunk[mid:]
-                    )
-
-                last_error = error
-                retries = self.config.pipeline.review_output_retries
-                for attempt in range(1, retries + 1):
-                    record_recovery(
-                        "review_singleton_retry",
-                        start_index=chunk_base,
-                        count=1,
-                        attempt=attempt,
-                        max_retries=retries,
-                        reason=last_error.reason,
-                    )
-                    try:
-                        result = review_once(chunk_base, chunk, attempt=attempt + 1)
-                    except ReviewOutputError as retry_error:
-                        last_error = retry_error
-                        continue
-                    record_recovery(
-                        "review_singleton_recovered",
-                        start_index=chunk_base,
-                        count=1,
-                        attempt=attempt,
-                    )
-                    return result
-                record_recovery(
-                    "review_singleton_failed",
-                    start_index=chunk_base,
-                    count=1,
-                    attempts=retries + 1,
-                    reason=last_error.reason,
-                )
-                raise last_error
-
-        def review_one(job: tuple[int, list]) -> list[dict]:
-            """审校一个初始连续块，并在必要时执行局部恢复。"""
-            chunk_base, chunk = job
-            return review_adaptive(chunk_base, chunk)
-
-        workers = min(
-            max(1, self.config.pipeline.review_concurrency),
-            len(jobs),
+        """保留旧私有 seam，并把叶块审校依赖动态注入专属模块。"""
+        return review_legacy_chapter(
+            text_segs,
+            terms,
+            config=self.config,
+            client=self.client,
+            reviewer=self.reviewer,
+            recoverable_error=ReviewOutputError,
+            agent_loop_factory=ReviewAgentLoop,
+            pack_contiguous=self._pack_contiguous,
+            chapter_index=chapter_index,
+            evidence=evidence,
+            debug=debug,
+            target_overrides=target_overrides,
+            review_round=review_round,
+            on_chunk_finished=on_chunk_finished,
         )
-        try:
-            if workers == 1:
-                results = []
-                for job in jobs:
-                    results.append(review_one(job))
-                    if on_chunk_finished:
-                        on_chunk_finished(len(job[1]))
-            else:
-                ordered_results: list[list[dict] | None] = [None] * len(jobs)
-                with ThreadPoolExecutor(max_workers=workers) as ex:
-                    futures = {
-                        ex.submit(review_one, job): (position, len(job[1]))
-                        for position, job in enumerate(jobs)
-                    }
-                    for future in as_completed(futures):
-                        position, segment_count = futures[future]
-                        ordered_results[position] = future.result()
-                        if on_chunk_finished:
-                            on_chunk_finished(segment_count)
-                results = [result for result in ordered_results if result is not None]
-        finally:
-            if debug is not None:
-                with recovery_lock:
-                    event_order = {
-                        "review_json_repaired": 0,
-                        "review_chunk_split": 0,
-                        "review_singleton_retry": 1,
-                        "review_singleton_recovered": 2,
-                        "review_singleton_failed": 2,
-                    }
-                    pending_events = sorted(
-                        recovery_events,
-                        key=lambda row: (
-                            row.get("start_index", -1),
-                            -row.get("count", 0),
-                            event_order.get(row.get("event", ""), 99),
-                            row.get("attempt", 0),
-                        ),
-                    )
-                for row in pending_events:
-                    event = row["event"]
-                    payload = {
-                        "chapter": chapter_index,
-                        **{key: value for key, value in row.items() if key != "event"},
-                    }
-                    debug.log_event(event, **payload)
-        return [issue for chunk_issues in results for issue in chunk_issues]
 
     @staticmethod
-    def _pack_contiguous(segs, budget: int) -> list[list]:
-        """按源文字符预算把段保序打包成若干连续块。"""
-        chunks: list[list] = []
-        cur: list = []
-        size = 0
-        for s in segs:
-            if cur and size + len(s.source) > budget:
-                chunks.append(cur)
-                cur, size = [], 0
-            cur.append(s)
-            size += len(s.source)
-        if cur:
-            chunks.append(cur)
-        return chunks
+    def _pack_contiguous(segs, budget: int) -> list[list[Segment]]:
+        """兼容旧私有入口；按字符预算保序打包审校段落。"""
+        return pack_legacy_review_chunks(segs, budget)
 
     def _process_batch(
         self,
@@ -3225,37 +1838,22 @@ class Orchestrator:
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> _BatchResult:
-        """单个批次：整批翻译 → 润色。
-
-        每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
-        全书概览/本章梗概作为恒定前缀注入，让译者把握全局。
-        标点规范化在章末统一执行，以维持跨段引号状态。
-        LLM 审校不在翻译批内做；全书完成后由独立 Review 阶段统一执行。
-        """
-        sources = [s.source for s in batch]
-        targets = self.translator.translate_batch(
-            sources,
-            glossary_terms=terms,
-            style=style,
-            context=ctx_text,
-            book_synopsis=book_synopsis,
-            chapter_digest=chapter_digest,
-            annotation_contexts=annotation_contexts,
+        """兼容旧私有入口；把旧 Agent 与抽样策略注入批次处理函数。"""
+        return process_legacy_batch(
+            batch,
+            terms,
+            ctx_text,
+            style,
+            book_synopsis,
+            chapter_digest,
+            annotation_contexts,
+            translate_batch=self.translator.translate_batch,
+            polish_batch=self.polisher.polish,
+            # 保持旧读取时机：Translator/Polisher 回调可在本批内更新动态配置。
+            polish_enabled=lambda: self.config.pipeline.polish,
+            backtranslate_sample=lambda: self.config.pipeline.backtranslate_sample,
+            random_sample=random.random,
         )
-
-        if self.config.pipeline.polish:
-            polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
-            if len(polished) == len(targets):
-                targets = polished
-
-        bt_samples: list[tuple[str, str]] = []
-        rate = self.config.pipeline.backtranslate_sample
-        if rate > 0:
-            for s, t in zip(sources, targets):
-                if random.random() < rate:
-                    bt_samples.append((s, t or ""))
-
-        return _BatchResult(targets=targets, bt_samples=bt_samples)
 
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
     ALL_STEPS = ("translate", "review", "report", "assemble")
@@ -3471,46 +2069,26 @@ class Orchestrator:
         """从给定实时状态或只读快照生成配置要求的全部产物。"""
         from ..assemble.writer import assemble, bilingual_out_path
 
-        if progress:
-            progress(0, 0, "回填译文…")
         out_cfg = self.config.output
-        do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
-        if not do_mono and not do_bilingual:
-            do_mono = True
-
-        outputs: list[str] = []
-        if do_mono:
-            outputs.append(
-                self._measure_stage_call(
-                    "assemble",
-                    assemble,
-                    store,
-                    input_path,
-                    out_path=out_path,
-                    out_format=out_format,
-                    bilingual=False,
-                    about_page=out_cfg.about_page,
-                    pdf_engine=pdf_engine,
-                )
-            )
-        if do_bilingual:
-            bi_out_path = bilingual_out_path(out_path) if out_path else None
-            outputs.append(
-                self._measure_stage_call(
-                    "assemble",
-                    assemble,
-                    store,
-                    input_path,
-                    out_path=bi_out_path,
-                    out_format=out_format,
-                    bilingual=True,
-                    order=out_cfg.bilingual_order,
-                    preserve_source_style=out_cfg.bilingual_preserve_source_style,
-                    about_page=out_cfg.about_page,
-                    pdf_engine=pdf_engine,
-                )
-            )
-        return outputs
+        # 锁、快照与 source hash 校验属于上层调用路径；服务只消费这里交给它的状态视图。
+        return assemble_outputs(
+            store,
+            input_path=input_path,
+            progress=progress,
+            out_format=out_format,
+            out_path=out_path,
+            pdf_engine=pdf_engine,
+            options=PublishingOptions(
+                mono=out_cfg.mono,
+                bilingual=out_cfg.bilingual,
+                bilingual_order=out_cfg.bilingual_order,
+                bilingual_preserve_source_style=out_cfg.bilingual_preserve_source_style,
+                about_page=out_cfg.about_page,
+            ),
+            renderer=assemble,
+            bilingual_path=bilingual_out_path,
+            stage_call=self._measure_stage_call,
+        )
 
     def _finish_steps_locked(
         self,
