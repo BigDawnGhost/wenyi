@@ -697,7 +697,11 @@ def _render_text_with_nodes(
         el.append(root)
         cursor = end
     append_until(el, cursor, len(text))
-    for fallback in fallbacks:
+    # 多条降级注释挤在段末时，相邻链接之间原本没有任何分隔文本，脚注数字会
+    # 连写成一串（如 11、12、13 会读成 111213）；插入顿号让它们可辨读。
+    for index, fallback in enumerate(fallbacks):
+        if index > 0:
+            el.append("、")
         el.append(fallback)
 
 
