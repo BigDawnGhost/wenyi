@@ -312,7 +312,7 @@ class TestOrchestrator(unittest.TestCase):
             captured: list[list[list[dict[str, str]]]] = []
 
             def process(batch, *args, annotation_contexts=None, **kwargs):
-                captured.append(annotation_contexts)
+                captured.append(annotation_contexts or [])
                 return _BatchResult(targets=[f"译{segment.source}" for segment in batch])
 
             try:
@@ -756,6 +756,76 @@ class TestSegmentLevelResume(unittest.TestCase):
                 all((segment.target or "").startswith("R1") for segment in resumed[:-1])
             )
             self.assertTrue((resumed[-1].target or "").startswith("R2"))
+
+    def test_resume_skips_do_not_refresh_term_snapshot_each_batch(self):
+        """续跑纯 skip 不反复刷术语快照；缺 checkpoint 时仍补抽并在真译前刷新。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.polish = False
+            cfg.pipeline.review = False
+            cfg.pipeline.book_understanding = False
+            cfg.segment.max_chars_per_batch = 8
+
+            store = Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R1"))).run(
+                txt, only_chapter=0
+            )
+            chapter = store.load_chapter(0)
+            segments = chapter.text_segments
+            self.assertGreater(len(segments), 2)
+            # 中断：末段待补译；首批术语 checkpoint 丢失（events 截断），其余已译批 checkpoint 仍在。
+            segments[-1].target = ""
+            store.save_chapter(chapter)
+            store.set_chapter_status(0, STATUS_PENDING)
+            first_key = store.batch_glossary_key(0, 1)
+            self.assertIn(first_key, store.completed_batch_glossary_keys(0))
+            kept_lines: list[str] = []
+            for line in Path(store.event_log_path).read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if (
+                    event.get("event") == "batch_glossary_extracted"
+                    and event.get("chapter") == 0
+                    and event.get("start_index") == 0
+                    and event.get("count") == 1
+                ):
+                    continue
+                kept_lines.append(line)
+            Path(store.event_log_path).write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+            store._batch_glossary_event_cache = None
+            self.assertNotIn(first_key, store.completed_batch_glossary_keys(0))
+
+            snapshot_calls = {"n": 0}
+            extract_batch_calls = {"n": 0}
+            orch = Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R2")))
+            real_snapshot = orch._chapter_term_snapshot
+            real_extract = orch._extract_batch_glossary
+
+            def counting_snapshot(glossary, text_segs):
+                snapshot_calls["n"] += 1
+                return real_snapshot(glossary, text_segs)
+
+            def counting_extract(*args, **kwargs):
+                extract_batch_calls["n"] += 1
+                return real_extract(*args, **kwargs)
+
+            with (
+                patch.object(orch, "_chapter_term_snapshot", side_effect=counting_snapshot),
+                patch.object(orch, "_extract_batch_glossary", side_effect=counting_extract),
+            ):
+                orch.run(txt, only_chapter=0)
+
+            # skip 首批缺 checkpoint → 补抽 1；真译末批后再抽 1（章末 chapter extract 不经此方法）。
+            self.assertEqual(extract_batch_calls["n"], 2)
+            # 章首 1 + 补抽后首次真译前惰性刷新 1；中间有 checkpoint 的 skip 不刷。
+            self.assertEqual(snapshot_calls["n"], 2)
+            resumed = store.load_chapter(0).text_segments
+            self.assertTrue((resumed[-1].target or "").startswith("R2"))
+            self.assertTrue(
+                all((segment.target or "").startswith("R1") for segment in resumed[:-1])
+            )
 
 
 class TestBookUnderstanding(unittest.TestCase):
