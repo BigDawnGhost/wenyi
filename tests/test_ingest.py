@@ -415,6 +415,22 @@ def _write_annotation_context_epub(path: str, *, notes_in_spine: bool) -> None:
 
 
 class TestEpubIngest(unittest.TestCase):
+    def test_epub_annotation_only_marker_is_not_translated(self):
+        html = '<html><body><p>[<a href="#tn2_1">←1</a>]</p></body></html>'
+
+        _title, segments, template = annotate_epub_resource(html, 0, "notes.xhtml")
+
+        self.assertEqual(segments, [])
+        rendered = BeautifulSoup(template, "html.parser")
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text(), "[←1]")
+        link = rendered.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "#tn2_1")
+
     def test_epub_point_annotation_is_excluded_from_source(self):
         html = """<html><body><p>Buck Mulligan<sup id="note-wrap"><a
         id="jpref1" href="notes.xhtml#jpnote1">2</a></sup> came down.</p></body></html>"""

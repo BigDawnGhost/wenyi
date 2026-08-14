@@ -916,6 +916,12 @@ def annotate_epub_resource(
                 descendant.insert_before(marker)
 
         text, meta = _segment_content(el, anchor, annotations)
+        if (
+            annotations
+            and all(annotation.get("mode") == "point" for annotation in annotations.values())
+            and _ANNOTATION_MARKER_ONLY.fullmatch(text)
+        ):
+            continue
         if not text:
             continue
         el["data-tn-id"] = anchor
