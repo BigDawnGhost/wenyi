@@ -394,8 +394,12 @@ class AnnotationAligner(Agent):
             if len(candidates) != 1:
                 results[index] = fallback_alignment(unit)
                 continue
+            marked_target = candidates[0].get("marked_target")
+            if not isinstance(marked_target, str):
+                results[index] = fallback_alignment(unit)
+                continue
             try:
-                placements = validate_marked_target(unit, candidates[0].get("marked_target"))
+                placements = validate_marked_target(unit, marked_target)
             except Exception:  # noqa: BLE001 - one malformed item must not poison its peers
                 results[index] = fallback_alignment(unit)
                 continue

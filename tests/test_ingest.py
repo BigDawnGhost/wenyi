@@ -422,8 +422,14 @@ class TestEpubIngest(unittest.TestCase):
 
         self.assertEqual(segments, [])
         rendered = BeautifulSoup(template, "html.parser")
-        self.assertEqual(rendered.find("p").get_text(), "[←1]")
-        self.assertEqual(rendered.find("a").get("href"), "#tn2_1")
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text(), "[←1]")
+        link = rendered.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "#tn2_1")
 
     def test_epub_point_annotation_is_excluded_from_source(self):
         html = """<html><body><p>Buck Mulligan<sup id="note-wrap"><a
