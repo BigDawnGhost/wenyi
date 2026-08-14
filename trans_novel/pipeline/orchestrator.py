@@ -68,6 +68,9 @@ from .runstore import STATUS_DONE, RunStore, slugify, source_sha256
 
 ProgressFn = Callable[[int, int, str], None]
 
+# 单次运行账本（run_metrics/）暂不启用；完善后改为 True 即可放量。
+_RUN_METRICS_ENABLED = False
+
 
 def _record_run_metrics(
     operation: str,
@@ -497,7 +500,7 @@ class Orchestrator:
         if active is not None:
             yield active
             return
-        if self._run_metrics_suppressed:
+        if self._run_metrics_suppressed or not _RUN_METRICS_ENABLED:
             yield None
             return
 

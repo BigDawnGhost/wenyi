@@ -696,6 +696,19 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
 
 class TestPerRunMetrics(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # 产品默认关闭账本；本类显式打开以覆盖实现路径。
+        cls._run_metrics_enabled = patch(
+            "trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED",
+            True,
+        )
+        cls._run_metrics_enabled.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._run_metrics_enabled.stop()
+
     @staticmethod
     def _config(directory: str) -> Config:
         return Config.from_dict(
