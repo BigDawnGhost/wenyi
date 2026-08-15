@@ -23,6 +23,7 @@ from trans_novel.ingest.epub_reader import (
     _find_opf_path,
     _parse_opf,
     annotate_epub_resource,
+    peek_epub_title,
 )
 from trans_novel.ingest.epub_toc import parse_toc_entries, resolve_epub_href
 from trans_novel.ingest.fb2_reader import read_fb2_binaries
@@ -1333,6 +1334,50 @@ class TestEpubIngest(unittest.TestCase):
                 for entry in doc.meta["toc_entries"]
             )
         )
+
+    def test_peek_epub_title_matches_full_document_title(self):
+        """轻量 OPF 书名须与完整 read_epub 的 Document.title 一致，否则 locate 会找错 state。"""
+        with tempfile.TemporaryDirectory() as d:
+            with_title = os.path.join(d, "named.epub")
+            write_sample_epub(with_title)
+            peeked = peek_epub_title(with_title)
+            full = load_document(with_title, "ja", "zh")
+            self.assertEqual(peeked, full.title)
+            self.assertEqual(peeked, "サンプル小説")
+
+            untitled = os.path.join(d, "untitled-book.epub")
+            with zipfile.ZipFile(untitled, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+<rootfiles><rootfile full-path="content.opf"/></rootfiles>
+</container>""",
+                )
+                zf.writestr(
+                    "content.opf",
+                    """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:language>en</dc:language>
+</metadata>
+<manifest>
+  <item id="ch" href="ch.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine><itemref idref="ch"/></spine>
+</package>""",
+                )
+                zf.writestr(
+                    "ch.xhtml",
+                    """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Body.</p></body></html>""",
+                )
+
+            peeked_untitled = peek_epub_title(untitled)
+            full_untitled = load_document(untitled, "en", "zh")
+            self.assertEqual(peeked_untitled, full_untitled.title)
+            self.assertEqual(peeked_untitled, "untitled-book")
 
 
 if __name__ == "__main__":
