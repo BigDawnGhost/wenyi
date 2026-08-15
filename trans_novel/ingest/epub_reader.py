@@ -1371,6 +1371,20 @@ def _logical_chapters(
     return chapters, strategy.name, canonical_toc_path
 
 
+def peek_epub_title(path: str) -> str:
+    """只读 OPF 取书名，不逐资源 annotate；供定位已有状态目录使用。
+
+    只解析 container.xml 和 OPF 两个小 XML，不触碰任何 XHTML 正文，因此远比
+    ``read_epub`` 便宜。与 ``read_epub`` 计算 ``Document.title`` 的规则保持一致（OPF 缺
+    标题时退回文件名词干），否则定位到的状态目录会和 ``prepare`` 时创建的对不上。
+    """
+
+    with zipfile.ZipFile(path, "r") as zf:
+        opf_path = _find_opf_path(zf)
+        book_title, _hrefs, _toc_paths = _parse_opf(zf, opf_path)
+    return book_title or os.path.splitext(os.path.basename(path))[0]
+
+
 def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
     """按 spine 读取物理资源，再按顶层目录锚点生成逻辑章节。"""
     with zipfile.ZipFile(path, "r") as zf:
