@@ -4,17 +4,15 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-TierConfigT = TypeVar("TierConfigT")
+from ..config import validate_llm_tier
 
-# 缺档回退链：向“更便宜优先”回退，绝不因缺档反而升到更贵的档
-_TIER_FALLBACK = {"fast": ("cheap", "strong"), "cheap": ("strong",), "strong": ()}
+TierConfigT = TypeVar("TierConfigT")
 
 
 def resolve_tier(tiers: dict[str, TierConfigT], tier: str) -> TierConfigT:
-    """按回退链解析 tier 配置。缺 strong 时 KeyError（与旧行为一致）。"""
-    if tier in tiers:
+    """精确解析合法 tier；禁止未知名称和跨档位静默回退。"""
+    validate_llm_tier(tier)
+    try:
         return tiers[tier]
-    for fallback in _TIER_FALLBACK.get(tier, ("strong",)):
-        if fallback in tiers:
-            return tiers[fallback]
-    return tiers["strong"]
+    except KeyError:
+        raise KeyError(f"未配置 LLM tier：{tier}") from None

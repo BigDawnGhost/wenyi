@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import typer
 from rich.progress import Progress
@@ -98,7 +98,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
                 "pipeline": {"polish": True},
             }
         )
@@ -137,7 +137,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
                 "pipeline": {"polish": True},
             }
         )
@@ -184,7 +184,7 @@ class TestCliConfig(unittest.TestCase):
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         captured = {}
@@ -232,7 +232,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         with (
@@ -328,7 +328,7 @@ class TestCliConfig(unittest.TestCase):
     def test_review_command_runs_full_read_only_review(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         captured = {}
@@ -378,7 +378,16 @@ class TestCliConfig(unittest.TestCase):
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
-        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        cfg = Config.from_dict(
+            {
+                "llm": {
+                    "api_format": "openai",
+                    "api_key_env": "TEST_LLM_KEY",
+                    "base_url": "https://example.test/v1",
+                    "model": "test-model",
+                }
+            }
+        )
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.cli.os.path.isfile") as isfile,
@@ -387,13 +396,13 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("DEEPSEEK_API_KEY", result.output)
+        self.assertIn("TEST_LLM_KEY", result.output)
         self.assertNotIn("输入文件不存在", result.output)
         self.assertNotIn("Traceback", result.output)
-        isfile.assert_not_called()
+        self.assertNotIn(call(missing), isfile.call_args_list)
 
     def test_assemble_skips_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        cfg = Config.from_dict({"llm": {"api_format": "openai"}})
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.cli.os.path.isfile", return_value=False),
@@ -403,10 +412,10 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("输入文件不存在", result.output)
-        self.assertNotIn("DEEPSEEK_API_KEY", result.output)
+        self.assertNotIn("LLM 配置缺少必填项", result.output)
 
     def test_assemble_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
         captured = {}
 
         class FakeOrchestrator:
@@ -448,7 +457,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("out.pdf", result.output)
 
     def test_report_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
         captured = {}
 
         class ReportStore:
@@ -486,7 +495,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("state/book/report.json", result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}}})
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
@@ -516,7 +525,7 @@ class TestCliConfig(unittest.TestCase):
                 self.assertNotIn("Traceback", result.output)
 
     def test_translate_rejects_unknown_output_format_after_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
         with (
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
@@ -527,7 +536,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("不支持的输出格式", result.output)
 
     def test_translate_reports_out_of_range_chapter_without_traceback(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"api_format": "fake"}})
 
         class FakeOrchestrator:
             def __init__(self, config):
@@ -556,7 +565,7 @@ class TestCliConfig(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"api_format": "fake"},
                     "paths": {"state_dir": state_dir},
                 }
             )

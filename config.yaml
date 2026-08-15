@@ -7,27 +7,26 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  # deepseek | openai | openrouter | openai-compatible | ollama | vllm | fake
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
+  # anthropic | openai；也接受简写 a | oai。fake 仅用于离线测试。
+  api_format: openai
+  # 二选一；同时配置时 api_key 优先。请勿把真实密钥提交到版本库。
+  api_key_env: LLM_API_KEY
+  # api_key: sk-...
+  base_url: "" # SDK 基础地址，或含 /chat/completions、/v1/messages 的完整地址
+  model: "" # strong / cheap / fast 三档共用的默认模型
   timeout: 600
   max_retries: 4 # Wenyi 统一执行的瞬时错误重试次数；SDK 内置重试已关闭
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
-        reasoning_effort: high
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
+  # 以下请求参数均可省略；需要档位差异时在 tiers.<档位> 下用同名字段覆盖。
+  # max_tokens: 8192
+  # max_tokens_field: max_tokens # OpenAI 格式也可设为 max_completion_tokens
+  # temperature: 0.2
+  # thinking: true
+  # reasoning_effort: high
+  # request_overrides: {}
+  # tiers:
+  #   fast:
+  #     model: provider-fast-model
+  #     thinking: false
 
 # ── 切分 ─────────────────────────────────────────────────────────────────
 segment:

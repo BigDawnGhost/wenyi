@@ -22,7 +22,7 @@ def _config() -> Config:
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {
-                "provider": "fake",
+                "api_format": "fake",
                 "tiers": {
                     "strong": {"model": "strong"},
                     "cheap": {"model": "cheap"},

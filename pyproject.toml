@@ -5,7 +5,8 @@ description = "A multi-agent long-form novel translation system with context, te
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "openai>=1.40",        # DeepSeek（OpenAI 兼容）调用
+    "anthropic>=0.121.0",  # Anthropic Messages API 调用
+    "openai>=1.40",        # OpenAI Chat Completions 兼容 API 调用
     "pydantic>=2.7",       # 模型 / 配置校验
     "pyyaml>=6.0",         # 读取 config.yaml
     "tenacity>=8.2",       # LLM 调用重试/退避
@@ -17,7 +18,6 @@ dependencies = [
     "rich>=13.7",          # 表格 / 进度条
     "json-repair>=0.61,<1", # 仅用于 Reviewer 畸形 JSON 的本地修复
     "pypdf>=6.14.2",
-    "google-genai>=2.13.0",
 ]
 
 [project.optional-dependencies]

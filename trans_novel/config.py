@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 _DEFAULT_CONFIG_YAML = """\
 # trans-novel 配置（多语言小说 → 中文）
@@ -18,27 +18,26 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  # deepseek | openai | openrouter | openai-compatible | ollama | vllm | fake
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
+  # anthropic | openai；也接受简写 a | oai。fake 仅用于离线测试。
+  api_format: openai
+  # 二选一；同时配置时 api_key 优先。请勿把真实密钥提交到版本库。
+  api_key_env: LLM_API_KEY
+  # api_key: sk-...
+  base_url: "" # SDK 基础地址，或含 /chat/completions、/v1/messages 的完整地址
+  model: "" # strong / cheap / fast 三档共用的默认模型
   timeout: 600
   max_retries: 4
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
-        reasoning_effort: high
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: false
+  # 以下请求参数均可省略；需要档位差异时在 tiers.<档位> 下用同名字段覆盖。
+  # max_tokens: 8192
+  # max_tokens_field: max_tokens # OpenAI 格式也可设为 max_completion_tokens
+  # temperature: 0.2
+  # thinking: true
+  # reasoning_effort: high
+  # request_overrides: {}
+  # tiers:
+  #   fast:
+  #     model: provider-fast-model
+  #     thinking: false
 
 # ── 切分 ─────────────────────────────────────────────────────────────────
 segment:
@@ -92,26 +91,77 @@ output:
 """
 
 
+MaxTokensField = Literal["max_tokens", "max_completion_tokens"]
+JSONResponseFallback = Literal["none", "reasoning_content"]
+APIFormat = Literal["anthropic", "openai", "fake"]
+LLMTier = Literal["strong", "cheap", "fast"]
+LLM_TIERS: tuple[LLMTier, ...] = ("strong", "cheap", "fast")
+
+
+def normalize_api_format(value: Any) -> APIFormat:
+    """把用户可读的 API 格式别名归一化为稳定内部值。"""
+    normalized = str(value).strip().lower()
+    aliases: dict[str, APIFormat] = {
+        "a": "anthropic",
+        "anthropic": "anthropic",
+        "oai": "openai",
+        "openai": "openai",
+        "fake": "fake",
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as error:
+        raise ValueError(
+            "llm.api_format 仅支持 anthropic / openai（简写 a / oai）；fake 仅用于离线测试"
+        ) from error
+
+
+def validate_llm_tier(value: str) -> LLMTier:
+    """只接受三个稳定调用档位，避免拼写错误静默改用全局模型。"""
+    if value not in LLM_TIERS:
+        supported = " / ".join(LLM_TIERS)
+        raise ValueError(f"未知 LLM tier：{value}（仅支持 {supported}）")
+    return cast(LLMTier, value)
+
+
 class TierConfig(BaseModel):
-    """跨 provider 通用的档位覆盖；专属参数由 provider 解析 options。"""
+    """单个调用档位对全局模型和请求参数的精确覆盖。"""
 
     model_config = ConfigDict(extra="forbid")
 
     model: str | None = None
-    options: dict[str, Any] = Field(default_factory=dict)
-
-
-ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
+    max_tokens: int | None = Field(default=None, gt=0)
+    max_tokens_field: MaxTokensField | None = None
+    temperature: float | None = None
+    thinking: bool | None = None
+    reasoning_effort: str | None = None
+    json_response_fallback: JSONResponseFallback | None = None
+    request_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMConfig(BaseModel):
-    provider: str = "deepseek"
-    base_url: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    api_format: APIFormat = "openai"
+    api_key: SecretStr | None = None
     api_key_env: str | None = None
-    reasoning_style: ReasoningStyle = "none"
+    base_url: str | None = None
+    model: str | None = None
     timeout: int = 600
-    max_retries: int = 4
-    tiers: dict[str, TierConfig] = Field(default_factory=dict)
+    max_retries: int = Field(default=4, ge=0)
+    max_tokens: int | None = Field(default=None, gt=0)
+    max_tokens_field: MaxTokensField = "max_tokens"
+    temperature: float | None = None
+    thinking: bool | None = None
+    reasoning_effort: str | None = None
+    json_response_fallback: JSONResponseFallback = "none"
+    request_overrides: dict[str, Any] = Field(default_factory=dict)
+    tiers: dict[LLMTier, TierConfig] = Field(default_factory=dict)
+
+    @field_validator("api_format", mode="before")
+    @classmethod
+    def _normalize_api_format(cls, value: Any) -> APIFormat:
+        return normalize_api_format(value)
 
 
 class SegmentConfig(BaseModel):
@@ -140,7 +190,7 @@ class PipelineConfig(BaseModel):
         le=5,
     )  # 单段畸形输出的额外重试次数
     review_agent_loop: bool = True  # 初审发现候选后，启动有界取证 Agent Loop
-    review_agent_tier: Literal["strong", "cheap", "fast"] = "strong"
+    review_agent_tier: LLMTier = "strong"
     review_agent_max_evidence_rounds: int = Field(
         default=2,
         ge=0,
@@ -197,20 +247,29 @@ class Config(BaseModel):
     def from_dict(cls, raw: dict[str, Any]) -> Config:
         """把 YAML 对应的嵌套字典转换为运行时配置模型。"""
         lang = raw.get("language", {})
-        llm_raw = raw.get("llm", {})
-        tiers = {
-            name: TierConfig.model_validate(t)
-            for name, t in (llm_raw.get("tiers", {}) or {}).items()
-        }
-        llm = LLMConfig(
-            provider=llm_raw.get("provider", "deepseek"),
-            base_url=llm_raw.get("base_url"),
-            api_key_env=llm_raw.get("api_key_env"),
-            reasoning_style=llm_raw.get("reasoning_style", "none"),
-            timeout=llm_raw.get("timeout", 600),
-            max_retries=llm_raw.get("max_retries", 4),
-            tiers=tiers,
-        )
+        llm_raw = raw.get("llm", {}) or {}
+        if not isinstance(llm_raw, dict):
+            raise ValueError("llm 配置必须是映射")
+        tiers_raw = llm_raw.get("tiers", {}) or {}
+        if not isinstance(tiers_raw, dict):
+            raise ValueError("llm.tiers 配置必须是映射")
+        legacy_fields = [name for name in ("provider", "reasoning_style") if name in llm_raw]
+        legacy_tiers = [
+            name for name, tier in tiers_raw.items() if isinstance(tier, dict) and "options" in tier
+        ]
+        if legacy_fields or legacy_tiers:
+            locations = [f"llm.{name}" for name in legacy_fields]
+            locations.extend(f"llm.tiers.{name}.options" for name in legacy_tiers)
+            raise ValueError(
+                "旧 LLM provider 配置已移除（发现 " + "、".join(locations) + "）。请改为：\n"
+                "llm:\n"
+                "  api_format: openai  # 或 anthropic\n"
+                "  api_key_env: LLM_API_KEY  # 或 api_key\n"
+                "  base_url: https://api.example.com/v1\n"
+                "  model: provider-model-name"
+            )
+        tiers = {name: TierConfig.model_validate(t) for name, t in tiers_raw.items()}
+        llm = LLMConfig.model_validate({**llm_raw, "tiers": tiers})
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
         output = OutputConfig.model_validate(raw.get("output", {}) or {})

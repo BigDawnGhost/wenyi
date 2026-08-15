@@ -29,7 +29,7 @@ class TestTranslatorAlignment(unittest.TestCase):
             {
                 "language": {"source": "ja", "target": "zh"},
                 "llm": {
-                    "provider": "fake",
+                    "api_format": "fake",
                     "tiers": {
                         "strong": {"model": "deepseek-v4-pro"},
                         "cheap": {"model": "deepseek-v4-flash"},
@@ -127,7 +127,7 @@ class TestTranslatorAnnotationContexts(unittest.TestCase):
         return Config.from_dict(
             {
                 "language": {"source": "en", "target": "zh"},
-                "llm": {"provider": "fake"},
+                "llm": {"api_format": "fake"},
                 "pipeline": {"align_retry_limit": 1},
             }
         )

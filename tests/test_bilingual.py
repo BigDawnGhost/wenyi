@@ -234,7 +234,7 @@ def _config(state_dir: str, output: dict | None = None):
     raw = {
         "language": {"source": "ja", "target": "zh"},
         "llm": {
-            "provider": "fake",
+            "api_format": "fake",
             "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
         },
         "pipeline": {
@@ -449,7 +449,7 @@ class TestCliBilingualFlags(unittest.TestCase):
     def test_translate_flags_override_output_config(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {"api_format": "fake", "tiers": {"strong": {"model": "p"}}},
             }
         )
         captured = {}

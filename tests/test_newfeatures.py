@@ -23,7 +23,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             {
                 "language": {"source": "auto", "target": "zh"},
                 "llm": {
-                    "provider": "fake",
+                    "api_format": "fake",
                     "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
                 },
                 "pipeline": {"book_understanding": False},
@@ -67,7 +67,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "ja-JP"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"api_format": "fake"},
                     "paths": {"state_dir": os.path.join(d, "state")},
                 }
             )
@@ -138,7 +138,7 @@ class TestPunct(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "zh", "target": "en"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"api_format": "fake"},
                     "paths": {"state_dir": os.path.join(directory, "state")},
                 }
             )
@@ -165,7 +165,7 @@ class TestRunAll(unittest.TestCase):
                 {
                     "language": {"source": "auto", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
+                        "api_format": "fake",
                         "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
                     },
                     "pipeline": {
