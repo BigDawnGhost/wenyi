@@ -156,7 +156,7 @@ class TestPdfIngest(unittest.TestCase):
                 }
             )
 
-            with patch("trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED", True):
+            with patch("trans_novel.pipeline.runtime._RUN_METRICS_ENABLED", True):
                 with (
                     patch(
                         "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",

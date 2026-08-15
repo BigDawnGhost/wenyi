@@ -1271,7 +1271,7 @@ class TestTitleTranslation(unittest.TestCase):
                     ),
                     self.assertRaisesRegex(RuntimeError, "invalid number"),
                 ):
-                    orchestrator._translate_titles(store, glossary)
+                    orchestrator._translation.translate_titles(store, glossary)
             finally:
                 glossary.close()
 
