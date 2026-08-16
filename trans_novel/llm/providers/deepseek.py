@@ -46,8 +46,8 @@ def _default_tiers() -> dict[str, ResolvedTier[DeepSeekTierOptions]]:
     """返回 DeepSeek 内置的 strong、cheap、fast 三档默认配置。"""
     return {
         "strong": ResolvedTier(
-            model="deepseek-v4-pro",
-            options=DeepSeekTierOptions(),
+            model="deepseek-v4-flash",
+            options=DeepSeekTierOptions(reasoning_effort="max"),
         ),
         "cheap": ResolvedTier(
             model="deepseek-v4-flash",
