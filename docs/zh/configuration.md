@@ -25,7 +25,7 @@ llm:
 
 - `https://api.deepseek.com`；
 - `DEEPSEEK_API_KEY` 环境变量；
-- `deepseek-v4-pro` 作为 strong 档；
+- `deepseek-v4-flash` 作为 strong 档，并默认 `reasoning_effort: max`（Pro 涨价后的成本控制；需要时可改回 `deepseek-v4-pro`）；
 - `deepseek-v4-flash` 作为 cheap 和 fast 档。
 
 API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
@@ -44,9 +44,9 @@ llm:
   max_retries: 4
   tiers:
     strong:
-      model: deepseek-v4-pro
+      model: deepseek-v4-flash
       options:
-        reasoning_effort: high
+        reasoning_effort: max
         thinking: true
     cheap:
       model: deepseek-v4-flash
