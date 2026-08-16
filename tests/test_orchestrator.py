@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.fake_llm import routing_handler
-from tests.sample_data import write_sample_txt
+from tests.sample_data import write_sample_epub, write_sample_txt
 from trans_novel.agents.reviewer import ReviewOutputError
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
@@ -20,7 +20,13 @@ from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.context import RollingContext
 from trans_novel.pipeline.orchestrator import Orchestrator, _BatchResult, _normalize_lang
-from trans_novel.pipeline.runstore import STATUS_DONE, STATUS_PENDING, RunStore
+from trans_novel.pipeline.runstore import (
+    STATUS_DONE,
+    STATUS_PENDING,
+    RunStore,
+    slugify,
+    source_sha256,
+)
 
 
 def _translated_para_count(calls) -> int:
@@ -2683,6 +2689,41 @@ class TestProgressLabels(unittest.TestCase):
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
             self.assertIn((0, 0, "生成全书概览…"), events)
+
+
+class TestLocateExistingStore(unittest.TestCase):
+    def test_epub_locate_uses_peek_title_without_load_document(self):
+        """EPUB 定位既有 state 只读 OPF 书名，不得再全本 load_document（避免双重 annotate）。"""
+        with tempfile.TemporaryDirectory() as directory:
+            epub = os.path.join(directory, "sample.epub")
+            write_sample_epub(epub)
+            digest = source_sha256(epub)
+            # write_sample_epub OPF 书名「サンプル小説」；与 prepare 使用同一 slug 规则
+            store = RunStore(
+                os.path.join(directory, "state", slugify("サンプル小説")),
+            )
+            store.save_manifest(
+                {
+                    "title": "サンプル小説",
+                    "fmt": "epub",
+                    "source_path": epub,
+                    "source_sha256": digest,
+                    "source_lang": "ja",
+                    "target_lang": "zh",
+                    "chapters": [],
+                }
+            )
+            cfg = _config(os.path.join(directory, "state"))
+            orch = Orchestrator(cfg, client=FakeClient())
+
+            with patch(
+                "trans_novel.pipeline.orchestrator.load_document",
+                side_effect=AssertionError("locate 不应调用 load_document"),
+            ):
+                located = orch._locate_existing_store(epub)
+
+            self.assertEqual(located.run_dir, store.run_dir)
+            self.assertTrue(located.exists())
 
 
 if __name__ == "__main__":

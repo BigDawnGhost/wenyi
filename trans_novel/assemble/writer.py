@@ -872,25 +872,40 @@ def _segment_render_maps(
     return by_anchor, src_by_anchor, kind_by_anchor, stored_meta_by_anchor
 
 
-def _build_source_anchor_ids(
-    soup: BeautifulSoup,
-    by_anchor: dict[str, str],
-    src_by_anchor: dict[str, str],
-    kind_by_anchor: dict[str, str],
-) -> dict[str, str]:
-    """为实际输出的原文块分配稳定且不与原书冲突的 synthetic ID。"""
+def _index_soup_ids(soup: BeautifulSoup) -> tuple[set[str], dict[str, Tag]]:
+    """一次 find_all 同时建立已占用 id/name 集合和 data-tn-id → Tag 索引。
+
+    回填需要对每个锚点做可能数百次查找；若每次都重新 ``soup.find()``，单页耗时与
+    「段数 × DOM 规模」成正比。这里只遍历一遍全页标签，后续查找降为 O(1) 字典查找。
+    """
     occupied: set[str] = set()
+    tn_id_index: dict[str, Tag] = {}
     for node in soup.find_all(True):
         for attr in ("id", "name"):
             value = node.get(attr)
             if isinstance(value, str) and value:
                 occupied.add(value)
+        tn_id = node.get("data-tn-id")
+        if isinstance(tn_id, str) and tn_id:
+            tn_id_index[tn_id] = node
+    return occupied, tn_id_index
+
+
+def _build_source_anchor_ids(
+    by_anchor: dict[str, str],
+    src_by_anchor: dict[str, str],
+    kind_by_anchor: dict[str, str],
+    tn_id_index: dict[str, Tag],
+    occupied: set[str],
+) -> dict[str, str]:
+    """为实际输出的原文块分配稳定且不与原书冲突的 synthetic ID。"""
+    occupied = set(occupied)  # 本函数会不断加入新分配的 id，不能直接复用调用方的集合
     assigned: dict[str, str] = {}
     for anchor, target in by_anchor.items():
         if kind_by_anchor.get(anchor) == KIND_HEADING:
             continue
         source = _bilingual_source(src_by_anchor.get(anchor, ""), target)
-        if not source or soup.find(True, attrs={"data-tn-id": anchor}) is None:
+        if not source or anchor not in tn_id_index:
             continue
         base = f"{_SOURCE_ANCHOR_PREFIX}{anchor}"
         candidate = base
@@ -927,12 +942,16 @@ def _render_segments_html(
     """
     soup = BeautifulSoup(template, "html.parser")
     by_anchor, src_by_anchor, kind_by_anchor, stored_meta_by_anchor = _segment_render_maps(segments)
+    # 一次建索引，后续按 anchor 查找 data-tn-id 节点都是 O(1)，避免每个锚点都
+    # 重新 soup.find() 扫一遍全页 DOM。
+    occupied_ids, tn_id_index = _index_soup_ids(soup)
     if bilingual and source_ids_by_anchor is None:
         source_ids_by_anchor = _build_source_anchor_ids(
-            soup,
             by_anchor,
             src_by_anchor,
             kind_by_anchor,
+            tn_id_index,
+            occupied_ids,
         )
     source_ids_by_anchor = source_ids_by_anchor or {}
     if bilingual and source_link_targets is None:
@@ -949,7 +968,7 @@ def _render_segments_html(
         }
     source_link_targets = source_link_targets or {}
     for anchor, text in by_anchor.items():
-        el = soup.find(True, attrs={"data-tn-id": anchor})
+        el = tn_id_index.get(anchor)
         if el is None:
             continue
         src = (
@@ -1458,12 +1477,14 @@ def _render_epub_resources(
     if bilingual:
         for href, (segments, template, _fresh_meta) in prepared.items():
             template_soup = BeautifulSoup(template, "html.parser")
+            occupied_ids, tn_id_index = _index_soup_ids(template_soup)
             by_anchor, src_by_anchor, kind_by_anchor, _stored_meta = _segment_render_maps(segments)
             source_ids = _build_source_anchor_ids(
-                template_soup,
                 by_anchor,
                 src_by_anchor,
                 kind_by_anchor,
+                tn_id_index,
+                occupied_ids,
             )
             source_ids_by_resource[href] = source_ids
             for fragment, segment_anchor in _fragment_anchor_map(template).items():
