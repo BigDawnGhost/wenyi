@@ -15,10 +15,10 @@ llm:
   max_retries: 4 # Wenyi 统一执行的瞬时错误重试次数；SDK 内置重试已关闭
   tiers:
     strong:
-      model: deepseek-v4-pro
+      model: deepseek-v4-flash
       options:
         thinking: true
-        reasoning_effort: high
+        reasoning_effort: max
     cheap:
       model: deepseek-v4-flash
       options:
