@@ -76,6 +76,33 @@ def _safe_id(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "agent"
 
 
+def _expand_evidence_ref_aliases(
+    value: Any,
+    aliases: dict[str, list[str]],
+) -> Any:
+    """把模型引用的 request_id 展开为该请求实际返回的 evidence refs。"""
+    if isinstance(value, list):
+        return [_expand_evidence_ref_aliases(item, aliases) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    expanded: dict[str, Any] = {}
+    for key, item in value.items():
+        if key != "evidence_refs" or not isinstance(item, list):
+            expanded[key] = _expand_evidence_ref_aliases(item, aliases)
+            continue
+        refs: list[Any] = []
+        for ref in item:
+            replacements = aliases.get(ref) if isinstance(ref, str) else None
+            refs.extend(replacements if replacements is not None else [ref])
+        deduplicated: list[Any] = []
+        for ref in refs:
+            if ref not in deduplicated:
+                deduplicated.append(ref)
+        expanded[key] = deduplicated
+    return expanded
+
+
 class _ActionLoop:
     """在普通 messages 接口上模拟 request-evidence/final 工具循环。"""
 
@@ -120,9 +147,11 @@ class _ActionLoop:
         evidence_rounds = 0
         seen_request_ids: set[str] = set()
         seen_requests: set[tuple[str, str]] = set()
+        request_ref_aliases: dict[str, list[str]] = {}
+        malformed_retries_remaining = 1
 
         try:
-            for turn_number in range(1, max_rounds + 2):
+            for turn_number in range(1, max_rounds + 3):
                 sent_messages = [dict(message) for message in messages]
                 turn: dict[str, Any] = {
                     "turn": turn_number,
@@ -153,6 +182,28 @@ class _ActionLoop:
                 try:
                     parsed = parse_json_result(raw)
                 except ValueError as error:
+                    if malformed_retries_remaining:
+                        malformed_retries_remaining -= 1
+                        turn["status"] = "retrying"
+                        turn["retry_reason"] = "malformed_json"
+                        self.debug.write_json(relative, trace)
+                        self.debug.log_event(
+                            "review_agent_output_retry",
+                            agent_id=agent_id,
+                            stage=stage,
+                            reason="malformed_json",
+                        )
+                        messages.append({"role": "assistant", "content": raw})
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "上一次响应不是完整有效的 JSON。请重新输出同一动作，"
+                                    "只输出一个符合协议且完整闭合的 JSON 对象。"
+                                ),
+                            }
+                        )
+                        continue
                     raise ReviewLoopProtocolError("malformed_json") from error
                 data = parsed.value
                 turn["parsed"] = data
@@ -167,7 +218,14 @@ class _ActionLoop:
                 if action == "final":
                     if data.get("complete") is not True:
                         raise ReviewLoopProtocolError("final_not_complete")
-                    result = validate_final(data, allowed_refs)
+                    normalized_data = _expand_evidence_ref_aliases(
+                        data,
+                        request_ref_aliases,
+                    )
+                    if normalized_data != data:
+                        turn["normalized_final"] = normalized_data
+                        self.debug.write_json(relative, trace)
+                    result = validate_final(normalized_data, allowed_refs)
                     trace["status"] = "finished"
                     trace["result"] = result
                     self.debug.write_json(relative, trace)
@@ -201,6 +259,8 @@ class _ActionLoop:
                         or request_id in current_ids
                     ):
                         raise ReviewLoopProtocolError("duplicate_evidence_request_id")
+                    if request_id in allowed_refs:
+                        raise ReviewLoopProtocolError("evidence_request_id_ref_collision")
                     tool = _text(request.get("tool"))
                     arguments = request.get("arguments")
                     if not tool or not isinstance(arguments, dict):
@@ -233,7 +293,13 @@ class _ActionLoop:
                     results.append(result)
                     batch_size += encoded_size + 1
                 evidence_rounds += 1
-                allowed_refs.update(self.evidence.evidence_refs(results))
+                result_refs = self.evidence.evidence_refs(results)
+                allowed_refs.update(result_refs)
+                for result in results:
+                    request_id = _text(result.get("request_id"))
+                    refs = sorted(self.evidence.evidence_refs(result))
+                    if request_id and refs:
+                        request_ref_aliases[request_id] = refs
                 turn["evidence_results"] = results
                 self.debug.write_json(relative, trace)
                 self.debug.log_event(
@@ -249,7 +315,7 @@ class _ActionLoop:
                         }
                         for request in requests
                     ],
-                    refs=sorted(self.evidence.evidence_refs(results)),
+                    refs=sorted(result_refs),
                 )
                 messages.append({"role": "assistant", "content": raw})
                 evidence_message = "【证据工具返回 JSON】\n" + json.dumps(
