@@ -245,8 +245,10 @@ class TestCliConfig(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("--chapter 只翻译并保存指定章节", " ".join(result.output.split()))
-        self.assertIn("--review/--no-review", result.output)
+        # CliRunner may wrap the message on Windows; compare ignoring whitespace.
+        compact = "".join(result.output.split())
+        self.assertIn("--chapter只翻译并保存指定章节", compact)
+        self.assertIn("--review/--no-review", compact)
 
     def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
         result = CliRunner().invoke(app, ["--help"])
