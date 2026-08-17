@@ -21,6 +21,17 @@ class AlignmentError(Exception):
 
 class Translator(Agent):
     @staticmethod
+    def _needs_translation(source: str) -> bool:
+        """仅把含语言文字的非空段落发送给模型。
+
+        PDF 表格经常把 ``-``、纯数字或其它占位符解析为独立段落。模型可能
+        把这些内容返回为空字符串，进而触发对齐失败；这类段落原样保留即可。
+        ``str.isalpha`` 覆盖拉丁、中文、日文、韩文等 Unicode 字母。
+        """
+        stripped = source.strip()
+        return bool(stripped) and any(character.isalpha() for character in stripped)
+
+    @staticmethod
     def _validate_annotation_contexts(
         sources: list[str],
         annotation_contexts: list[list[dict[str, str]]] | None,
@@ -142,37 +153,53 @@ class Translator(Agent):
         if n == 0:
             return []
 
+        translated_indices = [
+            index for index, source in enumerate(sources) if self._needs_translation(source)
+        ]
+        if not translated_indices:
+            return list(sources)
+        translated_sources = [sources[index] for index in translated_indices]
+        translated_annotation_contexts = [
+            annotation_contexts[index] for index in translated_indices
+        ]
+
         attempts = self.config.pipeline.align_retry_limit + 1
         for _ in range(attempts):
             try:
-                return self._call_batch(
-                    sources,
+                translated = self._call_batch(
+                    translated_sources,
                     glossary_terms,
                     style,
                     context,
                     book_synopsis,
                     chapter_digest,
-                    annotation_contexts,
+                    translated_annotation_contexts,
                 )
+                targets = list(sources)
+                for index, target in zip(translated_indices, translated):
+                    targets[index] = target
+                return targets
             except AlignmentError:
                 # 只恢复模型输出协议/对齐错误；传输错误已由 provider 统一处理。
                 continue
 
         # 兜底：逐段翻译。任一段仍失败时显式中断，保留已落盘
         # 批次供续跑；不能用空字符串占位，否则章节会被错误标记为已完成。
-        targets: list[str] = []
-        for index, source in enumerate(sources):
+        targets = list(sources)
+        for index, source, annotation_context in zip(
+            translated_indices,
+            translated_sources,
+            translated_annotation_contexts,
+        ):
             try:
-                targets.append(
-                    self._translate_one(
-                        source,
-                        glossary_terms,
-                        style,
-                        context,
-                        book_synopsis,
-                        chapter_digest,
-                        annotation_contexts[index],
-                    )
+                targets[index] = self._translate_one(
+                    source,
+                    glossary_terms,
+                    style,
+                    context,
+                    book_synopsis,
+                    chapter_digest,
+                    annotation_context,
                 )
             except Exception as error:
                 raise AlignmentError(f"逐段兜底翻译在第 {index} 段失败") from error
