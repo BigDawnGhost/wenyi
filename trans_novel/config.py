@@ -26,10 +26,10 @@ llm:
   max_retries: 4
   tiers:
     strong:
-      model: deepseek-v4-flash
+      model: deepseek-v4-pro
       options:
         thinking: true
-        reasoning_effort: max
+        reasoning_effort: high
     cheap:
       model: deepseek-v4-flash
       options:
@@ -51,7 +51,7 @@ segment:
 pipeline:
   review: false # 默认关闭；开启后在全书翻译完成后自动执行最终审校
   align_retry_limit: 2
-  polish: true # 润色（强档）：等于用强档把全书再翻一遍，最烧钱；默认开
+  polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
   rolling_context_segments: 6 # 注入的前文译文尾段数
   book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
