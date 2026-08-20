@@ -19,7 +19,7 @@ import zipfile
 from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, UnicodeDammit
-from bs4.element import Comment, NavigableString, Tag
+from bs4.element import Comment, NavigableString, ProcessingInstruction, Tag
 
 from .epub_chapters import get_chapter_split_strategy
 from .epub_toc import parse_toc_entries, resolve_epub_href
@@ -205,11 +205,18 @@ def _inside_implicit_note_body(node: Tag) -> bool:
     return bool(before.strip()) != bool(after.strip())
 
 
+def _is_text_string(node: object) -> bool:
+    """真正的文本节点；XML 处理指令（如 ``<?pagebreak number="69"?>``）不算正文。"""
+    return isinstance(node, NavigableString) and not isinstance(
+        node, (Comment, ProcessingInstruction)
+    )
+
+
 def _surrounding_text(block: Tag, node: Tag) -> tuple[str, str]:
     """返回节点在当前翻译块之前和之后的可见文字，用于识别段首回链。"""
 
     def text_of(value: object) -> str:
-        if isinstance(value, Comment):
+        if isinstance(value, Comment) or isinstance(value, ProcessingInstruction):
             return ""
         if isinstance(value, NavigableString):
             return str(value)
@@ -341,8 +348,7 @@ def _range_marker_node(link: Tag) -> Tag | None:
         child
         for child in link.children
         if not (
-            isinstance(child, NavigableString)
-            and not isinstance(child, Comment)
+            _is_text_string(child)
             and not str(child).strip()
         )
     ]
@@ -377,7 +383,7 @@ def _semantic_link_text(link: Tag, marker_node: Tag | None = None) -> str:
                 if child is marker_node or child.name in {"rt", "rp"}:
                     continue
                 collect(child)
-            elif isinstance(child, NavigableString) and not isinstance(child, Comment):
+            elif _is_text_string(child):
                 parts.append(str(child))
 
     collect(link)
@@ -546,7 +552,7 @@ def _segment_content(
                     continue
                 else:
                     walk(child, inside_range=inside_range)
-            elif isinstance(child, NavigableString) and not isinstance(child, Comment):
+            elif _is_text_string(child):
                 value = str(child)
                 if (
                     inside_range
@@ -561,7 +567,9 @@ def _segment_content(
                     has_later_text = any(
                         sibling.get_text(strip=True)
                         if isinstance(sibling, Tag)
-                        else isinstance(sibling, NavigableString) and bool(str(sibling).strip())
+                        else isinstance(sibling, NavigableString)
+                        and not isinstance(sibling, ProcessingInstruction)
+                        and bool(str(sibling).strip())
                         for sibling in child.next_siblings
                     )
                     if (
@@ -659,7 +667,7 @@ def _list_item_link_target(element: Tag) -> Tag | None:
     for child in element.children:
         if child is link or isinstance(child, Comment):
             continue
-        if isinstance(child, NavigableString):
+        if _is_text_string(child):
             if str(child).strip():
                 return None
             continue
@@ -682,7 +690,10 @@ def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
     for child in children:
         if isinstance(child, Tag) and child.name == "br":
             runs.append([])
-        elif isinstance(child, (Tag, NavigableString)):
+        elif isinstance(child, Tag) or (
+            isinstance(child, NavigableString)
+            and not isinstance(child, ProcessingInstruction)
+        ):
             runs[-1].append(child)
 
     targets: list[Tag] = []
@@ -690,7 +701,7 @@ def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
         has_text = any(
             node.get_text(strip=True)
             if isinstance(node, Tag)
-            else not isinstance(node, Comment) and bool(str(node).strip())
+            else _is_text_string(node) and bool(str(node).strip())
             for node in run
         )
         if not has_text:
