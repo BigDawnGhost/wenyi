@@ -1114,6 +1114,8 @@ class TestReviewReporting(unittest.TestCase):
                     "result.json",
                     "rounds",
                     "usage.json",
+                    "chunks",
+                    "checkpoint.json",
                 },
             )
 
@@ -1270,8 +1272,8 @@ class TestReviewReporting(unittest.TestCase):
             with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
                 orch.run_review(txt)
 
-    def test_review_always_reruns_and_creates_a_new_review_directory(self):
-        """每次执行都是一轮独立全书 Review。"""
+    def test_review_skips_when_already_completed_with_same_content(self):
+        """已完成且内容指纹一致的 Review 自动跳过，复用结果。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -1282,15 +1284,88 @@ class TestReviewReporting(unittest.TestCase):
 
             first = orch.run_review(txt)
             first_count = sum("译文审校" in call["messages"][0]["content"] for call in client.calls)
-            manifest = orch.prepare(txt).load_manifest()
-            self.assertTrue(all("review_status" not in chapter for chapter in manifest["chapters"]))
+            self.assertGreater(first_count, 0)
 
             second = orch.run_review(txt)
             second_count = sum(
                 "译文审校" in call["messages"][0]["content"] for call in client.calls
             )
-            self.assertEqual(second_count, first_count * 2)
+            # 内容未变 → 跳过，不产生新 LLM 调用
+            self.assertEqual(second_count, first_count)
+            # 复用同一结果
+            self.assertEqual(first["review_dir"], second["review_dir"])
+
+    def test_review_reruns_when_review_config_changed(self):
+        """内容未变但审校配置变化时不得复用旧结果，必须重审。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = FakeClient(handler=routing_handler)
+            orch = Orchestrator(cfg, client=client)
+            orch.run(txt)
+
+            first = orch.run_review(txt)
+            first_count = sum("译文审校" in call["messages"][0]["content"] for call in client.calls)
+
+            cfg.pipeline.review_agent_max_evidence_rounds = 1  # 配置变化
+            orch2 = Orchestrator(cfg, client=client)
+            second = orch2.run_review(txt)
+            second_count = sum(
+                "译文审校" in call["messages"][0]["content"] for call in client.calls
+            )
+            self.assertGreater(second_count, first_count)  # 重新审校
             self.assertNotEqual(first["review_dir"], second["review_dir"])
+
+    def test_review_resume_reuses_initial_and_agent_traces(self):
+        """删掉一个 chunk 缓存后续跑：初筛 + agent loop 都走 trace 复用，零调用。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=self._handler()))
+            store = orch.run(txt)
+            result = orch.run_review(txt)
+
+            # 模拟中断：把已完成 Review 的状态改回 running，并删掉轮级检查点
+            # （真实中断在扫描中途时无 checkpoint，重跑会从 round 1 重新扫描）
+            review_dir = result["review_dir"]
+            result_path = os.path.join(review_dir, "result.json")
+            with open(result_path, encoding="utf-8") as f:
+                state = json.load(f)
+            state["status"] = "running"
+            with open(result_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            checkpoint = os.path.join(review_dir, "checkpoint.json")
+            if os.path.isfile(checkpoint):
+                os.remove(checkpoint)
+
+            # 删除第一个 chunk 缓存，保留其 initial/agent trace
+            chunks_dir = os.path.join(review_dir, "chunks")
+            chunk_files = sorted(os.listdir(chunks_dir))
+            self.assertTrue(chunk_files)
+            removed = os.path.join(chunks_dir, chunk_files[0])
+            removed_bytes = Path(removed).read_bytes()
+            os.remove(removed)
+
+            meter = MeteredFakeClient(handler=self._handler())
+            orch2 = Orchestrator(cfg, client=meter)
+            orch2.run_review(txt)
+
+            reused_stages = [
+                call["stage"]
+                for call in meter.calls
+                if call["stage"] in ("Reviewer", "ReviewAgent")
+            ]
+            self.assertEqual(reused_stages, [])
+            self.assertTrue(os.path.isfile(removed))  # chunk 重新落盘
+            # 复用路径输出与首次运行逐字节一致
+            self.assertEqual(Path(removed).read_bytes(), removed_bytes)
+            # 续跑事件流：agent trace 复用应留痕（本测试中 agent 走 finished 短路，
+            # 不发 review_agent_resumed；仅确认事件日志可正常读取）
+            with open(os.path.join(review_dir, "events.jsonl"), encoding="utf-8") as f:
+                events = [json.loads(line) for line in f if line.strip()]
+            self.assertTrue(any(e["event"] == "review_leaf_finished" for e in events))
 
     def test_review_rejects_incomplete_book(self):
         """独立最终审校要求全书所有章节均已翻译完成。"""

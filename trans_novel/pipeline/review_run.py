@@ -1,4 +1,4 @@
-"""正式但只读的全书 Review 运行记录。"""
+"""正式但只读的全书 Review 运行记录，支持断点续跑。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
 from typing import Any
+
+from ..llm.usage import merge_usage_summaries
 
 
 def review_candidate_id(
@@ -104,6 +106,15 @@ class ReviewRunStore:
         path = self.path(relative)
         self._atomic_json(path, data)
         return path
+
+    def load_json(self, relative: str) -> dict[str, Any] | None:
+        """按 round 作用域读取一个逐轮 JSON；缺失或损坏时返回 None。"""
+        path = self.path(relative)
+        try:
+            with open(path, encoding="utf-8") as file:
+                return json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return None
 
     def log_event(self, event: str, **data: Any) -> None:
         """线程安全地追加本次 Review 的结构化事件。"""
@@ -202,11 +213,32 @@ class ReviewRunStore:
         return sorted(initial, key=position), sorted(dismissed, key=position)
 
     def start(self, *, reviewed_content_digest: str, metadata: dict[str, Any]) -> None:
-        """在首个模型调用前创建运行中结果并保存运行参数。"""
+        """在首个模型调用前创建运行中结果并保存运行参数。
+
+        如果是续跑（status=running），保留已有结果和 metadata 不覆盖。
+        """
         self._reviewed_content_digest = reviewed_content_digest
+        result_path = os.path.join(self.run_dir, "result.json")
+        if os.path.isfile(result_path):
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                if existing.get("status") == "running":
+                    # 续跑：保留已有结果和 metadata，只更新时间戳
+                    existing["resumed_at"] = datetime.now().astimezone().isoformat(
+                        timespec="microseconds"
+                    )
+                    self._atomic_json(result_path, existing)
+                    self.log_event("review_resumed", review_id=self.review_id)
+                    return
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # 首次运行：保存 metadata 并创建新结果
+        metadata["reviewed_content_digest"] = reviewed_content_digest
         self.write_json("rounds/metadata.json", metadata)
         self._atomic_json(
-            os.path.join(self.run_dir, "result.json"),
+            result_path,
             {
                 "review_id": self.review_id,
                 "status": "running",
@@ -256,6 +288,219 @@ class ReviewRunStore:
         return result
 
     def save_usage(self, usage: dict[str, Any]) -> None:
-        """保存本次 Review 的 Token 增量。"""
+        """合并保存本次 Review 的 Token 增量（跨进程续跑不丢失）。"""
+        existing = self.load_usage()
+        if existing is not None:
+            usage = merge_usage_summaries(existing, usage)
         self._atomic_json(os.path.join(self.run_dir, "usage.json"), usage)
         self.log_event("review_usage_recorded", **usage["totals"])
+
+    def load_usage(self) -> dict[str, Any] | None:
+        """读取已落盘的 Review 用量；文件缺失时返回 None。"""
+        path = os.path.join(self.run_dir, "usage.json")
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    # ── 断点续跑：chunk 级别完成状态 ──────────────────────────────────────
+
+    def mark_chunk_done(self, chunk_id: str, result: dict[str, Any]) -> None:
+        """标记一个审校块为已完成，保存结果用于续跑。"""
+        chunks_dir = os.path.join(self.run_dir, "chunks")
+        os.makedirs(chunks_dir, exist_ok=True)
+        self._atomic_json(os.path.join(chunks_dir, f"{chunk_id}.json"), result)
+
+    def load_chunk_result(self, chunk_id: str) -> dict[str, Any] | None:
+        """加载已完成的审校块结果，未完成返回 None。"""
+        path = os.path.join(self.run_dir, "chunks", f"{chunk_id}.json")
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def is_chunk_done(self, chunk_id: str) -> bool:
+        """检查审校块是否已完成。"""
+        return self.load_chunk_result(chunk_id) is not None
+
+    def rebuild_snapshots_from_chunks(self, review_round: int) -> None:
+        """从已落盘的 chunk 缓存重建初审/驳回快照。
+
+        用于 scan_done 断点续跑：跳过整轮扫描后，review_once 不再
+        重放 record_initial_issues/record_dismissed，这里按 chunk 文件
+        恢复内存聚合状态，保证最终报告的数据完整。
+
+        大块优先重建；若父块与拆半残留的子块同时存在（如整块重跑
+        成功后旧叶子未清理），跳过完全包含在已记录块内的子块，避免重复计数。
+        """
+        chunks_dir = os.path.join(self.run_dir, "chunks")
+        if not os.path.isdir(chunks_dir):
+            return
+        prefix = f"r{review_round}-ch"
+        entries: list[tuple[int, int, int, dict[str, Any]]] = []
+        for name in os.listdir(chunks_dir):
+            if not name.startswith(prefix) or not name.endswith(".json"):
+                continue
+            cached = self.load_chunk_result(name[:-5])
+            if cached is None:
+                continue
+            tail = name[len(prefix):]
+            try:
+                chapter_part, rest = tail.split("-base", 1)
+                chapter = int(chapter_part)
+                base_part, n_part = rest.split("-n", 1)
+                chunk_base = int(base_part)
+                size = int(n_part[:-5])
+            except ValueError:
+                continue
+            entries.append((chapter, chunk_base, size, cached))
+        # 按 (chapter, -size, base) 排序：大块在前，小块的包含关系可判
+        entries.sort(key=lambda e: (e[0], -e[2], e[1]))
+        covered: dict[int, list[tuple[int, int]]] = {}
+        for chapter, chunk_base, size, cached in entries:
+            start, end = chunk_base, chunk_base + size
+            ranges = covered.setdefault(chapter, [])
+            if any(lo <= start and end <= hi for lo, hi in ranges):
+                continue
+            ranges.append((start, end))
+            initial_issues = cached.get("initial_issues", [])
+            if initial_issues:
+                self.record_initial_issues(
+                    chapter=chapter,
+                    chunk_base=chunk_base,
+                    issues=initial_issues,
+                )
+            dismissed = cached.get("dismissed", [])
+            if dismissed:
+                self.record_dismissed(
+                    chapter=chapter,
+                    chunk_base=chunk_base,
+                    issues=dismissed,
+                )
+
+    # ── 断点续跑：轮级检查点 ────────────────────────────────────────────
+
+    def save_checkpoint(self, state: dict[str, Any]) -> None:
+        """保存轮级检查点，用于续跑恢复 round 循环状态。"""
+        self._atomic_json(os.path.join(self.run_dir, "checkpoint.json"), state)
+
+    def load_checkpoint(self) -> dict[str, Any] | None:
+        """加载轮级检查点，不存在返回 None。"""
+        path = os.path.join(self.run_dir, "checkpoint.json")
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    @staticmethod
+    def find_resumable(
+        book_run_dir: str,
+        content_digest: str | None = None,
+    ) -> "ReviewRunStore | None":
+        """找到最近一次未完成的 Review 用于续跑，没有则返回 None。
+
+        如果提供 ``content_digest``，只恢复内容指纹一致的会话，
+        防止用户中断后修改译文/术语导致加载陈旧缓存。
+        """
+        review_root = os.path.join(book_run_dir, "reviews")
+        if not os.path.isdir(review_root):
+            return None
+        candidates = sorted(
+            (d for d in os.listdir(review_root) if d.startswith("review-")),
+            reverse=True,
+        )
+        for name in candidates:
+            run_dir = os.path.join(review_root, name)
+            result_path = os.path.join(run_dir, "result.json")
+            if not os.path.isfile(result_path):
+                continue
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    result = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if result.get("status") != "running":
+                continue
+            # 内容指纹校验：防止加载陈旧缓存
+            if content_digest is not None:
+                meta_path = os.path.join(run_dir, "rounds", "metadata.json")
+                if not os.path.isfile(meta_path):
+                    continue
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if meta.get("reviewed_content_digest") != content_digest:
+                    continue
+            return ReviewRunStore._from_existing(run_dir, name)
+        return None
+
+    @classmethod
+    def _from_existing(cls, run_dir: str, review_id: str) -> "ReviewRunStore":
+        """从已有目录恢复一个 ReviewRunStore 实例。"""
+        inst = cls.__new__(cls)
+        inst.run_dir = run_dir
+        inst.review_id = review_id
+        inst._event_path = os.path.join(run_dir, "events.jsonl")
+        inst._event_lock = Lock()
+        inst._result_lock = Lock()
+        inst._initial_issues = []
+        inst._dismissed_issues = []
+        inst._active_round = None
+        inst._reviewed_content_digest = ""
+        # 恢复事件序号（避免与已有事件重叠）
+        inst._sequence = cls._read_max_seq(inst._event_path)
+        # 优先从 result.json 恢复 started_at（metadata 中无该字段）
+        inst.started_at = ""
+        result_path = os.path.join(run_dir, "result.json")
+        if os.path.isfile(result_path):
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                inst.started_at = existing.get("started_at", "")
+            except (json.JSONDecodeError, OSError):
+                pass
+        if not inst.started_at:
+            # 兼容早期版本：从 metadata 恢复时间戳
+            meta_path = os.path.join(run_dir, "rounds", "metadata.json")
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    inst.started_at = meta.get("started_at", "")
+                except (json.JSONDecodeError, OSError):
+                    inst.started_at = ""
+        return inst
+
+    @staticmethod
+    def _read_max_seq(event_path: str) -> int:
+        """从 events.jsonl 读取最大 seq 值。"""
+        max_seq = 0
+        if not os.path.isfile(event_path):
+            return max_seq
+        try:
+            with open(event_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                        seq = row.get("seq", 0)
+                        if isinstance(seq, int) and seq > max_seq:
+                            max_seq = seq
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+        except OSError:
+            pass
+        return max_seq
