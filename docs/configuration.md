@@ -25,7 +25,7 @@ Selecting `deepseek` is enough for the built-in defaults:
 
 - Base URL: `https://api.deepseek.com`
 - API key environment variable: `DEEPSEEK_API_KEY`
-- Strong tier: `deepseek-v4-flash` with `reasoning_effort: max` (cost control after Pro price increase; override to `deepseek-v4-pro` if needed)
+- Strong tier: `deepseek-v4-pro`
 - Cheap and fast tiers: `deepseek-v4-flash`
 
 API keys are always read from environment variables so they are not accidentally committed with the configuration. Use `provider: fake` for offline tests that must not make network requests.
@@ -43,9 +43,9 @@ llm:
   max_retries: 4
   tiers:
     strong:
-      model: deepseek-v4-flash
+      model: deepseek-v4-pro
       options:
-        reasoning_effort: max
+        reasoning_effort: high
         thinking: true
     cheap:
       model: deepseek-v4-flash
