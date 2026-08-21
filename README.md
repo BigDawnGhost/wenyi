@@ -30,6 +30,7 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 - [Documentation](#documentation)
 - [Limitations](#limitations)
 - [Community](#community)
+- [Star history](#star-history)
 - [License](#license)
 
 ---
@@ -218,6 +219,18 @@ Translated state directories for public-domain books may be shared through [weny
 - QQ group: 1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
+
+---
+
+## Star history
+
+<a href="https://star-history.dera.page/#BigDawnGhost/wenyi&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ---
 
