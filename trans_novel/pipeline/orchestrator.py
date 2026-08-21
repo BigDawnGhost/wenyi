@@ -54,7 +54,7 @@ from ..agents.translator import Translator
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.epub_reader import peek_epub_title
+from ..ingest.epub_reader import peek_epub_title, strip_ruby_markers
 from ..ingest.models import Chapter, Segment
 from ..ingest.segmenter import batch_segments, load_document
 from ..llm.base import LLMClient
@@ -3262,6 +3262,8 @@ class Orchestrator:
             chapter_digest=chapter_digest,
             annotation_contexts=annotation_contexts,
         )
+        # 模型偶发把源文注音标记〘假名〙抄进译文时剥掉。
+        targets = [strip_ruby_markers(target) for target in targets]
 
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
