@@ -2413,19 +2413,31 @@ class TestReviewReporting(unittest.TestCase):
             internal_issues = self._load_internal_issues(result)
 
         self.assertEqual(result_json["termination"], "unresolved_fixes")
-        self.assertEqual(summary["issue_count"], 3)
-        self.assertEqual(summary["blocked_issue_count"], 3)
+        self.assertEqual(summary["issue_count"], 1)
+        self.assertEqual(summary["blocked_issue_count"], 1)
         self.assertEqual(summary["conflict_count"], 1)
         self.assertEqual(summary["unresolved_conflict_count"], 1)
+        self.assertEqual(summary["unresolved_issue_count"], 2)
         self.assertEqual(summary["fallback_agent_count"], 1)
         self.assertEqual(result_json["summary"], summary)
+        self.assertEqual(len(result_json["unresolved_issues"]), 2)
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(len(residual), 1)
-        unresolved_ids = {issue["issue_id"] for issue in internal_issues}
+        actionable_ids = {
+            issue["issue_id"]
+            for issue in internal_issues
+            if issue.get("arbitration", {}).get("action") != "withheld"
+        }
+        withheld_ids = {
+            issue["issue_id"]
+            for issue in internal_issues
+            if issue.get("arbitration", {}).get("action") == "withheld"
+        }
         conflict_ids = set(conflicts[0]["issue_ids"])
         residual_ids = set(residual[0]["issue_ids"])
         self.assertEqual(conflict_ids, residual_ids)
-        self.assertTrue(conflict_ids <= unresolved_ids)
+        self.assertEqual(conflict_ids, withheld_ids)
+        self.assertTrue(conflict_ids.isdisjoint(actionable_ids))
 
     def test_shadow_loop_detects_a_b_a_oscillation(self):
         review_calls = 0

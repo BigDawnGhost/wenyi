@@ -234,6 +234,7 @@ class _ReviewRoundResult:
     """一次全书影子译文 Review 及冲突仲裁后的确定性结果。"""
 
     issues: list[dict[str, Any]]
+    unresolved_issues: list[dict[str, Any]]
     pre_arbitration_issues: list[dict[str, Any]]
     arbitration_superseded: list[dict[str, Any]]
     conflict_groups: list[dict[str, Any]]
@@ -2128,10 +2129,11 @@ class Orchestrator:
                 for group in conflict_groups
             ]
 
-        final_issues, arbitration_superseded = apply_review_arbitrations(
-            pre_arbitration_issues,
-            arbitrations,
-        )
+        (
+            final_issues,
+            arbitration_superseded,
+            unresolved_issues,
+        ) = apply_review_arbitrations(pre_arbitration_issues, arbitrations)
         fallback_agent_count = len(
             {
                 issue["_chunk_id"]
@@ -2139,22 +2141,26 @@ class Orchestrator:
                 if issue.get("agent_fallback") and isinstance(issue.get("_chunk_id"), str)
             }
         )
-        residual_conflicts = build_conflict_groups(final_issues)
+        residual_conflicts = [
+            arbitration for arbitration in arbitrations if arbitration.get("status") == "unresolved"
+        ]
         initial_issues, dismissed = debug.result_snapshots(review_round)
         debug.write_json("initial_issues.json", initial_issues)
         debug.write_json("dismissed_issues.json", dismissed)
         debug.write_json("pre_arbitration_issues.json", pre_arbitration_issues)
         debug.write_json("arbitration_superseded_issues.json", arbitration_superseded)
+        debug.write_json("unresolved_issues.json", unresolved_issues)
         debug.write_json("final_issues.json", final_issues)
         debug.write_json(
             "residual_conflicts.json",
             [
                 {
-                    "conflict_id": group["conflict_id"],
-                    "consistency_key": group["consistency_key"],
-                    "issue_ids": [issue["issue_id"] for issue in group["issues"]],
+                    "conflict_id": arbitration["conflict_id"],
+                    "consistency_key": arbitration["consistency_key"],
+                    "issue_ids": arbitration["issue_ids"],
+                    "reason": arbitration.get("reason", ""),
                 }
-                for group in residual_conflicts
+                for arbitration in residual_conflicts
             ],
         )
         debug.write_json(
@@ -2170,6 +2176,7 @@ class Orchestrator:
         )
         return _ReviewRoundResult(
             issues=final_issues,
+            unresolved_issues=unresolved_issues,
             pre_arbitration_issues=pre_arbitration_issues,
             arbitration_superseded=arbitration_superseded,
             conflict_groups=conflict_groups,
@@ -2490,6 +2497,7 @@ class Orchestrator:
         active_patches: dict[tuple[int, int], dict[str, Any]] = {}
         fix_failures: list[dict[str, Any]] = []
         blocked_issues: dict[str, dict[str, Any]] = {}
+        withheld_issues: dict[str, dict[str, Any]] = {}
         round_summaries: list[dict[str, Any]] = []
         latest: _ReviewRoundResult | None = None
         clean_streak = 0
@@ -2705,6 +2713,15 @@ class Orchestrator:
                         save_review_usage()
                         usage_before = self.client.usage_summary()
 
+                    for issue in latest.issues:
+                        issue_key = issue.get("issue_key")
+                        if isinstance(issue_key, str):
+                            withheld_issues.pop(issue_key, None)
+                    for issue in latest.unresolved_issues:
+                        issue_key = issue.get("issue_key")
+                        if isinstance(issue_key, str):
+                            withheld_issues[issue_key] = dict(issue)
+
                     current_issue_keys = {
                         str(issue["issue_key"])
                         for issue in latest.issues
@@ -2742,13 +2759,16 @@ class Orchestrator:
                         "fallback_agent_count": latest.fallback_agent_count,
                         "clean_streak_before": clean_streak,
                         "blocked_issue_count": len(blocked_issues),
+                        "unresolved_issue_count": len(withheld_issues),
                     }
                     if not latest.issues:
-                        if blocked_issues:
+                        if blocked_issues or withheld_issues:
                             clean_streak = 0
                             if progress:
                                 progress(0, required_clean, "干净确认")
-                            termination = "unresolved_fixes"
+                            termination = (
+                                "unresolved_fixes" if blocked_issues else "unresolved_conflicts"
+                            )
                             round_summary["clean_streak_after"] = 0
                             round_summary["patch_count"] = 0
                             round_summary["termination"] = termination
@@ -2943,7 +2963,16 @@ class Orchestrator:
                 raise RuntimeError("Review loop finished without a review round")
 
             unresolved = effective_issues(latest)
-            final_conflicts = _review_unresolved_conflict_records(unresolved)
+            manual_unresolved = sorted(
+                withheld_issues.values(),
+                key=lambda issue: (
+                    issue.get("chapter", -1),
+                    issue.get("index", -1),
+                    issue.get("review_round", -1),
+                    issue.get("issue_id", ""),
+                ),
+            )
+            final_conflicts = _review_unresolved_conflict_records([*unresolved, *manual_unresolved])
             final_residual_conflicts = [
                 record
                 for record in final_conflicts
@@ -2968,6 +2997,7 @@ class Orchestrator:
                         "conflict_id": record["conflict_id"],
                         "consistency_key": record["consistency_key"],
                         "issue_ids": record["issue_ids"],
+                        "reason": record.get("arbitration", {}).get("reason", ""),
                     }
                     for record in final_residual_conflicts
                 ],
@@ -2980,7 +3010,7 @@ class Orchestrator:
             )
             debug.write_json(
                 "rounds/final/unresolved_issues.json",
-                unresolved,
+                [*unresolved, *manual_unresolved],
             )
             debug.write_json("rounds/final/fix_failures.json", fix_failures)
             debug.write_json("rounds/final/rounds.json", round_summaries)
@@ -2996,6 +3026,7 @@ class Orchestrator:
                 ],
             )
             public_issues = _review_public_issues(unresolved)
+            public_unresolved_issues = _review_public_issues(manual_unresolved)
             changes = _review_net_changes(
                 loaded,
                 target_overrides,
@@ -3010,6 +3041,7 @@ class Orchestrator:
                 "issue_count": len(public_issues),
                 "conflict_count": len(final_conflicts),
                 "unresolved_conflict_count": len(final_residual_conflicts),
+                "unresolved_issue_count": len(manual_unresolved),
                 "fallback_agent_count": final_fallback_agent_count,
                 "review_round_count": len(round_summaries),
                 "fix_round_count": fix_rounds,
@@ -3028,6 +3060,7 @@ class Orchestrator:
                 termination=termination,
                 summary=summary,
                 issues=public_issues,
+                unresolved_issues=public_unresolved_issues,
                 changes=changes,
             )
             usage = save_review_usage()
