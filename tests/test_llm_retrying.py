@@ -192,7 +192,7 @@ def test_orchestrator_retry_sink_writes_book_event_log():
         store = RunStore(directory)
         client = DeepSeekClient(_config(max_retries=0))
         orchestrator = Orchestrator(Config(), client=client)
-        orchestrator._bind_llm_events(store)
+        orchestrator._runtime.bind_llm_events(store)
 
         client._emit_event("llm_retry_wait", reason="http_502", wait_seconds=1.0)
 

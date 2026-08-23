@@ -634,11 +634,11 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 completion=20,
                 stage="Translator",
             )
-            cumulative = first._flush_usage(store, scope="translate")
+            cumulative = first._runtime.flush_usage(store, scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
 
             # 同一进程再次 flush 没有新增调用，不能重复累计。
-            unchanged = first._flush_usage(store, scope="pipeline")
+            unchanged = first._runtime.flush_usage(store, scope="pipeline")
             self.assertEqual(unchanged["totals"]["total_tokens"], 120)
 
             # 模拟 resume：新 client / Orchestrator 的增量继续累加到同一本书。
@@ -651,7 +651,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 completion=10,
                 stage="Reviewer",
             )
-            cumulative = resumed._flush_usage(store, scope="translate")
+            cumulative = resumed._runtime.flush_usage(store, scope="translate")
 
             self.assertEqual(cumulative["totals"]["total_tokens"], 170)
             self.assertEqual(cumulative["totals"]["calls"], 2)
@@ -679,7 +679,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             initial = Orchestrator(config, client=initial_client)
             store = initial.run_steps(source, {"translate"})["store"]
             self._record(initial_client, "strong", prompt=100, completion=20)
-            initial._flush_usage(store, scope="translate")
+            initial._runtime.flush_usage(store, scope="translate")
 
             resumed_client = FakeClient(handler=routing_handler)
             resumed = Orchestrator(config, client=resumed_client)
@@ -700,7 +700,7 @@ class TestPerRunMetrics(unittest.TestCase):
     def setUpClass(cls) -> None:
         # 产品默认关闭账本；本类显式打开以覆盖实现路径。
         cls._run_metrics_enabled = patch(
-            "trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED",
+            "trans_novel.pipeline.runtime._RUN_METRICS_ENABLED",
             True,
         )
         cls._run_metrics_enabled.start()
@@ -1061,7 +1061,7 @@ class TestPerRunMetrics(unittest.TestCase):
                     wraps=source_sha256,
                 ) as initial_hash,
                 patch(
-                    "trans_novel.pipeline.orchestrator.source_sha256",
+                    "trans_novel.pipeline.runtime.source_sha256",
                     wraps=source_sha256,
                 ) as boundary_hash,
             ):
@@ -1106,7 +1106,7 @@ class TestPerRunMetrics(unittest.TestCase):
                 client=_MeteredFakeClient(handler=routing_handler),
             ).run_steps(source, {"translate"})
             resumed = Orchestrator(config, client=FakeClient())
-            locate = resumed._locate_existing_store
+            locate = resumed._preparation.locate_existing
             original_stat = os.stat(source)
 
             def mutate_then_locate(*args, **kwargs):
@@ -1124,8 +1124,8 @@ class TestPerRunMetrics(unittest.TestCase):
 
             with (
                 patch.object(
-                    resumed,
-                    "_locate_existing_store",
+                    resumed._preparation,
+                    "locate_existing",
                     side_effect=mutate_then_locate,
                 ),
                 self.assertRaisesRegex(ValueError, "本次命令执行期间发生变化"),
@@ -1150,8 +1150,8 @@ class TestPerRunMetrics(unittest.TestCase):
 
             self.assertEqual(resumed.config.source_lang, "ja")
             self.assertEqual(resumed.config.target_lang, "zh")
-            self.assertEqual(resumed.reviewer.src, "ja")
-            self.assertEqual(resumed.reviewer.tgt, "zh")
+            self.assertEqual(resumed._runtime.reviewer.src, "ja")
+            self.assertEqual(resumed._runtime.reviewer.tgt, "zh")
 
     def test_manifest_without_source_hash_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1184,8 +1184,8 @@ class TestPerRunMetrics(unittest.TestCase):
             )
 
             with patch.object(
-                failing,
-                "_run_review_session",
+                failing._review,
+                "run_session",
                 side_effect=RuntimeError("private failure detail"),
             ):
                 with self.assertRaisesRegex(RuntimeError, "private failure"):

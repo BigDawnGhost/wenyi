@@ -144,7 +144,7 @@ class TestPunct(unittest.TestCase):
             )
             orchestrator = Orchestrator(cfg, client=FakeClient())
 
-        self.assertFalse(orchestrator._punctuation_enabled())
+        self.assertFalse(orchestrator._runtime.punctuation_enabled())
 
 
 class TestLanguageProfile(unittest.TestCase):
