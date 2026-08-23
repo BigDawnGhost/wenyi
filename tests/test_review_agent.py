@@ -123,10 +123,41 @@ class TestBookEvidenceIndex(unittest.TestCase):
         self.assertEqual(result["term"]["source"], "Ann")
         self.assertEqual(result["term"]["target"], "安")
         self.assertEqual(result["term"]["aliases"], ["Annie"])
+        self.assertEqual(result["term"]["status"], "ok")
+        self.assertTrue(result["term"]["authoritative"])
         self.assertEqual(
             BookEvidenceIndex.evidence_refs(result),
             {result["term"]["ref"]},
         )
+
+    def test_conflicted_person_term_preserves_case_and_is_not_authoritative(self):
+        term = GlossaryTerm(
+            source="Giant",
+            target="巨指",
+            type="人物",
+            status="conflict",
+        )
+        index = BookEvidenceIndex(
+            [
+                _chapter(
+                    0,
+                    [
+                        ("The giant fingers held the ship.", "巨指固定住飞船。"),
+                        ("The Giant leaned closer.", "巨人靠近了。"),
+                    ],
+                )
+            ],
+            [term],
+            {},
+        )
+
+        result = index.term_occurrences({"term": "Giant", "selectors": [1], "context_radius": 0})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["total_matches"], 1)
+        self.assertEqual(result["selected"][0]["source"], "The Giant leaned closer.")
+        self.assertEqual(result["glossary_term"]["status"], "conflict")
+        self.assertFalse(result["glossary_term"]["authoritative"])
 
     def test_exact_source_wins_over_another_terms_same_alias(self):
         other = GlossaryTerm(source="Anne", target="安妮", aliases=["Ann"], type="人物")

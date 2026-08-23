@@ -181,10 +181,18 @@ class BookEvidenceIndex:
             return canonical, cached, []
 
         keys = term_match_sources(term) if term is not None else [canonical]
+        preserve_case = term is not None and term.status != "ok"
         found = tuple(
             segment
             for segment in self.segments
-            if any(source_matches_text(key, segment.source) for key in keys)
+            if any(
+                source_matches_text(
+                    key,
+                    segment.source,
+                    case_sensitive=preserve_case,
+                )
+                for key in keys
+            )
         )
         with self._cache_lock:
             existing = self._occurrence_cache.setdefault(cache_key, found)
@@ -274,6 +282,8 @@ class BookEvidenceIndex:
             "aliases": [_clip(alias, 256) for alias in term.aliases[:16]],
             "first_chapter": term.first_chapter,
             "note": _clip(term.note, 2000),
+            "status": _clip(term.status, 64),
+            "authoritative": term.status == "ok",
         }
 
     def glossary_term(self, arguments: dict[str, Any]) -> dict[str, Any]:

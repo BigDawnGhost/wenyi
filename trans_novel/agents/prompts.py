@@ -107,7 +107,8 @@ $pairs
 REVIEW_EVIDENCE_TOOLS = """\
 可用只读工具及 arguments：
 1. glossary_term：按原文术语或 alias 读取一个术语库条目。
-   {"term":"原文术语或别名"}；不得请求或枚举全量术语表。
+   {"term":"原文术语或别名"}；不得请求或枚举全量术语表。返回条目的
+   status 非 ok 或 authoritative=false 时表示译法仍有冲突，不得作为强制译法。
 2. term_occurrences：按术语在全书中命中的段落次序取证。
    {"term":"原文术语或别名","selectors":[1,3,"first","middle","last"],"context_radius":0}；
    selectors 最多 8 项，context_radius 为 0..2。不得请求全量正文。

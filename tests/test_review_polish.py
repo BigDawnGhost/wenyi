@@ -11,6 +11,7 @@ import unittest
 from trans_novel.agents.polisher import Polisher
 from trans_novel.agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
 from trans_novel.config import Config
+from trans_novel.glossary.store import GlossaryTerm
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
@@ -61,6 +62,29 @@ class TestReviewer(unittest.TestCase):
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
         self.assertEqual(client.calls[-1]["tier"], "cheap")  # 审校走廉价档
+
+    def test_reviewer_excludes_conflicted_glossary_terms(self):
+        def handler(messages, tier, json_mode):
+            prompt = messages[-1]["content"]
+            self.assertIn("Stable → 稳定", prompt)
+            self.assertNotIn("Giant → 巨指", prompt)
+            return _review_response([], 1)
+
+        reviewer = Reviewer(FakeClient(handler=handler), _cfg())
+
+        reviewer.review(
+            ["The Giant arrived."],
+            ["巨人来了。"],
+            [
+                GlossaryTerm(source="Stable", target="稳定", status="ok"),
+                GlossaryTerm(
+                    source="Giant",
+                    target="巨指",
+                    type="人物",
+                    status="conflict",
+                ),
+            ],
+        )
 
     def test_reviewer_drops_fields_outside_the_initial_issue_contract(self):
         """廉价初审不能绕过强档 Agent 注入跨块一致性 claim。"""
