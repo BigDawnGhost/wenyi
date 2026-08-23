@@ -32,8 +32,8 @@ from ..agents.review_loop import (
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.usage import usage_delta
-from .review_evidence import BookEvidenceIndex
-from .review_run import ReviewOutcome, ReviewRunStore
+from ..review.evidence import BookEvidenceIndex
+from ..review.run_store import ReviewOutcome, ReviewRunStore
 from .runstore import STATUS_DONE
 
 if TYPE_CHECKING:

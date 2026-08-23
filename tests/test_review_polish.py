@@ -14,7 +14,7 @@ from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.review_run import ReviewRunStore
+from trans_novel.review.run_store import ReviewRunStore
 
 
 def _cfg():
