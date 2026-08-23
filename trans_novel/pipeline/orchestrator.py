@@ -2378,9 +2378,7 @@ class Orchestrator:
             "review_agent_max_evidence_rounds": (
                 self.config.pipeline.review_agent_max_evidence_rounds
             ),
-            "review_conflict_arbitration": (
-                self.config.pipeline.review_conflict_arbitration
-            ),
+            "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
             "review_fix_loop": self.config.pipeline.review_fix_loop,
             "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
             "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
@@ -2389,9 +2387,7 @@ class Orchestrator:
     @staticmethod
     def _review_glossary_fingerprint(terms: list[GlossaryTerm]) -> str:
         """术语表内容指纹：术语表变化后已完成的 Review 结果不得复用。"""
-        ordered = sorted(
-            (term.source, term.target, term.type) for term in terms
-        )
+        ordered = sorted((term.source, term.target, term.type) for term in terms)
         return hashlib.sha256(json.dumps(ordered, ensure_ascii=False).encode("utf-8")).hexdigest()
 
     def _review_skip_eligible(
@@ -2404,9 +2400,7 @@ class Orchestrator:
         review_id = latest.get("review_id")
         if not isinstance(review_id, str) or not review_id:
             return False
-        metadata_path = os.path.join(
-            store.run_dir, "reviews", review_id, "rounds", "metadata.json"
-        )
+        metadata_path = os.path.join(store.run_dir, "reviews", review_id, "rounds", "metadata.json")
         try:
             with open(metadata_path, encoding="utf-8") as f:
                 metadata = json.load(f)
@@ -2451,8 +2445,13 @@ class Orchestrator:
         analysis = store.load_analysis() or {}
         reviewed_content_digest = _review_content_digest(loaded)
 
-        # 断点续跑：检查是否有未完成的 Review（内容指纹必须一致）
-        debug = ReviewRunStore.find_resumable(store.run_dir, reviewed_content_digest)
+        # 断点续跑：未完成 Review 须内容、审校配置、术语表指纹一致
+        debug = ReviewRunStore.find_resumable(
+            store.run_dir,
+            reviewed_content_digest,
+            config=self._review_config_snapshot(),
+            glossary_fingerprint=self._review_glossary_fingerprint(all_terms),
+        )
         if debug is not None:
             debug.log_event("review_resumed_from_checkpoint", review_id=debug.review_id)
         else:
@@ -2518,8 +2517,7 @@ class Orchestrator:
             seen_overlays = set(_checkpoint.get("seen_overlays", []))
             patch_records = _checkpoint.get("patch_records", [])
             active_patches = {
-                (p["chapter"], p["index"]): p
-                for p in _checkpoint.get("active_patches", [])
+                (p["chapter"], p["index"]): p for p in _checkpoint.get("active_patches", [])
             }
             fix_failures = _checkpoint.get("fix_failures", [])
             blocked_issues = _checkpoint.get("blocked_issues", {})
@@ -2580,8 +2578,7 @@ class Orchestrator:
                 "seen_overlays": sorted(seen_overlays),
                 "patch_records": patch_records,
                 "active_patches": [
-                    {**p, "chapter": c, "index": i}
-                    for (c, i), p in sorted(active_patches.items())
+                    {**p, "chapter": c, "index": i} for (c, i), p in sorted(active_patches.items())
                 ],
                 "fix_failures": fix_failures,
                 "blocked_issues": blocked_issues,
@@ -2681,7 +2678,11 @@ class Orchestrator:
                         ],
                     )
                     # 断点续跑：scan_done 恢复时跳过扫描，直接用缓存结果
-                    if _resume_scan_done and review_round == start_round and _resume_latest is not None:
+                    if (
+                        _resume_scan_done
+                        and review_round == start_round
+                        and _resume_latest is not None
+                    ):
                         latest = _resume_latest
                         _resume_scan_done = False
                         _resume_latest = None
@@ -3150,16 +3151,17 @@ class Orchestrator:
             round_prefix = f"r{review_round}-" if review_round is not None else ""
             chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
             if debug is not None and debug.is_chunk_done(chunk_id):
-                cached = debug.load_chunk_result(chunk_id)
+                review_debug = debug
+                cached = review_debug.load_chunk_result(chunk_id)
                 if cached is not None:
                     # 恢复聚合状态（report 需要 initial/dismissed 数据）
                     if chapter_index is not None:
-                        debug.record_initial_issues(
+                        review_debug.record_initial_issues(
                             chapter=chapter_index,
                             chunk_base=chunk_base,
                             issues=cached.get("initial_issues", []),
                         )
-                        debug.record_dismissed(
+                        review_debug.record_dismissed(
                             chapter=chapter_index,
                             chunk_base=chunk_base,
                             issues=cached.get("dismissed", []),
@@ -3171,7 +3173,10 @@ class Orchestrator:
             # 直接合并返回，避免触发一次 reviewer LLM 调用。
             if debug is not None and len(chunk) > 1:
                 cached_sub = self._try_cached_subchunks(
-                    chunk_base, chunk, debug, round_prefix,
+                    chunk_base,
+                    chunk,
+                    debug,
+                    round_prefix,
                     chapter_index,
                 )
                 if cached_sub is not None:
@@ -3224,7 +3229,8 @@ class Orchestrator:
                         start_index=chunk_base,
                         count=len(chunk),
                     )
-                if chapter_index is not None:
+                # reused_initial 仅在 debug 非空时赋值；显式收窄供类型检查。
+                if debug is not None and chapter_index is not None:
                     debug.record_initial_issues(
                         chapter=chapter_index,
                         chunk_base=chunk_base,
@@ -3232,6 +3238,7 @@ class Orchestrator:
                     )
                 initial_issue_count = len(local_issues)
             else:
+
                 def trace(event: str, data: dict[str, Any]) -> None:
                     """逐步保存初审完整请求、原始响应或服务错误。"""
                     if debug is None or initial_trace is None:
@@ -3343,12 +3350,15 @@ class Orchestrator:
                 )
             # 断点续跑：落盘 chunk 结果（在 review_once 内，有完整数据）
             if debug is not None and chapter_index is not None:
-                debug.mark_chunk_done(chunk_id, {
-                    "issues": mapped,
-                    "initial_issues": local_issues_before_agent,
-                    "dismissed": dismissed,
-                    "fallback_reason": fallback_reason,
-                })
+                debug.mark_chunk_done(
+                    chunk_id,
+                    {
+                        "issues": mapped,
+                        "initial_issues": local_issues_before_agent,
+                        "dismissed": dismissed,
+                        "fallback_reason": fallback_reason,
+                    },
+                )
             return mapped
 
         def review_adaptive(chunk_base: int, chunk: list) -> list[dict]:
@@ -3472,43 +3482,48 @@ class Orchestrator:
         翻译的 ``_resume_batches`` 按完成状态边界切分批，只补译缺失段。
         借鉴此模式：当父 chunk 缓存未命中时，递归检查所有子 chunk 是否有
         缓存。如果全部命中，合并返回，跳过 reviewer LLM 调用。
+
+        探测阶段不写 initial/dismissed 快照；仅整棵子树命中后才统一落盘，
+        避免半边命中返回 None 后父块重跑导致重复计数。
         """
-        if not chunk:
-            return []
-        chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
-        if debug.is_chunk_done(chunk_id):
-            cached = debug.load_chunk_result(chunk_id)
-            if cached is not None:
-                if chapter_index is not None:
-                    debug.record_initial_issues(
-                        chapter=chapter_index,
-                        chunk_base=chunk_base,
-                        issues=cached.get("initial_issues", []),
-                    )
-                    debug.record_dismissed(
-                        chapter=chapter_index,
-                        chunk_base=chunk_base,
-                        issues=cached.get("dismissed", []),
-                    )
-                return cached.get("issues", [])
-        # 单段 chunk 无法再拆分
-        if len(chunk) <= 1:
+        hits: list[tuple[int, dict[str, Any]]] = []
+
+        def probe(base: int, pieces: list) -> list[dict] | None:
+            if not pieces:
+                return []
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{base}-n{len(pieces)}"
+            if debug.is_chunk_done(chunk_id):
+                cached = debug.load_chunk_result(chunk_id)
+                if cached is not None:
+                    hits.append((base, cached))
+                    return list(cached.get("issues", []))
+            if len(pieces) <= 1:
+                return None
+            mid = len(pieces) // 2
+            left = probe(base, pieces[:mid])
+            if left is None:
+                return None
+            right = probe(base + mid, pieces[mid:])
+            if right is None:
+                return None
+            return left + right
+
+        merged = probe(chunk_base, chunk)
+        if merged is None:
             return None
-        # 递归探测：与 review_adaptive 拆半对齐
-        mid = len(chunk) // 2
-        left = Orchestrator._try_cached_subchunks(
-            chunk_base, chunk[:mid], debug, round_prefix,
-            chapter_index,
-        )
-        if left is None:
-            return None
-        right = Orchestrator._try_cached_subchunks(
-            chunk_base + mid, chunk[mid:], debug, round_prefix,
-            chapter_index,
-        )
-        if right is None:
-            return None
-        return left + right
+        if chapter_index is not None:
+            for base, cached in hits:
+                debug.record_initial_issues(
+                    chapter=chapter_index,
+                    chunk_base=base,
+                    issues=cached.get("initial_issues", []),
+                )
+                debug.record_dismissed(
+                    chapter=chapter_index,
+                    chunk_base=base,
+                    issues=cached.get("dismissed", []),
+                )
+        return merged
 
     @staticmethod
     def _pack_contiguous(segs, budget: int) -> list[list]:

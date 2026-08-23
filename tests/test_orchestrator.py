@@ -1317,6 +1317,76 @@ class TestReviewReporting(unittest.TestCase):
             self.assertGreater(second_count, first_count)  # 重新审校
             self.assertNotEqual(first["review_dir"], second["review_dir"])
 
+    def test_review_running_resume_rejects_config_change(self):
+        """running 续跑在审校配置变化时不得复用旧目录，应新开 Review。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = FakeClient(handler=routing_handler)
+            orch = Orchestrator(cfg, client=client)
+            orch.run(txt)
+
+            first = orch.run_review(txt)
+            review_dir = first["review_dir"]
+            result_path = os.path.join(review_dir, "result.json")
+            with open(result_path, encoding="utf-8") as f:
+                state = json.load(f)
+            state["status"] = "running"
+            with open(result_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            checkpoint = os.path.join(review_dir, "checkpoint.json")
+            if os.path.isfile(checkpoint):
+                os.remove(checkpoint)
+
+            cfg.pipeline.review_agent_max_evidence_rounds = 1
+            orch2 = Orchestrator(cfg, client=client)
+            second = orch2.run_review(txt)
+            self.assertNotEqual(first["review_dir"], second["review_dir"])
+
+    def test_try_cached_subchunks_partial_hit_does_not_record(self):
+        """半边子块命中不得提前写入 initial 快照，避免父块重跑重复计数。"""
+        from trans_novel.pipeline.review_run import ReviewRunStore
+
+        with tempfile.TemporaryDirectory() as d:
+            debug = ReviewRunStore(d)
+            debug.start(
+                reviewed_content_digest="digest",
+                metadata={"config": {}, "glossary_fingerprint": "g"},
+            )
+            # 仅缓存左半：base0-n2；父块 base0-n4 与右半缺失
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n2",
+                {
+                    "issues": [{"index": 0, "type": "mistranslation"}],
+                    "initial_issues": [{"index": 0, "type": "mistranslation"}],
+                    "dismissed": [],
+                },
+            )
+            pieces = [object(), object(), object(), object()]
+            with debug.round_scope(1):
+                missed = Orchestrator._try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNone(missed)
+            initial, dismissed = debug.result_snapshots(1)
+            self.assertEqual(initial, [])
+            self.assertEqual(dismissed, [])
+
+            debug.mark_chunk_done(
+                "r1-ch0-base2-n2",
+                {
+                    "issues": [{"index": 0, "type": "missing"}],
+                    "initial_issues": [{"index": 0, "type": "missing"}],
+                    "dismissed": [],
+                },
+            )
+            with debug.round_scope(1):
+                hit = Orchestrator._try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(len(hit), 2)
+            initial, _dismissed = debug.result_snapshots(1)
+            self.assertEqual(len(initial), 2)
+
     def test_review_resume_reuses_initial_and_agent_traces(self):
         """删掉一个 chunk 缓存后续跑：初筛 + agent loop 都走 trace 复用，零调用。"""
         with tempfile.TemporaryDirectory() as d:
@@ -1324,7 +1394,7 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=FakeClient(handler=self._handler()))
-            store = orch.run(txt)
+            orch.run(txt)
             result = orch.run_review(txt)
 
             # 模拟中断：把已完成 Review 的状态改回 running，并删掉轮级检查点

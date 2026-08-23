@@ -225,8 +225,8 @@ class ReviewRunStore:
                     existing = json.load(f)
                 if existing.get("status") == "running":
                     # 续跑：保留已有结果和 metadata，只更新时间戳
-                    existing["resumed_at"] = datetime.now().astimezone().isoformat(
-                        timespec="microseconds"
+                    existing["resumed_at"] = (
+                        datetime.now().astimezone().isoformat(timespec="microseconds")
                     )
                     self._atomic_json(result_path, existing)
                     self.log_event("review_resumed", review_id=self.review_id)
@@ -350,7 +350,7 @@ class ReviewRunStore:
             cached = self.load_chunk_result(name[:-5])
             if cached is None:
                 continue
-            tail = name[len(prefix):]
+            tail = name[len(prefix) :]
             try:
                 chapter_part, rest = tail.split("-base", 1)
                 chapter = int(chapter_part)
@@ -405,11 +405,14 @@ class ReviewRunStore:
     def find_resumable(
         book_run_dir: str,
         content_digest: str | None = None,
+        *,
+        config: dict[str, Any] | None = None,
+        glossary_fingerprint: str | None = None,
     ) -> "ReviewRunStore | None":
         """找到最近一次未完成的 Review 用于续跑，没有则返回 None。
 
-        如果提供 ``content_digest``，只恢复内容指纹一致的会话，
-        防止用户中断后修改译文/术语导致加载陈旧缓存。
+        ``content_digest`` / ``config`` / ``glossary_fingerprint`` 若提供，
+        必须与该次 Review 的 metadata 一致，避免改配置或术语后续跑复用陈旧缓存。
         """
         review_root = os.path.join(book_run_dir, "reviews")
         if not os.path.isdir(review_root):
@@ -430,8 +433,10 @@ class ReviewRunStore:
                 continue
             if result.get("status") != "running":
                 continue
-            # 内容指纹校验：防止加载陈旧缓存
-            if content_digest is not None:
+            need_meta = (
+                content_digest is not None or config is not None or glossary_fingerprint is not None
+            )
+            if need_meta:
                 meta_path = os.path.join(run_dir, "rounds", "metadata.json")
                 if not os.path.isfile(meta_path):
                     continue
@@ -440,7 +445,17 @@ class ReviewRunStore:
                         meta = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     continue
-                if meta.get("reviewed_content_digest") != content_digest:
+                if (
+                    content_digest is not None
+                    and meta.get("reviewed_content_digest") != content_digest
+                ):
+                    continue
+                if config is not None and meta.get("config") != config:
+                    continue
+                if (
+                    glossary_fingerprint is not None
+                    and meta.get("glossary_fingerprint") != glossary_fingerprint
+                ):
                     continue
             return ReviewRunStore._from_existing(run_dir, name)
         return None
