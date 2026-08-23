@@ -25,6 +25,9 @@ SERVICE_MODULES = (
     "finalization",
 )
 
+# 不得反向导入 orchestrator 的下层模块（含 language 这类共享工具）。
+LOWER_MODULES = SERVICE_MODULES + ("language",)
+
 FORBIDDEN_TOP_LEVEL = (
     "agents",
     "ingest",
@@ -91,9 +94,29 @@ class TestArchitectureBoundaries(unittest.TestCase):
 
     def test_no_lower_module_imports_orchestrator(self):
         """依赖方向固定：任何下层模块都不得反向导入 orchestrator.py。"""
-        for name in SERVICE_MODULES:
-            source = _module_source(name)
-            self.assertNotIn("orchestrator", source, f"{name}.py 不得反向导入编排器")
+        for name in LOWER_MODULES:
+            tree = ast.parse(_module_source(name))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.assertNotIn(
+                            "orchestrator",
+                            alias.name.split("."),
+                            f"{name}.py 不得反向导入编排器",
+                        )
+                if isinstance(node, ast.ImportFrom):
+                    module_parts = (node.module or "").split(".")
+                    self.assertNotIn(
+                        "orchestrator",
+                        module_parts,
+                        f"{name}.py 不得反向导入编排器",
+                    )
+                    for alias in node.names:
+                        self.assertNotEqual(
+                            alias.name,
+                            "orchestrator",
+                            f"{name}.py 不得反向导入编排器",
+                        )
 
     def test_runtime_uses_neutral_language_module(self):
         """共享 Runtime 不得反向依赖具体准备阶段。"""

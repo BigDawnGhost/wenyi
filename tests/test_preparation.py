@@ -6,7 +6,8 @@ import os
 import tempfile
 import unittest
 
-from trans_novel.pipeline.preparation import PreparationService, _normalize_lang
+from trans_novel.pipeline.language import normalize_lang
+from trans_novel.pipeline.preparation import PreparationService
 
 
 class TestSampleText(unittest.TestCase):
@@ -51,13 +52,13 @@ class TestSampleText(unittest.TestCase):
 
 class TestLangNormalize(unittest.TestCase):
     def test_normalize_lang(self):
-        self.assertEqual(_normalize_lang("Japanese"), "ja")
-        self.assertEqual(_normalize_lang("日语"), "ja")
-        self.assertEqual(_normalize_lang("RU"), "ru")
-        self.assertEqual(_normalize_lang("russian"), "ru")
-        self.assertEqual(_normalize_lang("fr"), "fr")
-        self.assertEqual(_normalize_lang("unknown"), "")
-        self.assertEqual(_normalize_lang(""), "")
+        self.assertEqual(normalize_lang("Japanese"), "ja")
+        self.assertEqual(normalize_lang("日语"), "ja")
+        self.assertEqual(normalize_lang("RU"), "ru")
+        self.assertEqual(normalize_lang("russian"), "ru")
+        self.assertEqual(normalize_lang("fr"), "fr")
+        self.assertEqual(normalize_lang("unknown"), "")
+        self.assertEqual(normalize_lang(""), "")
 
 
 if __name__ == "__main__":

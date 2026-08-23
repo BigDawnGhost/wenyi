@@ -62,7 +62,8 @@ def _record_run_metrics(
             bound = call_signature.bind(self, input_path, *args, **kwargs)
             bound.apply_defaults()
             invocation = {name: bound.arguments.get(name) for name in invocation_fields}
-            with self._run_metrics_session(
+            # 装饰器挂在 Orchestrator 方法上，账本由 Runtime 持有，避免反向依赖 façade 私有 API。
+            with self._runtime.run_metrics_session(
                 input_path,
                 operation=operation,
                 requested_steps=requested_steps,
@@ -97,7 +98,7 @@ def _record_pipeline_metrics(func: Callable) -> Callable:
             **kwargs,
         )
         bound.apply_defaults()
-        with self._run_metrics_session(
+        with self._runtime.run_metrics_session(
             input_path,
             operation="pipeline",
             requested_steps=sorted(normalized_steps),

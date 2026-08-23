@@ -20,7 +20,7 @@ from ..glossary.store import GlossaryStore
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.segmenter import load_document
 from .context import RollingContext
-from .language import normalize_lang as _normalize_lang
+from .language import normalize_lang
 from .runstore import RunStore, slugify
 
 if TYPE_CHECKING:
@@ -262,7 +262,7 @@ class PreparationService:
                 stage="language_detect",
             )
             code = (data.get("language") if isinstance(data, dict) else "") or ""
-            return _normalize_lang(str(code))
+            return normalize_lang(str(code))
         except Exception:  # noqa: BLE001 - provider errors mean detection failed
             return ""
 

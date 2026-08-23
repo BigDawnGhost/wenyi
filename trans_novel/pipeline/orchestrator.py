@@ -52,23 +52,6 @@ class Orchestrator:
         self._report = ReportService(self._runtime)
         self._assembly = AssemblyService(self._runtime)
 
-    # ── runtime 委托（metrics 装饰器与收尾流程均经由此处）─────────────────
-    def _run_metrics_session(
-        self,
-        input_path: str,
-        *,
-        operation: str,
-        requested_steps: list[str],
-        invocation: dict[str, Any] | None = None,
-    ):
-        """为一次顶层操作建立账本；嵌套入口复用同一记录。"""
-        return self._runtime.run_metrics_session(
-            input_path,
-            operation=operation,
-            requested_steps=requested_steps,
-            invocation=invocation,
-        )
-
     # ── 公开入口 ──────────────────────────────────────────────────────────
     def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
         """解析输入并定位状态目录；首次运行时在书级锁内完成初始化。"""
