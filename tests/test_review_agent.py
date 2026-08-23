@@ -671,6 +671,8 @@ class TestReviewRunStore(unittest.TestCase):
             with debug.round_scope(1):
                 debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {"status": "running"})
                 loaded = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+                self.assertIsNotNone(loaded)
+                assert loaded is not None
                 self.assertEqual(loaded["status"], "running")
             self.assertIsNone(debug.load_json("agents/r1-chunk-ch0-base0-n2.json"))
 
@@ -885,6 +887,8 @@ class TestReviewAgentLoop(unittest.TestCase):
             )
             with debug.round_scope(1):
                 saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
             self.assertEqual(saved["status"], "finished")
             self.assertEqual(len(saved["turns"]), 2)
             events = [
@@ -970,6 +974,8 @@ class TestReviewAgentLoop(unittest.TestCase):
             self.assertEqual(outcome.issues[0]["origin"], "initial")
             with debug.round_scope(1):
                 saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
             self.assertEqual(saved["status"], "finished")
 
     def test_run_resumes_reexecutes_evidence_without_llm_call(self):
@@ -1053,6 +1059,8 @@ class TestReviewAgentLoop(unittest.TestCase):
             self.assertEqual(outcome.issues[0]["candidate_id"], "r1-ch0-base0-candidate0")
             with debug.round_scope(1):
                 saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
             self.assertEqual(saved["status"], "finished")
             self.assertEqual(len(saved["turns"]), 2)
             self.assertIn("evidence_results", saved["turns"][0])
@@ -1152,6 +1160,8 @@ class TestReviewAgentLoop(unittest.TestCase):
             self.assertFalse(outcome.issues[0].get("agent_fallback"))
             with debug.round_scope(1):
                 saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
             self.assertEqual(saved["status"], "finished")
             self.assertEqual(len(saved["turns"]), 3)
 
@@ -1221,6 +1231,8 @@ class TestReviewAgentLoop(unittest.TestCase):
             self.assertEqual(outcome.issues[0]["candidate_id"], "r1-ch0-base0-candidate0")
             with debug.round_scope(1):
                 saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
             self.assertEqual(saved["status"], "finished")
             self.assertEqual(len(saved["turns"]), 1)
 
