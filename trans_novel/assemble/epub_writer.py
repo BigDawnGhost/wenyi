@@ -272,26 +272,18 @@ def _indexed_toc_entries(
 
 def _rewrite_toc(
     data: bytes,
-    entries_or_legacy_titles: list[dict[str, object]] | dict[str, str],
+    entries: list[dict[str, object]],
     *,
     is_ncx: bool,
     toc_path: str = "",
 ) -> bytes:
     """回填 NCX/NAV 的可见标题，同时原样保留 ``src``/``href``。
 
-    新状态按 ``toc_path + node_index`` 定位，因此同一 XHTML 的多个片段标题
-    可以拥有不同译名，也不会因不同目录下的同名文件互相覆盖。为继续导出旧
-    状态，传入 ``{basename: title}`` 时仍使用原来的文件名匹配逻辑。
+    按 ``toc_path + node_index`` 定位节点；同一 XHTML 的多个片段可有不同译名，
+    也不会因不同目录下的同名文件互相覆盖。无匹配条目时保留原标题。
     """
     try:
-        exact_entries = (
-            _indexed_toc_entries(entries_or_legacy_titles, toc_path)
-            if isinstance(entries_or_legacy_titles, list)
-            else {}
-        )
-        legacy_titles = (
-            entries_or_legacy_titles if isinstance(entries_or_legacy_titles, dict) else {}
-        )
+        exact_entries = _indexed_toc_entries(entries, toc_path)
         if is_ncx:
             soup = BeautifulSoup(data, "xml")
             for node_index, nav_point in enumerate(_ncx_nav_points(soup)):
@@ -300,19 +292,15 @@ def _rewrite_toc(
                 if not isinstance(label, Tag):
                     continue
                 entry = exact_entries.get(node_index)
-                if entry is not None:
-                    content = _direct_child(nav_point, "content")
-                    raw_src = _attr_str(content.get("src")) if content else ""
-                    expected = entry.get("raw_href")
-                    if isinstance(expected, str) and expected != raw_src:
-                        # 源 EPUB 与状态记录不一致时宁可保留原标题，也不改错节点。
-                        continue
-                    title = _translated_toc_title(entry)
-                else:
-                    content = _direct_child(nav_point, "content")
-                    title = legacy_titles.get(
-                        _base_no_frag(_attr_str(content.get("src")) if content else "")
-                    )
+                if entry is None:
+                    continue
+                content = _direct_child(nav_point, "content")
+                raw_src = _attr_str(content.get("src")) if content else ""
+                expected = entry.get("raw_href")
+                if isinstance(expected, str) and expected != raw_src:
+                    # 源 EPUB 与状态记录不一致时宁可保留原标题，也不改错节点。
+                    continue
+                title = _translated_toc_title(entry)
                 if title:
                     label.clear()
                     label.append(title)
@@ -320,31 +308,14 @@ def _rewrite_toc(
 
         # EPUB3 nav.xhtml：仅枚举 epub:type="toc" 范围内的直接 li 标签。
         soup = BeautifulSoup(data, "html.parser")
-        if legacy_titles:
-            # 旧状态保留原有的宽松匹配，兼容没有标准 ol/li 结构的 NAV。
-            toc_navs = [
-                node
-                for node in soup.find_all("nav")
-                if "toc"
-                in (_attr_str(node.get("epub:type")) or _attr_str(node.get("type"))).split()
-            ]
-            scopes: list[Tag | BeautifulSoup] = toc_navs or [soup]
-            for scope in scopes:
-                for label in scope.find_all("a", href=True):
-                    title = legacy_titles.get(_base_no_frag(_attr_str(label.get("href"))))
-                    if title:
-                        label.clear()
-                        label.append(title)
-            return str(soup).encode("utf-8")
         for node_index, (label, raw_href) in enumerate(_nav_label_nodes(soup)):
             entry = exact_entries.get(node_index)
-            if entry is not None:
-                expected = entry.get("raw_href")
-                if isinstance(expected, str) and expected != raw_href:
-                    continue
-                title = _translated_toc_title(entry)
-            else:
-                title = legacy_titles.get(_base_no_frag(raw_href))
+            if entry is None:
+                continue
+            expected = entry.get("raw_href")
+            if isinstance(expected, str) and expected != raw_href:
+                continue
+            title = _translated_toc_title(entry)
             if title:
                 label.clear()
                 label.append(title)
@@ -560,22 +531,6 @@ def _assemble_epub(
 
     chapters = [store.load_chapter(c["index"]) for c in m["chapters"]]
 
-    # 旧状态没有 node_index/resource_href，继续按 basename 回填；这条链路不能
-    # 区分同一 XHTML 的多个 fragment，只作为已有翻译状态的导出兼容层。
-    legacy_titles: dict[str, str] = {}
-    for chapter_meta in m["chapters"]:
-        base = _base_no_frag(chapter_meta.get("href") or "")
-        title = _ch_title(chapter_meta)
-        if base and title:
-            legacy_titles[base] = title
-    for entry in toc_entries:
-        if not isinstance(entry, dict):
-            continue
-        href = entry.get("resource_href") or entry.get("href")
-        base = _base_no_frag(href if isinstance(href, str) else "")
-        title = _translated_toc_title(entry)
-        if base and title:
-            legacy_titles[base] = title
     source_title = m.get("title", "") if isinstance(m.get("title"), str) else ""
     book_title = _export_book_title(
         source_title,
@@ -596,17 +551,6 @@ def _assemble_epub(
             preserve_source_style=preserve_source_style,
             source_lang=source_lang,
         )
-        if not rendered:
-            # 旧状态：每个 Chapter 自带一份物理 XHTML 模板。
-            for chapter in chapters:
-                if chapter.href and chapter.template:
-                    rendered[chapter.href] = _render_chapter_html(
-                        chapter,
-                        bilingual=bilingual,
-                        order=order,
-                        preserve_source_style=preserve_source_style,
-                        source_lang=source_lang,
-                    )
 
         infos = zin.infolist()
         with zipfile.ZipFile(out_path, "w") as zout:
@@ -627,15 +571,11 @@ def _assemble_epub(
                         ),
                     )
                 elif low.endswith(".ncx") or name in ncx_paths:
-                    exact = _indexed_toc_entries(toc_entries, name)
-                    toc_source: list[dict[str, object]] | dict[str, str] = (
-                        toc_entries if exact else legacy_titles
-                    )
                     zout.writestr(
                         info,
                         _rewrite_toc(
                             data,
-                            toc_source,
+                            toc_entries,
                             is_ncx=True,
                             toc_path=name,
                         ),
@@ -643,11 +583,9 @@ def _assemble_epub(
                 elif low.endswith(_HTML_EXTS):
                     html_data = rendered[name].encode("utf-8") if name in rendered else data
                     if name in toc_paths or _is_nav(html_data):
-                        exact = _indexed_toc_entries(toc_entries, name)
-                        toc_source = toc_entries if exact else legacy_titles
                         html_data = _rewrite_toc(
                             html_data,
-                            toc_source,
+                            toc_entries,
                             is_ncx=False,
                             toc_path=name,
                         )

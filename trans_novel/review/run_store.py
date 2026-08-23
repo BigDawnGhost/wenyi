@@ -475,7 +475,7 @@ class ReviewRunStore:
         inst._reviewed_content_digest = ""
         # 恢复事件序号（避免与已有事件重叠）
         inst._sequence = cls._read_max_seq(inst._event_path)
-        # 优先从 result.json 恢复 started_at（metadata 中无该字段）
+        # 从 result.json 恢复 started_at；缺失则留空。
         inst.started_at = ""
         result_path = os.path.join(run_dir, "result.json")
         if os.path.isfile(result_path):
@@ -485,16 +485,6 @@ class ReviewRunStore:
                 inst.started_at = existing.get("started_at", "")
             except (json.JSONDecodeError, OSError):
                 pass
-        if not inst.started_at:
-            # 兼容早期版本：从 metadata 恢复时间戳
-            meta_path = os.path.join(run_dir, "rounds", "metadata.json")
-            if os.path.isfile(meta_path):
-                try:
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        meta = json.load(f)
-                    inst.started_at = meta.get("started_at", "")
-                except (json.JSONDecodeError, OSError):
-                    inst.started_at = ""
         return inst
 
     @staticmethod

@@ -87,7 +87,6 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
     resolved        INTEGER DEFAULT 0,
     created_at      REAL
 );
-DROP TABLE IF EXISTS translation_memory;
 """
 )
 
