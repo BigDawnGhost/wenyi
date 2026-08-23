@@ -55,7 +55,7 @@ llm:
     fast:
       model: deepseek-v4-flash
       options:
-        thinking: false
+        thinking: true
 ```
 
 `max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries transient transport failures, HTTP 408/409/429 and 5xx responses, plus empty model responses; each wait is recorded in the book's `events.jsonl`.
