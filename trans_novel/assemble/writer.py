@@ -25,9 +25,9 @@ from .epub_writer import (
     _rewrite_html_document,
     _rewrite_toc,
 )
-from .html_renderer import _render_chapter_html
+from .html_renderer import _render_chapter_html, _render_segments_html
 from .html_writer import _assemble_html
-from .pdf_writer import _assemble_pdf
+from .pdf_writer import _assemble_pdf, _normalize_html_for_fpdf
 from .text_writer import _assemble_markdown, _assemble_text
 from .writer_common import (
     _OUT_EXT,
@@ -42,7 +42,9 @@ __all__ = [
     "bilingual_out_path",
     "_default_out",
     "_inject_bilingual_style",
+    "_normalize_html_for_fpdf",
     "_render_chapter_html",
+    "_render_segments_html",
     "_rewrite_html_document",
     "_rewrite_toc",
 ]

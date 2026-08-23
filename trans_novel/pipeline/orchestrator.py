@@ -2,13 +2,14 @@
 
 单章翻译流水线（章内批次**串行**，逐批刷新滚动上下文与术语快照；跨章亦串行传递梗概）：
   每批：渲染上下文（含前一批刚译出的译文）→ 翻译（对齐保证）→ 润色（可选）→
-        术语/称呼/固定表达实时抽取入库 → 立即供下一批参照。
-  章末：跨段标点规范化 → 全章术语兜底抽取 → 回译抽检 → 写 TM → 落盘标记 done。
+        含注释逻辑段定稿并串行定位链接 → 术语/称呼/固定表达实时抽取入库 →
+        立即供下一批参照。
+  章末：其余段落标点规范化 → 全章术语兜底抽取 → 回译抽检 → 落盘标记 done。
 翻译前先预扫源文建立全书理解（逐章梗概+全书概览，fast 档并行），作恒定前缀注入每章翻译。
 
 全书翻译完成后，独立 Review 阶段使用最终术语库按章并行审校；候选问题进入
-有界 Agent Loop 按需检索全书证据，跨块矛盾建议再统一仲裁。实验结果只写入
-时间戳 Debug 目录，不改正文或正式运行状态。run_all 随后执行一致性 QA、报告和导出。
+有界 Agent Loop 按需检索全书证据，跨块矛盾建议再统一仲裁。结果写入独立的
+正式 Review 目录，不改正文；run_all 随后仍以正式章节生成报告和导出。
 进度回调 progress(done_segments, total_segments, label) 与 UI 无关，每批完成即触发。
 """
 
@@ -18,13 +19,22 @@ import hashlib
 import json
 import os
 import random
+import warnings
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import wraps
+from inspect import signature
 from threading import Lock
-from typing import Any
+from typing import Any, Iterator
 
 from ..agents.analyzer import Analyzer
+from ..agents.annotation_aligner import (
+    AnnotationAligner,
+    AnnotationUnit,
+    target_digest,
+)
 from ..agents.polisher import Polisher
 from ..agents.review_fixer import (
     ProvisionalPatch,
@@ -44,17 +54,99 @@ from ..agents.translator import Translator
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..ingest.epub_reader import peek_epub_title, strip_ruby_markers
+from ..ingest.models import Chapter, Segment
 from ..ingest.segmenter import batch_segments, load_document
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
 from ..postprocess.punct import normalize_zh_segments
 from .context import RollingContext
-from .review_debug import DebugReviewRun
+from .metrics import RunMetricsRecorder
 from .review_evidence import BookEvidenceIndex
-from .runstore import STATUS_DONE, RunStore, slugify
+from .review_run import ReviewOutcome, ReviewRunStore
+from .runstore import STATUS_DONE, RunStore, slugify, source_sha256
 
 ProgressFn = Callable[[int, int, str], None]
+
+# 单次运行账本（run_metrics/）暂不启用；完善后改为 True 即可放量。
+_RUN_METRICS_ENABLED = False
+
+
+def _record_run_metrics(
+    operation: str,
+    requested_steps: list[str],
+    *,
+    invocation_fields: tuple[str, ...] = (),
+) -> Callable:
+    """为固定入口添加单次运行账本，同时允许入口之间安全嵌套。"""
+
+    def decorator(func: Callable) -> Callable:
+        call_signature = signature(func)
+
+        @wraps(func)
+        def wrapped(
+            self: Orchestrator,
+            input_path: str,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            bound = call_signature.bind(self, input_path, *args, **kwargs)
+            bound.apply_defaults()
+            invocation = {name: bound.arguments.get(name) for name in invocation_fields}
+            with self._run_metrics_session(
+                input_path,
+                operation=operation,
+                requested_steps=requested_steps,
+                invocation=invocation,
+            ):
+                return func(self, input_path, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
+
+
+def _record_pipeline_metrics(func: Callable) -> Callable:
+    """为动态步骤集合建立单条顶层流水线账本。"""
+
+    call_signature = signature(func)
+
+    @wraps(func)
+    def wrapped(
+        self: Orchestrator,
+        input_path: str,
+        steps,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        normalized_steps = set(steps)
+        bound = call_signature.bind(
+            self,
+            input_path,
+            normalized_steps,
+            *args,
+            **kwargs,
+        )
+        bound.apply_defaults()
+        with self._run_metrics_session(
+            input_path,
+            operation="pipeline",
+            requested_steps=sorted(normalized_steps),
+            invocation={
+                "out_format": bound.arguments["out_format"],
+                "pdf_engine": bound.arguments["pdf_engine"],
+            },
+        ):
+            return func(
+                self,
+                input_path,
+                normalized_steps,
+                *args,
+                **kwargs,
+            )
+
+    return wrapped
 
 
 # 语言名/代码 → ISO 639-1 两字母代码（模型检测结果归一化）
@@ -142,12 +234,9 @@ class _ReviewRoundResult:
     """一次全书影子译文 Review 及冲突仲裁后的确定性结果。"""
 
     issues: list[dict[str, Any]]
-    initial_issues: list[dict[str, Any]]
-    dismissed_issues: list[dict[str, Any]]
     pre_arbitration_issues: list[dict[str, Any]]
     arbitration_superseded: list[dict[str, Any]]
     conflict_groups: list[dict[str, Any]]
-    arbitrations: list[dict[str, Any]]
     residual_conflicts: list[dict[str, Any]]
     fallback_agent_count: int
 
@@ -174,11 +263,108 @@ def _review_overlay_digest(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _review_content_digest(chapters) -> str:
+    """计算本次 Review 实际读取的正式正文摘要。"""
+    payload = [
+        (
+            chapter.index,
+            text_index,
+            segment.index,
+            segment.anchor or "",
+            segment.kind,
+            segment.source,
+            segment.target or "",
+        )
+        for chapter in chapters
+        for text_index, segment in enumerate(chapter.text_segments)
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _review_net_changes(
+    chapters,
+    overrides: Mapping[tuple[int, int], str],
+    patch_records: list[dict[str, Any]],
+    active_patches: Mapping[tuple[int, int], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把多轮影子补丁折叠成每段一条的最终修改建议。"""
+    baseline = {
+        (chapter.index, text_index): segment.target or ""
+        for chapter in chapters
+        for text_index, segment in enumerate(chapter.text_segments)
+    }
+    issue_keys_by_location: dict[tuple[int, int], set[str]] = {}
+    for patch in patch_records:
+        chapter = patch.get("chapter")
+        index = patch.get("index")
+        if (
+            not isinstance(chapter, int)
+            or isinstance(chapter, bool)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or patch.get("status") == "rejected_cycle"
+        ):
+            continue
+        keys = issue_keys_by_location.setdefault((chapter, index), set())
+        keys.update(str(key) for key in patch.get("issue_keys", []) if isinstance(key, str) and key)
+
+    changes: list[dict[str, Any]] = []
+    for location, suggested_target in sorted(overrides.items()):
+        if baseline.get(location) == suggested_target:
+            continue
+        active = active_patches.get(location) or {}
+        changes.append(
+            {
+                "chapter": location[0],
+                "index": location[1],
+                "suggested_target": suggested_target,
+                "issue_keys": sorted(issue_keys_by_location.get(location, set())),
+                "review_result": str(active.get("status") or "provisional"),
+            }
+        )
+    return changes
+
+
+def _review_public_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """裁剪内部审校字段，生成面向用户的稳定问题列表。"""
+    public: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        issue_key = issue.get("issue_key")
+        chapter = issue.get("chapter")
+        index = issue.get("index")
+        if (
+            not isinstance(issue_key, str)
+            or not issue_key
+            or not isinstance(chapter, int)
+            or isinstance(chapter, bool)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+        ):
+            continue
+        public[issue_key] = {
+            "issue_key": issue_key,
+            "chapter": chapter,
+            "index": index,
+            "type": str(issue.get("type") or ""),
+            "detail": str(issue.get("detail") or ""),
+            "suggestion": str(issue.get("suggestion") or ""),
+        }
+    return sorted(
+        public.values(),
+        key=lambda issue: (issue["chapter"], issue["index"], issue["issue_key"]),
+    )
+
+
 def _review_conflict_records(
     groups: list[dict[str, Any]],
     arbitrations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """把冲突组及对应仲裁结果序列化为稳定的 Debug 记录。"""
+    """把冲突组及对应仲裁结果序列化为稳定的逐轮记录。"""
     return [
         {
             "conflict_id": group["conflict_id"],
@@ -199,6 +385,59 @@ def _review_conflict_records(
     ]
 
 
+def _review_unresolved_conflict_records(
+    issues: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """从最终未解决问题重建冲突记录，避免被最后一轮空结果掩盖。"""
+    groups = build_conflict_groups(issues)
+    arbitrations: list[dict[str, Any]] = []
+    for group in groups:
+        issue_ids = [str(issue["issue_id"]) for issue in group["issues"]]
+        annotations = [
+            issue.get("arbitration")
+            for issue in group["issues"]
+            if isinstance(issue.get("arbitration"), dict)
+        ]
+        reasons = [
+            str(annotation.get("reason", "")).strip()
+            for annotation in annotations
+            if str(annotation.get("reason", "")).strip()
+        ]
+        evidence_refs = sorted(
+            {
+                str(ref)
+                for issue in group["issues"]
+                for ref in issue.get("evidence_refs", [])
+                if isinstance(ref, str) and ref
+            }
+        )
+        arbitrations.append(
+            {
+                "conflict_id": group["conflict_id"],
+                "consistency_key": group["consistency_key"],
+                "issue_ids": issue_ids,
+                "status": "unresolved",
+                "recommended_value": "",
+                "reason": reasons[-1] if reasons else "最终未解决问题仍包含互斥建议。",
+                "supported_issue_ids": issue_ids,
+                "rejected_issue_ids": [],
+                "evidence_refs": evidence_refs,
+            }
+        )
+    return _review_conflict_records(groups, arbitrations)
+
+
+def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
+    """统计最终未解决问题中仍由降级 Agent 产生的独立审校块。"""
+    return len(
+        {
+            str(issue.get("_chunk_id") or issue.get("issue_key") or issue.get("issue_id"))
+            for issue in issues
+            if issue.get("agent_fallback")
+        }
+    )
+
+
 class Orchestrator:
     def __init__(self, config: Config, client: LLMClient | None = None):
         """初始化共享 LLM 客户端、用量检查点和各流水线 Agent。"""
@@ -213,7 +452,13 @@ class Orchestrator:
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
-        self._last_review_debug_dir: str | None = None
+        self.annotation_aligner = AnnotationAligner(self.client, config)
+        self._active_run_metrics: RunMetricsRecorder | None = None
+        self._run_metrics_suppressed = False
+
+    def _bind_llm_events(self, store: RunStore) -> None:
+        """把 provider 重试事件实时写入当前书籍的追加式事件日志。"""
+        self.client.set_event_sink(store.log_event)
 
     def _punctuation_enabled(self) -> bool:
         """判断当前目标语言是否应启用中文标点规范化。"""
@@ -242,6 +487,137 @@ class Orchestrator:
         )
         return cumulative
 
+    @contextmanager
+    def _run_metrics_session(
+        self,
+        input_path: str,
+        *,
+        operation: str,
+        requested_steps: list[str],
+        invocation: dict[str, Any] | None = None,
+    ) -> Iterator[RunMetricsRecorder | None]:
+        """为一次顶层操作建立账本；嵌套入口复用同一记录。"""
+        active = self._active_run_metrics
+        if active is not None:
+            yield active
+            return
+        if self._run_metrics_suppressed or not _RUN_METRICS_ENABLED:
+            yield None
+            return
+
+        try:
+            recorder = RunMetricsRecorder.start(
+                operation=operation,
+                requested_steps=requested_steps,
+                input_path=input_path,
+                config=self.config,
+                client=self.client,
+                invocation=invocation,
+            )
+        except Exception as metrics_error:
+            warnings.warn(
+                f"无法启动单次运行指标：{type(metrics_error).__name__}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._run_metrics_suppressed = True
+            try:
+                yield None
+            finally:
+                self._run_metrics_suppressed = False
+            return
+
+        self._active_run_metrics = recorder
+        status = "failed"
+        error: BaseException | None = None
+        try:
+            yield recorder
+            status = "completed"
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            try:
+                recorder.finish(self.client, status=status, error=error)
+            except Exception as metrics_error:
+                warnings.warn(
+                    f"无法保存单次运行指标：{type(metrics_error).__name__}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            self._active_run_metrics = None
+
+    @contextmanager
+    def _metric_stage(self, name: str) -> Iterator[None]:
+        """在已有运行账本中统计阶段耗时；无账本时保持原行为。"""
+        if self._active_run_metrics is None:
+            yield
+            return
+        with self._active_run_metrics.stage(name):
+            yield
+
+    def _measure_stage_call(
+        self,
+        name: str,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """统计一次函数调用所属阶段，并原样返回结果或抛出异常。"""
+        with self._metric_stage(name):
+            return func(*args, **kwargs)
+
+    def _attach_metrics_store(self, store: RunStore) -> None:
+        """让顶层运行账本随当前书籍状态一起落盘。"""
+        if self._active_run_metrics is not None:
+            try:
+                self._active_run_metrics.attach_store(store)
+            except Exception as metrics_error:
+                warnings.warn(
+                    f"无法绑定单次运行指标：{type(metrics_error).__name__}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+    def _capture_metrics_state(self, store: RunStore) -> None:
+        """从实时状态或导出快照冻结结束状态，防止后续进度污染账本。"""
+        if self._active_run_metrics is None:
+            return
+        try:
+            self._active_run_metrics.capture_state(store)
+        except Exception as metrics_error:
+            warnings.warn(
+                f"无法捕获单次运行结束状态：{type(metrics_error).__name__}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    def _source_sha256(self, input_path: str) -> str:
+        """在状态消费边界重新计算源文件哈希，不能信任锁外指标快照。"""
+        if self._active_run_metrics is not None:
+            verified = self._active_run_metrics.verify_input_sha256(input_path)
+            if verified is not None:
+                return verified
+        digest = source_sha256(input_path)
+        if self._active_run_metrics is not None:
+            self._active_run_metrics.input["sha256"] = digest
+        return digest
+
+    def _initial_source_sha256(self, input_path: str) -> str:
+        """取得解析前内容快照；有指标时复用其启动快照以少读一次文件。"""
+        if self._active_run_metrics is not None:
+            initial = self._active_run_metrics.input.get("sha256")
+            if isinstance(initial, str):
+                return initial
+        return source_sha256(input_path)
+
+    def _ensure_store_source(self, store: RunStore, input_path: str) -> str:
+        """校验候选状态确实属于当前输入文件。"""
+        return store.ensure_source_identity(
+            input_path,
+            actual_sha256=self._source_sha256(input_path),
+        )
+
     # ── 语言解析 ────────────────────────────────────────────────────────────
     def _apply_language(self, lang: str) -> None:
         """把解析出的源语言应用到 config 与各 agent（auto 检测后调用）。"""
@@ -262,8 +638,20 @@ class Orchestrator:
             self.backtrans,
             self.polisher,
             self.extractor,
+            self.annotation_aligner,
         ):
             ag.src = resolved
+            ag.tgt = self.config.target_lang
+
+    def _apply_manifest_languages(self, manifest: dict[str, Any]) -> None:
+        """从既有状态恢复源语言和目标语言，再同步给全部 agent。"""
+        target = manifest.get("target_lang")
+        if isinstance(target, str) and target:
+            self.config.target_lang = target
+        source = manifest.get("source_lang")
+        self._apply_language(
+            source if isinstance(source, str) and source else self.config.source_lang
+        )
 
     # ── 准备 / 续跑入口 ──────────────────────────────────────────────────
     def _locate_existing_store(
@@ -274,11 +662,18 @@ class Orchestrator:
     ) -> RunStore:
         """定位输入文件对应的既有状态，不创建或初始化新的翻译任务。
 
-        PDF 的状态目录直接取自文件名，因此可在调用 MinerU 前完成检查；其它
+        PDF 的状态目录直接取自文件名，因此可在调用 MinerU 前完成检查；EPUB 只读
+        OPF 取书名，不走全本 ingest（全本解析会对每个物理资源做一次 annotate，专为
+        定位目录多付这个成本没有必要，而且后面回填导出时还会重新 annotate 一遍）。其它
         格式仍需本地解析书名来得到与 ``prepare`` 相同的状态目录。
         """
-        if os.path.splitext(input_path)[1].lower() == ".pdf":
+        ext = os.path.splitext(input_path)[1].lower()
+        if ext == ".pdf":
             title = os.path.splitext(os.path.basename(input_path))[0]
+        elif ext == ".epub":
+            if progress:
+                progress(0, 0, "查找翻译进度…")
+            title = peek_epub_title(input_path)
         else:
             if progress:
                 progress(0, 0, "查找翻译进度…")
@@ -296,6 +691,9 @@ class Orchestrator:
         )
         if not store.exists():
             raise ValueError("尚无翻译进度。请先运行 translate。")
+        self._ensure_store_source(store, input_path)
+        self._bind_llm_events(store)
+        self._attach_metrics_store(store)
         return store
 
     def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
@@ -309,8 +707,11 @@ class Orchestrator:
             pdf_title = os.path.splitext(os.path.basename(input_path))[0]
             run_dir = os.path.join(self.config.state_dir, slugify(pdf_title))
             store = RunStore(run_dir)
+            self._bind_llm_events(store)
+            self._attach_metrics_store(store)
             with store.lock():
                 if store.exists():
+                    self._ensure_store_source(store, input_path)
                     store.log_event(
                         "run_resumed",
                         input_path=input_path,
@@ -319,17 +720,30 @@ class Orchestrator:
                     return store
                 if progress:
                     progress(0, 0, "解析文档…")
+                source_hash = self._initial_source_sha256(input_path)
+                # 转换失败也要留下同源初始化标记，确保重试保留失败运行账本。
+                store.begin_initialization(source_hash)
                 doc = load_document(
                     input_path,
                     self.config.source_lang,
                     self.config.target_lang,
                     split_segments=self.config.segment.max_chars_per_segment,
                     cache_dir=store.source_dir,
+                    source_hash=source_hash,
                 )
-                return self._prepare_locked(doc, store, input_path, progress)
+                if self._source_sha256(input_path) != source_hash:
+                    raise ValueError("PDF 在解析期间发生变化；请确认文件稳定后重试。")
+                return self._prepare_locked(
+                    doc,
+                    store,
+                    input_path,
+                    progress,
+                    source_hash=source_hash,
+                )
 
         if progress:
             progress(0, 0, "解析文档…")
+        source_hash = self._initial_source_sha256(input_path)
         # 超长段按句拆分（max_chars_per_segment），续段标 cont 供回填并回
         doc = load_document(
             input_path,
@@ -337,10 +751,20 @@ class Orchestrator:
             self.config.target_lang,
             split_segments=self.config.segment.max_chars_per_segment,
         )
+        if self._source_sha256(input_path) != source_hash:
+            raise ValueError("源文件在解析期间发生变化；请确认文件稳定后重试。")
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
+        self._bind_llm_events(store)
+        self._attach_metrics_store(store)
         with store.lock():
-            return self._prepare_locked(doc, store, input_path, progress)
+            return self._prepare_locked(
+                doc,
+                store,
+                input_path,
+                progress,
+                source_hash=source_hash,
+            )
 
     def _prepare_locked(
         self,
@@ -348,11 +772,17 @@ class Orchestrator:
         store: RunStore,
         input_path: str,
         progress: ProgressFn | None,
+        *,
+        source_hash: str | None = None,
     ) -> RunStore:
         """恢复已有状态；新运行分阶段写入，并以 manifest 原子提交完成标志。"""
         if store.exists():
+            self._ensure_store_source(store, input_path)
             store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
             return store  # 已有进度 → 直接续跑，不重置（语言在 run() 里按 manifest 应用）
+
+        initialization_hash = source_hash or self._source_sha256(input_path)
+        store.begin_initialization(initialization_hash)
 
         # 新建：auto 时只使用模型检测主要语言；失败则要求用户显式指定。
         if self.config.source_lang in ("auto", "", None):
@@ -369,7 +799,10 @@ class Orchestrator:
             store.log_event("language_detected", source_lang=doc.source_lang)
         self._apply_language(doc.source_lang)
 
-        manifest = store.stage_document(doc)
+        manifest = store.stage_document(
+            doc,
+            source_hash=initialization_hash,
+        )
         glossary = GlossaryStore(store.glossary_path)
         try:
             if progress:
@@ -389,6 +822,7 @@ class Orchestrator:
             # manifest 是初始化完成标志，必须最后原子落盘。
             manifest["initialized"] = True
             store.save_manifest(manifest)
+            store.finish_initialization()
             store.log_event(
                 "run_initialized",
                 input_path=input_path,
@@ -402,7 +836,6 @@ class Orchestrator:
                     "review": self.config.pipeline.review,
                     "polish": self.config.pipeline.polish,
                     "backtranslate_sample": self.config.pipeline.backtranslate_sample,
-                    "consistency_qa": self.config.pipeline.consistency_qa,
                     "book_understanding": self.config.pipeline.book_understanding,
                     "review_concurrency": self.config.pipeline.review_concurrency,
                     "review_output_retries": (self.config.pipeline.review_output_retries),
@@ -464,6 +897,11 @@ class Orchestrator:
             parts.append(f"【{tag}】\n{chunk}")
         return "\n\n".join(parts)
 
+    @_record_run_metrics(
+        "translate",
+        ["translate"],
+        invocation_fields=("only_chapter",),
+    )
     def run(
         self,
         input_path: str,
@@ -472,10 +910,22 @@ class Orchestrator:
         progress: ProgressFn | None = None,
     ) -> RunStore:
         """准备运行状态并在书级锁内翻译待处理章节。"""
-        store = self.prepare(input_path, progress=progress)
+        store = self._measure_stage_call(
+            "prepare",
+            self.prepare,
+            input_path,
+            progress=progress,
+        )
         with store.lock():
-            return self._run_locked(store, only_chapter=only_chapter, progress=progress)
+            result = self._run_locked(
+                store,
+                only_chapter=only_chapter,
+                progress=progress,
+            )
+            self._capture_metrics_state(store)
+            return result
 
+    @_record_run_metrics("prepare", ["prepare", "understanding"])
     def prepare_for_translation(
         self,
         input_path: str,
@@ -487,12 +937,22 @@ class Orchestrator:
         包括文档解析、语言识别、风格/初始术语分析，以及配置开启时的
         逐章预扫和全书概览。所有阶段均可续跑，再次调用会复用已落盘结果。
         """
-        store = self.prepare(input_path, progress=progress)
+        store = self._measure_stage_call(
+            "prepare",
+            self.prepare,
+            input_path,
+            progress=progress,
+        )
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+            self._apply_manifest_languages(manifest)
             try:
-                self._build_understanding(store, progress=progress)
+                self._measure_stage_call(
+                    "understanding",
+                    self._build_understanding,
+                    store,
+                    progress=progress,
+                )
                 store.log_event(
                     "translation_prepared",
                     input_path=input_path,
@@ -500,6 +960,7 @@ class Orchestrator:
                 )
             finally:
                 self._flush_usage(store, scope="prepare")
+            self._capture_metrics_state(store)
         return store
 
     def _run_locked(
@@ -511,7 +972,7 @@ class Orchestrator:
     ) -> RunStore:
         """恢复语言和上下文，依次翻译章节并持续保存用量与进度。"""
         manifest = store.load_manifest()
-        self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+        self._apply_manifest_languages(manifest)
         chapter_indices = {chapter.get("index") for chapter in manifest.get("chapters", [])}
         if only_chapter is not None and only_chapter not in chapter_indices:
             available = sorted(index for index in chapter_indices if isinstance(index, int))
@@ -524,7 +985,8 @@ class Orchestrator:
         )
         style = self.analyzer.style_brief(store.load_analysis() or {})
         # 翻译前预扫源文，建立全书理解（幂等、可续跑）；全书概览注入每章翻译
-        book_synopsis = self._build_understanding(store, progress=progress)
+        with self._metric_stage("understanding"):
+            book_synopsis = self._build_understanding(store, progress=progress)
 
         if only_chapter is not None:
             targets = [only_chapter]
@@ -535,6 +997,7 @@ class Orchestrator:
 
         total, done = self._progress_counts(store, progress_chapters)
         translation_history, source_corpus = self._load_translation_inputs(store)
+        annotation_context_registry = store.load_annotation_contexts()
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
@@ -542,25 +1005,27 @@ class Orchestrator:
             total_segments=total,
         )
         try:
-            for ci in targets:
-                done = self._translate_chapter(
-                    ci,
-                    store,
-                    glossary,
-                    context,
-                    style,
-                    book_synopsis,
-                    translation_history=translation_history,
-                    source_corpus=source_corpus,
-                    progress=progress,
-                    done=done,
-                    total=total,
-                )
-                store.save_context(context.to_dict())
-                self._flush_usage(store, scope="chapter")
-            # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
-            if not store.pending_chapters():
-                self._translate_titles(store, glossary, progress=progress)
+            with self._metric_stage("translate"):
+                for ci in targets:
+                    done = self._translate_chapter(
+                        ci,
+                        store,
+                        glossary,
+                        context,
+                        style,
+                        book_synopsis,
+                        translation_history=translation_history,
+                        source_corpus=source_corpus,
+                        annotation_context_registry=annotation_context_registry,
+                        progress=progress,
+                        done=done,
+                        total=total,
+                    )
+                    store.save_context(context.to_dict())
+                    self._flush_usage(store, scope="chapter")
+                # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
+                if not store.pending_chapters():
+                    self._translate_titles(store, glossary, progress=progress)
         finally:
             glossary.close()
             self._flush_usage(store, scope="translate")
@@ -959,6 +1424,308 @@ class Orchestrator:
                 progress(completed, len(pending), "翻译章节标题")
 
     # ── 单章 ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _sync_context_chapter_prefix(
+        context: RollingContext,
+        segments: list[Segment],
+        end: int,
+    ) -> None:
+        """用当前章已完成前缀刷新滚动上下文尾部。
+
+        注释逻辑段跨越批次时，最后一个续段完成后会同时定稿此前批次中的
+        target。这里把这些更新同步回内存上下文，确保下一批看到的也是最终
+        标点版本，而不是定位前的旧字符串。
+        """
+        prefix = segments[: max(0, min(end, len(segments)))]
+        if not prefix or any(not (segment.target and segment.target.strip()) for segment in prefix):
+            return
+        targets = [segment.target or "" for segment in prefix]
+        retained = min(len(targets), len(context.recent_targets))
+        if retained:
+            context.recent_targets[-retained:] = targets[-retained:]
+
+    @staticmethod
+    def _completed_logical_starts_in_range(
+        segments: list[Segment],
+        start: int,
+        count: int,
+    ) -> list[int]:
+        """返回最后一片落在当前批次内的逻辑原段起点，保持顺序并去重。
+
+        超长原段可能被切成首段和多个 ``cont`` 续段，且切分后的翻译批次
+        可能刚好从续段开始。向前追溯到首段，才能在最后一个续段译完时立即
+        合并完整 source/target 并执行一次注释定位。只在逻辑段末片属于当前
+        范围时返回，避免同一组续段跨多个批次时重复处理。
+        """
+        if count <= 0 or not segments:
+            return []
+        lower = max(0, start)
+        upper = min(len(segments), lower + count)
+        starts: list[int] = []
+        position = lower
+        while position < upper:
+            logical_start = position
+            while logical_start > 0 and segments[logical_start].cont:
+                logical_start -= 1
+            logical_end = logical_start
+            while logical_end + 1 < len(segments) and segments[logical_end + 1].cont:
+                logical_end += 1
+            if lower <= logical_end < upper:
+                starts.append(logical_start)
+            position = max(position + 1, logical_end + 1)
+        return starts
+
+    def _align_segment_annotation(
+        self,
+        ci: int,
+        chapter: Chapter,
+        start_position: int,
+        store: RunStore,
+    ) -> None:
+        """串行定位一个已译完逻辑原段的 EPUB 注释链接。
+
+        超长段会被切成一个带 anchor 的首段和若干 ``cont`` 续段；解析元数据
+        只存在首段，因此必须等全部续段都有译文后再合并 source/target。中文
+        标点先在该逻辑段内定稿，保证 placement 的字符偏移不会在章末失效。
+
+        定位结果无论正常还是确定性 fallback 都会立即写回章节文件。没有注释
+        或译文尚不完整时直接返回，且不会调用模型。
+        """
+        segments = chapter.text_segments
+        if not 0 <= start_position < len(segments):
+            return
+        while start_position > 0 and segments[start_position].cont:
+            start_position -= 1
+        segment = segments[start_position]
+        metadata = segment.meta.get("epub_annotations")
+        if not isinstance(metadata, dict):
+            return
+        raw_items = metadata.get("items")
+        if not isinstance(raw_items, list) or not raw_items:
+            return
+
+        logical_segments = [segment]
+        cursor = start_position + 1
+        while cursor < len(segments) and segments[cursor].cont:
+            logical_segments.append(segments[cursor])
+            cursor += 1
+        if any(not (item.target and item.target.strip()) for item in logical_segments):
+            return
+
+        target_changed = False
+        if self._punctuation_enabled():
+            targets = [item.target or "" for item in logical_segments]
+            normalized = normalize_zh_segments(
+                targets,
+                [item.cont for item in logical_segments],
+            )
+            target_changed = normalized != targets
+            for item, value in zip(logical_segments, normalized):
+                item.target = value
+
+        source = "".join(item.source for item in logical_segments)
+        target = "".join(item.target or "" for item in logical_segments)
+        expected_ids = {
+            str(item.get("id")) for item in raw_items if isinstance(item, dict) and item.get("id")
+        }
+        placements = metadata.get("placements")
+        placement_ids = {
+            str(item.get("id"))
+            for item in placements or []
+            if isinstance(item, dict) and item.get("id")
+        }
+        if (
+            metadata.get("target_digest") == target_digest(target)
+            and expected_ids
+            and placement_ids == expected_ids
+        ):
+            if target_changed:
+                store.save_chapter(chapter)
+            return
+
+        items = tuple(dict(item) for item in raw_items if isinstance(item, dict))
+        if not items:
+            if target_changed:
+                store.save_chapter(chapter)
+            return
+        anchor = segment.anchor or f"segment-{segment.index}"
+        unit = AnnotationUnit(
+            unit_id=f"ch{ci}:{anchor}",
+            source=source,
+            target=target,
+            items=items,
+        )
+        if not self.config.pipeline.annotation_alignment:
+            store.log_event(
+                "annotation_alignment_skipped",
+                chapter=ci,
+                segment=segment.index,
+                anchor=segment.anchor,
+                unit_id=unit.unit_id,
+                reason="disabled",
+            )
+            if target_changed:
+                store.save_chapter(chapter)
+            return
+
+        try:
+            result = self.annotation_aligner.align_unit(unit)
+        except Exception as error:  # noqa: BLE001 - 单段失败由 writer 安全降级
+            if target_changed:
+                store.save_chapter(chapter)
+            store.log_event(
+                "annotation_alignment_failed",
+                chapter=ci,
+                segment=segment.index,
+                anchor=segment.anchor,
+                unit_id=unit.unit_id,
+                error=type(error).__name__,
+                detail=str(error),
+            )
+            return
+
+        metadata["target_digest"] = result.target_digest
+        metadata["placements"] = [dict(item) for item in result.placements]
+        # 每个逻辑段完成后立即原子落盘；长书被中断时不必重新支付已完成的
+        # 注释定位调用，也能在翻译尚未完成时导出查看当前效果。
+        store.save_chapter(chapter)
+        store.log_event(
+            "annotation_alignment_completed",
+            chapter=ci,
+            segment=segment.index,
+            anchor=segment.anchor,
+            unit_id=unit.unit_id,
+            annotations=len(items),
+            used_fallback=result.used_fallback,
+        )
+
+    def _align_annotations_after_batch(
+        self,
+        ci: int,
+        chapter: Chapter,
+        start: int,
+        count: int,
+        store: RunStore,
+    ) -> None:
+        """按原文顺序串行处理当前批次触及且已完整翻译的注释段。"""
+        segments = chapter.text_segments
+        for logical_start in self._completed_logical_starts_in_range(
+            segments,
+            start,
+            count,
+        ):
+            self._align_segment_annotation(ci, chapter, logical_start, store)
+
+    @staticmethod
+    def _annotation_contexts_for_segments(
+        segments: list[Segment],
+        registry: dict[str, Any] | None,
+    ) -> list[list[dict[str, str]]]:
+        """按源文偏移把书级注释原文分配给对应的实际翻译切片。
+
+        EPUB 布局元数据只保存在一个逻辑段的首片；超长段的 ``cont``
+        续片没有独立 metadata。这里使用首片记录的原始字符偏移和各切片
+        累计边界，把 point 注释分给所在切片、range 注释分给所有相交
+        切片。相同目标在同一切片只注入一次。
+        """
+        assigned: list[list[dict[str, str]]] = [[] for _ in segments]
+        if not isinstance(registry, dict):
+            return assigned
+        raw_contexts = registry.get("contexts")
+        if not isinstance(raw_contexts, dict):
+            return assigned
+
+        position = 0
+        while position < len(segments):
+            logical_start = position
+            logical_end = logical_start + 1
+            while logical_end < len(segments) and segments[logical_end].cont:
+                logical_end += 1
+            logical_segments = segments[logical_start:logical_end]
+
+            boundaries: list[tuple[int, int]] = []
+            cursor = 0
+            for segment in logical_segments:
+                end = cursor + len(segment.source)
+                boundaries.append((cursor, end))
+                cursor = end
+
+            metadata = logical_segments[0].meta.get("epub_annotations")
+            raw_items = metadata.get("items") if isinstance(metadata, dict) else None
+            items = raw_items if isinstance(raw_items, list) else []
+            source_length = metadata.get("source_length") if isinstance(metadata, dict) else None
+            if items and (
+                not isinstance(source_length, int)
+                or isinstance(source_length, bool)
+                or source_length != cursor
+            ):
+                position = logical_end
+                continue
+            seen_by_piece: list[set[str]] = [set() for _ in logical_segments]
+
+            for raw_item in items:
+                if not isinstance(raw_item, dict) or raw_item.get("relation") != "noteref":
+                    continue
+                target_key = raw_item.get("target_key")
+                if not isinstance(target_key, str) or not target_key:
+                    continue
+                record = raw_contexts.get(target_key)
+                if not isinstance(record, dict):
+                    continue
+                raw_blocks = record.get("source_blocks")
+                blocks = (
+                    [block for block in raw_blocks if isinstance(block, str) and block.strip()]
+                    if isinstance(raw_blocks, list)
+                    else []
+                )
+                if not blocks:
+                    continue
+                note = {
+                    "target_key": target_key,
+                    "source": "\n\n".join(blocks),
+                }
+
+                start = raw_item.get("source_start")
+                end = raw_item.get("source_end")
+                if (
+                    not isinstance(start, int)
+                    or isinstance(start, bool)
+                    or not isinstance(end, int)
+                    or isinstance(end, bool)
+                    or not 0 <= start <= end <= cursor
+                ):
+                    continue
+
+                piece_indices: list[int]
+                if raw_item.get("mode") == "range" and start < end:
+                    piece_indices = [
+                        index
+                        for index, (piece_start, piece_end) in enumerate(boundaries)
+                        if start < piece_end and end > piece_start
+                    ]
+                else:
+                    # 边界上的 point 归前片；位置 0 归首片。
+                    piece_index = 0
+                    if start > 0:
+                        piece_index = next(
+                            (
+                                index
+                                for index, (_piece_start, piece_end) in enumerate(boundaries)
+                                if start <= piece_end
+                            ),
+                            len(boundaries) - 1,
+                        )
+                    piece_indices = [piece_index]
+
+                for piece_index in piece_indices:
+                    if target_key in seen_by_piece[piece_index]:
+                        continue
+                    seen_by_piece[piece_index].add(target_key)
+                    assigned[logical_start + piece_index].append(note)
+
+            position = logical_end
+        return assigned
+
     def _translate_chapter(
         self,
         ci: int,
@@ -970,6 +1737,7 @@ class Orchestrator:
         *,
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
         source_corpus: str,
+        annotation_context_registry: dict[str, Any] | None,
         progress: ProgressFn | None = None,
         done: int = 0,
         total: int = 0,
@@ -982,6 +1750,10 @@ class Orchestrator:
             store.log_event("chapter_skipped", chapter=ci, reason="empty")
             return done
         chapter_digest = chapter.meta.get("source_digest", "")
+        annotation_contexts = self._annotation_contexts_for_segments(
+            text_segs,
+            annotation_context_registry,
+        )
 
         batches = _resume_batches(text_segs, self.config.segment.max_chars_per_batch)
         label = self._chapter_progress_label(chapter.title, ci)
@@ -990,9 +1762,12 @@ class Orchestrator:
         if progress:
             progress(done, total, label)
         glossary_checkpoints = store.completed_batch_glossary_keys(ci)
-        # 章内术语快照会在每个批次术语抽取后刷新，让新确认的称呼/口癖/固定表达
-        # 立即影响后续批次。glossary_scope=chapter 时仍按本章源文裁剪，避免全量表过大。
+        # 章首读一次术语快照供后续真译注入 prompt。glossary_scope=chapter 时按本章
+        # 源文裁剪。之后仅在「术语库可能已变」且「下一批真要翻译」时惰性刷新：
+        # 正常 skip（译文与术语 checkpoint 都在）不抽、不刷；缺 checkpoint 的已译
+        # 批仍补抽并标记 stale，保证中途续跑不漏抽取、又不在纯 skip 上白刷整表。
         term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+        term_snapshot_stale = False
 
         # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
         # 不再并发，换取章内跨批的代词/术语/语气连贯。
@@ -1005,7 +1780,19 @@ class Orchestrator:
             existing_targets = [s.target for s in b if s.target and s.target.strip()]
             if len(existing_targets) == len(b):
                 # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
-                context.add_targets(existing_targets)
+                self._align_annotations_after_batch(
+                    ci,
+                    chapter,
+                    batch_start,
+                    len(b),
+                    store,
+                )
+                context.add_targets([s.target or "" for s in b])
+                self._sync_context_chapter_prefix(
+                    context,
+                    text_segs,
+                    batch_start + len(b),
+                )
                 if glossary_key in glossary_checkpoints:
                     summary = {
                         "inserted": 0,
@@ -1015,6 +1802,7 @@ class Orchestrator:
                         "skipped": 1,
                     }
                 else:
+                    # 译文在、术语 checkpoint 不在（旧状态/中断在抽取前）：补抽入库。
                     summary = self._extract_batch_glossary(
                         glossary,
                         store,
@@ -1025,7 +1813,7 @@ class Orchestrator:
                         source_corpus,
                     )
                     glossary_checkpoints.add(glossary_key)
-                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+                    term_snapshot_stale = True
                 store.log_event(
                     "batch_skipped",
                     chapter=ci,
@@ -1043,12 +1831,41 @@ class Orchestrator:
                     progress(done, total, label)
                 continue
 
+            if term_snapshot_stale:
+                term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+                term_snapshot_stale = False
+
             ctx_text = context.render(self.config.pipeline.rolling_context_segments)
             res = self._process_batch(
-                b, term_snapshot, ctx_text, style, book_synopsis, chapter_digest
+                b,
+                term_snapshot,
+                ctx_text,
+                style,
+                book_synopsis,
+                chapter_digest,
+                annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
             )
             for s, t in zip(b, res.targets):
                 s.target = t
+            bt_samples.extend(res.bt_samples)
+            # 增量持久化译文，下次中断从此批之后续跑。
+            store.save_chapter(chapter)
+            # 只处理当前批次触及的注释逻辑段。多个注释段严格按原文顺序
+            # 一段一次调用；若当前批只有超长段的前半部分，则等最后一个
+            # cont 续段译完后再合并定位。
+            self._align_annotations_after_batch(
+                ci,
+                chapter,
+                batch_start,
+                len(b),
+                store,
+            )
+            context.add_targets([s.target or "" for s in b])
+            self._sync_context_chapter_prefix(
+                context,
+                text_segs,
+                batch_start + len(b),
+            )
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -1058,18 +1875,18 @@ class Orchestrator:
                 punctuation_normalized=self._punctuation_enabled(),
                 backtranslate_sample_count=len(res.bt_samples),
                 segments=[
-                    {"index": batch_start + i, "source": s.source, "target": t}
-                    for i, (s, t) in enumerate(zip(b, res.targets))
+                    {
+                        "index": batch_start + i,
+                        "source": s.source,
+                        "target": s.target,
+                    }
+                    for i, s in enumerate(b)
                 ],
             )
-            context.add_targets(res.targets)
-            bt_samples.extend(res.bt_samples)
             done += len(b)
             seg_base += len(b)
             if progress:
                 progress(done, total, label)
-            # 增量持久化译文，下次中断从此批之后续跑。
-            store.save_chapter(chapter)
             # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
             self._extract_batch_glossary(
                 glossary,
@@ -1082,9 +1899,11 @@ class Orchestrator:
             )
             self._update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
-            term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+            # 库可能已变；延迟到下一批真译前再刷，末批之后无需再刷。
+            term_snapshot_stale = True
 
-        # 标点在章级统一处理，直引号状态才能跨批次、跨段保持连续。
+        # 不含注释的段落在章末统一完成标点规范化。含注释逻辑段已在其
+        # 最后一个续段译完时用同一函数定稿；此处重复处理是幂等的。
         if self._punctuation_enabled():
             translated = [segment.target or "" for segment in text_segs]
             normalized_targets = normalize_zh_segments(
@@ -1136,8 +1955,7 @@ class Orchestrator:
             )
 
         chapter.meta["backtranslation_issues"] = bt_issues
-        store.save_chapter(chapter)
-        store.set_chapter_status(ci, STATUS_DONE)
+        store.save_chapter_with_status(chapter, STATUS_DONE)
         store.log_event(
             "chapter_done",
             chapter=ci,
@@ -1193,14 +2011,14 @@ class Orchestrator:
         )
         return summary
 
-    # ── 实验性全书 Agent Review ─────────────────────────────────────────────
+    # ── 只读全书 Agent Review ───────────────────────────────────────────────
 
     def _review_round(
         self,
         loaded,
         all_terms: list[GlossaryTerm],
         evidence: BookEvidenceIndex,
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
         *,
         review_round: int,
         target_overrides: Mapping[tuple[int, int], str],
@@ -1246,7 +2064,7 @@ class Orchestrator:
                 issue["review_round"] = review_round
             raw_issues.extend(chapter_issues)
             debug.log_event(
-                "review_debug_chapter_finished",
+                "review_chapter_finished",
                 chapter=chapter.index,
                 segment_count=len(text_segs),
                 issue_count=len(chapter_issues),
@@ -1352,12 +2170,9 @@ class Orchestrator:
         )
         return _ReviewRoundResult(
             issues=final_issues,
-            initial_issues=initial_issues,
-            dismissed_issues=dismissed,
             pre_arbitration_issues=pre_arbitration_issues,
             arbitration_superseded=arbitration_superseded,
             conflict_groups=conflict_groups,
-            arbitrations=arbitrations,
             residual_conflicts=residual_conflicts,
             fallback_agent_count=fallback_agent_count,
         )
@@ -1368,7 +2183,7 @@ class Orchestrator:
         evidence: BookEvidenceIndex,
         all_terms: list[GlossaryTerm],
         analysis: dict[str, Any],
-        debug: DebugReviewRun,
+        debug: ReviewRunStore,
         *,
         review_round: int,
         fix_round: int,
@@ -1553,18 +2368,65 @@ class Orchestrator:
         )
         return patches, [*skipped, *failures]
 
-    def _review_book_debug(
+    def _review_config_snapshot(self) -> dict[str, Any]:
+        """当前审校相关配置快照，供 metadata 落盘与 skip 判定对比。"""
+        return {
+            "review_concurrency": self.config.pipeline.review_concurrency,
+            "review_output_retries": self.config.pipeline.review_output_retries,
+            "review_agent_loop": self.config.pipeline.review_agent_loop,
+            "review_agent_tier": self.config.pipeline.review_agent_tier,
+            "review_agent_max_evidence_rounds": (
+                self.config.pipeline.review_agent_max_evidence_rounds
+            ),
+            "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
+            "review_fix_loop": self.config.pipeline.review_fix_loop,
+            "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
+            "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
+        }
+
+    @staticmethod
+    def _review_glossary_fingerprint(terms: list[GlossaryTerm]) -> str:
+        """术语表内容指纹：术语表变化后已完成的 Review 结果不得复用。"""
+        ordered = sorted((term.source, term.target, term.type) for term in terms)
+        return hashlib.sha256(json.dumps(ordered, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def _review_skip_eligible(
+        self,
+        store: RunStore,
+        latest: dict[str, Any],
+        terms: list[GlossaryTerm],
+    ) -> bool:
+        """已完成 Review 结果能否安全复用：内容、配置与术语表必须全部一致。"""
+        review_id = latest.get("review_id")
+        if not isinstance(review_id, str) or not review_id:
+            return False
+        metadata_path = os.path.join(store.run_dir, "reviews", review_id, "rounds", "metadata.json")
+        try:
+            with open(metadata_path, encoding="utf-8") as f:
+                metadata = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return False
+        saved_config = metadata.get("config")
+        saved_glossary = metadata.get("glossary_fingerprint")
+        return (
+            isinstance(saved_config, dict)
+            and saved_config == self._review_config_snapshot()
+            and isinstance(saved_glossary, str)
+            and saved_glossary == self._review_glossary_fingerprint(terms)
+        )
+
+    def _run_review_session(
         self,
         store: RunStore,
         all_terms: list[GlossaryTerm],
         *,
         progress: ProgressFn | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> ReviewOutcome:
         """在只读影子译文上循环 Review→临时 Fix→盲复审。
 
-        正式 chapter、manifest、report、events、usage 和术语库始终不变。每轮
-        Fix 只更新内存 overlay 与本次时间戳 Debug 目录，下一轮全书 Review
-        不接收旧问题说明，只读取修改后的影子译文。
+        正式 chapter、manifest 和术语库始终不变。每轮 Fix 只更新内存 overlay
+        与本次 Review 目录；下一轮全书 Review 不接收旧问题说明，只读取修改后
+        的影子译文。会话摘要、用量与正式事件在结束时持久化。
         """
         manifest = store.load_manifest()
         pending = [
@@ -1581,39 +2443,45 @@ class Orchestrator:
         loaded = [store.load_chapter(item["index"]) for item in chapter_rows]
         total = sum(len(chapter.text_segments) for chapter in loaded)
         analysis = store.load_analysis() or {}
-        debug = DebugReviewRun(store.run_dir)
-        self._last_review_debug_dir = debug.run_dir
+        reviewed_content_digest = _review_content_digest(loaded)
+
+        # 断点续跑：未完成 Review 须内容、审校配置、术语表指纹一致
+        debug = ReviewRunStore.find_resumable(
+            store.run_dir,
+            reviewed_content_digest,
+            config=self._review_config_snapshot(),
+            glossary_fingerprint=self._review_glossary_fingerprint(all_terms),
+        )
+        if debug is not None:
+            debug.log_event("review_resumed_from_checkpoint", review_id=debug.review_id)
+        else:
+            debug = ReviewRunStore(store.run_dir)
         debug.start(
-            source_path=manifest.get("source_path"),
-            title=manifest.get("title"),
-            source_lang=self.config.source_lang,
-            target_lang=self.config.target_lang,
-            chapter_count=len(loaded),
-            total_segments=total,
-            config={
-                "review_concurrency": self.config.pipeline.review_concurrency,
-                "review_output_retries": self.config.pipeline.review_output_retries,
-                "review_agent_loop": self.config.pipeline.review_agent_loop,
-                "review_agent_tier": self.config.pipeline.review_agent_tier,
-                "review_agent_max_evidence_rounds": (
-                    self.config.pipeline.review_agent_max_evidence_rounds
-                ),
-                "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
-                "review_fix_loop": self.config.pipeline.review_fix_loop,
-                "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
-                "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
+            reviewed_content_digest=reviewed_content_digest,
+            metadata={
+                "source_sha256": manifest.get("source_sha256"),
+                "title": manifest.get("title"),
+                "source_lang": self.config.source_lang,
+                "target_lang": self.config.target_lang,
+                "chapter_count": len(loaded),
+                "total_segments": total,
+                "config": self._review_config_snapshot(),
+                "glossary_fingerprint": self._review_glossary_fingerprint(all_terms),
             },
+        )
+        store.log_event(
+            "review_started",
+            review_id=debug.review_id,
+            review_dir=debug.run_dir,
+            reviewed_content_digest=reviewed_content_digest,
         )
         usage_before = self.client.usage_summary()
 
-        def save_debug_usage() -> dict[str, Any]:
-            """保存本次实验 Review 的用量增量，不写入正式 usage.json。"""
+        def save_review_usage() -> dict[str, Any]:
+            """保存本次 Review 增量并合并到本书累计用量。"""
             usage = usage_delta(self.client.usage_summary(), usage_before)
-            debug.write_json("usage.json", usage)
-            debug.log_event(
-                "review_debug_usage_recorded",
-                **usage["totals"],
-            )
+            debug.save_usage(usage)
+            self._flush_usage(store, scope="review")
             return usage
 
         target_overrides: dict[tuple[int, int], str] = {}
@@ -1629,18 +2497,109 @@ class Orchestrator:
         termination = "not_started"
         fix_loop = self.config.pipeline.review_fix_loop
         required_clean = self.config.pipeline.review_clean_confirmations if fix_loop else 1
-        # 每次 Fix 前最多可能先出现 ``required_clean - 1`` 轮干净结果；
-        # 每个已接受补丁后仍须保留完整盲审，并最终容纳连续 clean 确认。
-        # 该上界避免在最后一轮接受一个从未被下一轮 Reviewer 看见的补丁。
         max_review_rounds = (
             (self.config.pipeline.review_fix_max_rounds + 1) * required_clean if fix_loop else 1
         )
+
+        # 断点续跑：加载轮级检查点
+        _checkpoint = debug.load_checkpoint()
+        _resume_scan_done = False
+        _resume_latest: _ReviewRoundResult | None = None
+        if _checkpoint is not None:
+            start_round = _checkpoint.get("next_round", 1)
+            # 配置收紧（如降低 review_clean_confirmations）后轮次上限可能变小；
+            # 若检查点轮次已超出上限，直接收敛到最后一轮，避免空循环 + RuntimeError。
+            start_round = min(start_round, max_review_rounds)
+            target_overrides = {
+                (o["chapter"], o["index"]): o["target"]
+                for o in _checkpoint.get("target_overrides", [])
+            }
+            seen_overlays = set(_checkpoint.get("seen_overlays", []))
+            patch_records = _checkpoint.get("patch_records", [])
+            active_patches = {
+                (p["chapter"], p["index"]): p for p in _checkpoint.get("active_patches", [])
+            }
+            fix_failures = _checkpoint.get("fix_failures", [])
+            blocked_issues = _checkpoint.get("blocked_issues", {})
+            round_summaries = _checkpoint.get("round_summaries", [])
+            clean_streak = _checkpoint.get("clean_streak", 0)
+            fix_rounds = _checkpoint.get("fix_rounds", 0)
+            # 恢复 round 内部相位：scan_done 表示扫描已完成，可跳过
+            if _checkpoint.get("phase") == "scan_done":
+                _resume_scan_done = True
+                start_round = _checkpoint.get("next_round", 1)
+                # 配置收紧导致上限小于检查点轮次时，不能复用旧轮的扫描结果
+                if start_round > max_review_rounds:
+                    _resume_scan_done = False
+                    _resume_latest = None
+                    start_round = max_review_rounds
+                else:
+                    _resume_latest = _ReviewRoundResult(
+                        issues=_checkpoint.get("latest_issues", []),
+                        pre_arbitration_issues=_checkpoint.get("latest_pre_arbitration_issues", []),
+                        arbitration_superseded=_checkpoint.get("latest_arbitration_superseded", []),
+                        conflict_groups=_checkpoint.get("latest_conflict_groups", []),
+                        residual_conflicts=_checkpoint.get("latest_residual_conflicts", []),
+                        fallback_agent_count=_checkpoint.get("latest_fallback_agent_count", 0),
+                    )
+                debug.log_event(
+                    "review_checkpoint_restored",
+                    next_round=start_round,
+                    phase="scan_done",
+                    override_count=len(target_overrides),
+                    fix_rounds=fix_rounds,
+                    clean_streak=clean_streak,
+                )
+            else:
+                debug.log_event(
+                    "review_checkpoint_restored",
+                    next_round=start_round,
+                    phase="round_done",
+                    override_count=len(target_overrides),
+                    fix_rounds=fix_rounds,
+                    clean_streak=clean_streak,
+                )
+        else:
+            start_round = 1
+
+        def _save_checkpoint(
+            current_round: int,
+            phase: str = "round_done",
+            latest: _ReviewRoundResult | None = None,
+        ) -> None:
+            """保存轮级检查点。phase: round_done | scan_done"""
+            state: dict[str, Any] = {
+                "phase": phase,
+                "next_round": current_round + 1 if phase == "round_done" else current_round,
+                "target_overrides": [
+                    {"chapter": c, "index": i, "target": t}
+                    for (c, i), t in sorted(target_overrides.items())
+                ],
+                "seen_overlays": sorted(seen_overlays),
+                "patch_records": patch_records,
+                "active_patches": [
+                    {**p, "chapter": c, "index": i} for (c, i), p in sorted(active_patches.items())
+                ],
+                "fix_failures": fix_failures,
+                "blocked_issues": blocked_issues,
+                "round_summaries": round_summaries,
+                "clean_streak": clean_streak,
+                "fix_rounds": fix_rounds,
+            }
+            if latest is not None:
+                state["latest_issues"] = latest.issues
+                state["latest_pre_arbitration_issues"] = latest.pre_arbitration_issues
+                state["latest_arbitration_superseded"] = latest.arbitration_superseded
+                state["latest_conflict_groups"] = latest.conflict_groups
+                state["latest_residual_conflicts"] = latest.residual_conflicts
+                state["latest_fallback_agent_count"] = latest.fallback_agent_count
+            debug.save_checkpoint(state)
 
         def register_blocked(
             issues: list[dict[str, Any]],
             failures: list[dict[str, Any]],
         ) -> None:
-            """保留未得到有效补丁的问题，避免后续 Reviewer 漏报后假 clean。"""
+            """按稳定问题键保留 Fix 失败项，避免后续 Reviewer 漏报后假 clean。"""
             by_id = {
                 str(issue["issue_id"]): issue
                 for issue in issues
@@ -1655,19 +2614,10 @@ class Orchestrator:
                     issue = by_id.get(str(issue_id))
                     if issue is None:
                         continue
-                    location_type = (
-                        issue.get("chapter"),
-                        issue.get("index"),
-                        issue.get("type"),
-                    )
-                    for blocked_id, blocked in list(blocked_issues.items()):
-                        if (
-                            blocked.get("chapter"),
-                            blocked.get("index"),
-                            blocked.get("type"),
-                        ) == location_type:
-                            blocked_issues.pop(blocked_id)
-                    blocked_issues[str(issue_id)] = {
+                    issue_key = issue.get("issue_key")
+                    if not isinstance(issue_key, str) or not issue_key:
+                        continue
+                    blocked_issues[issue_key] = {
                         **dict(issue),
                         "fix_failure": {
                             "status": failure.get("status"),
@@ -1679,12 +2629,18 @@ class Orchestrator:
         def effective_issues(current: _ReviewRoundResult) -> list[dict[str, Any]]:
             """合并本轮问题与历史未修项，按书序返回公开的未解决问题。"""
             combined = {
-                str(issue["issue_id"]): dict(issue)
+                str(issue["issue_key"]): dict(issue)
                 for issue in current.issues
-                if isinstance(issue.get("issue_id"), str)
+                if isinstance(issue.get("issue_key"), str)
             }
-            for issue_id, issue in blocked_issues.items():
-                combined.setdefault(issue_id, dict(issue))
+            for issue_key, blocked in blocked_issues.items():
+                current_issue = combined.get(issue_key)
+                if current_issue is None:
+                    combined[issue_key] = dict(blocked)
+                    continue
+                fix_failure = blocked.get("fix_failure")
+                if isinstance(fix_failure, dict):
+                    current_issue["fix_failure"] = dict(fix_failure)
             return sorted(
                 combined.values(),
                 key=lambda issue: (
@@ -1696,7 +2652,7 @@ class Orchestrator:
             )
 
         try:
-            for review_round in range(1, max_review_rounds + 1):
+            for review_round in range(start_round, max_review_rounds + 1):
                 overlay_digest = _review_overlay_digest(loaded, target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,
@@ -1721,29 +2677,60 @@ class Orchestrator:
                             for (chapter, index), target in sorted(target_overrides.items())
                         ],
                     )
-                    latest = self._review_round(
-                        loaded,
-                        all_terms,
-                        evidence,
-                        debug,
-                        review_round=review_round,
-                        target_overrides=target_overrides,
-                        progress=progress,
-                    )
+                    # 断点续跑：scan_done 恢复时跳过扫描，直接用缓存结果
+                    if (
+                        _resume_scan_done
+                        and review_round == start_round
+                        and _resume_latest is not None
+                    ):
+                        latest = _resume_latest
+                        _resume_scan_done = False
+                        _resume_latest = None
+                        # 跳过扫描后重建初审/驳回快照，保证最终报告数据完整
+                        debug.rebuild_snapshots_from_chunks(review_round)
+                        debug.log_event("review_scan_skipped", review_round=review_round)
+                    else:
+                        latest = self._review_round(
+                            loaded,
+                            all_terms,
+                            evidence,
+                            debug,
+                            review_round=review_round,
+                            target_overrides=target_overrides,
+                            progress=progress,
+                        )
+                        # 断点续跑：扫描完成，保存 mid-round 检查点
+                        _save_checkpoint(review_round, phase="scan_done", latest=latest)
+                        # 提前落盘本次扫描用量，避免 fix 阶段崩溃导致用量丢失
+                        save_review_usage()
+                        usage_before = self.client.usage_summary()
 
-                    issue_locations = {
-                        (issue.get("chapter"), issue.get("index")) for issue in latest.issues
+                    current_issue_keys = {
+                        str(issue["issue_key"])
+                        for issue in latest.issues
+                        if isinstance(issue.get("issue_key"), str)
                     }
-                    for location, patch_record in active_patches.items():
+                    for patch_record in active_patches.values():
                         if patch_record.get("round", review_round) >= review_round:
                             continue
-                        if location in issue_locations:
+                        covered_issue_keys = {
+                            str(issue_key)
+                            for issue_key in patch_record.get("issue_keys", [])
+                            if isinstance(issue_key, str)
+                        }
+                        rereported = sorted(covered_issue_keys & current_issue_keys)
+                        not_rereported = sorted(covered_issue_keys - current_issue_keys)
+                        for issue_key in not_rereported:
+                            blocked_issues.pop(issue_key, None)
+                        patch_record["rereported_issue_keys"] = rereported
+                        patch_record["not_rereported_issue_keys"] = not_rereported
+                        if rereported:
                             patch_record["status"] = "needs_revision"
                             patch_record["failed_review_round"] = review_round
                         else:
-                            if patch_record.get("status") != "verified":
-                                patch_record["verified_in_round"] = review_round
-                            patch_record["status"] = "verified"
+                            if patch_record.get("status") != "not_rereported":
+                                patch_record["not_rereported_in_round"] = review_round
+                            patch_record["status"] = "not_rereported"
 
                     round_summary: dict[str, Any] = {
                         "review_round": review_round,
@@ -1767,6 +2754,7 @@ class Orchestrator:
                             round_summary["termination"] = termination
                             debug.write_json("summary.json", round_summary)
                             round_summaries.append(round_summary)
+                            _save_checkpoint(review_round)
                             break
                         clean_streak += 1
                         if progress:
@@ -1779,7 +2767,9 @@ class Orchestrator:
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
                         if termination == "clean_confirmed":
+                            _save_checkpoint(review_round)
                             break
+                        _save_checkpoint(review_round)
                         continue
 
                     if clean_streak and progress:
@@ -1792,6 +2782,7 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
                     if fix_rounds >= self.config.pipeline.review_fix_max_rounds:
                         termination = "max_rounds"
@@ -1799,6 +2790,7 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
 
                     patches, failures = self._propose_review_patches(
@@ -1840,10 +2832,18 @@ class Orchestrator:
                         debug.write_json("fix_failures.json", failures)
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
 
+                    issue_keys_by_id = {
+                        str(issue["issue_id"]): str(issue["issue_key"])
+                        for issue in latest.issues
+                        if isinstance(issue.get("issue_id"), str)
+                        and isinstance(issue.get("issue_key"), str)
+                    }
                     candidate_overrides = dict(target_overrides)
                     applicable: list[ProvisionalPatch] = []
+                    hash_failures: list[dict[str, Any]] = []
                     for patch in patches:
                         location = (patch.chapter, patch.index)
                         current = evidence.segment_ref(*location)
@@ -1862,25 +2862,15 @@ class Orchestrator:
                             }
                             fix_failures.append(failure)
                             failures.append(failure)
+                            hash_failures.append(failure)
                             continue
                         candidate_overrides[location] = patch.after
                         applicable.append(patch)
 
                     register_blocked(
                         latest.issues,
-                        [
-                            {
-                                **failure,
-                                "review_round": review_round,
-                            }
-                            for failure in failures
-                        ],
+                        hash_failures,
                     )
-                    for patch in applicable:
-                        location = (patch.chapter, patch.index)
-                        for issue_id, blocked in list(blocked_issues.items()):
-                            if (blocked.get("chapter"), blocked.get("index")) == location:
-                                blocked_issues.pop(issue_id)
                     round_summary["fix_failure_count"] = len(failures)
                     round_summary["blocked_issue_count"] = len(blocked_issues)
                     candidate_digest = _review_overlay_digest(
@@ -1899,18 +2889,27 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
                     if candidate_digest in seen_overlays:
                         termination = "cycle_detected"
                         for patch in applicable:
                             record = {
                                 **patch.as_dict(),
+                                "issue_keys": sorted(
+                                    {
+                                        issue_keys_by_id[issue_id]
+                                        for issue_id in patch.issue_ids
+                                        if issue_id in issue_keys_by_id
+                                    }
+                                ),
                                 "status": "rejected_cycle",
                             }
                             patch_records.append(record)
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
 
                     fix_rounds += 1
@@ -1918,6 +2917,13 @@ class Orchestrator:
                         location = (patch.chapter, patch.index)
                         previous = active_patches.get(location)
                         record = patch.as_dict()
+                        record["issue_keys"] = sorted(
+                            {
+                                issue_keys_by_id[issue_id]
+                                for issue_id in patch.issue_ids
+                                if issue_id in issue_keys_by_id
+                            }
+                        )
                         if previous is not None:
                             previous["status"] = "superseded"
                             previous["superseded_by"] = patch.patch_id
@@ -1928,56 +2934,58 @@ class Orchestrator:
                     round_summary["fix_round"] = fix_rounds
                     debug.write_json("summary.json", round_summary)
                     round_summaries.append(round_summary)
+                    _save_checkpoint(review_round)
             else:
                 termination = "max_rounds"
+                _save_checkpoint(max_review_rounds)
 
             if latest is None:  # pragma: no cover - max_review_rounds 至少为 1
                 raise RuntimeError("Review loop finished without a review round")
 
             unresolved = effective_issues(latest)
+            final_conflicts = _review_unresolved_conflict_records(unresolved)
+            final_residual_conflicts = [
+                record
+                for record in final_conflicts
+                if record.get("arbitration", {}).get("status") == "unresolved"
+            ]
+            final_fallback_agent_count = _review_unresolved_fallback_count(unresolved)
             initial_issues, dismissed = debug.result_snapshots()
-            debug.write_json("initial_issues.json", initial_issues)
-            debug.write_json("dismissed_issues.json", dismissed)
+            debug.write_json("rounds/final/initial_issues.json", initial_issues)
+            debug.write_json("rounds/final/dismissed_issues.json", dismissed)
             debug.write_json(
-                "pre_arbitration_issues.json",
+                "rounds/final/pre_arbitration_issues.json",
                 latest.pre_arbitration_issues,
             )
             debug.write_json(
-                "arbitration_superseded_issues.json",
+                "rounds/final/arbitration_superseded_issues.json",
                 latest.arbitration_superseded,
             )
-            debug.write_json("final_issues.json", unresolved)
             debug.write_json(
-                "residual_conflicts.json",
+                "rounds/final/residual_conflicts.json",
                 [
                     {
-                        "conflict_id": group["conflict_id"],
-                        "consistency_key": group["consistency_key"],
-                        "issue_ids": [issue["issue_id"] for issue in group["issues"]],
+                        "conflict_id": record["conflict_id"],
+                        "consistency_key": record["consistency_key"],
+                        "issue_ids": record["issue_ids"],
                     }
-                    for group in latest.residual_conflicts
+                    for record in final_residual_conflicts
                 ],
             )
+            debug.write_json("rounds/final/conflicts.json", final_conflicts)
+            debug.write_json("rounds/final/patch-history.json", patch_records)
             debug.write_json(
-                "conflicts.json",
-                _review_conflict_records(
-                    latest.conflict_groups,
-                    latest.arbitrations,
-                ),
-            )
-            debug.write_json("patches.json", patch_records)
-            debug.write_json(
-                "verified_patches.json",
-                [patch for patch in patch_records if patch["status"] == "verified"],
+                "rounds/final/not_rereported_patches.json",
+                [patch for patch in patch_records if patch["status"] == "not_rereported"],
             )
             debug.write_json(
-                "unresolved_issues.json",
+                "rounds/final/unresolved_issues.json",
                 unresolved,
             )
-            debug.write_json("fix_failures.json", fix_failures)
-            debug.write_json("rounds.json", round_summaries)
+            debug.write_json("rounds/final/fix_failures.json", fix_failures)
+            debug.write_json("rounds/final/rounds.json", round_summaries)
             debug.write_json(
-                "shadow_targets.json",
+                "rounds/final/shadow_targets.json",
                 [
                     {
                         "chapter": chapter,
@@ -1987,61 +2995,100 @@ class Orchestrator:
                     for (chapter, index), target in sorted(target_overrides.items())
                 ],
             )
+            public_issues = _review_public_issues(unresolved)
+            changes = _review_net_changes(
+                loaded,
+                target_overrides,
+                patch_records,
+                active_patches,
+            )
             summary = {
                 "initial_issue_count": len(initial_issues),
                 "dismissed_issue_count": len(dismissed),
                 "pre_arbitration_issue_count": len(latest.pre_arbitration_issues),
                 "arbitration_superseded_count": len(latest.arbitration_superseded),
-                "issue_count": len(unresolved),
-                "conflict_count": len(latest.conflict_groups),
-                "unresolved_conflict_count": len(latest.residual_conflicts),
-                "fallback_agent_count": latest.fallback_agent_count,
+                "issue_count": len(public_issues),
+                "conflict_count": len(final_conflicts),
+                "unresolved_conflict_count": len(final_residual_conflicts),
+                "fallback_agent_count": final_fallback_agent_count,
                 "review_round_count": len(round_summaries),
                 "fix_round_count": fix_rounds,
                 "patch_count": len(patch_records),
-                "verified_patch_count": sum(
-                    patch["status"] == "verified" for patch in patch_records
+                "change_count": len(changes),
+                "not_rereported_patch_count": sum(
+                    patch["status"] == "not_rereported" for patch in patch_records
                 ),
                 "shadow_override_count": len(target_overrides),
                 "blocked_issue_count": len(blocked_issues),
                 "clean_streak": clean_streak,
-                "termination": termination,
-                "debug_dir": debug.run_dir,
             }
-            debug.write_json(
-                "result.json",
-                {
-                    "summary": summary,
-                    "issues": unresolved,
-                    "conflicts": latest.arbitrations,
-                    "patches": patch_records,
-                    "fix_failures": fix_failures,
-                    "arbitration_superseded_issues": (latest.arbitration_superseded),
-                },
+            debug.write_json("rounds/final/summary.json", summary)
+            result = debug.finish(
+                status="completed",
+                termination=termination,
+                summary=summary,
+                issues=public_issues,
+                changes=changes,
             )
-            debug.write_json("summary.json", summary)
-            save_debug_usage()
-            debug.finish(status="finished", **summary)
-            return unresolved
+            usage = save_review_usage()
+            store.log_event(
+                "review_finished",
+                review_id=debug.review_id,
+                review_dir=debug.run_dir,
+                status="completed",
+                termination=termination,
+                issue_count=len(public_issues),
+                change_count=len(changes),
+            )
+            return ReviewOutcome(
+                run_dir=debug.run_dir,
+                result=result,
+                usage=usage,
+            )
         except Exception as error:
             initial_issues, dismissed = debug.result_snapshots()
-            debug.write_json("initial_issues.json", initial_issues)
-            debug.write_json("dismissed_issues.json", dismissed)
-            debug.write_json(
-                "partial_issues.json",
-                effective_issues(latest) if latest is not None else [],
+            partial_issues = effective_issues(latest) if latest is not None else []
+            public_issues = _review_public_issues(partial_issues)
+            partial_changes = _review_net_changes(
+                loaded,
+                target_overrides,
+                patch_records,
+                active_patches,
             )
-            debug.write_json("partial_patches.json", patch_records)
-            debug.write_json("fix_failures.json", fix_failures)
-            save_debug_usage()
+            debug.write_json("rounds/final/initial_issues.json", initial_issues)
+            debug.write_json("rounds/final/dismissed_issues.json", dismissed)
+            debug.write_json(
+                "rounds/final/partial_issues.json",
+                partial_issues,
+            )
+            debug.write_json("rounds/final/partial_patches.json", patch_records)
+            debug.write_json("rounds/final/fix_failures.json", fix_failures)
             debug.finish(
                 status="failed",
-                issue_count=len(latest.issues) if latest is not None else 0,
-                conflict_count=(len(latest.conflict_groups) if latest is not None else 0),
-                fallback_agent_count=(latest.fallback_agent_count if latest is not None else 0),
+                termination="error",
+                summary={
+                    "issue_count": len(public_issues),
+                    "change_count": len(partial_changes),
+                    "conflict_count": (len(latest.conflict_groups) if latest is not None else 0),
+                    "fallback_agent_count": (
+                        latest.fallback_agent_count if latest is not None else 0
+                    ),
+                },
+                issues=public_issues,
+                changes=partial_changes,
+                error={"type": type(error).__name__, "message": str(error)},
+            )
+            save_review_usage()
+            store.log_event(
+                "review_finished",
+                review_id=debug.review_id,
+                review_dir=debug.run_dir,
+                status="failed",
+                termination="error",
+                issue_count=len(public_issues),
+                change_count=len(partial_changes),
                 error_type=type(error).__name__,
                 error=str(error),
-                debug_dir=debug.run_dir,
             )
             raise
 
@@ -2052,7 +3099,7 @@ class Orchestrator:
         *,
         chapter_index: int | None = None,
         evidence: BookEvidenceIndex | None = None,
-        debug: DebugReviewRun | None = None,
+        debug: ReviewRunStore | None = None,
         target_overrides: Mapping[tuple[int, int], str] | None = None,
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
@@ -2099,9 +3146,48 @@ class Orchestrator:
                 )
 
             tgts = [target_for(local_index, segment) for local_index, segment in enumerate(chunk)]
+
+            # 断点续跑：chunk 缓存检查（跳过 reviewer + agent loop LLM 调用）
+            round_prefix = f"r{review_round}-" if review_round is not None else ""
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
+            if debug is not None and debug.is_chunk_done(chunk_id):
+                review_debug = debug
+                cached = review_debug.load_chunk_result(chunk_id)
+                if cached is not None:
+                    # 恢复聚合状态（report 需要 initial/dismissed 数据）
+                    if chapter_index is not None:
+                        review_debug.record_initial_issues(
+                            chapter=chapter_index,
+                            chunk_base=chunk_base,
+                            issues=cached.get("initial_issues", []),
+                        )
+                        review_debug.record_dismissed(
+                            chapter=chapter_index,
+                            chunk_base=chunk_base,
+                            issues=cached.get("dismissed", []),
+                        )
+                    return cached.get("issues", [])
+
+            # 断点续跑：子 chunk 缓存探测（借鉴翻译 _resume_batches 边界切分）
+            # 与 review_adaptive 的递归拆半对齐：如果所有子 chunk 都有缓存，
+            # 直接合并返回，避免触发一次 reviewer LLM 调用。
+            if debug is not None and len(chunk) > 1:
+                cached_sub = self._try_cached_subchunks(
+                    chunk_base,
+                    chunk,
+                    debug,
+                    round_prefix,
+                    chapter_index,
+                )
+                if cached_sub is not None:
+                    return cached_sub
+
             local_issues: list[dict] = []
             initial_trace: dict[str, Any] | None = None
             initial_path = ""
+            initial_issue_count = 0
+            repaired = False
+            reused_initial: dict[str, Any] | None = None
             if debug is not None:
                 round_prefix = f"r{review_round}-" if review_round is not None else ""
                 initial_id = (
@@ -2109,65 +3195,103 @@ class Orchestrator:
                     f"-n{len(chunk)}-attempt{attempt}"
                 )
                 initial_path = f"initial/{initial_id}.json"
-                initial_trace = {
-                    "agent_id": initial_id,
-                    "chapter": chapter_index,
-                    "chunk_base": chunk_base,
-                    "segment_count": len(chunk),
-                    "attempt": attempt,
-                    "status": "running",
-                }
-                debug.write_json(initial_path, initial_trace)
-
-            def trace(event: str, data: dict[str, Any]) -> None:
-                """逐步保存初审完整请求、原始响应或服务错误。"""
-                if debug is None or initial_trace is None:
-                    return
-                initial_trace[event] = data
-                debug.write_json(initial_path, initial_trace)
-
-            try:
-                review_result = self.reviewer.review_result(
-                    srcs,
-                    tgts,
-                    terms,
-                    trace=trace if debug is not None else None,
-                )
-            except Exception as error:
-                if debug is not None and initial_trace is not None:
-                    initial_trace["status"] = "failed"
-                    initial_trace["error"] = {
-                        "type": type(error).__name__,
-                        "message": str(error),
+                # 断点续跑：初筛已完成的结果直接复用（跳过最贵的 reviewer 调用）。
+                # 结果在首次运行中已校验过块内 index，可直接信任。
+                existing_initial = debug.load_json(initial_path)
+                if (
+                    existing_initial is not None
+                    and existing_initial.get("status") == "finished"
+                    and isinstance(existing_initial.get("issues"), list)
+                ):
+                    reused_initial = existing_initial
+                else:
+                    initial_trace = {
+                        "agent_id": initial_id,
+                        "chapter": chapter_index,
+                        "chunk_base": chunk_base,
+                        "segment_count": len(chunk),
+                        "attempt": attempt,
+                        "status": "running",
                     }
                     debug.write_json(initial_path, initial_trace)
-                raise
-            if review_result.repaired:
-                record_recovery(
-                    "review_json_repaired",
-                    start_index=chunk_base,
-                    count=len(chunk),
-                )
-            for it in review_result.issues:
-                it = dict(it)
-                idx = it.get("index")
-                if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(chunk):
-                    it["index"] = idx
-                    local_issues.append(it)
-                else:
-                    raise ReviewOutputError("invalid_issue_index")
-            if debug is not None and initial_trace is not None:
-                initial_trace["status"] = "finished"
-                initial_trace["json_repaired"] = review_result.repaired
-                initial_trace["issues"] = local_issues
-                debug.write_json(initial_path, initial_trace)
-                if chapter_index is not None:
+
+            if reused_initial is not None:
+                # 复用路径与 fresh 路径的错误语义不同：越界 index 不再抛
+                # ReviewOutputError，而是静默丢弃。这有意为之——首次运行已
+                # 校验并通过，越界只可能来自人工篡改；宁可少报也不让恢复
+                # 因陈旧 trace 把整个 chunk 打成 fallback。会话级内容指纹
+                # 守卫已排除正常内容变化场景。
+                local_issues = [dict(issue) for issue in reused_initial["issues"]]
+                repaired = bool(reused_initial.get("json_repaired"))
+                if repaired:
+                    record_recovery(
+                        "review_json_repaired",
+                        start_index=chunk_base,
+                        count=len(chunk),
+                    )
+                # reused_initial 仅在 debug 非空时赋值；显式收窄供类型检查。
+                if debug is not None and chapter_index is not None:
                     debug.record_initial_issues(
                         chapter=chapter_index,
                         chunk_base=chunk_base,
                         issues=local_issues,
                     )
+                initial_issue_count = len(local_issues)
+            else:
 
+                def trace(event: str, data: dict[str, Any]) -> None:
+                    """逐步保存初审完整请求、原始响应或服务错误。"""
+                    if debug is None or initial_trace is None:
+                        return
+                    initial_trace[event] = data
+                    debug.write_json(initial_path, initial_trace)
+
+                try:
+                    review_result = self.reviewer.review_result(
+                        srcs,
+                        tgts,
+                        terms,
+                        trace=trace if debug is not None else None,
+                    )
+                except Exception as error:
+                    if debug is not None and initial_trace is not None:
+                        initial_trace["status"] = "failed"
+                        initial_trace["error"] = {
+                            "type": type(error).__name__,
+                            "message": str(error),
+                        }
+                        debug.write_json(initial_path, initial_trace)
+                    raise
+                repaired = review_result.repaired
+                if repaired:
+                    record_recovery(
+                        "review_json_repaired",
+                        start_index=chunk_base,
+                        count=len(chunk),
+                    )
+                for it in review_result.issues:
+                    it = dict(it)
+                    idx = it.get("index")
+                    if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(chunk):
+                        it["index"] = idx
+                        local_issues.append(it)
+                    else:
+                        raise ReviewOutputError("invalid_issue_index")
+                initial_issue_count = len(review_result.issues)
+                if debug is not None and initial_trace is not None:
+                    initial_trace["status"] = "finished"
+                    initial_trace["json_repaired"] = repaired
+                    initial_trace["issues"] = local_issues
+                    debug.write_json(initial_path, initial_trace)
+                    if chapter_index is not None:
+                        debug.record_initial_issues(
+                            chapter=chapter_index,
+                            chunk_base=chunk_base,
+                            issues=local_issues,
+                        )
+
+            # 保存 agent loop 前的初始 issues（供 chunk 缓存落盘）
+            local_issues_before_agent = list(local_issues)
             dismissed: list[dict[str, Any]] = []
             fallback_reason = ""
             if (
@@ -2199,8 +3323,6 @@ class Orchestrator:
                     issues=dismissed,
                 )
 
-            round_prefix = f"r{review_round}-" if review_round is not None else ""
-            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
             mapped: list[dict[str, Any]] = []
             for issue in local_issues:
                 local_index = issue.get("index")
@@ -2221,10 +3343,21 @@ class Orchestrator:
                     chapter=chapter_index,
                     chunk_base=chunk_base,
                     segment_count=len(chunk),
-                    initial_issue_count=len(review_result.issues),
+                    initial_issue_count=initial_issue_count,
                     final_issue_count=len(mapped),
                     dismissed_count=len(dismissed),
                     fallback=bool(fallback_reason),
+                )
+            # 断点续跑：落盘 chunk 结果（在 review_once 内，有完整数据）
+            if debug is not None and chapter_index is not None:
+                debug.mark_chunk_done(
+                    chunk_id,
+                    {
+                        "issues": mapped,
+                        "initial_issues": local_issues_before_agent,
+                        "dismissed": dismissed,
+                        "fallback_reason": fallback_reason,
+                    },
                 )
             return mapped
 
@@ -2337,6 +3470,62 @@ class Orchestrator:
         return [issue for chunk_issues in results for issue in chunk_issues]
 
     @staticmethod
+    def _try_cached_subchunks(
+        chunk_base: int,
+        chunk: list,
+        debug: ReviewRunStore,
+        round_prefix: str,
+        chapter_index: int | None,
+    ) -> list[dict] | None:
+        """递归探测子 chunk 缓存，与 review_adaptive 的拆半对齐。
+
+        翻译的 ``_resume_batches`` 按完成状态边界切分批，只补译缺失段。
+        借鉴此模式：当父 chunk 缓存未命中时，递归检查所有子 chunk 是否有
+        缓存。如果全部命中，合并返回，跳过 reviewer LLM 调用。
+
+        探测阶段不写 initial/dismissed 快照；仅整棵子树命中后才统一落盘，
+        避免半边命中返回 None 后父块重跑导致重复计数。
+        """
+        hits: list[tuple[int, dict[str, Any]]] = []
+
+        def probe(base: int, pieces: list) -> list[dict] | None:
+            if not pieces:
+                return []
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{base}-n{len(pieces)}"
+            if debug.is_chunk_done(chunk_id):
+                cached = debug.load_chunk_result(chunk_id)
+                if cached is not None:
+                    hits.append((base, cached))
+                    return list(cached.get("issues", []))
+            if len(pieces) <= 1:
+                return None
+            mid = len(pieces) // 2
+            left = probe(base, pieces[:mid])
+            if left is None:
+                return None
+            right = probe(base + mid, pieces[mid:])
+            if right is None:
+                return None
+            return left + right
+
+        merged = probe(chunk_base, chunk)
+        if merged is None:
+            return None
+        if chapter_index is not None:
+            for base, cached in hits:
+                debug.record_initial_issues(
+                    chapter=chapter_index,
+                    chunk_base=base,
+                    issues=cached.get("initial_issues", []),
+                )
+                debug.record_dismissed(
+                    chapter=chapter_index,
+                    chunk_base=base,
+                    issues=cached.get("dismissed", []),
+                )
+        return merged
+
+    @staticmethod
     def _pack_contiguous(segs, budget: int) -> list[list]:
         """按源文字符预算把段保序打包成若干连续块。"""
         chunks: list[list] = []
@@ -2360,6 +3549,7 @@ class Orchestrator:
         style: str,
         book_synopsis: str = "",
         chapter_digest: str = "",
+        annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> _BatchResult:
         """单个批次：整批翻译 → 润色。
 
@@ -2376,7 +3566,10 @@ class Orchestrator:
             context=ctx_text,
             book_synopsis=book_synopsis,
             chapter_digest=chapter_digest,
+            annotation_contexts=annotation_contexts,
         )
+        # 模型偶发把源文注音标记〘假名〙抄进译文时剥掉。
+        targets = [strip_ruby_markers(target) for target in targets]
 
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
@@ -2393,37 +3586,177 @@ class Orchestrator:
         return _BatchResult(targets=targets, bt_samples=bt_samples)
 
     # ── 可选步骤 / 连续全流程 ────────────────────────────────────────────────
-    ALL_STEPS = ("translate", "review", "qa", "report", "assemble")
+    ALL_STEPS = ("translate", "review", "report", "assemble")
 
+    @_record_run_metrics("review", ["review"])
     def run_review(
         self,
         input_path: str,
         *,
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
-        """全量执行 Debug-only Review，不修改正式状态、Usage 或正文。"""
-        self._last_review_debug_dir = None
-        store = self._locate_existing_store(input_path, progress=progress)
+        """全量执行只读 Review，并保存正式结果、事件与用量。"""
+        store = self._measure_stage_call(
+            "prepare",
+            self._locate_existing_store,
+            input_path,
+            progress=progress,
+        )
         with store.lock():
             manifest = store.load_manifest()
-            self._apply_language(manifest.get("source_lang") or self.config.source_lang)
+            self._apply_manifest_languages(manifest)
             terms = GlossaryStore.load_terms_readonly(store.glossary_path)
-            try:
-                issues = self._review_book_debug(
+            # 跳过已完成 review：内容指纹一致则复用结果
+            loaded = [store.load_chapter(ch["index"]) for ch in manifest.get("chapters", [])]
+            digest = _review_content_digest(loaded)
+            latest = store.load_latest_review_result()
+            if (
+                latest is not None
+                and latest.get("status") == "completed"
+                and latest.get("reviewed_content_digest") == digest
+                and self._review_skip_eligible(store, latest, terms)
+            ):
+                store.log_event("review_skipped", reason="already_completed")
+                outcome = ReviewOutcome(
+                    run_dir=os.path.join(store.run_dir, "reviews", latest.get("review_id", "")),
+                    result=latest,
+                    usage=self._review_usage_from_dir(store, latest.get("review_id", "")),
+                )
+            else:
+                outcome = self._measure_stage_call(
+                    "review",
+                    self._run_review_session,
                     store,
                     terms,
                     progress=progress,
                 )
-            finally:
-                # 实验 Review 的调用不进入正式 usage.json；抬高 checkpoint，
-                # 避免同一 Orchestrator 后续阶段把本次用量补写进去。
-                self._usage_checkpoint = self.client.usage_summary()
+            self._capture_metrics_state(store)
         return {
             "store": store,
-            "review_issues": issues,
-            "debug_dir": self._last_review_debug_dir,
+            "review_issues": outcome.issues,
+            "review_changes": outcome.changes,
+            "review_result": outcome.result,
+            "review_dir": outcome.run_dir,
         }
 
+    @staticmethod
+    def _review_usage_from_dir(store: RunStore, review_id: str) -> dict[str, Any]:
+        """读取已完成的 Review 目录用量；缺失时返回空（调用方容忍）。"""
+        try:
+            with open(
+                os.path.join(store.run_dir, "reviews", review_id, "usage.json"),
+                encoding="utf-8",
+            ) as f:
+                usage = json.load(f)
+            return usage if isinstance(usage, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _run_existing_steps(
+        self,
+        input_path: str,
+        steps: set[str],
+        *,
+        progress: ProgressFn | None,
+        out_format: str = "epub",
+        out_path: str | None = None,
+        pdf_engine: str = "weasyprint",
+    ) -> dict[str, Any]:
+        """仅从既有状态执行本地收尾阶段，不创建新的翻译任务。"""
+        store = self._measure_stage_call(
+            "prepare",
+            self._locate_existing_store,
+            input_path,
+            progress=progress,
+        )
+        with store.lock():
+            manifest = store.load_manifest()
+            self._apply_manifest_languages(manifest)
+            result = self._finish_steps_locked(
+                store,
+                input_path=input_path,
+                steps=steps,
+                run_steps_input=sorted(steps),
+                progress=progress,
+                out_format=out_format,
+                out_path=out_path,
+                pdf_engine=pdf_engine,
+            )
+            self._capture_metrics_state(store)
+            return result
+
+    @_record_run_metrics("report", ["report"])
+    def run_report(
+        self,
+        input_path: str,
+        *,
+        progress: ProgressFn | None = None,
+    ) -> dict[str, Any]:
+        """从既有状态重新生成报告，并记录独立运行指标。"""
+        return self._run_existing_steps(
+            input_path,
+            {"report"},
+            progress=progress,
+        )
+
+    @_record_run_metrics(
+        "assemble",
+        ["assemble"],
+        invocation_fields=("out_format", "pdf_engine"),
+    )
+    def run_assemble(
+        self,
+        input_path: str,
+        *,
+        out_format: str = "epub",
+        out_path: str | None = None,
+        pdf_engine: str = "weasyprint",
+        progress: ProgressFn | None = None,
+    ) -> dict[str, Any]:
+        """从既有状态快照导出成品，不等待正在进行的整本翻译。"""
+        store = self._measure_stage_call(
+            "prepare",
+            self._locate_existing_store,
+            input_path,
+            progress=progress,
+        )
+        store.log_event("run_steps_started", steps=["assemble"], input_path=input_path)
+
+        with store.assemble_lock():
+            snapshot = self._measure_stage_call(
+                "prepare",
+                store.create_export_snapshot,
+                actual_sha256=self._source_sha256(input_path),
+            )
+            manifest = snapshot.load_manifest()
+            self._apply_manifest_languages(manifest)
+            self._capture_metrics_state(snapshot)
+            # 等待另一个导出期间源文件也可能变化，因此真正渲染前再次确认。
+            self._ensure_store_source(store, input_path)
+            outputs = self._assemble_outputs(
+                snapshot,
+                input_path=input_path,
+                progress=progress,
+                out_format=out_format,
+                out_path=out_path,
+                pdf_engine=pdf_engine,
+            )
+            # 原模板也属于导出输入；渲染后再次核验，避免把中途替换的源文件记为成功。
+            self._ensure_store_source(store, input_path)
+        store.log_event("assembled", outputs=outputs, out_format=out_format)
+        store.log_event("run_steps_finished", steps=["assemble"], outputs=outputs)
+        return {
+            "store": store,
+            "output": outputs[0] if outputs else None,
+            "outputs": outputs,
+            "report": None,
+            "review_issues": [],
+            "review_changes": [],
+            "review_result": None,
+            "review_dir": None,
+        }
+
+    @_record_pipeline_metrics
     def run_steps(
         self,
         input_path: str,
@@ -2435,7 +3768,6 @@ class Orchestrator:
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
-        self._last_review_debug_dir = None
         steps = set(steps)
         run_steps_input = sorted(steps)
         if steps == {"review"}:
@@ -2446,18 +3778,32 @@ class Orchestrator:
                 "outputs": [],
                 "report": None,
                 "review_issues": reviewed["review_issues"],
-                "review_debug_dir": reviewed["debug_dir"],
-                "qa_issues": [],
+                "review_changes": reviewed["review_changes"],
+                "review_result": reviewed["review_result"],
+                "review_dir": reviewed["review_dir"],
             }
+        if steps == {"assemble"}:
+            return self.run_assemble(
+                input_path,
+                out_format=out_format,
+                out_path=out_path,
+                pdf_engine=pdf_engine,
+                progress=progress,
+            )
 
         if "translate" in steps:
             store = self.run(input_path, progress=progress)
         else:
-            store = self.prepare(input_path, progress=progress)
+            store = self._measure_stage_call(
+                "prepare",
+                self.prepare,
+                input_path,
+                progress=progress,
+            )
             m = store.load_manifest()
-            self._apply_language(m.get("source_lang") or self.config.source_lang)
+            self._apply_manifest_languages(m)
         with store.lock():
-            return self._finish_steps_locked(
+            result = self._finish_steps_locked(
                 store,
                 input_path=input_path,
                 steps=steps,
@@ -2467,6 +3813,62 @@ class Orchestrator:
                 out_path=out_path,
                 pdf_engine=pdf_engine,
             )
+            self._capture_metrics_state(store)
+            return result
+
+    def _assemble_outputs(
+        self,
+        store: RunStore,
+        *,
+        input_path: str,
+        progress: ProgressFn | None,
+        out_format: str,
+        out_path: str | None,
+        pdf_engine: str,
+    ) -> list[str]:
+        """从给定实时状态或只读快照生成配置要求的全部产物。"""
+        from ..assemble.writer import assemble, bilingual_out_path
+
+        if progress:
+            progress(0, 0, "回填译文…")
+        out_cfg = self.config.output
+        do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
+        if not do_mono and not do_bilingual:
+            do_mono = True
+
+        outputs: list[str] = []
+        if do_mono:
+            outputs.append(
+                self._measure_stage_call(
+                    "assemble",
+                    assemble,
+                    store,
+                    input_path,
+                    out_path=out_path,
+                    out_format=out_format,
+                    bilingual=False,
+                    about_page=out_cfg.about_page,
+                    pdf_engine=pdf_engine,
+                )
+            )
+        if do_bilingual:
+            bi_out_path = bilingual_out_path(out_path) if out_path else None
+            outputs.append(
+                self._measure_stage_call(
+                    "assemble",
+                    assemble,
+                    store,
+                    input_path,
+                    out_path=bi_out_path,
+                    out_format=out_format,
+                    bilingual=True,
+                    order=out_cfg.bilingual_order,
+                    preserve_source_style=out_cfg.bilingual_preserve_source_style,
+                    about_page=out_cfg.about_page,
+                    pdf_engine=pdf_engine,
+                )
+            )
+        return outputs
 
     def _finish_steps_locked(
         self,
@@ -2480,48 +3882,56 @@ class Orchestrator:
         out_path: str | None,
         pdf_engine: str,
     ) -> dict[str, Any]:
-        """在书级锁内执行 QA、报告和导出收尾步骤并返回结果汇总。"""
-        from ..agents.consistency import ConsistencyChecker
+        """在书级锁内执行审校、报告和导出收尾步骤并返回结果汇总。"""
         from ..assemble.report import build_report
-        from ..assemble.writer import assemble, bilingual_out_path
 
         store.log_event("run_steps_started", steps=run_steps_input, input_path=input_path)
 
-        glossary = (
-            GlossaryStore(store.glossary_path) if {"qa", "report"}.intersection(steps) else None
-        )
+        glossary = GlossaryStore(store.glossary_path) if "report" in steps else None
         review_issues: list[dict] = []
-        qa_issues: list[dict] = []
+        review_changes: list[dict] = []
+        review_result: dict[str, Any] | None = None
+        review_dir: str | None = None
         report: dict[str, Any] | None = None
         try:
             if "review" in steps:
-                # 先保存 Review 前的合法增量；Review 自身所有用量无论成功失败
-                # 都通过推进 checkpoint 排除在正式 usage.json 之外。
+                # 先保存此前阶段的增量，使会话 usage.json 只包含 Review 调用。
                 self._flush_usage(store, scope="pipeline")
-                try:
-                    review_issues = self._review_book_debug(
+                # 跳过已完成 review：内容指纹一致则复用结果
+                manifest = store.load_manifest()
+                ch_rows = manifest.get("chapters", [])
+                loaded_chs = [store.load_chapter(ch["index"]) for ch in ch_rows]
+                digest = _review_content_digest(loaded_chs)
+                prev = store.load_latest_review_result()
+                review_terms = (
+                    glossary.all_terms()
+                    if glossary is not None
+                    else GlossaryStore.load_terms_readonly(store.glossary_path)
+                )
+                if (
+                    prev is not None
+                    and prev.get("status") == "completed"
+                    and prev.get("reviewed_content_digest") == digest
+                    and self._review_skip_eligible(store, prev, review_terms)
+                ):
+                    store.log_event("review_skipped", reason="already_completed")
+                    outcome = ReviewOutcome(
+                        run_dir=os.path.join(store.run_dir, "reviews", prev.get("review_id", "")),
+                        result=prev,
+                        usage=self._review_usage_from_dir(store, prev.get("review_id", "")),
+                    )
+                else:
+                    outcome = self._measure_stage_call(
+                        "review",
+                        self._run_review_session,
                         store,
-                        (
-                            glossary.all_terms()
-                            if glossary is not None
-                            else GlossaryStore.load_terms_readonly(store.glossary_path)
-                        ),
+                        review_terms,
                         progress=progress,
                     )
-                finally:
-                    self._usage_checkpoint = self.client.usage_summary()
-
-            if "qa" in steps:
-                if glossary is None:  # pragma: no cover - 由 needs 条件保证
-                    raise RuntimeError("QA 需要术语库")
-                if progress:
-                    progress(0, 0, "一致性 QA…")
-                qa_issues = ConsistencyChecker(self.client, self.config).check(store, glossary)
-                store.log_event(
-                    "consistency_qa_finished",
-                    issue_count=len(qa_issues),
-                    issues=qa_issues,
-                )
+                review_issues = outcome.issues
+                review_changes = outcome.changes
+                review_result = outcome.result
+                review_dir = outcome.run_dir
 
             self._flush_usage(store, scope="pipeline")
             if "report" in steps:
@@ -2529,8 +3939,13 @@ class Orchestrator:
                     raise RuntimeError("报告生成需要术语库")
                 if progress:
                     progress(0, 0, "生成报告…")
-                report = build_report(store, glossary)
-                report["consistency_issues"] = qa_issues
+                report = self._measure_stage_call(
+                    "report",
+                    build_report,
+                    store,
+                    glossary,
+                )
+                assert report is not None
                 store.save_report(report)
                 store.log_event("report_saved", path=store.report_path)
         finally:
@@ -2540,46 +3955,24 @@ class Orchestrator:
 
         outputs: list[str] = []
         if "assemble" in steps:
-            if progress:
-                progress(0, 0, "回填译文…")
-            out_cfg = self.config.output
-            do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
-            if not do_mono and not do_bilingual:
-                do_mono = True  # 兜底：mono/bilingual 都关时至少产一个单语产物
-            if do_mono:
-                outputs.append(
-                    assemble(
-                        store,
-                        input_path,
-                        out_path=out_path,
-                        out_format=out_format,
-                        bilingual=False,
-                        about_page=out_cfg.about_page,
-                        pdf_engine=pdf_engine,
-                    )
+            with store.assemble_lock():
+                # 导出会重新读取源书模板；在读取前后都验证，避免运行期间替换文件。
+                self._ensure_store_source(store, input_path)
+                outputs = self._assemble_outputs(
+                    store,
+                    input_path=input_path,
+                    progress=progress,
+                    out_format=out_format,
+                    out_path=out_path,
+                    pdf_engine=pdf_engine,
                 )
-            if do_bilingual:
-                bi_out_path = bilingual_out_path(out_path) if out_path else None
-                outputs.append(
-                    assemble(
-                        store,
-                        input_path,
-                        out_path=bi_out_path,
-                        out_format=out_format,
-                        bilingual=True,
-                        order=out_cfg.bilingual_order,
-                        preserve_source_style=(out_cfg.bilingual_preserve_source_style),
-                        about_page=out_cfg.about_page,
-                        pdf_engine=pdf_engine,
-                    )
-                )
+                self._ensure_store_source(store, input_path)
             store.log_event("assembled", outputs=outputs, out_format=out_format)
 
         store.log_event(
             "run_steps_finished",
             steps=run_steps_input,
             outputs=outputs,
-            qa_issue_count=len(qa_issues),
         )
         return {
             "store": store,
@@ -2587,8 +3980,9 @@ class Orchestrator:
             "outputs": outputs,
             "report": report,
             "review_issues": review_issues,
-            "review_debug_dir": self._last_review_debug_dir,
-            "qa_issues": qa_issues,
+            "review_changes": review_changes,
+            "review_result": review_result,
+            "review_dir": review_dir,
         }
 
     def run_all(
@@ -2598,15 +3992,12 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str = "epub",
         out_path: str | None = None,
-        do_qa: bool | None = None,
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
-        """翻译 → 最终审校 → 一致性 QA → 报告 → 回填，返回结果汇总。"""
+        """翻译 → 最终审校 → 报告 → 回填，返回结果汇总。"""
         steps = {"translate", "report", "assemble"}
         if self.config.pipeline.review:
             steps.add("review")
-        if do_qa if do_qa is not None else self.config.pipeline.consistency_qa:
-            steps.add("qa")
         return self.run_steps(
             input_path,
             steps,

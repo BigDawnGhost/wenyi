@@ -18,6 +18,8 @@ from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup
 
+from ..pipeline.runstore import RunStore
+
 # 图片 MIME 类型到扩展名的映射
 _IMAGE_EXTENSION_BY_TYPE = {
     "image/gif": ".gif",
@@ -160,11 +162,17 @@ def _materialize_html_resources(
     return rewritten
 
 
-def _template_resource_source(manifest: dict, source_path: str) -> str:
+def _template_resource_source(
+    store: RunStore,
+    manifest: dict,
+    source_path: str,
+) -> str:
     """Return the HTML file whose directory resolves template media references."""
-    raw_meta = manifest.get("meta")
-    meta = raw_meta if isinstance(raw_meta, dict) else {}
-    converted_html_path = meta.get("converted_html_path")
-    if manifest.get("fmt") == "pdf" and isinstance(converted_html_path, str):
-        return converted_html_path
+    if manifest.get("fmt") == "pdf":
+        from ..ingest.pdf_reader import pdf_cache_html_path
+
+        source_hash = manifest.get("source_sha256")
+        if not isinstance(source_hash, str):
+            raise ValueError("PDF manifest 缺少有效的 source_sha256")
+        return pdf_cache_html_path(store.source_dir, source_hash)
     return source_path

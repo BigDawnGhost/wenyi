@@ -12,15 +12,17 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 
-from trans_novel.assemble.writer import assemble
+from trans_novel.assemble.writer import _normalize_html_for_fpdf, assemble
 from trans_novel.cli import _runstore_for
 from trans_novel.config import Config
+from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.errors import MinerUError
 from trans_novel.ingest.models import Document
+from trans_novel.ingest.pdf_reader import pdf_cache_html_path
 from trans_novel.ingest.segmenter import load_document
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.runstore import RunStore
+from trans_novel.pipeline.runstore import RunStore, source_sha256
 
 _HTML = """\
 <!doctype html>
@@ -57,8 +59,8 @@ class TestPdfIngest(unittest.TestCase):
             with open(pdf_path, "wb") as file:
                 file.write(b"not accessed when cached HTML exists")
             cache_dir = os.path.join(directory, "state", "sample", "source")
-            os.makedirs(cache_dir)
-            cached_html = os.path.join(cache_dir, "converted.html")
+            cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
+            os.makedirs(os.path.dirname(cached_html))
             with open(cached_html, "w", encoding="utf-8") as file:
                 file.write(_HTML)
 
@@ -72,10 +74,8 @@ class TestPdfIngest(unittest.TestCase):
         self.assertEqual(document.title, "sample")
         self.assertEqual(document.fmt, "pdf")
         self.assertEqual(document.source_path, os.path.abspath(pdf_path))
-        self.assertEqual(
-            document.meta["converted_html_path"],
-            os.path.abspath(cached_html),
-        )
+        self.assertNotIn("pdf_path", document.meta)
+        self.assertNotIn("converted_html_path", document.meta)
         self.assertEqual(
             [chapter.title for chapter in document.chapters],
             ["Chapter One", "Chapter Two"],
@@ -105,6 +105,86 @@ class TestPdfIngest(unittest.TestCase):
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
+    def test_pdf_failed_conversion_cannot_leave_a_reusable_partial_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = os.path.join(directory, "sample.pdf")
+            with open(pdf_path, "wb") as file:
+                file.write(b"invalid PDF; conversion is mocked")
+            cache_dir = os.path.join(directory, "state", "sample", "source")
+
+            def write_partial_then_fail(_input: str, output: str, **_kwargs) -> None:
+                os.makedirs(os.path.dirname(output), exist_ok=True)
+                with open(output, "w", encoding="utf-8") as file:
+                    file.write("<html><body><p>PARTIAL</p></body></html>")
+                raise RuntimeError("connection reset")
+
+            with (
+                patch(
+                    "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                    side_effect=write_partial_then_fail,
+                ),
+                self.assertRaises(MinerUError),
+            ):
+                load_document(pdf_path, "en", "zh", cache_dir=cache_dir)
+
+            def convert_fresh(_input: str, output: str, **_kwargs) -> None:
+                os.makedirs(os.path.dirname(output), exist_ok=True)
+                with open(output, "w", encoding="utf-8") as file:
+                    file.write(_HTML.replace("First paragraph.", "Fresh retry."))
+
+            with patch(
+                "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                side_effect=convert_fresh,
+            ) as conversion:
+                document = load_document(pdf_path, "en", "zh", cache_dir=cache_dir)
+
+            conversion.assert_called_once()
+            self.assertIn("Fresh retry.", document.chapters[0].segments[1].source)
+
+    def test_pdf_failed_conversion_metric_survives_successful_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = os.path.join(directory, "sample.pdf")
+            with open(pdf_path, "wb") as file:
+                file.write(b"invalid PDF; conversion is mocked")
+            state_dir = os.path.join(directory, "state")
+            config = Config.from_dict(
+                {
+                    "language": {"source": "en", "target": "zh"},
+                    "llm": {"provider": "fake"},
+                    "pipeline": {"book_understanding": False},
+                    "paths": {"state_dir": state_dir},
+                }
+            )
+
+            with patch("trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED", True):
+                with (
+                    patch(
+                        "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                        side_effect=RuntimeError("temporary outage"),
+                    ),
+                    self.assertRaises(MinerUError),
+                ):
+                    Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
+
+                def convert_fresh(_input: str, output: str, **_kwargs) -> None:
+                    os.makedirs(os.path.dirname(output), exist_ok=True)
+                    with open(output, "w", encoding="utf-8") as file:
+                        file.write(_HTML)
+
+                with patch(
+                    "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                    side_effect=convert_fresh,
+                ):
+                    store = Orchestrator(
+                        config,
+                        client=FakeClient(),
+                    ).prepare_for_translation(pdf_path)
+
+                self.assertEqual(
+                    [metric["status"] for metric in store.load_run_metrics()],
+                    ["failed", "completed"],
+                )
+
     def test_orchestrator_uses_state_cache_and_resume_skips_pdf_parse(self):
         with tempfile.TemporaryDirectory() as directory:
             pdf_path = os.path.join(directory, "sample.pdf")
@@ -112,8 +192,8 @@ class TestPdfIngest(unittest.TestCase):
                 file.write(b"not accessed when cached HTML exists")
             state_dir = os.path.join(directory, "state")
             cache_dir = os.path.join(state_dir, "sample", "source")
-            os.makedirs(cache_dir)
-            cached_html = os.path.join(cache_dir, "converted.html")
+            cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
+            os.makedirs(os.path.dirname(cached_html))
             with open(cached_html, "w", encoding="utf-8") as file:
                 file.write(_HTML)
             config = Config.from_dict(
@@ -131,10 +211,110 @@ class TestPdfIngest(unittest.TestCase):
             store = orchestrator.prepare(pdf_path)
             os.remove(cached_html)
             resumed = orchestrator.prepare(pdf_path)
+            serialized_manifest = str(store.load_manifest())
 
         self.assertEqual(store.run_dir, os.path.join(state_dir, "sample"))
         self.assertEqual(resumed.run_dir, store.run_dir)
         self.assertFalse(os.path.exists(cached_html))
+        self.assertNotIn(os.path.abspath(pdf_path), serialized_manifest)
+        self.assertNotIn(os.path.abspath(cached_html), serialized_manifest)
+
+    def test_pdf_cache_isolated_by_source_hash_after_interrupted_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = os.path.join(directory, "sample.pdf")
+            with open(pdf_path, "wb") as file:
+                file.write(b"old PDF")
+            state_dir = os.path.join(directory, "state")
+            cache_root = os.path.join(state_dir, "sample", "source")
+            stale_hash = source_sha256(pdf_path)
+            stale_html = pdf_cache_html_path(cache_root, stale_hash)
+            os.makedirs(os.path.dirname(stale_html))
+            with open(stale_html, "w", encoding="utf-8") as file:
+                file.write(_HTML.replace("First paragraph.", "Stale body."))
+            config = Config.from_dict(
+                {
+                    "language": {"source": "en", "target": "zh"},
+                    "llm": {
+                        "provider": "fake",
+                        "tiers": {"strong": {"model": "fake"}},
+                    },
+                    "paths": {"state_dir": state_dir},
+                }
+            )
+            with (
+                patch.object(RunStore, "save_manifest", side_effect=OSError("disk full")),
+                self.assertRaisesRegex(OSError, "disk full"),
+            ):
+                Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+
+            partial_store = RunStore(os.path.join(state_dir, "sample"))
+            stale_glossary = GlossaryStore(partial_store.glossary_path)
+            stale_glossary.upsert_term(GlossaryTerm(source="OldBook", target="旧书"))
+            stale_glossary.close()
+
+            with open(pdf_path, "wb") as file:
+                file.write(b"new PDF")
+            fresh_hash = source_sha256(pdf_path)
+
+            def convert(_input: str, output: str, **_kwargs) -> None:
+                os.makedirs(os.path.dirname(output), exist_ok=True)
+                with open(output, "w", encoding="utf-8") as file:
+                    file.write(_HTML.replace("First paragraph.", "Fresh body."))
+
+            with patch(
+                "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                side_effect=convert,
+            ) as conversion:
+                store = Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+
+            conversion.assert_called_once()
+            self.assertEqual(store.load_manifest()["source_sha256"], fresh_hash)
+            self.assertIn("Fresh body.", store.load_chapter(0).segments[1].source)
+            glossary = GlossaryStore(store.glossary_path)
+            try:
+                self.assertIsNone(glossary.get_term("OldBook"))
+            finally:
+                glossary.close()
+
+    def test_pdf_change_during_conversion_is_rejected_and_cache_is_discarded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = os.path.join(directory, "sample.pdf")
+            with open(pdf_path, "wb") as file:
+                file.write(b"PDF before conversion")
+            original_hash = source_sha256(pdf_path)
+            state_dir = os.path.join(directory, "state")
+
+            def convert(_input: str, output: str, **_kwargs) -> None:
+                with open(pdf_path, "wb") as file:
+                    file.write(b"PDF replaced during conversion")
+                os.makedirs(os.path.dirname(output), exist_ok=True)
+                with open(output, "w", encoding="utf-8") as file:
+                    file.write(_HTML)
+
+            config = Config.from_dict(
+                {
+                    "language": {"source": "en", "target": "zh"},
+                    "llm": {"provider": "fake"},
+                    "paths": {"state_dir": state_dir},
+                }
+            )
+            with (
+                patch(
+                    "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                    side_effect=convert,
+                ),
+                self.assertRaisesRegex(ValueError, "转换或解析期间发生变化"),
+            ):
+                Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+
+            stale_cache = os.path.dirname(
+                pdf_cache_html_path(
+                    os.path.join(state_dir, "sample", "source"),
+                    original_hash,
+                )
+            )
+            self.assertFalse(os.path.exists(stale_cache))
+            self.assertFalse(os.path.isfile(os.path.join(state_dir, "sample", "manifest.json")))
 
     def test_cli_tools_locate_pdf_state_without_parsing_source(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -167,13 +347,13 @@ class TestPdfIngest(unittest.TestCase):
             with open(pdf_path, "wb") as file:
                 file.write(b"not accessed when cached HTML exists")
             cache_dir = os.path.join(directory, "state", "sample", "source")
-            image_dir = os.path.join(cache_dir, "images")
+            cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
+            image_dir = os.path.join(os.path.dirname(cached_html), "images")
             os.makedirs(image_dir)
             with open(os.path.join(image_dir, "chart.svg"), "w", encoding="utf-8") as file:
                 file.write(
                     '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
                 )
-            cached_html = os.path.join(cache_dir, "converted.html")
             with open(cached_html, "w", encoding="utf-8") as file:
                 file.write(
                     """<html><body><h1>Chapter</h1>
@@ -186,7 +366,7 @@ class TestPdfIngest(unittest.TestCase):
                 "zh",
                 cache_dir=cache_dir,
             )
-            store = RunStore(os.path.join(directory, "run"))
+            store = RunStore(os.path.join(directory, "state", "sample"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.epub")
@@ -420,6 +600,66 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
         self.assertEqual(writes[0]["font_family"], "WenyiCJK")
         self.assertIn("<img", str(writes[0]["html"]))
         self.assertNotIn("<style", str(writes[0]["html"]))
+
+    def test_fpdf_normalizer_preserves_named_anchor_metadata(self):
+        normalized = _normalize_html_for_fpdf(
+            """<html><body><p>
+            <a class="decorative">plain</a>
+            <a id="note-1" name="note-1">target</a>
+            <a href="#note-1">jump</a>
+            </p></body></html>""",
+            base_dir=".",
+        )
+        rendered = BeautifulSoup(normalized, "html.parser")
+
+        self.assertIsNone(rendered.find("a", class_="decorative"))
+        destination = rendered.find("span", id="note-1")
+        self.assertIsNotNone(destination)
+        assert destination is not None
+        self.assertEqual(destination.get("name"), "note-1")
+        link = rendered.find("a", href="#note-1")
+        self.assertIsNotNone(link)
+        assert link is not None
+        self.assertEqual(link.get_text(strip=True), "jump")
+
+    def test_fpdf_normalizer_flattens_nested_tables_without_losing_rich_content(self):
+        normalized = _normalize_html_for_fpdf(
+            """<html><body><table><caption>Details</caption><tr>
+            <th>Outer</th><td><img src="chart.png"/><a href="#note">caption</a>
+            <table><tr><td><em>inner</em></td></tr></table></td>
+            </tr></table></body></html>""",
+            base_dir=".",
+        )
+        rendered = BeautifulSoup(normalized, "html.parser")
+
+        self.assertIsNone(rendered.find("table"))
+        self.assertIsNone(rendered.find("tr"))
+        self.assertIsNone(rendered.find("td"))
+        text = rendered.get_text(" ", strip=True)
+        self.assertEqual(text.count("Details"), 1)
+        self.assertEqual(text.count("Outer"), 1)
+        self.assertEqual(text.count("inner"), 1)
+        self.assertIsNotNone(rendered.find("em", string="inner"))
+        image = rendered.find("img")
+        self.assertIsNotNone(image)
+        assert image is not None
+        self.assertEqual(image.get("src"), os.path.abspath("chart.png"))
+        self.assertEqual(image.get("width"), "340")
+        self.assertIsNotNone(rendered.find("a", href="#note"))
+
+    def test_fpdf_normalizer_preserves_image_only_table_cells(self):
+        normalized = _normalize_html_for_fpdf(
+            '<html><body><table><tr><td><img src="chart.png"/></td></tr></table></body></html>',
+            base_dir=".",
+        )
+        rendered = BeautifulSoup(normalized, "html.parser")
+
+        self.assertIsNone(rendered.find("table"))
+        image = rendered.find("img")
+        self.assertIsNotNone(image)
+        assert image is not None
+        self.assertEqual(image.get("src"), os.path.abspath("chart.png"))
+        self.assertEqual(image.get("width"), "340")
 
     def test_html_export_has_one_head_and_translated_content(self):
         with tempfile.TemporaryDirectory() as directory:

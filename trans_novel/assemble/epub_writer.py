@@ -22,9 +22,12 @@ from ..pipeline.runstore import RunStore
 from .html_renderer import (
     _BILINGUAL_CSS,
     _BILINGUAL_STYLE_ID,
+    _build_source_anchor_ids,
+    _index_soup_ids,
     _render_chapter_html,
     _render_paragraph_html,
     _render_segments_html,
+    _segment_render_maps,
 )
 from .html_resources import (
     _IMAGE_EXTENSION_BY_TYPE,
@@ -409,7 +412,7 @@ def _render_epub_resources(
         raise ValueError("EPUB 翻译状态引用了未登记的正文资源：" + ", ".join(undeclared[:3]))
 
     # 延迟导入避免 reader -> models / writer 模块加载期间形成不必要的依赖环。
-    from ..ingest.epub_reader import annotate_epub_resource
+    from ..ingest.epub_reader import _fragment_anchor_map, annotate_epub_resource
 
     names = set(zin.namelist())
     raw_toc_paths = meta.get("toc_paths")
@@ -418,7 +421,10 @@ def _render_epub_resources(
         if isinstance(raw_toc_paths, list)
         else set()
     )
-    rendered: dict[str, str] = {}
+    prepared: dict[
+        str,
+        tuple[list[Segment], str, dict[str, dict[str, object]]],
+    ] = {}
     for resource_index, href in resources:
         segments = grouped.get(href)
         if not segments:
@@ -469,6 +475,36 @@ def _render_epub_resources(
             preview = ", ".join(changed_anchors[:3])
             raise ValueError(f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）")
         fresh_meta_by_anchor = {anchor: segment.meta for anchor, segment in fresh_by_anchor.items()}
+        prepared[href] = (segments, template, fresh_meta_by_anchor)
+
+    source_ids_by_resource: dict[str, dict[str, str]] = {}
+    source_link_targets: dict[tuple[str, str], str] = {}
+    if bilingual:
+        for href, (segments, template, _fresh_meta) in prepared.items():
+            template_soup = BeautifulSoup(template, "html.parser")
+            occupied_ids, tn_id_index = _index_soup_ids(template_soup)
+            by_anchor, src_by_anchor, kind_by_anchor, _stored_meta = _segment_render_maps(segments)
+            source_ids = _build_source_anchor_ids(
+                by_anchor,
+                src_by_anchor,
+                kind_by_anchor,
+                tn_id_index,
+                occupied_ids,
+            )
+            source_ids_by_resource[href] = source_ids
+            for fragment, segment_anchor in _fragment_anchor_map(template).items():
+                if not isinstance(segment_anchor, str):
+                    continue
+                source_id = source_ids.get(segment_anchor)
+                if fragment and source_id:
+                    source_link_targets[(href, fragment)] = source_id
+
+    rendered: dict[str, str] = {}
+    for _resource_index, href in resources:
+        resource = prepared.get(href)
+        if resource is None:
+            continue
+        segments, template, fresh_meta_by_anchor = resource
         rendered[href] = _render_segments_html(
             template,
             segments,
@@ -477,6 +513,9 @@ def _render_epub_resources(
             order=order,
             preserve_source_style=preserve_source_style,
             source_lang=source_lang,
+            resource_href=href,
+            source_ids_by_anchor=source_ids_by_resource.get(href),
+            source_link_targets=source_link_targets,
         )
     return rendered
 
@@ -788,7 +827,8 @@ def _build_epub_from_html_templates(
     from ebooklib import epub
 
     manifest = store.load_manifest()
-    target_lang_code = _manifest_target_lang(manifest)
+    raw_target_lang = manifest.get("target_lang", "zh")
+    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
     raw_title = manifest.get("title", "translated")
     title = _export_book_title(
         raw_title if isinstance(raw_title, str) else "translated",
@@ -800,7 +840,7 @@ def _build_epub_from_html_templates(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
-    resource_source = _template_resource_source(manifest, source_path)
+    resource_source = _template_resource_source(store, manifest, source_path)
 
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")

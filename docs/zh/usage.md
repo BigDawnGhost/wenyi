@@ -19,6 +19,9 @@ uv run trans-novel translate book.epub
 
 ## Windows
 
+Windows Release 提供 `wenyi-windows-x64.zip`，运行前请使用
+`SHA256SUMS.txt` 校验文件。
+
 使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
 
 ```powershell
@@ -34,6 +37,35 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 也可把 `language.source` 设为已知的语言代码，避免调用模型自动识别源语言。
+
+## Linux
+
+Release 提供 `wenyi-linux-x64.tar.gz` 和 `wenyi-linux-arm64.tar.gz`。请下载与
+处理器架构匹配的压缩包，使用 `SHA256SUMS.txt` 校验后执行：
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # x64 系统请改用 wenyi-linux-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+## macOS
+
+Release 分别提供适用于 Apple Silicon 的 `wenyi-macos-arm64.tar.gz` 和适用于
+Intel Mac 的 `wenyi-macos-x64.tar.gz` 终端程序。下载与处理器匹配的压缩包，先用
+`SHA256SUMS.txt` 核对文件，再执行：
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # Intel Mac 请改用 wenyi-macos-x64.tar.gz
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+这些命令行程序由 PyInstaller 做 ad-hoc 签名，但没有使用 Apple 开发者证书完成
+notarization。macOS 仍可能隔离下载的程序；确认校验和无误后，如系统提示拦截，
+可在 **系统设置 → 隐私与安全性** 中批准运行。
 
 ## 输入与输出
 
@@ -58,7 +90,9 @@ export MINERU_API_KEY=...
 uv run trans-novel translate book.pdf
 ```
 
-MinerU 转换生成的 HTML 会保存到 `state/<书名>/source/converted.html`。
+MinerU 转换生成的 HTML 会保存到
+`state/<书名>/source/<源文件 SHA-256>/converted.html`。按内容隔离缓存，可避免
+初始化中断后把另一份 PDF 的转换结果误用于当前文件。
 后续运行会直接复用该文件，也可人工修正后再续跑。
 
 #### PDF 导出
@@ -83,6 +117,25 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
 Windows。
 
+## 单次运行指标
+
+`state/<书名>/usage.json` 继续保存这本书跨续跑累计的 token 总账。`translate`、
+`prepare`、`review`、`assemble` 和 `report` 会各自生成一份
+`state/<书名>/run_metrics/<run-id>.json`，记录：
+
+- 输入文件 SHA-256、配置、程序包和 Git 提交的指纹；
+- 指定章节、输出格式、PDF 引擎等本次调用参数；
+- 本次请求的阶段、成功或失败状态，以及各阶段墙钟耗时；
+- 仅由本次命令新增的模型调用数与 token；
+- 命令结束时已完成的章节数和正文段数。
+
+每次续跑都会新建一条记录，因此不同分支的全新运行可以公平比较，不会把历史
+成本混在一起。账本不保存完整源文件路径或书籍正文；敏感配置值会被遮蔽，失败
+时也只记录异常类型。
+
+新 manifest 使用 `source_sha256`，不再保存源文件绝对路径。若同名状态目录记录的
+哈希与当前输入不一致，Wenyi 会拒绝续跑；旧版本生成的 manifest 需要重新建立。
+
 ## 常用命令
 
 ```bash
@@ -93,9 +146,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# 覆盖配置中的润色、最终审校与一致性 QA 开关
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# 覆盖配置中的润色与最终审校开关
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # 同时生成单语和双语版 / 仅生成双语版
 uv run trans-novel translate book.epub --bilingual
@@ -113,8 +166,8 @@ uv run trans-novel translate book.epub
 uv run trans-novel status book.epub
 ```
 
-更改润色设置不会自动重跑已经完成的翻译批次。实验性 Review 不同：每次执行
-`review` 都会全量重审完整译文，并创建新的时间戳调试目录。只有需要从头翻译时
+更改润色设置不会自动重跑已经完成的翻译批次。Review 不同：每次执行
+`review` 都会全量重审完整译文，并创建新的时间戳只读审校目录。只有需要从头翻译时
 才应使用新的状态目录或清理对应状态。
 
 ## 独立阶段与术语管理
@@ -124,20 +177,19 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
 
 `review` 会使用最终术语库检查完整译文。原有 Reviewer 提示词先并发检查连续
 文本块；候选问题随后可进入有界取证循环，互相矛盾的跨块一致性建议还可获得
-终局建议。确认的问题可以生成完整单段的 Debug 影子替换；同轮 Fixer 都读取
+终局建议。确认的问题可以生成仅限本次运行的完整单段影子替换；同轮 Fixer 都读取
 同一份不可变快照，下一轮全书 Review 不接收旧问题说明，只盲审更新后的影子译文。
-这些替换不会写入 manifest、章节 JSON、术语库、`report.json`、正式事件日志或
-正式 `usage.json`。每次运行的提示词、原始响应、解析动作、取证结果、影子补丁、
-事件、剩余建议和模型用量增量会写入
-`state/<书名>/debug/review-<时间戳>/`。调试目录内独立的 `usage.json` 包含
-总量及 `by_tier`、`by_stage` 明细，无论成功还是失败都会保留。
+这些替换不会写入 manifest、章节 JSON 或术语库。每次运行会把面向用户的统一
+`result.json`、本次模型用量、事件和内部逐轮记录写入
+`state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
+本书累计 `usage.json`；`report.json` 只保存简短的只读审校摘要。
 
-`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型
-的情况下重新导出已有译文。
+`report` 汇总当前翻译状态和只读 Review 结果，不会修改正文；`assemble` 可在
+不重新调用模型的情况下重新导出已有译文。若另一个终端仍在翻译，导出会读取
+调用时已经落盘的一致快照，不必等到整本书结束；之后新完成的批次需再次导出才会进入成品。

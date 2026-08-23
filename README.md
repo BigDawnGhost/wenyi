@@ -10,7 +10,7 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 [![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square)](https://github.com/BigDawnGhost/wenyi/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/Tybfva4HT)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
 **English** | [简体中文](docs/zh/README.md)
 
@@ -42,7 +42,7 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 | Segments translated in isolation, unaware of surrounding content | Whole-book prescan with chapter digests and rolling context |
 | Glossary managed manually or as an afterthought | Real-time term extraction with conflict detection, fed back into subsequent batches |
 | Single-pass translation, fragile to interruptions | Batch checkpoints and chapter status tracking: resume any interrupted run with the same command |
-| Raw model output, no systematic quality process | Translate → polish → chapter-level backtranslation sampling → final review → consistency QA |
+| Raw model output, no systematic quality process | Translate → polish → chapter-level backtranslation sampling → evidence-driven whole-book review |
 
 Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
 
@@ -52,7 +52,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 
 - **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- **Multi-stage quality** — optional polishing (strong model), final AI review, backtranslation sampling, and cross-chapter consistency QA
+- **Multi-stage quality** — optional polishing (strong model), backtranslation sampling, and an evidence-driven whole-book AI review
 - **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
 - **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
@@ -102,10 +102,7 @@ uv run trans-novel translate book.epub
 # 3. Review — independent final review against the completed glossary
 uv run trans-novel review book.epub
 
-# 4. Consistency QA
-uv run trans-novel qa book.epub
-
-# 5. Check progress
+# 4. Check progress
 uv run trans-novel status book.epub
 ```
 
@@ -120,16 +117,16 @@ uv run trans-novel translate book.epub
 ### Command-line overrides
 
 ```bash
-uv run trans-novel translate book.epub --polish --review --qa     # enable all quality stages
-uv run trans-novel translate book.epub --no-polish                 # disable polishing
-uv run trans-novel translate book.epub --bilingual                 # produce both editions
-uv run trans-novel translate book.epub --chapter 0                 # translate the first chapter (indices start at 0)
-uv run trans-novel translate book.epub --format txt                # export as plain text
+uv run trans-novel translate book.epub --polish --review          # enable polishing and final review
+uv run trans-novel translate book.epub --no-polish                # disable polishing
+uv run trans-novel translate book.epub --bilingual                # produce both editions
+uv run trans-novel translate book.epub --chapter 0                # translate the first chapter (indices start at 0)
+uv run trans-novel translate book.epub --format txt               # export as plain text
 ```
 
 Final review is disabled by default. Set `pipeline.review: true` to run it
 automatically after the complete book has been translated and the glossary has
-reached its final state, or run the experimental Agent Review independently:
+reached its final state, or run Agent Review independently:
 
 ```bash
 uv run trans-novel review book.epub
@@ -138,10 +135,11 @@ uv run trans-novel review book.epub
 Each Review run starts from the beginning, checks chunks concurrently, and can
 selectively request cross-book evidence before resolving contradictory
 consistency suggestions. Confirmed issues can produce provisional full-segment
-replacements in a Debug-only shadow translation. A fresh whole-book review sees
+replacements in a run-local shadow translation. A fresh whole-book review sees
 the shadow text—but not the previous issue explanation—and validates it again.
-Formal translation state is never modified; traces, shadow patches, and remaining
-recommendations are written under `state/<book>/debug/`.
+Formal translation state is never modified. The consolidated read-only result,
+run usage, events, and internal round records are written under
+`state/<book>/reviews/review-<timestamp>/`.
 
 ---
 
@@ -169,25 +167,27 @@ flowchart TD
     subgraph T[Translate chapter by chapter]
         E[Inject context and translate a batch]
         E --> F[Polish and persist translations]
-        F --> G[Extract terms and refresh the glossary]
+        F --> FA[Immediately align annotated EPUB paragraphs<br/>Sequential; skipped when disabled or absent]
+        FA --> G[Extract terms and refresh the glossary]
         G --> H{More batches?}
         H -- Yes --> E
-        H -- No --> I[Normalize punctuation and run chapter-level term extraction]
-        I --> J[Check backtranslation samples and persist the final chapter]
+        H -- No --> I[Normalize remaining punctuation]
+        I --> IB[Run chapter-level fallback term extraction]
+        IB --> J[Check backtranslation samples and persist the final chapter]
     end
 
     J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
-    K --> N{Confirmed issues?}
+    K --> N{Confirmed issues and<br/>Fix budget remaining?}
     N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
     O --> K
-    N -- No, confirmed twice --> L[Optional cross-chapter consistency QA]
-    L --> M[Generate the report and assemble the selected output]
+    N -- No or stopped --> P[Save read-only issues<br/>and modification suggestions]
+    P --> M[Generate the report and assemble the selected output]
 ```
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 The Review Fixer receives the same style brief, book synopsis, chapter digest,
 relevant glossary subset, and nearby source/translation context used to preserve
-the book's voice. Its replacements remain temporary Debug artifacts.
+the book's voice. Its replacements remain temporary review suggestions.
 
 ---
 
@@ -215,7 +215,7 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## Community
 
-- [Discord server](https://discord.gg/Tybfva4HT)
+- [Discord server](https://discord.gg/sM3AQcF5D2)
 - QQ group: 1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
@@ -224,11 +224,11 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## Star history
 
-<a href="https://www.star-history.com/?repos=BigDawnGhost%2FWenyi&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#BigDawnGhost/wenyi&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&theme=dark&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
  </picture>
 </a>
 

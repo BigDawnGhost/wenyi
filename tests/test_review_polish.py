@@ -14,7 +14,7 @@ from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.review_debug import DebugReviewRun
+from trans_novel.pipeline.review_run import ReviewRunStore
 
 
 def _cfg():
@@ -142,7 +142,7 @@ class TestReviewer(unittest.TestCase):
         orch = Orchestrator(cfg, client=client)
 
         with tempfile.TemporaryDirectory() as d:
-            debug = DebugReviewRun(d)
+            debug = ReviewRunStore(d)
             issues = orch._review_chapter(
                 [
                     Segment(index=0, source="源文0", target="译文0"),
@@ -228,7 +228,7 @@ class TestReviewer(unittest.TestCase):
         segments = [Segment(index=i, source=f"源文{i}", target=f"译文{i}") for i in range(4)]
 
         with tempfile.TemporaryDirectory() as d:
-            debug = DebugReviewRun(d)
+            debug = ReviewRunStore(d)
             issues = orch._review_chapter(
                 segments,
                 [],

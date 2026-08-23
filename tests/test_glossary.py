@@ -210,6 +210,36 @@ class TestGlossary(unittest.TestCase):
         s = self.store.stats()
         self.assertEqual(s, {"terms": 1, "open_conflicts": 0})
 
+    def test_all_terms_preserves_insert_order_not_type_source_sort(self):
+        """入库先后决定 all_terms 顺序，避免新词插队打乱 prompt 前缀缓存。"""
+        # 故意先插「乙」(type 术语)，再插「甲」(type 人物)：字母/类型序会变成 甲,乙。
+        self.store.upsert_term(
+            GlossaryTerm(source="乙", target="Yi", type="术语"),
+            chapter=0,
+        )
+        self.store.upsert_term(
+            GlossaryTerm(source="甲", target="Jia", type=TYPE_PERSON),
+            chapter=0,
+        )
+        self.assertEqual(
+            [term.source for term in self.store.all_terms()],
+            ["乙", "甲"],
+        )
+        # 人工改定译法（或同 target 合并字段）不得改变入库位置。
+        self.assertTrue(self.store.resolve_term("乙", "Yi-updated"))
+        terms = self.store.all_terms()
+        self.assertEqual([term.source for term in terms], ["乙", "甲"])
+        self.assertEqual(terms[0].target, "Yi-updated")
+        # 新词只能追加在末尾。
+        self.store.upsert_term(
+            GlossaryTerm(source="丙", target="Bing", type=TYPE_PERSON),
+            chapter=1,
+        )
+        self.assertEqual(
+            [term.source for term in self.store.all_terms()],
+            ["乙", "甲", "丙"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

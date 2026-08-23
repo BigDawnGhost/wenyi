@@ -13,16 +13,16 @@ from html import escape
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from ..ingest.models import KIND_HEADING
 from ..pipeline.runstore import RunStore
 from .epub_writer import _epub_resource_specs, _render_epub_resources
 from .html_renderer import (
     _BILINGUAL_CSS,
     _BILINGUAL_STYLE_ID,
     _render_chapter_html,
-    _render_paragraph_html,
 )
 from .html_resources import _materialize_html_resources, _template_resource_source
-from .writer_common import _epub_lang, _merged_paragraphs
+from .writer_common import _bilingual_source, _epub_lang, _merged_paragraphs
 
 
 def _assemble_html(
@@ -92,19 +92,21 @@ def _assemble_html(
 
         # TXT / Markdown 等无 HTML 模板的输入也必须能导出正文。
         for kind, target, source in _merged_paragraphs(ch):
-            level = ch.meta.get("heading_level", 1)
-            level = level if isinstance(level, int) and 1 <= level <= 6 else 1
-            body_parts.extend(
-                _render_paragraph_html(
-                    kind,
-                    target,
-                    source,
-                    bilingual=bilingual,
-                    order=order,
-                    preserve_source_style=True,
-                    heading_level=level,
-                )
-            )
+            if kind == KIND_HEADING:
+                level = ch.meta.get("heading_level", 1)
+                level = level if isinstance(level, int) and 1 <= level <= 6 else 1
+                target_html = f"<h{level}>{escape(target)}</h{level}>"
+            else:
+                target_html = f"<p>{escape(target)}</p>"
+            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
+            if not src:
+                body_parts.append(target_html)
+                continue
+            source_html = f'<p class="tn-source">{escape(src)}</p>'
+            if order == "source_first":
+                body_parts.extend((source_html, target_html))
+            else:
+                body_parts.extend((target_html, source_html))
 
     full_html = f"""<!DOCTYPE html>
 <html lang="{escape(_epub_lang(m.get("target_lang", "zh")))}">
@@ -117,7 +119,7 @@ def _assemble_html(
 </html>"""
     full_html = _materialize_html_resources(
         full_html,
-        source_path=_template_resource_source(m, source_path),
+        source_path=_template_resource_source(store, m, source_path),
         out_path=out_path,
     )
 

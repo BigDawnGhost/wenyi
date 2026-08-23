@@ -20,6 +20,9 @@ Whenever the program starts, it checks for `config.yaml` in the current director
 
 ## Windows
 
+Windows releases provide `wenyi-windows-x64.zip`. Verify the archive against
+`SHA256SUMS.txt` before running it.
+
 When using a packaged `wenyi.exe`, set the API key in PowerShell:
 
 ```powershell
@@ -35,6 +38,35 @@ setx DEEPSEEK_API_KEY "sk-..."
 ```
 
 You may also set `language.source` to a known ISO language code to avoid an additional model call for language detection.
+
+## Linux
+
+Releases provide `wenyi-linux-x64.tar.gz` and `wenyi-linux-arm64.tar.gz`. Download
+the archive matching your processor, verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # use wenyi-linux-x64.tar.gz on x64 systems
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+## macOS
+
+Releases provide separate terminal executables for Apple Silicon (`wenyi-macos-arm64.tar.gz`)
+and Intel (`wenyi-macos-x64.tar.gz`) Macs. Download the archive matching your processor,
+verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # use wenyi-macos-x64.tar.gz on Intel Macs
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+These command-line executables are ad-hoc signed by PyInstaller but are not notarized with an
+Apple Developer certificate. macOS may quarantine a downloaded build; after verifying the
+checksum, approve it in **System Settings → Privacy & Security** if prompted.
 
 ## Input and output
 
@@ -59,7 +91,9 @@ export MINERU_API_KEY=...
 uv run trans-novel translate book.pdf
 ```
 
-MinerU's converted HTML is saved at `state/<book>/source/converted.html`.
+MinerU's converted HTML is saved at
+`state/<book>/source/<source-sha256>/converted.html`. The content-addressed
+directory prevents an interrupted run from reusing another PDF's conversion.
 Later runs reuse this file, and you may correct it manually before resuming.
 
 #### PDF output
@@ -85,6 +119,27 @@ Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
 
+## Per-run metrics
+
+`state/<book>/usage.json` remains the cumulative token total for the book.
+`translate`, `prepare`, `review`, `assemble`, and `report` each write an independent
+`state/<book>/run_metrics/<run-id>.json` record with:
+
+- the input SHA-256, configuration, package, and Git revision fingerprints;
+- invocation options such as a selected chapter, output format, and PDF engine;
+- requested stages, completion or failure status, and per-stage wall time;
+- only the LLM calls and tokens added by that invocation; and
+- ending chapter and segment completion counts.
+
+Every resume creates a new record, so clean runs from different branches can be
+compared without mixing their costs. Records omit the full source path and book
+text, redact sensitive option values, and store only an exception type on
+failure.
+
+New manifests store `source_sha256` instead of an absolute source path. Wenyi
+rejects a same-title state directory when its recorded hash does not match the
+current input. Manifests created by older versions must be rebuilt.
+
 ## Common commands
 
 ```bash
@@ -95,9 +150,9 @@ uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
 
-# Override polishing, final review, and whole-book QA settings
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
+# Override polishing and final review settings
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
 
 # Produce both editions, or only the bilingual edition
 uv run trans-novel translate book.epub --bilingual
@@ -116,8 +171,8 @@ uv run trans-novel status book.epub
 ```
 
 Changing polishing settings does not automatically rerun translation batches that
-are already complete. Experimental Review is different: every `review` invocation
-rechecks the complete translated book and creates a new timestamped debug run.
+are already complete. Review is different: every `review` invocation rechecks the
+complete translated book and creates a new timestamped read-only review run.
 Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
@@ -128,7 +183,6 @@ uv run trans-novel review book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
-uv run trans-novel qa book.epub
 uv run trans-novel report book.epub
 uv run trans-novel assemble book.epub
 ```
@@ -137,16 +191,18 @@ uv run trans-novel assemble book.epub
 unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
 can then enter a bounded evidence loop, and contradictory cross-chunk consistency
 suggestions can receive a final recommendation. Confirmed issues may generate
-provisional full-segment replacements in a Debug-only shadow translation. Every
+provisional full-segment replacements in a run-local shadow translation. Every
 Fixer in a round reads the same immutable snapshot; the next whole-book pass
 blindly reviews the resulting shadow text without receiving prior issue
 explanations. Review never writes these replacements to the manifest, chapter
-JSON, glossary, `report.json`, the formal event log, or the formal `usage.json`.
-Each run writes prompts, raw responses, parsed actions, requested evidence,
-patches, events, remaining suggestions, and its model-usage delta to
-`state/<book>/debug/review-<timestamp>/`.
-The debug directory's `usage.json` includes totals plus `by_tier` and `by_stage`
-breakdowns and is retained on both success and failure.
+JSON, or glossary. Each run writes one user-facing `result.json`, its model-usage
+delta, an event stream, and internal round traces to
+`state/<book>/reviews/review-<timestamp>/`. The same usage delta is also added once
+to the book's cumulative `usage.json`; `report.json` contains only a compact
+read-only review summary.
 
-`qa` and `report` collect problems without modifying translated text. `assemble`
-rebuilds output from existing state without calling the model again.
+`report` summarizes the current translation and read-only Review result without
+modifying translated text. `assemble` rebuilds output from existing state without
+calling the model again. If another terminal is still translating, export uses a
+consistent snapshot of the batches already persisted when the command starts; run
+it again to include batches completed afterward.

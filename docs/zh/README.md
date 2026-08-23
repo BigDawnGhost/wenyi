@@ -10,7 +10,7 @@
 [![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](../../LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square)](https://github.com/BigDawnGhost/wenyi/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/Tybfva4HT)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
 [English](../../README.md) | **简体中文**
 
@@ -42,7 +42,7 @@
 | 逐段翻译，彼此孤立，缺乏上下文 | 全书预扫 + 逐章梗概 + 滚动上下文 |
 | 术语靠人工事后整理 | 翻译中实时抽取专有名词，自动检测译法冲突，立即影响后续批次 |
 | 一次性翻译，中断即作废 | 批次检查点 + 章节状态记录，任意中断后重新执行同一命令即可续跑 |
-| 模型直出，无系统性质控 | 翻译 → 润色 → 章末回译抽检 → 最终审校 → 跨章一致性 QA |
+| 模型直出，无系统性质控 | 翻译 → 润色 → 章末回译抽检 → 取证式全书审校 |
 
 文译为**长文本**设计 —— 长篇小说、社科专著、纪实文学……
 
@@ -52,7 +52,7 @@
 
 - **全书理解** — 翻译前预扫源文，生成逐章梗概和全书概览，注入每批翻译上下文
 - **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
-- **多阶段质量保证** — 可选润色（强档模型重译）、全书最终 AI 审校、回译抽检、跨章一致性 QA
+- **多阶段质量保证** — 可选润色（强档模型重译）、回译抽检和取证式全书 AI 审校
 - **断点续跑** — 批次级检查点、章节状态记录和原子状态写入；任意中断后重新执行同一命令即可续跑
 - **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点
 - **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
@@ -102,10 +102,7 @@ uv run trans-novel translate book.epub
 # 3. 独立审校 — 基于最终术语库的逐章审校
 uv run trans-novel review book.epub
 
-# 4. 一致性 QA
-uv run trans-novel qa book.epub
-
-# 5. 查看进度
+# 4. 查看进度
 uv run trans-novel status book.epub
 ```
 
@@ -120,24 +117,24 @@ uv run trans-novel translate book.epub
 ### 命令行覆盖
 
 ```bash
-uv run trans-novel translate book.epub --polish --review --qa     # 启用全部质量阶段
-uv run trans-novel translate book.epub --no-polish                 # 关闭润色
-uv run trans-novel translate book.epub --bilingual                 # 同时生成双语版
-uv run trans-novel translate book.epub --chapter 0                 # 仅翻译第一章（索引从 0 开始）
-uv run trans-novel translate book.epub --format txt                # 导出为纯文本
+uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
+uv run trans-novel translate book.epub --no-polish                # 关闭润色
+uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
+uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
+uv run trans-novel translate book.epub --format txt               # 导出为纯文本
 ```
 
 最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在全书翻译完成、
-术语库达到最终状态后再统一执行审校；也可以独立运行实验性 Agent Review：
+术语库达到最终状态后再统一执行审校；也可以独立运行 Agent Review：
 
 ```bash
 uv run trans-novel review book.epub
 ```
 
 每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
-矛盾的一致性建议。确认的问题可生成完整单段的 Debug 影子修订；下一轮从头盲审
+矛盾的一致性建议。确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
 只会看到影子译文，不会收到上一轮的问题说明。正式译文和正式状态始终不变，修订、
-复审结果及未解决建议只写入 `state/<书名>/debug/` 下的时间戳目录。
+复审结果及未解决建议集中写入 `state/<书名>/reviews/review-<时间戳>/result.json`。
 
 ---
 
@@ -165,24 +162,26 @@ flowchart TD
     subgraph T[逐章翻译]
         E[注入上下文并翻译一个批次]
         E --> F[润色并保存译文]
-        F --> G[抽取术语并刷新术语快照]
+        F --> FA[立即串行定位含注释逻辑段<br/>关闭或无注释时跳过]
+        FA --> G[抽取术语并刷新术语快照]
         G --> H{还有待译批次？}
         H -- 是 --> E
-        H -- 否 --> I[章末标点规范化与全章术语兜底抽取]
-        I --> J[回译抽检并保存章节最终状态]
+        H -- 否 --> I[章末规范化其余段落标点]
+        I --> IB[全章术语兜底抽取]
+        IB --> J[回译抽检并保存章节最终状态]
     end
 
     J --> K[可选并行全书审校<br/>使用完整术语库]
-    K --> N{存在已确认问题？}
+    K --> N{存在确认问题且<br/>仍有修订轮次？}
     N -- 是 --> O[基于同一固定快照<br/>生成临时影子修订]
     O --> K
-    N -- 连续两轮无问题 --> L[可选跨章一致性 QA]
-    L --> M[生成报告并组装所选格式]
+    N -- 否或达到停止条件 --> P[保存只读问题<br/>与修改建议]
+    P --> M[生成报告并组装所选格式]
 ```
 
 启用全书理解时，预扫阶段按可配置并发数并行执行，并且幂等可续跑——已完成的梗概会跨运行复用。翻译过程中，每批获得最新的术语快照和已译上下文，确保代词、术语和语气跨章一致。
 Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，
-以保持全书风格；它生成的替换只存在于本次 Debug 影子译文中。
+以保持全书风格；它生成的替换只存在于本次运行的影子译文中。
 
 ---
 
@@ -207,7 +206,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 社区
 
-- [Discord 服务器](https://discord.gg/Tybfva4HT)
+- [Discord 服务器](https://discord.gg/sM3AQcF5D2)
 - QQ 群：1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — 问题反馈
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — 想法与讨论
@@ -216,11 +215,11 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 星标历史
 
-<a href="https://www.star-history.com/?repos=BigDawnGhost%2FWenyi&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#BigDawnGhost/wenyi&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&theme=dark&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
  </picture>
 </a>
 

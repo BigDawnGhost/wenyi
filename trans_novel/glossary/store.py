@@ -92,8 +92,18 @@ DROP TABLE IF EXISTS translation_memory;
 )
 
 
+# 与 epub_reader 写入 Segment.source 的振假名标记一致；匹配前剥离以免拆散子串。
+_RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
+
+
 def _match_text(text: str) -> str:
-    """Normalize width/compatibility forms and case for glossary matching."""
+    """Normalize width/compatibility forms and case for glossary matching.
+
+    同时去掉正文里的振假名标记 ``漢字〘かんじ〙`` → ``漢字``，否则
+    ``与り`` 无法命中 ``与〘あずか〙り``。
+    """
+    if "〘" in text:
+        text = _RUBY_MARK_RE.sub("", text)
     return unicodedata.normalize("NFKC", text).casefold()
 
 
@@ -260,7 +270,9 @@ class GlossaryStore:
             conn = sqlite3.connect(snapshot_path)
             conn.row_factory = sqlite3.Row
             try:
-                rows = conn.execute("SELECT * FROM glossary ORDER BY type, source").fetchall()
+                # 按入库顺序（rowid）返回，而非按 type/source 字母序：后者会让新增词条
+                # 插进已有列表中间，使注入 prompt 的对照表整体错位，白白打掉前缀缓存。
+                rows = conn.execute("SELECT * FROM glossary ORDER BY rowid").fetchall()
                 return [GlossaryTerm.from_row(row) for row in rows]
             finally:
                 conn.close()
@@ -352,8 +364,15 @@ class GlossaryStore:
         return cur.rowcount > 0
 
     def all_terms(self) -> list[GlossaryTerm]:
-        """按术语类型和原文排序返回全部术语。"""
-        rows = self.conn.execute("SELECT * FROM glossary ORDER BY type, source").fetchall()
+        """按入库顺序（rowid）返回全部术语。
+
+        这是几乎所有翻译/审校/润色 prompt 注入术语表的唯一数据源：按 rowid
+        排序保证既有词条位置恒定，新词条只会追加在末尾，改动最小化才能让
+        DeepSeek 等按前缀匹配的缓存持续命中；不得改回按 type/source 字母序
+        （新词插入表中间会让后面所有词条错位，整段前缀失效）。人类浏览用的
+        字母序分组排序应在展示层（如 CLI）自行 sorted()，不要动这里。
+        """
+        rows = self.conn.execute("SELECT * FROM glossary ORDER BY rowid").fetchall()
         return [GlossaryTerm.from_row(r) for r in rows]
 
     @staticmethod

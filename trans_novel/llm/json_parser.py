@@ -9,6 +9,10 @@ from typing import Any
 from json_repair import repair_json
 
 
+class JsonParseError(ValueError):
+    """模型回复在本地修复后仍不是可用 JSON。"""
+
+
 @dataclass(frozen=True)
 class JsonParseResult:
     """模型 JSON 的解析结果，以及是否经过语法修复。"""
@@ -36,10 +40,10 @@ def parse_json_result(text: str) -> JsonParseResult:
             skip_json_loads=True,
         )
     except Exception as error:
-        raise ValueError(f"无法解析为 JSON：{raw[:200]!r}") from error
+        raise JsonParseError(f"无法解析为 JSON：{raw[:200]!r}") from error
     # json-repair 对空文本和纯自然语言返回空串；它们不属于可恢复 JSON。
     if value == "":
-        raise ValueError(f"无法解析为 JSON：{raw[:200]!r}")
+        raise JsonParseError(f"无法解析为 JSON：{raw[:200]!r}")
     return JsonParseResult(value, repaired=True)
 
 

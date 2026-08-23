@@ -7,16 +7,11 @@ import threading
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from ...config import LLMConfig
 from ..base import LLMClient, Messages
 from ..json_parser import parse_json_loose
+from ..retrying import RetryReporter, provider_retry
 from ..tiers import resolve_tier
 from ..usage import UsageSample, make_usage_sample, read_usage_int
 from ._openai_compatible import ResolvedTier, resolve_provider_tiers
@@ -131,25 +126,6 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
         cache_hit_tokens=cache_hit_tokens,
         cache_miss_tokens=cache_miss_tokens,
     )
-
-
-def is_retryable_gemini_error(exc: Exception) -> bool:
-    """判断是否为可重试的 Gemini 错误（429 限流、5xx 服务端错误或网络超时/连接错误）。"""
-    status_code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-    if status_code is not None:
-        try:
-            code = int(status_code)
-            if code == 429 or 500 <= code < 600:
-                return True
-        except (TypeError, ValueError):
-            pass
-
-    # 捕获网络超时或连接错误
-    exc_name = type(exc).__name__
-    if any(kw in exc_name.lower() for kw in ("timeout", "connection", "network", "servererror")):
-        return True
-
-    return False
 
 
 def get_api_key_from_env(custom_env: str | None = None) -> tuple[str | None, str]:
@@ -275,12 +251,15 @@ class GeminiClient(LLMClient):
         if tier_config.options.extra_body:
             config_kwargs.update(tier_config.options.extra_body)
 
-        @retry(
-            stop=stop_after_attempt(self.cfg.max_retries + 1),
-            wait=wait_exponential(multiplier=1, max=30),
-            retry=retry_if_exception(is_retryable_gemini_error),
-            reraise=True,
+        reporter = RetryReporter(
+            provider="Gemini",
+            tier=tier,
+            stage=stage,
+            max_attempts=max(1, self.cfg.max_retries + 1),
+            emit=self._emit_event,
         )
+
+        @provider_retry(self.cfg.max_retries, reporter)
         def _call() -> str:
             response = client.models.generate_content(
                 model=tier_config.model,

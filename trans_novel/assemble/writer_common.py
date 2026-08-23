@@ -110,7 +110,14 @@ def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:
 
 
 def _bilingual_source(source: str, target: str) -> str:
-    """双语原文去重：原文为空白，或与译文相同（翻译回退到原文）时不输出原文。"""
+    """双语原文去重：原文为空白，或与译文相同（翻译回退到原文）时不输出原文。
+
+    Segment.source 可能含振假名标记 ``〘…〙``；纯文本回退时剥掉，真正的
+    ruby 仍由 ``_bilingual_source_markup`` 从模板 DOM 保留。
+    """
+    from ..ingest.epub_reader import strip_ruby_markers
+
+    source = strip_ruby_markers(source)
     return source if (source.strip() and source != target) else ""
 
 

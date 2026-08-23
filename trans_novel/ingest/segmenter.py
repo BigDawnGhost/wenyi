@@ -114,6 +114,7 @@ def load_document(
     split_segments: int = 0,
     *,
     cache_dir: str | None = None,
+    source_hash: str | None = None,
 ) -> Document:
     """按文件扩展名读取文档，并按需拆分超过上限的翻译段。"""
     ext = os.path.splitext(path)[1].lower()
@@ -133,6 +134,7 @@ def load_document(
             source_lang,
             target_lang,
             cache_dir=cache_dir,
+            source_hash=source_hash,
         )
     else:
         raise ValueError(
