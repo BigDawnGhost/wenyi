@@ -1423,21 +1423,41 @@ class TestTitleTranslation(unittest.TestCase):
     def test_rewrite_nav_and_ncx_labels(self):
         from trans_novel.assemble.writer import _rewrite_toc
 
+        toc_path = "toc.xhtml"
+        entries = [
+            {
+                "toc_path": toc_path,
+                "node_index": 0,
+                "raw_href": "ch1.xhtml",
+                "title_translated": "第一章译名",
+                "title": "第一章",
+            }
+        ]
         nav = (
             b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
             b'<nav epub:type="toc"><ol>'
             b'<li><a href="ch1.xhtml">\xe7\xac\xac\xe4\xb8\x80\xe7\xab\xa0</a></li>'
             b"</ol></nav></body></html>"
         )
-        out = _rewrite_toc(nav, {"ch1.xhtml": "第一章译名"}, is_ncx=False)
+        out = _rewrite_toc(nav, entries, is_ncx=False, toc_path=toc_path)
         self.assertIn("第一章译名", out.decode("utf-8"))
 
+        ncx_path = "toc.ncx"
+        ncx_entries = [
+            {
+                "toc_path": ncx_path,
+                "node_index": 0,
+                "raw_href": "text/ch1.xhtml#x",
+                "title_translated": "第一章译名",
+                "title": "第一章",
+            }
+        ]
         ncx = (
             b'<?xml version="1.0"?><ncx><navMap><navPoint>'
             b"<navLabel><text>old</text></navLabel>"
             b'<content src="text/ch1.xhtml#x"/></navPoint></navMap></ncx>'
         )
-        out2 = _rewrite_toc(ncx, {"ch1.xhtml": "第一章译名"}, is_ncx=True)
+        out2 = _rewrite_toc(ncx, ncx_entries, is_ncx=True, toc_path=ncx_path)
         dec = out2.decode("utf-8")
         self.assertIn("第一章译名", dec)
         self.assertNotIn(">old<", dec)

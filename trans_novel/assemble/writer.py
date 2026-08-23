@@ -1,6 +1,6 @@
 """回填：把译文写回原格式。
 
-本模块是向后兼容入口，实际实现已按格式拆分到子模块：
+本模块是 assemble 的公共入口；实现按格式拆在子模块：
 - writer_common：路径、标题、语言等通用辅助
 - text_writer：TXT / Markdown
 - html_renderer：DOM 渲染
@@ -9,8 +9,8 @@
 - pdf_writer：PDF 输出
 - epub_writer：EPUB 回填与新建
 
-公共接口 ``assemble()`` 和 ``bilingual_out_path()`` 保持不变。少量仍被现有
-调用方使用的私有辅助也继续导出；需要替换实现细节的测试应直接 patch 对应子模块。
+``assemble()`` / ``bilingual_out_path()`` 与少量私有辅助仍从此处导出；
+替换实现细节的测试应直接 patch 对应子模块。
 """
 
 from __future__ import annotations
