@@ -304,7 +304,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
         self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
         self.assertTrue(client.tiers["strong"].options.thinking)
-        self.assertFalse(client.tiers["fast"].options.thinking)
+        self.assertTrue(client.tiers["fast"].options.thinking)
 
     def test_explicit_config_overrides_provider_defaults(self):
         client = DeepSeekClient(_minimal_deepseek_cfg())
@@ -1091,6 +1091,11 @@ class TestPerRunMetrics(unittest.TestCase):
 
             self.assertNotEqual(store.load_manifest()["source_sha256"], source_sha256(source))
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows 上 os.utime 会重置 ctime，(dev,ino,size,mtime,ctime) 签名无法捕获等长改写；"
+        "与 metrics.verify_input_sha256 的 os.name != 'nt' 快路径一致。",
+    )
     def test_source_change_between_metrics_snapshot_and_state_check_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "novel.txt")
