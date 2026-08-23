@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 from bs4 import BeautifulSoup
-from bs4.element import Comment, Tag
+from bs4.element import Tag
 
 from tests.sample_data import (
     write_cross_resource_toc_epub,
@@ -18,6 +18,7 @@ from tests.sample_data import (
     write_sample_epub,
     write_sample_txt,
 )
+from trans_novel.assemble.writer import _render_chapter_html
 from trans_novel.ingest.epub_reader import (
     _decode_markup,
     _find_opf_path,
@@ -1384,31 +1385,49 @@ class TestPagebreakProcessingInstruction(unittest.TestCase):
     """源书 XHTML 的 <?pagebreak number="N"?> 页码标记不得进入翻译源文。"""
 
     def test_pagebreak_pi_is_excluded_from_segment_source(self):
-        html = (
-            '<html><body><p><?pagebreak number="69"?>'
-            "At first I was meek.</p></body></html>"
-        )
+        html = '<html><body><p><?pagebreak number="69"?>At first I was meek.</p></body></html>'
         _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
-        self.assertEqual(
-            [segment.source for segment in segments], ["At first I was meek."]
+        self.assertEqual([segment.source for segment in segments], ["At first I was meek."])
+        self.assertIn('<?pagebreak number="69"?>', template)
+        for segment in segments:
+            segment.target = "起初我很温顺。"
+        rendered = _render_chapter_html(
+            Chapter(
+                index=0,
+                title=_title,
+                segments=segments,
+                href="body.xhtml",
+                template=template,
+            )
         )
-        self.assertIn("<?pagebreak number=\"69\"?>", template)
+        self.assertIn('<?pagebreak number="69"?>', rendered)
+        self.assertIn("起初我很温顺。", rendered)
+
+    def test_pagebreak_mid_paragraph_survives_export_replace(self):
+        html = '<html><body><p>Hello <?pagebreak number="70"?>world.</p></body></html>'
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["Hello world."])
+        for segment in segments:
+            segment.target = "你好世界。"
+        rendered = _render_chapter_html(
+            Chapter(
+                index=0,
+                title=_title,
+                segments=segments,
+                href="body.xhtml",
+                template=template,
+            )
+        )
+        self.assertIn('<?pagebreak number="70"?>', rendered)
+        self.assertIn("你好世界。", rendered)
 
     def test_pagebreak_only_line_is_not_a_translation_target(self):
-        html = (
-            '<html><body><p><?pagebreak number="70"?><br/>'
-            "Then I grew bold.</p></body></html>"
-        )
+        html = '<html><body><p><?pagebreak number="70"?><br/>Then I grew bold.</p></body></html>'
         _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
-        self.assertEqual(
-            [segment.source for segment in segments], ["Then I grew bold."]
-        )
+        self.assertEqual([segment.source for segment in segments], ["Then I grew bold."])
 
     def test_tender_pagebreak_variant_is_excluded(self):
-        html = (
-            '<html><body><p><?tender pagebreak number="7"?>'
-            "To VÉRA.</p></body></html>"
-        )
+        html = '<html><body><p><?tender pagebreak number="7"?>To VÉRA.</p></body></html>'
         _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
         self.assertEqual([segment.source for segment in segments], ["To VÉRA."])
 
@@ -1418,17 +1437,32 @@ class TestPagebreakProcessingInstruction(unittest.TestCase):
             "<!-- note -->Second</p></body></html>"
         )
         _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
-        self.assertEqual(
-            [segment.source for segment in segments], ["First", "Second"]
-        )
+        self.assertEqual([segment.source for segment in segments], ["First", "Second"])
         rendered = BeautifulSoup(template, "html.parser")
         paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
         self.assertEqual(paragraph.get_text(), "First Second")
         self.assertEqual(
             [span.get_text() for span in paragraph.find_all("span")],
             ["First ", "Second"],
         )
         self.assertIn("<!-- note -->", template)
+        self.assertIn('<?pagebreak number="8"?>', template)
+        for segment, target in zip(segments, ["第一行", "第二行"], strict=True):
+            segment.target = target
+        exported = _render_chapter_html(
+            Chapter(
+                index=0,
+                title=_title,
+                segments=segments,
+                href="body.xhtml",
+                template=template,
+            )
+        )
+        self.assertIn('<?pagebreak number="8"?>', exported)
+        self.assertIn("第一行", exported)
+        self.assertIn("第二行", exported)
 
     def test_pagebreak_inside_link_is_excluded_from_source(self):
         html = (
@@ -1436,23 +1470,15 @@ class TestPagebreakProcessingInstruction(unittest.TestCase):
             "the note</a> below.</p></body></html>"
         )
         _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
-        self.assertEqual(
-            [segment.source for segment in segments], ["See the note below."]
-        )
+        self.assertEqual([segment.source for segment in segments], ["See the note below."])
 
     def test_pagebreak_only_line_inside_list_item_is_not_a_target(self):
-        html = (
-            '<html><body><ul><li><?pagebreak number="9"?><br/>'
-            "Only item.</li></ul></body></html>"
-        )
+        html = '<html><body><ul><li><?pagebreak number="9"?><br/>Only item.</li></ul></body></html>'
         _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
         self.assertEqual([segment.source for segment in segments], ["Only item."])
 
     def test_pagebreak_inside_heading_is_excluded_from_title(self):
-        html = (
-            '<html><body><h1>Chapter <?pagebreak number="10"?>'
-            "Three</h1></body></html>"
-        )
+        html = '<html><body><h1>Chapter <?pagebreak number="10"?>Three</h1></body></html>'
         title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
         self.assertEqual(title, "Chapter Three")
         self.assertTrue(all("pagebreak" not in s.source for s in segments))
@@ -1477,16 +1503,12 @@ class TestPagebreakProcessingInstruction(unittest.TestCase):
             p = os.path.join(d, "novel.html")
             with open(p, "w", encoding="utf-8") as f:
                 f.write(
-                    '<html><body><h1>Chapter One</h1>'
-                    "<p><?pagebreak number=\"11\"?>Body text.</p></body></html>"
+                    "<html><body><h1>Chapter One</h1>"
+                    '<p><?pagebreak number="11"?>Body text.</p></body></html>'
                 )
             doc = load_document(p, "en", "zh")
             self.assertEqual(doc.title, "novel")
-            sources = [
-                s.source
-                for ch in doc.chapters
-                for s in ch.segments
-            ]
+            sources = [s.source for ch in doc.chapters for s in ch.segments]
             self.assertNotIn("pagebreak", "\n".join(sources))
             self.assertIn("Body text.", "\n".join(sources))
 

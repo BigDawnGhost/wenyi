@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup, UnicodeDammit
-from bs4.element import Comment, Tag
+from bs4.element import Comment, ProcessingInstruction, Tag
 from bs4.exceptions import ParserRejectedMarkup
 
 from ..ingest.epub_toc import nav_root_list, nav_toc_scopes, resolve_epub_href
@@ -685,6 +685,11 @@ def _render_text_with_nodes(
         if cursor < end:
             _append_text_with_breaks(soup, parent, text[cursor:end])
 
+    # annotate 通常已把 PI 提到块前；此处再兜底，避免漏网 PI 被 clear 掉。
+    if el.parent is not None:
+        for node in list(el.descendants):
+            if isinstance(node, ProcessingInstruction):
+                el.insert_before(node.extract())
     el.clear()
     cursor = 0
     for start, end, _order, root, markers in sorted(ranges):

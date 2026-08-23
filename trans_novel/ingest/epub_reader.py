@@ -16,6 +16,7 @@ import posixpath
 import re
 import xml.etree.ElementTree as ET
 import zipfile
+from typing import TypeGuard
 from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, UnicodeDammit
@@ -205,20 +206,29 @@ def _inside_implicit_note_body(node: Tag) -> bool:
     return bool(before.strip()) != bool(after.strip())
 
 
-def _is_text_string(node: object) -> bool:
+def _is_text_string(node: object) -> TypeGuard[NavigableString]:
     """真正的文本节点；XML 处理指令（如 ``<?pagebreak number="69"?>``）不算正文。"""
     return isinstance(node, NavigableString) and not isinstance(
         node, (Comment, ProcessingInstruction)
     )
 
 
+def _hoist_processing_instructions(el: Tag) -> None:
+    """把块内 PI 挪到块前当兄弟，避免 writer ``clear()`` 清掉页码等标记。"""
+    if el.parent is None:
+        return
+    extracted = [
+        node.extract() for node in list(el.descendants) if isinstance(node, ProcessingInstruction)
+    ]
+    for node in extracted:
+        el.insert_before(node)
+
+
 def _surrounding_text(block: Tag, node: Tag) -> tuple[str, str]:
     """返回节点在当前翻译块之前和之后的可见文字，用于识别段首回链。"""
 
     def text_of(value: object) -> str:
-        if isinstance(value, Comment) or isinstance(value, ProcessingInstruction):
-            return ""
-        if isinstance(value, NavigableString):
+        if _is_text_string(value):
             return str(value)
         if isinstance(value, Tag):
             return value.get_text(" ", strip=False)
@@ -345,12 +355,7 @@ def _range_marker_node(link: Tag) -> Tag | None:
     形似编号，并且 href/id/class/语义属性或装饰符提供注释线索的节点。
     """
     significant = [
-        child
-        for child in link.children
-        if not (
-            _is_text_string(child)
-            and not str(child).strip()
-        )
+        child for child in link.children if not (_is_text_string(child) and not str(child).strip())
     ]
     if not significant:
         return None
@@ -567,9 +572,7 @@ def _segment_content(
                     has_later_text = any(
                         sibling.get_text(strip=True)
                         if isinstance(sibling, Tag)
-                        else isinstance(sibling, NavigableString)
-                        and not isinstance(sibling, ProcessingInstruction)
-                        and bool(str(sibling).strip())
+                        else _is_text_string(sibling) and bool(str(sibling).strip())
                         for sibling in child.next_siblings
                     )
                     if (
@@ -665,11 +668,7 @@ def _list_item_link_target(element: Tag) -> Tag | None:
     if not isinstance(link, Tag) or not link.get_text(strip=True):
         return None
     for child in element.children:
-        if child is link or isinstance(child, Comment):
-            continue
-        if _is_text_string(child):
-            if str(child).strip():
-                return None
+        if child is link:
             continue
         if isinstance(child, Tag):
             # 子列表/子正文块由自己的叶节点负责；它们不属于当前 li 的正文。
@@ -677,6 +676,12 @@ def _list_item_link_target(element: Tag) -> Tag | None:
                 continue
             if child.get_text(strip=True):
                 return None
+            continue
+        if _is_text_string(child):
+            if str(child).strip():
+                return None
+            continue
+        # Comment / ProcessingInstruction 等非正文节点忽略
     return link
 
 
@@ -690,10 +695,10 @@ def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
     for child in children:
         if isinstance(child, Tag) and child.name == "br":
             runs.append([])
-        elif isinstance(child, Tag) or (
-            isinstance(child, NavigableString)
-            and not isinstance(child, ProcessingInstruction)
-        ):
+        elif isinstance(child, Tag):
+            runs[-1].append(child)
+        elif _is_text_string(child):
+            # PI/Comment 留在 runs 外当兄弟，导出时不被 clear()
             runs[-1].append(child)
 
     targets: list[Tag] = []
@@ -936,6 +941,8 @@ def annotate_epub_resource(
         if not text:
             continue
         el["data-tn-id"] = anchor
+        # 页码等 PI 挪到块前，回填 clear 目标块时仍保留在模板中。
+        _hoist_processing_instructions(el)
         kind = (
             KIND_HEADING
             if el.name in _HEADING_TAGS or el.find_parent(_HEADING_TAGS) is not None
