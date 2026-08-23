@@ -621,6 +621,11 @@ def _annotation_restorations(
             and str(method or "").lower() not in rejected
         )
         if not usable:
+            if mode == "range" and not marker_text and len(items) == 1:
+                # Whole block/heading was wrapped by this link (e.g. <h1><a>CHAPTER 1</a></h1>)
+                # Wrap the translated text inside this link rather than appending a dangling ↩ / 目录 fallback
+                pending_ranges.append((0, len(text), order, root, [], marker_text))
+                continue
             fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
             continue
         assert isinstance(start, int) and not isinstance(start, bool)
@@ -1323,14 +1328,21 @@ def _rewrite_toc(
 
         # EPUB3 nav.xhtml：仅枚举 epub:type="toc" 范围内的直接 li 标签。
         soup = BeautifulSoup(data, "html.parser")
+        toc_navs = [
+            node
+            for node in soup.find_all("nav")
+            if "toc"
+            in (
+                _attr_str(node.get("epub:type"))
+                or _attr_str(node.get("type"))
+                or _attr_str(node.get("role"))
+            ).split()
+        ]
+        if not toc_navs and not is_ncx and not (toc_path and ("nav" in toc_path.lower() or "toc" in toc_path.lower())):
+            return data
+
         if legacy_titles:
             # 旧状态保留原有的宽松匹配，兼容没有标准 ol/li 结构的 NAV。
-            toc_navs = [
-                node
-                for node in soup.find_all("nav")
-                if "toc"
-                in (_attr_str(node.get("epub:type")) or _attr_str(node.get("type"))).split()
-            ]
             scopes: list[Tag | BeautifulSoup] = toc_navs or [soup]
             for scope in scopes:
                 for label in scope.find_all("a", href=True):
@@ -2067,8 +2079,13 @@ def _assemble_epub(
 
 
 def _is_nav(data: bytes) -> bool:
-    """粗略判断 HTML 资源是否包含 EPUB3 目录导航。"""
-    return b"epub:type" in data and b"toc" in data
+    """判断 HTML 资源是否包含 EPUB3 目录导航 (<nav epub:type="toc">)."""
+    return b"<nav" in data and (
+        b'epub:type="toc"' in data
+        or b"epub:type='toc'" in data
+        or b'type="toc"' in data
+        or b'role="doc-toc"' in data
+    )
 
 
 def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: str) -> None:
