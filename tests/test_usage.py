@@ -5,7 +5,6 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
-import sys
 import tempfile
 import threading
 import unittest
@@ -1093,10 +1092,10 @@ class TestPerRunMetrics(unittest.TestCase):
 
             self.assertNotEqual(store.load_manifest()["source_sha256"], source_sha256(source))
 
-    @unittest.skipUnless(
-        sys.platform == "linux",
-        "签名层依赖 Linux inode/ctime 语义；Windows 上 os.utime 会同时重置 ctime，"
-        "使 (dev,ino,size,mtime,ctime) 签名无法捕获等长内容改写。",
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows 上 os.utime 会重置 ctime，(dev,ino,size,mtime,ctime) 签名无法捕获等长改写；"
+        "与 metrics.verify_input_sha256 的 os.name != 'nt' 快路径一致。",
     )
     def test_source_change_between_metrics_snapshot_and_state_check_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

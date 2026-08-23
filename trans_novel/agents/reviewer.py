@@ -191,7 +191,7 @@ class BackTranslator(Agent):
         items = self._ask_json(
             system,
             user,
-            tier="fast",  # 机械回译免思考；语义比对(check)仍走 cheap
+            tier="fast",  # 机械回译走 fast；语义比对(check)仍走 cheap
             key="backtranslations",
             default=[],
         )

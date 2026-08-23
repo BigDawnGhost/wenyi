@@ -55,7 +55,7 @@ def _default_tiers() -> dict[str, ResolvedTier[DeepSeekTierOptions]]:
         ),
         "fast": ResolvedTier(
             model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(thinking=False),
+            options=DeepSeekTierOptions(thinking=True),
         ),
     }
 

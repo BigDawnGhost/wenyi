@@ -38,7 +38,7 @@ llm:
     fast:
       model: deepseek-v4-flash
       options:
-        thinking: false
+        thinking: true
 
 # ── 切分 ─────────────────────────────────────────────────────────────────
 segment:
@@ -125,8 +125,7 @@ class PipelineConfig(BaseModel):
     polish: bool = True  # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
     backtranslate_sample: float = 0.0
     rolling_context_segments: int = 6
-    # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
-    # fast 档（免思考），且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
+    # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt；关掉可省去预扫成本。
     book_understanding: bool = True
     prescan_concurrency: int = 4  # 预扫逐章梗概的并发线程数（各章独立，1=串行）
     annotation_alignment: bool = True  # 每个含注释逻辑段定稿后串行定位链接

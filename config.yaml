@@ -27,7 +27,7 @@ llm:
     fast:
       model: deepseek-v4-flash
       options:
-        thinking: false # fast 档免思考，与 deepseek.py 内置默认一致；全书概览为恒定前缀可命中缓存复用
+        thinking: true
 
 # ── 切分 ─────────────────────────────────────────────────────────────────
 segment:
@@ -44,8 +44,7 @@ pipeline:
   backtranslate_sample: 0 # 回译抽检比例（0 关闭）
   rolling_context_segments: 6 # 注入的前文译文尾段数
   book_understanding:
-    true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译（让译者对全书有理解）；
-    # fast 档免思考，全书概览为恒定前缀可命中缓存复用；关掉省去预扫成本
+    true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译（让译者对全书有理解）；关掉省去预扫成本
   prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
   annotation_alignment: true # 每个含注释逻辑段译完后串行定位链接；关闭时仅译文侧退化为段末标记
   annotation_alignment_concurrency: 4 # 单个逻辑段内注释数 >1 时，按条并发请求定位的最大并发数（降低多注释段落回退率）
