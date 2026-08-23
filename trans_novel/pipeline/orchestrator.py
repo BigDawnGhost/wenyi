@@ -54,7 +54,7 @@ from ..agents.translator import Translator
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.epub_reader import peek_epub_title
+from ..ingest.epub_reader import peek_epub_title, strip_ruby_markers
 from ..ingest.models import Chapter, Segment
 from ..ingest.segmenter import batch_segments, load_document
 from ..llm.base import LLMClient
@@ -2368,6 +2368,53 @@ class Orchestrator:
         )
         return patches, [*skipped, *failures]
 
+    def _review_config_snapshot(self) -> dict[str, Any]:
+        """当前审校相关配置快照，供 metadata 落盘与 skip 判定对比。"""
+        return {
+            "review_concurrency": self.config.pipeline.review_concurrency,
+            "review_output_retries": self.config.pipeline.review_output_retries,
+            "review_agent_loop": self.config.pipeline.review_agent_loop,
+            "review_agent_tier": self.config.pipeline.review_agent_tier,
+            "review_agent_max_evidence_rounds": (
+                self.config.pipeline.review_agent_max_evidence_rounds
+            ),
+            "review_conflict_arbitration": (self.config.pipeline.review_conflict_arbitration),
+            "review_fix_loop": self.config.pipeline.review_fix_loop,
+            "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
+            "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
+        }
+
+    @staticmethod
+    def _review_glossary_fingerprint(terms: list[GlossaryTerm]) -> str:
+        """术语表内容指纹：术语表变化后已完成的 Review 结果不得复用。"""
+        ordered = sorted((term.source, term.target, term.type) for term in terms)
+        return hashlib.sha256(json.dumps(ordered, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def _review_skip_eligible(
+        self,
+        store: RunStore,
+        latest: dict[str, Any],
+        terms: list[GlossaryTerm],
+    ) -> bool:
+        """已完成 Review 结果能否安全复用：内容、配置与术语表必须全部一致。"""
+        review_id = latest.get("review_id")
+        if not isinstance(review_id, str) or not review_id:
+            return False
+        metadata_path = os.path.join(store.run_dir, "reviews", review_id, "rounds", "metadata.json")
+        try:
+            with open(metadata_path, encoding="utf-8") as f:
+                metadata = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return False
+        saved_config = metadata.get("config")
+        saved_glossary = metadata.get("glossary_fingerprint")
+        return (
+            isinstance(saved_config, dict)
+            and saved_config == self._review_config_snapshot()
+            and isinstance(saved_glossary, str)
+            and saved_glossary == self._review_glossary_fingerprint(terms)
+        )
+
     def _run_review_session(
         self,
         store: RunStore,
@@ -2397,7 +2444,18 @@ class Orchestrator:
         total = sum(len(chapter.text_segments) for chapter in loaded)
         analysis = store.load_analysis() or {}
         reviewed_content_digest = _review_content_digest(loaded)
-        debug = ReviewRunStore(store.run_dir)
+
+        # 断点续跑：未完成 Review 须内容、审校配置、术语表指纹一致
+        debug = ReviewRunStore.find_resumable(
+            store.run_dir,
+            reviewed_content_digest,
+            config=self._review_config_snapshot(),
+            glossary_fingerprint=self._review_glossary_fingerprint(all_terms),
+        )
+        if debug is not None:
+            debug.log_event("review_resumed_from_checkpoint", review_id=debug.review_id)
+        else:
+            debug = ReviewRunStore(store.run_dir)
         debug.start(
             reviewed_content_digest=reviewed_content_digest,
             metadata={
@@ -2407,21 +2465,8 @@ class Orchestrator:
                 "target_lang": self.config.target_lang,
                 "chapter_count": len(loaded),
                 "total_segments": total,
-                "config": {
-                    "review_concurrency": self.config.pipeline.review_concurrency,
-                    "review_output_retries": self.config.pipeline.review_output_retries,
-                    "review_agent_loop": self.config.pipeline.review_agent_loop,
-                    "review_agent_tier": self.config.pipeline.review_agent_tier,
-                    "review_agent_max_evidence_rounds": (
-                        self.config.pipeline.review_agent_max_evidence_rounds
-                    ),
-                    "review_conflict_arbitration": (
-                        self.config.pipeline.review_conflict_arbitration
-                    ),
-                    "review_fix_loop": self.config.pipeline.review_fix_loop,
-                    "review_fix_max_rounds": self.config.pipeline.review_fix_max_rounds,
-                    "review_clean_confirmations": (self.config.pipeline.review_clean_confirmations),
-                },
+                "config": self._review_config_snapshot(),
+                "glossary_fingerprint": self._review_glossary_fingerprint(all_terms),
             },
         )
         store.log_event(
@@ -2452,12 +2497,103 @@ class Orchestrator:
         termination = "not_started"
         fix_loop = self.config.pipeline.review_fix_loop
         required_clean = self.config.pipeline.review_clean_confirmations if fix_loop else 1
-        # 每次 Fix 前最多可能先出现 ``required_clean - 1`` 轮干净结果；
-        # 每个已接受补丁后仍须保留完整盲审，并最终容纳连续 clean 确认。
-        # 该上界避免在最后一轮接受一个从未被下一轮 Reviewer 看见的补丁。
         max_review_rounds = (
             (self.config.pipeline.review_fix_max_rounds + 1) * required_clean if fix_loop else 1
         )
+
+        # 断点续跑：加载轮级检查点
+        _checkpoint = debug.load_checkpoint()
+        _resume_scan_done = False
+        _resume_latest: _ReviewRoundResult | None = None
+        if _checkpoint is not None:
+            start_round = _checkpoint.get("next_round", 1)
+            # 配置收紧（如降低 review_clean_confirmations）后轮次上限可能变小；
+            # 若检查点轮次已超出上限，直接收敛到最后一轮，避免空循环 + RuntimeError。
+            start_round = min(start_round, max_review_rounds)
+            target_overrides = {
+                (o["chapter"], o["index"]): o["target"]
+                for o in _checkpoint.get("target_overrides", [])
+            }
+            seen_overlays = set(_checkpoint.get("seen_overlays", []))
+            patch_records = _checkpoint.get("patch_records", [])
+            active_patches = {
+                (p["chapter"], p["index"]): p for p in _checkpoint.get("active_patches", [])
+            }
+            fix_failures = _checkpoint.get("fix_failures", [])
+            blocked_issues = _checkpoint.get("blocked_issues", {})
+            round_summaries = _checkpoint.get("round_summaries", [])
+            clean_streak = _checkpoint.get("clean_streak", 0)
+            fix_rounds = _checkpoint.get("fix_rounds", 0)
+            # 恢复 round 内部相位：scan_done 表示扫描已完成，可跳过
+            if _checkpoint.get("phase") == "scan_done":
+                _resume_scan_done = True
+                start_round = _checkpoint.get("next_round", 1)
+                # 配置收紧导致上限小于检查点轮次时，不能复用旧轮的扫描结果
+                if start_round > max_review_rounds:
+                    _resume_scan_done = False
+                    _resume_latest = None
+                    start_round = max_review_rounds
+                else:
+                    _resume_latest = _ReviewRoundResult(
+                        issues=_checkpoint.get("latest_issues", []),
+                        pre_arbitration_issues=_checkpoint.get("latest_pre_arbitration_issues", []),
+                        arbitration_superseded=_checkpoint.get("latest_arbitration_superseded", []),
+                        conflict_groups=_checkpoint.get("latest_conflict_groups", []),
+                        residual_conflicts=_checkpoint.get("latest_residual_conflicts", []),
+                        fallback_agent_count=_checkpoint.get("latest_fallback_agent_count", 0),
+                    )
+                debug.log_event(
+                    "review_checkpoint_restored",
+                    next_round=start_round,
+                    phase="scan_done",
+                    override_count=len(target_overrides),
+                    fix_rounds=fix_rounds,
+                    clean_streak=clean_streak,
+                )
+            else:
+                debug.log_event(
+                    "review_checkpoint_restored",
+                    next_round=start_round,
+                    phase="round_done",
+                    override_count=len(target_overrides),
+                    fix_rounds=fix_rounds,
+                    clean_streak=clean_streak,
+                )
+        else:
+            start_round = 1
+
+        def _save_checkpoint(
+            current_round: int,
+            phase: str = "round_done",
+            latest: _ReviewRoundResult | None = None,
+        ) -> None:
+            """保存轮级检查点。phase: round_done | scan_done"""
+            state: dict[str, Any] = {
+                "phase": phase,
+                "next_round": current_round + 1 if phase == "round_done" else current_round,
+                "target_overrides": [
+                    {"chapter": c, "index": i, "target": t}
+                    for (c, i), t in sorted(target_overrides.items())
+                ],
+                "seen_overlays": sorted(seen_overlays),
+                "patch_records": patch_records,
+                "active_patches": [
+                    {**p, "chapter": c, "index": i} for (c, i), p in sorted(active_patches.items())
+                ],
+                "fix_failures": fix_failures,
+                "blocked_issues": blocked_issues,
+                "round_summaries": round_summaries,
+                "clean_streak": clean_streak,
+                "fix_rounds": fix_rounds,
+            }
+            if latest is not None:
+                state["latest_issues"] = latest.issues
+                state["latest_pre_arbitration_issues"] = latest.pre_arbitration_issues
+                state["latest_arbitration_superseded"] = latest.arbitration_superseded
+                state["latest_conflict_groups"] = latest.conflict_groups
+                state["latest_residual_conflicts"] = latest.residual_conflicts
+                state["latest_fallback_agent_count"] = latest.fallback_agent_count
+            debug.save_checkpoint(state)
 
         def register_blocked(
             issues: list[dict[str, Any]],
@@ -2516,7 +2652,7 @@ class Orchestrator:
             )
 
         try:
-            for review_round in range(1, max_review_rounds + 1):
+            for review_round in range(start_round, max_review_rounds + 1):
                 overlay_digest = _review_overlay_digest(loaded, target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,
@@ -2541,15 +2677,33 @@ class Orchestrator:
                             for (chapter, index), target in sorted(target_overrides.items())
                         ],
                     )
-                    latest = self._review_round(
-                        loaded,
-                        all_terms,
-                        evidence,
-                        debug,
-                        review_round=review_round,
-                        target_overrides=target_overrides,
-                        progress=progress,
-                    )
+                    # 断点续跑：scan_done 恢复时跳过扫描，直接用缓存结果
+                    if (
+                        _resume_scan_done
+                        and review_round == start_round
+                        and _resume_latest is not None
+                    ):
+                        latest = _resume_latest
+                        _resume_scan_done = False
+                        _resume_latest = None
+                        # 跳过扫描后重建初审/驳回快照，保证最终报告数据完整
+                        debug.rebuild_snapshots_from_chunks(review_round)
+                        debug.log_event("review_scan_skipped", review_round=review_round)
+                    else:
+                        latest = self._review_round(
+                            loaded,
+                            all_terms,
+                            evidence,
+                            debug,
+                            review_round=review_round,
+                            target_overrides=target_overrides,
+                            progress=progress,
+                        )
+                        # 断点续跑：扫描完成，保存 mid-round 检查点
+                        _save_checkpoint(review_round, phase="scan_done", latest=latest)
+                        # 提前落盘本次扫描用量，避免 fix 阶段崩溃导致用量丢失
+                        save_review_usage()
+                        usage_before = self.client.usage_summary()
 
                     current_issue_keys = {
                         str(issue["issue_key"])
@@ -2600,6 +2754,7 @@ class Orchestrator:
                             round_summary["termination"] = termination
                             debug.write_json("summary.json", round_summary)
                             round_summaries.append(round_summary)
+                            _save_checkpoint(review_round)
                             break
                         clean_streak += 1
                         if progress:
@@ -2612,7 +2767,9 @@ class Orchestrator:
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
                         if termination == "clean_confirmed":
+                            _save_checkpoint(review_round)
                             break
+                        _save_checkpoint(review_round)
                         continue
 
                     if clean_streak and progress:
@@ -2625,6 +2782,7 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
                     if fix_rounds >= self.config.pipeline.review_fix_max_rounds:
                         termination = "max_rounds"
@@ -2632,6 +2790,7 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
 
                     patches, failures = self._propose_review_patches(
@@ -2673,6 +2832,7 @@ class Orchestrator:
                         debug.write_json("fix_failures.json", failures)
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
 
                     issue_keys_by_id = {
@@ -2729,6 +2889,7 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
                     if candidate_digest in seen_overlays:
                         termination = "cycle_detected"
@@ -2748,6 +2909,7 @@ class Orchestrator:
                         round_summary["termination"] = termination
                         debug.write_json("summary.json", round_summary)
                         round_summaries.append(round_summary)
+                        _save_checkpoint(review_round)
                         break
 
                     fix_rounds += 1
@@ -2772,8 +2934,10 @@ class Orchestrator:
                     round_summary["fix_round"] = fix_rounds
                     debug.write_json("summary.json", round_summary)
                     round_summaries.append(round_summary)
+                    _save_checkpoint(review_round)
             else:
                 termination = "max_rounds"
+                _save_checkpoint(max_review_rounds)
 
             if latest is None:  # pragma: no cover - max_review_rounds 至少为 1
                 raise RuntimeError("Review loop finished without a review round")
@@ -2982,9 +3146,48 @@ class Orchestrator:
                 )
 
             tgts = [target_for(local_index, segment) for local_index, segment in enumerate(chunk)]
+
+            # 断点续跑：chunk 缓存检查（跳过 reviewer + agent loop LLM 调用）
+            round_prefix = f"r{review_round}-" if review_round is not None else ""
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
+            if debug is not None and debug.is_chunk_done(chunk_id):
+                review_debug = debug
+                cached = review_debug.load_chunk_result(chunk_id)
+                if cached is not None:
+                    # 恢复聚合状态（report 需要 initial/dismissed 数据）
+                    if chapter_index is not None:
+                        review_debug.record_initial_issues(
+                            chapter=chapter_index,
+                            chunk_base=chunk_base,
+                            issues=cached.get("initial_issues", []),
+                        )
+                        review_debug.record_dismissed(
+                            chapter=chapter_index,
+                            chunk_base=chunk_base,
+                            issues=cached.get("dismissed", []),
+                        )
+                    return cached.get("issues", [])
+
+            # 断点续跑：子 chunk 缓存探测（借鉴翻译 _resume_batches 边界切分）
+            # 与 review_adaptive 的递归拆半对齐：如果所有子 chunk 都有缓存，
+            # 直接合并返回，避免触发一次 reviewer LLM 调用。
+            if debug is not None and len(chunk) > 1:
+                cached_sub = self._try_cached_subchunks(
+                    chunk_base,
+                    chunk,
+                    debug,
+                    round_prefix,
+                    chapter_index,
+                )
+                if cached_sub is not None:
+                    return cached_sub
+
             local_issues: list[dict] = []
             initial_trace: dict[str, Any] | None = None
             initial_path = ""
+            initial_issue_count = 0
+            repaired = False
+            reused_initial: dict[str, Any] | None = None
             if debug is not None:
                 round_prefix = f"r{review_round}-" if review_round is not None else ""
                 initial_id = (
@@ -2992,65 +3195,103 @@ class Orchestrator:
                     f"-n{len(chunk)}-attempt{attempt}"
                 )
                 initial_path = f"initial/{initial_id}.json"
-                initial_trace = {
-                    "agent_id": initial_id,
-                    "chapter": chapter_index,
-                    "chunk_base": chunk_base,
-                    "segment_count": len(chunk),
-                    "attempt": attempt,
-                    "status": "running",
-                }
-                debug.write_json(initial_path, initial_trace)
-
-            def trace(event: str, data: dict[str, Any]) -> None:
-                """逐步保存初审完整请求、原始响应或服务错误。"""
-                if debug is None or initial_trace is None:
-                    return
-                initial_trace[event] = data
-                debug.write_json(initial_path, initial_trace)
-
-            try:
-                review_result = self.reviewer.review_result(
-                    srcs,
-                    tgts,
-                    terms,
-                    trace=trace if debug is not None else None,
-                )
-            except Exception as error:
-                if debug is not None and initial_trace is not None:
-                    initial_trace["status"] = "failed"
-                    initial_trace["error"] = {
-                        "type": type(error).__name__,
-                        "message": str(error),
+                # 断点续跑：初筛已完成的结果直接复用（跳过最贵的 reviewer 调用）。
+                # 结果在首次运行中已校验过块内 index，可直接信任。
+                existing_initial = debug.load_json(initial_path)
+                if (
+                    existing_initial is not None
+                    and existing_initial.get("status") == "finished"
+                    and isinstance(existing_initial.get("issues"), list)
+                ):
+                    reused_initial = existing_initial
+                else:
+                    initial_trace = {
+                        "agent_id": initial_id,
+                        "chapter": chapter_index,
+                        "chunk_base": chunk_base,
+                        "segment_count": len(chunk),
+                        "attempt": attempt,
+                        "status": "running",
                     }
                     debug.write_json(initial_path, initial_trace)
-                raise
-            if review_result.repaired:
-                record_recovery(
-                    "review_json_repaired",
-                    start_index=chunk_base,
-                    count=len(chunk),
-                )
-            for it in review_result.issues:
-                it = dict(it)
-                idx = it.get("index")
-                if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(chunk):
-                    it["index"] = idx
-                    local_issues.append(it)
-                else:
-                    raise ReviewOutputError("invalid_issue_index")
-            if debug is not None and initial_trace is not None:
-                initial_trace["status"] = "finished"
-                initial_trace["json_repaired"] = review_result.repaired
-                initial_trace["issues"] = local_issues
-                debug.write_json(initial_path, initial_trace)
-                if chapter_index is not None:
+
+            if reused_initial is not None:
+                # 复用路径与 fresh 路径的错误语义不同：越界 index 不再抛
+                # ReviewOutputError，而是静默丢弃。这有意为之——首次运行已
+                # 校验并通过，越界只可能来自人工篡改；宁可少报也不让恢复
+                # 因陈旧 trace 把整个 chunk 打成 fallback。会话级内容指纹
+                # 守卫已排除正常内容变化场景。
+                local_issues = [dict(issue) for issue in reused_initial["issues"]]
+                repaired = bool(reused_initial.get("json_repaired"))
+                if repaired:
+                    record_recovery(
+                        "review_json_repaired",
+                        start_index=chunk_base,
+                        count=len(chunk),
+                    )
+                # reused_initial 仅在 debug 非空时赋值；显式收窄供类型检查。
+                if debug is not None and chapter_index is not None:
                     debug.record_initial_issues(
                         chapter=chapter_index,
                         chunk_base=chunk_base,
                         issues=local_issues,
                     )
+                initial_issue_count = len(local_issues)
+            else:
 
+                def trace(event: str, data: dict[str, Any]) -> None:
+                    """逐步保存初审完整请求、原始响应或服务错误。"""
+                    if debug is None or initial_trace is None:
+                        return
+                    initial_trace[event] = data
+                    debug.write_json(initial_path, initial_trace)
+
+                try:
+                    review_result = self.reviewer.review_result(
+                        srcs,
+                        tgts,
+                        terms,
+                        trace=trace if debug is not None else None,
+                    )
+                except Exception as error:
+                    if debug is not None and initial_trace is not None:
+                        initial_trace["status"] = "failed"
+                        initial_trace["error"] = {
+                            "type": type(error).__name__,
+                            "message": str(error),
+                        }
+                        debug.write_json(initial_path, initial_trace)
+                    raise
+                repaired = review_result.repaired
+                if repaired:
+                    record_recovery(
+                        "review_json_repaired",
+                        start_index=chunk_base,
+                        count=len(chunk),
+                    )
+                for it in review_result.issues:
+                    it = dict(it)
+                    idx = it.get("index")
+                    if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(chunk):
+                        it["index"] = idx
+                        local_issues.append(it)
+                    else:
+                        raise ReviewOutputError("invalid_issue_index")
+                initial_issue_count = len(review_result.issues)
+                if debug is not None and initial_trace is not None:
+                    initial_trace["status"] = "finished"
+                    initial_trace["json_repaired"] = repaired
+                    initial_trace["issues"] = local_issues
+                    debug.write_json(initial_path, initial_trace)
+                    if chapter_index is not None:
+                        debug.record_initial_issues(
+                            chapter=chapter_index,
+                            chunk_base=chunk_base,
+                            issues=local_issues,
+                        )
+
+            # 保存 agent loop 前的初始 issues（供 chunk 缓存落盘）
+            local_issues_before_agent = list(local_issues)
             dismissed: list[dict[str, Any]] = []
             fallback_reason = ""
             if (
@@ -3082,8 +3323,6 @@ class Orchestrator:
                     issues=dismissed,
                 )
 
-            round_prefix = f"r{review_round}-" if review_round is not None else ""
-            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
             mapped: list[dict[str, Any]] = []
             for issue in local_issues:
                 local_index = issue.get("index")
@@ -3104,10 +3343,21 @@ class Orchestrator:
                     chapter=chapter_index,
                     chunk_base=chunk_base,
                     segment_count=len(chunk),
-                    initial_issue_count=len(review_result.issues),
+                    initial_issue_count=initial_issue_count,
                     final_issue_count=len(mapped),
                     dismissed_count=len(dismissed),
                     fallback=bool(fallback_reason),
+                )
+            # 断点续跑：落盘 chunk 结果（在 review_once 内，有完整数据）
+            if debug is not None and chapter_index is not None:
+                debug.mark_chunk_done(
+                    chunk_id,
+                    {
+                        "issues": mapped,
+                        "initial_issues": local_issues_before_agent,
+                        "dismissed": dismissed,
+                        "fallback_reason": fallback_reason,
+                    },
                 )
             return mapped
 
@@ -3220,6 +3470,62 @@ class Orchestrator:
         return [issue for chunk_issues in results for issue in chunk_issues]
 
     @staticmethod
+    def _try_cached_subchunks(
+        chunk_base: int,
+        chunk: list,
+        debug: ReviewRunStore,
+        round_prefix: str,
+        chapter_index: int | None,
+    ) -> list[dict] | None:
+        """递归探测子 chunk 缓存，与 review_adaptive 的拆半对齐。
+
+        翻译的 ``_resume_batches`` 按完成状态边界切分批，只补译缺失段。
+        借鉴此模式：当父 chunk 缓存未命中时，递归检查所有子 chunk 是否有
+        缓存。如果全部命中，合并返回，跳过 reviewer LLM 调用。
+
+        探测阶段不写 initial/dismissed 快照；仅整棵子树命中后才统一落盘，
+        避免半边命中返回 None 后父块重跑导致重复计数。
+        """
+        hits: list[tuple[int, dict[str, Any]]] = []
+
+        def probe(base: int, pieces: list) -> list[dict] | None:
+            if not pieces:
+                return []
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{base}-n{len(pieces)}"
+            if debug.is_chunk_done(chunk_id):
+                cached = debug.load_chunk_result(chunk_id)
+                if cached is not None:
+                    hits.append((base, cached))
+                    return list(cached.get("issues", []))
+            if len(pieces) <= 1:
+                return None
+            mid = len(pieces) // 2
+            left = probe(base, pieces[:mid])
+            if left is None:
+                return None
+            right = probe(base + mid, pieces[mid:])
+            if right is None:
+                return None
+            return left + right
+
+        merged = probe(chunk_base, chunk)
+        if merged is None:
+            return None
+        if chapter_index is not None:
+            for base, cached in hits:
+                debug.record_initial_issues(
+                    chapter=chapter_index,
+                    chunk_base=base,
+                    issues=cached.get("initial_issues", []),
+                )
+                debug.record_dismissed(
+                    chapter=chapter_index,
+                    chunk_base=base,
+                    issues=cached.get("dismissed", []),
+                )
+        return merged
+
+    @staticmethod
     def _pack_contiguous(segs, budget: int) -> list[list]:
         """按源文字符预算把段保序打包成若干连续块。"""
         chunks: list[list] = []
@@ -3262,6 +3568,8 @@ class Orchestrator:
             chapter_digest=chapter_digest,
             annotation_contexts=annotation_contexts,
         )
+        # 模型偶发把源文注音标记〘假名〙抄进译文时剥掉。
+        targets = [strip_ruby_markers(target) for target in targets]
 
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
@@ -3298,13 +3606,30 @@ class Orchestrator:
             manifest = store.load_manifest()
             self._apply_manifest_languages(manifest)
             terms = GlossaryStore.load_terms_readonly(store.glossary_path)
-            outcome = self._measure_stage_call(
-                "review",
-                self._run_review_session,
-                store,
-                terms,
-                progress=progress,
-            )
+            # 跳过已完成 review：内容指纹一致则复用结果
+            loaded = [store.load_chapter(ch["index"]) for ch in manifest.get("chapters", [])]
+            digest = _review_content_digest(loaded)
+            latest = store.load_latest_review_result()
+            if (
+                latest is not None
+                and latest.get("status") == "completed"
+                and latest.get("reviewed_content_digest") == digest
+                and self._review_skip_eligible(store, latest, terms)
+            ):
+                store.log_event("review_skipped", reason="already_completed")
+                outcome = ReviewOutcome(
+                    run_dir=os.path.join(store.run_dir, "reviews", latest.get("review_id", "")),
+                    result=latest,
+                    usage=self._review_usage_from_dir(store, latest.get("review_id", "")),
+                )
+            else:
+                outcome = self._measure_stage_call(
+                    "review",
+                    self._run_review_session,
+                    store,
+                    terms,
+                    progress=progress,
+                )
             self._capture_metrics_state(store)
         return {
             "store": store,
@@ -3313,6 +3638,19 @@ class Orchestrator:
             "review_result": outcome.result,
             "review_dir": outcome.run_dir,
         }
+
+    @staticmethod
+    def _review_usage_from_dir(store: RunStore, review_id: str) -> dict[str, Any]:
+        """读取已完成的 Review 目录用量；缺失时返回空（调用方容忍）。"""
+        try:
+            with open(
+                os.path.join(store.run_dir, "reviews", review_id, "usage.json"),
+                encoding="utf-8",
+            ) as f:
+                usage = json.load(f)
+            return usage if isinstance(usage, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
 
     def _run_existing_steps(
         self,
@@ -3559,17 +3897,37 @@ class Orchestrator:
             if "review" in steps:
                 # 先保存此前阶段的增量，使会话 usage.json 只包含 Review 调用。
                 self._flush_usage(store, scope="pipeline")
-                outcome = self._measure_stage_call(
-                    "review",
-                    self._run_review_session,
-                    store,
-                    (
-                        glossary.all_terms()
-                        if glossary is not None
-                        else GlossaryStore.load_terms_readonly(store.glossary_path)
-                    ),
-                    progress=progress,
+                # 跳过已完成 review：内容指纹一致则复用结果
+                manifest = store.load_manifest()
+                ch_rows = manifest.get("chapters", [])
+                loaded_chs = [store.load_chapter(ch["index"]) for ch in ch_rows]
+                digest = _review_content_digest(loaded_chs)
+                prev = store.load_latest_review_result()
+                review_terms = (
+                    glossary.all_terms()
+                    if glossary is not None
+                    else GlossaryStore.load_terms_readonly(store.glossary_path)
                 )
+                if (
+                    prev is not None
+                    and prev.get("status") == "completed"
+                    and prev.get("reviewed_content_digest") == digest
+                    and self._review_skip_eligible(store, prev, review_terms)
+                ):
+                    store.log_event("review_skipped", reason="already_completed")
+                    outcome = ReviewOutcome(
+                        run_dir=os.path.join(store.run_dir, "reviews", prev.get("review_id", "")),
+                        result=prev,
+                        usage=self._review_usage_from_dir(store, prev.get("review_id", "")),
+                    )
+                else:
+                    outcome = self._measure_stage_call(
+                        "review",
+                        self._run_review_session,
+                        store,
+                        review_terms,
+                        progress=progress,
+                    )
                 review_issues = outcome.issues
                 review_changes = outcome.changes
                 review_result = outcome.result

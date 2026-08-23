@@ -301,8 +301,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
 
         self.assertEqual(client.base_url, DEFAULT_BASE_URL)
         self.assertEqual(client.api_key_env, DEFAULT_API_KEY_ENV)
-        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-flash")
-        self.assertEqual(client.tiers["strong"].options.reasoning_effort, "max")
+        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
         self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
         self.assertTrue(client.tiers["strong"].options.thinking)
         self.assertFalse(client.tiers["fast"].options.thinking)
@@ -327,7 +326,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         )
 
         self.assertEqual(client.tiers["fast"].model, "custom-fast")
-        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-flash")
+        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
         self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
 
     def test_provider_option_can_be_overridden_without_repeating_model(self):

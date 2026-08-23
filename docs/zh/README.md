@@ -30,6 +30,7 @@
 - [文档](#文档)
 - [憧憬与不足](#憧憬与不足)
 - [社区](#社区)
+- [星标历史](#星标历史)
 - [许可证](#许可证)
 
 ---
@@ -209,6 +210,18 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 - QQ 群：1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — 问题反馈
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — 想法与讨论
+
+---
+
+## 星标历史
+
+<a href="https://star-history.dera.page/#BigDawnGhost/wenyi&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ---
 

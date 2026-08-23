@@ -48,6 +48,11 @@ _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
 _ANNOTATION_META_KEY = "epub_annotations"
+# 振假名写入 Segment.source：汉字〘假名〙。罕见括号便于提示词要求忽略，
+# 且术语匹配时剥离（见 glossary.store._match_text）。模板里仍保留 <ruby>。
+_RUBY_MARK_LEFT = "〘"
+_RUBY_MARK_RIGHT = "〙"
+_RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
 _ANNOTATION_ID_ATTR = "data-tn-annotation-id"
 _ANNOTATION_MARKER_ONLY = re.compile(r"^[\d\s*＊※†‡\[\]()〔〕（）{}↩↵←↑↓⤶.·:：\-]+$")
 _ANNOTATION_HINT = re.compile(
@@ -536,10 +541,17 @@ def _segment_content(
         """递归收集正文文本节点，并记录需保留节点的源文偏移。"""
         for child in parent.children:
             if isinstance(child, Tag):
+                if child.name == "ruby":
+                    # 汉字进正文；假名写成 〘…〙 紧随其后，供翻译/审校消歧。
+                    base_start = raw_length
+                    walk(child, inside_range=inside_range)
+                    reading = "".join(rt.get_text() for rt in child.find_all("rt")).strip()
+                    if reading and raw_length > base_start:
+                        append_text(f"{_RUBY_MARK_LEFT}{reading}{_RUBY_MARK_RIGHT}")
+                    continue
                 if child.name in {"rt", "rp"}:
-                    # 振假名与不支持 ruby 时显示的备用括号都不是正文；
-                    # 保留在模板中，但不要把 ``漢字（かんじ）`` 拆成
-                    # 可翻译源文里的 ``漢字（）``。
+                    # 振假名节点本身不进正文（已在 ruby 分支写成 〘…〙）；
+                    # 模板仍保留 <rt>/<rp> 供双语导出。
                     continue
                 if inside_range and id(child) in marker_node_ids:
                     # range 链接的注释号属于结构标记，不进入待译文字。
@@ -653,6 +665,13 @@ def _segment_content(
             "items": annotation_items,
         }
     return text, meta
+
+
+def strip_ruby_markers(text: str) -> str:
+    """去掉正文注音标记 ``〘…〙``；术语匹配与译文误抄兜底共用。"""
+    if not text or _RUBY_MARK_LEFT not in text:
+        return text
+    return _RUBY_MARK_RE.sub("", text)
 
 
 def _has_meaningful_descendant_block(element: Tag) -> bool:
