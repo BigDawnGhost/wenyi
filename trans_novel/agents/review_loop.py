@@ -116,47 +116,152 @@ class _ActionLoop:
             "turns": [],
         }
         relative = f"agents/{_safe_id(agent_id)}.json"
-        self.debug.write_json(relative, trace)
+        # 断点续跑：先探测已有 trace（必须先 load 再写，否则覆盖自己）
+        existing = self.debug.load_json(relative)
+        resume_turns: list[dict[str, Any]] = []
+        if existing is not None:
+            existing_status = existing.get("status")
+            if existing_status == "finished" and isinstance(existing.get("result"), dict):
+                self.debug.log_event(
+                    "review_agent_finished",
+                    agent_id=agent_id,
+                    stage=stage,
+                    turns=len(existing.get("turns", [])),
+                    resumed=True,
+                )
+                return existing["result"], ""
+            if existing_status == "fallback":
+                self.debug.log_event(
+                    "review_agent_fallback",
+                    agent_id=agent_id,
+                    stage=stage,
+                    reason=str(existing.get("fallback_reason", "")),
+                    resumed=True,
+                )
+                return None, str(existing.get("fallback_reason", ""))
+            if existing_status == "running":
+                resume_turns = [
+                    dict(turn)
+                    for turn in existing.get("turns", [])
+                    if isinstance(turn, dict)
+                ]
+        trace["turns"] = resume_turns
         evidence_rounds = 0
         seen_request_ids: set[str] = set()
         seen_requests: set[tuple[str, str]] = set()
+        start_turn = 1
+        if resume_turns:
+            # 断点续跑：重放已完成取证轮，重建消息历史与去重状态。
+            # 消息顺序、证据 JSON 与取证轮次提示必须与原始运行逐字节
+            # 一致，后续 in-flight 调用才能无缝续上。
+            first_messages = resume_turns[0].get("messages")
+            if isinstance(first_messages, list):
+                messages = [dict(message) for message in first_messages]
+            self.debug.log_event(
+                "review_agent_resumed",
+                agent_id=agent_id,
+                stage=stage,
+                turns=len(resume_turns),
+            )
+            for cached in resume_turns:
+                cached_results = cached.get("evidence_results")
+                cached_raw = cached.get("raw_response")
+                if not isinstance(cached_results, list) or not isinstance(cached_raw, str):
+                    continue
+                messages.append({"role": "assistant", "content": cached_raw})
+                evidence_message = "【证据工具返回 JSON】\n" + json.dumps(
+                    cached_results, ensure_ascii=False, indent=2
+                )
+                evidence_rounds += 1
+                if evidence_rounds >= max_rounds:
+                    evidence_message += (
+                        "\n取证轮次已用完。下一次响应只能输出 action=final，不得再次请求证据。"
+                    )
+                messages.append({"role": "user", "content": evidence_message})
+                allowed_refs.update(self.evidence.evidence_refs(cached_results))
+                cached_parsed = cached.get("parsed")
+                if isinstance(cached_parsed, dict):
+                    for request in cached_parsed.get("requests", []):
+                        if not isinstance(request, dict):
+                            continue
+                        request_id = _text(request.get("request_id"))
+                        if request_id:
+                            seen_request_ids.add(request_id)
+                        tool = _text(request.get("tool"))
+                        arguments = request.get("arguments")
+                        if tool and isinstance(arguments, dict):
+                            seen_requests.add(
+                                (tool, json.dumps(arguments, ensure_ascii=False, sort_keys=True))
+                            )
+            # 从第一个未完成 turn 续跑：最后一个缓存 turn 若无证据结果
+            # （in-flight 请求、取证执行中或 final 已解析未落盘）原地重入。
+            start_turn = len(resume_turns)
+            if "evidence_results" in resume_turns[-1]:
+                start_turn += 1
+        self.debug.write_json(relative, trace)
+        cached_by_turn = {
+            turn["turn"]: turn
+            for turn in resume_turns
+            if isinstance(turn.get("turn"), int)
+        }
 
         try:
-            for turn_number in range(1, max_rounds + 2):
+            for turn_number in range(start_turn, max(start_turn, max_rounds + 1) + 1):
                 sent_messages = [dict(message) for message in messages]
-                turn: dict[str, Any] = {
-                    "turn": turn_number,
-                    "messages": sent_messages,
-                    "status": "requesting",
-                }
-                trace["turns"].append(turn)
-                self.debug.write_json(relative, trace)
-                try:
-                    raw = self.client.complete(
-                        sent_messages,
-                        tier=self.config.pipeline.review_agent_tier,
-                        json_mode=True,
-                        stage=stage,
-                    )
-                except Exception as error:
-                    turn["status"] = "failed"
-                    turn["error"] = {
-                        "type": type(error).__name__,
-                        "message": str(error),
+                cached_turn = cached_by_turn.get(turn_number)
+                if cached_turn is not None:
+                    turn = cached_turn
+                    turn["messages"] = sent_messages
+                else:
+                    turn: dict[str, Any] = {
+                        "turn": turn_number,
+                        "messages": sent_messages,
+                        "status": "requesting",
                     }
-                    self.debug.write_json(relative, trace)
-                    raise
-                turn["status"] = "responded"
-                turn["raw_response"] = raw
+                    trace["turns"].append(turn)
+                self.debug.write_json(relative, trace)
+                if cached_turn is not None and isinstance(cached_turn.get("raw_response"), str):
+                    raw = cached_turn["raw_response"]
+                    turn["status"] = "responded"
+                    turn["raw_response"] = raw
+                else:
+                    try:
+                        raw = self.client.complete(
+                            sent_messages,
+                            tier=self.config.pipeline.review_agent_tier,
+                            json_mode=True,
+                            stage=stage,
+                        )
+                    except Exception as error:
+                        turn["status"] = "failed"
+                        turn["error"] = {
+                            "type": type(error).__name__,
+                            "message": str(error),
+                        }
+                        self.debug.write_json(relative, trace)
+                        raise
+                    turn["status"] = "responded"
+                    turn["raw_response"] = raw
                 self.debug.write_json(relative, trace)
 
-                try:
-                    parsed = parse_json_result(raw)
-                except ValueError as error:
-                    raise ReviewLoopProtocolError("malformed_json") from error
-                data = parsed.value
-                turn["parsed"] = data
-                turn["json_repaired"] = parsed.repaired
+                # 仅当 raw 与 parsed 都来自同一缓存响应时才复用 parsed；
+                # 无 raw 的残留 parsed（手工篡改/损坏 trace）不得遮蔽新调用结果。
+                if (
+                    cached_turn is not None
+                    and isinstance(cached_turn.get("raw_response"), str)
+                    and isinstance(cached_turn.get("parsed"), dict)
+                ):
+                    data = cached_turn["parsed"]
+                    turn["parsed"] = data
+                    turn["json_repaired"] = bool(cached_turn.get("json_repaired"))
+                else:
+                    try:
+                        parsed = parse_json_result(raw)
+                    except ValueError as error:
+                        raise ReviewLoopProtocolError("malformed_json") from error
+                    data = parsed.value
+                    turn["parsed"] = data
+                    turn["json_repaired"] = parsed.repaired
                 self.debug.write_json(relative, trace)
                 if not isinstance(data, dict):
                     raise ReviewLoopProtocolError("response_not_object")
@@ -276,6 +381,9 @@ class _ActionLoop:
                 reason=reason,
             )
             return None, reason
+        trace["status"] = "fallback"
+        trace["fallback_reason"] = "loop_ended_without_final"
+        self.debug.write_json(relative, trace)
         return None, "loop_ended_without_final"
 
 
