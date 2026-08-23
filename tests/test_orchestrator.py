@@ -1361,7 +1361,7 @@ class TestReviewReporting(unittest.TestCase):
 
     def test_try_cached_subchunks_partial_hit_does_not_record(self):
         """半边子块命中不得提前写入 initial 快照，避免父块重跑重复计数。"""
-        from trans_novel.pipeline.review_run import ReviewRunStore
+        from trans_novel.review.run_store import ReviewRunStore
 
         with tempfile.TemporaryDirectory() as d:
             debug = ReviewRunStore(d)

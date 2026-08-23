@@ -27,8 +27,8 @@ from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.review_evidence import BookEvidenceIndex
-from trans_novel.pipeline.review_run import ReviewRunStore, review_candidate_id
+from trans_novel.review.evidence import BookEvidenceIndex
+from trans_novel.review.run_store import ReviewRunStore, review_candidate_id
 
 
 def _config() -> Config:
@@ -586,7 +586,12 @@ class TestReviewRunStore(unittest.TestCase):
                     "issues": [],
                     "initial_issues": [],
                     "dismissed": [
-                        {"index": 0, "type": "terminology", "detail": "独立子块驳回", "suggestion": ""}
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "独立子块驳回",
+                            "suggestion": "",
+                        }
                     ],
                 },
             )
@@ -690,20 +695,26 @@ class TestReviewAgentLoop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
             with debug.round_scope(1):
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "finished",
-                    "turns": [],
-                    "result": {"issues": [], "dismissed": []},
-                })
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "finished",
+                        "turns": [],
+                        "result": {"issues": [], "dismissed": []},
+                    },
+                )
                 calls = []
                 loop = ReviewAgentLoop(
                     FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
-                    _config(), self._evidence(), debug,
+                    _config(),
+                    self._evidence(),
+                    debug,
                 )
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
                     initial_issues=[],
@@ -716,24 +727,36 @@ class TestReviewAgentLoop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
             with debug.round_scope(1):
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "fallback",
-                    "fallback_reason": "malformed_json: broken",
-                    "turns": [],
-                })
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "fallback",
+                        "fallback_reason": "malformed_json: broken",
+                        "turns": [],
+                    },
+                )
                 calls = []
                 loop = ReviewAgentLoop(
                     FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
-                    _config(), self._evidence(), debug,
+                    _config(),
+                    self._evidence(),
+                    debug,
                 )
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
-                    initial_issues=[{"index": 0, "type": "terminology",
-                                     "detail": "术语不一致", "suggestion": "统一"}],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
                     review_round=1,
                 )
             self.assertEqual(calls, [])
@@ -749,64 +772,126 @@ class TestReviewAgentLoop(unittest.TestCase):
             with debug.round_scope(1):
                 evidence_turn = {
                     "turn": 1,
-                    "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+                    "messages": [
+                        {"role": "system", "content": "s"},
+                        {"role": "user", "content": "u"},
+                    ],
                     "status": "responded",
-                    "raw_response": json.dumps({
+                    "raw_response": json.dumps(
+                        {
+                            "action": "request_evidence",
+                            "requests": [
+                                {
+                                    "request_id": "term-1",
+                                    "tool": "term_occurrences",
+                                    "arguments": {
+                                        "term": "Ann",
+                                        "selectors": [1],
+                                        "context_radius": 0,
+                                    },
+                                }
+                            ],
+                            "complete": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "parsed": {
                         "action": "request_evidence",
-                        "requests": [{"request_id": "term-1", "tool": "term_occurrences",
-                                      "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0}}],
+                        "requests": [
+                            {
+                                "request_id": "term-1",
+                                "tool": "term_occurrences",
+                                "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0},
+                            }
+                        ],
                         "complete": False,
-                    }, ensure_ascii=False),
-                    "parsed": {"action": "request_evidence",
-                               "requests": [{"request_id": "term-1", "tool": "term_occurrences",
-                                             "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0}}],
-                               "complete": False},
+                    },
                     "json_repaired": False,
-                    "evidence_results": [{"request_id": "term-1", "tool": "term_occurrences",
-                                          "ok": True, "occurrences": []}],
+                    "evidence_results": [
+                        {
+                            "request_id": "term-1",
+                            "tool": "term_occurrences",
+                            "ok": True,
+                            "occurrences": [],
+                        }
+                    ],
                 }
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "running",
-                    "turns": [evidence_turn],
-                })
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "running",
+                        "turns": [evidence_turn],
+                    },
+                )
                 calls = []
 
                 def handler(messages, tier, json_mode):
                     calls.append(messages)
-                    assert messages[-1]["role"] == "user" and "【证据工具返回 JSON】" in messages[-1]["content"]
-                    return json.dumps({
-                        "action": "final",
-                        "decisions": [{"candidate_id": "r1-ch0-base0-candidate0", "index": 0,
-                                       "verdict": "confirmed", "reason": "ok"}],
-                        "complete": True,
-                    }, ensure_ascii=False)
+                    assert (
+                        messages[-1]["role"] == "user"
+                        and "【证据工具返回 JSON】" in messages[-1]["content"]
+                    )
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
 
-                loop = ReviewAgentLoop(FakeClient(handler=handler), _config(),
-                                       self._evidence(), debug)
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler), _config(), self._evidence(), debug
+                )
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
-                    initial_issues=[{"index": 0, "type": "terminology",
-                                     "detail": "术语不一致", "suggestion": "统一"}],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
                     review_round=1,
                 )
             self.assertEqual(len(calls), 1)
-            self.assertEqual(outcome.issues, [{"index": 0, "type": "terminology",
-                                               "detail": "术语不一致", "suggestion": "统一",
-                                               "origin": "initial",
-                                               "candidate_id": "r1-ch0-base0-candidate0",
-                                               "consistency": {},
-                                               "evidence_refs": ["ch0:text0:seg0"]}])
+            self.assertEqual(
+                outcome.issues,
+                [
+                    {
+                        "index": 0,
+                        "type": "terminology",
+                        "detail": "术语不一致",
+                        "suggestion": "统一",
+                        "origin": "initial",
+                        "candidate_id": "r1-ch0-base0-candidate0",
+                        "consistency": {},
+                        "evidence_refs": ["ch0:text0:seg0"],
+                    }
+                ],
+            )
             with debug.round_scope(1):
                 saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
             self.assertEqual(saved["status"], "finished")
             self.assertEqual(len(saved["turns"]), 2)
             events = [
                 json.loads(line)
-                for line in Path(debug.run_dir, "events.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in Path(debug.run_dir, "events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
             ]
             self.assertIn(
                 "review_agent_resumed",
@@ -822,37 +907,62 @@ class TestReviewAgentLoop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
             with debug.round_scope(1):
-                final_raw = json.dumps({
-                    "action": "final",
-                    "decisions": [{"candidate_id": "r1-ch0-base0-candidate0",
-                                   "index": 0, "verdict": "confirmed", "reason": "ok"}],
-                    "complete": True,
-                }, ensure_ascii=False)
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "running",
-                    "turns": [{
-                        "turn": 1,
-                        "messages": [{"role": "system", "content": "s"},
-                                     {"role": "user", "content": "u"}],
-                        "status": "responded",
-                        "raw_response": final_raw,
-                        "parsed": json.loads(final_raw),
-                        "json_repaired": False,
-                    }],
-                })
+                final_raw = json.dumps(
+                    {
+                        "action": "final",
+                        "decisions": [
+                            {
+                                "candidate_id": "r1-ch0-base0-candidate0",
+                                "index": 0,
+                                "verdict": "confirmed",
+                                "reason": "ok",
+                            }
+                        ],
+                        "complete": True,
+                    },
+                    ensure_ascii=False,
+                )
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "running",
+                        "turns": [
+                            {
+                                "turn": 1,
+                                "messages": [
+                                    {"role": "system", "content": "s"},
+                                    {"role": "user", "content": "u"},
+                                ],
+                                "status": "responded",
+                                "raw_response": final_raw,
+                                "parsed": json.loads(final_raw),
+                                "json_repaired": False,
+                            }
+                        ],
+                    },
+                )
                 calls = []
                 loop = ReviewAgentLoop(
                     FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
-                    _config(), self._evidence(), debug,
+                    _config(),
+                    self._evidence(),
+                    debug,
                 )
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
-                    initial_issues=[{"index": 0, "type": "terminology",
-                                     "detail": "术语不一致", "suggestion": "统一"}],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
                     review_round=1,
                 )
             self.assertEqual(calls, [])
@@ -866,42 +976,77 @@ class TestReviewAgentLoop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
             with debug.round_scope(1):
-                evidence_raw = json.dumps({
-                    "action": "request_evidence",
-                    "requests": [{"request_id": "term-1", "tool": "term_occurrences",
-                                  "arguments": {"term": "Ann", "selectors": [1],
-                                                "context_radius": 0}}],
-                    "complete": False,
-                }, ensure_ascii=False)
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "running",
-                    "turns": [{
-                        "turn": 1,
-                        "messages": [{"role": "system", "content": "s"},
-                                     {"role": "user", "content": "u"}],
-                        "status": "responded",
-                        "raw_response": evidence_raw,
-                        "parsed": json.loads(evidence_raw),
-                        "json_repaired": False,
-                    }],
-                })
+                evidence_raw = json.dumps(
+                    {
+                        "action": "request_evidence",
+                        "requests": [
+                            {
+                                "request_id": "term-1",
+                                "tool": "term_occurrences",
+                                "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0},
+                            }
+                        ],
+                        "complete": False,
+                    },
+                    ensure_ascii=False,
+                )
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "running",
+                        "turns": [
+                            {
+                                "turn": 1,
+                                "messages": [
+                                    {"role": "system", "content": "s"},
+                                    {"role": "user", "content": "u"},
+                                ],
+                                "status": "responded",
+                                "raw_response": evidence_raw,
+                                "parsed": json.loads(evidence_raw),
+                                "json_repaired": False,
+                            }
+                        ],
+                    },
+                )
                 calls = []
-                handler = lambda m, t, j: calls.append(1) or json.dumps({
-                    "action": "final",
-                    "decisions": [{"candidate_id": "r1-ch0-base0-candidate0",
-                                   "index": 0, "verdict": "confirmed", "reason": "ok"}],
-                    "complete": True,
-                }, ensure_ascii=False)
-                loop = ReviewAgentLoop(FakeClient(handler=handler), _config(),
-                                       self._evidence(), debug)
+
+                def handler(m, t, j):
+                    calls.append(1)
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler), _config(), self._evidence(), debug
+                )
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
-                    initial_issues=[{"index": 0, "type": "terminology",
-                                     "detail": "术语不一致", "suggestion": "统一"}],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
                     review_round=1,
                 )
             self.assertEqual(len(calls), 1)  # 仅 final turn 一次调用
@@ -917,49 +1062,88 @@ class TestReviewAgentLoop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
             with debug.round_scope(1):
-                evidence_raw = json.dumps({
-                    "action": "request_evidence",
-                    "requests": [{"request_id": "term-1", "tool": "term_occurrences",
-                                  "arguments": {"term": "Ann", "selectors": [1],
-                                                "context_radius": 0}}],
-                    "complete": False,
-                }, ensure_ascii=False)
+                evidence_raw = json.dumps(
+                    {
+                        "action": "request_evidence",
+                        "requests": [
+                            {
+                                "request_id": "term-1",
+                                "tool": "term_occurrences",
+                                "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0},
+                            }
+                        ],
+                        "complete": False,
+                    },
+                    ensure_ascii=False,
+                )
                 turns = []
                 for turn_number in (1, 2):
-                    turns.append({
-                        "turn": turn_number,
-                        "messages": [{"role": "system", "content": "s"},
-                                     {"role": "user", "content": "u"}],
-                        "status": "responded",
-                        "raw_response": evidence_raw,
-                        "parsed": json.loads(evidence_raw),
-                        "json_repaired": False,
-                        "evidence_results": [{"request_id": "term-1", "tool": "term_occurrences",
-                                              "ok": True, "occurrences": []}],
-                    })
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "running",
-                    "turns": turns,
-                })
+                    turns.append(
+                        {
+                            "turn": turn_number,
+                            "messages": [
+                                {"role": "system", "content": "s"},
+                                {"role": "user", "content": "u"},
+                            ],
+                            "status": "responded",
+                            "raw_response": evidence_raw,
+                            "parsed": json.loads(evidence_raw),
+                            "json_repaired": False,
+                            "evidence_results": [
+                                {
+                                    "request_id": "term-1",
+                                    "tool": "term_occurrences",
+                                    "ok": True,
+                                    "occurrences": [],
+                                }
+                            ],
+                        }
+                    )
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "running",
+                        "turns": turns,
+                    },
+                )
                 calls = []
-                handler = lambda m, t, j: calls.append(1) or json.dumps({
-                    "action": "final",
-                    "decisions": [{"candidate_id": "r1-ch0-base0-candidate0",
-                                   "index": 0, "verdict": "confirmed", "reason": "ok"}],
-                    "complete": True,
-                }, ensure_ascii=False)
+
+                def handler(m, t, j):
+                    calls.append(1)
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
                 config = _config()
                 config.pipeline.review_agent_max_evidence_rounds = 1  # 低于已缓存的两轮
-                loop = ReviewAgentLoop(FakeClient(handler=handler), config,
-                                       self._evidence(), debug)
+                loop = ReviewAgentLoop(FakeClient(handler=handler), config, self._evidence(), debug)
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
-                    initial_issues=[{"index": 0, "type": "terminology",
-                                     "detail": "术语不一致", "suggestion": "统一"}],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
                     review_round=1,
                 )
             # 修复前：空 turn 范围 → 0 调用 + trace 永远 running
@@ -976,32 +1160,60 @@ class TestReviewAgentLoop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
             with debug.round_scope(1):
-                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {
-                    "agent_id": "r1-chunk-ch0-base0-n2",
-                    "stage": "review_agent",
-                    "status": "running",
-                    "turns": [{
-                        "turn": 1,
-                        "messages": [{"role": "system", "content": "s"},
-                                     {"role": "user", "content": "u"}],
-                        "status": "requesting",
-                    }],
-                })
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review_agent",
+                        "status": "running",
+                        "turns": [
+                            {
+                                "turn": 1,
+                                "messages": [
+                                    {"role": "system", "content": "s"},
+                                    {"role": "user", "content": "u"},
+                                ],
+                                "status": "requesting",
+                            }
+                        ],
+                    },
+                )
                 calls = []
-                handler = lambda m, t, j: calls.append(1) or json.dumps({
-                    "action": "final",
-                    "decisions": [{"candidate_id": "r1-ch0-base0-candidate0",
-                                   "index": 0, "verdict": "confirmed", "reason": "ok"}],
-                    "complete": True,
-                }, ensure_ascii=False)
-                loop = ReviewAgentLoop(FakeClient(handler=handler), _config(),
-                                       self._evidence(), debug)
+
+                def handler(m, t, j):
+                    calls.append(1)
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler), _config(), self._evidence(), debug
+                )
                 outcome = loop.review_chunk(
-                    chapter=0, chunk_base=0,
+                    chapter=0,
+                    chunk_base=0,
                     sources=["Ann arrived.", "Ann spoke."],
                     targets=["安到了。", "安开口了。"],
-                    initial_issues=[{"index": 0, "type": "terminology",
-                                     "detail": "术语不一致", "suggestion": "统一"}],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
                     review_round=1,
                 )
             # requesting 空 turn 必须原地重入并发出调用（start_turn=1，不 +1）

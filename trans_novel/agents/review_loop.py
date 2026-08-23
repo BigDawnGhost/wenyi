@@ -12,8 +12,8 @@ from typing import Any, Callable
 from ..config import Config
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
-from ..pipeline.review_evidence import BookEvidenceIndex
-from ..pipeline.review_run import ReviewRunStore, review_candidate_id
+from ..review.evidence import BookEvidenceIndex
+from ..review.run_store import ReviewRunStore, review_candidate_id
 from . import prompts
 
 _ISSUE_TYPES = {"missing", "added", "mistranslation", "terminology", "pronoun"}
@@ -141,9 +141,7 @@ class _ActionLoop:
                 return None, str(existing.get("fallback_reason", ""))
             if existing_status == "running":
                 resume_turns = [
-                    dict(turn)
-                    for turn in existing.get("turns", [])
-                    if isinstance(turn, dict)
+                    dict(turn) for turn in existing.get("turns", []) if isinstance(turn, dict)
                 ]
         trace["turns"] = resume_turns
         evidence_rounds = 0
@@ -200,9 +198,7 @@ class _ActionLoop:
                 start_turn += 1
         self.debug.write_json(relative, trace)
         cached_by_turn = {
-            turn["turn"]: turn
-            for turn in resume_turns
-            if isinstance(turn.get("turn"), int)
+            turn["turn"]: turn for turn in resume_turns if isinstance(turn.get("turn"), int)
         }
 
         try:

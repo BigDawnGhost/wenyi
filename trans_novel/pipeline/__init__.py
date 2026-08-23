@@ -19,6 +19,8 @@
   runstore.py         运行态持久化：manifest/chapters/usage/events/reviews 等。
   context.py          滚动上下文。
   metrics.py          单次运行账本。
-  review_run.py / review_evidence.py   Review 运行记录与全书证据索引。
   checks.py           结果一致性检查。
+
+Review 证据索引与运行目录位于顶层 ``trans_novel.review``；本包内
+``review_run.py`` / ``review_evidence.py`` 仅为兼容 re-export。
 """
