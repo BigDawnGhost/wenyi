@@ -305,7 +305,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         self.assertEqual(client.tiers["strong"].options.reasoning_effort, "max")
         self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
         self.assertTrue(client.tiers["strong"].options.thinking)
-        self.assertFalse(client.tiers["fast"].options.thinking)
+        self.assertTrue(client.tiers["fast"].options.thinking)
 
     def test_explicit_config_overrides_provider_defaults(self):
         client = DeepSeekClient(_minimal_deepseek_cfg())
