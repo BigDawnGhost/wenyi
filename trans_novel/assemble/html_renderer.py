@@ -61,8 +61,8 @@ def _render_paragraph_html(
 ) -> list[str]:
     """渲染单个段落为 HTML 片段列表。
 
-    - heading_level 不为 None 时用 h{level}（html_writer 用可配级数）；
-    - heading_level 为 None 时 heading 统一用 h1（epub_writer 新建 EPUB）。
+    目前由 ``epub_writer._build_epub_from_chapters`` 调用：
+    - heading_level 为 None 时 heading 用 h1；传入正整数则用 h{level}。
     - preserve_source_style=True 时原文块用纯 tn-source 类；
     - preserve_source_style=False 时追加 ibooks-dark-theme-use-custom-text-color。
     """
@@ -82,50 +82,6 @@ def _render_paragraph_html(
     src_html = f'<p class="{source_class}">{escape(src)}</p>'
     first, second = _ordered_pair(src_html, target_html, order)
     return [first, second]
-
-
-def _japanese_ruby_source(element: Tag, source_lang: str) -> str:
-    """日语双语原文保留 ruby 注音，并拍平其它文本内联标签。"""
-    normalized_lang = source_lang.strip().replace("_", "-").lower()
-    if not (normalized_lang == "ja" or normalized_lang.startswith("ja-")):
-        return ""
-    if element.find("ruby") is None:
-        return ""
-
-    fragment = BeautifulSoup(str(element), "html.parser")
-    root = fragment.find(element.name)
-    if not isinstance(root, Tag):
-        return ""
-    for comment in list(root.find_all(string=lambda node: isinstance(node, Comment))):
-        comment.extract()
-    for tag in list(
-        root.find_all(
-            [
-                "audio",
-                "canvas",
-                "embed",
-                "hr",
-                "iframe",
-                "img",
-                "math",
-                "object",
-                "script",
-                "source",
-                "style",
-                "svg",
-                "video",
-            ]
-        )
-    ):
-        tag.decompose()
-    ruby_tags = {"ruby", "rb", "rt", "rp", "rtc", "br"}
-    for tag in list(root.find_all(True)):
-        if tag.name not in ruby_tags:
-            tag.unwrap()
-            continue
-        for attr in ("id", "name", "data-tn-id", _INLINE_ID_ATTR, _LINE_WRAPPER_ATTR):
-            tag.attrs.pop(attr, None)
-    return root.decode_contents()
 
 
 def _bilingual_source_markup(
