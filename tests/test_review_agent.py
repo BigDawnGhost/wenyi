@@ -364,6 +364,78 @@ class TestReviewFixer(unittest.TestCase):
                 with self.assertRaisesRegex(ReviewFixerProtocolError, reason):
                     self._propose(payload)
 
+    def test_rejects_dropped_dialogue_quotes(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {
+                    "segment_ref": "ch0:text1:seg1",
+                    "before_hash": ReviewFixer.target_hash("“当前译文。”"),
+                    "issue_ids": ["r1-review-00001"],
+                    "replacement": "修订后的完整译文。",
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        with self.assertRaisesRegex(
+            ReviewFixerProtocolError,
+            "dropped_dialogue_quotes",
+        ):
+            ReviewFixer(client, _config()).propose(
+                1,
+                "ch0:text1:seg1",
+                0,
+                1,
+                '"Original sentence."',
+                "“当前译文。”",
+                [
+                    {
+                        "issue_id": "r1-review-00001",
+                        "chapter": 0,
+                        "index": 1,
+                        "type": "mistranslation",
+                        "detail": "原意不完整",
+                        "suggestion": "补全信息",
+                    }
+                ],
+            )
+
+    def test_allows_removing_target_quotes_absent_from_source(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {
+                    "segment_ref": "ch0:text1:seg1",
+                    "before_hash": ReviewFixer.target_hash("“当前译文。”"),
+                    "issue_ids": ["r1-review-00001"],
+                    "replacement": "修订后的完整译文。",
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        patch = ReviewFixer(client, _config()).propose(
+            1,
+            "ch0:text1:seg1",
+            0,
+            1,
+            "Original sentence.",
+            "“当前译文。”",
+            [
+                {
+                    "issue_id": "r1-review-00001",
+                    "chapter": 0,
+                    "index": 1,
+                    "type": "added",
+                    "detail": "原文没有对话引号",
+                    "suggestion": "删除多余引号",
+                }
+            ],
+        )
+
+        self.assertEqual(patch.after, "修订后的完整译文。")
+
 
 class TestReadonlyGlossarySnapshot(unittest.TestCase):
     def test_reads_committed_wal_without_touching_formal_database_files(self):
