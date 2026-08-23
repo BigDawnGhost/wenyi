@@ -18,8 +18,10 @@ from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.usage import UsageSample
+from trans_novel.pipeline.annotations import AnnotationService
 from trans_novel.pipeline.context import RollingContext
-from trans_novel.pipeline.orchestrator import Orchestrator, _BatchResult, _normalize_lang
+from trans_novel.pipeline.orchestrator import Orchestrator
+from trans_novel.pipeline.review_workflow import ReviewService
 from trans_novel.pipeline.runstore import (
     STATUS_DONE,
     STATUS_PENDING,
@@ -27,6 +29,7 @@ from trans_novel.pipeline.runstore import (
     slugify,
     source_sha256,
 )
+from trans_novel.pipeline.translation import TranslationService, _BatchResult
 
 
 def _translated_para_count(calls) -> int:
@@ -188,7 +191,7 @@ class TestOrchestrator(unittest.TestCase):
             },
         }
 
-        contexts = Orchestrator._annotation_contexts_for_segments(segments, registry)
+        contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
 
         self.assertEqual(
             [item["target_key"] for item in contexts[0]],
@@ -240,7 +243,7 @@ class TestOrchestrator(unittest.TestCase):
             },
         }
 
-        contexts = Orchestrator._annotation_contexts_for_segments(segments, registry)
+        contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
 
         self.assertEqual(
             [[item["target_key"] for item in piece] for piece in contexts],
@@ -248,7 +251,7 @@ class TestOrchestrator(unittest.TestCase):
         )
         metadata["source_length"] = 5
         self.assertEqual(
-            Orchestrator._annotation_contexts_for_segments(segments, registry),
+            AnnotationService.annotation_contexts_for_segments(segments, registry),
             [[], []],
         )
 
@@ -323,10 +326,10 @@ class TestOrchestrator(unittest.TestCase):
 
             try:
                 with (
-                    patch.object(orch, "_process_batch", side_effect=process),
+                    patch.object(orch._translation, "process_batch", side_effect=process),
                     patch.object(
-                        orch,
-                        "_extract_batch_glossary",
+                        orch._translation,
+                        "extract_batch_glossary",
                         return_value={
                             "inserted": 0,
                             "conflict": 0,
@@ -335,7 +338,7 @@ class TestOrchestrator(unittest.TestCase):
                         },
                     ),
                     patch.object(
-                        orch.extractor,
+                        orch._runtime.extractor,
                         "extract_and_store",
                         return_value={
                             "inserted": 0,
@@ -345,7 +348,7 @@ class TestOrchestrator(unittest.TestCase):
                         },
                     ),
                 ):
-                    orch._translate_chapter(
+                    orch._translation.translate_chapter(
                         0,
                         store,
                         glossary,
@@ -422,7 +425,7 @@ class TestOrchestrator(unittest.TestCase):
             client = FakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
 
-            orch._align_annotations_after_batch(
+            orch._annotations.align_annotations_after_batch(
                 0,
                 chapter,
                 0,
@@ -497,11 +500,11 @@ class TestOrchestrator(unittest.TestCase):
             store = RunStore(os.path.join(directory, "state", "book"))
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
 
-            orch._align_annotations_after_batch(0, chapter, 0, 1, store)
+            orch._annotations.align_annotations_after_batch(0, chapter, 0, 1, store)
             self.assertEqual(requested, [])
 
             chapter.segments[1].target = "乙"
-            orch._align_annotations_after_batch(0, chapter, 1, 1, store)
+            orch._annotations.align_annotations_after_batch(0, chapter, 1, 1, store)
 
             self.assertEqual(len(requested), 1)
             self.assertIn('"immutable_target": "甲乙"', requested[0])
@@ -579,7 +582,7 @@ class TestOrchestrator(unittest.TestCase):
             store = RunStore(os.path.join(directory, "state", "book"))
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
 
-            orch._align_annotations_after_batch(0, chapter, 0, 2, store)
+            orch._annotations.align_annotations_after_batch(0, chapter, 0, 2, store)
 
             self.assertEqual(requested_units, ["ch0:a", "ch0:b"])
             saved = store.load_chapter(0)
@@ -666,7 +669,9 @@ class TestOrchestrator(unittest.TestCase):
             client2 = FakeClient(handler=routing_handler)
             orch2 = Orchestrator(cfg, client=client2)
             chapter_indices = [chapter["index"] for chapter in m["chapters"]]
-            expected_total, expected_done = orch2._progress_counts(store, chapter_indices)
+            expected_total, expected_done = orch2._translation.progress_counts(
+                store, chapter_indices
+            )
             progress_events: list[tuple[int, int, str]] = []
             store2 = orch2.run(
                 txt,
@@ -674,7 +679,9 @@ class TestOrchestrator(unittest.TestCase):
             )
             m2 = store2.load_manifest()
             self.assertTrue(all(c["status"] == STATUS_DONE for c in m2["chapters"]))
-            chapter_label = Orchestrator._chapter_progress_label(store.load_chapter(1).title, 1)
+            chapter_label = TranslationService.chapter_progress_label(
+                store.load_chapter(1).title, 1
+            )
             first_chapter_progress = next(
                 event for event in progress_events if event[2] == chapter_label
             )
@@ -806,8 +813,8 @@ class TestSegmentLevelResume(unittest.TestCase):
             snapshot_calls = {"n": 0}
             extract_batch_calls = {"n": 0}
             orch = Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R2")))
-            real_snapshot = orch._chapter_term_snapshot
-            real_extract = orch._extract_batch_glossary
+            real_snapshot = orch._translation.chapter_term_snapshot
+            real_extract = orch._translation.extract_batch_glossary
 
             def counting_snapshot(glossary, text_segs):
                 snapshot_calls["n"] += 1
@@ -818,8 +825,16 @@ class TestSegmentLevelResume(unittest.TestCase):
                 return real_extract(*args, **kwargs)
 
             with (
-                patch.object(orch, "_chapter_term_snapshot", side_effect=counting_snapshot),
-                patch.object(orch, "_extract_batch_glossary", side_effect=counting_extract),
+                patch.object(
+                    orch._translation,
+                    "chapter_term_snapshot",
+                    side_effect=counting_snapshot,
+                ),
+                patch.object(
+                    orch._translation,
+                    "extract_batch_glossary",
+                    side_effect=counting_extract,
+                ),
             ):
                 orch.run(txt, only_chapter=0)
 
@@ -1114,6 +1129,8 @@ class TestReviewReporting(unittest.TestCase):
                     "result.json",
                     "rounds",
                     "usage.json",
+                    "chunks",
+                    "checkpoint.json",
                 },
             )
 
@@ -1270,8 +1287,8 @@ class TestReviewReporting(unittest.TestCase):
             with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
                 orch.run_review(txt)
 
-    def test_review_always_reruns_and_creates_a_new_review_directory(self):
-        """每次执行都是一轮独立全书 Review。"""
+    def test_review_skips_when_already_completed_with_same_content(self):
+        """已完成且内容指纹一致的 Review 自动跳过，复用结果。"""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -1282,15 +1299,158 @@ class TestReviewReporting(unittest.TestCase):
 
             first = orch.run_review(txt)
             first_count = sum("译文审校" in call["messages"][0]["content"] for call in client.calls)
-            manifest = orch.prepare(txt).load_manifest()
-            self.assertTrue(all("review_status" not in chapter for chapter in manifest["chapters"]))
+            self.assertGreater(first_count, 0)
 
             second = orch.run_review(txt)
             second_count = sum(
                 "译文审校" in call["messages"][0]["content"] for call in client.calls
             )
-            self.assertEqual(second_count, first_count * 2)
+            # 内容未变 → 跳过，不产生新 LLM 调用
+            self.assertEqual(second_count, first_count)
+            # 复用同一结果
+            self.assertEqual(first["review_dir"], second["review_dir"])
+
+    def test_review_reruns_when_review_config_changed(self):
+        """内容未变但审校配置变化时不得复用旧结果，必须重审。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = FakeClient(handler=routing_handler)
+            orch = Orchestrator(cfg, client=client)
+            orch.run(txt)
+
+            first = orch.run_review(txt)
+            first_count = sum("译文审校" in call["messages"][0]["content"] for call in client.calls)
+
+            cfg.pipeline.review_agent_max_evidence_rounds = 1  # 配置变化
+            orch2 = Orchestrator(cfg, client=client)
+            second = orch2.run_review(txt)
+            second_count = sum(
+                "译文审校" in call["messages"][0]["content"] for call in client.calls
+            )
+            self.assertGreater(second_count, first_count)  # 重新审校
             self.assertNotEqual(first["review_dir"], second["review_dir"])
+
+    def test_review_running_resume_rejects_config_change(self):
+        """running 续跑在审校配置变化时不得复用旧目录，应新开 Review。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = FakeClient(handler=routing_handler)
+            orch = Orchestrator(cfg, client=client)
+            orch.run(txt)
+
+            first = orch.run_review(txt)
+            review_dir = first["review_dir"]
+            result_path = os.path.join(review_dir, "result.json")
+            with open(result_path, encoding="utf-8") as f:
+                state = json.load(f)
+            state["status"] = "running"
+            with open(result_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            checkpoint = os.path.join(review_dir, "checkpoint.json")
+            if os.path.isfile(checkpoint):
+                os.remove(checkpoint)
+
+            cfg.pipeline.review_agent_max_evidence_rounds = 1
+            orch2 = Orchestrator(cfg, client=client)
+            second = orch2.run_review(txt)
+            self.assertNotEqual(first["review_dir"], second["review_dir"])
+
+    def test_try_cached_subchunks_partial_hit_does_not_record(self):
+        """半边子块命中不得提前写入 initial 快照，避免父块重跑重复计数。"""
+        from trans_novel.review.run_store import ReviewRunStore
+
+        with tempfile.TemporaryDirectory() as d:
+            debug = ReviewRunStore(d)
+            debug.start(
+                reviewed_content_digest="digest",
+                metadata={"config": {}, "glossary_fingerprint": "g"},
+            )
+            # 仅缓存左半：base0-n2；父块 base0-n4 与右半缺失
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n2",
+                {
+                    "issues": [{"index": 0, "type": "mistranslation"}],
+                    "initial_issues": [{"index": 0, "type": "mistranslation"}],
+                    "dismissed": [],
+                },
+            )
+            pieces = [object(), object(), object(), object()]
+            with debug.round_scope(1):
+                missed = ReviewService._try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNone(missed)
+            initial, dismissed = debug.result_snapshots(1)
+            self.assertEqual(initial, [])
+            self.assertEqual(dismissed, [])
+
+            debug.mark_chunk_done(
+                "r1-ch0-base2-n2",
+                {
+                    "issues": [{"index": 0, "type": "missing"}],
+                    "initial_issues": [{"index": 0, "type": "missing"}],
+                    "dismissed": [],
+                },
+            )
+            with debug.round_scope(1):
+                hit = ReviewService._try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(len(hit), 2)
+            initial, _dismissed = debug.result_snapshots(1)
+            self.assertEqual(len(initial), 2)
+
+    def test_review_resume_reuses_initial_and_agent_traces(self):
+        """删掉一个 chunk 缓存后续跑：初筛 + agent loop 都走 trace 复用，零调用。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=self._handler()))
+            orch.run(txt)
+            result = orch.run_review(txt)
+
+            # 模拟中断：把已完成 Review 的状态改回 running，并删掉轮级检查点
+            # （真实中断在扫描中途时无 checkpoint，重跑会从 round 1 重新扫描）
+            review_dir = result["review_dir"]
+            result_path = os.path.join(review_dir, "result.json")
+            with open(result_path, encoding="utf-8") as f:
+                state = json.load(f)
+            state["status"] = "running"
+            with open(result_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            checkpoint = os.path.join(review_dir, "checkpoint.json")
+            if os.path.isfile(checkpoint):
+                os.remove(checkpoint)
+
+            # 删除第一个 chunk 缓存，保留其 initial/agent trace
+            chunks_dir = os.path.join(review_dir, "chunks")
+            chunk_files = sorted(os.listdir(chunks_dir))
+            self.assertTrue(chunk_files)
+            removed = os.path.join(chunks_dir, chunk_files[0])
+            removed_bytes = Path(removed).read_bytes()
+            os.remove(removed)
+
+            meter = MeteredFakeClient(handler=self._handler())
+            orch2 = Orchestrator(cfg, client=meter)
+            orch2.run_review(txt)
+
+            reused_stages = [
+                call["stage"]
+                for call in meter.calls
+                if call["stage"] in ("Reviewer", "ReviewAgent")
+            ]
+            self.assertEqual(reused_stages, [])
+            self.assertTrue(os.path.isfile(removed))  # chunk 重新落盘
+            # 复用路径输出与首次运行逐字节一致
+            self.assertEqual(Path(removed).read_bytes(), removed_bytes)
+            # 续跑事件流：agent trace 复用应留痕（本测试中 agent 走 finished 短路，
+            # 不发 review_agent_resumed；仅确认事件日志可正常读取）
+            with open(os.path.join(review_dir, "events.jsonl"), encoding="utf-8") as f:
+                events = [json.loads(line) for line in f if line.strip()]
+            self.assertTrue(any(e["event"] == "review_leaf_finished" for e in events))
 
     def test_review_rejects_incomplete_book(self):
         """独立最终审校要求全书所有章节均已翻译完成。"""
@@ -1317,7 +1477,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=client)
 
             with (
-                patch("trans_novel.pipeline.orchestrator.load_document") as loader,
+                patch("trans_novel.pipeline.preparation.load_document") as loader,
                 self.assertRaisesRegex(ValueError, "尚无翻译进度"),
             ):
                 orch.run_review(pdf)
@@ -1508,9 +1668,9 @@ class TestReviewReporting(unittest.TestCase):
                 }
 
             with (
-                patch.object(orch, "_review_chapter", side_effect=fake_review),
+                patch.object(orch._review, "review_chapter", side_effect=fake_review),
                 patch(
-                    "trans_novel.pipeline.orchestrator.ReviewConflictArbiter.arbitrate",
+                    "trans_novel.pipeline.review_workflow.ReviewConflictArbiter.arbitrate",
                     new=fake_arbitrate,
                 ),
             ):
@@ -2253,7 +2413,7 @@ class TestReviewReporting(unittest.TestCase):
                     }
                 ]
 
-            with patch.object(orch, "_review_chapter", side_effect=fake_review):
+            with patch.object(orch._review, "review_chapter", side_effect=fake_review):
                 result = orch.run_review(txt)
 
             review_dir = Path(result["review_dir"])
@@ -2336,44 +2496,6 @@ class TestReviewReporting(unittest.TestCase):
 
 
 class TestStyleAnalysis(unittest.TestCase):
-    def _long_doc(self, d):
-        from trans_novel.ingest.segmenter import load_document
-
-        txt = os.path.join(d, "long.txt")
-        chapters = []
-        for i in range(3):
-            # 段落勿以「第N章」开头，避免被 TXT reader 的章标题启发式误判
-            body = "\n\n".join(f"章{i}の段落{j}です。" + "あ" * 60 for j in range(8))
-            chapters.append(f"# 第{i}章\n\n{body}")
-        with open(txt, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(chapters))
-        return load_document(txt, "ja", "zh")
-
-    def test_sample_text_multipoint(self):
-        """labeled=True 多点采样带三个标注；labeled=False 为纯源文单段。"""
-        with tempfile.TemporaryDirectory() as d:
-            doc = self._long_doc(d)
-            labeled = Orchestrator._sample_text(doc)
-            for tag in ("【开头样章】", "【中部样章】", "【结尾样章】"):
-                self.assertIn(tag, labeled)
-            plain = Orchestrator._sample_text(doc, labeled=False)
-            self.assertNotIn("样章】", plain)
-            self.assertIn("章0の段落0です", plain)
-
-    def test_sample_text_short_book_dedup(self):
-        """单章书：三个采样点重合，只取一次、不重复。"""
-        with tempfile.TemporaryDirectory() as d:
-            from trans_novel.ingest.segmenter import load_document
-
-            txt = os.path.join(d, "short.txt")
-            with open(txt, "w", encoding="utf-8") as f:
-                f.write("# 唯一章\n\n" + "长段落。" + "あ" * 300)
-            doc = load_document(txt, "ja", "zh")
-            sample = Orchestrator._sample_text(doc)
-            self.assertEqual(sample.count("【开头样章】"), 1)
-            self.assertNotIn("【中部样章】", sample)
-            self.assertNotIn("【结尾样章】", sample)
-
     def test_style_brief_new_fields(self):
         """style_brief 渲染新风格维度；旧 analysis（缺新字段）不报错不输出。"""
         from trans_novel.agents.analyzer import Analyzer
@@ -2644,22 +2766,11 @@ class TestTierRouting(unittest.TestCase):
             self.assertEqual(seen, set(expect), "各类调用都应出现")
 
 
-class TestLangNormalize(unittest.TestCase):
-    def test_normalize_lang(self):
-        self.assertEqual(_normalize_lang("Japanese"), "ja")
-        self.assertEqual(_normalize_lang("日语"), "ja")
-        self.assertEqual(_normalize_lang("RU"), "ru")
-        self.assertEqual(_normalize_lang("russian"), "ru")
-        self.assertEqual(_normalize_lang("fr"), "fr")
-        self.assertEqual(_normalize_lang("unknown"), "")
-        self.assertEqual(_normalize_lang(""), "")
-
-
 class TestProgressLabels(unittest.TestCase):
     def test_progress_label_prefers_real_title(self):
-        self.assertEqual(Orchestrator._chapter_progress_label("引言", 0), "引言")
-        self.assertEqual(Orchestrator._chapter_progress_label("第一章", 1), "第一章")
-        self.assertEqual(Orchestrator._chapter_progress_label("", 1), "章节 2")
+        self.assertEqual(TranslationService.chapter_progress_label("引言", 0), "引言")
+        self.assertEqual(TranslationService.chapter_progress_label("第一章", 1), "第一章")
+        self.assertEqual(TranslationService.chapter_progress_label("", 1), "章节 2")
 
     def test_progress_covers_preparation_and_output_stages(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2717,10 +2828,10 @@ class TestLocateExistingStore(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient())
 
             with patch(
-                "trans_novel.pipeline.orchestrator.load_document",
+                "trans_novel.pipeline.preparation.load_document",
                 side_effect=AssertionError("locate 不应调用 load_document"),
             ):
-                located = orch._locate_existing_store(epub)
+                located = orch._preparation.locate_existing(epub)
 
             self.assertEqual(located.run_dir, store.run_dir)
             self.assertTrue(located.exists())

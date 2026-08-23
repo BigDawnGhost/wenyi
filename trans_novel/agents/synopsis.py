@@ -27,7 +27,7 @@ class Synopsizer(Agent):
         user = prompts.render(
             "chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000]
         )
-        # 机械任务走 fast 档（免思考）；梗概 ≤200 字，上限留足裕量防输出失控
+        # 机械任务走 fast 档；梗概 ≤200 字，上限留足裕量防输出失控
         return self._ask_text(system, user, tier="fast", max_tokens=600)
 
     def book_synopsis(self, digests: list[str], analysis_brief: str) -> str:

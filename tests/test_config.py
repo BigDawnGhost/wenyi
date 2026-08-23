@@ -25,7 +25,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.llm.tiers["strong"].model, "deepseek-v4-pro")
             self.assertEqual(cfg.llm.tiers["cheap"].model, "deepseek-v4-flash")
             self.assertEqual(cfg.llm.tiers["fast"].model, "deepseek-v4-flash")
-            self.assertFalse(cfg.llm.tiers["fast"].options["thinking"])
+            self.assertTrue(cfg.llm.tiers["fast"].options["thinking"])
             self.assertFalse(hasattr(cfg.llm, "api_key"))
             generated = path.read_text(encoding="utf-8")
             self.assertIn("# trans-novel 配置", generated)
