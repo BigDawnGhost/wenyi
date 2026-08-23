@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
+from ..ingest.epub_reader import strip_ruby_markers
 from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
 from ..postprocess.punct import normalize_zh_segments
@@ -794,6 +795,8 @@ class TranslationService:
             chapter_digest=chapter_digest,
             annotation_contexts=annotation_contexts,
         )
+        # 模型偶发把源文注音标记〘假名〙抄进译文时剥掉。
+        targets = [strip_ruby_markers(target) for target in targets]
 
         if self._runtime.config.pipeline.polish:
             polished = self._runtime.polisher.polish(targets, glossary_terms=terms, style=style)

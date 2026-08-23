@@ -92,8 +92,18 @@ DROP TABLE IF EXISTS translation_memory;
 )
 
 
+# 与 epub_reader 写入 Segment.source 的振假名标记一致；匹配前剥离以免拆散子串。
+_RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
+
+
 def _match_text(text: str) -> str:
-    """Normalize width/compatibility forms and case for glossary matching."""
+    """Normalize width/compatibility forms and case for glossary matching.
+
+    同时去掉正文里的振假名标记 ``漢字〘かんじ〙`` → ``漢字``，否则
+    ``与り`` 无法命中 ``与〘あずか〙り``。
+    """
+    if "〘" in text:
+        text = _RUBY_MARK_RE.sub("", text)
     return unicodedata.normalize("NFKC", text).casefold()
 
 

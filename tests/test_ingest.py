@@ -18,11 +18,14 @@ from tests.sample_data import (
     write_sample_epub,
     write_sample_txt,
 )
+from trans_novel.glossary.store import source_matches_text
 from trans_novel.ingest.epub_reader import (
     _decode_markup,
     _find_opf_path,
     _parse_opf,
     annotate_epub_resource,
+    peek_epub_title,
+    strip_ruby_markers,
 )
 from trans_novel.ingest.epub_toc import parse_toc_entries, resolve_epub_href
 from trans_novel.ingest.fb2_reader import read_fb2_binaries
@@ -1040,16 +1043,35 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(resolved.fragment, "section 1")
         self.assertEqual(resolved.target_key, "OEBPS/text/A+B C.xhtml#section 1")
 
-    def test_ruby_reading_is_not_included_in_translatable_source(self):
+    def test_ruby_reading_is_embedded_in_source_with_markers(self):
         html = """<html><body>
 <p><ruby>漢字<rp>（</rp><rt>かんじ</rt><rp>）</rp></ruby>です</p>
 </body></html>"""
 
         _title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
 
-        self.assertEqual([segment.source for segment in segments], ["漢字です"])
+        self.assertEqual([segment.source for segment in segments], ["漢字〘かんじ〙です"])
         self.assertIn("<rt>かんじ</rt>", template)
         self.assertIn("<rp>（</rp>", template)
+        self.assertNotIn("ruby", segments[0].meta)
+        self.assertEqual(strip_ruby_markers(segments[0].source), "漢字です")
+        self.assertEqual(strip_ruby_markers("汉字〘かんじ〙保留"), "汉字保留")
+
+    def test_ruby_in_source_disambiguates_azukaru_but_glossary_strips_marks(self):
+        html = """<html><body>
+<p>満足に<ruby>与<rt>あずか</rt></ruby>りがちな疲れ</p>
+</body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "chapter.xhtml")
+
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["満足に与〘あずか〙りがちな疲れ"],
+        )
+        # 术语匹配只对「去注音」文本，避免 与り 被括号拆散
+        self.assertTrue(source_matches_text("与り", segments[0].source))
+        self.assertTrue(source_matches_text("与", segments[0].source))
+        self.assertEqual(strip_ruby_markers(segments[0].source), "満足に与りがちな疲れ")
 
     def test_table_and_definition_list_cells_are_extracted(self):
         html = """<html><body>
@@ -1333,6 +1355,50 @@ class TestEpubIngest(unittest.TestCase):
                 for entry in doc.meta["toc_entries"]
             )
         )
+
+    def test_peek_epub_title_matches_full_document_title(self):
+        """轻量 OPF 书名须与完整 read_epub 的 Document.title 一致，否则 locate 会找错 state。"""
+        with tempfile.TemporaryDirectory() as d:
+            with_title = os.path.join(d, "named.epub")
+            write_sample_epub(with_title)
+            peeked = peek_epub_title(with_title)
+            full = load_document(with_title, "ja", "zh")
+            self.assertEqual(peeked, full.title)
+            self.assertEqual(peeked, "サンプル小説")
+
+            untitled = os.path.join(d, "untitled-book.epub")
+            with zipfile.ZipFile(untitled, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+<rootfiles><rootfile full-path="content.opf"/></rootfiles>
+</container>""",
+                )
+                zf.writestr(
+                    "content.opf",
+                    """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:language>en</dc:language>
+</metadata>
+<manifest>
+  <item id="ch" href="ch.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine><itemref idref="ch"/></spine>
+</package>""",
+                )
+                zf.writestr(
+                    "ch.xhtml",
+                    """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Body.</p></body></html>""",
+                )
+
+            peeked_untitled = peek_epub_title(untitled)
+            full_untitled = load_document(untitled, "en", "zh")
+            self.assertEqual(peeked_untitled, full_untitled.title)
+            self.assertEqual(peeked_untitled, "untitled-book")
 
 
 if __name__ == "__main__":

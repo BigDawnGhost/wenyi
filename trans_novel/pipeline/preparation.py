@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.store import GlossaryStore
+from ..ingest.epub_reader import peek_epub_title
 from ..ingest.segmenter import load_document
 from .context import RollingContext
 from .language import normalize_lang as _normalize_lang
@@ -43,11 +44,18 @@ class PreparationService:
     ) -> RunStore:
         """定位输入文件对应的既有状态，不创建或初始化新的翻译任务。
 
-        PDF 的状态目录直接取自文件名，因此可在调用 MinerU 前完成检查；其它
+        PDF 的状态目录直接取自文件名，因此可在调用 MinerU 前完成检查；EPUB 只读
+        OPF 取书名，不走全本 ingest（全本解析会对每个物理资源做一次 annotate，专为
+        定位目录多付这个成本没有必要，而且后面回填导出时还会重新 annotate 一遍）。其它
         格式仍需本地解析书名来得到与 prepare 相同的状态目录。
         """
-        if os.path.splitext(input_path)[1].lower() == ".pdf":
+        ext = os.path.splitext(input_path)[1].lower()
+        if ext == ".pdf":
             title = os.path.splitext(os.path.basename(input_path))[0]
+        elif ext == ".epub":
+            if progress:
+                progress(0, 0, "查找翻译进度…")
+            title = peek_epub_title(input_path)
         else:
             if progress:
                 progress(0, 0, "查找翻译进度…")
