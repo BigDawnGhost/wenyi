@@ -54,9 +54,6 @@ FORBIDDEN_PIPELINE_MODULES_FOR_AGENTS = (
     "context",
     "language",
     "checks",
-    # 兼容 re-export 也禁止；agents 应直接依赖顶层 review/
-    "review_evidence",
-    "review_run",
 )
 
 

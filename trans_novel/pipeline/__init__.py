@@ -21,6 +21,5 @@
   metrics.py          单次运行账本。
   checks.py           结果一致性检查。
 
-Review 证据索引与运行目录位于顶层 ``trans_novel.review``；本包内
-``review_run.py`` / ``review_evidence.py`` 仅为兼容 re-export。
+Review 证据索引与运行目录位于顶层 ``trans_novel.review``。
 """
