@@ -79,3 +79,12 @@ even if a later Reviewer missed it).
 ## Resumability
 
 Each completed translation batch is persisted immediately. Running `translate` again skips completed batches and fills only missing work. A standalone `assemble` briefly freezes the persisted manifest and chapter snapshot, releases the state lock, and renders from that snapshot, so it does not wait for a full translation running in another terminal.
+
+## Subtitle path (SRT)
+
+`.srt` files take a parallel light path under `trans_novel.srt`, not the book
+Orchestrator above. There is no whole-book prescan, glossary, polishing, or
+Review. Translation uses overlapping cue windows with high concurrency on the
+strong model tier; progress is stored under `state/srt/<slug>/` with
+`cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
+[Usage guide — SRT subtitles](usage.md#srt-subtitles).

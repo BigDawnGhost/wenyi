@@ -70,13 +70,13 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 
 ## Input and output
 
-- Input formats: EPUB, FB2, TXT, Markdown, HTML, and PDF.
-- Default output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
-- `--format txt|html|markdown|pdf`: export the selected format. Every input format still produces EPUB by default.
+- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, and SRT.
+- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
+- `--format txt|html|markdown|pdf`: export the selected format for book inputs. Every book input still produces EPUB by default. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
-- Runtime data is stored under `state/`, including chapter intermediates, the SQLite glossary, usage data, and reports.
+- Book runtime data is stored under `state/<book>/`, including chapter intermediates, the SQLite glossary, usage data, and reports. Subtitle runs use a separate tree under `state/srt/` (see [SRT subtitles](#srt-subtitles)).
 
 ### Experimental PDF support
 
@@ -119,6 +119,38 @@ Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
 
+## SRT subtitles
+
+`translate` routes `.srt` files automatically. The subtitle path is intentionally
+lighter than the book pipeline:
+
+- sliding windows of 20 cues with overlap 10, up to 100 concurrent strong-tier calls;
+- no glossary, polishing, chapter backtranslation, or whole-book review;
+- `--chapter`, `--polish`, `--review`, and `--format` are ignored or rejected where they do not apply;
+- monolingual `output/<stem>.zh.srt` by default; add `--bilingual` for `.zh-bi.srt`.
+
+```bash
+uv run trans-novel translate movie.srt
+uv run trans-novel translate movie.srt --bilingual
+uv run trans-novel translate movie.srt --no-mono --bilingual
+```
+
+Resume by running the same source file again. Cached batches under
+`state/srt/<slug>/batches/` are skipped. Layout:
+
+```text
+state/srt/<slug>/
+  manifest.json    # source identity, cue counts, window settings
+  cues.jsonl       # one cue per line: index, timestamp, source, target, status
+  batches/         # raw model results for resume
+  usage.json       # cumulative token usage across resumes
+  events.jsonl     # run events and LLM retry observations
+```
+
+There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives in
+`trans_novel.srt` (store + translate), with I/O in `ingest.srt_reader` and
+`assemble.srt_writer`.
+
 ## Per-run metrics
 
 `state/<book>/usage.json` remains the cumulative token total for the book.
@@ -149,6 +181,7 @@ uv run trans-novel translate book.epub --chapter 3
 uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
+uv run trans-novel translate movie.srt
 
 # Override polishing and final review settings
 uv run trans-novel translate book.epub --polish --review

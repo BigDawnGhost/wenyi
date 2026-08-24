@@ -74,3 +74,7 @@ state/<书名>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ## 断点续跑
 
 每个完成批次都会立即写入状态目录。再次运行 `translate` 会跳过已有译文，仅补齐未完成部分。独立运行 `assemble` 时会短暂冻结当时已经落盘的 manifest 和章节快照，随后释放状态锁并在锁外导出，因此不必等待另一个终端中的整本翻译结束。
+
+## 字幕路径（SRT）
+
+`.srt` 走平行轻量路径 `trans_novel.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。
