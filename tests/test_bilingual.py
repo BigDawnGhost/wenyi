@@ -240,7 +240,6 @@ def _config(state_dir: str, output: dict | None = None):
         "pipeline": {
             "review": True,
             "polish": False,
-            "backtranslate_sample": 0.0,
         },
         "paths": {"state_dir": state_dir},
     }

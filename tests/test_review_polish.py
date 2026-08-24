@@ -1,4 +1,4 @@
-"""审校 / 润色 / 回译抽检 测试（离线）。"""
+"""审校 / 润色测试（离线）。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import threading
 import unittest
 
 from trans_novel.agents.polisher import Polisher
-from trans_novel.agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
+from trans_novel.agents.reviewer import Reviewer, ReviewOutputError
 from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
@@ -334,24 +334,6 @@ class TestPolisher(unittest.TestCase):
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(out, ["甲", "乙"])  # 段数不符 → 保守保留原译
-
-
-class TestBackTranslator(unittest.TestCase):
-    def test_check(self):
-        def handler(messages, tier, json_mode):
-            system = messages[0]["content"]
-            if "回译译者" in system:
-                return json.dumps({"backtranslations": ["あ", "い"]}, ensure_ascii=False)
-            if "保真度" in system:
-                return json.dumps(
-                    {"issues": [{"index": 1, "detail": "含义改变"}]}, ensure_ascii=False
-                )
-            return "{}"
-
-        bt = BackTranslator(FakeClient(handler=handler), _cfg())
-        issues = bt.check(["あ", "い"], ["甲", "乙"])
-        self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0]["index"], 1)
 
 
 if __name__ == "__main__":

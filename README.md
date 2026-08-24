@@ -42,7 +42,7 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 | Segments translated in isolation, unaware of surrounding content | Whole-book prescan with chapter digests and rolling context |
 | Glossary managed manually or as an afterthought | Real-time term extraction with conflict detection, fed back into subsequent batches |
 | Single-pass translation, fragile to interruptions | Batch checkpoints and chapter status tracking: resume any interrupted run with the same command |
-| Raw model output, no systematic quality process | Translate → polish → chapter-level backtranslation sampling → evidence-driven whole-book review |
+| Raw model output, no systematic quality process | Translate → polish → evidence-driven whole-book review |
 
 Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
 
@@ -52,7 +52,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 
 - **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- **Multi-stage quality** — optional polishing (strong model), backtranslation sampling, and an evidence-driven whole-book AI review
+- **Multi-stage quality** — optional polishing (strong model) and an evidence-driven whole-book AI review
 - **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
 - **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
@@ -173,7 +173,7 @@ flowchart TD
         H -- Yes --> E
         H -- No --> I[Normalize remaining punctuation]
         I --> IB[Run chapter-level fallback term extraction]
-        IB --> J[Check backtranslation samples and persist the final chapter]
+        IB --> J[Persist the final chapter]
     end
 
     J --> K[Optional parallel whole-book review<br/>Using the completed glossary]

@@ -1,4 +1,4 @@
-"""翻译服务：批次续跑、章/批翻译、润色、滚动上下文、术语快照与抽取、回译抽检、标题翻译。
+"""翻译服务：批次续跑、章/批翻译、润色、滚动上下文、术语快照与抽取、标题翻译。
 
 服务接收已经生成的全书概览，在调用方持有书级锁时执行正文翻译。保持章内及跨章串行，
 不增加并行化。每批精确顺序：
@@ -6,16 +6,14 @@
     翻译 → 批次译文落盘 → 注释定位并落盘 → 更新上下文 → batch 事件
     → 术语抽取/checkpoint → 更新历史索引 → 下一批
 
-章末仍执行剩余标点规范化、全章术语兜底、回译检查，并用 save_chapter_with_status
+章末仍执行剩余标点规范化、全章术语兜底，并用 save_chapter_with_status
 原子发布正文和 done。已有译文但缺失 glossary checkpoint 时只补抽术语，不重新翻译
 或覆盖译文。
 """
 
 from __future__ import annotations
 
-import random
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.extractor import TranslatedSegmentEvidence
@@ -54,12 +52,6 @@ def _resume_batches(segments, max_chars: int) -> list[list]:
         if current:
             batches.append(current)
     return batches
-
-
-@dataclass
-class _BatchResult:
-    targets: list[str]
-    bt_samples: list[tuple[str, str]] = field(default_factory=list)
 
 
 class TranslationService:
@@ -248,7 +240,6 @@ class TranslationService:
         # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
         # 不再并发，换取章内跨批的代词/术语/语气连贯。
         # 断点续跑（段/批级）：上次中断前已译完并落盘的批次，整批跳过、不重翻，只重建上下文。
-        bt_samples: list[tuple[str, str]] = []
         seg_base = 0  # 当前批首段的章内段号（issue 批内下标 → 章内段号）
         for b in batches:
             batch_start = seg_base
@@ -312,7 +303,7 @@ class TranslationService:
                 term_snapshot_stale = False
 
             ctx_text = context.render(self._runtime.config.pipeline.rolling_context_segments)
-            res = self.process_batch(
+            targets = self.process_batch(
                 b,
                 term_snapshot,
                 ctx_text,
@@ -321,9 +312,8 @@ class TranslationService:
                 chapter_digest,
                 annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
             )
-            for s, t in zip(b, res.targets):
+            for s, t in zip(b, targets):
                 s.target = t
-            bt_samples.extend(res.bt_samples)
             # 增量持久化译文，下次中断从此批之后续跑。
             store.save_chapter(chapter)
             # 只处理当前批次触及的注释逻辑段。多个注释段严格按原文顺序
@@ -349,7 +339,6 @@ class TranslationService:
                 count=len(b),
                 polished=self._runtime.config.pipeline.polish,
                 punctuation_normalized=self._runtime.punctuation_enabled(),
-                backtranslate_sample_count=len(res.bt_samples),
                 segments=[
                     {
                         "index": batch_start + i,
@@ -414,30 +403,12 @@ class TranslationService:
             summary=chapter_glossary_summary,
         )
 
-        # 回译抽检
-        bt_issues: list[dict] = []
-        if bt_samples:
-            srcs = [a for a, _ in bt_samples]
-            tgts = [b for _, b in bt_samples]
-            for it in self._runtime.backtrans.check(srcs, tgts):
-                it["chapter"] = ci
-                bt_issues.append(it)
-            store.log_event(
-                "chapter_backtranslation_checked",
-                chapter=ci,
-                sample_count=len(bt_samples),
-                issue_count=len(bt_issues),
-                issues=bt_issues,
-            )
-
-        chapter.meta["backtranslation_issues"] = bt_issues
         store.save_chapter_with_status(chapter, STATUS_DONE)
         store.log_event(
             "chapter_done",
             chapter=ci,
             title=chapter.title,
             segment_count=len(text_segs),
-            backtranslation_issue_count=len(bt_issues),
         )
         return done
 
@@ -777,7 +748,7 @@ class TranslationService:
         book_synopsis: str = "",
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
-    ) -> _BatchResult:
+    ) -> list[str]:
         """单个批次：整批翻译 → 润色。
 
         每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
@@ -803,11 +774,4 @@ class TranslationService:
             if len(polished) == len(targets):
                 targets = polished
 
-        bt_samples: list[tuple[str, str]] = []
-        rate = self._runtime.config.pipeline.backtranslate_sample
-        if rate > 0:
-            for s, t in zip(sources, targets):
-                if random.random() < rate:
-                    bt_samples.append((s, t or ""))
-
-        return _BatchResult(targets=targets, bt_samples=bt_samples)
+        return targets
