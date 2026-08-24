@@ -22,4 +22,5 @@
   checks.py           结果一致性检查。
 
 Review 证据索引与运行目录位于顶层 ``trans_novel.review``。
+字幕翻译位于顶层 ``trans_novel.srt``（不走本包编排）。
 """

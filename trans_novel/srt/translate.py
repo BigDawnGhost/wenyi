@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +14,8 @@ from ..config import Config
 from ..ingest.srt_reader import parse_srt
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
-from .srt_store import SrtRunStore
+from ..llm.usage import merge_usage_summaries, usage_delta
+from .store import STATUS_DONE, SrtRunStore
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -119,6 +121,34 @@ def _merge_batch_result(
             final_translations[key] = batch_result[key]
 
 
+def _flush_usage(
+    store: SrtRunStore,
+    client: LLMClient,
+    checkpoint: dict[str, Any],
+    *,
+    scope: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """把 client 尚未落盘的用量增量合并到 usage.json，返回 (cumulative, new_checkpoint)。"""
+    current = client.usage_summary()
+    increment = usage_delta(current, checkpoint)
+    accumulated = store.load_usage() or {
+        "totals": {},
+        "by_tier": {},
+        "by_stage": {},
+    }
+    if not increment["totals"]["calls"]:
+        return merge_usage_summaries(accumulated, increment), current
+    cumulative = merge_usage_summaries(accumulated, increment)
+    store.save_usage(cumulative)
+    store.log_event(
+        "usage_summary",
+        scope=scope,
+        increment=increment,
+        cumulative=cumulative,
+    )
+    return cumulative, current
+
+
 def translate_srt(
     source_path: str,
     config: Config,
@@ -137,9 +167,28 @@ def translate_srt(
         write_mono = True
 
     store = SrtRunStore.for_source(config.state_dir, source_path)
-    store.ensure_manifest(source_path, cue_count=len(cues))
+    store.ensure_manifest(
+        source_path,
+        cue_count=len(cues),
+        source_lang=config.source_lang or "auto",
+        target_lang=config.target_lang or "zh",
+        batch_size=BATCH_SIZE,
+        overlap_size=OVERLAP_SIZE,
+        max_concurrent=MAX_CONCURRENT,
+    )
+    cue_rows = store.ensure_cues([(c.index, c.timestamp, c.text) for c in cues])
+
     llm = client or build_client(config)
     llm.validate_credentials()
+    llm.set_event_sink(store.log_event)
+    usage_checkpoint = llm.usage_summary()
+
+    store.log_event(
+        "srt_run_started",
+        source_path=os.path.abspath(source_path),
+        cue_count=len(cues),
+        run_dir=store.run_dir,
+    )
 
     source_map = {cue.index: cue.text for cue in cues}
     segment_items = list(source_map.items())
@@ -158,7 +207,7 @@ def translate_srt(
             )
         )
 
-    final_translations = store.load_translations()
+    final_translations = store.translations_from_cues(cue_rows)
     pending = [
         job
         for job in jobs
@@ -207,13 +256,23 @@ def translate_srt(
                         is_first=is_first,
                         is_last=is_last,
                     )
-                    store.save_translations(final_translations)
+                    store.apply_translations(cue_rows, final_translations)
+                    store.save_cues(cue_rows)
+                    store.log_event("srt_batch_done", batch_start=start, size=len(result))
+                else:
+                    store.log_event("srt_batch_failed", batch_start=start)
                 done += 1
                 if progress:
                     progress(done, max(total, 1), "翻译字幕…")
+        usage_cumulative, usage_checkpoint = _flush_usage(
+            store, llm, usage_checkpoint, scope="srt_batches"
+        )
+    else:
+        usage_cumulative = store.load_usage() or llm.usage_summary()
 
     missing = [key for key in source_map if key not in final_translations]
     if missing:
+        store.log_event("srt_fallback", missing_count=len(missing))
         if progress:
             progress(0, len(missing), "补漏字幕…")
         with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT, len(missing))) as executor:
@@ -233,7 +292,16 @@ def translate_srt(
                 finished += 1
                 if progress:
                     progress(finished, len(missing), "补漏字幕…")
-        store.save_translations(final_translations)
+        store.apply_translations(cue_rows, final_translations)
+        store.save_cues(cue_rows)
+        usage_cumulative, usage_checkpoint = _flush_usage(
+            store, llm, usage_checkpoint, scope="srt_fallback"
+        )
+
+    store.apply_translations(cue_rows, final_translations, status=STATUS_DONE)
+    store.save_cues(cue_rows)
+    done_count = sum(1 for row in cue_rows.values() if row.get("status") == STATUS_DONE)
+    store.update_manifest(done_count=done_count, status="done", cue_count=len(cues))
 
     mono_path, bilingual_path = default_srt_out_paths(
         source_path,
@@ -247,12 +315,23 @@ def translate_srt(
         mono_path=mono_path,
         bilingual_path=bilingual_path,
     )
+
+    usage_cumulative, _ = _flush_usage(store, llm, usage_checkpoint, scope="srt_finish")
+    # 即使本轮无 token 增量（如 FakeClient），也落盘空壳，便于续跑合并与 CLI 对账
+    if not os.path.isfile(store.usage_path):
+        store.save_usage(usage_cumulative)
+    store.log_event(
+        "srt_run_finished",
+        translated=len(final_translations),
+        cue_count=len(cues),
+        outputs=outputs,
+    )
     return {
         "outputs": outputs,
         "run_dir": store.run_dir,
         "cue_count": len(cues),
         "translated": len(final_translations),
-        "usage": llm.usage_summary(),
+        "usage": store.load_usage() or usage_cumulative,
     }
 
 

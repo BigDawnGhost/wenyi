@@ -294,7 +294,7 @@ def _translate_srt_or_raise(
     bilingual: bool | None = None,
 ) -> None:
     """字幕翻译：无术语库，strong 档高并发，状态落在 state/srt/。"""
-    from .pipeline.srt_translation import translate_srt
+    from .srt.translate import translate_srt
 
     if chapter is not None:
         raise ValueError("SRT 字幕翻译不支持 --chapter")
