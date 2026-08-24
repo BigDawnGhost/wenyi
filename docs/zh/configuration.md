@@ -277,4 +277,4 @@ paths:
 - `max_chars_per_segment`：超长段落的拆分阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
 - `punctuation.normalize`：统一简体中文大陆常用全角标点。
-- `state_dir`：断点、章节产物、术语库和报告的位置。
+- `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。
