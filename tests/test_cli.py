@@ -471,7 +471,7 @@ class TestCliConfig(unittest.TestCase):
                             "chapters_total": 2,
                             "terms": 3,
                             "open_conflicts": 0,
-                            "backtranslation_issues": 0,
+                            "empty_targets": 0,
                         }
                     },
                 }

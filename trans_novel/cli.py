@@ -822,7 +822,7 @@ def report(
     console.print(f"翻译报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
-        f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"
+        f"待裁决冲突 {s['open_conflicts']}  空译文 {s['empty_targets']}"
     )
 
 

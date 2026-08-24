@@ -58,13 +58,6 @@ def routing_handler(messages, tier, json_mode):
             ensure_ascii=False,
         )
 
-    if "回译译者" in system:
-        n = _count_numbered(user)
-        return json.dumps({"backtranslations": [f"逆{i}" for i in range(n)]}, ensure_ascii=False)
-
-    if "保真度" in system:
-        return json.dumps({"issues": []}, ensure_ascii=False)
-
     if "章节梗概员" in system:
         return "本章梗概：人物登场，情节推进。"
 

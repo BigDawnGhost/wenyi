@@ -171,7 +171,6 @@ class TestRunAll(unittest.TestCase):
                     "pipeline": {
                         "review": True,
                         "polish": True,
-                        "backtranslate_sample": 0.0,
                     },
                     "paths": {"state_dir": state},
                 }

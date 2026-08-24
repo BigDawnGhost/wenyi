@@ -40,7 +40,6 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertTrue(cfg.output.about_page)
             self.assertFalse(cfg.pipeline.review)
             self.assertTrue(cfg.pipeline.polish)
-            self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
             self.assertTrue(cfg.pipeline.annotation_alignment)
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
             self.assertEqual(cfg.pipeline.review_output_retries, 2)
@@ -71,7 +70,6 @@ class TestConfigFileCreation(unittest.TestCase):
 
         self.assertFalse(cfg.pipeline.review)
         self.assertTrue(cfg.pipeline.polish)
-        self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
         self.assertTrue(cfg.pipeline.annotation_alignment)
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
         self.assertEqual(cfg.pipeline.review_output_retries, 2)
