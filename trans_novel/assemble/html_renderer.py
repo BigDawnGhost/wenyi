@@ -334,6 +334,11 @@ def _annotation_restorations(
             and str(method or "").lower() not in rejected
         )
         if not usable:
+            if mode == "range" and not marker_text and len(items) == 1:
+                # Whole block/heading was wrapped by this link (e.g. <h1><a>CHAPTER 1</a></h1>)
+                # Wrap the translated text inside this link rather than appending a dangling ↩ / 目录 fallback
+                pending_ranges.append((0, len(text), order, root, [], marker_text))
+                continue
             fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
             continue
         assert isinstance(start, int) and not isinstance(start, bool)
