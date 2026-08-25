@@ -123,11 +123,25 @@ TTC font file. This option also works on Windows.
 
 `translate book.docx` uses the full book Orchestrator (glossary, polish, review, resume under `state/<slug>/`).
 
-- Paragraphs and heading styles (`Heading 1`–`9` / outline levels) are extracted; level-1 headings start chapters.
-- Character/paragraph style: bold/italic/underline/color/size, plus alignment and paragraph shading. Translated Chinese uses **Song (宋体)** (not the source Western font); **untranslated source text keeps non-Song defaults**. Uniform runs apply without a model call; mixed runs align after translate, with proportional fallback. Heading theme blue is neutralized unless the source set an explicit color.
-- Word automatic lists (`numPr`) are preserved as List Number / List Bullet groups (restart per source list id).
-- Simple tables are translated cell-by-cell and rebuilt (no merged cells / nested tables in v1).
-- Default export is `output/<stem>.zh.docx` with heading outline for Word's Navigation pane; use `--format epub` (etc.) when needed.
+**Structure**
+
+- Paragraphs and heading styles (`Heading 1`–`9` / outline levels); level-1 headings start chapters.
+- Simple tables are rebuilt cell-by-cell (no merged cells / nested tables in v1).
+- Word automatic lists (`numPr`) become List Number / List Bullet groups (restart per source list id).
+- Contents-style lines that already include a visible prefix such as `1. Title` are **not** auto-numbered again (avoids double numbering).
+
+**Styles**
+
+- Keeps bold / italic / underline / color / size, paragraph alignment, and shading.
+- Uniform runs: apply on export with **no** extra model call.
+- Mixed runs: after translate, each meaningful span is positioned alone (EPUB-annotation-style markers); bold/color and other attrs are **inherited from the source item**. Failed spans fall back proportionally without discarding the whole paragraph.
+- Font/size-only run splits are ignored for alignment (noise).
+- Translated Chinese uses **Song (宋体)**; untranslated source text and bilingual source lines do **not** force Song.
+- Default Heading theme blue is neutralized unless the source set an explicit color.
+
+**Output**
+
+- Default: `output/<stem>.zh.docx` (Navigation pane via heading outline). Override with `--format epub` (etc.).
 
 ```bash
 uv run trans-novel translate book.docx
@@ -141,7 +155,7 @@ uv run trans-novel translate book.docx --format epub
 lighter than the book pipeline:
 
 - sliding windows of 20 cues with overlap 10, up to 100 concurrent strong-tier calls;
-- no glossary, polishing, chapter backtranslation, or whole-book review;
+- no glossary, polishing, or whole-book review;
 - `--chapter`, `--polish`, `--review`, and `--format` are ignored or rejected where they do not apply;
 - monolingual `output/<stem>.zh.srt` by default; add `--bilingual` for `.zh-bi.srt`.
 

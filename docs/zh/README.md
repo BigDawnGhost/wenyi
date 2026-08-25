@@ -149,7 +149,7 @@ uv run trans-novel review book.epub
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
 - 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
 - `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
-- `.docx` 走完整书籍管线：标题样式保留为导航结构，简易表格会重建；默认导出 `.zh.docx`（可用 `--format` 覆盖）。详见[使用指南](usage.md#docx-word)。
+- `.docx` 走完整书籍管线：尽量保留标题导航、简易表格、列表与常见字符/段落样式；已译中文用宋体。默认导出 `.zh.docx`（可用 `--format` 覆盖）。详见[使用指南](usage.md#docx-word)。
 
 ---
 

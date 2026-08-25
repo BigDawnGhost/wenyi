@@ -154,7 +154,7 @@ run usage, events, and internal round records are written under
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 - `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
-- `.docx` input uses the full book pipeline. Heading styles become navigation structure; simple tables are rebuilt. Default export is `.zh.docx` (override with `--format`). Details: [Usage guide](docs/usage.md#docx-word).
+- `.docx` input uses the full book pipeline. Headings, simple tables, lists, and common run/paragraph styles are preserved where possible; translated Chinese uses Song (宋体). Default export is `.zh.docx` (override with `--format`). Details: [Usage guide](docs/usage.md#docx-word).
 
 ---
 
