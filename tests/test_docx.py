@@ -18,7 +18,10 @@ from trans_novel.config import Config
 from trans_novel.ingest.docx_reader import read_docx
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT
 from trans_novel.ingest.segmenter import load_document
-from trans_novel.pipeline.docx_styles import proportional_range_placements
+from trans_novel.pipeline.docx_styles import (
+    merge_align_results,
+    proportional_range_placements,
+)
 from trans_novel.pipeline.runstore import STATUS_DONE, RunStore
 
 
@@ -155,6 +158,48 @@ class TestDocxStyles(unittest.TestCase):
         self.assertEqual(placements[0]["status"], "fallback")
         self.assertLess(placements[0]["target_start"], placements[0]["target_end"])
         self.assertEqual(placements[0]["color"], "FF0000")
+
+    def test_merge_keeps_good_spans_and_inherits_style(self):
+        items = [
+            {
+                "id": "s0",
+                "mode": "range",
+                "source_start": 0,
+                "source_end": 10,
+                "bold": True,
+            },
+            {
+                "id": "s1",
+                "mode": "range",
+                "source_start": 20,
+                "source_end": 30,
+                "italic": True,
+            },
+        ]
+        placements = [
+            {
+                "id": "s0",
+                "mode": "range",
+                "target_start": 0,
+                "target_end": 4,
+                "status": "aligned",
+                "method": "llm_markers",
+            },
+            {
+                "id": "s1",
+                "mode": "range",
+                "target_start": 10,
+                "target_end": 10,
+                "status": "fallback",
+                "method": "paragraph_end",
+            },
+        ]
+        merged, any_fallback = merge_align_results("x" * 40, "y" * 20, items, placements)
+        self.assertTrue(any_fallback)
+        self.assertEqual(merged[0]["method"], "llm_markers")
+        self.assertEqual(merged[0]["bold"], True)
+        self.assertEqual(merged[1]["method"], "proportional_source_range")
+        self.assertEqual(merged[1]["italic"], True)
 
     def test_assemble_applies_uniform_bold(self):
         with tempfile.TemporaryDirectory() as directory:

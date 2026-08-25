@@ -28,6 +28,8 @@ _HEADING_NAME = re.compile(
 )
 
 _STYLE_KEYS = ("bold", "italic", "underline", "color", "size_pt", "font")
+# 只有这些差异才值得混排对齐；font/size 单独变化不拆 span（中文导出也不保留西文字体）
+_ALIGN_STYLE_KEYS = ("bold", "italic", "underline", "color")
 
 
 def _iter_body_blocks(doc: DocxDocument):
@@ -222,6 +224,22 @@ def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return tuple((key, style[key]) for key in _STYLE_KEYS if key in style)
 
 
+def _align_style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    """仅含需定位的可见样式，用于判断是否真·混排。"""
+    return tuple((key, style[key]) for key in _ALIGN_STYLE_KEYS if key in style)
+
+
+def _meaningful_align_style(style: dict[str, Any]) -> dict[str, Any]:
+    """对齐/写出时继承的样式；可带 size_pt，但不含原文 font。"""
+    out: dict[str, Any] = {}
+    for key in _ALIGN_STYLE_KEYS:
+        if key in style:
+            out[key] = style[key]
+    if "size_pt" in style:
+        out["size_pt"] = style["size_pt"]
+    return out
+
+
 def _paragraph_text_and_style_meta(
     paragraph: DocxParagraph,
     numbering_root=None,
@@ -272,27 +290,35 @@ def _paragraph_text_and_style_meta(
     if not spans:
         return text, _with_para_props({})
 
+    # 合并相邻 run：仅按「需对齐的可见样式」判断，避免 font/size 把整段拆碎
     merged: list[dict[str, Any]] = []
     for span in spans:
         if (
             merged
             and merged[-1]["end"] == span["start"]
-            and _style_fingerprint(merged[-1]["style"]) == _style_fingerprint(span["style"])
+            and _align_style_fingerprint(merged[-1]["style"])
+            == _align_style_fingerprint(span["style"])
         ):
             merged[-1]["end"] = span["end"]
+            # 保留一份 size 供写出继承
+            if "size_pt" in span["style"] and "size_pt" not in merged[-1]["style"]:
+                merged[-1]["style"]["size_pt"] = span["style"]["size_pt"]
         else:
             merged.append(
                 {"start": span["start"], "end": span["end"], "style": dict(span["style"])}
             )
 
-    fingerprints = {_style_fingerprint(item["style"]) for item in merged}
-    if len(fingerprints) <= 1:
-        style = merged[0]["style"]
+    align_fps = {_align_style_fingerprint(item["style"]) for item in merged}
+    if len(align_fps) <= 1:
+        # 无 bold/italic/color 混排：整段同质（可带统一 size）
+        style = _meaningful_align_style(merged[0]["style"])
         return text, _with_para_props({"docx_style": style} if style else {})
 
     items: list[dict[str, Any]] = []
     for index, span in enumerate(merged):
-        if not span["style"]:
+        meaningful = _meaningful_align_style(span["style"])
+        # 普通正文（无加粗/斜体/颜色）不进对齐列表，写出时当默认 run
+        if not any(key in meaningful for key in _ALIGN_STYLE_KEYS):
             continue
         items.append(
             {
@@ -300,13 +326,13 @@ def _paragraph_text_and_style_meta(
                 "mode": "range",
                 "source_start": int(span["start"]),
                 "source_end": int(span["end"]),
-                **span["style"],
+                **meaningful,
             }
         )
     if not items:
         return text, _with_para_props({})
     if len(items) == 1 and items[0]["source_start"] == 0 and items[0]["source_end"] == len(text):
-        style = {key: items[0][key] for key in _STYLE_KEYS if key in items[0]}
+        style = {key: items[0][key] for key in (*_ALIGN_STYLE_KEYS, "size_pt") if key in items[0]}
         return text, _with_para_props({"docx_style": style})
     return text, _with_para_props({"docx_styles": {"items": items}})
 
