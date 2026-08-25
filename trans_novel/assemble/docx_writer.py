@@ -11,6 +11,7 @@ from typing import Any
 from docx import Document as open_docx
 from docx.document import Document as DocxDocument
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
@@ -62,6 +63,109 @@ def _apply_run_style(run, style: dict[str, Any] | None) -> None:
     font = style.get("font")
     if isinstance(font, str) and font.strip():
         run.font.name = font.strip()
+
+
+def _set_run_color_value(run, value: str) -> None:
+    """写入直写颜色，清掉 themeColor，避免 Heading 默认主题蓝。"""
+    r_pr = run._r.get_or_add_rPr()  # noqa: SLF001
+    for child in list(r_pr):
+        if child.tag == qn("w:color"):
+            r_pr.remove(child)
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), value)
+    r_pr.append(color)
+
+
+def _neutralize_heading_theme_color(
+    paragraph,
+    style: dict[str, Any] | None,
+) -> None:
+    """python-docx 默认 Heading 带 accent 蓝；无显式颜色时改为黑色。"""
+    explicit = None
+    if isinstance(style, dict):
+        color = style.get("color")
+        if isinstance(color, str) and len(color) >= 6:
+            explicit = color[-6:]
+    value = explicit or "000000"
+    for run in paragraph.runs:
+        if run.text:
+            _set_run_color_value(run, value)
+
+
+def _list_style_name(list_fmt: str | None, ilvl: int) -> str:
+    """映射到 python-docx 内置列表样式名。"""
+    level = max(0, min(2, int(ilvl)))
+    bullet = (list_fmt or "").lower() in {"bullet", "none"}
+    if bullet:
+        return "List Bullet" if level == 0 else f"List Bullet {level + 1}"
+    return "List Number" if level == 0 else f"List Number {level + 1}"
+
+
+def _abstract_num_id_for_style(doc: DocxDocument, style_name: str) -> int | None:
+    """从段落样式上的 numPr 找到 abstractNumId。"""
+    try:
+        style = doc.styles[style_name]
+    except KeyError:
+        return None
+    try:
+        num_pr = style.element.pPr.numPr  # noqa: SLF001
+        num_id = int(num_pr.numId.val)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    try:
+        numbering = doc.part.numbering_part._element  # noqa: SLF001
+    except (AttributeError, ValueError, KeyError):
+        return None
+    for num in numbering.findall(qn("w:num")):
+        if num.get(qn("w:numId")) == str(num_id):
+            abs_el = num.find(qn("w:abstractNumId"))
+            if abs_el is not None:
+                try:
+                    return int(abs_el.get(qn("w:val")))
+                except (TypeError, ValueError):
+                    return None
+    return None
+
+
+def _next_num_id(numbering_root) -> int:
+    used = []
+    for num in numbering_root.findall(qn("w:num")):
+        raw = num.get(qn("w:numId"))
+        if raw is not None:
+            try:
+                used.append(int(raw))
+            except ValueError:
+                continue
+    return (max(used) + 1) if used else 1
+
+
+def _restart_list_numbering(doc: DocxDocument, paragraph, *, style_name: str, ilvl: int) -> None:
+    """为列表首项新建带 startOverride 的 numId，使各组列表从 1 重开。"""
+    abstract_id = _abstract_num_id_for_style(doc, style_name)
+    if abstract_id is None:
+        return
+    try:
+        numbering = doc.part.numbering_part._element  # noqa: SLF001
+    except (AttributeError, ValueError, KeyError):
+        return
+    new_id = _next_num_id(numbering)
+    num = OxmlElement("w:num")
+    num.set(qn("w:numId"), str(new_id))
+    abs_ref = OxmlElement("w:abstractNumId")
+    abs_ref.set(qn("w:val"), str(abstract_id))
+    num.append(abs_ref)
+    override = OxmlElement("w:lvlOverride")
+    override.set(qn("w:ilvl"), str(max(0, ilvl)))
+    start = OxmlElement("w:startOverride")
+    start.set(qn("w:val"), "1")
+    override.append(start)
+    num.append(override)
+    numbering.append(num)
+
+    p_pr = paragraph._p.get_or_add_pPr()  # noqa: SLF001
+    num_pr = p_pr.get_or_add_numPr()
+    num_pr.get_or_add_ilvl().val = max(0, ilvl)
+    num_pr.get_or_add_numId().val = new_id
 
 
 def _style_slices(
@@ -186,6 +290,8 @@ def _add_heading(
         align=align,
         shade=shade,
     )
+    # 覆盖模板 Heading 的 accent 主题蓝：原文无显式色则用黑色
+    _neutralize_heading_theme_color(paragraph, style)
 
 
 def _add_normal(
@@ -197,7 +303,30 @@ def _add_normal(
     align: str | None = None,
     shade: str | None = None,
     dim: bool = False,
+    list_fmt: str | None = None,
+    list_ilvl: int = 0,
+    list_restart: bool = False,
 ) -> None:
+    if list_fmt is not None:
+        style_name = _list_style_name(list_fmt, list_ilvl)
+        try:
+            paragraph = doc.add_paragraph(style=style_name)
+        except KeyError:
+            paragraph = doc.add_paragraph()
+            style_name = "List Number"
+        _fill_paragraph(
+            paragraph,
+            text,
+            style=style,
+            placements=placements,
+            align=align,
+            shade=shade,
+            dim=dim,
+        )
+        if list_restart:
+            _restart_list_numbering(doc, paragraph, style_name=style_name, ilvl=list_ilvl)
+        return
+
     paragraph = doc.add_paragraph()
     _fill_paragraph(
         paragraph,
@@ -331,6 +460,7 @@ def _emit_chapter_blocks(
     """按段顺序写出；连续同 table_id 聚合成一张表；cont 续段并回上一段。"""
     i = 0
     segs = chapter.segments
+    last_list_num_id: int | None = None
     while i < len(segs):
         seg = segs[i]
         meta = seg.meta if isinstance(seg.meta, dict) else {}
@@ -358,6 +488,7 @@ def _emit_chapter_blocks(
                 bilingual=bilingual,
                 order=order,
             )
+            last_list_num_id = None
             continue
 
         if not seg.source.strip() and not (seg.target and seg.target.strip()):
@@ -386,6 +517,10 @@ def _emit_chapter_blocks(
         style, placements, align, shade = _segment_style_payload(
             style_meta, source=source, output_text=target
         )
+        list_num_id = style_meta.get("list_num_id")
+        list_ilvl = style_meta.get("list_ilvl")
+        list_fmt = style_meta.get("list_fmt")
+        is_list = isinstance(list_num_id, int) and isinstance(list_fmt, str)
         if kind == KIND_HEADING:
             _add_heading(
                 doc,
@@ -396,6 +531,7 @@ def _emit_chapter_blocks(
                 align=align,
                 shade=shade,
             )
+            last_list_num_id = None
         elif bilingual:
             _add_bilingual_paragraphs(
                 doc,
@@ -407,6 +543,21 @@ def _emit_chapter_blocks(
                 align=align,
                 shade=shade,
             )
+            last_list_num_id = None
+        elif is_list:
+            restart = list_num_id != last_list_num_id
+            _add_normal(
+                doc,
+                target,
+                style=style,
+                placements=placements,
+                align=align,
+                shade=shade,
+                list_fmt=list_fmt,
+                list_ilvl=int(list_ilvl) if isinstance(list_ilvl, int) else 0,
+                list_restart=restart,
+            )
+            last_list_num_id = list_num_id
         else:
             _add_normal(
                 doc,
@@ -416,6 +567,7 @@ def _emit_chapter_blocks(
                 align=align,
                 shade=shade,
             )
+            last_list_num_id = None
 
 
 def _assemble_docx(

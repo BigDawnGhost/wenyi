@@ -95,6 +95,49 @@ class TestDocxReader(unittest.TestCase):
         self.assertEqual(items[0]["source_end"], 4)
         self.assertEqual(items[0]["color"], "FF0000")
 
+    def test_list_number_meta_and_export(self):
+        from docx.oxml.ns import qn
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "list.docx")
+            doc = DocxDocument()
+            doc.add_paragraph("One", style="List Number")
+            doc.add_paragraph("Two", style="List Number")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+            segment = book.chapters[0].segments[0]
+            self.assertEqual(segment.meta.get("list_fmt"), "decimal")
+            self.assertIsInstance(segment.meta.get("list_num_id"), int)
+            store = RunStore(os.path.join(directory, "state", "list"))
+            store.save_manifest(
+                {
+                    "title": "list",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            chapter = book.chapters[0]
+            for item in chapter.segments:
+                item.target = item.source
+            store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path)
+            result = DocxDocument(out_path)
+            first = result.paragraphs[0]
+            self.assertTrue((first.style.name or "").startswith("List Number"))
+            num_pr = first._p.pPr.find(qn("w:numPr")) if first._p.pPr is not None else None
+            self.assertIsNotNone(num_pr)
+
 
 class TestDocxStyles(unittest.TestCase):
     def test_proportional_fallback_maps_ranges(self):

@@ -124,7 +124,8 @@ TTC font file. This option also works on Windows.
 `translate book.docx` uses the full book Orchestrator (glossary, polish, review, resume under `state/<slug>/`).
 
 - Paragraphs and heading styles (`Heading 1`–`9` / outline levels) are extracted; level-1 headings start chapters.
-- Character/paragraph style: bold/italic/underline/color/size/font, plus alignment and paragraph shading. Uniform runs apply without a model call; mixed runs align after translate (EPUB-annotation-like markers), falling back to proportional offsets so export still keeps styles even before alignment.
+- Character/paragraph style: bold/italic/underline/color/size/font, plus alignment and paragraph shading. Uniform runs apply without a model call; mixed runs align after translate (EPUB-annotation-like markers), falling back to proportional offsets so export still keeps styles even before alignment. Built-in Heading theme blue is neutralized unless the source set an explicit color.
+- Word automatic lists (`numPr`) are preserved as List Number / List Bullet groups (restart per source list id).
 - Simple tables are translated cell-by-cell and rebuilt (no merged cells / nested tables in v1).
 - Default export is `output/<stem>.zh.docx` with heading outline for Word's Navigation pane; use `--format epub` (etc.) when needed.
 

@@ -64,6 +64,69 @@ def _outline_level(paragraph: DocxParagraph) -> int | None:
     return None
 
 
+def _list_meta(paragraph: DocxParagraph, numbering_root) -> dict[str, Any] | None:
+    """读取 Word 自动编号：list_num_id / list_ilvl / list_fmt（decimal|bullet|…）。
+
+    编号可能写在段落 ``w:numPr``，也可能只挂在段落样式上（如 List Number）。
+    """
+    num_pr = None
+    try:
+        p_pr = paragraph._p.pPr  # noqa: SLF001
+    except AttributeError:
+        p_pr = None
+    if p_pr is not None:
+        num_pr = p_pr.find(qn("w:numPr"))
+    if num_pr is None and paragraph.style is not None:
+        try:
+            style_p_pr = paragraph.style.element.pPr
+            if style_p_pr is not None:
+                num_pr = style_p_pr.find(qn("w:numPr"))
+        except AttributeError:
+            num_pr = None
+    if num_pr is None:
+        return None
+    num_id_el = num_pr.find(qn("w:numId"))
+    if num_id_el is None:
+        return None
+    raw_num_id = num_id_el.get(qn("w:val"))
+    if raw_num_id is None:
+        return None
+    try:
+        num_id = int(raw_num_id)
+    except ValueError:
+        return None
+    ilvl_el = num_pr.find(qn("w:ilvl"))
+    try:
+        ilvl = int(ilvl_el.get(qn("w:val"))) if ilvl_el is not None else 0
+    except (TypeError, ValueError):
+        ilvl = 0
+    ilvl = max(0, min(8, ilvl))
+    fmt = "decimal"
+    if numbering_root is not None:
+        abstract_id = None
+        for num in numbering_root.findall(qn("w:num")):
+            if num.get(qn("w:numId")) == str(num_id):
+                abs_el = num.find(qn("w:abstractNumId"))
+                if abs_el is not None:
+                    abstract_id = abs_el.get(qn("w:val"))
+                break
+        if abstract_id is not None:
+            for abs_num in numbering_root.findall(qn("w:abstractNum")):
+                if abs_num.get(qn("w:abstractNumId")) != abstract_id:
+                    continue
+                for lvl in abs_num.findall(qn("w:lvl")):
+                    if lvl.get(qn("w:ilvl")) != str(ilvl):
+                        continue
+                    fmt_el = lvl.find(qn("w:numFmt"))
+                    if fmt_el is not None:
+                        raw_fmt = fmt_el.get(qn("w:val"))
+                        if isinstance(raw_fmt, str) and raw_fmt:
+                            fmt = raw_fmt
+                    break
+                break
+    return {"list_num_id": num_id, "list_ilvl": ilvl, "list_fmt": fmt}
+
+
 def _paragraph_align(paragraph: DocxParagraph) -> str | None:
     """读取段落对齐：center / left / right / both / distribute。"""
     alignment = paragraph.alignment
@@ -159,9 +222,13 @@ def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return tuple((key, style[key]) for key in _STYLE_KEYS if key in style)
 
 
-def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[str, Any]]:
-    """合并段落 runs 为纯文本，并生成 align / docx_style / docx_styles meta。"""
+def _paragraph_text_and_style_meta(
+    paragraph: DocxParagraph,
+    numbering_root=None,
+) -> tuple[str, dict[str, Any]]:
+    """合并段落 runs 为纯文本，并生成 align / list / docx_style / docx_styles meta。"""
     align = _paragraph_align(paragraph)
+    list_meta = _list_meta(paragraph, numbering_root)
     spans: list[dict[str, Any]] = []
     parts: list[str] = []
     offset = 0
@@ -181,6 +248,8 @@ def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[
             meta = {**meta, "align": align}
         if shade:
             meta = {**meta, "shade": shade}
+        if list_meta:
+            meta = {**meta, **list_meta}
         return meta
 
     if not text:
@@ -242,12 +311,12 @@ def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[
     return text, _with_para_props({"docx_styles": {"items": items}})
 
 
-def _cell_text_and_style(cell) -> tuple[str, dict[str, Any]]:
+def _cell_text_and_style(cell, numbering_root=None) -> tuple[str, dict[str, Any]]:
     """合并单元格段落；样式取自首个非空段落。"""
     texts: list[str] = []
     style_meta: dict[str, Any] = {}
     for paragraph in cell.paragraphs:
-        text, meta = _paragraph_text_and_style_meta(paragraph)
+        text, meta = _paragraph_text_and_style_meta(paragraph, numbering_root)
         if not text:
             continue
         if not style_meta and meta:
@@ -263,13 +332,19 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
     except Exception as error:  # noqa: BLE001 - 统一为可读的输入错误
         raise ValueError(f"无法读取 Word 文档：{error}") from error
 
+    numbering_root = None
+    try:
+        numbering_root = docx.part.numbering_part._element  # noqa: SLF001
+    except (AttributeError, ValueError, KeyError):
+        numbering_root = None
+
     book_title = os.path.splitext(os.path.basename(path))[0]
     blocks: list[dict[str, Any]] = []
     table_id = 0
 
     for block in _iter_body_blocks(docx):
         if isinstance(block, DocxParagraph):
-            text, style_meta = _paragraph_text_and_style_meta(block)
+            text, style_meta = _paragraph_text_and_style_meta(block, numbering_root)
             if not text:
                 continue
             level = _outline_level(block)
@@ -296,7 +371,7 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
                     if cell is None:
                         text, style_meta = "", {}
                     else:
-                        text, style_meta = _cell_text_and_style(cell)
+                        text, style_meta = _cell_text_and_style(cell, numbering_root)
                     cells.append(
                         {
                             "text": text or "",
