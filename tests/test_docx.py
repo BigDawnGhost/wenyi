@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from docx import Document as DocxDocument
+from docx.shared import RGBColor
 from typer.testing import CliRunner
 
 from trans_novel.assemble.docx_writer import _assemble_docx
@@ -17,6 +18,7 @@ from trans_novel.config import Config
 from trans_novel.ingest.docx_reader import read_docx
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT
 from trans_novel.ingest.segmenter import load_document
+from trans_novel.pipeline.docx_styles import proportional_range_placements
 from trans_novel.pipeline.runstore import STATUS_DONE, RunStore
 
 
@@ -59,6 +61,94 @@ class TestDocxReader(unittest.TestCase):
             _write_sample_docx(path)
             book = load_document(path, "en", "zh")
         self.assertEqual(book.fmt, "docx")
+
+    def test_uniform_style_skips_mixed_meta(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "styled.docx")
+            doc = DocxDocument()
+            paragraph = doc.add_paragraph()
+            run = paragraph.add_run("All bold blue")
+            run.bold = True
+            run.font.color.rgb = RGBColor(0x00, 0x00, 0xFF)
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = book.chapters[0].segments[0]
+        self.assertEqual(segment.meta.get("docx_style", {}).get("bold"), True)
+        self.assertEqual(segment.meta.get("docx_style", {}).get("color"), "0000FF")
+        self.assertNotIn("docx_styles", segment.meta)
+
+    def test_mixed_runs_record_style_spans(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "mixed.docx")
+            doc = DocxDocument()
+            paragraph = doc.add_paragraph()
+            red = paragraph.add_run("Red ")
+            red.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+            paragraph.add_run("plain")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = book.chapters[0].segments[0]
+        self.assertNotIn("docx_style", segment.meta)
+        items = segment.meta["docx_styles"]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source_start"], 0)
+        self.assertEqual(items[0]["source_end"], 4)
+        self.assertEqual(items[0]["color"], "FF0000")
+
+
+class TestDocxStyles(unittest.TestCase):
+    def test_proportional_fallback_maps_ranges(self):
+        items = [
+            {
+                "id": "s0",
+                "mode": "range",
+                "source_start": 0,
+                "source_end": 4,
+                "color": "FF0000",
+            }
+        ]
+        placements = proportional_range_placements("Red plain", "红的 普通", items)
+        self.assertEqual(len(placements), 1)
+        self.assertEqual(placements[0]["status"], "fallback")
+        self.assertLess(placements[0]["target_start"], placements[0]["target_end"])
+        self.assertEqual(placements[0]["color"], "FF0000")
+
+    def test_assemble_applies_uniform_bold(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "bold.docx")
+            src = DocxDocument()
+            paragraph = src.add_paragraph()
+            run = paragraph.add_run("Hello")
+            run.bold = True
+            src.save(path)
+            book = read_docx(path, "en", "zh")
+            store = RunStore(os.path.join(directory, "state", "bold"))
+            store.save_manifest(
+                {
+                    "title": "bold",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            chapter = book.chapters[0]
+            chapter.segments[0].target = "你好"
+            store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path)
+            result = DocxDocument(out_path)
+            runs = [run for p in result.paragraphs for run in p.runs if run.text.strip()]
+            self.assertTrue(runs)
+            self.assertTrue(runs[0].bold)
 
 
 class TestDocxAssemble(unittest.TestCase):

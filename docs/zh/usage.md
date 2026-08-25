@@ -122,6 +122,7 @@ Windows。
 `translate book.docx` 走完整书籍 Orchestrator（术语、润色、审校、`state/<slug>/` 续跑）。
 
 - 抽取段落与标题样式（`Heading 1`–`9` / outline），一级标题切章。
+- 字符样式：整段同质的加粗/斜体/颜色/字号/字体直接套到译文（不额外调模型）；段内混排在翻译后用类似 EPUB 注释的标记对齐（cheap 档），失败则按源文比例回退。
 - 简易表格按单元格翻译并重建（首版不支持合并单元格 / 嵌套表）。
 - 默认导出 `output/<stem>.zh.docx`，标题带大纲供 Word 导航窗格；需要时可 `--format epub` 等。
 

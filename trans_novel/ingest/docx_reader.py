@@ -2,6 +2,10 @@
 
 标题样式（Heading / 标题 / outlineLvl）映射为 heading segments，并按一级标题切章。
 表格按文档顺序抽出，单元格合并为一段，meta 记录行列供写出时重建。
+
+字符样式：
+- 整段同质 → ``meta["docx_style"]``（写出整段套用，无需 AI 对齐）
+- 段内混排 → ``meta["docx_styles"]["items"]``（源文偏移 + bold/color 等，译后对齐）
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ _HEADING_NAME = re.compile(
     r"^(?:Heading|标题|標題)\s*([1-9])\s*$",
     re.IGNORECASE,
 )
+
+_STYLE_KEYS = ("bold", "italic", "underline", "color", "size_pt", "font")
 
 
 def _iter_body_blocks(doc: DocxDocument):
@@ -58,10 +64,123 @@ def _outline_level(paragraph: DocxParagraph) -> int | None:
     return None
 
 
-def _cell_text(cell) -> str:
-    """合并单元格内段落文本。"""
-    parts = [p.text.strip() for p in cell.paragraphs if p.text and p.text.strip()]
-    return "\n".join(parts)
+def _run_style(run) -> dict[str, Any]:
+    """抽取单个 run 的可见字符样式（仅显式设置的字段）。"""
+    style: dict[str, Any] = {}
+    if run.bold is True:
+        style["bold"] = True
+    elif run.bold is False:
+        style["bold"] = False
+    if run.italic is True:
+        style["italic"] = True
+    elif run.italic is False:
+        style["italic"] = False
+    if run.underline:
+        style["underline"] = True
+    size = run.font.size
+    if size is not None:
+        try:
+            style["size_pt"] = float(size.pt)
+        except (AttributeError, TypeError, ValueError):
+            pass
+    color = run.font.color
+    if color is not None and color.rgb is not None:
+        style["color"] = str(color.rgb)
+    name = run.font.name
+    if isinstance(name, str) and name.strip():
+        style["font"] = name.strip()
+    return style
+
+
+def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    return tuple((key, style[key]) for key in _STYLE_KEYS if key in style)
+
+
+def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[str, Any]]:
+    """合并段落 runs 为纯文本，并生成 docx_style / docx_styles meta。"""
+    spans: list[dict[str, Any]] = []
+    parts: list[str] = []
+    offset = 0
+    for run in paragraph.runs:
+        text = run.text or ""
+        if not text:
+            continue
+        start, end = offset, offset + len(text)
+        spans.append({"start": start, "end": end, "style": _run_style(run)})
+        parts.append(text)
+        offset = end
+    text = "".join(parts).strip()
+    if not text:
+        return "", {}
+
+    # strip() 可能去掉首尾空白：按 strip 后的文本重算相对偏移
+    leading = len("".join(parts)) - len("".join(parts).lstrip())
+    stripped = "".join(parts).strip()
+    if stripped != "".join(parts):
+        new_spans: list[dict[str, Any]] = []
+        for span in spans:
+            start = max(0, span["start"] - leading)
+            end = min(len(stripped), span["end"] - leading)
+            if start >= end:
+                continue
+            new_spans.append({"start": start, "end": end, "style": span["style"]})
+        spans = new_spans
+        text = stripped
+
+    if not spans:
+        return text, {}
+
+    merged: list[dict[str, Any]] = []
+    for span in spans:
+        if (
+            merged
+            and merged[-1]["end"] == span["start"]
+            and _style_fingerprint(merged[-1]["style"]) == _style_fingerprint(span["style"])
+        ):
+            merged[-1]["end"] = span["end"]
+        else:
+            merged.append(
+                {"start": span["start"], "end": span["end"], "style": dict(span["style"])}
+            )
+
+    fingerprints = {_style_fingerprint(item["style"]) for item in merged}
+    if len(fingerprints) <= 1:
+        style = merged[0]["style"]
+        return text, ({"docx_style": style} if style else {})
+
+    items: list[dict[str, Any]] = []
+    for index, span in enumerate(merged):
+        if not span["style"]:
+            continue
+        items.append(
+            {
+                "id": f"s{index}",
+                "mode": "range",
+                "source_start": int(span["start"]),
+                "source_end": int(span["end"]),
+                **span["style"],
+            }
+        )
+    if not items:
+        return text, {}
+    if len(items) == 1 and items[0]["source_start"] == 0 and items[0]["source_end"] == len(text):
+        style = {key: items[0][key] for key in _STYLE_KEYS if key in items[0]}
+        return text, {"docx_style": style}
+    return text, {"docx_styles": {"items": items}}
+
+
+def _cell_text_and_style(cell) -> tuple[str, dict[str, Any]]:
+    """合并单元格段落；样式取自首个非空段落。"""
+    texts: list[str] = []
+    style_meta: dict[str, Any] = {}
+    for paragraph in cell.paragraphs:
+        text, meta = _paragraph_text_and_style_meta(paragraph)
+        if not text:
+            continue
+        if not style_meta and meta:
+            style_meta = meta
+        texts.append(text)
+    return "\n".join(texts), style_meta
 
 
 def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
@@ -77,14 +196,16 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
 
     for block in _iter_body_blocks(docx):
         if isinstance(block, DocxParagraph):
-            text = (block.text or "").strip()
+            text, style_meta = _paragraph_text_and_style_meta(block)
             if not text:
                 continue
             level = _outline_level(block)
             if level is not None:
-                blocks.append({"kind": "heading", "text": text, "level": level})
+                blocks.append(
+                    {"kind": "heading", "text": text, "level": level, "style_meta": style_meta}
+                )
             else:
-                blocks.append({"kind": "text", "text": text})
+                blocks.append({"kind": "text", "text": text, "style_meta": style_meta})
             continue
 
         if isinstance(block, DocxTable):
@@ -99,12 +220,16 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
                 row_cells = list(row.cells)
                 for c_idx in range(cols):
                     cell = row_cells[c_idx] if c_idx < len(row_cells) else None
-                    text = _cell_text(cell) if cell is not None else ""
+                    if cell is None:
+                        text, style_meta = "", {}
+                    else:
+                        text, style_meta = _cell_text_and_style(cell)
                     cells.append(
                         {
                             "text": text or "",
                             "row": r_idx,
                             "col": c_idx,
+                            "style_meta": style_meta,
                         }
                     )
             blocks.append(
@@ -121,7 +246,6 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
     if not blocks:
         raise ValueError("Word 文档中未解析到可翻译段落或表格")
 
-    # 按一级标题切章；无一级标题则整篇一章
     chapter_specs: list[tuple[str | None, int, list[dict[str, Any]]]] = []
     current_title: str | None = None
     current_level = 1
@@ -144,33 +268,39 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
         segments: list[Segment] = []
         idx = 0
         for item in body:
+            style_meta = item.get("style_meta") or {}
             if item["kind"] == "heading":
+                meta = {"heading_level": int(item["level"]), **style_meta}
                 segments.append(
                     Segment(
                         index=idx,
                         source=item["text"],
                         kind=KIND_HEADING,
-                        meta={"heading_level": int(item["level"])},
+                        meta=meta,
                     )
                 )
                 idx += 1
             elif item["kind"] == "text":
-                segments.append(Segment(index=idx, source=item["text"], kind=KIND_TEXT))
+                segments.append(
+                    Segment(index=idx, source=item["text"], kind=KIND_TEXT, meta=dict(style_meta))
+                )
                 idx += 1
             elif item["kind"] == "table":
                 for cell in item["cells"]:
+                    meta = {
+                        "table_id": item["table_id"],
+                        "row": cell["row"],
+                        "col": cell["col"],
+                        "rows": item["rows"],
+                        "cols": item["cols"],
+                        **(cell.get("style_meta") or {}),
+                    }
                     segments.append(
                         Segment(
                             index=idx,
                             source=cell["text"],
                             kind=KIND_TEXT,
-                            meta={
-                                "table_id": item["table_id"],
-                                "row": cell["row"],
-                                "col": cell["col"],
-                                "rows": item["rows"],
-                                "cols": item["cols"],
-                            },
+                            meta=meta,
                         )
                     )
                     idx += 1
