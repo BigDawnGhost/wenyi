@@ -31,6 +31,19 @@ _STYLE_KEYS = ("bold", "italic", "underline", "color", "size_pt", "font")
 # 只有这些差异才值得混排对齐；font/size 单独变化不拆 span（中文导出也不保留西文字体）
 _ALIGN_STYLE_KEYS = ("bold", "italic", "underline", "color")
 
+# 正文已自带可见序号时（如目录「1. Title」），不再套 Word 自动编号，避免双重序号
+_VISIBLE_LIST_PREFIX = re.compile(
+    r"^(?:"
+    r"\d+\."  # 1.
+    r"|[A-Za-z]\."  # A.
+    r"|[ivxlcdm]+\."  # i. / iv.
+    r"|[•·‣▪◦‣]\s*"  # bullets
+    r"|（?\d+）"  # （1）
+    r"|\(\d+\)"  # (1)
+    r")\s+",
+    re.IGNORECASE,
+)
+
 
 def _iter_body_blocks(doc: DocxDocument):
     """按 body 顺序产出段落与表格。"""
@@ -66,10 +79,16 @@ def _outline_level(paragraph: DocxParagraph) -> int | None:
     return None
 
 
+def _text_has_visible_list_prefix(text: str) -> bool:
+    """正文是否已含可见序号（目录常见「1. Title」）。"""
+    return bool(_VISIBLE_LIST_PREFIX.match((text or "").lstrip()))
+
+
 def _list_meta(paragraph: DocxParagraph, numbering_root) -> dict[str, Any] | None:
     """读取 Word 自动编号：list_num_id / list_ilvl / list_fmt（decimal|bullet|…）。
 
     编号可能写在段落 ``w:numPr``，也可能只挂在段落样式上（如 List Number）。
+    ``numId<=0`` 视为无效；正文已自带「1.」等前缀时不返回列表 meta，避免导出双重序号。
     """
     num_pr = None
     try:
@@ -96,6 +115,8 @@ def _list_meta(paragraph: DocxParagraph, numbering_root) -> dict[str, Any] | Non
     try:
         num_id = int(raw_num_id)
     except ValueError:
+        return None
+    if num_id <= 0:
         return None
     ilvl_el = num_pr.find(qn("w:ilvl"))
     try:
@@ -266,7 +287,8 @@ def _paragraph_text_and_style_meta(
             meta = {**meta, "align": align}
         if shade:
             meta = {**meta, "shade": shade}
-        if list_meta:
+        # 目录等正文已写「1. …」时，忽略自动编号，防止 List Number 再叠一层
+        if list_meta and not _text_has_visible_list_prefix(text):
             meta = {**meta, **list_meta}
         return meta
 

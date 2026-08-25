@@ -15,6 +15,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
+from ..ingest.docx_reader import _text_has_visible_list_prefix
 from ..ingest.models import KIND_HEADING, Chapter
 from ..pipeline.docx_styles import proportional_range_placements
 from ..pipeline.runstore import RunStore
@@ -622,7 +623,13 @@ def _emit_chapter_blocks(
         list_num_id = style_meta.get("list_num_id")
         list_ilvl = style_meta.get("list_ilvl")
         list_fmt = style_meta.get("list_fmt")
-        is_list = isinstance(list_num_id, int) and isinstance(list_fmt, str)
+        is_list = (
+            isinstance(list_num_id, int)
+            and list_num_id > 0
+            and isinstance(list_fmt, str)
+            and not _text_has_visible_list_prefix(target)
+            and not _text_has_visible_list_prefix(source)
+        )
         if kind == KIND_HEADING:
             _add_heading(
                 doc,

@@ -98,6 +98,20 @@ class TestDocxReader(unittest.TestCase):
         self.assertEqual(items[0]["source_end"], 4)
         self.assertEqual(items[0]["color"], "FF0000")
 
+    def test_toc_line_with_visible_number_skips_list_meta(self):
+        """目录「1. Title」正文已含序号时，不应再套自动编号。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc.docx")
+            doc = DocxDocument()
+            doc.add_heading("Contents", level=1)
+            # 模拟带失效 numPr 的目录行：正文已有「1.」
+            doc.add_paragraph("1. The myth of primitive society", style="List Number")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+            toc = next(s for s in book.chapters[0].segments if s.source.startswith("1. The myth"))
+            self.assertIsNone(toc.meta.get("list_num_id"))
+            self.assertIsNone(toc.meta.get("list_fmt"))
+
     def test_list_number_meta_and_export(self):
         from docx.oxml.ns import qn
 
