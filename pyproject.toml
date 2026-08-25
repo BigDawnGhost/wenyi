@@ -18,6 +18,7 @@ dependencies = [
     "json-repair>=0.61,<1", # 仅用于 Reviewer 畸形 JSON 的本地修复
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
+    "python-docx>=1.2.0",
 ]
 
 [project.optional-dependencies]

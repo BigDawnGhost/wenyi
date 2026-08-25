@@ -523,7 +523,7 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
         ):
-            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "docx"])
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "xml"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("不支持的输出格式", result.output)

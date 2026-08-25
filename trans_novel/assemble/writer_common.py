@@ -15,6 +15,7 @@ _OUT_EXT = {
     "html": ".html",
     "markdown": ".md",
     "pdf": ".pdf",
+    "docx": ".docx",
 }
 
 

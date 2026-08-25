@@ -142,13 +142,14 @@ uv run trans-novel review book.epub
 
 | 输入 | 输出 |
 |---|---|
-| EPUB、FB2、TXT、Markdown、HTML、PDF | EPUB（单语 / 双语）、TXT、HTML、Markdown |
+| EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX | EPUB（单语 / 双语）、TXT、HTML、Markdown、DOCX |
 | SRT（影视字幕） | 单语 `.zh.srt`，可选双语 `.zh-bi.srt` |
 
 - PDF 输入首次需 `MINERU_API_KEY` 调用外部转换服务，转换后的 HTML 缓存复用。
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
 - 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
 - `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
+- `.docx` 走完整书籍管线：标题样式保留为导航结构，简易表格会重建；默认导出 `.zh.docx`（可用 `--format` 覆盖）。详见[使用指南](usage.md#docx-word)。
 
 ---
 
