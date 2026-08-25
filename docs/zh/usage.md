@@ -69,9 +69,9 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 
 ## 输入与输出
 
-- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、SRT。
-- 书籍默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
-- `--format txt|html|markdown|pdf`：书籍输入可改为导出指定格式；书籍输入默认仍生成 EPUB。该选项不适用于 SRT。
+- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX、SRT。
+- 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认改为 `<书名>.zh.docx`）；双语版 `*.zh-bi.*` 按需开启。
+- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；未指定时 `.docx`→`docx`，其它书籍→`epub`。该选项不适用于 SRT。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
@@ -117,12 +117,42 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
 Windows。
 
+## DOCX（Word）
+
+`translate book.docx` 走完整书籍 Orchestrator（术语、润色、审校、`state/<slug>/` 续跑）。
+
+**结构**
+
+- 段落与标题样式（`Heading 1`–`9` / outline）；一级标题切章。
+- 简易表格按单元格重建（首版不支持合并单元格 / 嵌套表）。
+- Word 自动编号（`numPr`）按组重建为 List Number / List Bullet（按源 list id 分段重开）。
+- 目录一类正文已含 `1. 标题` 可见序号的行**不再**套自动编号，避免双重序号。
+
+**样式**
+
+- 保留加粗 / 斜体 / 下划线 / 颜色 / 字号，以及段落对齐与底纹。
+- 整段同质：导出直接套用，**不**额外调模型。
+- 段内混排：译后对每个有意义的跨度单独定位（仿 EPUB 注释标记）；加粗/颜色等属性从原文 item **继承**。单个跨度失败只比例回退该跨度，不整段作废。
+- 仅 font/size 差异不参与对齐（噪音）。
+- **已译中文**统一**宋体**（不沿用原文西文字体）；**未翻译原文**与双语原文侧不套宋体。
+- 模板 Heading 主题蓝会去掉，除非原文写了显式颜色。
+
+**输出**
+
+- 默认：`output/<stem>.zh.docx`（标题大纲可供 Word 导航窗格）。可用 `--format epub` 等覆盖。
+
+```bash
+uv run trans-novel translate book.docx
+uv run trans-novel translate book.docx --bilingual
+uv run trans-novel translate book.docx --format epub
+```
+
 ## SRT 字幕
 
 `translate` 会按扩展名自动分流 `.srt`。字幕路径比书籍管线更轻：
 
 - 滑窗 20 条、重叠 10，最多 100 路并发 strong 档调用；
-- 无术语库、润色、章末回译抽检或全书审校；
+- 无术语库、润色或全书审校；
 - `--chapter`、`--polish`、`--review`、`--format` 在不适用时会被忽略或拒绝；
 - 默认写出单语 `output/<stem>.zh.srt`；加 `--bilingual` 可生成 `.zh-bi.srt`。
 

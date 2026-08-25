@@ -136,9 +136,13 @@ def load_document(
             cache_dir=cache_dir,
             source_hash=source_hash,
         )
+    elif ext == ".docx":
+        from .docx_reader import read_docx
+
+        doc = read_docx(path, source_lang, target_lang)
     else:
         raise ValueError(
-            f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .xhtml / .pdf）"
+            f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .xhtml / .pdf / .docx）"
         )
 
     if split_segments and split_segments > 0:

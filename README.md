@@ -147,13 +147,14 @@ run usage, events, and internal round records are written under
 
 | Input | Output |
 |---|---|
-| EPUB, FB2, TXT, Markdown, HTML, PDF | EPUB (monolingual / bilingual), TXT, HTML, Markdown |
+| EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX | EPUB (monolingual / bilingual), TXT, HTML, Markdown, DOCX |
 | SRT (movie / series subtitles) | `.zh.srt` (monolingual) and optional `.zh-bi.srt` (bilingual) |
 
 - PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 - `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
+- `.docx` input uses the full book pipeline. Headings, simple tables, lists, and common run/paragraph styles are preserved where possible; translated Chinese uses Song (宋体). Default export is `.zh.docx` (override with `--format`). Details: [Usage guide](docs/usage.md#docx-word).
 
 ---
 

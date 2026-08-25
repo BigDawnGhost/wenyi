@@ -199,11 +199,22 @@ def _require_input_file(input_path: str) -> None:
 def _validate_output_format(fmt: str) -> str:
     """规范化并校验用户可选择的输出格式。"""
     normalized = fmt.strip().lower()
-    allowed = {"epub", "txt", "html", "markdown", "pdf"}
+    allowed = {"epub", "txt", "html", "markdown", "pdf", "docx"}
     if normalized not in allowed:
-        console.print(f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown / pdf）[/]")
+        console.print(
+            f"[red]不支持的输出格式：{fmt}（可选 epub / txt / html / markdown / pdf / docx）[/]"
+        )
         raise typer.Exit(2)
     return normalized
+
+
+def _resolve_output_format(input_path: str, fmt: str | None) -> str:
+    """用户未指定 --format 时：.docx 默认出 docx，其余默认 epub。"""
+    if fmt is not None and str(fmt).strip():
+        return _validate_output_format(str(fmt))
+    if os.path.splitext(input_path)[1].lower() == ".docx":
+        return "docx"
+    return "epub"
 
 
 def _validate_pdf_engine(engine: str) -> str:
@@ -256,7 +267,7 @@ def _translate_impl(
     input_path: str,
     *,
     chapter: int | None = None,
-    fmt: str = "epub",
+    fmt: str | None = None,
     out: str | None = None,
     pdf_engine: str = "weasyprint",
     polish: bool | None = None,
@@ -345,7 +356,7 @@ def _translate_impl_or_raise(
     input_path: str,
     *,
     chapter: int | None = None,
-    fmt: str = "epub",
+    fmt: str | None = None,
     out: str | None = None,
     pdf_engine: str = "weasyprint",
     polish: bool | None = None,
@@ -361,7 +372,7 @@ def _translate_impl_or_raise(
         _translate_srt_or_raise(
             input_path,
             chapter=chapter,
-            fmt=fmt,
+            fmt=fmt or "epub",
             out=out,
             polish=polish,
             review=review,
@@ -370,7 +381,7 @@ def _translate_impl_or_raise(
         )
         return
 
-    fmt = _validate_output_format(fmt)
+    fmt = _resolve_output_format(input_path, fmt)
     pdf_engine = _validate_pdf_engine(pdf_engine)
     config = _load_config()
     if polish is not None:
@@ -527,7 +538,7 @@ def _print_usage(report: dict) -> None:
 def translate(
     input: str = typer.Argument(
         ...,
-        help="待翻译书籍或字幕（EPUB / FB2 / TXT / Markdown / HTML / PDF / SRT）",
+        help="待翻译书籍或字幕（EPUB / FB2 / TXT / Markdown / HTML / PDF / DOCX / SRT）",
     ),
     chapter: int | None = typer.Option(
         None,
@@ -535,10 +546,10 @@ def translate(
         min=0,
         help="仅翻译并保存指定章节（从 0 起）；不执行审校、报告和导出",
     ),
-    fmt: str = typer.Option(
-        "epub",
+    fmt: str | None = typer.Option(
+        None,
         "--format",
-        help="最终导出格式：epub / txt / html / markdown / pdf",
+        help="最终导出格式：epub / txt / html / markdown / pdf / docx；默认随输入（.docx→docx，其余→epub）",
     ),
     out: str | None = typer.Option(
         None,
@@ -753,10 +764,10 @@ def assemble(
         "--out",
         help="单语版输出路径；默认写入源文件旁的 output 目录",
     ),
-    fmt: str = typer.Option(
-        "epub",
+    fmt: str | None = typer.Option(
+        None,
         "--format",
-        help="导出格式：epub / txt / html / markdown / pdf",
+        help="导出格式：epub / txt / html / markdown / pdf / docx；默认随输入（.docx→docx，其余→epub）",
     ),
     pdf_engine: str = typer.Option(
         "weasyprint",
@@ -779,9 +790,9 @@ def assemble(
     from .pipeline.orchestrator import Orchestrator
 
     config = _load_config()
-    fmt = _validate_output_format(fmt)
-    pdf_engine = _validate_pdf_engine(pdf_engine)
     _require_input_file(input)
+    fmt = _resolve_output_format(input, fmt)
+    pdf_engine = _validate_pdf_engine(pdf_engine)
     if mono is not None:
         config.output.mono = mono
     if bilingual is not None:

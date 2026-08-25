@@ -7,6 +7,7 @@
 - html_resources：资源读取与物化
 - html_writer：HTML 输出
 - pdf_writer：PDF 输出
+- docx_writer：Word .docx 重建
 - epub_writer：EPUB 回填与新建
 
 ``assemble()`` / ``bilingual_out_path()`` 与少量私有辅助仍从此处导出；
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 from ..pipeline.runstore import RunStore
 from .about import append_about_page
+from .docx_writer import _assemble_docx
 from .epub_writer import (
     _assemble_epub,
     _build_epub_from_chapters,
@@ -71,6 +73,7 @@ def assemble(
     out_format="html"：优先回填 HTML 模板，无模板时按章重建。
     out_format="markdown"：无论原文格式，按章重建为 Markdown。
     out_format="pdf"：先生成打印专用 HTML，再由 WeasyPrint 分页输出。
+    out_format="docx"：按章重建 Word 文档（标题导航 + 段落 + 简易表格）。
     bilingual=True 时额外输出原文，order 控制译文/原文先后。
     preserve_source_style=True 时原文继承原书正文样式，不注入淡化 CSS。
     about_page=True 时在书末附加"关于此翻译"说明页。
@@ -111,6 +114,10 @@ def assemble(
             order=order,
             preserve_source_style=preserve_source_style,
         )
+    if out_format == "docx":
+        out_path = out_path or _default_out(source_path, "docx", "", bilingual=bilingual)
+        _ensure_parent_dir(out_path)
+        return _assemble_docx(store, out_path, bilingual=bilingual, order=order)
     out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
     _ensure_parent_dir(out_path)
     if m["fmt"] == "epub":

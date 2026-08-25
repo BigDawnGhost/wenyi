@@ -70,9 +70,9 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 
 ## Input and output
 
-- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, and SRT.
-- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
-- `--format txt|html|markdown|pdf`: export the selected format for book inputs. Every book input still produces EPUB by default. This flag does not apply to SRT.
+- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX, and SRT.
+- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx` instead). The bilingual `*.zh-bi.*` edition is optional.
+- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, `.docx` → `docx` and other books → `epub`. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
@@ -119,13 +119,43 @@ Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
 
+## DOCX (Word)
+
+`translate book.docx` uses the full book Orchestrator (glossary, polish, review, resume under `state/<slug>/`).
+
+**Structure**
+
+- Paragraphs and heading styles (`Heading 1`–`9` / outline levels); level-1 headings start chapters.
+- Simple tables are rebuilt cell-by-cell (no merged cells / nested tables in v1).
+- Word automatic lists (`numPr`) become List Number / List Bullet groups (restart per source list id).
+- Contents-style lines that already include a visible prefix such as `1. Title` are **not** auto-numbered again (avoids double numbering).
+
+**Styles**
+
+- Keeps bold / italic / underline / color / size, paragraph alignment, and shading.
+- Uniform runs: apply on export with **no** extra model call.
+- Mixed runs: after translate, each meaningful span is positioned alone (EPUB-annotation-style markers); bold/color and other attrs are **inherited from the source item**. Failed spans fall back proportionally without discarding the whole paragraph.
+- Font/size-only run splits are ignored for alignment (noise).
+- Translated Chinese uses **Song (宋体)**; untranslated source text and bilingual source lines do **not** force Song.
+- Default Heading theme blue is neutralized unless the source set an explicit color.
+
+**Output**
+
+- Default: `output/<stem>.zh.docx` (Navigation pane via heading outline). Override with `--format epub` (etc.).
+
+```bash
+uv run trans-novel translate book.docx
+uv run trans-novel translate book.docx --bilingual
+uv run trans-novel translate book.docx --format epub
+```
+
 ## SRT subtitles
 
 `translate` routes `.srt` files automatically. The subtitle path is intentionally
 lighter than the book pipeline:
 
 - sliding windows of 20 cues with overlap 10, up to 100 concurrent strong-tier calls;
-- no glossary, polishing, chapter backtranslation, or whole-book review;
+- no glossary, polishing, or whole-book review;
 - `--chapter`, `--polish`, `--review`, and `--format` are ignored or rejected where they do not apply;
 - monolingual `output/<stem>.zh.srt` by default; add `--bilingual` for `.zh-bi.srt`.
 

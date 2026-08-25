@@ -23,6 +23,7 @@ from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
 from ..postprocess.punct import normalize_zh_segments
 from .context import RollingContext
+from .docx_styles import DocxStyleService
 from .runstore import STATUS_DONE, RunStore
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ class TranslationService:
     def __init__(self, runtime: PipelineRuntime, annotations: AnnotationService):
         self._runtime = runtime
         self._annotations = annotations
+        self._docx_styles = DocxStyleService(runtime)
 
     def run(
         self,
@@ -254,6 +256,13 @@ class TranslationService:
                     len(b),
                     store,
                 )
+                self._docx_styles.align_styles_after_batch(
+                    ci,
+                    chapter,
+                    batch_start,
+                    len(b),
+                    store,
+                )
                 context.add_targets([s.target or "" for s in b])
                 self.sync_context_chapter_prefix(
                     context,
@@ -320,6 +329,13 @@ class TranslationService:
             # 一段一次调用；若当前批只有超长段的前半部分，则等最后一个
             # cont 续段译完后再合并定位。
             self._annotations.align_annotations_after_batch(
+                ci,
+                chapter,
+                batch_start,
+                len(b),
+                store,
+            )
+            self._docx_styles.align_styles_after_batch(
                 ci,
                 chapter,
                 batch_start,
