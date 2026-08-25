@@ -1,4 +1,4 @@
-"""审校 / 润色 / 回译抽检 测试（离线）。"""
+"""审校 / 润色测试（离线）。"""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ import threading
 import unittest
 
 from trans_novel.agents.polisher import Polisher
-from trans_novel.agents.reviewer import BackTranslator, Reviewer, ReviewOutputError
+from trans_novel.agents.reviewer import Reviewer, ReviewOutputError
 from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.review_run import ReviewRunStore
+from trans_novel.review.run_store import ReviewRunStore
 
 
 def _cfg():
@@ -143,7 +143,7 @@ class TestReviewer(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             debug = ReviewRunStore(d)
-            issues = orch._review_chapter(
+            issues = orch._review.review_chapter(
                 [
                     Segment(index=0, source="源文0", target="译文0"),
                     Segment(index=1, source="源文1", target="译文1"),
@@ -229,7 +229,7 @@ class TestReviewer(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             debug = ReviewRunStore(d)
-            issues = orch._review_chapter(
+            issues = orch._review.review_chapter(
                 segments,
                 [],
                 chapter_index=7,
@@ -260,7 +260,7 @@ class TestReviewer(unittest.TestCase):
         cfg.pipeline.review_output_retries = 2
         client = FakeClient(handler=handler)
 
-        issues = Orchestrator(cfg, client=client)._review_chapter(
+        issues = Orchestrator(cfg, client=client)._review.review_chapter(
             [Segment(index=0, source="源文", target="译文")],
             [],
         )
@@ -274,7 +274,7 @@ class TestReviewer(unittest.TestCase):
         client = FakeClient(handler=lambda m, t, j: "")
 
         with self.assertRaisesRegex(ReviewOutputError, "malformed_json"):
-            Orchestrator(cfg, client=client)._review_chapter(
+            Orchestrator(cfg, client=client)._review.review_chapter(
                 [Segment(index=0, source="源文", target="译文")],
                 [],
             )
@@ -309,7 +309,7 @@ class TestReviewer(unittest.TestCase):
             Segment(index=1, source="源文乙", target="译文乙"),
         ]
 
-        issues = orch._review_chapter(segments, [])
+        issues = orch._review.review_chapter(segments, [])
 
         self.assertEqual([it["index"] for it in issues], [0, 1])
         self.assertEqual([it["detail"] for it in issues], ["甲", "乙"])
@@ -334,24 +334,6 @@ class TestPolisher(unittest.TestCase):
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(out, ["甲", "乙"])  # 段数不符 → 保守保留原译
-
-
-class TestBackTranslator(unittest.TestCase):
-    def test_check(self):
-        def handler(messages, tier, json_mode):
-            system = messages[0]["content"]
-            if "回译译者" in system:
-                return json.dumps({"backtranslations": ["あ", "い"]}, ensure_ascii=False)
-            if "保真度" in system:
-                return json.dumps(
-                    {"issues": [{"index": 1, "detail": "含义改变"}]}, ensure_ascii=False
-                )
-            return "{}"
-
-        bt = BackTranslator(FakeClient(handler=handler), _cfg())
-        issues = bt.check(["あ", "い"], ["甲", "乙"])
-        self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0]["index"], 1)
 
 
 if __name__ == "__main__":

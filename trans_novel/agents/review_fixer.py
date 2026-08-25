@@ -62,6 +62,15 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _dialogue_quote_pairs(text: str) -> int:
+    """粗略计数完整双引号对，用于阻止 Fixer 丢失既有对话边界。"""
+    return (
+        text.count('"') // 2
+        + min(text.count("“"), text.count("”"))
+        + min(text.count("「"), text.count("」"))
+    )
+
+
 def _patch_id(
     *,
     round_number: int,
@@ -308,6 +317,12 @@ class ReviewFixer(Agent):
         replacement = replacement.strip()
         if replacement == current_target.strip():
             raise ReviewFixerProtocolError("unchanged_replacement")
+        required_quote_pairs = min(
+            _dialogue_quote_pairs(source),
+            _dialogue_quote_pairs(current_target),
+        )
+        if _dialogue_quote_pairs(replacement) < required_quote_pairs:
+            raise ReviewFixerProtocolError("dropped_dialogue_quotes")
 
         return ProvisionalPatch(
             patch_id=_patch_id(

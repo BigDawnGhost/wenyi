@@ -376,18 +376,6 @@ $candidates_json
 请逐项核对首次译文，输出 JSON：{"terms":[...]}。\
 """)
 
-BACKTRANSLATE_SYSTEM = Template("""\
-你是回译译者。把给定的中文译文回译成$src_label，只看中文、忠实表达其含义，输出 JSON：
-{"backtranslations":["...",...]}，长度与输入一致。\
-""")
-
-BACKTRANSLATE_USER = Template("""\
-【中文译文】（共 $n 段）
-$numbered_target
-
-输出 JSON：{"backtranslations":[...]}。\
-""")
-
 CHAPTER_DIGEST_SYSTEM = Template("""\
 你是小说章节梗概员。阅读给定的$src_label单章原文，用简体中文写出该章梗概（不超过 200 字）：
 交代本章关键情节推进、登场人物及其处境、重要信息或转折，去除细枝末节。只输出梗概正文，不要解释。\
@@ -438,8 +426,6 @@ _DEFAULTS = {
     "glossary_extractor_user": GLOSSARY_EXTRACTOR_USER,
     "glossary_history_system": GLOSSARY_HISTORY_SYSTEM,
     "glossary_history_user": GLOSSARY_HISTORY_USER,
-    "backtranslate_system": BACKTRANSLATE_SYSTEM,
-    "backtranslate_user": BACKTRANSLATE_USER,
     "chapter_digest_system": CHAPTER_DIGEST_SYSTEM,
     "chapter_digest_user": CHAPTER_DIGEST_USER,
     "book_synopsis_system": BOOK_SYNOPSIS_SYSTEM,

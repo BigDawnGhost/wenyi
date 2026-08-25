@@ -55,7 +55,7 @@ llm:
     fast:
       model: deepseek-v4-flash
       options:
-        thinking: false
+        thinking: true
 ```
 
 `max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries transient transport failures, HTTP 408/409/429 and 5xx responses, plus empty model responses; each wait is recorded in the book's `events.jsonl`.
@@ -176,7 +176,6 @@ Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` pr
 pipeline:
   review: false
   polish: true
-  backtranslate_sample: 0
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
@@ -196,7 +195,6 @@ pipeline:
 
 - `review`: disabled by default; when enabled, automatically run the evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
-- `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
@@ -263,4 +261,4 @@ paths:
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
 - `punctuation.normalize`: normalize output to common full-width Simplified Chinese punctuation.
-- `state_dir`: location of checkpoints, chapter files, the glossary database, usage data, and reports.
+- `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.

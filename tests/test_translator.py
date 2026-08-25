@@ -49,6 +49,42 @@ class TestTranslatorAlignment(unittest.TestCase):
         self.assertEqual(len(out), 3)
         self.assertEqual(out, ["译0", "译1", "译2"])
 
+    def test_nonlinguistic_table_cells_are_preserved_without_model_input(self):
+        def handler(messages, tier, json_mode):
+            user = messages[-1]["content"]
+            self.assertNotIn("-", user.split("【待译", 1)[-1])
+            n = _count_segments(user)
+            return json.dumps({"translations": [f"译{i}" for i in range(n)]}, ensure_ascii=False)
+
+        client = FakeClient(handler=handler)
+        translator = Translator(client, self._config())
+
+        result = translator.translate_batch(["本文", "-", "42", "—", "3.14%"])
+
+        self.assertEqual(result, ["译0", "-", "42", "—", "3.14%"])
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(_count_segments(client.calls[0]["messages"][-1]["content"]), 1)
+
+    def test_all_nonlinguistic_segments_skip_model(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: self.fail("model must not be called")
+        )
+        translator = Translator(client, self._config())
+
+        result = translator.translate_batch(["-", "42", "……", "(100%)"])
+
+        self.assertEqual(result, ["-", "42", "……", "(100%)"])
+        self.assertEqual(client.calls, [])
+
+    def test_fallback_error_reports_original_segment_index_after_filtering(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps({"translations": []})
+        )
+        translator = Translator(client, self._config())
+
+        with self.assertRaisesRegex(Exception, "第 1 段失败"):
+            translator.translate_batch(["-", "本文", "42"])
+
     def test_fallback_to_per_segment_on_mismatch(self):
         # 多段批次故意少返回一段；单段调用正常 → 触发逐段兜底
         def handler(messages, tier, json_mode):

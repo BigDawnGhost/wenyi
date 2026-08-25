@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 
 from trans_novel.glossary.store import (
     TYPE_APPELLATION,
@@ -184,26 +182,6 @@ class TestGlossary(unittest.TestCase):
             self.assertEqual(len(check.open_conflicts()), 1)
         finally:
             check.close()
-
-    def test_opening_store_removes_legacy_translation_memory_table(self):
-        self.store.close()
-        with closing(sqlite3.connect(self.store.db_path)) as conn:
-            conn.execute(
-                """CREATE TABLE translation_memory (
-                    source_hash TEXT PRIMARY KEY,
-                    source_text TEXT NOT NULL,
-                    target_text TEXT NOT NULL
-                )"""
-            )
-            conn.execute("INSERT INTO translation_memory VALUES ('hash', 'source', 'target')")
-            conn.commit()
-
-        self.store = GlossaryStore(self.store.db_path)
-        row = self.store.conn.execute(
-            """SELECT 1 FROM sqlite_master
-               WHERE type='table' AND name='translation_memory'"""
-        ).fetchone()
-        self.assertIsNone(row)
 
     def test_stats(self):
         self.store.upsert_term(GlossaryTerm(source="A", target="甲"))

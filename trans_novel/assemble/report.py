@@ -9,19 +9,17 @@ from ..pipeline.runstore import STATUS_DONE, RunStore
 
 
 def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
-    """汇总完成进度、空译文、术语冲突、回译和最新 Review 摘要。"""
+    """汇总完成进度、空译文、术语冲突和最新 Review 摘要。"""
     m = store.load_manifest()
     chapters_total = len(m["chapters"])
     chapters_done = sum(1 for c in m["chapters"] if c["status"] == STATUS_DONE)
 
-    bt_issues: list[dict] = []
     empty_targets: list[dict] = []
 
     for c in m["chapters"]:
         if c["status"] != STATUS_DONE:
             continue
         ch = store.load_chapter(c["index"])
-        bt_issues.extend(ch.meta.get("backtranslation_issues", []))
         for s in ch.text_segments:
             if not (s.target and s.target.strip()):
                 empty_targets.append(
@@ -37,11 +35,9 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
             "chapters_done": chapters_done,
             "terms": gstats["terms"],
             "open_conflicts": len(conflicts),
-            "backtranslation_issues": len(bt_issues),
             "empty_targets": len(empty_targets),
         },
         "open_conflicts": conflicts,
-        "backtranslation_issues": bt_issues,
         "empty_targets": empty_targets,
     }
     review = store.load_latest_review_result()

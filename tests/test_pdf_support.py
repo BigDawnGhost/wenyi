@@ -156,7 +156,7 @@ class TestPdfIngest(unittest.TestCase):
                 }
             )
 
-            with patch("trans_novel.pipeline.orchestrator._RUN_METRICS_ENABLED", True):
+            with patch("trans_novel.pipeline.runtime._RUN_METRICS_ENABLED", True):
                 with (
                     patch(
                         "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
@@ -583,7 +583,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                     },
                 ),
                 patch(
-                    "trans_novel.assemble.writer._find_fpdf_font",
+                    "trans_novel.assemble.pdf_writer._find_fpdf_font",
                     return_value=font_path,
                 ),
             ):

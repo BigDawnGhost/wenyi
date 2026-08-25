@@ -245,8 +245,10 @@ class TestCliConfig(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("--chapter 只翻译并保存指定章节", " ".join(result.output.split()))
-        self.assertIn("--review/--no-review", result.output)
+        # CliRunner may wrap the message on Windows; compare ignoring whitespace.
+        compact = "".join(result.output.split())
+        self.assertIn("--chapter只翻译并保存指定章节", compact)
+        self.assertIn("--review/--no-review", compact)
 
     def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
         result = CliRunner().invoke(app, ["--help"])
@@ -469,7 +471,7 @@ class TestCliConfig(unittest.TestCase):
                             "chapters_total": 2,
                             "terms": 3,
                             "open_conflicts": 0,
-                            "backtranslation_issues": 0,
+                            "empty_targets": 0,
                         }
                     },
                 }
@@ -521,7 +523,7 @@ class TestCliConfig(unittest.TestCase):
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
         ):
-            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "docx"])
+            result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "xml"])
 
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn("不支持的输出格式", result.output)
