@@ -10,13 +10,23 @@ from typing import Any
 
 from docx import Document as open_docx
 from docx.document import Document as DocxDocument
-from docx.enum.text import WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from ..ingest.models import KIND_HEADING, Chapter
+from ..pipeline.docx_styles import proportional_range_placements
 from ..pipeline.runstore import RunStore
 from .writer_common import _bilingual_source, _ch_title, _ordered_pair, _seg_text
+
+_ALIGN_MAP = {
+    "left": WD_ALIGN_PARAGRAPH.LEFT,
+    "center": WD_ALIGN_PARAGRAPH.CENTER,
+    "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    "both": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    "distribute": WD_ALIGN_PARAGRAPH.DISTRIBUTE,
+}
 
 
 def _set_outline_level(paragraph, level: int) -> None:
@@ -98,16 +108,43 @@ def _style_slices(
     return slices or [(text, style)]
 
 
+def _apply_paragraph_align(paragraph, align: str | None) -> None:
+    """应用段落对齐。"""
+    if not align:
+        return
+    value = _ALIGN_MAP.get(str(align).strip().lower())
+    if value is not None:
+        paragraph.alignment = value
+
+
+def _apply_paragraph_shade(paragraph, shade: str | None) -> None:
+    """应用段落底纹填充色。"""
+    if not shade:
+        return
+    p_pr = paragraph._p.get_or_add_pPr()  # noqa: SLF001
+    shd = p_pr.find(qn("w:shd"))
+    if shd is None:
+        shd = p_pr.makeelement(qn("w:shd"), {})
+        p_pr.append(shd)
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), str(shade).upper()[-6:])
+
+
 def _fill_paragraph(
     paragraph,
     text: str,
     *,
     style: dict[str, Any] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    align: str | None = None,
+    shade: str | None = None,
     dim: bool = False,
 ) -> None:
     """清空并按样式切片写入段落。"""
     paragraph.clear()
+    _apply_paragraph_align(paragraph, align)
+    _apply_paragraph_shade(paragraph, shade)
     for fragment, frag_style in _style_slices(text, style, placements):
         run = paragraph.add_run(fragment)
         _apply_run_style(run, frag_style)
@@ -127,6 +164,8 @@ def _add_heading(
     *,
     style: dict[str, Any] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    align: str | None = None,
+    shade: str | None = None,
 ) -> None:
     level = max(1, min(9, level))
     style_name = f"Heading {level}"
@@ -139,7 +178,14 @@ def _add_heading(
         except (KeyError, ValueError):
             pass
     _set_outline_level(paragraph, level)
-    _fill_paragraph(paragraph, text, style=style, placements=placements)
+    _fill_paragraph(
+        paragraph,
+        text,
+        style=style,
+        placements=placements,
+        align=align,
+        shade=shade,
+    )
 
 
 def _add_normal(
@@ -148,10 +194,20 @@ def _add_normal(
     *,
     style: dict[str, Any] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    align: str | None = None,
+    shade: str | None = None,
     dim: bool = False,
 ) -> None:
     paragraph = doc.add_paragraph()
-    _fill_paragraph(paragraph, text, style=style, placements=placements, dim=dim)
+    _fill_paragraph(
+        paragraph,
+        text,
+        style=style,
+        placements=placements,
+        align=align,
+        shade=shade,
+        dim=dim,
+    )
 
 
 def _add_bilingual_paragraphs(
@@ -162,31 +218,48 @@ def _add_bilingual_paragraphs(
     *,
     style: dict[str, Any] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    align: str | None = None,
+    shade: str | None = None,
 ) -> None:
     src = _bilingual_source(source, target)
     if not src:
-        _add_normal(doc, target, style=style, placements=placements)
+        _add_normal(doc, target, style=style, placements=placements, align=align, shade=shade)
         return
     first, second = _ordered_pair(src, target, order)
     if order == "source_first":
-        _add_normal(doc, first, dim=False)
-        _add_normal(doc, second, style=style, placements=placements, dim=False)
+        _add_normal(doc, first, dim=False, align=align, shade=shade)
+        _add_normal(doc, second, style=style, placements=placements, align=align, shade=shade)
     else:
-        _add_normal(doc, first, style=style, placements=placements)
-        _add_normal(doc, second, dim=True)
+        _add_normal(doc, first, style=style, placements=placements, align=align, shade=shade)
+        _add_normal(doc, second, dim=True, align=align, shade=shade)
 
 
-def _segment_style_payload(meta: dict[str, Any]) -> tuple[dict[str, Any] | None, list | None]:
-    """返回 (整段样式, 混排 placements)。"""
+def _segment_style_payload(
+    meta: dict[str, Any],
+    *,
+    source: str,
+    output_text: str,
+) -> tuple[dict[str, Any] | None, list | None, str | None, str | None]:
+    """返回 (整段样式, 混排 placements, align, shade)。
+
+    若混排尚无 placements（未对齐或未翻译就导出），按源文偏移比例映到当前写出文本，
+    这样「Adam Kuper」加粗等在回退原文导出时也不会丢。
+    """
+    align = meta.get("align") if isinstance(meta.get("align"), str) else None
+    shade = meta.get("shade") if isinstance(meta.get("shade"), str) else None
     uniform = meta.get("docx_style")
     if isinstance(uniform, dict) and uniform:
-        return uniform, None
+        return uniform, None, align, shade
     styles = meta.get("docx_styles")
-    if isinstance(styles, dict):
-        placements = styles.get("placements")
-        if isinstance(placements, list) and placements:
-            return None, placements
-    return None, None
+    if not isinstance(styles, dict):
+        return None, None, align, shade
+    placements = styles.get("placements")
+    if isinstance(placements, list) and placements:
+        return None, placements, align, shade
+    items = styles.get("items")
+    if isinstance(items, list) and items:
+        return None, proportional_range_placements(source, output_text, items), align, shade
+    return None, None, align, shade
 
 
 def _flush_table(
@@ -206,7 +279,9 @@ def _flush_table(
     for r in range(rows):
         for c in range(cols):
             target, source, meta = cells.get((r, c), ("", "", {}))
-            style, placements = _segment_style_payload(meta)
+            style, placements, align, shade = _segment_style_payload(
+                meta, source=source, output_text=target
+            )
             cell = table.cell(r, c)
             cell.text = ""
             paragraph = cell.paragraphs[0]
@@ -214,15 +289,36 @@ def _flush_table(
                 src = _bilingual_source(source, target)
                 if src:
                     first, second = _ordered_pair(src, target, order)
-                    _fill_paragraph(paragraph, first, style=style, placements=placements)
+                    _fill_paragraph(
+                        paragraph,
+                        first,
+                        style=style,
+                        placements=placements,
+                        align=align,
+                        shade=shade,
+                    )
                     paragraph.add_run("\n")
                     dim_run = paragraph.add_run(second)
                     dim_run.font.size = Pt(9)
                     dim_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
                 else:
-                    _fill_paragraph(paragraph, target, style=style, placements=placements)
+                    _fill_paragraph(
+                        paragraph,
+                        target,
+                        style=style,
+                        placements=placements,
+                        align=align,
+                        shade=shade,
+                    )
             else:
-                _fill_paragraph(paragraph, target, style=style, placements=placements)
+                _fill_paragraph(
+                    paragraph,
+                    target,
+                    style=style,
+                    placements=placements,
+                    align=align,
+                    shade=shade,
+                )
 
 
 def _emit_chapter_blocks(
@@ -287,9 +383,19 @@ def _emit_chapter_blocks(
             i += 1
         target = "".join(target_parts)
         source = "".join(source_parts)
-        style, placements = _segment_style_payload(style_meta)
+        style, placements, align, shade = _segment_style_payload(
+            style_meta, source=source, output_text=target
+        )
         if kind == KIND_HEADING:
-            _add_heading(doc, target, heading_level, style=style, placements=placements)
+            _add_heading(
+                doc,
+                target,
+                heading_level,
+                style=style,
+                placements=placements,
+                align=align,
+                shade=shade,
+            )
         elif bilingual:
             _add_bilingual_paragraphs(
                 doc,
@@ -298,9 +404,18 @@ def _emit_chapter_blocks(
                 order,
                 style=style,
                 placements=placements,
+                align=align,
+                shade=shade,
             )
         else:
-            _add_normal(doc, target, style=style, placements=placements)
+            _add_normal(
+                doc,
+                target,
+                style=style,
+                placements=placements,
+                align=align,
+                shade=shade,
+            )
 
 
 def _assemble_docx(

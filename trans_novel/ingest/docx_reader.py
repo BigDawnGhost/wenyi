@@ -64,6 +64,40 @@ def _outline_level(paragraph: DocxParagraph) -> int | None:
     return None
 
 
+def _paragraph_align(paragraph: DocxParagraph) -> str | None:
+    """读取段落对齐：center / left / right / both / distribute。"""
+    alignment = paragraph.alignment
+    if alignment is not None:
+        mapping = {
+            0: "left",
+            1: "center",
+            2: "right",
+            3: "both",
+            4: "distribute",
+        }
+        name = mapping.get(int(alignment))
+        if name:
+            return name
+        # Enum may expose .name
+        raw = getattr(alignment, "name", None)
+        if isinstance(raw, str) and raw.lower() in mapping.values():
+            return raw.lower()
+    try:
+        p_pr = paragraph._p.pPr  # noqa: SLF001
+    except AttributeError:
+        p_pr = None
+    if p_pr is not None:
+        jc = p_pr.find(qn("w:jc"))
+        if jc is not None:
+            value = jc.get(qn("w:val"))
+            if isinstance(value, str) and value:
+                # OOXML uses "both" for justify; accept common aliases
+                normalized = value.strip().lower()
+                if normalized in {"left", "center", "right", "both", "distribute", "justify"}:
+                    return "both" if normalized == "justify" else normalized
+    return None
+
+
 def _run_style(run) -> dict[str, Any]:
     """抽取单个 run 的可见字符样式（仅显式设置的字段）。"""
     style: dict[str, Any] = {}
@@ -86,10 +120,39 @@ def _run_style(run) -> dict[str, Any]:
     color = run.font.color
     if color is not None and color.rgb is not None:
         style["color"] = str(color.rgb)
+    else:
+        # 主题色/直写 w:color 时 rgb 可能为空，回退读 XML
+        try:
+            r_pr = run._r.rPr  # noqa: SLF001
+        except AttributeError:
+            r_pr = None
+        if r_pr is not None:
+            color_node = r_pr.find(qn("w:color"))
+            if color_node is not None:
+                value = color_node.get(qn("w:val"))
+                if isinstance(value, str) and value and value.lower() not in {"auto", "nil"}:
+                    style["color"] = value.upper()
     name = run.font.name
     if isinstance(name, str) and name.strip():
         style["font"] = name.strip()
     return style
+
+
+def _paragraph_shade(paragraph: DocxParagraph) -> str | None:
+    """读取段落底纹填充色（w:shd/@w:fill）。"""
+    try:
+        p_pr = paragraph._p.pPr  # noqa: SLF001
+    except AttributeError:
+        return None
+    if p_pr is None:
+        return None
+    shd = p_pr.find(qn("w:shd"))
+    if shd is None:
+        return None
+    fill = shd.get(qn("w:fill"))
+    if isinstance(fill, str) and fill and fill.lower() not in {"auto", "nil"}:
+        return fill.upper()
+    return None
 
 
 def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
@@ -97,7 +160,8 @@ def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 
 def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[str, Any]]:
-    """合并段落 runs 为纯文本，并生成 docx_style / docx_styles meta。"""
+    """合并段落 runs 为纯文本，并生成 align / docx_style / docx_styles meta。"""
+    align = _paragraph_align(paragraph)
     spans: list[dict[str, Any]] = []
     parts: list[str] = []
     offset = 0
@@ -110,8 +174,17 @@ def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[
         parts.append(text)
         offset = end
     text = "".join(parts).strip()
+    shade = _paragraph_shade(paragraph)
+
+    def _with_para_props(meta: dict[str, Any]) -> dict[str, Any]:
+        if align:
+            meta = {**meta, "align": align}
+        if shade:
+            meta = {**meta, "shade": shade}
+        return meta
+
     if not text:
-        return "", {}
+        return "", _with_para_props({})
 
     # strip() 可能去掉首尾空白：按 strip 后的文本重算相对偏移
     leading = len("".join(parts)) - len("".join(parts).lstrip())
@@ -128,7 +201,7 @@ def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[
         text = stripped
 
     if not spans:
-        return text, {}
+        return text, _with_para_props({})
 
     merged: list[dict[str, Any]] = []
     for span in spans:
@@ -146,7 +219,7 @@ def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[
     fingerprints = {_style_fingerprint(item["style"]) for item in merged}
     if len(fingerprints) <= 1:
         style = merged[0]["style"]
-        return text, ({"docx_style": style} if style else {})
+        return text, _with_para_props({"docx_style": style} if style else {})
 
     items: list[dict[str, Any]] = []
     for index, span in enumerate(merged):
@@ -162,11 +235,11 @@ def _paragraph_text_and_style_meta(paragraph: DocxParagraph) -> tuple[str, dict[
             }
         )
     if not items:
-        return text, {}
+        return text, _with_para_props({})
     if len(items) == 1 and items[0]["source_start"] == 0 and items[0]["source_end"] == len(text):
         style = {key: items[0][key] for key in _STYLE_KEYS if key in items[0]}
-        return text, {"docx_style": style}
-    return text, {"docx_styles": {"items": items}}
+        return text, _with_para_props({"docx_style": style})
+    return text, _with_para_props({"docx_styles": {"items": items}})
 
 
 def _cell_text_and_style(cell) -> tuple[str, dict[str, Any]]:

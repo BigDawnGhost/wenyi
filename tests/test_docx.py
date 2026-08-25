@@ -150,6 +150,55 @@ class TestDocxStyles(unittest.TestCase):
             self.assertTrue(runs)
             self.assertTrue(runs[0].bold)
 
+    def test_assemble_preserves_center_and_mixed_bold_without_placements(self):
+        """未跑样式对齐时，导出仍应用居中与混排加粗（比例回退）。"""
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import RGBColor
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "mixed.docx")
+            src = DocxDocument()
+            title = src.add_heading("Title", level=1)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph = src.add_paragraph()
+            bold = paragraph.add_run("Adam Kuper")
+            bold.bold = True
+            bold.font.color.rgb = RGBColor(0x11, 0x22, 0x33)
+            paragraph.add_run(" is a writer.")
+            src.save(path)
+            book = read_docx(path, "en", "zh")
+            self.assertEqual(book.chapters[0].segments[0].meta.get("align"), "center")
+            store = RunStore(os.path.join(directory, "state", "mixed"))
+            store.save_manifest(
+                {
+                    "title": "mixed",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            chapter = book.chapters[0]
+            for segment in chapter.segments:
+                segment.target = segment.source
+            store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path)
+            result = DocxDocument(out_path)
+            self.assertEqual(result.paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
+            adam = next(p for p in result.paragraphs if p.text.startswith("Adam Kuper"))
+            first = next(run for run in adam.runs if run.text.startswith("Adam"))
+            self.assertTrue(first.bold)
+            self.assertEqual(str(first.font.color.rgb), "112233")
+
 
 class TestDocxAssemble(unittest.TestCase):
     def test_assemble_rebuilds_headings_and_table(self):
