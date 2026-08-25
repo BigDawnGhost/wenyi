@@ -69,13 +69,13 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 
 ## 输入与输出
 
-- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
-- 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
-- `--format txt|html|markdown|pdf`：改为导出指定格式；所有输入默认仍生成 EPUB。
+- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、SRT。
+- 书籍默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
+- `--format txt|html|markdown|pdf`：书籍输入可改为导出指定格式；书籍输入默认仍生成 EPUB。该选项不适用于 SRT。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
-- 状态文件位于 `state/`，包含章节中间结果、术语 SQLite 库和报告。
+- 书籍状态位于 `state/<书名>/`，含章节中间结果、术语 SQLite 库、用量和报告。字幕运行使用独立目录树 `state/srt/`（见 [SRT 字幕](#srt-字幕)）。
 
 ### 实验性 PDF 支持
 
@@ -117,6 +117,36 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
 Windows。
 
+## SRT 字幕
+
+`translate` 会按扩展名自动分流 `.srt`。字幕路径比书籍管线更轻：
+
+- 滑窗 20 条、重叠 10，最多 100 路并发 strong 档调用；
+- 无术语库、润色、章末回译抽检或全书审校；
+- `--chapter`、`--polish`、`--review`、`--format` 在不适用时会被忽略或拒绝；
+- 默认写出单语 `output/<stem>.zh.srt`；加 `--bilingual` 可生成 `.zh-bi.srt`。
+
+```bash
+uv run trans-novel translate movie.srt
+uv run trans-novel translate movie.srt --bilingual
+uv run trans-novel translate movie.srt --no-mono --bilingual
+```
+
+再次对同一源文件执行即可续跑；已缓存的
+`state/srt/<slug>/batches/` 会跳过。目录布局：
+
+```text
+state/srt/<slug>/
+  manifest.json    # 源身份、字幕条数、滑窗配置
+  cues.jsonl       # 每行一条：index / timestamp / source / target / status
+  batches/         # 模型原始批次结果，供续跑
+  usage.json       # 跨 resume 累计 token
+  events.jsonl     # 运行事件与 LLM 重试观察
+```
+
+字幕路径不会生成 `glossary.db` 或 `reviews/`。包代码在 `trans_novel.srt`
+（store + translate），读写分别在 `ingest.srt_reader` 与 `assemble.srt_writer`。
+
 ## 单次运行指标
 
 `state/<书名>/usage.json` 继续保存这本书跨续跑累计的 token 总账。`translate`、
@@ -145,6 +175,7 @@ uv run trans-novel translate book.epub --chapter 3
 uv run trans-novel translate book.epub --format txt
 uv run trans-novel prepare book.epub
 uv run trans-novel translate book.pdf
+uv run trans-novel translate movie.srt
 
 # 覆盖配置中的润色与最终审校开关
 uv run trans-novel translate book.epub --polish --review

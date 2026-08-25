@@ -282,6 +282,65 @@ def _translate_impl(
         raise typer.Exit(1) from None
 
 
+def _translate_srt_or_raise(
+    input_path: str,
+    *,
+    chapter: int | None = None,
+    fmt: str = "epub",
+    out: str | None = None,
+    polish: bool | None = None,
+    review: bool | None = None,
+    mono: bool | None = None,
+    bilingual: bool | None = None,
+) -> None:
+    """字幕翻译：无术语库，strong 档高并发，状态落在 state/srt/。"""
+    from .srt.translate import translate_srt
+
+    if chapter is not None:
+        raise ValueError("SRT 字幕翻译不支持 --chapter")
+    ignored: list[str] = []
+    if fmt != "epub":
+        ignored.append("--format")
+    if polish is not None:
+        ignored.append("--polish/--no-polish")
+    if review is not None:
+        ignored.append("--review/--no-review")
+    if ignored:
+        raise ValueError("SRT 字幕翻译不支持：" + "、".join(ignored))
+
+    config = _load_config()
+    if mono is not None:
+        config.output.mono = mono
+    if bilingual is not None:
+        config.output.bilingual = bilingual
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as prog:
+        cb = _RichProgressBridge(prog, "翻译字幕…")
+        result = translate_srt(
+            input_path,
+            config,
+            out=out,
+            mono=mono,
+            bilingual=bilingual,
+            progress=cb,
+        )
+
+    console.print(
+        f"[bold green]字幕翻译完成[/]：{result['translated']}/{result['cue_count']} 条，"
+        f"状态目录：{result['run_dir']}"
+    )
+    _print_usage({"usage": result.get("usage") or {}})
+    for path in result.get("outputs") or []:
+        console.print(f"译文：[bold]{path}[/]")
+
+
 def _translate_impl_or_raise(
     input_path: str,
     *,
@@ -298,6 +357,19 @@ def _translate_impl_or_raise(
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input_path)
+    if os.path.splitext(input_path)[1].lower() == ".srt":
+        _translate_srt_or_raise(
+            input_path,
+            chapter=chapter,
+            fmt=fmt,
+            out=out,
+            polish=polish,
+            review=review,
+            mono=mono,
+            bilingual=bilingual,
+        )
+        return
+
     fmt = _validate_output_format(fmt)
     pdf_engine = _validate_pdf_engine(pdf_engine)
     config = _load_config()
@@ -455,7 +527,7 @@ def _print_usage(report: dict) -> None:
 def translate(
     input: str = typer.Argument(
         ...,
-        help="待翻译书籍（EPUB / FB2 / TXT / Markdown / HTML / PDF）",
+        help="待翻译书籍或字幕（EPUB / FB2 / TXT / Markdown / HTML / PDF / SRT）",
     ),
     chapter: int | None = typer.Option(
         None,
@@ -750,7 +822,7 @@ def report(
     console.print(f"翻译报告已写入 {store.report_path}")
     console.print(
         f"  章节 {s['chapters_done']}/{s['chapters_total']}  术语 {s['terms']}  "
-        f"待裁决冲突 {s['open_conflicts']}  回译疑点 {s['backtranslation_issues']}"
+        f"待裁决冲突 {s['open_conflicts']}  空译文 {s['empty_targets']}"
     )
 
 

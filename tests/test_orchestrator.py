@@ -29,7 +29,7 @@ from trans_novel.pipeline.runstore import (
     slugify,
     source_sha256,
 )
-from trans_novel.pipeline.translation import TranslationService, _BatchResult
+from trans_novel.pipeline.translation import TranslationService
 
 
 def _translated_para_count(calls) -> int:
@@ -86,7 +86,6 @@ def _config(state_dir: str):
             "pipeline": {
                 "review": True,
                 "polish": True,
-                "backtranslate_sample": 0.0,
             },
             "paths": {"state_dir": state_dir},
         }
@@ -322,7 +321,7 @@ class TestOrchestrator(unittest.TestCase):
 
             def process(batch, *args, annotation_contexts=None, **kwargs):
                 captured.append(annotation_contexts or [])
-                return _BatchResult(targets=[f"译{segment.source}" for segment in batch])
+                return [f"译{segment.source}" for segment in batch]
 
             try:
                 with (
@@ -2736,8 +2735,6 @@ class TestTierRouting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.pipeline.backtranslate_sample = 1.0  # 强制触发回译
-
             client = FakeClient(handler=routing_handler)
             orch = Orchestrator(cfg, client=client)
             orch.run(txt)
@@ -2747,9 +2744,7 @@ class TestTierRouting(unittest.TestCase):
                 "章节梗概员": "fast",
                 "全书概览员": "fast",
                 "术语与称呼抽取器": "fast",
-                "回译译者": "fast",
                 "译文审校": "cheap",
-                "保真度": "cheap",
                 "文学翻译": "strong",
             }
             seen = set()

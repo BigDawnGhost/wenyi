@@ -42,7 +42,7 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 | Segments translated in isolation, unaware of surrounding content | Whole-book prescan with chapter digests and rolling context |
 | Glossary managed manually or as an afterthought | Real-time term extraction with conflict detection, fed back into subsequent batches |
 | Single-pass translation, fragile to interruptions | Batch checkpoints and chapter status tracking: resume any interrupted run with the same command |
-| Raw model output, no systematic quality process | Translate → polish → chapter-level backtranslation sampling → evidence-driven whole-book review |
+| Raw model output, no systematic quality process | Translate → polish → evidence-driven whole-book review |
 
 Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
 
@@ -52,7 +52,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 
 - **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- **Multi-stage quality** — optional polishing (strong model), backtranslation sampling, and an evidence-driven whole-book AI review
+- **Multi-stage quality** — optional polishing (strong model) and an evidence-driven whole-book AI review
 - **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
 - **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
@@ -148,10 +148,12 @@ run usage, events, and internal round records are written under
 | Input | Output |
 |---|---|
 | EPUB, FB2, TXT, Markdown, HTML, PDF | EPUB (monolingual / bilingual), TXT, HTML, Markdown |
+| SRT (movie / series subtitles) | `.zh.srt` (monolingual) and optional `.zh-bi.srt` (bilingual) |
 
 - PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
+- `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
 
 ---
 
@@ -173,7 +175,7 @@ flowchart TD
         H -- Yes --> E
         H -- No --> I[Normalize remaining punctuation]
         I --> IB[Run chapter-level fallback term extraction]
-        IB --> J[Check backtranslation samples and persist the final chapter]
+        IB --> J[Persist the final chapter]
     end
 
     J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
@@ -208,6 +210,7 @@ Translated state directories for public-domain books may be shared through [weny
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
 - PDF input depends on the MinerU external service; the initial conversion requires an API key.
+- SRT translation is a light concurrent path: no glossary, polishing, or whole-book review, and slug collision is possible for identically named files in different folders.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large state directories; storage requirements grow with book length.
 
@@ -242,4 +245,4 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## AtomGit (China)
 
-Wenyi is also hosted on AtomGit: [https://gitcode.com/2403_86951519/wenyi](https://gitcode.com/2403_86951519/wenyi)
+Wenyi is also hosted on AtomGit: [https://atomgit.com/BigDawnGhost/wenyi](https://atomgit.com/BigDawnGhost/wenyi)

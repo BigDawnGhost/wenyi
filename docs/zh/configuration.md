@@ -192,7 +192,6 @@ DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应�
 pipeline:
   review: false
   polish: true
-  backtranslate_sample: 0
   rolling_context_segments: 6
   book_understanding: true
   prescan_concurrency: 4
@@ -212,7 +211,6 @@ pipeline:
 
 - `review`：默认关闭；开启后在全书翻译完成时自动执行取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
-- `backtranslate_sample`：回译抽检比例，`0` 为关闭。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
@@ -277,4 +275,4 @@ paths:
 - `max_chars_per_segment`：超长段落的拆分阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
 - `punctuation.normalize`：统一简体中文大陆常用全角标点。
-- `state_dir`：断点、章节产物、术语库和报告的位置。
+- `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。

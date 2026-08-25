@@ -225,7 +225,6 @@ class PreparationService:
                 config={
                     "review": self._runtime.config.pipeline.review,
                     "polish": self._runtime.config.pipeline.polish,
-                    "backtranslate_sample": (self._runtime.config.pipeline.backtranslate_sample),
                     "book_understanding": self._runtime.config.pipeline.book_understanding,
                     "review_concurrency": self._runtime.config.pipeline.review_concurrency,
                     "review_output_retries": (self._runtime.config.pipeline.review_output_retries),

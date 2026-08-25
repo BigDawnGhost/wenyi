@@ -23,7 +23,7 @@ from typing import Any
 from ..agents.analyzer import Analyzer
 from ..agents.annotation_aligner import AnnotationAligner
 from ..agents.polisher import Polisher
-from ..agents.reviewer import BackTranslator, Reviewer
+from ..agents.reviewer import Reviewer
 from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
 from ..config import Config
@@ -131,7 +131,6 @@ class PipelineRuntime:
         self.synopsizer = Synopsizer(self.client, config)
         self.translator = Translator(self.client, config)
         self.reviewer = Reviewer(self.client, config)
-        self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
         self.annotation_aligner = AnnotationAligner(self.client, config)
@@ -324,7 +323,6 @@ class PipelineRuntime:
             self.synopsizer,
             self.translator,
             self.reviewer,
-            self.backtrans,
             self.polisher,
             self.extractor,
             self.annotation_aligner,
