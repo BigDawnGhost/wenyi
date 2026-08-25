@@ -1521,8 +1521,9 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertEqual(out, chapter)
 
     def test_heading_wrapped_in_toc_link_keeps_translation_inside_anchor(self):
-        """整段标题被 <a href=content-toc> 包住且无对齐时，译文进链接，不挂悬空 ↩。"""
+        """整段源文被 <a href=content-toc> 包住且无对齐时，译文进链接，不挂悬空 ↩。"""
         target = "第一章"
+        source = "CHAPTER 1"
         template = (
             '<html><body><h1 data-tn-id="tn1_0">'
             '<a data-tn-annotation-id="ann-0" href="content-toc.xhtml">CHAPTER 1</a>'
@@ -1530,25 +1531,25 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         )
         segment = Segment(
             index=0,
-            source="CHAPTER 1",
+            source=source,
             target=target,
             kind="heading",
             anchor="tn1_0",
             meta={
                 "epub_annotations": {
                     "version": 1,
-                    "source_length": len("CHAPTER 1"),
+                    "source_length": len(source),
                     "items": [
                         {
                             "id": "ann-0",
                             "mode": "range",
                             "source_start": 0,
-                            "source_end": len("CHAPTER 1"),
-                            "source_text": "CHAPTER 1",
+                            "source_end": len(source),
+                            "source_text": source,
                             "marker_text": "",
                         }
                     ],
-                    # 故意不给可用 placement / digest，走「整块链接」回退路径。
+                    # 故意不给可用 placement / digest；须覆盖整段 source 才走整块回填。
                 }
             },
         )

@@ -334,9 +334,25 @@ def _annotation_restorations(
             and str(method or "").lower() not in rejected
         )
         if not usable:
-            if mode == "range" and not marker_text and len(items) == 1:
-                # Whole block/heading was wrapped by this link (e.g. <h1><a>CHAPTER 1</a></h1>)
-                # Wrap the translated text inside this link rather than appending a dangling ↩ / 目录 fallback
+            source_start = item.get("source_start")
+            source_end = item.get("source_end")
+            source_length = annotations.get("source_length")
+            # Only whole-source wraps (e.g. <h1><a>CHAPTER 1</a></h1>) keep the
+            # translation inside the link. Partial inline links still fall back to ↩.
+            covers_whole_source = (
+                mode == "range"
+                and not marker_text
+                and len(items) == 1
+                and isinstance(source_start, int)
+                and not isinstance(source_start, bool)
+                and isinstance(source_end, int)
+                and not isinstance(source_end, bool)
+                and isinstance(source_length, int)
+                and not isinstance(source_length, bool)
+                and source_start == 0
+                and source_end == source_length > 0
+            )
+            if covers_whole_source:
                 pending_ranges.append((0, len(text), order, root, [], marker_text))
                 continue
             fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
