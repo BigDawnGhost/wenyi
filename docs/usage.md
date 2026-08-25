@@ -70,9 +70,9 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 
 ## Input and output
 
-- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, and SRT.
-- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory. The bilingual `<book-name>.zh-bi.epub` is optional.
-- `--format txt|html|markdown|pdf`: export the selected format for book inputs. Every book input still produces EPUB by default. This flag does not apply to SRT.
+- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX, and SRT.
+- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx` instead). The bilingual `*.zh-bi.*` edition is optional.
+- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, `.docx` → `docx` and other books → `epub`. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
@@ -118,6 +118,20 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 Images mixed with text are placed as separate blocks. It uses a discoverable
 CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
 TTC font file. This option also works on Windows.
+
+## DOCX (Word)
+
+`translate book.docx` uses the full book Orchestrator (glossary, polish, review, resume under `state/<slug>/`).
+
+- Paragraphs and heading styles (`Heading 1`–`9` / outline levels) are extracted; level-1 headings start chapters.
+- Simple tables are translated cell-by-cell and rebuilt (no merged cells / nested tables in v1).
+- Default export is `output/<stem>.zh.docx` with heading outline for Word's Navigation pane; use `--format epub` (etc.) when needed.
+
+```bash
+uv run trans-novel translate book.docx
+uv run trans-novel translate book.docx --bilingual
+uv run trans-novel translate book.docx --format epub
+```
 
 ## SRT subtitles
 

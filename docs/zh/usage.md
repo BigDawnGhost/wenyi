@@ -69,9 +69,9 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 
 ## 输入与输出
 
-- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、SRT。
-- 书籍默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
-- `--format txt|html|markdown|pdf`：书籍输入可改为导出指定格式；书籍输入默认仍生成 EPUB。该选项不适用于 SRT。
+- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX、SRT。
+- 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认改为 `<书名>.zh.docx`）；双语版 `*.zh-bi.*` 按需开启。
+- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；未指定时 `.docx`→`docx`，其它书籍→`epub`。该选项不适用于 SRT。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
@@ -116,6 +116,20 @@ uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
 会作为独立区块输出。它会查找系统中的中文字体；如果未找到，请用
 `TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
 Windows。
+
+## DOCX（Word）
+
+`translate book.docx` 走完整书籍 Orchestrator（术语、润色、审校、`state/<slug>/` 续跑）。
+
+- 抽取段落与标题样式（`Heading 1`–`9` / outline），一级标题切章。
+- 简易表格按单元格翻译并重建（首版不支持合并单元格 / 嵌套表）。
+- 默认导出 `output/<stem>.zh.docx`，标题带大纲供 Word 导航窗格；需要时可 `--format epub` 等。
+
+```bash
+uv run trans-novel translate book.docx
+uv run trans-novel translate book.docx --bilingual
+uv run trans-novel translate book.docx --format epub
+```
 
 ## SRT 字幕
 
