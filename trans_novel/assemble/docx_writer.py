@@ -22,7 +22,6 @@ from .writer_common import (
     _bilingual_source,
     _ch_title,
     _manifest_target_lang,
-    _ordered_pair,
     _seg_text,
 )
 
@@ -71,6 +70,21 @@ def _target_output_font(target_lang: str | None) -> str | None:
     if normalized == "zh" or normalized.startswith("zh-"):
         return _ZH_FONT
     return None
+
+
+def _font_for_text(
+    output_font: str | None,
+    *,
+    source: str,
+    output_text: str,
+    is_source_side: bool = False,
+) -> str | None:
+    """译文用目标字体；未翻译回退原文或双语原文侧不套宋体。"""
+    if is_source_side or not output_font:
+        return None
+    if not output_text.strip() or output_text == source:
+        return None
+    return output_font
 
 
 def _apply_run_style(
@@ -393,6 +407,7 @@ def _add_bilingual_paragraphs(
     output_font: str | None = None,
 ) -> None:
     src = _bilingual_source(source, target)
+    target_font = _font_for_text(output_font, source=source, output_text=target)
     if not src:
         _add_normal(
             doc,
@@ -401,32 +416,32 @@ def _add_bilingual_paragraphs(
             placements=placements,
             align=align,
             shade=shade,
-            output_font=output_font,
+            output_font=target_font,
         )
         return
-    first, second = _ordered_pair(src, target, order)
+    # 译文侧可用宋体；原文侧保持默认/不强制目标字体
     if order == "source_first":
-        _add_normal(doc, first, dim=False, align=align, shade=shade, output_font=output_font)
+        _add_normal(doc, src, dim=False, align=align, shade=shade, output_font=None)
         _add_normal(
             doc,
-            second,
+            target,
             style=style,
             placements=placements,
             align=align,
             shade=shade,
-            output_font=output_font,
+            output_font=target_font,
         )
     else:
         _add_normal(
             doc,
-            first,
+            target,
             style=style,
             placements=placements,
             align=align,
             shade=shade,
-            output_font=output_font,
+            output_font=target_font,
         )
-        _add_normal(doc, second, dim=True, align=align, shade=shade, output_font=output_font)
+        _add_normal(doc, src, dim=True, align=align, shade=shade, output_font=None)
 
 
 def _segment_style_payload(
@@ -478,28 +493,40 @@ def _flush_table(
             style, placements, align, shade = _segment_style_payload(
                 meta, source=source, output_text=target
             )
+            target_font = _font_for_text(output_font, source=source, output_text=target)
             cell = table.cell(r, c)
             cell.text = ""
             paragraph = cell.paragraphs[0]
             if bilingual:
                 src = _bilingual_source(source, target)
                 if src:
-                    first, second = _ordered_pair(src, target, order)
-                    _fill_paragraph(
-                        paragraph,
-                        first,
-                        style=style,
-                        placements=placements,
-                        align=align,
-                        shade=shade,
-                        output_font=output_font,
-                    )
-                    paragraph.add_run("\n")
-                    dim_run = paragraph.add_run(second)
-                    dim_run.font.size = Pt(9)
-                    dim_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-                    if output_font:
-                        _set_run_font(dim_run, output_font)
+                    if order == "source_first":
+                        _fill_paragraph(
+                            paragraph,
+                            src,
+                            align=align,
+                            shade=shade,
+                            output_font=None,
+                        )
+                        paragraph.add_run("\n")
+                        # 译文另起逻辑：简化为同一段内第二行
+                        for fragment, frag_style in _style_slices(target, style, placements):
+                            run = paragraph.add_run(fragment)
+                            _apply_run_style(run, frag_style, output_font=target_font)
+                    else:
+                        _fill_paragraph(
+                            paragraph,
+                            target,
+                            style=style,
+                            placements=placements,
+                            align=align,
+                            shade=shade,
+                            output_font=target_font,
+                        )
+                        paragraph.add_run("\n")
+                        dim_run = paragraph.add_run(src)
+                        dim_run.font.size = Pt(9)
+                        dim_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
                 else:
                     _fill_paragraph(
                         paragraph,
@@ -508,7 +535,7 @@ def _flush_table(
                         placements=placements,
                         align=align,
                         shade=shade,
-                        output_font=output_font,
+                        output_font=target_font,
                     )
             else:
                 _fill_paragraph(
@@ -518,7 +545,7 @@ def _flush_table(
                     placements=placements,
                     align=align,
                     shade=shade,
-                    output_font=output_font,
+                    output_font=target_font,
                 )
 
 
@@ -591,6 +618,7 @@ def _emit_chapter_blocks(
         style, placements, align, shade = _segment_style_payload(
             style_meta, source=source, output_text=target
         )
+        text_font = _font_for_text(output_font, source=source, output_text=target)
         list_num_id = style_meta.get("list_num_id")
         list_ilvl = style_meta.get("list_ilvl")
         list_fmt = style_meta.get("list_fmt")
@@ -604,7 +632,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
-                output_font=output_font,
+                output_font=text_font,
             )
             last_list_num_id = None
         elif bilingual:
@@ -629,7 +657,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
-                output_font=output_font,
+                output_font=text_font,
                 list_fmt=list_fmt,
                 list_ilvl=int(list_ilvl) if isinstance(list_ilvl, int) else 0,
                 list_restart=restart,
@@ -643,7 +671,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
-                output_font=output_font,
+                output_font=text_font,
             )
             last_list_num_id = None
 

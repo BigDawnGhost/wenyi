@@ -240,6 +240,45 @@ class TestDocxStyles(unittest.TestCase):
             self.assertTrue(runs[0].bold)
             self.assertEqual(runs[0].font.name, "宋体")
 
+    def test_untranslated_source_fallback_skips_song_font(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "src.docx")
+            src = DocxDocument()
+            paragraph = src.add_paragraph()
+            run = paragraph.add_run("Hello")
+            run.font.name = "Times New Roman"
+            src.save(path)
+            book = read_docx(path, "en", "zh")
+            store = RunStore(os.path.join(directory, "state", "src"))
+            store.save_manifest(
+                {
+                    "title": "src",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            chapter = book.chapters[0]
+            # 未翻译：target 为空，写出回退原文
+            chapter.segments[0].target = None
+            store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path)
+            result = DocxDocument(out_path)
+            runs = [run for p in result.paragraphs for run in p.runs if run.text.strip()]
+            self.assertTrue(runs)
+            self.assertEqual(runs[0].text, "Hello")
+            self.assertNotEqual(runs[0].font.name, "宋体")
+
     def test_assemble_preserves_center_and_mixed_bold_without_placements(self):
         """未跑样式对齐时，导出仍应用居中与混排加粗（比例回退）。"""
         from docx.enum.text import WD_ALIGN_PARAGRAPH
