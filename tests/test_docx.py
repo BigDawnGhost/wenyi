@@ -151,7 +151,9 @@ class TestDocxReader(unittest.TestCase):
             _assemble_docx(store, out_path)
             result = DocxDocument(out_path)
             first = result.paragraphs[0]
-            self.assertTrue((first.style.name or "").startswith("List Number"))
+            style = first.style
+            style_name = style.name if style is not None and style.name is not None else ""
+            self.assertTrue(style_name.startswith("List Number"))
             num_pr = first._p.pPr.find(qn("w:numPr")) if first._p.pPr is not None else None
             self.assertIsNotNone(num_pr)
 
