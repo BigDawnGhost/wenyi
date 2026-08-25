@@ -1463,6 +1463,114 @@ class TestTitleTranslation(unittest.TestCase):
         self.assertNotIn(">old<", dec)
 
 
+class TestEpubTocMisdetectRegression(unittest.TestCase):
+    """回归：带「返回目录」链接的正文页不应被当成 TOC 改写。
+
+    对应 #183 / #184：章节标题变成「目录」、目录条目重复 / 悬空 fallback。
+    """
+
+    def test_is_nav_rejects_chapter_body_with_content_toc_link(self):
+        from trans_novel.assemble.epub_writer import _is_nav
+
+        chapter = (
+            b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+            b'<section epub:type="chapter">'
+            b'<h1><a href="content-toc.xhtml">CHAPTER 1</a></h1>'
+            b"<p>Body text.</p></section></body></html>"
+        )
+        # 旧逻辑只查 epub:type + toc 子串，会把这类正文误判为导航页。
+        self.assertFalse(_is_nav(chapter))
+
+    def test_is_nav_accepts_explicit_toc_nav(self):
+        from trans_novel.assemble.epub_writer import _is_nav
+
+        nav = (
+            b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+            b'<nav epub:type="toc"><ol>'
+            b'<li><a href="ch1.xhtml">Chapter 1</a></li>'
+            b"</ol></nav></body></html>"
+        )
+        self.assertTrue(_is_nav(nav))
+        self.assertTrue(
+            _is_nav(b'<html><body><nav role="doc-toc"><ol><li>x</li></ol></nav></body></html>')
+        )
+
+    def test_rewrite_toc_skips_chapter_body_without_toc_nav(self):
+        from trans_novel.assemble.epub_writer import _rewrite_toc
+
+        chapter = (
+            b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+            b'<section epub:type="chapter">'
+            b'<h1><a href="content-toc.xhtml">CHAPTER 1</a></h1>'
+            b"<p>Body text.</p></section></body></html>"
+        )
+        entries = [
+            {
+                "toc_path": "ch1.xhtml",
+                "node_index": 0,
+                "raw_href": "content-toc.xhtml",
+                "title_translated": "目录",
+                "title": "Contents",
+            }
+        ]
+
+        out = _rewrite_toc(chapter, entries, is_ncx=False, toc_path="ch1.xhtml")
+        text = out.decode("utf-8")
+        self.assertIn("CHAPTER 1", text)
+        self.assertNotIn(">目录<", text)
+        self.assertEqual(out, chapter)
+
+    def test_heading_wrapped_in_toc_link_keeps_translation_inside_anchor(self):
+        """整段标题被 <a href=content-toc> 包住且无对齐时，译文进链接，不挂悬空 ↩。"""
+        target = "第一章"
+        template = (
+            '<html><body><h1 data-tn-id="tn1_0">'
+            '<a data-tn-annotation-id="ann-0" href="content-toc.xhtml">CHAPTER 1</a>'
+            "</h1></body></html>"
+        )
+        segment = Segment(
+            index=0,
+            source="CHAPTER 1",
+            target=target,
+            kind="heading",
+            anchor="tn1_0",
+            meta={
+                "epub_annotations": {
+                    "version": 1,
+                    "source_length": len("CHAPTER 1"),
+                    "items": [
+                        {
+                            "id": "ann-0",
+                            "mode": "range",
+                            "source_start": 0,
+                            "source_end": len("CHAPTER 1"),
+                            "source_text": "CHAPTER 1",
+                            "marker_text": "",
+                        }
+                    ],
+                    # 故意不给可用 placement / digest，走「整块链接」回退路径。
+                }
+            },
+        )
+
+        rendered = BeautifulSoup(
+            _render_segments_html(template, [segment]),
+            "html.parser",
+        )
+        heading = rendered.find("h1")
+        self.assertIsInstance(heading, Tag)
+        assert isinstance(heading, Tag)
+        link = heading.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "content-toc.xhtml")
+        self.assertEqual(link.get_text(strip=True), target)
+        self.assertEqual(heading.get_text(strip=True), target)
+        self.assertNotIn("↩", heading.get_text())
+        self.assertNotIn("目录", heading.get_text())
+        self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+
 class TestReport(unittest.TestCase):
     def test_report_summary(self):
         with tempfile.TemporaryDirectory() as d:
