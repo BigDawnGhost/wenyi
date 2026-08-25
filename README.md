@@ -245,4 +245,4 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## AtomGit (China)
 
-Wenyi is also hosted on AtomGit: [https://gitcode.com/2403_86951519/wenyi](https://gitcode.com/2403_86951519/wenyi)
+Wenyi is also hosted on AtomGit: [https://atomgit.com/BigDawnGhost/wenyi](https://atomgit.com/BigDawnGhost/wenyi)

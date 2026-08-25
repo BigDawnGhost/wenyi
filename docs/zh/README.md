@@ -235,4 +235,4 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 国内 AtomGit 托管
 
-本项目在 AtomGit 亦有镜像：[https://gitcode.com/2403_86951519/wenyi](https://gitcode.com/2403_86951519/wenyi)
+本项目在 AtomGit 亦有镜像：[https://atomgit.com/BigDawnGhost/wenyi](https://atomgit.com/BigDawnGhost/wenyi)
