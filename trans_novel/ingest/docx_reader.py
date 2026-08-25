@@ -10,7 +10,8 @@ import os
 import re
 from typing import Any
 
-from docx import Document as DocxDocument
+from docx import Document as open_docx
+from docx.document import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph as DocxParagraph
@@ -66,7 +67,7 @@ def _cell_text(cell) -> str:
 def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
     """读取 .docx，识别标题切章，抽出段落与简易表格。"""
     try:
-        docx = DocxDocument(path)
+        docx = open_docx(path)
     except Exception as error:  # noqa: BLE001 - 统一为可读的输入错误
         raise ValueError(f"无法读取 Word 文档：{error}") from error
 

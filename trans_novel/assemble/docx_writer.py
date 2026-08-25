@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from docx import Document as DocxDocument
+from docx import Document as open_docx
+from docx.document import Document as DocxDocument
 from docx.enum.text import WD_COLOR_INDEX
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
@@ -182,7 +183,7 @@ def _assemble_docx(
 ) -> str:
     """按章节重建 .docx；标题带 outline，表格按 meta 重建。"""
     manifest = store.load_manifest()
-    doc = DocxDocument()
+    doc = open_docx()
     # 去掉默认空段
     if doc.paragraphs:
         p0 = doc.paragraphs[0]
