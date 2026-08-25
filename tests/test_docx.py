@@ -163,6 +163,7 @@ class TestDocxStyles(unittest.TestCase):
             paragraph = src.add_paragraph()
             run = paragraph.add_run("Hello")
             run.bold = True
+            run.font.name = "Times New Roman"
             src.save(path)
             book = read_docx(path, "en", "zh")
             store = RunStore(os.path.join(directory, "state", "bold"))
@@ -192,6 +193,7 @@ class TestDocxStyles(unittest.TestCase):
             runs = [run for p in result.paragraphs for run in p.runs if run.text.strip()]
             self.assertTrue(runs)
             self.assertTrue(runs[0].bold)
+            self.assertEqual(runs[0].font.name, "宋体")
 
     def test_assemble_preserves_center_and_mixed_bold_without_placements(self):
         """未跑样式对齐时，导出仍应用居中与混排加粗（比例回退）。"""

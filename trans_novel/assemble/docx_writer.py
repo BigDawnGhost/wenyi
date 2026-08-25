@@ -18,7 +18,16 @@ from docx.shared import Pt, RGBColor
 from ..ingest.models import KIND_HEADING, Chapter
 from ..pipeline.docx_styles import proportional_range_placements
 from ..pipeline.runstore import RunStore
-from .writer_common import _bilingual_source, _ch_title, _ordered_pair, _seg_text
+from .writer_common import (
+    _bilingual_source,
+    _ch_title,
+    _manifest_target_lang,
+    _ordered_pair,
+    _seg_text,
+)
+
+# 译文侧不沿用原文西文字体；中文目标默认宋体（含东亚字形）。
+_ZH_FONT = "宋体"
 
 _ALIGN_MAP = {
     "left": WD_ALIGN_PARAGRAPH.LEFT,
@@ -41,28 +50,54 @@ def _set_outline_level(paragraph, level: int) -> None:
     outline.set(qn("w:val"), str(level - 1))
 
 
-def _apply_run_style(run, style: dict[str, Any] | None) -> None:
-    """把 meta 中的字符样式应用到 run。"""
-    if not style:
+def _set_run_font(run, font_name: str) -> None:
+    """设置 run 的 ascii/hAnsi/eastAsia 字体，避免只改西文名。"""
+    name = font_name.strip()
+    if not name:
         return
-    if "bold" in style:
-        run.bold = bool(style["bold"])
-    if "italic" in style:
-        run.italic = bool(style["italic"])
-    if style.get("underline"):
-        run.underline = True
-    size_pt = style.get("size_pt")
-    if isinstance(size_pt, (int, float)) and size_pt > 0:
-        run.font.size = Pt(float(size_pt))
-    color = style.get("color")
-    if isinstance(color, str) and len(color) >= 6:
-        try:
-            run.font.color.rgb = RGBColor.from_string(color[-6:])
-        except (ValueError, TypeError):
-            pass
-    font = style.get("font")
-    if isinstance(font, str) and font.strip():
-        run.font.name = font.strip()
+    run.font.name = name
+    r_pr = run._r.get_or_add_rPr()  # noqa: SLF001
+    r_fonts = r_pr.find(qn("w:rFonts"))
+    if r_fonts is None:
+        r_fonts = OxmlElement("w:rFonts")
+        r_pr.insert(0, r_fonts)
+    for attr in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        r_fonts.set(qn(attr), name)
+
+
+def _target_output_font(target_lang: str | None) -> str | None:
+    """目标语言对应的写出字体；中文用宋体，其它语言不强行改字体。"""
+    normalized = (target_lang or "zh").strip().lower().replace("_", "-")
+    if normalized == "zh" or normalized.startswith("zh-"):
+        return _ZH_FONT
+    return None
+
+
+def _apply_run_style(
+    run,
+    style: dict[str, Any] | None,
+    *,
+    output_font: str | None = None,
+) -> None:
+    """把 meta 中的字符样式应用到 run；不沿用原文 font，改用 output_font。"""
+    if style:
+        if "bold" in style:
+            run.bold = bool(style["bold"])
+        if "italic" in style:
+            run.italic = bool(style["italic"])
+        if style.get("underline"):
+            run.underline = True
+        size_pt = style.get("size_pt")
+        if isinstance(size_pt, (int, float)) and size_pt > 0:
+            run.font.size = Pt(float(size_pt))
+        color = style.get("color")
+        if isinstance(color, str) and len(color) >= 6:
+            try:
+                run.font.color.rgb = RGBColor.from_string(color[-6:])
+            except (ValueError, TypeError):
+                pass
+    if output_font:
+        _set_run_font(run, output_font)
 
 
 def _set_run_color_value(run, value: str) -> None:
@@ -243,6 +278,7 @@ def _fill_paragraph(
     placements: list[dict[str, Any]] | None = None,
     align: str | None = None,
     shade: str | None = None,
+    output_font: str | None = None,
     dim: bool = False,
 ) -> None:
     """清空并按样式切片写入段落。"""
@@ -251,7 +287,7 @@ def _fill_paragraph(
     _apply_paragraph_shade(paragraph, shade)
     for fragment, frag_style in _style_slices(text, style, placements):
         run = paragraph.add_run(fragment)
-        _apply_run_style(run, frag_style)
+        _apply_run_style(run, frag_style, output_font=output_font)
         if dim:
             run.font.size = Pt(10)
             run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -270,6 +306,7 @@ def _add_heading(
     placements: list[dict[str, Any]] | None = None,
     align: str | None = None,
     shade: str | None = None,
+    output_font: str | None = None,
 ) -> None:
     level = max(1, min(9, level))
     style_name = f"Heading {level}"
@@ -289,6 +326,7 @@ def _add_heading(
         placements=placements,
         align=align,
         shade=shade,
+        output_font=output_font,
     )
     # 覆盖模板 Heading 的 accent 主题蓝：原文无显式色则用黑色
     _neutralize_heading_theme_color(paragraph, style)
@@ -302,6 +340,7 @@ def _add_normal(
     placements: list[dict[str, Any]] | None = None,
     align: str | None = None,
     shade: str | None = None,
+    output_font: str | None = None,
     dim: bool = False,
     list_fmt: str | None = None,
     list_ilvl: int = 0,
@@ -321,6 +360,7 @@ def _add_normal(
             placements=placements,
             align=align,
             shade=shade,
+            output_font=output_font,
             dim=dim,
         )
         if list_restart:
@@ -335,6 +375,7 @@ def _add_normal(
         placements=placements,
         align=align,
         shade=shade,
+        output_font=output_font,
         dim=dim,
     )
 
@@ -349,18 +390,43 @@ def _add_bilingual_paragraphs(
     placements: list[dict[str, Any]] | None = None,
     align: str | None = None,
     shade: str | None = None,
+    output_font: str | None = None,
 ) -> None:
     src = _bilingual_source(source, target)
     if not src:
-        _add_normal(doc, target, style=style, placements=placements, align=align, shade=shade)
+        _add_normal(
+            doc,
+            target,
+            style=style,
+            placements=placements,
+            align=align,
+            shade=shade,
+            output_font=output_font,
+        )
         return
     first, second = _ordered_pair(src, target, order)
     if order == "source_first":
-        _add_normal(doc, first, dim=False, align=align, shade=shade)
-        _add_normal(doc, second, style=style, placements=placements, align=align, shade=shade)
+        _add_normal(doc, first, dim=False, align=align, shade=shade, output_font=output_font)
+        _add_normal(
+            doc,
+            second,
+            style=style,
+            placements=placements,
+            align=align,
+            shade=shade,
+            output_font=output_font,
+        )
     else:
-        _add_normal(doc, first, style=style, placements=placements, align=align, shade=shade)
-        _add_normal(doc, second, dim=True, align=align, shade=shade)
+        _add_normal(
+            doc,
+            first,
+            style=style,
+            placements=placements,
+            align=align,
+            shade=shade,
+            output_font=output_font,
+        )
+        _add_normal(doc, second, dim=True, align=align, shade=shade, output_font=output_font)
 
 
 def _segment_style_payload(
@@ -399,6 +465,7 @@ def _flush_table(
     *,
     bilingual: bool,
     order: str,
+    output_font: str | None = None,
 ) -> None:
     table = doc.add_table(rows=rows, cols=cols)
     try:
@@ -425,11 +492,14 @@ def _flush_table(
                         placements=placements,
                         align=align,
                         shade=shade,
+                        output_font=output_font,
                     )
                     paragraph.add_run("\n")
                     dim_run = paragraph.add_run(second)
                     dim_run.font.size = Pt(9)
                     dim_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+                    if output_font:
+                        _set_run_font(dim_run, output_font)
                 else:
                     _fill_paragraph(
                         paragraph,
@@ -438,6 +508,7 @@ def _flush_table(
                         placements=placements,
                         align=align,
                         shade=shade,
+                        output_font=output_font,
                     )
             else:
                 _fill_paragraph(
@@ -447,6 +518,7 @@ def _flush_table(
                     placements=placements,
                     align=align,
                     shade=shade,
+                    output_font=output_font,
                 )
 
 
@@ -456,6 +528,7 @@ def _emit_chapter_blocks(
     *,
     bilingual: bool,
     order: str,
+    output_font: str | None = None,
 ) -> None:
     """按段顺序写出；连续同 table_id 聚合成一张表；cont 续段并回上一段。"""
     i = 0
@@ -487,6 +560,7 @@ def _emit_chapter_blocks(
                 cols,
                 bilingual=bilingual,
                 order=order,
+                output_font=output_font,
             )
             last_list_num_id = None
             continue
@@ -530,6 +604,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
+                output_font=output_font,
             )
             last_list_num_id = None
         elif bilingual:
@@ -542,6 +617,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
+                output_font=output_font,
             )
             last_list_num_id = None
         elif is_list:
@@ -553,6 +629,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
+                output_font=output_font,
                 list_fmt=list_fmt,
                 list_ilvl=int(list_ilvl) if isinstance(list_ilvl, int) else 0,
                 list_restart=restart,
@@ -566,6 +643,7 @@ def _emit_chapter_blocks(
                 placements=placements,
                 align=align,
                 shade=shade,
+                output_font=output_font,
             )
             last_list_num_id = None
 
@@ -579,6 +657,7 @@ def _assemble_docx(
 ) -> str:
     """按章节重建 .docx；标题带 outline，样式与表格按 meta 重建。"""
     manifest = store.load_manifest()
+    output_font = _target_output_font(_manifest_target_lang(manifest))
     doc = open_docx()
     if doc.paragraphs:
         p0 = doc.paragraphs[0]
@@ -598,8 +677,14 @@ def _assemble_docx(
         if title and not has_h1 and chapter.meta.get("explicit_title"):
             if first_block and doc.paragraphs and not doc.paragraphs[0].text:
                 pass
-            _add_heading(doc, title, 1)
-        _emit_chapter_blocks(doc, chapter, bilingual=bilingual, order=order)
+            _add_heading(doc, title, 1, output_font=output_font)
+        _emit_chapter_blocks(
+            doc,
+            chapter,
+            bilingual=bilingual,
+            order=order,
+            output_font=output_font,
+        )
         first_block = False
 
     body = doc.element.body
