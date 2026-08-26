@@ -115,6 +115,10 @@ def load_document(
     *,
     cache_dir: str | None = None,
     source_hash: str | None = None,
+    pdf_backend: str = "mineru",
+    babeldoc_bridge_url: str = "http://127.0.0.1:8765",
+    babeldoc_pages: str | None = None,
+    babeldoc_timeout: float = 600.0,
 ) -> Document:
     """按文件扩展名读取文档，并按需拆分超过上限的翻译段。"""
     ext = os.path.splitext(path)[1].lower()
@@ -129,13 +133,26 @@ def load_document(
     elif ext == ".pdf":
         if cache_dir is None:
             raise ValueError("PDF 读取需要指定运行状态缓存目录")
-        doc = read_pdf(
-            path,
-            source_lang,
-            target_lang,
-            cache_dir=cache_dir,
-            source_hash=source_hash,
-        )
+        if pdf_backend == "babeldoc":
+            from .pdf_babeldoc import read_pdf_babeldoc
+
+            doc = read_pdf_babeldoc(
+                path,
+                source_lang,
+                target_lang,
+                bridge_url=babeldoc_bridge_url,
+                pages=babeldoc_pages,
+                cache_dir=cache_dir,
+                timeout=babeldoc_timeout,
+            )
+        else:
+            doc = read_pdf(
+                path,
+                source_lang,
+                target_lang,
+                cache_dir=cache_dir,
+                source_hash=source_hash,
+            )
     elif ext == ".docx":
         from .docx_reader import read_docx
 
@@ -145,7 +162,8 @@ def load_document(
             f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .xhtml / .pdf / .docx）"
         )
 
-    if split_segments and split_segments > 0:
+    # BabelDOC 段 id 与排版绑定，禁止再按字符拆碎。
+    if split_segments and split_segments > 0 and not (doc.meta or {}).get("babeldoc"):
         split_long_segments(doc.chapters, split_segments)
     return doc
 

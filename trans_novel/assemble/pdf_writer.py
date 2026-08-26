@@ -311,6 +311,16 @@ def _assemble_pdf_fpdf2(
     return out_path
 
 
+def _assemble_pdf_babeldoc(store: RunStore, out_path: str) -> str:
+    """Fill back translations through the external BabelDOC HTTP bridge."""
+    from ..ingest.pdf_babeldoc import translations_from_store
+    from ..pdf_bridge import BabeldocBridgeClient
+
+    session_id, bridge_url, mapping = translations_from_store(store)
+    client = BabeldocBridgeClient(bridge_url)
+    return client.fillback(session_id, mapping, out_path=out_path)
+
+
 def _assemble_pdf(
     store: RunStore,
     source_path: str,
@@ -322,6 +332,11 @@ def _assemble_pdf(
     preserve_source_style: bool = False,
 ) -> str:
     """Dispatch PDF output to the selected rendering backend."""
+    manifest = store.load_manifest() or {}
+    raw_meta = manifest.get("meta")
+    meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
+    if meta.get("pdf_export") == "babeldoc" or meta.get("babeldoc"):
+        return _assemble_pdf_babeldoc(store, out_path)
     if engine == "weasyprint":
         return _assemble_pdf_weasyprint(
             store,

@@ -67,6 +67,11 @@ pipeline:
   review_fix_max_rounds: 2 # 最多生成两轮临时替换；完整 Review 轮数另受连续 clean 确认影响
   review_clean_confirmations: 2 # 连续两轮未发现问题才视为影子译文通过
   glossary_scope: chapter # chapter=本章相关词条；full=全量表
+  # PDF 后端：mineru（默认）| babeldoc（外部 AGPL HTTP bridge，主仓不引入 babeldoc）
+  pdf_backend: mineru
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  # babeldoc_pages: "15"   # 可选；限制 bridge 处理页（1-based）
+  babeldoc_timeout: 600
 
 # ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────
 honorific:
@@ -148,6 +153,11 @@ class PipelineConfig(BaseModel):
     review_fix_max_rounds: int = Field(default=2, ge=0, le=4)
     review_clean_confirmations: int = Field(default=2, ge=1, le=2)
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
+    # PDF：mineru=现有 HTML 路径；babeldoc=外部 AGPL bridge（HTTP，主仓不 import babeldoc）
+    pdf_backend: Literal["mineru", "babeldoc"] = "mineru"
+    babeldoc_bridge_url: str = "http://127.0.0.1:8765"
+    babeldoc_pages: str | None = None  # 如 "15" / "6-8"；None=全书
+    babeldoc_timeout: float = 600.0
 
 
 class OutputConfig(BaseModel):
