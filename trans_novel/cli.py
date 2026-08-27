@@ -726,6 +726,7 @@ def glossary_conflicts(
                 f"  {conflict['source']}: 现有「{conflict['existing_target']}」 vs "
                 f"提议「{conflict['proposed_target']}」"
                 f"（第 {conflict['chapter']} 章）"
+                + (f" — {conflict['note']}" if conflict.get("note") else "")
             )
     finally:
         glossary.close()

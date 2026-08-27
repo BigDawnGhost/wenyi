@@ -72,6 +72,31 @@ class TestGlossary(unittest.TestCase):
         self.assertTrue(source_matches_text("гад", "Этот гад снова пришёл."))
         self.assertFalse(source_matches_text("гад", "Этот гадкий человек снова пришёл."))
 
+    def test_kana_source_match_respects_kana_run_boundaries(self):
+        # 短假名词嵌在同文字假名串中间时是更长单词的一部分，不应命中。
+        self.assertFalse(source_matches_text("あんな", "あんなに急に変わる。"))
+        self.assertFalse(source_matches_text("メイ", "メインストリートを歩く。"))
+        self.assertFalse(source_matches_text("しょう", "しょうがないから行く。"))
+        # 独立出现的假名词正常命中；中点「・」是分隔符而非片假名延续。
+        self.assertTrue(source_matches_text("メイ", "「メイ、おはよう」"))
+        self.assertTrue(source_matches_text("あんな", "「あんな！」と叫んだ。"))
+        self.assertTrue(source_matches_text("メイ", "メイ・スミスは黙っていた。"))
+        # 片假名词后跟平假名助词属正常接续。
+        self.assertTrue(source_matches_text("メイ", "メイは立ち止まった。"))
+
+    def test_kana_term_not_injected_from_longer_kana_run(self):
+        self.store.upsert_term(
+            GlossaryTerm(source="あんな", target="Anna", type=TYPE_PERSON)
+        )
+        self.store.upsert_term(GlossaryTerm(source="メイ", target="小梅", type=TYPE_PERSON))
+
+        self.assertEqual(self.store.terms_in_text("あんなに慌てなくてもいい。"), [])
+        self.assertEqual(self.store.terms_in_text("メイン料理を注文した。"), [])
+        self.assertEqual(
+            {term.source for term in self.store.terms_in_text("「あんな、メイが呼んでる」")},
+            {"あんな", "メイ"},
+        )
+
     def test_appellation_does_not_match_bare_name_alias(self):
         self.store.upsert_term(
             GlossaryTerm(
@@ -157,6 +182,48 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(term.target, "掘北")
         self.assertEqual(term.status, "ok")
         self.assertEqual(self.store.open_conflicts(), [])
+
+    def test_same_target_conflicting_gender_is_flagged_not_overwritten(self):
+        self.store.upsert_term(
+            GlossaryTerm(source="白井", target="白井", type=TYPE_PERSON, gender="女"),
+            chapter=0,
+        )
+        # 同译法但性别判断相左：保留现有事实并登记冲突，而非静默覆盖。
+        r = self.store.upsert_term(
+            GlossaryTerm(source="白井", target="白井", type=TYPE_PERSON, gender="男"),
+            chapter=2,
+        )
+        self.assertEqual(r, "conflict")
+        term = self.store.get_term("白井")
+        assert term is not None
+        self.assertEqual(term.gender, "女")
+        self.assertEqual(term.status, "conflict")
+        conflicts = self.store.open_conflicts()
+        self.assertEqual(len(conflicts), 1)
+        self.assertIn("性别冲突", conflicts[0]["note"])
+
+        self.assertTrue(self.store.resolve_term("白井", "白井"))
+        self.store.mark_conflicts_resolved("白井")
+        term = self.store.get_term("白井")
+        assert term is not None
+        self.assertEqual(term.status, "ok")
+        self.assertEqual(self.store.open_conflicts(), [])
+
+    def test_same_target_same_or_empty_gender_stays_unchanged(self):
+        self.store.upsert_term(
+            GlossaryTerm(source="白井", target="白井", gender="女"),
+            chapter=0,
+        )
+        r = self.store.upsert_term(GlossaryTerm(source="白井", target="白井", gender="女"))
+        self.assertEqual(r, "unchanged")
+        self.assertEqual(self.store.get_term("白井").status, "ok")
+        # 空 gender 不视为冲突，其它字段照常补全。
+        r = self.store.upsert_term(GlossaryTerm(source="白井", target="白井", note="班长"))
+        self.assertEqual(r, "unchanged")
+        term = self.store.get_term("白井")
+        assert term is not None
+        self.assertEqual(term.gender, "女")
+        self.assertEqual(term.note, "班长")
 
     def test_concurrent_upserts_make_one_atomic_conflict_decision(self):
         path = os.path.join(self.tmp.name, "concurrent.db")
