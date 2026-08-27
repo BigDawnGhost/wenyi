@@ -9,9 +9,13 @@ from __future__ import annotations
 from .store import GlossaryStore
 
 
-def resolve(store: GlossaryStore, source: str, target: str) -> bool:
-    """裁定 source 的最终译法并清除冲突标记，返回术语是否存在。"""
-    if not store.resolve_term(source, target):
+def resolve(store: GlossaryStore, source: str, target: str,
+            gender: str | None = None) -> bool:
+    """裁定 source 的最终译法并清除冲突标记，返回术语是否存在。
+
+    传入 gender 时一并裁定性别；不传表示确认现有性别。
+    """
+    if not store.resolve_term(source, target, gender=gender):
         return False
     store.mark_conflicts_resolved(source)
     return True

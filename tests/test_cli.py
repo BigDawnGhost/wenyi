@@ -592,6 +592,19 @@ class TestCliConfig(unittest.TestCase):
                 self.assertIn("错误：输入文件内容与现有状态不一致", result.output)
                 self.assertNotIn("Traceback", result.output)
 
+    def test_glossary_resolve_rejects_unknown_or_invalid_gender(self):
+        # 未知标记/乱值不能显式裁定性别：store 会归一为空并保留原值，却
+        # 照常恢复 ok 并关闭未裁决的冲突。校验在加载配置前完成。
+        for bad in ("unknown", "未知", "猫"):
+            with self.subTest(gender=bad):
+                result = CliRunner().invoke(
+                    app,
+                    ["glossary", "resolve", "missing.txt", "白井", "白井",
+                     "--gender", bad],
+                )
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("无效性别", result.output)
+
 
 class TestWindowsConsoleEncoding(unittest.TestCase):
     class _Stream:

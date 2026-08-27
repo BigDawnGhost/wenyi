@@ -16,7 +16,7 @@ import sqlite3
 import tempfile
 import time
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 # 术语类型
@@ -91,6 +91,16 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
 )
 
 
+# 模型可能返回的性别未知标记；统一归一为空串。"未知" 不等于已知事实，与
+# 既有非空值不一致时不得视为矛盾（Analyzer 会把 prompt 里的「未知」原样种入）。
+_UNKNOWN_GENDERS = {"未知", "不明", "不详", "unknown", "none", "n/a", "?", "？"}
+
+
+def _normalize_gender(gender: str | None) -> str:
+    g = (gender or "").strip()
+    return "" if g.casefold() in _UNKNOWN_GENDERS else g
+
+
 # 与 epub_reader 写入 Segment.source 的振假名标记一致；匹配前剥离以免拆散子串。
 _RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
 
@@ -108,22 +118,41 @@ def _match_text(text: str) -> str:
 
 _WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
 
+# 假名连续串字符类。片假名排除中点「・」(U+30FB)：「メイ・スミス」这类写法里
+# 点是分隔符，不应把右侧的姓并入匹配键。
+_HIRAGANA_CLASS = "\\u3041-\\u309f"
+_KATAKANA_CLASS = "\\u30a1-\\u30fa\\u30fc-\\u30ff"
+
 
 def _source_pattern(key: str) -> re.Pattern[str] | None:
-    """为空格分词文字构造边界正则；连续书写文字返回 None 使用子串匹配。"""
+    """为空格分词文字构造边界正则；其余文字返回 None 使用子串匹配。
+
+    假名字符串虽无空格分词，但短假名词条嵌在同文字假名串中间时几乎总是
+    更长单词的一部分（``メイ`` in ``メイン``、``あんな`` in ``あんなに``、
+    ``しょう`` in ``しょうがない``），按同文字假名连续串加边界过滤。含汉字
+    的键仍走子串匹配（无法无分词器地区分 ``母`` 与 ``お母さん``）。
+    """
     if key.isascii():
         return re.compile(rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])")
 
     letters = [char for char in key if char.isalpha()]
-    if not letters or not all(
+    if letters and all(
         any(script in unicodedata.name(char, "") for script in _WORD_BOUNDARY_SCRIPTS)
         for char in letters
     ):
-        return None
+        left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
+        right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
+        return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
 
-    left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
-    right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
-    return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
+    if re.fullmatch(rf"[{_HIRAGANA_CLASS}]+", key):
+        return re.compile(
+            rf"(?<![{_HIRAGANA_CLASS}]){re.escape(key)}(?![{_HIRAGANA_CLASS}])"
+        )
+    if re.fullmatch(rf"[{_KATAKANA_CLASS}]+", key):
+        return re.compile(
+            rf"(?<![{_KATAKANA_CLASS}]){re.escape(key)}(?![{_KATAKANA_CLASS}])"
+        )
+    return None
 
 
 def source_matches_text(source: str, text: str) -> bool:
@@ -286,9 +315,13 @@ class GlossaryStore:
         """插入或更新术语，返回 'inserted'|'unchanged'|'conflict'。
 
         同 source 已存在且 target 不同时保留当前译法，把新译法作为候选记录，
-        避免自动提取结果在无人确认时改写术语表。
+        避免自动提取结果在无人确认时改写术语表。target 相同但性别事实相左时
+        同样按冲突处理（保留现有性别并登记），而不是静默覆盖。
         """
         try:
+            # 未知性别标记先在入口归一为空，避免后续分支把「未知」当成
+            # 与既有非空值相左的事实。
+            term = replace(term, gender=_normalize_gender(term.gender))
             # 锁在读取 existing 之前取得，保证两个连接不会同时基于旧快照决策。
             self.conn.execute("BEGIN IMMEDIATE")
             existing = self.get_term(term.source)
@@ -314,6 +347,32 @@ class GlossaryStore:
                 )
                 result = "inserted"
             elif existing.target == term.target:
+                # 存量库可能残留未归一的未知值（旧版本 Analyzer 原样写入
+                # 「未知」）；比较前一并归一，未知与任何已知值都不算矛盾。
+                existing_gender = _normalize_gender(existing.gender)
+                if existing_gender and term.gender and existing_gender != term.gender:
+                    # 同译法但性别判断相左：与 target 冲突同等处理——保留现有
+                    # gender 并登记冲突等待人工裁决，而不是静默覆盖。注意冲突
+                    # 词条仍会照常注入翻译/审校 prompt；把矛盾事实从 prompt 中
+                    # 完整隔离属于术语架构改造，见 issue #87。
+                    self._log_conflict(
+                        term.source,
+                        existing.target,
+                        term.target,
+                        chapter,
+                        note=(
+                            f"性别冲突：现有「{existing_gender}」"
+                            f" vs 提议「{term.gender}」"
+                        ),
+                    )
+                    self.conn.execute(
+                        "UPDATE glossary SET status='conflict', updated_at=? "
+                        "WHERE source=?",
+                        (now, term.source),
+                    )
+                    result = "conflict"
+                    self.conn.commit()
+                    return result
                 # 合并别名 / 补全字段，不算冲突
                 merged_aliases = sorted(set(existing.aliases) | set(term.aliases))
                 self.conn.execute(
@@ -344,21 +403,36 @@ class GlossaryStore:
             self.conn.rollback()
             raise
 
-    def _log_conflict(self, source, existing_target, proposed_target, chapter):
-        """在当前事务中记录一次候选译法冲突。"""
+    def _log_conflict(self, source, existing_target, proposed_target, chapter,
+                      note: str | None = None):
+        """在当前事务中记录一次候选译法/事实冲突。"""
         self.conn.execute(
             """INSERT INTO term_conflicts
-               (source,existing_target,proposed_target,chapter,created_at)
-               VALUES (?,?,?,?,?)""",
-            (source, existing_target, proposed_target, chapter, time.time()),
+               (source,existing_target,proposed_target,chapter,note,created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (source, existing_target, proposed_target, chapter, note, time.time()),
         )
 
-    def resolve_term(self, source: str, target: str) -> bool:
-        """人工裁定最终译法并恢复正常状态，返回术语是否存在。"""
-        cur = self.conn.execute(
-            "UPDATE glossary SET target=?, status='ok', updated_at=? WHERE source=?",
-            (target, time.time(), source),
-        )
+    def resolve_term(self, source: str, target: str,
+                     gender: str | None = None) -> bool:
+        """人工裁定最终译法并恢复正常状态，返回术语是否存在。
+
+        传入非空 gender 时一并裁定性别（「未知」等未知标记视为不裁定，
+        保留现有值）；不传表示确认现有性别。
+        """
+        new_gender = _normalize_gender(gender)
+        if new_gender:
+            cur = self.conn.execute(
+                "UPDATE glossary SET target=?, gender=?, status='ok', updated_at=? "
+                "WHERE source=?",
+                (target, new_gender, time.time(), source),
+            )
+        else:
+            cur = self.conn.execute(
+                "UPDATE glossary SET target=?, status='ok', updated_at=? "
+                "WHERE source=?",
+                (target, time.time(), source),
+            )
         self.conn.commit()
         return cur.rowcount > 0
 
