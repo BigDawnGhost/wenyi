@@ -99,7 +99,8 @@ pipeline:
 
 3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
    Keep the same bridge process alive for the whole session. Wenyi never imports
-   babeldoc.
+   babeldoc. Chapters are split from the PDF outline (bookmarks); segments keep
+   `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
 
 The first MinerU PDF import requires `MINERU_API_KEY`:
 

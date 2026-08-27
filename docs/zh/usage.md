@@ -96,7 +96,8 @@ pipeline:
 ```
 
 3. `uv run trans-novel translate book.pdf` 后 `assemble --format pdf` 会经 bridge `/fillback` 出 PDF。  
-   **须在同一 bridge 进程生命周期内完成翻译与导出**（session 在内存）。主仓不 import babeldoc。
+   **须在同一 bridge 进程生命周期内完成翻译与导出**（session 在内存）。主仓不 import babeldoc。  
+   章节按 **PDF 内置 TOC（书签）** 断章；段落仍带 `meta.babeldoc_id` 供回填。无书签时退回单章。
 
 首次读取 PDF（MinerU）需设置 `MINERU_API_KEY`：
 

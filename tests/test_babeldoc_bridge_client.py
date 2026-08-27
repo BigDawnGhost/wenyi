@@ -73,6 +73,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
         fake.extract.return_value = payload
         with (
             patch("trans_novel.ingest.pdf_babeldoc.BabeldocBridgeClient", return_value=fake),
+            patch("trans_novel.ingest.pdf_babeldoc.toc_chapter_starts", return_value=[]),
             tempfile_directory() as cache_dir,
         ):
             doc = read_pdf_babeldoc(
@@ -85,6 +86,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             )
             self.assertTrue(doc.meta.get("babeldoc"))
             self.assertEqual(doc.meta.get("babeldoc_session_id"), "sess1")
+            self.assertEqual(len(doc.chapters), 1)
             self.assertEqual(len(doc.chapters[0].segments), 2)
             self.assertEqual(doc.chapters[0].segments[0].kind, "heading")
             self.assertEqual(doc.chapters[0].segments[0].meta.get("babeldoc_id"), "14:1")
@@ -92,6 +94,58 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             self.assertTrue(cache.is_file())
             saved = json.loads(cache.read_text(encoding="utf-8"))
             self.assertEqual(saved["session_id"], "sess1")
+
+    def test_toc_splits_chapters_by_page(self):
+        from trans_novel.ingest.pdf_babeldoc import _chapters_from_paragraphs
+
+        paragraphs = [
+            {
+                "id": "5:0",
+                "source": "Author bio text here.",
+                "page": 5,
+                "layout_label": "plain text",
+            },
+            {
+                "id": "6:0",
+                "source": "Brief contents line.",
+                "page": 6,
+                "layout_label": "plain text",
+            },
+            {
+                "id": "14:0",
+                "source": "Preface body paragraph.",
+                "page": 14,
+                "layout_label": "plain text",
+            },
+            {
+                "id": "14:1",
+                "source": "More preface text here.",
+                "page": 14,
+                "layout_label": "plain text",
+            },
+        ]
+        starts = [(5, "About the Author"), (6, "Brief Contents"), (14, "Preface")]
+        chapters = _chapters_from_paragraphs(paragraphs, book_title="Book", toc_starts=starts)
+        self.assertEqual(
+            [c.title for c in chapters], ["About the Author", "Brief Contents", "Preface"]
+        )
+        self.assertEqual([len(c.segments) for c in chapters], [1, 1, 2])
+        self.assertEqual(chapters[2].segments[1].meta.get("babeldoc_id"), "14:1")
+
+    def test_toc_chapter_starts_reads_weaver(self):
+        from trans_novel.ingest.pdf_babeldoc import toc_chapter_starts
+
+        pdf = Path("Molecular Biology (5th Ed) (Robert F. Weaver) (z.pdf")
+        if not pdf.is_file():
+            self.skipTest("Weaver sample PDF not present")
+        starts = toc_chapter_starts(pdf)
+        self.assertGreater(len(starts), 5)
+        titles = [t for _p, t in starts]
+        self.assertTrue(any("Preface" in t for t in titles))
+        self.assertTrue(any("About the Author" in t for t in titles))
+        # Preface bookmark should land on 0-based page 14 for this book.
+        preface_pages = [p for p, t in starts if "Preface" in t]
+        self.assertIn(14, preface_pages)
 
 
 class tempfile_directory:
