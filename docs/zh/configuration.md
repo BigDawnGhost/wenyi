@@ -93,6 +93,33 @@ llm:
 
 `openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
 
+### OrcaRouter
+
+OrcaRouter 提供 OpenAI 兼容接口。内置 `orcarouter` provider 默认使用
+`https://api.orcarouter.ai/v1`，并从 `ORCAROUTER_API_KEY` 环境变量读取密钥。
+可先[创建 OrcaRouter API Key](https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a)，
+再配置当前账户可用的模型 ID：
+
+```bash
+export ORCAROUTER_API_KEY=sk-orca-...
+```
+
+```yaml
+llm:
+  provider: orcarouter
+  tiers:
+    strong:
+      model: your-model-id
+    cheap:
+      model: your-cheap-model-id
+    fast:
+      model: your-fast-model-id
+```
+
+模型档位需要显式配置。OrcaRouter 使用下文的通用 OpenAI 兼容选项，包括
+`reasoning_style` 和各档位的 `request_overrides`；需要时也可覆盖 `base_url` 或
+`api_key_env`。
+
 ### Google Gemini
 
 通过官方 `google-genai` SDK 原生支持 Google Gemini 模型，设置 `provider: gemini`（或 `provider: google`）。默认读取 `GEMINI_API_KEY`（或兼容 `GOOGLE_API_KEY`）环境变量：

@@ -308,6 +308,23 @@ def _rewrite_toc(
 
         # EPUB3 nav.xhtml：仅枚举 epub:type="toc" 范围内的直接 li 标签。
         soup = BeautifulSoup(data, "html.parser")
+        toc_navs = [
+            node
+            for node in soup.find_all("nav")
+            if "toc"
+            in (
+                _attr_str(node.get("epub:type"))
+                or _attr_str(node.get("type"))
+                or _attr_str(node.get("role"))
+            ).split()
+            or _attr_str(node.get("role")) == "doc-toc"
+        ]
+        if not toc_navs and not (
+            toc_path and ("nav" in toc_path.lower() or "toc" in toc_path.lower())
+        ):
+            # Avoid rewriting chapter bodies that were mis-detected as TOC.
+            return data
+
         for node_index, (label, raw_href) in enumerate(_nav_label_nodes(soup)):
             entry = exact_entries.get(node_index)
             if entry is None:
@@ -604,8 +621,13 @@ def _assemble_epub(
 
 
 def _is_nav(data: bytes) -> bool:
-    """粗略判断 HTML 资源是否包含 EPUB3 目录导航。"""
-    return b"epub:type" in data and b"toc" in data
+    """判断 HTML 资源是否包含 EPUB3 目录导航（nav epub:type=toc）。"""
+    return b"<nav" in data and (
+        b'epub:type="toc"' in data
+        or b"epub:type='toc'" in data
+        or b'type="toc"' in data
+        or b'role="doc-toc"' in data
+    )
 
 
 def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: str) -> None:

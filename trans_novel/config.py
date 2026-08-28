@@ -18,7 +18,9 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  # deepseek | openai | openrouter | openai-compatible | ollama | vllm | fake
+  # deepseek | openai | openrouter | orcarouter | openai-compatible | ollama | vllm | fake
+  # OrcaRouter 默认使用 https://api.orcarouter.ai/v1 和 ORCAROUTER_API_KEY；
+  # 切换为 provider: orcarouter 时，请把 tiers.*.model 改为账户可用的模型 ID。
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
