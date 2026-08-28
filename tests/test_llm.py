@@ -392,11 +392,14 @@ class TestProviderFactory(unittest.TestCase):
             OpenAICompatibleClient,
         )
         from trans_novel.llm.providers.openrouter import OpenRouterClient
+        from trans_novel.llm.providers.orcarouter import OrcaRouterClient
         from trans_novel.llm.providers.vllm import VLLMClient
 
         cases = (
             ("openai", OpenAIClient, None),
             ("openrouter", OpenRouterClient, None),
+            ("orcarouter", OrcaRouterClient, None),
+            ("orca-router", OrcaRouterClient, None),
             ("openai-compatible", OpenAICompatibleClient, "https://example.test/v1"),
             ("ollama", OllamaClient, None),
             ("vllm", VLLMClient, None),
@@ -407,6 +410,22 @@ class TestProviderFactory(unittest.TestCase):
                     build_client(self._config(provider, base_url=base_url)),
                     expected_type,
                 )
+
+    def test_orcarouter_defaults_and_api_key_validation(self):
+        from trans_novel.llm.factory import build_client
+        from trans_novel.llm.providers.orcarouter import OrcaRouterClient
+
+        client = build_client(self._config("orcarouter"))
+        assert isinstance(client, OrcaRouterClient)
+
+        self.assertEqual(client.base_url, "https://api.orcarouter.ai/v1")
+        self.assertEqual(client.api_key_env, "ORCAROUTER_API_KEY")
+        self.assertTrue(client.requires_api_key)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "ORCAROUTER_API_KEY"):
+                client.validate_credentials()
+        with patch.dict(os.environ, {"ORCAROUTER_API_KEY": "secret"}, clear=True):
+            client.validate_credentials()
 
     def test_local_provider_defaults(self):
         from trans_novel.llm.factory import build_client

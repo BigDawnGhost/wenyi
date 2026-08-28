@@ -90,6 +90,34 @@ llm:
 
 The OpenAI provider reads `OPENAI_API_KEY`; OpenRouter reads `OPENROUTER_API_KEY`. Both providers allow `base_url` and `api_key_env` to override their defaults.
 
+### OrcaRouter
+
+OrcaRouter exposes an OpenAI-compatible endpoint. The built-in `orcarouter`
+provider uses `https://api.orcarouter.ai/v1` and reads `ORCAROUTER_API_KEY` by
+default. [Create an OrcaRouter API key](https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a),
+then configure the model IDs available to your account:
+
+```bash
+export ORCAROUTER_API_KEY=sk-orca-...
+```
+
+```yaml
+llm:
+  provider: orcarouter
+  tiers:
+    strong:
+      model: your-model-id
+    cheap:
+      model: your-cheap-model-id
+    fast:
+      model: your-fast-model-id
+```
+
+Model tiers must be configured explicitly. OrcaRouter uses the generic
+OpenAI-compatible options described below, including `reasoning_style` and
+per-tier `request_overrides`. You may override `base_url` or `api_key_env` when
+needed.
+
 ### Google Gemini
 
 Google Gemini is supported natively through the official `google-genai` SDK using `provider: gemini` (or `provider: google`). It reads `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) from environment variables:
