@@ -110,6 +110,7 @@ class PreparationService:
                 source_hash = self._runtime.initial_source_sha256(input_path)
                 # 转换失败也要留下同源初始化标记，确保重试保留失败运行账本。
                 store.begin_initialization(source_hash)
+                pipeline = self._runtime.config.pipeline
                 doc = load_document(
                     input_path,
                     self._runtime.config.source_lang,
@@ -117,6 +118,10 @@ class PreparationService:
                     split_segments=self._runtime.config.segment.max_chars_per_segment,
                     cache_dir=store.source_dir,
                     source_hash=source_hash,
+                    pdf_backend=pipeline.pdf_backend,
+                    babeldoc_bridge_url=pipeline.babeldoc_bridge_url,
+                    babeldoc_pages=pipeline.babeldoc_pages,
+                    babeldoc_timeout=pipeline.babeldoc_timeout,
                 )
                 if self._runtime.source_sha256(input_path) != source_hash:
                     raise ValueError("PDF 在解析期间发生变化；请确认文件稳定后重试。")

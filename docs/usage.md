@@ -84,7 +84,29 @@ PDF input and PDF output are both experimental.
 
 #### PDF input
 
-The first PDF import requires `MINERU_API_KEY`:
+Default backend is MinerU. For layout-preserving export, use the external
+**BabelDOC bridge** (AGPL, separate repo/process, HTTP only):
+
+1. Install/start `wenyi-babeldoc-bridge` (default `http://127.0.0.1:8765`)
+2. In `config.yaml`:
+
+```yaml
+pipeline:
+  pdf_backend: babeldoc
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  # babeldoc_pages: "15"   # optional, 1-based
+```
+
+3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
+   Keep the same bridge process alive for the whole session. Wenyi never imports
+   babeldoc. Chapters are split from the PDF outline (bookmarks); segments keep
+   `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
+
+BabelDOC is intended for PDFs with an extractable text layer. Before contacting the
+bridge, Wenyi checks the selected pages and stops with a suggestion to use the default
+MinerU backend or run OCR first when it finds only scanned images and no text layer.
+
+The first MinerU PDF import requires `MINERU_API_KEY`:
 
 ```bash
 export MINERU_API_KEY=...

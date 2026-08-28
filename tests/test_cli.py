@@ -20,6 +20,7 @@ from trans_novel.cli import (
 )
 from trans_novel.config import Config
 from trans_novel.ingest.errors import MinerUError
+from trans_novel.pdf_bridge import BabeldocBridgeError
 
 
 class FakeStore:
@@ -492,6 +493,7 @@ class TestCliConfig(unittest.TestCase):
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
+            BabeldocBridgeError("BabelDOC 检测到纯图片 PDF，请改用 MinerU"),
             ValueError("不支持的输出格式：xml"),
         ):
             with self.subTest(error=type(error).__name__):
