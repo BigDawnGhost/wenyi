@@ -100,6 +100,17 @@ OrcaRouter 提供 OpenAI 兼容接口。内置 `orcarouter` provider 默认使�
 可先[创建 OrcaRouter API Key](https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a)，
 再配置当前账户可用的模型 ID：
 
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.orcarouter.ai/v1",
+    api_key="sk-orca-YOUR_KEY",  # Get key at https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a
+)
+```
+
+在 Wenyi 中请勿把密钥写入 `config.yaml`，而应导出环境变量：
+
 ```bash
 export ORCAROUTER_API_KEY=sk-orca-...
 ```

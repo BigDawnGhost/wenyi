@@ -97,6 +97,17 @@ provider uses `https://api.orcarouter.ai/v1` and reads `ORCAROUTER_API_KEY` by
 default. [Create an OrcaRouter API key](https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a),
 then configure the model IDs available to your account:
 
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.orcarouter.ai/v1",
+    api_key="sk-orca-YOUR_KEY",  # Get key at https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a
+)
+```
+
+For Wenyi, keep the key out of `config.yaml` and export it instead:
+
 ```bash
 export ORCAROUTER_API_KEY=sk-orca-...
 ```
