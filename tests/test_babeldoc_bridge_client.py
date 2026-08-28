@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from trans_novel.ingest.pdf_babeldoc import read_pdf_babeldoc
+from trans_novel.ingest.pdf_babeldoc import _is_image_only_pdf, read_pdf_babeldoc
 from trans_novel.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeError
 
 
@@ -94,6 +94,43 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             self.assertTrue(cache.is_file())
             saved = json.loads(cache.read_text(encoding="utf-8"))
             self.assertEqual(saved["session_id"], "sess1")
+
+    def test_image_only_pdf_is_rejected_before_bridge_request(self):
+        with (
+            patch("trans_novel.ingest.pdf_babeldoc._is_image_only_pdf", return_value=True),
+            patch("trans_novel.ingest.pdf_babeldoc.BabeldocBridgeClient") as client,
+            self.assertRaisesRegex(BabeldocBridgeError, "只有扫描图片.*MinerU"),
+        ):
+            read_pdf_babeldoc(
+                "scan.pdf",
+                "en",
+                "zh",
+                bridge_url="http://bridge.test",
+            )
+
+        client.assert_not_called()
+
+    def test_image_only_detection_accepts_an_ocr_text_layer(self):
+        page = MagicMock()
+        page.extract_text.return_value = "Recognized text"
+        reader = MagicMock()
+        reader.pages = [page]
+
+        with patch("pypdf.PdfReader", return_value=reader):
+            self.assertFalse(_is_image_only_pdf("ocr.pdf"))
+
+    def test_image_only_detection_honors_selected_pages(self):
+        text_page = MagicMock()
+        text_page.extract_text.return_value = "Digital text"
+        image_page = MagicMock()
+        image_page.extract_text.return_value = ""
+        image_page.get.return_value = {"/XObject": {"/scan": {"/Subtype": "/Image"}}}
+        reader = MagicMock()
+        reader.pages = [text_page, image_page]
+
+        with patch("pypdf.PdfReader", return_value=reader):
+            self.assertTrue(_is_image_only_pdf("mixed.pdf", pages="2"))
+            self.assertFalse(_is_image_only_pdf("mixed.pdf"))
 
     def test_toc_splits_chapters_by_page(self):
         from trans_novel.ingest.pdf_babeldoc import _chapters_from_paragraphs

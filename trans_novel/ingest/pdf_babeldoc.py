@@ -18,6 +18,106 @@ BABELDOC_META = "babeldoc"
 BABELDOC_ID_META = "babeldoc_id"
 
 
+def _selected_page_indices(pages: str | None, page_count: int) -> list[int]:
+    """Expand BabelDOC's 1-based page selection syntax into 0-based indices."""
+    if not pages or not pages.strip():
+        return list(range(page_count))
+
+    selected: set[int] = set()
+    try:
+        for raw_token in pages.split(","):
+            token = raw_token.strip()
+            if not token:
+                continue
+            if token.isdigit():
+                page = int(token)
+                if 1 <= page <= page_count:
+                    selected.add(page - 1)
+                continue
+
+            match = re.fullmatch(r"(\d*)-(\d*)", token)
+            if match is None or not any(match.groups()):
+                return []
+            start = int(match.group(1)) if match.group(1) else 1
+            end = int(match.group(2)) if match.group(2) else page_count
+            if start < 1 or end < 1 or start > end:
+                return []
+            selected.update(range(max(1, start) - 1, min(page_count, end)))
+    except ValueError:
+        return []
+    return sorted(selected)
+
+
+def _resolved_pdf_object(value):
+    get_object = getattr(value, "get_object", None)
+    return get_object() if callable(get_object) else value
+
+
+def _resources_have_image(resources, *, seen: set[int] | None = None) -> bool:
+    """Return whether PDF resources contain an image, including nested forms."""
+    resources = _resolved_pdf_object(resources)
+    if not hasattr(resources, "get"):
+        return False
+    if seen is None:
+        seen = set()
+    identity = id(resources)
+    if identity in seen:
+        return False
+    seen.add(identity)
+
+    xobjects = _resolved_pdf_object(resources.get("/XObject"))
+    if not hasattr(xobjects, "values"):
+        return False
+    for reference in xobjects.values():
+        xobject = _resolved_pdf_object(reference)
+        if not hasattr(xobject, "get"):
+            continue
+        subtype = str(xobject.get("/Subtype") or "")
+        if subtype == "/Image":
+            return True
+        if subtype == "/Form" and _resources_have_image(xobject.get("/Resources"), seen=seen):
+            return True
+    return False
+
+
+def _page_has_image(page) -> bool:
+    if _resources_have_image(page.get("/Resources")):
+        return True
+    try:
+        content = page.get_contents()
+        return content is not None and any(
+            operator == b"INLINE IMAGE" for _operands, operator in content.operations
+        )
+    except Exception:
+        return False
+
+
+def _is_image_only_pdf(path: str | Path, *, pages: str | None = None) -> bool:
+    """Best-effort detection of selected pages containing images but no text layer.
+
+    Detection failures deliberately fall through to BabelDOC, which remains the
+    authority for parsing unusual or damaged PDFs.
+    """
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(path))
+        indices = _selected_page_indices(pages, len(reader.pages))
+        if not indices:
+            return False
+
+        found_image = False
+        for index in indices:
+            page = reader.pages[index]
+            text = page.extract_text() or ""
+            if text.strip():
+                return False
+            found_image = found_image or _page_has_image(page)
+        return found_image
+    except Exception:
+        return False
+
+
 def toc_chapter_starts(pdf_path: str | Path) -> list[tuple[int, str]]:
     """Read PDF bookmarks and return ``(0-based page, title)`` chapter starts.
 
@@ -177,6 +277,12 @@ def read_pdf_babeldoc(
     timeout: float = 600.0,
 ) -> Document:
     """Call bridge ``/extract`` and map paragraphs into TOC-based chapters."""
+    if _is_image_only_pdf(path, pages=pages):
+        raise BabeldocBridgeError(
+            "BabelDOC 后端检测到所选 PDF 页面只有扫描图片，没有可提取的文本层，"
+            "无法可靠解析。请改用默认 MinerU 后端（pipeline.pdf_backend: mineru），"
+            "或先用 OCR 工具生成可搜索文本层后再选择 babeldoc。"
+        )
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)
     payload = client.extract(path, pages=pages)
     session_id = payload.get("session_id")

@@ -99,6 +99,9 @@ pipeline:
    **须在同一 bridge 进程生命周期内完成翻译与导出**（session 在内存）。主仓不 import babeldoc。  
    章节按 **PDF 内置 TOC（书签）** 断章；段落仍带 `meta.babeldoc_id` 供回填。无书签时退回单章。
 
+BabelDOC 只适合带可提取文本层的 PDF。选择该后端时，Wenyi 会在请求 bridge 前检查所选页面；
+若页面只有扫描图片而没有文本层，会停止并提示改用默认 MinerU，或先进行 OCR。
+
 首次读取 PDF（MinerU）需设置 `MINERU_API_KEY`：
 
 ```bash

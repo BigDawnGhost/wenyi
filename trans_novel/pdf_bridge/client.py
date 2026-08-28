@@ -7,8 +7,10 @@ from typing import Any
 
 import httpx
 
+from ..ingest.errors import IngestError
 
-class BabeldocBridgeError(RuntimeError):
+
+class BabeldocBridgeError(IngestError):
     """Raised when the external BabelDOC bridge cannot complete a request."""
 
 

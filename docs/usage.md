@@ -102,6 +102,10 @@ pipeline:
    babeldoc. Chapters are split from the PDF outline (bookmarks); segments keep
    `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
 
+BabelDOC is intended for PDFs with an extractable text layer. Before contacting the
+bridge, Wenyi checks the selected pages and stops with a suggestion to use the default
+MinerU backend or run OCR first when it finds only scanned images and no text layer.
+
 The first MinerU PDF import requires `MINERU_API_KEY`:
 
 ```bash
