@@ -13,6 +13,7 @@ from bs4.element import Tag
 
 from tests.sample_data import (
     write_cross_resource_toc_epub,
+    write_degenerate_toc_epub,
     write_grouped_nav_epub,
     write_nested_toc_epub,
     write_sample_epub,
@@ -960,6 +961,20 @@ class TestEpubIngest(unittest.TestCase):
         broken = next(entry for entry in doc.meta["toc_entries"] if entry["title"] == "PART II")
         self.assertNotIn("segment_anchor", broken)
         self.assertNotIn("boundary_position", broken)
+
+    def test_degenerate_toc_falls_back_to_spine_chapters(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "degenerate.epub")
+            write_degenerate_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["One", "Two", "Three"])
+        self.assertEqual(doc.meta["epub_split_strategy"], "spine-fallback")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["One", "First body."], ["Two", "Second body."], ["Three", "Third body."]],
+        )
 
     def test_logical_chapter_can_span_multiple_spine_resources(self):
         with tempfile.TemporaryDirectory() as d:

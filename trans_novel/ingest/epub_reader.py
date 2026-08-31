@@ -1208,6 +1208,36 @@ def _build_epub_annotation_contexts(
     return {"version": 1, "contexts": contexts}
 
 
+def _toc_collapsed_to_single_boundary(
+    toc_entries: list[dict[str, object]],
+    canonical_toc_path: str,
+    resources: list[dict[str, object]],
+) -> bool:
+    """判断目录是否因全部指向同一资源而退化为单边界。
+
+    坏 NCX/NAV 会让多个顶层节点解析到同一位置，去重后只剩一条边界。
+    仅当目录里确实存在多个可定位顶层节点，且 spine 仍包含多个带正文的
+    资源时才视为退化，从而退回按 spine 资源切章。
+    """
+    top_level = 0
+    for entry in toc_entries:
+        if entry.get("toc_path") != canonical_toc_path:
+            continue
+        if entry.get("depth") != 0 or entry.get("external"):
+            continue
+        position = entry.get("boundary_position")
+        if isinstance(position, int) and position >= 0:
+            top_level += 1
+    if top_level < 2:
+        return False
+    non_empty_resources = 0
+    for resource in resources:
+        segments = resource.get("segments")
+        if isinstance(segments, list) and any(isinstance(segment, Segment) for segment in segments):
+            non_empty_resources += 1
+    return non_empty_resources >= 2
+
+
 def _logical_chapters(
     resources: list[dict[str, object]],
     toc_entries: list[dict[str, object]],
@@ -1339,6 +1369,14 @@ def _logical_chapters(
         return value
 
     boundaries.sort(key=boundary_position)
+
+    if len(boundaries) == 1 and _toc_collapsed_to_single_boundary(
+        toc_entries, canonical_toc_path, resources
+    ):
+        # 坏目录可能把所有顶层节点都指向同一资源，去重后只剩一条边界，
+        # 整本书被压成一章。此时若 spine 仍有多个带正文的资源，就退回
+        # 按 spine 资源切章，避免丢失全书结构。
+        boundaries = []
 
     if not boundaries:
         chapters: list[Chapter] = []

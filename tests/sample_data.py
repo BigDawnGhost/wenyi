@@ -259,6 +259,43 @@ def write_cross_resource_toc_epub(path: str) -> None:
             zf.writestr(f"OEBPS/{name}", content)
 
 
+def write_degenerate_toc_epub(path: str) -> None:
+    """生成目录所有顶层节点都指向同一 XHTML 的坏 EPUB。
+
+    旧 calibre 生成的坏 NCX 会让每个 navPoint 的 ``content src`` 都指向
+    第一个内容文件，切章策略因此把所有章折叠到同一边界位置。
+    """
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Degenerate</dc:title></metadata>
+<manifest>
+  <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+  <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="toc"><itemref idref="ch1"/><itemref idref="ch2"/><itemref idref="ch3"/></spine>
+</package>"""
+    ncx = """<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint id="ch1"><navLabel><text>One</text></navLabel><content src="ch1.xhtml"/></navPoint>
+  <navPoint id="ch2"><navLabel><text>Two</text></navLabel><content src="ch1.xhtml"/></navPoint>
+  <navPoint id="ch3"><navLabel><text>Three</text></navLabel><content src="ch1.xhtml"/></navPoint>
+</navMap></ncx>"""
+    resources = {
+        "ch1.xhtml": "<html><body><h1>One</h1><p>First body.</p></body></html>",
+        "ch2.xhtml": "<html><body><h1>Two</h1><p>Second body.</p></body></html>",
+        "ch3.xhtml": "<html><body><h1>Three</h1><p>Third body.</p></body></html>",
+    }
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _CONTAINER)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/toc.ncx", ncx)
+        for name, content in resources.items():
+            zf.writestr(f"OEBPS/{name}", content)
+
+
 _INLINE_OPF = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
