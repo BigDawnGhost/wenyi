@@ -43,6 +43,11 @@ def _load_json(path: str) -> Any:
         return json.load(file)
 
 
+def _integer_index(value: Any) -> int | None:
+    """只接受非布尔整数位置，并向静态类型检查器显式收窄类型。"""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 class ReviewAutofixService:
     """把只读 Review 结果发布到正式章节，并保留可恢复索引。"""
 
@@ -190,46 +195,29 @@ class ReviewAutofixService:
         # changes 先全量叠加。用户显式开启 Autofix 时，不再对 review_result
         # 做二次筛选；原始状态仍保留在索引供后续解析。
         def location_key(item: dict[str, Any]) -> tuple[int, int]:
-            chapter = item.get("chapter")
-            index = item.get("index")
-            return (
-                chapter if isinstance(chapter, int) and not isinstance(chapter, bool) else -1,
-                index if isinstance(index, int) and not isinstance(index, bool) else -1,
-            )
+            chapter = _integer_index(item.get("chapter"))
+            index = _integer_index(item.get("index"))
+            return (chapter if chapter is not None else -1, index if index is not None else -1)
 
         changes = sorted(
             (dict(change) for change in outcome.changes if isinstance(change, dict)),
             key=location_key,
         )
         for change in changes:
-            chapter_index = change.get("chapter")
-            text_index = change.get("index")
+            chapter_index = _integer_index(change.get("chapter"))
+            text_index = _integer_index(change.get("index"))
             suggested = change.get("suggested_target")
-            chapter = (
-                chapters_by_index.get(chapter_index)
-                if isinstance(chapter_index, int) and not isinstance(chapter_index, bool)
-                else None
-            )
-            segment = (
-                chapter.text_segments[text_index]
-                if chapter is not None
-                and isinstance(text_index, int)
-                and not isinstance(text_index, bool)
-                and 0 <= text_index < len(chapter.text_segments)
-                else None
-            )
-            if segment is None or not isinstance(suggested, str) or not suggested.strip():
+            chapter = chapters_by_index.get(chapter_index) if chapter_index is not None else None
+            if (
+                chapter is None
+                or text_index is None
+                or not 0 <= text_index < len(chapter.text_segments)
+                or not isinstance(suggested, str)
+                or not suggested.strip()
+            ):
                 add_record(
-                    chapter=(
-                        chapter_index
-                        if isinstance(chapter_index, int) and not isinstance(chapter_index, bool)
-                        else -1
-                    ),
-                    index=(
-                        text_index
-                        if isinstance(text_index, int) and not isinstance(text_index, bool)
-                        else -1
-                    ),
+                    chapter=chapter_index if chapter_index is not None else -1,
+                    index=text_index if text_index is not None else -1,
                     segment_ref="",
                     origin="change",
                     before="",
@@ -243,6 +231,7 @@ class ReviewAutofixService:
                     source_change=change,
                 )
                 continue
+            segment = chapter.text_segments[text_index]
             location = (chapter.index, text_index)
             before = overrides.get(location, segment.target or "")
             after = suggested
