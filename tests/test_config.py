@@ -50,6 +50,8 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertTrue(cfg.pipeline.review_fix_loop)
             self.assertEqual(cfg.pipeline.review_fix_max_rounds, 2)
             self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
+            self.assertFalse(cfg.pipeline.review_autofix)
+            self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:
@@ -80,6 +82,8 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertTrue(cfg.pipeline.review_fix_loop)
         self.assertEqual(cfg.pipeline.review_fix_max_rounds, 2)
         self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
+        self.assertFalse(cfg.pipeline.review_autofix)
+        self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
 
     def test_about_page_can_be_disabled(self):
         cfg = Config.from_dict({"output": {"about_page": False}})

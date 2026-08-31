@@ -36,6 +36,7 @@ from trans_novel.ingest.segmenter import load_document
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
+from trans_novel.review.run_store import ReviewRunStore
 
 _FB2_WITH_IMAGES = """\
 <?xml version="1.0" encoding="utf-8"?>
@@ -1588,6 +1589,45 @@ class TestReport(unittest.TestCase):
             self.assertNotIn("low_confidence_terms", report)
             self.assertNotIn("chapters_reviewed", s)
             self.assertNotIn("review_issues", report)
+
+    def test_report_marks_review_autofix_as_published(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            store, _ = _run(txt, os.path.join(d, "state"))
+            review = ReviewRunStore(store.run_dir)
+            review.start(
+                reviewed_content_digest="digest",
+                metadata={"config": {}, "glossary_fingerprint": "g"},
+            )
+            result = review.finish(
+                status="completed",
+                termination="max_rounds",
+                summary={"issue_count": 2, "change_count": 1},
+                issues=[],
+                changes=[],
+            )
+            review.write_json(
+                "result.json",
+                {
+                    **result,
+                    "autofix": {
+                        "enabled": True,
+                        "status": "partial",
+                        "applied_segment_count": 1,
+                        "failed_issue_count": 1,
+                    },
+                },
+            )
+            glossary = GlossaryStore(store.glossary_path)
+
+            report = build_report(store, glossary)
+            glossary.close()
+
+            self.assertFalse(report["review"]["read_only"])
+            self.assertEqual(report["review"]["autofix_status"], "partial")
+            self.assertEqual(report["review"]["autofix_applied_segment_count"], 1)
+            self.assertEqual(report["review"]["autofix_failed_issue_count"], 1)
 
 
 if __name__ == "__main__":

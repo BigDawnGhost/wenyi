@@ -43,12 +43,17 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
     review = store.load_latest_review_result()
     if review is not None:
         review_summary = review.get("summary") or {}
+        autofix = review.get("autofix") or {}
+        applied_segments = int(autofix.get("applied_segment_count") or 0)
         report["review"] = {
             "review_id": review.get("review_id"),
             "status": review.get("status"),
             "termination": review.get("termination"),
             "issue_count": int(review_summary.get("issue_count") or 0),
             "change_count": int(review_summary.get("change_count") or 0),
-            "read_only": True,
+            "read_only": applied_segments == 0,
+            "autofix_status": autofix.get("status"),
+            "autofix_applied_segment_count": applied_segments,
+            "autofix_failed_issue_count": int(autofix.get("failed_issue_count") or 0),
         }
     return report

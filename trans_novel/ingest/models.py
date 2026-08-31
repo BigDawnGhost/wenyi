@@ -26,6 +26,7 @@ class Segment(BaseModel):
     source: str  # 原文
     kind: str = KIND_TEXT  # text | heading
     target: str | None = None  # 译文（翻译/润色后填入）
+    target_before_polish: str | None = None  # 润色前译文（未开启润色时为 None）
     anchor: str | None = None  # 回填定位标记（EPUB 用占位符 id）
     resource_href: str | None = None  # EPUB: Segment 所属的物理 XHTML 路径
     cont: bool = False  # 超长段被拆分后的续段：回填时并回上一段，不另起段落

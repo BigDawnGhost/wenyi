@@ -84,7 +84,29 @@ PDF input and PDF output are both experimental.
 
 #### PDF input
 
-The first PDF import requires `MINERU_API_KEY`:
+Default backend is MinerU. For layout-preserving export, use the external
+**BabelDOC bridge** (AGPL, separate repo/process, HTTP only):
+
+1. Install/start `wenyi-babeldoc-bridge` (default `http://127.0.0.1:8765`)
+2. In `config.yaml`:
+
+```yaml
+pipeline:
+  pdf_backend: babeldoc
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  # babeldoc_pages: "15"   # optional, 1-based
+```
+
+3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
+   Keep the same bridge process alive for the whole session. Wenyi never imports
+   babeldoc. Chapters are split from the PDF outline (bookmarks); segments keep
+   `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
+
+BabelDOC is intended for PDFs with an extractable text layer. Before contacting the
+bridge, Wenyi checks the selected pages and stops with a suggestion to use the default
+MinerU backend or run OCR first when it finds only scanned images and no text layer.
+
+The first MinerU PDF import requires `MINERU_API_KEY`:
 
 ```bash
 export MINERU_API_KEY=...
@@ -235,7 +257,8 @@ uv run trans-novel status book.epub
 
 Changing polishing settings does not automatically rerun translation batches that
 are already complete. Review is different: every `review` invocation rechecks the
-complete translated book and creates a new timestamped read-only review run.
+complete translated book and creates a new timestamped Review run. Runs are
+read-only by default; `--autofix` may publish their final revisions.
 Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
@@ -243,6 +266,7 @@ intentionally want a fresh translation.
 
 ```bash
 uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
@@ -257,14 +281,21 @@ suggestions can receive a final recommendation. Confirmed issues may generate
 provisional full-segment replacements in a run-local shadow translation. Every
 Fixer in a round reads the same immutable snapshot; the next whole-book pass
 blindly reviews the resulting shadow text without receiving prior issue
-explanations. Review never writes these replacements to the manifest, chapter
-JSON, or glossary. Each run writes one user-facing `result.json`, its model-usage
+explanations. By default these replacements remain read-only. With `--autofix`
+(or `pipeline.review_autofix: true`), folded `changes` are applied first; remaining
+issues then reuse the same bounded Review Agent Loop against that updated text,
+and confirmed issues reuse the same Review Fixer. The final complete segments are
+written only to chapter `target`; no Review history fields are added to chapter
+JSON, and the manifest and glossary are unchanged. Each run writes one user-facing
+`result.json`, its model-usage
 delta, an event stream, and internal round traces to
 `state/<book>/reviews/review-<timestamp>/`. The same usage delta is also added once
-to the book's cumulative `usage.json`; `report.json` contains only a compact
-read-only review summary.
+to the book's cumulative `usage.json`. Autofix keeps its full before/after chain,
+issue decisions, failures, and idempotent write journal in `autofix/index.json`;
+annotation and DOCX style offsets are refreshed after publishing. `report.json`
+contains a compact Review and Autofix summary.
 
-`report` summarizes the current translation and read-only Review result without
+`report` summarizes the current translation and latest Review result without
 modifying translated text. `assemble` rebuilds output from existing state without
 calling the model again. If another terminal is still translating, export uses a
 consistent snapshot of the batches already persisted when the command starts; run

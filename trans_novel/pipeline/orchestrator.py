@@ -1,7 +1,7 @@
 """编排器：纯流程控制层，唯一公开的编排 façade。
 
 Orchestrator 只负责：
-  * 共享 runtime 与各具体服务（准备/翻译/注释/审校/收尾）的装配；
+  * 共享 runtime 与各具体服务（准备/翻译/注释/审校/Autofix/收尾）的装配；
   * steps 路由、阶段顺序、锁作用域选择、metrics session 包裹、progress 转发；
   * 异常短路与异常传播、统一返回结构。
 
@@ -11,8 +11,8 @@ agents / ingest / glossary / assemble / ThreadPoolExecutor，也不直接读写�
 状态文件。依赖方向固定为：
 
     CLI → Orchestrator → Runtime / Preparation / Translation / Annotation /
-                          Review / Finalization → agents / ingest / glossary /
-                          assemble / RunStore
+                          Review / ReviewAutofix / Finalization → agents / ingest /
+                          glossary / assemble / RunStore
 
 任何下层模块都不得反向导入本模块。
 """
@@ -26,6 +26,7 @@ from ..config import Config
 from .annotations import AnnotationService
 from .finalization import AssemblyService, ReportService
 from .preparation import PreparationService
+from .review_autofix import ReviewAutofixService
 from .review_workflow import ReviewService
 from .runstore import RunStore
 from .runtime import LLMClient, PipelineRuntime, _record_pipeline_metrics, _record_run_metrics
@@ -49,6 +50,7 @@ class Orchestrator:
         self._annotations = AnnotationService(self._runtime)
         self._translation = TranslationService(self._runtime, self._annotations)
         self._review = ReviewService(self._runtime)
+        self._review_autofix = ReviewAutofixService(self._runtime, self._annotations)
         self._report = ReportService(self._runtime)
         self._assembly = AssemblyService(self._runtime)
 
@@ -150,14 +152,14 @@ class Orchestrator:
             progress=progress,
         )
 
-    @_record_run_metrics("review", ["review"])
+    @_record_run_metrics("review", ["review", "review_autofix"])
     def run_review(
         self,
         input_path: str,
         *,
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
-        """全量执行只读 Review，并保存正式结果、事件与用量。"""
+        """全量执行 Review，并按配置发布 Autofix 结果。"""
         store = self._runtime.measure_stage_call(
             "prepare",
             self._preparation.locate_existing,
@@ -167,9 +169,7 @@ class Orchestrator:
         with store.lock():
             self._preparation.activate(store)
             terms = self._review.session_terms(store)
-            outcome = self._runtime.measure_stage_call(
-                "review",
-                self._review.run_session,
+            outcome = self._run_review_locked(
                 store,
                 terms,
                 progress=progress,
@@ -182,6 +182,40 @@ class Orchestrator:
             "review_result": outcome.result,
             "review_dir": outcome.run_dir,
         }
+
+    def _run_review_locked(
+        self,
+        store: RunStore,
+        terms: Any,
+        *,
+        progress: ProgressFn | None,
+    ) -> Any:
+        """在书级锁内执行只读 Review，并按配置进入独立 Autofix 发布阶段。"""
+        resumed = self._runtime.measure_stage_call(
+            "review_autofix",
+            self._review_autofix.resume_pending,
+            store,
+            progress=progress,
+        )
+        if resumed is not None:
+            return resumed
+        outcome = self._runtime.measure_stage_call(
+            "review",
+            self._review.run_session,
+            store,
+            terms,
+            progress=progress,
+        )
+        if not self.config.pipeline.review_autofix:
+            return outcome
+        return self._runtime.measure_stage_call(
+            "review_autofix",
+            self._review_autofix.run,
+            store,
+            outcome,
+            terms,
+            progress=progress,
+        )
 
     def _run_existing_steps(
         self,
@@ -366,9 +400,7 @@ class Orchestrator:
                     # 先保存此前阶段的增量，使会话 usage.json 只包含 Review 调用。
                     self._runtime.flush_usage(store, scope="pipeline")
                     terms = self._review.session_terms(store, glossary)
-                    outcome = self._runtime.measure_stage_call(
-                        "review",
-                        self._review.run_session,
+                    outcome = self._run_review_locked(
                         store,
                         terms,
                         progress=progress,

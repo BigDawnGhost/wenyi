@@ -20,6 +20,7 @@ from trans_novel.cli import (
 )
 from trans_novel.config import Config
 from trans_novel.ingest.errors import MinerUError
+from trans_novel.pdf_bridge import BabeldocBridgeError
 
 
 class FakeStore:
@@ -378,6 +379,45 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("/tmp/reviews/review-20260801-120000", result.output)
         self.assertIn("干净确认", result.output)
 
+    def test_review_autofix_option_overrides_config_and_reports_writeback(self):
+        cfg = Config.from_dict(
+            {
+                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "pipeline": {"review_autofix": False},
+            }
+        )
+        captured = {}
+
+        class FakeOrchestrator:
+            def __init__(self, config):
+                captured["autofix"] = config.pipeline.review_autofix
+
+            def run_review(self, input_path, **kwargs):
+                return {
+                    "review_result": {
+                        "termination": "max_rounds",
+                        "summary": {"issue_count": 1, "change_count": 1},
+                        "autofix": {
+                            "enabled": True,
+                            "status": "partial",
+                            "applied_segment_count": 1,
+                            "failed_issue_count": 1,
+                        },
+                    },
+                    "review_dir": "/tmp/reviews/review-autofix",
+                }
+
+        with (
+            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
+            patch("trans_novel.cli.os.path.isfile", return_value=True),
+        ):
+            result = CliRunner().invoke(app, ["review", "input.txt", "--autofix"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(captured["autofix"])
+        self.assertIn("Autofix：已写回 1 段，失败 1 项", result.output)
+
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
         cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
@@ -492,6 +532,7 @@ class TestCliConfig(unittest.TestCase):
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
+            BabeldocBridgeError("BabelDOC 检测到纯图片 PDF，请改用 MinerU"),
             ValueError("不支持的输出格式：xml"),
         ):
             with self.subTest(error=type(error).__name__):

@@ -13,6 +13,8 @@
                       标题与目录翻译。
   review_workflow.py  Review 服务：并行审校、证据 Agent Loop、冲突仲裁、Fixer、
                       影子译文与盲复审状态机。
+  review_autofix.py   可选发布服务：叠加 Review changes，复用 Agent Loop 核验
+                      最终 issues，并将完整单段修订幂等写回正式 target。
   finalization.py     ReportService（术语库生命周期、报告）与 AssemblyService
                       （实时状态导出 / 只读快照导出）。
   language.py         与具体阶段无关的语言规范化纯函数。

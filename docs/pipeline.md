@@ -16,6 +16,7 @@ Read input
 -> Extract and update terminology as translation progresses
 -> Normalize remaining punctuation at the end of each chapter
 -> Optionally run the evidence-driven whole-book review
+-> Optionally publish Review Autofix revisions to formal segment targets
 -> Generate the report
 -> Write translated content back and assemble the requested output
 ```
@@ -43,31 +44,41 @@ The glossary constrains later translation and supplies evidence to the final rev
 - **Selective evidence loop:** when a successfully reviewed leaf chunk contains candidates and `review_agent_loop` is enabled, a bounded Agent Loop confirms, dismisses, or refines them and may add issues within that chunk. It can request one glossary entry by source or alias, the first, middle, last, or Nth occurrence of a term, nearby source-and-translation segments, and limited book, chapter, or style context instead of loading the whole book or glossary into every prompt. The loop uses the configured tier (`strong` by default) and must decide after at most `review_agent_max_evidence_rounds` evidence rounds.
 - **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The final suggestion set conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available in the round traces. It never changes the glossary or translated text.
 - **Shadow Fix and blind re-review:** confirmed issues for the same segment are grouped into one Fixer request. The Fixer receives the style brief, book synopsis, chapter digest, relevant glossary subset, and nearby source/translation pairs, and must return one complete replacement segment rather than a diff. All Fixers in a round read one immutable shadow snapshot; their patches are applied together only after the round finishes. The next whole-book Review and evidence index read the updated shadow text without receiving the old issue explanations. Unresolved arbitration conflicts and unverified Agent fallbacks are left unresolved. The loop stops after consecutive clean passes, the configured Fix limit, no progress, or an A→B→A cycle.
+- **Optional Autofix publishing:** the Review engine itself remains read-only. When `review_autofix` is enabled, a separate publisher first overlays the folded `changes`, then sends final unresolved issues through the existing Review Agent Loop against that updated translation. Confirmed issues reuse the existing Fixer; no Autofix-specific loop or prompt exists. The publisher writes only final complete segments to formal `target` values, then refreshes annotation and DOCX style offsets.
 Final review is the sole model-driven semantic review stage and is disabled by
 default. Setting `pipeline.review: true` runs it after translation in the
 one-command workflow. Review is also available as an independent stage:
 
 ```bash
 uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Every invocation
-reviews the complete translated book from the beginning. It may update only a
-run-local shadow translation and never changes chapter JSON, the manifest, or the
-glossary. The final result, run-local usage delta, events, and internal round traces
-are written to:
+reviews the complete translated book from the beginning. The Review engine may
+update only a run-local shadow translation. Publishing is disabled by default;
+enable `pipeline.review_autofix` or pass `--autofix` to replace formal chapter
+`target` values after Review completes. The manifest and glossary are never changed.
+The final result, run-local usage delta, events, and internal traces are written to:
 
 ```text
 state/<book>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ```
 
-The directory has only `result.json`, `usage.json`, `events.jsonl`, and `rounds/`.
+The base Review directory contains `result.json`, `usage.json`, `events.jsonl`, and
+`rounds/`.
 `result.json` contains the final issues and folded modification suggestions;
 chapter and segment indices point back to the formal chapter JSON instead of
 copying source text and context. `rounds/` retains prompts, responses, patches,
-and failures for diagnosis. The run-local usage delta is also merged exactly once
-into the book's cumulative `usage.json`, while `report.json` receives only the
-Review ID, stop reason, counts, and `read_only: true`.
+and failures for diagnosis. Autofix adds `autofix/index.json`, which keeps each
+before/after chain, issue ID, Agent decision, failure, target hash, and publication
+status. Chapter JSON receives no additional Review history field. The journal is
+written before formal targets and allows an interrupted publication to resume
+idempotently. A partial final issue fix does not roll back a valid direct `change`;
+the index and result summary report the failure. The run-local usage delta is also
+merged exactly once into the book's cumulative `usage.json`, while `report.json`
+receives a compact Review/Autofix summary and sets `read_only: false` for a published
+run.
 
 `not_rereported` means only that a subsequent blind review did not report the
 logical issue covered by the suggestion again. It is not proof that the proposed
@@ -78,7 +89,7 @@ even if a later Reviewer missed it).
 
 ## Resumability
 
-Each completed translation batch is persisted immediately. Running `translate` again skips completed batches and fills only missing work. A standalone `assemble` briefly freezes the persisted manifest and chapter snapshot, releases the state lock, and renders from that snapshot, so it does not wait for a full translation running in another terminal.
+Each completed translation batch is persisted immediately. When polishing is enabled, each segment in the chapter JSON keeps the translation-stage text in `target_before_polish` and the polished final text in `target`. Running `translate` again skips completed batches and fills only missing work. A standalone `assemble` briefly freezes the persisted manifest and chapter snapshot, releases the state lock, and renders from that snapshot, so it does not wait for a full translation running in another terminal.
 
 ## Subtitle path (SRT)
 
