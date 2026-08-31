@@ -247,13 +247,15 @@ uv run trans-novel status book.epub
 ```
 
 更改润色设置不会自动重跑已经完成的翻译批次。Review 不同：每次执行
-`review` 都会全量重审完整译文，并创建新的时间戳只读审校目录。只有需要从头翻译时
+`review` 都会全量重审完整译文，并创建新的时间戳审校目录。默认保持只读；使用
+`--autofix` 时可以发布最终修订。只有需要从头翻译时
 才应使用新的状态目录或清理对应状态。
 
 ## 独立阶段与术语管理
 
 ```bash
 uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
 uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
@@ -265,11 +267,16 @@ uv run trans-novel assemble book.epub
 文本块；候选问题随后可进入有界取证循环，互相矛盾的跨块一致性建议还可获得
 终局建议。确认的问题可以生成仅限本次运行的完整单段影子替换；同轮 Fixer 都读取
 同一份不可变快照，下一轮全书 Review 不接收旧问题说明，只盲审更新后的影子译文。
-这些替换不会写入 manifest、章节 JSON 或术语库。每次运行会把面向用户的统一
-`result.json`、本次模型用量、事件和内部逐轮记录写入
+默认情况下，这些替换不会写回。使用 `--autofix`（或设置
+`pipeline.review_autofix: true`）时，会先叠加折叠后的 `changes`；剩余 issues
+基于更新后的译文复用同一个有界 Review Agent Loop，确认项再复用同一个 Review
+Fixer。最终完整段落只写入章节 `target`，不会给章节 JSON 增加 Review 历史字段，
+也不修改 manifest 和术语库。每次运行会把面向用户的统一 `result.json`、本次模型用量、事件和内部逐轮记录写入
 `state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
-本书累计 `usage.json`；`report.json` 只保存简短的只读审校摘要。
+本书累计 `usage.json`。Autofix 的完整前后版本链、issue 判定、失败原因和幂等
+写回日志保存在 `autofix/index.json`；发布后会刷新注释与 DOCX 样式偏移。
+`report.json` 保存简短的 Review 与 Autofix 摘要。
 
-`report` 汇总当前翻译状态和只读 Review 结果，不会修改正文；`assemble` 可在
+`report` 汇总当前翻译状态和最新 Review 结果，不会修改正文；`assemble` 可在
 不重新调用模型的情况下重新导出已有译文。若另一个终端仍在翻译，导出会读取
 调用时已经落盘的一致快照，不必等到整本书结束；之后新完成的批次需再次导出才会进入成品。

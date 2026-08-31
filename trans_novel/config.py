@@ -68,6 +68,7 @@ pipeline:
   review_fix_loop: true # 只在内存影子译文上暂改并盲复审，不写回正式正文
   review_fix_max_rounds: 2 # 最多生成两轮临时替换；完整 Review 轮数另受连续 clean 确认影响
   review_clean_confirmations: 2 # 连续两轮未发现问题才视为影子译文通过
+  review_autofix: false # 可选将 Review 建议与终局 Agent 修订写回正式章节
   glossary_scope: chapter # chapter=本章相关词条；full=全量表
   # PDF 后端：mineru（默认）| babeldoc（外部 AGPL HTTP bridge，主仓不引入 babeldoc）
   pdf_backend: mineru
@@ -154,6 +155,7 @@ class PipelineConfig(BaseModel):
     review_fix_loop: bool = True  # 仅在内存影子译文上生成临时替换并盲复审
     review_fix_max_rounds: int = Field(default=2, ge=0, le=4)
     review_clean_confirmations: int = Field(default=2, ge=1, le=2)
+    review_autofix: bool = False  # Review 完成后由独立发布阶段写回正式译文
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
     # PDF：mineru=现有 HTML 路径；babeldoc=外部 AGPL bridge（HTTP，主仓不 import babeldoc）
     pdf_backend: Literal["mineru", "babeldoc"] = "mineru"

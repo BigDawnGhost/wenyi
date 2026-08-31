@@ -610,12 +610,19 @@ def prepare(
 @app.command(rich_help_panel="质量检查")
 def review(
     input: str = typer.Argument(..., help="全书正文已经翻译完成的源文件"),
+    autofix: bool | None = typer.Option(
+        None,
+        "--autofix/--no-autofix",
+        help="覆盖 pipeline.review_autofix，将审校修订写回正式章节",
+    ),
 ):
-    """全量运行取证、影子修订与盲复审；不修改正式正文。"""
+    """全量运行取证、影子修订与盲复审；可选自动写回。"""
     from .pipeline.orchestrator import Orchestrator
 
     _require_input_file(input)
     config = _load_config()
+    if autofix is not None:
+        config.pipeline.review_autofix = autofix
     orch = Orchestrator(config)
 
     try:
@@ -640,7 +647,14 @@ def review(
         f"仍有 {summary['issue_count']} 项问题，"
         f"生成 {summary['change_count']} 项修改建议。"
     )
-    console.print("审校结果为只读建议，正式章节译文未修改。")
+    autofix_result = review_result.get("autofix") or {}
+    if autofix_result.get("enabled"):
+        console.print(
+            f"Autofix：已写回 {autofix_result.get('applied_segment_count', 0)} 段，"
+            f"失败 {autofix_result.get('failed_issue_count', 0)} 项。"
+        )
+    else:
+        console.print("审校结果为只读建议，正式章节译文未修改。")
     console.print(f"审校目录：{result['review_dir']}")
 
 

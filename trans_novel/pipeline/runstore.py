@@ -12,7 +12,7 @@
   glossary.db       术语库 + 译法冲突记录
   report.json       翻译报告
   events.jsonl      追加式行为 / 改写 / 翻译结果日志
-  reviews/          每次只读全书 Review 的正式结果与逐轮记录
+  reviews/          每次全书 Review 的结果、逐轮记录与可选 Autofix 发布索引
 """
 
 from __future__ import annotations

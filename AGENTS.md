@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是面向长篇文本的多阶段翻译工具。主流程包含输入解析、全书预扫、术语管理、批次翻译、可选润色、只读全书 Review、报告和多格式导出，并以磁盘状态实现断点续跑。
+Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是面向长篇文本的多阶段翻译工具。主流程包含输入解析、全书预扫、术语管理、批次翻译、可选润色、全书 Review、可选 Autofix 发布、报告和多格式导出，并以磁盘状态实现断点续跑。
 
 - Python：3.10+；CI 覆盖 3.10 和 3.12。
 - 包管理与命令执行：优先使用 `uv`。
@@ -19,7 +19,7 @@ Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是面向长篇文本�
 - `trans_novel/pipeline/`：书籍工作流。
   - `orchestrator.py` 只负责装配服务、步骤路由和锁作用域。
   - `runtime.py` 保存共享运行依赖、LLM 事件/用量/指标逻辑。
-  - `preparation.py`、`translation.py`、`annotations.py`、`review_workflow.py`、`finalization.py` 分别实现领域阶段。
+  - `preparation.py`、`translation.py`、`annotations.py`、`review_workflow.py`、`review_autofix.py`、`finalization.py` 分别实现领域阶段。
   - `runstore.py` 定义运行状态、原子写入、源文件身份和跨进程锁。
 - `trans_novel/agents/`：模型驱动的分析、翻译、润色、注释对齐、审校取证与影子修订。
 - `trans_novel/review/`：Review 的证据索引、运行目录与纯数据模型；不是正式译文存储。
@@ -42,8 +42,8 @@ Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是面向长篇文本�
 
 ```text
 CLI → Orchestrator → Runtime / Preparation / Translation / Annotation /
-                      Review / Finalization → agents / ingest / glossary /
-                      assemble / RunStore
+                      Review / ReviewAutofix / Finalization → agents / ingest /
+                      glossary / assemble / RunStore
 ```
 
 - `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble`、`postprocess` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
@@ -63,7 +63,7 @@ CLI → Orchestrator → Runtime / Preparation / Translation / Annotation /
 - 保持锁语义：长流程使用书级运行锁；一致状态读写使用短状态锁；事件追加与产物导出分别使用专用锁。
 - 已完成批次和章节必须可安全跳过。修改翻译、术语检查点、预扫或 Review 缓存时，必须覆盖中断后续跑场景。
 - 导出从一致快照读取，不能观察到 manifest 与章节文件的混合时刻。
-- Review 只能修改本次运行内存/目录中的影子译文，不能写回正式章节 JSON、manifest 或术语库。
+- Review 引擎只能修改本次运行内存/目录中的影子译文。只有显式开启的独立 Review Autofix 发布服务可以在先写可恢复索引后更新正式章节 `target`；它不得新增章节历史字段、修改 manifest 或术语库。
 - 用量和事件是追加/累计账本。一次 Review 增量只能合并一次，重试与续跑不得重复计费。
 - 保留 `Segment`、章节索引、EPUB 注释/锚点、DOCX 样式和 `babeldoc_id` 等稳定身份；不要为方便处理而重新编号或扁平化。
 

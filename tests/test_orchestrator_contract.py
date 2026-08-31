@@ -51,17 +51,19 @@ class _RecordingStore:
 class TestOrchestratorContract(unittest.TestCase):
     """spy services 下的编排契约。"""
 
-    def _orchestrator(self, review=False):
+    def _orchestrator(self, review=False, review_autofix=False):
         cfg = Config.from_dict(
             {
                 "llm": {"provider": "fake"},
-                "pipeline": {"review": review},
+                "pipeline": {"review": review, "review_autofix": review_autofix},
             }
         )
         orch = Orchestrator(cfg)
         orch._preparation = MagicMock()
         orch._translation = MagicMock()
         orch._review = MagicMock()
+        orch._review_autofix = MagicMock()
+        orch._review_autofix.resume_pending.return_value = None
         orch._report = MagicMock()
         orch._assembly = MagicMock()
         # 收尾流程需要可用的术语库作用域（spy 版）。
@@ -144,6 +146,8 @@ class TestOrchestratorContract(unittest.TestCase):
         orch._preparation.locate_existing.assert_called_once_with("novel.txt", progress=progress)
         orch._review.session_terms.assert_called_once_with(store)
         orch._review.run_session.assert_called_once_with(store, ["术语"], progress=progress)
+        orch._review_autofix.resume_pending.assert_called_once_with(store, progress=progress)
+        orch._review_autofix.run.assert_not_called()
         self.assertEqual(
             result,
             {
@@ -175,6 +179,37 @@ class TestOrchestratorContract(unittest.TestCase):
         orch._review.run_session.assert_called_once()
         self.assertEqual(result["review_result"], {"r": 1})
         self.assertIsNone(result["report"])
+
+    def test_review_autofix_runs_after_read_only_review_when_enabled(self):
+        """Autofix 只在 Review 结果产生后发布，并把新 outcome 返回上层。"""
+        orch = self._orchestrator(review_autofix=True)
+        store = _RecordingStore()
+        orch._preparation.locate_existing.return_value = store
+        orch._review.session_terms.return_value = ["术语"]
+        review_outcome = Mock(
+            issues=[{"old": 1}],
+            changes=[{"chapter": 0}],
+            result={"phase": "review"},
+            run_dir="reviews/3",
+        )
+        fixed_outcome = Mock(
+            issues=[{"old": 1}],
+            changes=[{"chapter": 0}],
+            result={"phase": "autofix"},
+            run_dir="reviews/3",
+        )
+        orch._review.run_session.return_value = review_outcome
+        orch._review_autofix.run.return_value = fixed_outcome
+
+        result = orch.run_review("novel.txt")
+
+        orch._review_autofix.run.assert_called_once_with(
+            store,
+            review_outcome,
+            ["术语"],
+            progress=None,
+        )
+        self.assertEqual(result["review_result"], {"phase": "autofix"})
 
     def test_run_assemble_uses_snapshot_fast_path_without_run_lock(self):
         """仅导出：快照快路径，不获取书级锁，格式参数全部透传。"""
