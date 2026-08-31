@@ -218,6 +218,7 @@ pipeline:
   review_fix_loop: true
   review_fix_max_rounds: 2
   review_clean_confirmations: 2
+  review_autofix: false
   glossary_scope: chapter
 ```
 
@@ -237,15 +238,19 @@ pipeline:
 - `review_fix_loop`: generate complete provisional segment replacements for confirmed issues in a run-local shadow translation, then blindly review the whole book again. Disabling it keeps the single-pass recommendation-only behavior.
 - `review_fix_max_rounds`: maximum number of provisional Fix rounds, from `0` to `4`; this is not the total number of Review passes.
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
+- `review_autofix`: disabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 
 The command-line flags `--polish`, `--no-polish`, `--review`, and `--no-review`
 override the corresponding configuration values for a `translate` run.
 
 Run final review independently with `trans-novel review INPUT`. Each invocation
-reviews the complete translated book from the beginning. Review may modify only a
-run-local shadow translation; it never persists replacements to formal translation
-state. The consolidated result and internal round records are written under
+reviews the complete translated book from the beginning. By default, Review may
+modify only a run-local shadow translation. Use `trans-novel review INPUT --autofix`
+to override the setting for that invocation, or `--no-autofix` to force read-only
+behavior. Autofix first applies folded Review changes, then reuses the same Agent
+Loop and Fixer for final unresolved issues; there is no separate Autofix loop or
+prompt. The consolidated result and internal round records are written under
 `state/<book>/reviews/review-<timestamp>/`. Review usage is stored both as the
 run-local delta and in the book's cumulative usage totals.
 

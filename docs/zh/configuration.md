@@ -233,6 +233,7 @@ pipeline:
   review_fix_loop: true
   review_fix_max_rounds: 2
   review_clean_confirmations: 2
+  review_autofix: false
   glossary_scope: chapter
 ```
 
@@ -252,14 +253,18 @@ pipeline:
 - `review_fix_loop`：针对确认的问题在本次运行的影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。
 - `review_fix_max_rounds`：最多生成的临时 Fix 轮数，范围为 `0` 到 `4`；它不是 Review 总轮数。
 - `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
+- `review_autofix`：默认关闭。只读 Review 引擎结束后，先把折叠后的 `changes` 叠加到工作译文，再让每段剩余 issue 基于更新后的译文复用现有有界 Review Agent Loop，确认项继续交给现有 Review Fixer。生成的完整单段译文只覆盖正式章节的 `target`，不修改 manifest 和术语库。完整前后版本链、issue ID、判定、失败原因和写回状态保存在本次 Review 的 `autofix/index.json`，不会给章节 JSON 新增历史字段。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
 
 `translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`
 会覆盖对应配置。
 
 可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
-译文。Review 只会修改本次运行的影子译文，不会把替换写入正式翻译状态；统一
-结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
+译文。默认情况下 Review 只修改本次运行的影子译文；可用
+`trans-novel review INPUT --autofix` 覆盖本次设置并发布修订，也可用
+`--no-autofix` 强制保持只读。Autofix 会先应用折叠后的 changes，再让最终未解决
+issues 复用同一套 Agent Loop 和 Fixer，不会另建一套 Autofix loop 或 prompt。
+统一结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
 本次 Review 用量既保存为目录内增量，也会计入本书累计用量。
 
 ## 输出

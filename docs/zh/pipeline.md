@@ -16,6 +16,7 @@
 -> 实时抽取和更新术语
 -> 章末规范化其余段落标点
 -> 可选执行取证式全书审校
+-> 可选将 Review Autofix 修订发布到正式段落 target
 -> 生成报告
 -> 回填并组装指定格式的成品
 ```
@@ -43,27 +44,34 @@
 - **选择性取证循环**：成功完成初审的叶块若产生候选问题，且开启 `review_agent_loop`，有界 Agent Loop 会确认、驳回或细化候选，也可补充当前块内的问题。它能按原文或别名读取单个术语条目，按首次、中间、末次或第 N 次请求术语命中，获取指定段落的相邻原译文，以及有限的全书概览、章节梗概和风格信息，无需给每个请求注入整本书或全量术语表。循环默认使用 `strong` 档，并必须在最多 `review_agent_max_evidence_rounds` 轮取证后给出结论。
 - **跨块仲裁**：所有并发块完成后，同一术语、人称或固定表达若出现互相矛盾的一致性建议，可再交给终局仲裁器。最终建议集会保守地把所有落选建议统一改写为胜出值；所有被替代的旧建议仍保留在逐轮记录中，不会修改术语库或正文。
 - **影子修订与盲复审**：同一段的多个确认问题会合并为一次 Fixer 请求。Fixer 会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，并必须返回完整单段替换而非局部 diff。同轮所有 Fixer 读取同一份不可变影子快照，全部结束后才统一应用；下一轮全书 Reviewer 与取证索引只读取更新后的影子译文，不接收旧问题说明。未解决的仲裁冲突和未经确认的 Agent fallback 会保留为未解决项。连续无问题、达到 Fix 上限、没有有效进展或检测到 A→B→A 循环时停止。
+- **可选 Autofix 发布**：Review 引擎自身仍保持只读。开启 `review_autofix` 后，独立发布服务会先叠加折叠后的 `changes`，再让最终未解决 issues 基于更新后的译文进入现有 Review Agent Loop；确认项继续复用现有 Fixer，不存在 Autofix 专属 loop 或 prompt。发布阶段只把最终完整段落写入正式 `target`，随后刷新注释与 DOCX 样式偏移。
 最终审校是唯一由模型执行的语义审校阶段，默认关闭。设置
 `pipeline.review: true` 后，一键流程会在翻译完成后执行最终审校；也可以将它
 作为独立阶段使用：
 
 ```bash
 uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
 ```
 
 即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。每次运行都会从头
-审查完整译文。它只会更新本次运行内存中的影子译文，不会修改章节 JSON、manifest
-或术语库。最终结果、本次用量、事件和内部逐轮记录写入：
+审查完整译文。Review 引擎只更新本次运行内存中的影子译文；发布默认关闭，设置
+`pipeline.review_autofix` 或传入 `--autofix` 后，才会在 Review 完成后覆盖正式章节
+的 `target`。manifest 和术语库始终不变。最终结果、本次用量、事件和内部记录写入：
 
 ```text
 state/<书名>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ```
 
-目录顶层只有 `result.json`、`usage.json`、`events.jsonl` 和 `rounds/`。
+基础 Review 目录包含 `result.json`、`usage.json`、`events.jsonl` 和 `rounds/`。
 `result.json` 集中保存最终问题和折叠后的修改建议，并只用章节号和段落索引定位
 正式章节 JSON，不重复保存原文和上下文。`rounds/` 保存 Prompt、响应、补丁和失败
-信息以便诊断。本次用量增量还会且只会合并一次到本书累计 `usage.json`；
-`report.json` 只记录 Review ID、停止原因、问题数、建议数和 `read_only: true`。
+信息以便诊断。Autofix 另写 `autofix/index.json`，保存每次前后版本链、issue ID、
+Agent 判定、失败原因、目标哈希和发布状态；章节 JSON 不增加 Review 历史字段。索引
+会在正式 target 之前落盘，进程中断后可幂等续写。最终 issue 修订部分失败时，已有效
+应用的直接 `change` 不会回滚，失败会进入索引和结果摘要。本次用量增量还会且只会
+合并一次到本书累计 `usage.json`；`report.json` 保存简短的 Review/Autofix 摘要，
+已发布的运行会标记 `read_only: false`。
 
 `not_rereported` 只表示后续盲审没有再次报告该建议所覆盖的逻辑问题，并不证明
 候选替换在语义上正确。停止原因

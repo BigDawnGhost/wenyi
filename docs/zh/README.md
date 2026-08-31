@@ -129,12 +129,16 @@ uv run trans-novel translate book.epub --format txt               # 导出为纯
 
 ```bash
 uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
 ```
 
 每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
 矛盾的一致性建议。确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
-只会看到影子译文，不会收到上一轮的问题说明。正式译文和正式状态始终不变，修订、
-复审结果及未解决建议集中写入 `state/<书名>/reviews/review-<时间戳>/result.json`。
+只会看到影子译文，不会收到上一轮的问题说明。Review 默认只读；使用 `--autofix`
+（或设置 `pipeline.review_autofix: true`）后，会先应用折叠后的 changes，再让剩余
+issues 基于更新译文复用现有 Review Agent Loop 和 Fixer。只有正式段落的 `target`
+会被覆盖，完整历史保存在 Review 目录的 `autofix/index.json`；统一结果仍写入
+`state/<书名>/reviews/review-<时间戳>/result.json`。
 
 ---
 
@@ -178,13 +182,17 @@ flowchart TD
     K --> N{存在确认问题且<br/>仍有修订轮次？}
     N -- 是 --> O[基于同一固定快照<br/>生成临时影子修订]
     O --> K
-    N -- 否或达到停止条件 --> P[保存只读问题<br/>与修改建议]
-    P --> M[生成报告并组装所选格式]
+    N -- 否或达到停止条件 --> P[保存 Review 问题<br/>与折叠后的 changes]
+    P --> Q{开启 Autofix？}
+    Q -- 是 --> R[叠加 changes 并复用 Agent Loop 与 Fixer<br/>发布最终段落 target]
+    Q -- 否 --> M[生成报告并组装所选格式]
+    R --> M
 ```
 
 启用全书理解时，预扫阶段按可配置并发数并行执行，并且幂等可续跑——已完成的梗概会跨运行复用。翻译过程中，每批获得最新的术语快照和已译上下文，确保代词、术语和语气跨章一致。
 Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，
-以保持全书风格；它生成的替换只存在于本次运行的影子译文中。
+以保持全书风格；普通 Review 循环中的替换只存在于影子译文中，可选 Autofix 发布
+阶段会复用它生成正式段落 target。
 
 ---
 

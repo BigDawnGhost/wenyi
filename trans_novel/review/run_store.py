@@ -487,6 +487,15 @@ class ReviewRunStore:
                 pass
         return inst
 
+    @classmethod
+    def open_existing(cls, run_dir: str) -> "ReviewRunStore":
+        """打开已有 Review 目录，供后续 Autofix 共用原子写入与事件序列。"""
+        normalized = os.path.normpath(run_dir)
+        review_id = os.path.basename(normalized)
+        if not review_id.startswith("review-") or not os.path.isdir(normalized):
+            raise ValueError("Review 目录无效")
+        return cls._from_existing(normalized, review_id)
+
     @staticmethod
     def _read_max_seq(event_path: str) -> int:
         """从 events.jsonl 读取最大 seq 值。"""

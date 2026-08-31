@@ -4,7 +4,7 @@
   * orchestrator.py 不导入 agents / ingest / glossary / assemble / postprocess / llm；
   * 不使用 ThreadPoolExecutor / concurrent.futures；
   * 不直接调用 load_document / complete_json / build_report / assemble；
-  * 装配全部六个拆分出的服务模块；
+  * 装配全部拆分出的服务模块；
   * 任何下层模块都不得反向导入 orchestrator.py；
   * agents 不得反向依赖 pipeline 编排模块（只允许依赖顶层 review 纯模型）。
 """
@@ -25,6 +25,7 @@ SERVICE_MODULES = (
     "annotations",
     "translation",
     "review_workflow",
+    "review_autofix",
     "finalization",
 )
 
@@ -48,6 +49,7 @@ FORBIDDEN_PIPELINE_MODULES_FOR_AGENTS = (
     "annotations",
     "translation",
     "review_workflow",
+    "review_autofix",
     "finalization",
     "runstore",
     "metrics",
@@ -114,7 +116,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
         self.assertNotIn("GlossaryStore", source)
 
     def test_orchestrator_wires_all_services(self):
-        """编排器必须装配全部六个拆分出的服务模块。"""
+        """编排器必须装配全部拆分出的服务模块。"""
         source = _module_source("orchestrator")
         for name in SERVICE_MODULES:
             self.assertIn(f"from .{name} import", source, f"缺少 {name} 的装配")
@@ -166,6 +168,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
             "annotations": "AnnotationService",
             "translation": "TranslationService",
             "review_workflow": "ReviewService",
+            "review_autofix": "ReviewAutofixService",
             "finalization": "ReportService",
         }
         for module_name, class_name in classes.items():
