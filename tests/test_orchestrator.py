@@ -631,6 +631,21 @@ class TestOrchestrator(unittest.TestCase):
             # 每段都有译文（润色后为 "润{i}"）
             ch0 = store.load_chapter(0)
             self.assertTrue(all(s.target for s in ch0.text_segments))
+            self.assertTrue(
+                all((s.target_before_polish or "").startswith("译") for s in ch0.text_segments)
+            )
+            self.assertTrue(all((s.target or "").startswith("润") for s in ch0.text_segments))
+
+            # 润色前后译文均存入章节 JSON，而不只存在运行期模型中。
+            with open(store.chapter_path(0), encoding="utf-8") as chapter_file:
+                chapter_json = json.load(chapter_file)
+            self.assertTrue(
+                all(
+                    "target_before_polish" in segment
+                    for segment in chapter_json["segments"]
+                    if segment["source"].strip()
+                )
+            )
 
             # 术语抽取写入了「堀北」；分析器种入了「绫小路」
             from trans_novel.glossary.store import GlossaryStore

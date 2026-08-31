@@ -786,8 +786,14 @@ class TranslationService:
         targets = [strip_ruby_markers(target) for target in targets]
 
         if self._runtime.config.pipeline.polish:
+            for segment, target in zip(batch, targets):
+                segment.target_before_polish = target
             polished = self._runtime.polisher.polish(targets, glossary_terms=terms, style=style)
             if len(polished) == len(targets):
                 targets = polished
+        else:
+            # 段落可能在修改配置后被重译，不应沿用旧的润色前快照。
+            for segment in batch:
+                segment.target_before_polish = None
 
         return targets
