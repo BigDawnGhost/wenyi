@@ -740,6 +740,7 @@ def glossary_conflicts(
                 f"  {conflict['source']}: 现有「{conflict['existing_target']}」 vs "
                 f"提议「{conflict['proposed_target']}」"
                 f"（第 {conflict['chapter']} 章）"
+                + (f" — {conflict['note']}" if conflict.get("note") else "")
             )
     finally:
         glossary.close()
@@ -750,11 +751,24 @@ def glossary_resolve(
     input: str = typer.Argument(..., help="已建立翻译状态的源文件"),
     source: str = typer.Argument(..., help="需要裁定的原文术语"),
     target: str = typer.Argument(..., help="今后统一采用的目标语言译名"),
+    gender: str | None = typer.Option(
+        None,
+        "--gender",
+        "-g",
+        help="同时裁定性别（如 男/女）；不传表示确认现有性别",
+    ),
 ) -> None:
     """把一个已有术语裁定为指定译名，并关闭对应冲突。"""
     from .glossary import resolver
     from .glossary.store import GlossaryStore
 
+    if gender is not None and gender.strip() not in ("男", "女"):
+        # 显式裁定只接受确切值；「未知」等标记或乱值会把未裁决的性别
+        # 冲突连同一并关闭，必须拒绝。
+        console.print(
+            f"[red]无效性别：{gender}（可为 男/女；不裁定请省略 --gender）[/]"
+        )
+        raise typer.Exit(1)
     config = _load_config()
     store = _runstore_for_cli(config, input)
     if not store.exists():
@@ -762,10 +776,12 @@ def glossary_resolve(
         raise typer.Exit(1)
     glossary = GlossaryStore(store.glossary_path)
     try:
-        if not resolver.resolve(glossary, source, target):
+        if not resolver.resolve(glossary, source, target, gender=gender):
             console.print(f"[red]术语不存在：{source}[/]")
             raise typer.Exit(1)
-        console.print(f"已裁定 {source} → {target}")
+        console.print(
+            f"已裁定 {source} → {target}" + (f"（性别：{gender}）" if gender else "")
+        )
     finally:
         glossary.close()
 
