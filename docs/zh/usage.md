@@ -96,6 +96,7 @@ pipeline:
 ```
 
 3. `uv run trans-novel translate book.pdf` 后 `assemble --format pdf` 会经 bridge `/fillback` 出 PDF。  
+   回填 PDF 默认不绘制 BabelDOC 的版面定位框，也不输出 plain text / title 等角色标签。  
    bridge 会把抽取后的原始 IL 冻结为持久 session 快照；只要保留 session 目录并使用完全
    相同的 Python/BabelDOC 版本，服务重启后可按原 session ID 懒恢复，不会重跑版面识别。
    长时间翻译建议用 `WENYI_BABELDOC_STATE_DIR` 指定持久目录；默认系统临时目录可能在重启

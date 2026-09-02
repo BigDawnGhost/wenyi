@@ -98,6 +98,8 @@ pipeline:
 ```
 
 3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
+   The fillback PDF omits BabelDOC layout overlay boxes and role labels
+   such as ``plain text`` / ``title`` by default.
    The bridge freezes the post-extraction IL as a durable session snapshot. It can
    restart and lazily restore the same session without rerunning layout analysis,
    provided its session directory and exact Python/BabelDOC versions are retained.
