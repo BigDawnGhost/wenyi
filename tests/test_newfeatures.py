@@ -273,6 +273,7 @@ class TestRunAll(unittest.TestCase):
                     },
                     "pipeline": {
                         "review": True,
+                        "review_autofix": False,
                         "polish": True,
                     },
                     "paths": {"state_dir": state},
