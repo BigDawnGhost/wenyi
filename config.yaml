@@ -40,7 +40,7 @@ segment:
 
 # ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
 pipeline:
-  review: false # 默认关闭；开启后在全书翻译完成后自动执行最终审校
+  review: true # 默认关闭；开启后在全书翻译完成后自动执行最终审校
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   rolling_context_segments: 6 # 注入的前文译文尾段数
@@ -58,10 +58,10 @@ pipeline:
   review_fix_loop: true # 只在内存影子译文上暂改并盲复审，不写回正式正文
   review_fix_max_rounds: 2 # 最多生成两轮临时替换；完整 Review 轮数另受连续 clean 确认影响
   review_clean_confirmations: 2 # 连续两轮未发现问题才视为影子译文通过
-  review_autofix: false # 可选将 Review 建议与终局 Agent 修订写回正式章节
+  review_autofix: true # 可选将 Review 建议与终局 Agent 修订写回正式章节
   glossary_scope: chapter # chapter=只注入本章出现的词条（长书省 token）；full=全量表
   # PDF 后端：mineru（默认，支持扫描件）| babeldoc（可选，外部 AGPL HTTP bridge）
-  pdf_backend: mineru
+  pdf_backend: babeldoc
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # 可选；限制 bridge 处理页（1-based）
   babeldoc_timeout: 600
