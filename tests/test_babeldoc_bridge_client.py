@@ -7,11 +7,34 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from trans_novel.assemble.pdf_writer import _assemble_pdf_babeldoc
 from trans_novel.ingest.pdf_babeldoc import _is_image_only_pdf, read_pdf_babeldoc
 from trans_novel.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeError
 
 
 class BabeldocBridgeClientTests(unittest.TestCase):
+    def test_fillback_uses_configured_timeout(self):
+        with (
+            patch(
+                "trans_novel.ingest.pdf_babeldoc.translations_from_store",
+                return_value=("session", "http://bridge.test", {"0:0": "译文"}),
+            ),
+            patch("trans_novel.pdf_bridge.BabeldocBridgeClient") as client_class,
+        ):
+            result = _assemble_pdf_babeldoc(
+                MagicMock(),
+                "output.pdf",
+                timeout=3600,
+            )
+
+        client_class.assert_called_once_with("http://bridge.test", timeout=3600)
+        client_class.return_value.fillback.assert_called_once_with(
+            "session",
+            {"0:0": "译文"},
+            out_path="output.pdf",
+        )
+        self.assertIs(result, client_class.return_value.fillback.return_value)
+
     def test_health_wraps_connection_errors(self):
         client = BabeldocBridgeClient("http://127.0.0.1:9")
         with patch("trans_novel.pdf_bridge.client.httpx.get", side_effect=OSError("down")):

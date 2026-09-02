@@ -104,6 +104,7 @@ class AssemblyService:
                     bilingual=False,
                     about_page=out_cfg.about_page,
                     pdf_engine=pdf_engine,
+                    babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                 )
             )
         if do_bilingual:
@@ -121,6 +122,7 @@ class AssemblyService:
                     preserve_source_style=out_cfg.bilingual_preserve_source_style,
                     about_page=out_cfg.about_page,
                     pdf_engine=pdf_engine,
+                    babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                 )
             )
         return outputs
