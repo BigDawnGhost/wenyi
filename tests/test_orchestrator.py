@@ -85,6 +85,7 @@ def _config(state_dir: str):
             "segment": {"max_chars_per_batch": 1800},
             "pipeline": {
                 "review": True,
+                "review_autofix": False,
                 "polish": True,
             },
             "paths": {"state_dir": state_dir},
@@ -444,6 +445,68 @@ class TestOrchestrator(unittest.TestCase):
                 if "align EPUB annotation markers" in call["messages"][0]["content"]
             ]
             self.assertEqual(len(calls), 1)
+
+    def test_annotation_alignment_uses_formal_target_without_normalizing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.source_lang = "en"
+            requested: list[str] = []
+
+            def handler(messages, tier, json_mode):
+                if "align EPUB annotation markers" in messages[0]["content"]:
+                    requested.append(messages[-1]["content"])
+                    return json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "unit_id": "ch0:tn0_0",
+                                    "marked_target": "甲,⟪tn0_0_annotation_0⟫乙",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                return routing_handler(messages, tier, json_mode)
+
+            chapter = Chapter(
+                index=0,
+                segments=[
+                    Segment(
+                        index=0,
+                        source="Alpha beta",
+                        target="甲,乙",
+                        anchor="tn0_0",
+                        meta={
+                            "epub_annotations": {
+                                "version": 1,
+                                "source_length": len("Alpha beta"),
+                                "items": [
+                                    {
+                                        "id": "tn0_0_annotation_0",
+                                        "mode": "point",
+                                        "source_start": 5,
+                                        "source_end": 5,
+                                        "source_text": "",
+                                        "marker_text": "1",
+                                    }
+                                ],
+                            }
+                        },
+                    )
+                ],
+            )
+            store = RunStore(os.path.join(directory, "state", "book"))
+            orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+
+            orch._annotations.align_annotations_after_batch(0, chapter, 0, 1, store)
+
+            saved = store.load_chapter(0)
+            self.assertEqual(saved.segments[0].target, "甲,乙")
+            self.assertIn('"immutable_target": "甲,乙"', requested[0])
+            self.assertEqual(
+                saved.segments[0].meta["epub_annotations"]["placements"][0]["target_start"],
+                2,
+            )
 
     def test_annotation_alignment_waits_for_final_continuation(self):
         with tempfile.TemporaryDirectory() as directory:

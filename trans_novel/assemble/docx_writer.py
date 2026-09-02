@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from docx import Document as open_docx
@@ -453,8 +454,8 @@ def _segment_style_payload(
 ) -> tuple[dict[str, Any] | None, list | None, str | None, str | None]:
     """返回 (整段样式, 混排 placements, align, shade)。
 
-    若混排尚无 placements（未对齐或未翻译就导出），按源文偏移比例映到当前写出文本，
-    这样「Adam Kuper」加粗等在回退原文导出时也不会丢。
+    若混排尚无有效 placements（未对齐、摘要失配或未翻译就导出），按源文偏移比例
+    映到当前写出文本，这样「Adam Kuper」加粗等在回退原文导出时也不会丢。
     """
     align = meta.get("align") if isinstance(meta.get("align"), str) else None
     shade = meta.get("shade") if isinstance(meta.get("shade"), str) else None
@@ -465,7 +466,8 @@ def _segment_style_payload(
     if not isinstance(styles, dict):
         return None, None, align, shade
     placements = styles.get("placements")
-    if isinstance(placements, list) and placements:
+    output_digest = hashlib.sha256(output_text.encode("utf-8")).hexdigest()
+    if isinstance(placements, list) and placements and styles.get("target_digest") == output_digest:
         return None, placements, align, shade
     items = styles.get("items")
     if isinstance(items, list) and items:

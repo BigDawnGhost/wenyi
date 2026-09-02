@@ -11,6 +11,7 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square)](https://github.com/BigDawnGhost/wenyi/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
+<a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
 
 **English** | [简体中文](docs/zh/README.md)
 
@@ -119,14 +120,15 @@ uv run trans-novel translate book.epub
 ```bash
 uv run trans-novel translate book.epub --polish --review          # enable polishing and final review
 uv run trans-novel translate book.epub --no-polish                # disable polishing
+uv run trans-novel translate book.epub --no-review                # skip final review
 uv run trans-novel translate book.epub --bilingual                # produce both editions
 uv run trans-novel translate book.epub --chapter 0                # translate the first chapter (indices start at 0)
 uv run trans-novel translate book.epub --format txt               # export as plain text
 ```
 
-Final review is disabled by default. Set `pipeline.review: true` to run it
-automatically after the complete book has been translated and the glossary has
-reached its final state, or run Agent Review independently:
+Final review runs by default after the complete book has been translated and the
+glossary has reached its final state. Pass `--no-review` or set
+`pipeline.review: false` to skip it. You can also run Agent Review independently:
 
 ```bash
 uv run trans-novel review book.epub
@@ -138,8 +140,9 @@ selectively request cross-book evidence before resolving contradictory
 consistency suggestions. Confirmed issues can produce provisional full-segment
 replacements in a run-local shadow translation. A fresh whole-book review sees
 the shadow text—but not the previous issue explanation—and validates it again.
-Review is read-only by default. With `--autofix` (or
-`pipeline.review_autofix: true`), folded changes are applied first and remaining
+Review publishes to formal chapter `target` values by default. Pass
+`--no-autofix` or set `pipeline.review_autofix: false` to keep the run
+read-only. With Autofix, folded changes are applied first and remaining
 issues reuse the existing Review Agent Loop and Fixer against that updated text.
 Only formal segment `target` values are replaced; full history stays in the Review
 directory's `autofix/index.json`. The consolidated result, run usage, events, and
@@ -154,7 +157,7 @@ internal records are written under `state/<book>/reviews/review-<timestamp>/`.
 | EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX | EPUB (monolingual / bilingual), TXT, HTML, Markdown, DOCX |
 | SRT (movie / series subtitles) | `.zh.srt` (monolingual) and optional `.zh-bi.srt` (bilingual) |
 
-- PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
+- PDF input defaults to the BabelDOC bridge. MinerU conversion is optional for scanned pages and requires `MINERU_API_KEY`; that HTML is cached and reused.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 - `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
@@ -178,8 +181,7 @@ flowchart TD
         FA --> G[Extract terms and refresh the glossary]
         G --> H{More batches?}
         H -- Yes --> E
-        H -- No --> I[Normalize remaining punctuation]
-        I --> IB[Run chapter-level fallback term extraction]
+        H -- No --> IB[Run chapter-level fallback term extraction]
         IB --> J[Persist the final chapter]
     end
 
@@ -190,8 +192,9 @@ flowchart TD
     N -- No or stopped --> P[Save Review issues<br/>and folded changes]
     P --> Q{Autofix enabled?}
     Q -- Yes --> R[Overlay changes; reuse Agent Loop and Fixer<br/>Publish final segment targets]
-    Q -- No --> M[Generate the report and assemble the selected output]
-    R --> M
+    Q -- No --> X[Optionally normalize punctuation<br/>on the export-only copy]
+    R --> X
+    X --> M[Generate the report and assemble the selected output]
 ```
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
@@ -218,7 +221,7 @@ Translated state directories for public-domain books may be shared through [weny
 - The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
-- PDF input depends on the MinerU external service; the initial conversion requires an API key.
+- PDF input defaults to the BabelDOC bridge. MinerU is optional for scanned pages and requires an API key.
 - SRT translation is a light concurrent path: no glossary, polishing, or whole-book review, and slug collision is possible for identically named files in different folders.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large state directories; storage requirements grow with book length.

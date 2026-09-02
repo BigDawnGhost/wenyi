@@ -145,7 +145,6 @@ def config_identity(config: Config) -> dict[str, Any]:
         "pipeline": _safe_value(config.pipeline.model_dump(mode="python")),
         "output": _safe_value(config.output.model_dump(mode="python")),
         "honorific_strategy": config.honorific_strategy,
-        "punctuation_normalize": config.punctuation_normalize,
     }
     return {"fingerprint": _fingerprint(summary), "summary": summary}
 

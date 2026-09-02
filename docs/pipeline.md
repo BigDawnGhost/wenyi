@@ -14,11 +14,11 @@ Read input
 -> Optionally polish each completed batch
 -> Immediately align each annotated EPUB logical paragraph in sequence
 -> Extract and update terminology as translation progresses
--> Normalize remaining punctuation at the end of each chapter
 -> Optionally run the evidence-driven whole-book review
 -> Optionally publish Review Autofix revisions to formal segment targets
 -> Generate the report
--> Write translated content back and assemble the requested output
+-> Optionally normalize punctuation on an export-only copy
+-> Write the copy back and assemble the requested output
 ```
 
 ## Whole-book understanding and context
@@ -37,16 +37,16 @@ The glossary constrains later translation and supplies evidence to the final rev
 
 - **Segment alignment:** the model must return a JSON array with the same number of items as the input. Wenyi retries mismatched batches and falls back to translating one segment at a time.
 - **Polishing:** improves Chinese fluency while preserving meaning and segment count.
-- **Punctuation normalization:** converts punctuation to common Simplified Chinese full-width conventions.
+- **Punctuation normalization:** optionally converts punctuation to common Simplified Chinese full-width conventions on an export-only copy. It never rewrites formal chapter `target` values, so changing this output option does not alter translation, Review, or resume state.
 - **EPUB annotation context:** during preparation, Wenyi resolves high-confidence footnote and endnote references to their source-language note bodies, deduplicates shared targets, and stores an auxiliary copy separately from chapter text. Translation batches automatically receive that copy only for the numbered segments that reference it. Backlinks, chapter jumps, external links, and other ordinary hyperlinks are excluded. The borrowed copy is never appended to the referencing segment or rolling context; note resources already present in the EPUB spine remain ordinary translatable book content.
-- **EPUB annotation alignment:** removes recognized footnote markers from translatable source text while retaining semantic superscripts/subscripts. As soon as an annotated logical paragraph has been fully translated, polished, and punctuation-finalized, Wenyi makes one sequential alignment call and immediately persists the restored `a/sup/href/id/class` positions. Split continuations are rejoined first; unrelated paragraphs make no call. The target text is immutable during alignment, and failures degrade to clickable end markers instead of dropping links. Untranslated text and bilingual source copies keep the source EPUB's original annotation positions. EPUB state created before this metadata format must be prepared again from the source book.
+- **EPUB annotation alignment:** removes recognized footnote markers from translatable source text while retaining semantic superscripts/subscripts. As soon as an annotated logical paragraph has been fully translated and polished, Wenyi makes one sequential alignment call against the formal target and immediately persists the restored `a/sup/href/id/class` positions. When export punctuation normalization is enabled, the export layer remaps those offsets together with the normalized in-memory copy. Split continuations are rejoined first; unrelated paragraphs make no call. Failures degrade to clickable end markers instead of dropping links. Untranslated text and bilingual source copies keep the source EPUB's original annotation positions. EPUB state created before this metadata format must be prepared again from the source book.
 - **Agent Review:** starts only after every chapter has been translated and uses the completed glossary. Contiguous chapter chunks are checked concurrently with the existing Reviewer prompt. Every response must end with a completion receipt containing the exact reviewed-segment count and `complete: true`. Syntax-only JSON damage is repaired locally with `json-repair`; a missing or invalid receipt recursively splits only the affected chunk, and a singleton receives at most `1 + review_output_retries` attempts.
 - **Selective evidence loop:** when a successfully reviewed leaf chunk contains candidates and `review_agent_loop` is enabled, a bounded Agent Loop confirms, dismisses, or refines them and may add issues within that chunk. It can request one glossary entry by source or alias, the first, middle, last, or Nth occurrence of a term, nearby source-and-translation segments, and limited book, chapter, or style context instead of loading the whole book or glossary into every prompt. The loop uses the configured tier (`strong` by default) and must decide after at most `review_agent_max_evidence_rounds` evidence rounds.
 - **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The final suggestion set conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available in the round traces. It never changes the glossary or translated text.
 - **Shadow Fix and blind re-review:** confirmed issues for the same segment are grouped into one Fixer request. The Fixer receives the style brief, book synopsis, chapter digest, relevant glossary subset, and nearby source/translation pairs, and must return one complete replacement segment rather than a diff. All Fixers in a round read one immutable shadow snapshot; their patches are applied together only after the round finishes. The next whole-book Review and evidence index read the updated shadow text without receiving the old issue explanations. Unresolved arbitration conflicts and unverified Agent fallbacks are left unresolved. The loop stops after consecutive clean passes, the configured Fix limit, no progress, or an A→B→A cycle.
 - **Optional Autofix publishing:** the Review engine itself remains read-only. When `review_autofix` is enabled, a separate publisher first overlays the folded `changes`, then sends final unresolved issues through the existing Review Agent Loop against that updated translation. Confirmed issues reuse the existing Fixer; no Autofix-specific loop or prompt exists. The publisher writes only final complete segments to formal `target` values, then refreshes annotation and DOCX style offsets.
-Final review is the sole model-driven semantic review stage and is disabled by
-default. Setting `pipeline.review: true` runs it after translation in the
+Final review is the sole model-driven semantic review stage and is enabled by
+default. Setting `pipeline.review: false` or passing `--no-review` skips it in the
 one-command workflow. Review is also available as an independent stage:
 
 ```bash
@@ -55,10 +55,10 @@ uv run trans-novel review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Every invocation
-reviews the complete translated book from the beginning. The Review engine may
-update only a run-local shadow translation. Publishing is disabled by default;
-enable `pipeline.review_autofix` or pass `--autofix` to replace formal chapter
-`target` values after Review completes. The manifest and glossary are never changed.
+reviews the complete translated book from the beginning. The Review engine first
+updates a run-local shadow translation. Publishing is enabled by default;
+set `pipeline.review_autofix: false` or pass `--no-autofix` to keep Review from
+replacing formal chapter `target` values. The manifest and glossary are never changed.
 The final result, run-local usage delta, events, and internal traces are written to:
 
 ```text

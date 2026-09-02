@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from ..agents.annotation_aligner import AnnotationUnit, target_digest
 from ..ingest.models import Chapter
-from ..postprocess.punct import normalize_zh_segments
 from .annotations import AnnotationService
 from .runstore import RunStore
 
@@ -183,17 +182,6 @@ class DocxStyleService:
         if any(not (item.target and item.target.strip()) for item in logical_segments):
             return
 
-        target_changed = False
-        if self._runtime.punctuation_enabled():
-            targets = [item.target or "" for item in logical_segments]
-            normalized = normalize_zh_segments(
-                targets,
-                [item.cont for item in logical_segments],
-            )
-            target_changed = normalized != targets
-            for item, value in zip(logical_segments, normalized):
-                item.target = value
-
         source = "".join(item.source for item in logical_segments)
         target = "".join(item.target or "" for item in logical_segments)
         expected_ids = {str(item.get("id")) for item in items if isinstance(item.get("id"), str)}
@@ -208,8 +196,6 @@ class DocxStyleService:
             and expected_ids
             and placement_ids == expected_ids
         ):
-            if target_changed:
-                store.save_chapter(chapter)
             return
 
         # 模型只看位置：每个 span 单独请求（AnnotationAligner 对 N>1 会拆开）

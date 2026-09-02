@@ -30,7 +30,7 @@ Selecting `deepseek` is enough for the built-in defaults:
 
 API keys are always read from environment variables so they are not accidentally committed with the configuration. Use `provider: fake` for offline tests that must not make network requests.
 
-The first PDF import also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`.
+When `pipeline.pdf_backend` is `mineru`, the first PDF import also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`. The default BabelDOC backend does not use this key.
 
 Add the advanced fields only when you need a proxy, custom environment variable, timeout, retry policy, or model override:
 
@@ -202,7 +202,7 @@ Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` pr
 
 ```yaml
 pipeline:
-  review: false
+  review: true
   polish: true
   rolling_context_segments: 6
   book_understanding: true
@@ -218,16 +218,19 @@ pipeline:
   review_fix_loop: true
   review_fix_max_rounds: 2
   review_clean_confirmations: 2
-  review_autofix: false
+  review_autofix: true
   glossary_scope: chapter
+  pdf_backend: babeldoc
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  babeldoc_timeout: 600
 ```
 
-- `review`: disabled by default; when enabled, automatically run the evidence-driven whole-book review after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
+- `review`: enabled by default; automatically run the evidence-driven whole-book review after the complete book has been translated. Pass `--no-review` or set this to `false` to skip it in the one-command workflow. The explicit `trans-novel review` command remains available.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `annotation_alignment`: enabled by default. After each annotated logical paragraph has been fully translated and polished, finalize its punctuation and immediately locate EPUB footnote/endnote links with one sequential model call. Split continuations are rejoined first, and segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions. This option controls link placement only; resolved source-language note content is supplied to translation automatically.
+- `annotation_alignment`: enabled by default. After each annotated logical paragraph has been fully translated and polished, immediately locate EPUB footnote/endnote links with one sequential model call against the formal target. If export punctuation normalization is enabled, the export layer remaps the persisted offsets together with the normalized in-memory copy. Split continuations are rejoined first, and segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions. This option controls link placement only; resolved source-language note content is supplied to translation automatically.
 - `annotation_alignment_concurrency`: when a paragraph carries more than one annotation, each annotation is aligned through its own independent, concurrently issued request instead of asking one call to place every marker at once (a single mistake used to invalidate the whole paragraph's markers, which is why heavily annotated books tended to fall back to end-of-paragraph placement far more often). This caps how many of those per-annotation requests may run at once for a single paragraph.
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.
@@ -238,17 +241,21 @@ pipeline:
 - `review_fix_loop`: generate complete provisional segment replacements for confirmed issues in a run-local shadow translation, then blindly review the whole book again. Disabling it keeps the single-pass recommendation-only behavior.
 - `review_fix_max_rounds`: maximum number of provisional Fix rounds, from `0` to `4`; this is not the total number of Review passes.
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
-- `review_autofix`: disabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
+- `review_autofix`: enabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. Pass `--no-autofix` or set this to `false` to keep Review from writing formal `target` values. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
+- `pdf_backend`: default `babeldoc` preserves PDF layout through the external AGPL HTTP bridge. Use `mineru` for scanned pages that have no extractable text layer.
+- `babeldoc_bridge_url`: BabelDOC bridge base URL; default `http://127.0.0.1:8765`.
+- `babeldoc_timeout`: HTTP timeout in seconds for bridge extract and fillback.
+- `babeldoc_pages`: optional 1-based page selection such as `"15"` or `"6-8"`; omit it to process the whole file.
 
 The command-line flags `--polish`, `--no-polish`, `--review`, and `--no-review`
 override the corresponding configuration values for a `translate` run.
 
 Run final review independently with `trans-novel review INPUT`. Each invocation
-reviews the complete translated book from the beginning. By default, Review may
-modify only a run-local shadow translation. Use `trans-novel review INPUT --autofix`
-to override the setting for that invocation, or `--no-autofix` to force read-only
-behavior. Autofix first applies folded Review changes, then reuses the same Agent
+reviews the complete translated book from the beginning. By default, Review
+publishes folded changes after the shadow loop. Use `--no-autofix` to keep that
+invocation read-only, or `--autofix` to force publishing when the config is off.
+Autofix first applies folded Review changes, then reuses the same Agent
 Loop and Fixer for final unresolved issues; there is no separate Autofix loop or
 prompt. The consolidated result and internal round records are written under
 `state/<book>/reviews/review-<timestamp>/`. Review usage is stored both as the
@@ -263,6 +270,7 @@ output:
   bilingual_order: target_first
   bilingual_preserve_source_style: false
   about_page: true
+  punctuation_normalize: true
 ```
 
 - `mono`: produce the monolingual Chinese edition as `<book-name>.zh.epub`.
@@ -270,10 +278,13 @@ output:
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
+- `punctuation_normalize`: normalize Chinese punctuation only on the in-memory export copy. Formal chapter `target` values, Review input, and resume state remain unchanged.
+
+The former top-level `punctuation.normalize` key is not accepted; remove it and configure only `output.punctuation_normalize`.
 
 Only the monolingual edition is enabled by default. `--bilingual` enables both editions, and configuration plus command-line switches can be combined to produce only the bilingual edition.
 
-## Segmentation, honorifics, punctuation, and paths
+## Segmentation, honorifics, and paths
 
 ```yaml
 segment:
@@ -283,9 +294,6 @@ segment:
 honorific:
   strategy: keep_style
 
-punctuation:
-  normalize: true
-
 paths:
   state_dir: state
 ```
@@ -293,5 +301,4 @@ paths:
 - `max_chars_per_batch`: approximate source-character budget for one model translation request.
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
-- `punctuation.normalize`: normalize output to common full-width Simplified Chinese punctuation.
 - `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.

@@ -84,11 +84,12 @@ PDF input and PDF output are both experimental.
 
 #### PDF input
 
-Default backend is MinerU. For layout-preserving export, use the external
-**BabelDOC bridge** (AGPL, separate repo/process, HTTP only):
+Default backend is BabelDOC, which preserves layout through the external
+**BabelDOC bridge** (AGPL, separate repo/process, HTTP only). Use MinerU for
+scanned pages that have no extractable text layer.
 
 1. Install/start `wenyi-babeldoc-bridge` (default `http://127.0.0.1:8765`)
-2. In `config.yaml`:
+2. The default `config.yaml` already selects BabelDOC:
 
 ```yaml
 pipeline:
@@ -97,14 +98,28 @@ pipeline:
   # babeldoc_pages: "15"   # optional, 1-based
 ```
 
+To use MinerU instead:
+
+```yaml
+pipeline:
+  pdf_backend: mineru
+```
+
 3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
-   Keep the same bridge process alive for the whole session. Wenyi never imports
-   babeldoc. Chapters are split from the PDF outline (bookmarks); segments keep
-   `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
+   The fillback PDF omits BabelDOC layout overlay boxes and role labels
+   such as ``plain text`` / ``title`` by default.
+   The bridge freezes the post-extraction IL as a durable session snapshot. It can
+   restart and lazily restore the same session without rerunning layout analysis,
+   provided its session directory and exact Python/BabelDOC versions are retained.
+   Set `WENYI_BABELDOC_STATE_DIR` to a persistent directory for long translations;
+   the default system temporary directory may be cleaned after a reboot. Wenyi never
+   imports babeldoc. Chapters are split from the PDF outline (bookmarks); segments
+   keep `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
 
 BabelDOC is intended for PDFs with an extractable text layer. Before contacting the
-bridge, Wenyi checks the selected pages and stops with a suggestion to use the default
-MinerU backend or run OCR first when it finds only scanned images and no text layer.
+bridge, Wenyi checks the selected pages and stops with a suggestion to switch to
+MinerU (`pipeline.pdf_backend: mineru`) or run OCR first when it finds only scanned
+images and no text layer.
 
 The first MinerU PDF import requires `MINERU_API_KEY`:
 

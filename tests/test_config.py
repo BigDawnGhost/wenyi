@@ -38,7 +38,10 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.output.bilingual_order, "target_first")
             self.assertFalse(cfg.output.bilingual_preserve_source_style)
             self.assertTrue(cfg.output.about_page)
-            self.assertFalse(cfg.pipeline.review)
+            self.assertTrue(cfg.output.punctuation_normalize)
+            self.assertIn("  punctuation_normalize: true", generated)
+            self.assertNotIn("\npunctuation:\n", generated)
+            self.assertTrue(cfg.pipeline.review)
             self.assertTrue(cfg.pipeline.polish)
             self.assertTrue(cfg.pipeline.annotation_alignment)
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
@@ -50,8 +53,8 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertTrue(cfg.pipeline.review_fix_loop)
             self.assertEqual(cfg.pipeline.review_fix_max_rounds, 2)
             self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
-            self.assertFalse(cfg.pipeline.review_autofix)
-            self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
+            self.assertTrue(cfg.pipeline.review_autofix)
+            self.assertEqual(cfg.pipeline.pdf_backend, "babeldoc")
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:
@@ -82,13 +85,22 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertTrue(cfg.pipeline.review_fix_loop)
         self.assertEqual(cfg.pipeline.review_fix_max_rounds, 2)
         self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
-        self.assertFalse(cfg.pipeline.review_autofix)
-        self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
+        self.assertTrue(cfg.pipeline.review_autofix)
+        self.assertEqual(cfg.pipeline.pdf_backend, "babeldoc")
 
     def test_about_page_can_be_disabled(self):
         cfg = Config.from_dict({"output": {"about_page": False}})
 
         self.assertFalse(cfg.output.about_page)
+
+    def test_export_punctuation_normalization_can_be_disabled(self):
+        cfg = Config.from_dict({"output": {"punctuation_normalize": False}})
+
+        self.assertFalse(cfg.output.punctuation_normalize)
+
+    def test_legacy_punctuation_config_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "output.punctuation_normalize"):
+            Config.from_dict({"punctuation": {"normalize": False}})
 
     def test_compatible_reasoning_style_is_loaded(self):
         cfg = Config.from_dict(

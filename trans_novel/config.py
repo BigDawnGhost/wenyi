@@ -51,7 +51,7 @@ segment:
 
 # ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
 pipeline:
-  review: false # 默认关闭；开启后在全书翻译完成后自动执行最终审校
+  review: true # 默认开启；全书翻译完成后自动执行最终审校，可用 --no-review 关闭
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
   rolling_context_segments: 6 # 注入的前文译文尾段数
@@ -68,10 +68,10 @@ pipeline:
   review_fix_loop: true # 只在内存影子译文上暂改并盲复审，不写回正式正文
   review_fix_max_rounds: 2 # 最多生成两轮临时替换；完整 Review 轮数另受连续 clean 确认影响
   review_clean_confirmations: 2 # 连续两轮未发现问题才视为影子译文通过
-  review_autofix: false # 可选将 Review 建议与终局 Agent 修订写回正式章节
+  review_autofix: true # 默认开启；将 Review 建议写回正式章节，可用 --no-autofix 保持只读
   glossary_scope: chapter # chapter=本章相关词条；full=全量表
-  # PDF 后端：mineru（默认）| babeldoc（外部 AGPL HTTP bridge，主仓不引入 babeldoc）
-  pdf_backend: mineru
+  # PDF 后端：babeldoc（默认，保留版式，需外部 AGPL HTTP bridge）| mineru（支持扫描件）
+  pdf_backend: babeldoc
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # 可选；限制 bridge 处理页（1-based）
   babeldoc_timeout: 600
@@ -81,21 +81,18 @@ honorific:
   # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
-punctuation:
-  normalize: true
-
 # ── 路径 ─────────────────────────────────────────────────────────────────
 paths:
   state_dir: state # 运行状态、各章中间产物、术语库
 
-# ── 双语输出 ───────────────────────────────────────────────────────────────
+# ── 输出 ───────────────────────────────────────────────────────────────────
 output:
   mono: true # 产出单语中文版（<书名>.zh.epub）
   bilingual: false # 产出原文与译文对照版（<书名>.zh-bi.epub）
   bilingual_order: target_first # target_first=译文在上；source_first=原文在上
   bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示
   about_page: true # 在书末附加“关于此翻译”说明页
+  punctuation_normalize: true # 仅规范导出副本，不改写正式译文状态
 """
 
 
@@ -127,7 +124,7 @@ class SegmentConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    review: bool = False
+    review: bool = True
     align_retry_limit: int = 2  # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
     polish: bool = True  # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本
     rolling_context_segments: int = 6
@@ -155,10 +152,10 @@ class PipelineConfig(BaseModel):
     review_fix_loop: bool = True  # 仅在内存影子译文上生成临时替换并盲复审
     review_fix_max_rounds: int = Field(default=2, ge=0, le=4)
     review_clean_confirmations: int = Field(default=2, ge=1, le=2)
-    review_autofix: bool = False  # Review 完成后由独立发布阶段写回正式译文
+    review_autofix: bool = True  # Review 完成后由独立发布阶段写回正式译文
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
-    # PDF：mineru=现有 HTML 路径；babeldoc=外部 AGPL bridge（HTTP，主仓不 import babeldoc）
-    pdf_backend: Literal["mineru", "babeldoc"] = "mineru"
+    # PDF：babeldoc=外部 AGPL bridge（默认，HTTP，主仓不 import babeldoc）；mineru=HTML 路径，适合扫描件
+    pdf_backend: Literal["mineru", "babeldoc"] = "babeldoc"
     babeldoc_bridge_url: str = "http://127.0.0.1:8765"
     babeldoc_pages: str | None = None  # 如 "15" / "6-8"；None=全书
     babeldoc_timeout: float = 600.0
@@ -172,6 +169,7 @@ class OutputConfig(BaseModel):
     )
     bilingual_preserve_source_style: bool = False
     about_page: bool = True  # 在书末附加项目说明页
+    punctuation_normalize: bool = True  # 仅规范导出副本，不写回章节 target
 
 
 class Config(BaseModel):
@@ -182,7 +180,6 @@ class Config(BaseModel):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     honorific_strategy: str = "keep_style"
-    punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
     state_dir: str = "state"
 
     @staticmethod
@@ -224,8 +221,11 @@ class Config(BaseModel):
         )
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
+        if "punctuation" in raw:
+            raise ValueError(
+                "配置项 punctuation.normalize 已移至 output.punctuation_normalize，请删除旧配置项。"
+            )
         output = OutputConfig.model_validate(raw.get("output", {}) or {})
-        punct = raw.get("punctuation", {}) or {}
         return cls(
             source_lang=lang.get("source", "auto"),
             target_lang=lang.get("target", "zh"),
@@ -234,6 +234,5 @@ class Config(BaseModel):
             pipeline=pipeline,
             output=output,
             honorific_strategy=raw.get("honorific", {}).get("strategy", "keep_style"),
-            punctuation_normalize=bool(punct.get("normalize", True)),
             state_dir=raw.get("paths", {}).get("state_dir", "state"),
         )

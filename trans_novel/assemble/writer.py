@@ -27,6 +27,7 @@ from .epub_writer import (
     _rewrite_html_document,
     _rewrite_toc,
 )
+from .export_view import ExportViewStore
 from .html_renderer import _render_chapter_html, _render_segments_html
 from .html_writer import _assemble_html
 from .pdf_writer import _assemble_pdf, _normalize_html_for_fpdf
@@ -63,6 +64,8 @@ def assemble(
     preserve_source_style: bool = False,
     about_page: bool = True,
     pdf_engine: str = "weasyprint",
+    babeldoc_timeout: float = 600.0,
+    punctuation_normalize: bool = False,
 ) -> str:
     """生成译文文件（默认 EPUB）。
 
@@ -77,11 +80,13 @@ def assemble(
     bilingual=True 时额外输出原文，order 控制译文/原文先后。
     preserve_source_style=True 时原文继承原书正文样式，不注入淡化 CSS。
     about_page=True 时在书末附加"关于此翻译"说明页。
+    punctuation_normalize=True 时仅规范本次导出副本，不写回章节 target。
     """
     if out_format not in _OUT_EXT:
         supported = " / ".join(_OUT_EXT)
         raise ValueError(f"不支持的输出格式：{out_format}（支持 {supported}）")
 
+    store = ExportViewStore(store, punctuation_normalize=punctuation_normalize)
     m = store.load_manifest()
     if out_format == "txt":
         out_path = out_path or _default_out(source_path, "txt", "", bilingual=bilingual)
@@ -113,6 +118,7 @@ def assemble(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            babeldoc_timeout=babeldoc_timeout,
         )
     if out_format == "docx":
         out_path = out_path or _default_out(source_path, "docx", "", bilingual=bilingual)

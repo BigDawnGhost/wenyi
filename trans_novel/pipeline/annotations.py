@@ -3,7 +3,7 @@
 负责：
   * 注释上下文到切片的映射（超长段切分后的 point/range 偏移分配）；
   * 注释逻辑段重组：最后一个 cont 续段译完后才合并完整 source/target；
-  * 注释定位、placement 缓存（target_digest 幂等）、中文标点定稿及失败降级。
+  * 注释定位、placement 缓存（target_digest 幂等）及失败降级。
 多个注释逻辑段保持严格串行；每段完成后立即持久化；定位异常仅记录事件并继续。
 """
 
@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from ..agents.annotation_aligner import AnnotationUnit, target_digest
 from ..ingest.models import Chapter, Segment
-from ..postprocess.punct import normalize_zh_segments
 from .runstore import RunStore
 
 if TYPE_CHECKING:
@@ -177,8 +176,9 @@ class AnnotationService:
         """串行定位一个已译完逻辑原段的 EPUB 注释链接。
 
         超长段会被切成一个带 anchor 的首段和若干 cont 续段；解析元数据
-        只存在首段，因此必须等全部续段都有译文后再合并 source/target。中文
-        标点先在该逻辑段内定稿，保证 placement 的字符偏移不会在章末失效。
+        只存在首段，因此必须等全部续段都有译文后再合并 source/target。
+        定位模型仅读取正式 target；导出阶段若规范标点，会在副本上同步
+        重映射 placement。
 
         定位结果无论正常还是确定性 fallback 都会立即写回章节文件。没有注释
         或译文尚不完整时直接返回，且不会调用模型。
@@ -204,17 +204,6 @@ class AnnotationService:
         if any(not (item.target and item.target.strip()) for item in logical_segments):
             return
 
-        target_changed = False
-        if self._runtime.punctuation_enabled():
-            targets = [item.target or "" for item in logical_segments]
-            normalized = normalize_zh_segments(
-                targets,
-                [item.cont for item in logical_segments],
-            )
-            target_changed = normalized != targets
-            for item, value in zip(logical_segments, normalized):
-                item.target = value
-
         source = "".join(item.source for item in logical_segments)
         target = "".join(item.target or "" for item in logical_segments)
         expected_ids = {
@@ -231,14 +220,10 @@ class AnnotationService:
             and expected_ids
             and placement_ids == expected_ids
         ):
-            if target_changed:
-                store.save_chapter(chapter)
             return
 
         items = tuple(dict(item) for item in raw_items if isinstance(item, dict))
         if not items:
-            if target_changed:
-                store.save_chapter(chapter)
             return
         anchor = segment.anchor or f"segment-{segment.index}"
         unit = AnnotationUnit(
@@ -256,15 +241,11 @@ class AnnotationService:
                 unit_id=unit.unit_id,
                 reason="disabled",
             )
-            if target_changed:
-                store.save_chapter(chapter)
             return
 
         try:
             result = self._runtime.annotation_aligner.align_unit(unit)
         except Exception as error:  # noqa: BLE001 - 单段失败由 writer 安全降级
-            if target_changed:
-                store.save_chapter(chapter)
             store.log_event(
                 "annotation_alignment_failed",
                 chapter=ci,
