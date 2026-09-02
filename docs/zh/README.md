@@ -119,13 +119,14 @@ uv run trans-novel translate book.epub
 ```bash
 uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
 uv run trans-novel translate book.epub --no-polish                # 关闭润色
+uv run trans-novel translate book.epub --no-review                # 跳过最终审校
 uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
 uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
 uv run trans-novel translate book.epub --format txt               # 导出为纯文本
 ```
 
-最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在全书翻译完成、
-术语库达到最终状态后再统一执行审校；也可以独立运行 Agent Review：
+最终审校默认开启，一键流程会在全书翻译完成、术语库达到最终状态后再统一执行。
+可用 `--no-review` 或设置 `pipeline.review: false` 跳过；也可以独立运行 Agent Review：
 
 ```bash
 uv run trans-novel review book.epub
@@ -134,9 +135,10 @@ uv run trans-novel review book.epub --autofix
 
 每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
 矛盾的一致性建议。确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
-只会看到影子译文，不会收到上一轮的问题说明。Review 默认只读；使用 `--autofix`
-（或设置 `pipeline.review_autofix: true`）后，会先应用折叠后的 changes，再让剩余
-issues 基于更新译文复用现有 Review Agent Loop 和 Fixer。只有正式段落的 `target`
+只会看到影子译文，不会收到上一轮的问题说明。Review 默认会写回正式章节 `target`；
+使用 `--no-autofix` 或设置 `pipeline.review_autofix: false` 可保持只读。开启 Autofix
+后，会先应用折叠后的 changes，再让剩余 issues 基于更新译文复用现有 Review Agent Loop
+和 Fixer。只有正式段落的 `target`
 会被覆盖，完整历史保存在 Review 目录的 `autofix/index.json`；统一结果仍写入
 `state/<书名>/reviews/review-<时间戳>/result.json`。
 

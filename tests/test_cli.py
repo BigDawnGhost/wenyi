@@ -133,7 +133,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["polish"])
-        self.assertFalse(captured["review"])
+        self.assertTrue(captured["review"])
 
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(

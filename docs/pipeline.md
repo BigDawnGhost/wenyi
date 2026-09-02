@@ -45,8 +45,8 @@ The glossary constrains later translation and supplies evidence to the final rev
 - **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The final suggestion set conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available in the round traces. It never changes the glossary or translated text.
 - **Shadow Fix and blind re-review:** confirmed issues for the same segment are grouped into one Fixer request. The Fixer receives the style brief, book synopsis, chapter digest, relevant glossary subset, and nearby source/translation pairs, and must return one complete replacement segment rather than a diff. All Fixers in a round read one immutable shadow snapshot; their patches are applied together only after the round finishes. The next whole-book Review and evidence index read the updated shadow text without receiving the old issue explanations. Unresolved arbitration conflicts and unverified Agent fallbacks are left unresolved. The loop stops after consecutive clean passes, the configured Fix limit, no progress, or an A→B→A cycle.
 - **Optional Autofix publishing:** the Review engine itself remains read-only. When `review_autofix` is enabled, a separate publisher first overlays the folded `changes`, then sends final unresolved issues through the existing Review Agent Loop against that updated translation. Confirmed issues reuse the existing Fixer; no Autofix-specific loop or prompt exists. The publisher writes only final complete segments to formal `target` values, then refreshes annotation and DOCX style offsets.
-Final review is the sole model-driven semantic review stage and is disabled by
-default. Setting `pipeline.review: true` runs it after translation in the
+Final review is the sole model-driven semantic review stage and is enabled by
+default. Setting `pipeline.review: false` or passing `--no-review` skips it in the
 one-command workflow. Review is also available as an independent stage:
 
 ```bash
@@ -55,10 +55,10 @@ uv run trans-novel review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Every invocation
-reviews the complete translated book from the beginning. The Review engine may
-update only a run-local shadow translation. Publishing is disabled by default;
-enable `pipeline.review_autofix` or pass `--autofix` to replace formal chapter
-`target` values after Review completes. The manifest and glossary are never changed.
+reviews the complete translated book from the beginning. The Review engine first
+updates a run-local shadow translation. Publishing is enabled by default;
+set `pipeline.review_autofix: false` or pass `--no-autofix` to keep Review from
+replacing formal chapter `target` values. The manifest and glossary are never changed.
 The final result, run-local usage delta, events, and internal traces are written to:
 
 ```text

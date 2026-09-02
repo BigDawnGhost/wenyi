@@ -30,8 +30,9 @@ llm:
 
 API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
 
-PDF 输入的首次解析另外读取 `MINERU_API_KEY`，用于调用 MinerU
-转换服务。该密钥与 LLM provider 配置无关，也不写入 `config.yaml`。
+当 `pipeline.pdf_backend` 为 `mineru` 时，PDF 输入的首次解析另外读取
+`MINERU_API_KEY`，用于调用 MinerU 转换服务。该密钥与 LLM provider 配置无关，
+也不写入 `config.yaml`。默认的 BabelDOC 后端不使用此密钥。
 
 需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
 
@@ -217,7 +218,7 @@ DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应�
 
 ```yaml
 pipeline:
-  review: false
+  review: true
   polish: true
   rolling_context_segments: 6
   book_understanding: true
@@ -233,11 +234,14 @@ pipeline:
   review_fix_loop: true
   review_fix_max_rounds: 2
   review_clean_confirmations: 2
-  review_autofix: false
+  review_autofix: true
   glossary_scope: chapter
+  pdf_backend: babeldoc
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  babeldoc_timeout: 600
 ```
 
-- `review`：默认关闭；开启后在全书翻译完成时自动执行取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
+- `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `trans-novel review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
@@ -253,16 +257,19 @@ pipeline:
 - `review_fix_loop`：针对确认的问题在本次运行的影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。
 - `review_fix_max_rounds`：最多生成的临时 Fix 轮数，范围为 `0` 到 `4`；它不是 Review 总轮数。
 - `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
-- `review_autofix`：默认关闭。只读 Review 引擎结束后，先把折叠后的 `changes` 叠加到工作译文，再让每段剩余 issue 基于更新后的译文复用现有有界 Review Agent Loop，确认项继续交给现有 Review Fixer。生成的完整单段译文只覆盖正式章节的 `target`，不修改 manifest 和术语库。完整前后版本链、issue ID、判定、失败原因和写回状态保存在本次 Review 的 `autofix/index.json`，不会给章节 JSON 新增历史字段。
+- `review_autofix`：默认开启。只读 Review 引擎结束后，先把折叠后的 `changes` 叠加到工作译文，再让每段剩余 issue 基于更新后的译文复用现有有界 Review Agent Loop，确认项继续交给现有 Review Fixer。可用 `--no-autofix` 或设为 `false`，避免写回正式 `target`。生成的完整单段译文只覆盖正式章节的 `target`，不修改 manifest 和术语库。完整前后版本链、issue ID、判定、失败原因和写回状态保存在本次 Review 的 `autofix/index.json`，不会给章节 JSON 新增历史字段。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
+- `pdf_backend`：默认 `babeldoc`，经外部 AGPL HTTP bridge 保留 PDF 版式。扫描件、无文本层页面请改用 `mineru`。
+- `babeldoc_bridge_url`：BabelDOC bridge 地址，默认 `http://127.0.0.1:8765`。
+- `babeldoc_timeout`：bridge extract / fillback 的 HTTP 超时秒数。
+- `babeldoc_pages`：可选的 1-based 页码，如 `"15"` 或 `"6-8"`；省略则处理全书。
 
 `translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`
 会覆盖对应配置。
 
 可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
-译文。默认情况下 Review 只修改本次运行的影子译文；可用
-`trans-novel review INPUT --autofix` 覆盖本次设置并发布修订，也可用
-`--no-autofix` 强制保持只读。Autofix 会先应用折叠后的 changes，再让最终未解决
+译文。默认会在影子循环后发布折叠后的修订；可用 `--no-autofix` 保持本次只读，
+或在配置关闭时用 `--autofix` 强制发布。Autofix 会先应用折叠后的 changes，再让最终未解决
 issues 复用同一套 Agent Loop 和 Fixer，不会另建一套 Autofix loop 或 prompt。
 统一结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
 本次 Review 用量既保存为目录内增量，也会计入本书累计用量。
