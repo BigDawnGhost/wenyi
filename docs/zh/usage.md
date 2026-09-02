@@ -83,16 +83,24 @@ PDF 输入和 PDF 导出目前均属于实验性支持。
 
 #### PDF 输入
 
-默认走 MinerU。也可用外部 **BabelDOC bridge**（AGPL，独立仓库/进程，HTTP only）保留版式：
+默认走 BabelDOC，经外部 **BabelDOC bridge**（AGPL，独立仓库/进程，HTTP only）保留版式。
+扫描件、无文本层页面请改用 MinerU。
 
 1. 另仓安装并启动 `wenyi-babeldoc-bridge`（默认 `http://127.0.0.1:8765`）
-2. `config.yaml`：
+2. 默认 `config.yaml` 已选择 BabelDOC：
 
 ```yaml
 pipeline:
   pdf_backend: babeldoc
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # 可选，1-based
+```
+
+改用 MinerU：
+
+```yaml
+pipeline:
+  pdf_backend: mineru
 ```
 
 3. `uv run trans-novel translate book.pdf` 后 `assemble --format pdf` 会经 bridge `/fillback` 出 PDF。  
@@ -103,7 +111,7 @@ pipeline:
    `meta.babeldoc_id` 供回填。无书签时退回单章。
 
 BabelDOC 只适合带可提取文本层的 PDF。选择该后端时，Wenyi 会在请求 bridge 前检查所选页面；
-若页面只有扫描图片而没有文本层，会停止并提示改用默认 MinerU，或先进行 OCR。
+若页面只有扫描图片而没有文本层，会停止并提示改用 MinerU（`pipeline.pdf_backend: mineru`），或先进行 OCR。
 
 首次读取 PDF（MinerU）需设置 `MINERU_API_KEY`：
 

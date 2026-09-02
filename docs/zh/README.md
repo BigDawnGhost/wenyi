@@ -119,13 +119,14 @@ uv run trans-novel translate book.epub
 ```bash
 uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
 uv run trans-novel translate book.epub --no-polish                # 关闭润色
+uv run trans-novel translate book.epub --no-review                # 跳过最终审校
 uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
 uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
 uv run trans-novel translate book.epub --format txt               # 导出为纯文本
 ```
 
-最终审校默认关闭。设置 `pipeline.review: true` 后，一键流程会在全书翻译完成、
-术语库达到最终状态后再统一执行审校；也可以独立运行 Agent Review：
+最终审校默认开启，一键流程会在全书翻译完成、术语库达到最终状态后再统一执行。
+可用 `--no-review` 或设置 `pipeline.review: false` 跳过；也可以独立运行 Agent Review：
 
 ```bash
 uv run trans-novel review book.epub
@@ -134,9 +135,10 @@ uv run trans-novel review book.epub --autofix
 
 每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
 矛盾的一致性建议。确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
-只会看到影子译文，不会收到上一轮的问题说明。Review 默认只读；使用 `--autofix`
-（或设置 `pipeline.review_autofix: true`）后，会先应用折叠后的 changes，再让剩余
-issues 基于更新译文复用现有 Review Agent Loop 和 Fixer。只有正式段落的 `target`
+只会看到影子译文，不会收到上一轮的问题说明。Review 默认会写回正式章节 `target`；
+使用 `--no-autofix` 或设置 `pipeline.review_autofix: false` 可保持只读。开启 Autofix
+后，会先应用折叠后的 changes，再让剩余 issues 基于更新译文复用现有 Review Agent Loop
+和 Fixer。只有正式段落的 `target`
 会被覆盖，完整历史保存在 Review 目录的 `autofix/index.json`；统一结果仍写入
 `state/<书名>/reviews/review-<时间戳>/result.json`。
 
@@ -149,7 +151,7 @@ issues 基于更新译文复用现有 Review Agent Loop 和 Fixer。只有正式
 | EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX | EPUB（单语 / 双语）、TXT、HTML、Markdown、DOCX |
 | SRT（影视字幕） | 单语 `.zh.srt`，可选双语 `.zh-bi.srt` |
 
-- PDF 输入首次需 `MINERU_API_KEY` 调用外部转换服务，转换后的 HTML 缓存复用。
+- PDF 输入默认走 BabelDOC bridge。扫描件可改用 MinerU，首次转换需 `MINERU_API_KEY`，生成的 HTML 会缓存复用。
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
 - 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
 - `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
@@ -209,7 +211,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 憧憬与不足
 
-本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入依赖外部 MinerU 服务。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/`。当前译文管线主要针对简体中文输出优化，不支持其他目标语言。
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入默认依赖 BabelDOC bridge，扫描件才走 MinerU。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/`。当前译文管线主要针对简体中文输出优化，不支持其他目标语言。
 
 未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
 

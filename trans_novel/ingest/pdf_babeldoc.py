@@ -280,7 +280,7 @@ def read_pdf_babeldoc(
     if _is_image_only_pdf(path, pages=pages):
         raise BabeldocBridgeError(
             "BabelDOC 后端检测到所选 PDF 页面只有扫描图片，没有可提取的文本层，"
-            "无法可靠解析。请改用默认 MinerU 后端（pipeline.pdf_backend: mineru），"
+            "无法可靠解析。请改用 MinerU 后端（pipeline.pdf_backend: mineru），"
             "或先用 OCR 工具生成可搜索文本层后再选择 babeldoc。"
         )
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)

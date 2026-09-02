@@ -69,6 +69,7 @@ class TestPdfIngest(unittest.TestCase):
                 "en",
                 "zh",
                 cache_dir=cache_dir,
+                pdf_backend="mineru",
             )
 
         self.assertEqual(document.title, "sample")
@@ -101,6 +102,7 @@ class TestPdfIngest(unittest.TestCase):
                     "en",
                     "zh",
                     cache_dir=cache_dir,
+                    pdf_backend="mineru",
                 )
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
@@ -125,7 +127,7 @@ class TestPdfIngest(unittest.TestCase):
                 ),
                 self.assertRaises(MinerUError),
             ):
-                load_document(pdf_path, "en", "zh", cache_dir=cache_dir)
+                load_document(pdf_path, "en", "zh", cache_dir=cache_dir, pdf_backend="mineru")
 
             def convert_fresh(_input: str, output: str, **_kwargs) -> None:
                 os.makedirs(os.path.dirname(output), exist_ok=True)
@@ -136,7 +138,9 @@ class TestPdfIngest(unittest.TestCase):
                 "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
                 side_effect=convert_fresh,
             ) as conversion:
-                document = load_document(pdf_path, "en", "zh", cache_dir=cache_dir)
+                document = load_document(
+                    pdf_path, "en", "zh", cache_dir=cache_dir, pdf_backend="mineru"
+                )
 
             conversion.assert_called_once()
             self.assertIn("Fresh retry.", document.chapters[0].segments[1].source)
@@ -151,7 +155,7 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {"provider": "fake"},
-                    "pipeline": {"book_understanding": False},
+                    "pipeline": {"book_understanding": False, "pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
             )
@@ -203,6 +207,7 @@ class TestPdfIngest(unittest.TestCase):
                         "provider": "fake",
                         "tiers": {"strong": {"model": "fake"}},
                     },
+                    "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
             )
@@ -238,6 +243,7 @@ class TestPdfIngest(unittest.TestCase):
                         "provider": "fake",
                         "tiers": {"strong": {"model": "fake"}},
                     },
+                    "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
             )
@@ -295,6 +301,7 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {"provider": "fake"},
+                    "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
             )
@@ -329,6 +336,7 @@ class TestPdfIngest(unittest.TestCase):
                         "provider": "fake",
                         "tiers": {"strong": {"model": "fake"}},
                     },
+                    "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
             )
@@ -365,6 +373,7 @@ class TestPdfIngest(unittest.TestCase):
                 "en",
                 "zh",
                 cache_dir=cache_dir,
+                pdf_backend="mineru",
             )
             store = RunStore(os.path.join(directory, "state", "sample"))
             _initialize_test_store(store, document)

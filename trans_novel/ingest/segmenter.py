@@ -115,7 +115,7 @@ def load_document(
     *,
     cache_dir: str | None = None,
     source_hash: str | None = None,
-    pdf_backend: str = "mineru",
+    pdf_backend: str = "babeldoc",
     babeldoc_bridge_url: str = "http://127.0.0.1:8765",
     babeldoc_pages: str | None = None,
     babeldoc_timeout: float = 600.0,

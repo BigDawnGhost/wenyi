@@ -119,14 +119,15 @@ uv run trans-novel translate book.epub
 ```bash
 uv run trans-novel translate book.epub --polish --review          # enable polishing and final review
 uv run trans-novel translate book.epub --no-polish                # disable polishing
+uv run trans-novel translate book.epub --no-review                # skip final review
 uv run trans-novel translate book.epub --bilingual                # produce both editions
 uv run trans-novel translate book.epub --chapter 0                # translate the first chapter (indices start at 0)
 uv run trans-novel translate book.epub --format txt               # export as plain text
 ```
 
-Final review is disabled by default. Set `pipeline.review: true` to run it
-automatically after the complete book has been translated and the glossary has
-reached its final state, or run Agent Review independently:
+Final review runs by default after the complete book has been translated and the
+glossary has reached its final state. Pass `--no-review` or set
+`pipeline.review: false` to skip it. You can also run Agent Review independently:
 
 ```bash
 uv run trans-novel review book.epub
@@ -138,8 +139,9 @@ selectively request cross-book evidence before resolving contradictory
 consistency suggestions. Confirmed issues can produce provisional full-segment
 replacements in a run-local shadow translation. A fresh whole-book review sees
 the shadow text—but not the previous issue explanation—and validates it again.
-Review is read-only by default. With `--autofix` (or
-`pipeline.review_autofix: true`), folded changes are applied first and remaining
+Review publishes to formal chapter `target` values by default. Pass
+`--no-autofix` or set `pipeline.review_autofix: false` to keep the run
+read-only. With Autofix, folded changes are applied first and remaining
 issues reuse the existing Review Agent Loop and Fixer against that updated text.
 Only formal segment `target` values are replaced; full history stays in the Review
 directory's `autofix/index.json`. The consolidated result, run usage, events, and
@@ -154,7 +156,7 @@ internal records are written under `state/<book>/reviews/review-<timestamp>/`.
 | EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX | EPUB (monolingual / bilingual), TXT, HTML, Markdown, DOCX |
 | SRT (movie / series subtitles) | `.zh.srt` (monolingual) and optional `.zh-bi.srt` (bilingual) |
 
-- PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
+- PDF input defaults to the BabelDOC bridge. MinerU conversion is optional for scanned pages and requires `MINERU_API_KEY`; that HTML is cached and reused.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 - `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
@@ -218,7 +220,7 @@ Translated state directories for public-domain books may be shared through [weny
 - The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
-- PDF input depends on the MinerU external service; the initial conversion requires an API key.
+- PDF input defaults to the BabelDOC bridge. MinerU is optional for scanned pages and requires an API key.
 - SRT translation is a light concurrent path: no glossary, polishing, or whole-book review, and slug collision is possible for identically named files in different folders.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large state directories; storage requirements grow with book length.
