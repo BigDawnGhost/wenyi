@@ -63,6 +63,7 @@ def assemble(
     preserve_source_style: bool = False,
     about_page: bool = True,
     pdf_engine: str = "weasyprint",
+    babeldoc_timeout: float = 600.0,
 ) -> str:
     """生成译文文件（默认 EPUB）。
 
@@ -113,6 +114,7 @@ def assemble(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            babeldoc_timeout=babeldoc_timeout,
         )
     if out_format == "docx":
         out_path = out_path or _default_out(source_path, "docx", "", bilingual=bilingual)

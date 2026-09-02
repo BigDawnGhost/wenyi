@@ -98,9 +98,13 @@ pipeline:
 ```
 
 3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
-   Keep the same bridge process alive for the whole session. Wenyi never imports
-   babeldoc. Chapters are split from the PDF outline (bookmarks); segments keep
-   `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
+   The bridge freezes the post-extraction IL as a durable session snapshot. It can
+   restart and lazily restore the same session without rerunning layout analysis,
+   provided its session directory and exact Python/BabelDOC versions are retained.
+   Set `WENYI_BABELDOC_STATE_DIR` to a persistent directory for long translations;
+   the default system temporary directory may be cleaned after a reboot. Wenyi never
+   imports babeldoc. Chapters are split from the PDF outline (bookmarks); segments
+   keep `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
 
 BabelDOC is intended for PDFs with an extractable text layer. Before contacting the
 bridge, Wenyi checks the selected pages and stops with a suggestion to use the default
