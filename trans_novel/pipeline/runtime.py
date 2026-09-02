@@ -146,10 +146,12 @@ class PipelineRuntime:
         """把 provider 重试事件实时写入当前书籍的追加式事件日志。"""
         self.client.set_event_sink(store.log_event)
 
-    def punctuation_enabled(self) -> bool:
-        """判断当前目标语言是否应启用中文标点规范化。"""
+    def export_punctuation_enabled(self) -> bool:
+        """判断导出副本是否应启用中文标点规范化。"""
         target = (self.config.target_lang or "").lower().replace("_", "-")
-        return self.config.punctuation_normalize and (target == "zh" or target.startswith("zh-"))
+        return self.config.output.punctuation_normalize and (
+            target == "zh" or target.startswith("zh-")
+        )
 
     def flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
         """把当前 client 尚未落盘的用量增量合并到本书 usage.json。"""

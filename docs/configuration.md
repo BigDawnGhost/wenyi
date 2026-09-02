@@ -227,7 +227,7 @@ pipeline:
 - `rolling_context_segments`: number of recent translated segments included with each translation batch.
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `annotation_alignment`: enabled by default. After each annotated logical paragraph has been fully translated and polished, finalize its punctuation and immediately locate EPUB footnote/endnote links with one sequential model call. Split continuations are rejoined first, and segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions. This option controls link placement only; resolved source-language note content is supplied to translation automatically.
+- `annotation_alignment`: enabled by default. After each annotated logical paragraph has been fully translated and polished, immediately locate EPUB footnote/endnote links with one sequential model call against the formal target. If export punctuation normalization is enabled, the export layer remaps the persisted offsets together with the normalized in-memory copy. Split continuations are rejoined first, and segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions. This option controls link placement only; resolved source-language note content is supplied to translation automatically.
 - `annotation_alignment_concurrency`: when a paragraph carries more than one annotation, each annotation is aligned through its own independent, concurrently issued request instead of asking one call to place every marker at once (a single mistake used to invalidate the whole paragraph's markers, which is why heavily annotated books tended to fall back to end-of-paragraph placement far more often). This caps how many of those per-annotation requests may run at once for a single paragraph.
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.
@@ -263,6 +263,7 @@ output:
   bilingual_order: target_first
   bilingual_preserve_source_style: false
   about_page: true
+  punctuation_normalize: true
 ```
 
 - `mono`: produce the monolingual Chinese edition as `<book-name>.zh.epub`.
@@ -270,10 +271,13 @@ output:
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
+- `punctuation_normalize`: normalize Chinese punctuation only on the in-memory export copy. Formal chapter `target` values, Review input, and resume state remain unchanged.
+
+The former top-level `punctuation.normalize` key is not accepted; remove it and configure only `output.punctuation_normalize`.
 
 Only the monolingual edition is enabled by default. `--bilingual` enables both editions, and configuration plus command-line switches can be combined to produce only the bilingual edition.
 
-## Segmentation, honorifics, punctuation, and paths
+## Segmentation, honorifics, and paths
 
 ```yaml
 segment:
@@ -283,9 +287,6 @@ segment:
 honorific:
   strategy: keep_style
 
-punctuation:
-  normalize: true
-
 paths:
   state_dir: state
 ```
@@ -293,5 +294,4 @@ paths:
 - `max_chars_per_batch`: approximate source-character budget for one model translation request.
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
-- `punctuation.normalize`: normalize output to common full-width Simplified Chinese punctuation.
 - `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.

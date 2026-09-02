@@ -29,7 +29,7 @@ def _config(state_dir: str) -> Config:
                 "review_autofix": True,
                 "review_concurrency": 1,
             },
-            "punctuation": {"normalize": False},
+            "output": {"punctuation_normalize": False},
             "paths": {"state_dir": state_dir},
         }
     )
@@ -128,6 +128,37 @@ def _fix_json(user: str, replacement: str) -> str:
 
 
 class TestReviewAutofix(unittest.TestCase):
+    def test_export_punctuation_setting_does_not_rewrite_autofix_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            outcome = _outcome(
+                store,
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "change,译文?",
+                        "issue_keys": ["issue-1"],
+                        "review_result": "not_rereported",
+                    }
+                ],
+            )
+            config = _config(str(Path(directory, "state")))
+            config.output.punctuation_normalize = True
+
+            fixed = Orchestrator(config, client=FakeClient())._review_autofix.run(
+                store, outcome, []
+            )
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "change,译文?")
+            index = json.loads(
+                Path(outcome.run_dir, "autofix", "index.json").read_text(encoding="utf-8")
+            )
+            records = index["records"]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["origin"], "change")
+            self.assertEqual(fixed.result["autofix"]["applied_segment_count"], 1)
+
     def test_changes_are_written_without_adding_segment_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             store = _store(directory)

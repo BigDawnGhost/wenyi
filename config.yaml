@@ -71,18 +71,15 @@ honorific:
   # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
-punctuation:
-  normalize: true
-
 # ── 路径 ─────────────────────────────────────────────────────────────────
 paths:
   state_dir: state # 运行状态、各章中间产物、术语库
 
-# ── 双语输出 ───────────────────────────────────────────────────────────────
+# ── 输出 ───────────────────────────────────────────────────────────────────
 output:
   mono: true            # 产出单语中文版
   bilingual: false      # 产出双语版（原文淡化，与译文对照）
   bilingual_order: target_first  # target_first=译文在上原文在下; source_first=原文在上
   bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示
   about_page: true      # 在书末附加“关于此翻译”说明页
+  punctuation_normalize: true # 仅规范导出副本，不改写 state 中的正式译文
