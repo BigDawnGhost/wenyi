@@ -154,7 +154,7 @@ class PipelineConfig(BaseModel):
     review_clean_confirmations: int = Field(default=2, ge=1, le=2)
     review_autofix: bool = True  # Review 完成后由独立发布阶段写回正式译文
     glossary_scope: str = "chapter"  # chapter=只注入本章出现的词条（省 token）；full=全量表
-    # PDF：mineru=现有 HTML 路径；babeldoc=外部 AGPL bridge（HTTP，主仓不 import babeldoc）
+    # PDF：babeldoc=外部 AGPL bridge（默认，HTTP，主仓不 import babeldoc）；mineru=HTML 路径，适合扫描件
     pdf_backend: Literal["mineru", "babeldoc"] = "babeldoc"
     babeldoc_bridge_url: str = "http://127.0.0.1:8765"
     babeldoc_pages: str | None = None  # 如 "15" / "6-8"；None=全书
