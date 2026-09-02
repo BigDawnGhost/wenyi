@@ -134,7 +134,7 @@ def _config(state_dir: str):
                 "provider": "fake",
                 "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
             },
-            "pipeline": {"review": True, "polish": True},
+            "pipeline": {"review": True, "review_autofix": False, "polish": True},
             "paths": {"state_dir": state_dir},
         }
     )

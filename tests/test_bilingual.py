@@ -239,6 +239,7 @@ def _config(state_dir: str, output: dict | None = None):
         },
         "pipeline": {
             "review": True,
+            "review_autofix": False,
             "polish": False,
         },
         "paths": {"state_dir": state_dir},

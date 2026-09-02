@@ -85,6 +85,7 @@ def _config(state_dir: str):
             "segment": {"max_chars_per_batch": 1800},
             "pipeline": {
                 "review": True,
+                "review_autofix": False,
                 "polish": True,
             },
             "paths": {"state_dir": state_dir},
