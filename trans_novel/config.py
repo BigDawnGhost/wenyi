@@ -81,21 +81,18 @@ honorific:
   # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
-punctuation:
-  normalize: true
-
 # ── 路径 ─────────────────────────────────────────────────────────────────
 paths:
   state_dir: state # 运行状态、各章中间产物、术语库
 
-# ── 双语输出 ───────────────────────────────────────────────────────────────
+# ── 输出 ───────────────────────────────────────────────────────────────────
 output:
   mono: true # 产出单语中文版（<书名>.zh.epub）
   bilingual: false # 产出原文与译文对照版（<书名>.zh-bi.epub）
   bilingual_order: target_first # target_first=译文在上；source_first=原文在上
   bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示
   about_page: true # 在书末附加“关于此翻译”说明页
+  punctuation_normalize: true # 仅规范导出副本，不改写正式译文状态
 """
 
 
@@ -172,6 +169,7 @@ class OutputConfig(BaseModel):
     )
     bilingual_preserve_source_style: bool = False
     about_page: bool = True  # 在书末附加项目说明页
+    punctuation_normalize: bool = True  # 仅规范导出副本，不写回章节 target
 
 
 class Config(BaseModel):
@@ -182,7 +180,6 @@ class Config(BaseModel):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     honorific_strategy: str = "keep_style"
-    punctuation_normalize: bool = True  # 译文标点规范化为简体中文通用
     state_dir: str = "state"
 
     @staticmethod
@@ -224,8 +221,11 @@ class Config(BaseModel):
         )
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
+        if "punctuation" in raw:
+            raise ValueError(
+                "配置项 punctuation.normalize 已移至 output.punctuation_normalize，请删除旧配置项。"
+            )
         output = OutputConfig.model_validate(raw.get("output", {}) or {})
-        punct = raw.get("punctuation", {}) or {}
         return cls(
             source_lang=lang.get("source", "auto"),
             target_lang=lang.get("target", "zh"),
@@ -234,6 +234,5 @@ class Config(BaseModel):
             pipeline=pipeline,
             output=output,
             honorific_strategy=raw.get("honorific", {}).get("strategy", "keep_style"),
-            punctuation_normalize=bool(punct.get("normalize", True)),
             state_dir=raw.get("paths", {}).get("state_dir", "state"),
         )

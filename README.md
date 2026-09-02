@@ -178,8 +178,7 @@ flowchart TD
         FA --> G[Extract terms and refresh the glossary]
         G --> H{More batches?}
         H -- Yes --> E
-        H -- No --> I[Normalize remaining punctuation]
-        I --> IB[Run chapter-level fallback term extraction]
+        H -- No --> IB[Run chapter-level fallback term extraction]
         IB --> J[Persist the final chapter]
     end
 
@@ -190,8 +189,9 @@ flowchart TD
     N -- No or stopped --> P[Save Review issues<br/>and folded changes]
     P --> Q{Autofix enabled?}
     Q -- Yes --> R[Overlay changes; reuse Agent Loop and Fixer<br/>Publish final segment targets]
-    Q -- No --> M[Generate the report and assemble the selected output]
-    R --> M
+    Q -- No --> X[Optionally normalize punctuation<br/>on the export-only copy]
+    R --> X
+    X --> M[Generate the report and assemble the selected output]
 ```
 
 When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.

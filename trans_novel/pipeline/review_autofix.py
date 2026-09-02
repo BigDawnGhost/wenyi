@@ -19,7 +19,6 @@ from ..agents.review_fixer import ProvisionalPatch, ReviewFixer
 from ..agents.review_loop import ReviewAgentLoop
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.usage import usage_delta
-from ..postprocess.punct import normalize_zh_segments
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore, review_candidate_id
 from .docx_styles import DocxStyleService
@@ -651,34 +650,6 @@ class ReviewAutofixService:
                 artifacts=[agent_artifact, fixer_artifact],
             )
             overrides[location] = patch.after
-
-        # 在写回前对实际工作快照做一次章级确定性标点收敛。若它产生
-        # 额外变化，也作为独立索引记录保留，不会成为无来源的隐式覆盖。
-        if self._runtime.punctuation_enabled() and overrides:
-            affected_chapters = sorted({chapter for chapter, _ in overrides})
-            for chapter_index in affected_chapters:
-                chapter = chapters_by_index[chapter_index]
-                working = [
-                    overrides.get((chapter_index, index), segment.target or "")
-                    for index, segment in enumerate(chapter.text_segments)
-                ]
-                normalized = normalize_zh_segments(
-                    working,
-                    [segment.cont for segment in chapter.text_segments],
-                )
-                for text_index, (before, after) in enumerate(zip(working, normalized)):
-                    if before == after:
-                        continue
-                    segment = chapter.text_segments[text_index]
-                    add_record(
-                        chapter=chapter_index,
-                        index=text_index,
-                        segment_ref=f"ch{chapter_index}:text{text_index}:seg{segment.index}",
-                        origin="punctuation_normalize",
-                        before=before,
-                        after=after,
-                    )
-                    overrides[(chapter_index, text_index)] = after
 
         locations: list[dict[str, Any]] = []
         for (chapter_index, text_index), target in sorted(overrides.items()):

@@ -6,9 +6,9 @@
     翻译 → 批次译文落盘 → 注释定位并落盘 → 更新上下文 → batch 事件
     → 术语抽取/checkpoint → 更新历史索引 → 下一批
 
-章末仍执行剩余标点规范化、全章术语兜底，并用 save_chapter_with_status
-原子发布正文和 done。已有译文但缺失 glossary checkpoint 时只补抽术语，不重新翻译
-或覆盖译文。
+章末执行全章术语兜底，并用 save_chapter_with_status 原子发布模型原始译文和
+done。标点机械规范化只作用于导出副本，不写入正式 target。已有译文但缺失
+glossary checkpoint 时只补抽术语，不重新翻译或覆盖译文。
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from ..glossary.store import GlossaryStore
 from ..ingest.epub_reader import strip_ruby_markers
 from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
-from ..postprocess.punct import normalize_zh_segments
 from .context import RollingContext
 from .docx_styles import DocxStyleService
 from .runstore import STATUS_DONE, RunStore
@@ -354,7 +353,6 @@ class TranslationService:
                 start_index=batch_start,
                 count=len(b),
                 polished=self._runtime.config.pipeline.polish,
-                punctuation_normalized=self._runtime.punctuation_enabled(),
                 segments=[
                     {
                         "index": batch_start + i,
@@ -382,23 +380,6 @@ class TranslationService:
             glossary_checkpoints.add(glossary_key)
             # 库可能已变；延迟到下一批真译前再刷，末批之后无需再刷。
             term_snapshot_stale = True
-
-        # 不含注释的段落在章末统一完成标点规范化。含注释逻辑段已在其
-        # 最后一个续段译完时用同一函数定稿；此处重复处理是幂等的。
-        if self._runtime.punctuation_enabled():
-            translated = [segment.target or "" for segment in text_segs]
-            normalized_targets = normalize_zh_segments(
-                translated,
-                [segment.cont for segment in text_segs],
-            )
-            for segment, normalized in zip(text_segs, normalized_targets):
-                segment.target = normalized
-            # 当前章译文已在逐批处理中加入滚动上下文；同步替换其保留在尾部的
-            # 部分，确保下一章看到的是最终规范化版本。
-            retained = min(len(normalized_targets), len(context.recent_targets))
-            if retained:
-                context.recent_targets[-retained:] = normalized_targets[-retained:]
-            self.update_translation_history(translation_history, ci, 0, text_segs)
 
         # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
         # 最终 Review 会在全书翻译完成后读取此时已经稳定的最终术语库。
@@ -483,8 +464,7 @@ class TranslationService:
         """用当前章已完成前缀刷新滚动上下文尾部。
 
         注释逻辑段跨越批次时，最后一个续段完成后会同时定稿此前批次中的
-        target。这里把这些更新同步回内存上下文，确保下一批看到的也是最终
-        标点版本，而不是定位前的旧字符串。
+        target。这里把这些更新同步回内存上下文，确保下一批看到最新正式译文。
         """
         prefix = segments[: max(0, min(end, len(segments)))]
         if not prefix or any(not (segment.target and segment.target.strip()) for segment in prefix):
@@ -769,7 +749,7 @@ class TranslationService:
 
         每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
         全书概览/本章梗概作为恒定前缀注入，让译者把握全局。
-        标点规范化在章末统一执行，以维持跨段引号状态。
+        标点机械规范化由导出阶段对一次性副本执行。
         LLM 审校不在翻译批内做；全书完成后由独立 Review 阶段统一执行。
         """
         sources = [s.source for s in batch]

@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
 from trans_novel.agents.langprofile import honorific_rule
+from trans_novel.assemble.export_view import ExportViewStore
 from trans_novel.config import Config
+from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
+from trans_novel.pipeline.runstore import RunStore
 from trans_novel.postprocess.punct import normalize_zh, normalize_zh_segments
 
 
@@ -144,7 +149,105 @@ class TestPunct(unittest.TestCase):
             )
             orchestrator = Orchestrator(cfg, client=FakeClient())
 
-        self.assertFalse(orchestrator._runtime.punctuation_enabled())
+        self.assertFalse(orchestrator._runtime.export_punctuation_enabled())
+
+    def test_punctuation_normalization_only_changes_export_copy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "novel.txt"
+            source.write_text("Hello world.", encoding="utf-8")
+            config = Config.from_dict(
+                {
+                    "language": {"source": "en", "target": "zh"},
+                    "llm": {
+                        "provider": "fake",
+                        "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                    },
+                    "pipeline": {
+                        "book_understanding": False,
+                        "polish": False,
+                        "annotation_alignment": False,
+                    },
+                    "output": {"punctuation_normalize": True},
+                    "paths": {"state_dir": str(Path(directory) / "state")},
+                }
+            )
+
+            def handler(messages, tier, json_mode):
+                if "文学翻译" in messages[0]["content"]:
+                    return json.dumps({"translations": ["他说,真的吗?"]}, ensure_ascii=False)
+                return routing_handler(messages, tier, json_mode)
+
+            orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
+            store = orchestrator.run(str(source))
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "他说,真的吗?")
+
+            output = Path(
+                orchestrator.run_assemble(
+                    str(source),
+                    out_format="txt",
+                    out_path=str(Path(directory) / "novel.zh.txt"),
+                )["output"]
+            )
+            self.assertIn("他说，真的吗？", output.read_text(encoding="utf-8"))
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "他说,真的吗?")
+
+            config.output.punctuation_normalize = False
+            raw_output = Path(
+                orchestrator.run_assemble(
+                    str(source),
+                    out_format="txt",
+                    out_path=str(Path(directory) / "novel.raw.zh.txt"),
+                )["output"]
+            )
+            self.assertIn("他说,真的吗?", raw_output.read_text(encoding="utf-8"))
+
+    def test_export_copy_remaps_annotation_and_docx_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before = "甲...乙"
+            after = "甲……乙"
+            placement = {
+                "id": "marker",
+                "target_start": 4,
+                "target_end": 4,
+                "status": "aligned",
+            }
+            store = RunStore(str(Path(directory) / "state" / "book"))
+            store.save_chapter(
+                Chapter(
+                    index=0,
+                    segments=[
+                        Segment(
+                            index=0,
+                            source="source",
+                            target=before,
+                            meta={
+                                "epub_annotations": {
+                                    "target_digest": hashlib.sha256(before.encode()).hexdigest(),
+                                    "placements": [dict(placement)],
+                                },
+                                "docx_styles": {
+                                    "target_digest": hashlib.sha256(before.encode()).hexdigest(),
+                                    "placements": [dict(placement)],
+                                },
+                            },
+                        )
+                    ],
+                )
+            )
+
+            exported = ExportViewStore(store, punctuation_normalize=True).load_chapter(0)
+
+            self.assertEqual(exported.segments[0].target, after)
+            expected_digest = hashlib.sha256(after.encode()).hexdigest()
+            for key in ("epub_annotations", "docx_styles"):
+                metadata = exported.segments[0].meta[key]
+                self.assertEqual(metadata["target_digest"], expected_digest)
+                self.assertEqual(metadata["placements"][0]["target_start"], 3)
+                self.assertEqual(metadata["placements"][0]["target_end"], 3)
+
+            persisted = store.load_chapter(0).segments[0]
+            self.assertEqual(persisted.target, before)
+            self.assertEqual(persisted.meta["epub_annotations"]["placements"][0]["target_start"], 4)
 
 
 class TestLanguageProfile(unittest.TestCase):

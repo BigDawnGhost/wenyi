@@ -242,7 +242,7 @@ pipeline:
 - `rolling_context_segments`：每批翻译附带的前文译文段数。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
 - `prescan_concurrency`：预扫章节梗概的并发数。
-- `annotation_alignment`：默认开启。EPUB 中存在脚注、尾注等内部链接时，每个含注释的逻辑段在翻译、润色和标点定稿后立即串行调用一次模型定位；超长续段会先重新合并，不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。该选项只控制链接定位；已经解析出的原语言注释正文始终会自动提供给对应翻译段落。
+- `annotation_alignment`：默认开启。EPUB 中存在脚注、尾注等内部链接时，每个含注释的逻辑段在翻译和润色后立即针对正式译文串行调用一次模型定位。开启导出标点规范化时，导出层会在规范化内存副本的同时重映射已保存的偏移。超长续段会先重新合并，不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。该选项只控制链接定位；已经解析出的原语言注释正文始终会自动提供给对应翻译段落。
 - `annotation_alignment_concurrency`：当一个逻辑段内注释数超过一条时，不再用一次模型调用要求同时摆对所有标记（一条出错就会连累整段全部标记回退），而是给每条注释单独发起一次并发请求；该项限制同一段内这些逐条请求可同时并发的上限。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
 - `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
@@ -276,6 +276,7 @@ output:
   bilingual_order: target_first
   bilingual_preserve_source_style: false
   about_page: true
+  punctuation_normalize: true
 ```
 
 - `mono`：生成单语中文版，文件名为 `<书名>.zh.epub`。
@@ -283,6 +284,9 @@ output:
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
 - `bilingual_preserve_source_style`：设为 `true` 时，原文继承书籍正文样式，不使用灰色淡化背景；仅影响 EPUB 和 HTML。
 - `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
+- `punctuation_normalize`：仅在内存中的导出副本上规范中文标点。正式章节 `target`、Review 输入和续跑状态均保持不变。
+
+旧的顶层 `punctuation.normalize` 配置不再接受；请删除旧配置，并只使用 `output.punctuation_normalize`。
 
 默认只生成单语版；使用 `--bilingual` 可同时生成双语版，配置和命令行也可组合为仅生成双语版。
 
@@ -296,9 +300,6 @@ segment:
 honorific:
   strategy: keep_style
 
-punctuation:
-  normalize: true
-
 paths:
   state_dir: state
 ```
@@ -306,5 +307,4 @@ paths:
 - `max_chars_per_batch`：单个模型翻译批次的目标字符数。
 - `max_chars_per_segment`：超长段落的拆分阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
-- `punctuation.normalize`：统一简体中文大陆常用全角标点。
 - `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。
