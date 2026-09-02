@@ -10,6 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
@@ -48,12 +49,12 @@ def _selected_page_indices(pages: str | None, page_count: int) -> list[int]:
     return sorted(selected)
 
 
-def _resolved_pdf_object(value):
+def _resolved_pdf_object(value: Any) -> Any:
     get_object = getattr(value, "get_object", None)
     return get_object() if callable(get_object) else value
 
 
-def _resources_have_image(resources, *, seen: set[int] | None = None) -> bool:
+def _resources_have_image(resources: Any, *, seen: set[int] | None = None) -> bool:
     """Return whether PDF resources contain an image, including nested forms."""
     resources = _resolved_pdf_object(resources)
     if not hasattr(resources, "get"):
@@ -80,7 +81,7 @@ def _resources_have_image(resources, *, seen: set[int] | None = None) -> bool:
     return False
 
 
-def _page_has_image(page) -> bool:
+def _page_has_image(page: Any) -> bool:
     if _resources_have_image(page.get("/Resources")):
         return True
     try:
