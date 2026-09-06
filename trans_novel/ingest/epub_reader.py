@@ -1,12 +1,8 @@
-"""EPUB 读取器（纯标准库 + BeautifulSoup）。
-
-EPUB 即一个 zip：
-  META-INF/container.xml → 指向 OPF
-  OPF → manifest（资源清单）+ spine（阅读顺序）
-
-读取时先按 spine 提取物理 XHTML 资源，再根据 NCX/NAV 的顶层目录锚点
-切成逻辑 Chapter。因此 Chapter 与 XHTML 不再是一对一：切章之后，每个
-Segment 的 ``resource_href`` 仍记录它所属的物理资源，writer 据此聚合回填。
+"""EPUB reader using the standard library and BeautifulSoup.
+An EPUB ZIP contains META-INF/container.xml pointing to OPF, whose manifest lists resources
+and spine defines reading order. Read physical XHTML resources in spine order, then split
+logical chapters at top-level NCX/NAV anchors. Chapters and XHTML are not one-to-one: each
+Segment retains resource_href for writer aggregation and backfill.
 """
 
 from __future__ import annotations
@@ -48,8 +44,8 @@ _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
 _ANNOTATION_META_KEY = "epub_annotations"
-# 振假名写入 Segment.source：汉字〘假名〙。罕见括号便于提示词要求忽略，
-# 且术语匹配时剥离（见 glossary.store._match_text）。模板里仍保留 <ruby>。
+# Embed furigana in Segment.source using distinctive reading markers that prompts can exclude.
+# Strip those markers for glossary matching; retain the original ruby element in the template.
 _RUBY_MARK_LEFT = "〘"
 _RUBY_MARK_RIGHT = "〙"
 _RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
@@ -86,14 +82,16 @@ _LINE_WRAPPER_ATTR = "data-tn-line"
 
 
 def _preserved_inline_roots(block: Tag) -> list[Tag]:
-    """返回需要原样回填的非文本节点，并尽量保留其无文字包装标签。"""
+    """Return nontext nodes for unchanged backfill, preserving text-free wrappers where
+    possible.
+    """
     roots: list[Tag] = []
     seen: set[int] = set()
     for candidate in block.find_all(True):
         if candidate.has_attr(_ANNOTATION_ID_ATTR):
-            # 注释根由 ``epub_annotations`` 单独恢复，不能再作为普通内联
-            # 节点记录一份。其内部的图片等原子节点仍需独立记录，否则范围
-            # 链接重建正文时会把这些节点一并清空。
+            # Annotation roots are restored separately by epub_annotations, so do not duplicate them as
+            # ordinary inline nodes. Still record their atomic children, such as images, independently
+            # so rebuilding a range link's body cannot erase those children.
             continue
         is_atomic = candidate.name in _ATOMIC_INLINE_TAGS
         is_empty_anchor = (
@@ -122,7 +120,9 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
 
 
 def _is_internal_link(link: Tag) -> bool:
-    """判断链接是否指向 EPUB 包内资源，而非 Web、邮件或脚本地址。"""
+    """Determine whether a link targets an EPUB resource rather than web, email or script
+    content.
+    """
     raw_href = link.get("href")
     if not isinstance(raw_href, str) or not raw_href.strip():
         return False
@@ -131,7 +131,7 @@ def _is_internal_link(link: Tag) -> bool:
 
 
 def _semantic_tokens(node: Tag) -> set[str]:
-    """返回 EPUB/ARIA/HTML 链接语义 token 的小写集合。"""
+    """Return lowercase EPUB/ARIA/HTML semantic tokens for a link."""
     tokens: set[str] = set()
     for key in ("epub:type", "role", "rel"):
         value = node.get(key)
@@ -143,13 +143,13 @@ def _semantic_tokens(node: Tag) -> set[str]:
                 normalized = token.strip().lower()
                 if normalized:
                     tokens.add(normalized)
-                    # 某些制作工具会写 ``z3998:footnote`` 一类前缀值。
+                    # Some generators prefix values, for example z3998:footnote.
                     tokens.add(normalized.rsplit(":", 1)[-1])
     return tokens
 
 
 def _inside_note_body(node: Tag) -> bool:
-    """判断节点是否位于显式 footnote/endnote 语义容器中。"""
+    """Check whether a node is inside an explicit footnote/endnote semantic container."""
     for parent in (node, *node.parents):
         if isinstance(parent, Tag) and _semantic_tokens(parent) & _NOTE_BODY_SEMANTICS:
             return True
@@ -157,7 +157,7 @@ def _inside_note_body(node: Tag) -> bool:
 
 
 def _has_note_identity(node: Tag) -> bool:
-    """判断节点的 id/name/class 是否明确表示脚注正文。"""
+    """Check whether id, name or class explicitly identifies footnote body content."""
     identity: list[str] = []
     for key in ("id", "name", "class"):
         value = node.get(key)
@@ -169,7 +169,7 @@ def _has_note_identity(node: Tag) -> bool:
 
 
 def _has_short_note_identity(node: Tag) -> bool:
-    """判断节点 id/name 是否为仅在强结构证据下采用的 ``n1`` 型注释名。"""
+    """Detect n1-style annotation IDs/names that require strong supporting structure."""
     return any(
         isinstance(node.get(key), str) and bool(_SHORT_NOTE_IDENTITY.fullmatch(str(node.get(key))))
         for key in ("id", "name")
@@ -177,7 +177,7 @@ def _has_short_note_identity(node: Tag) -> bool:
 
 
 def _implicit_note_body_scope(node: Tag) -> Tag | None:
-    """返回以稳定命名标识、但缺少 EPUB 语义的最近注释容器。"""
+    """Find the nearest named annotation container lacking explicit EPUB semantics."""
     for parent in (node, *node.parents):
         if (
             isinstance(parent, Tag)
@@ -189,7 +189,7 @@ def _implicit_note_body_scope(node: Tag) -> Tag | None:
 
 
 def _short_note_body_scope(node: Tag) -> Tag | None:
-    """返回 ``n1`` 型容器；调用方还须提供角标或回链结构证据。"""
+    """Find an n1-style container; callers must also supply superscript or backlink evidence."""
     for parent in (node, *node.parents):
         if (
             isinstance(parent, Tag)
@@ -201,7 +201,7 @@ def _short_note_body_scope(node: Tag) -> Tag | None:
 
 
 def _inside_implicit_note_body(node: Tag) -> bool:
-    """判断节点是否位于以稳定命名标识、但缺少 EPUB 语义的注释容器。"""
+    """Check whether a node is in a named annotation container lacking EPUB semantics."""
     if _implicit_note_body_scope(node) is not None:
         return True
     short_scope = _short_note_body_scope(node)
@@ -212,14 +212,16 @@ def _inside_implicit_note_body(node: Tag) -> bool:
 
 
 def _is_text_string(node: object) -> TypeGuard[NavigableString]:
-    """真正的文本节点；XML 处理指令（如 ``<?pagebreak number="69"?>``）不算正文。"""
+    """Recognize actual text nodes, excluding XML processing instructions such as page-break
+    markers.
+    """
     return isinstance(node, NavigableString) and not isinstance(
         node, (Comment, ProcessingInstruction)
     )
 
 
 def _hoist_processing_instructions(el: Tag) -> None:
-    """把块内 PI 挪到块前当兄弟，避免 writer ``clear()`` 清掉页码等标记。"""
+    """Move block processing instructions before the block so writer clear() cannot erase them."""
     if el.parent is None:
         return
     extracted = [
@@ -230,7 +232,7 @@ def _hoist_processing_instructions(el: Tag) -> None:
 
 
 def _surrounding_text(block: Tag, node: Tag) -> tuple[str, str]:
-    """返回节点在当前翻译块之前和之后的可见文字，用于识别段首回链。"""
+    """Return visible text before and after a node to identify leading backlinks."""
 
     def text_of(value: object) -> str:
         if _is_text_string(value):
@@ -257,7 +259,9 @@ def _annotation_relation(
     range_marker: Tag | None,
     marker_only: bool,
 ) -> str:
-    """把需保结构的内部链接区分为正向注释、回链和普通链接。"""
+    """Classify structure-preserving internal links as annotation links, backlinks or ordinary
+    links.
+    """
     semantics = _semantic_tokens(link)
     if semantics & _BACKLINK_SEMANTICS:
         return "backlink"
@@ -270,8 +274,8 @@ def _annotation_relation(
     if marker_only and re.fullmatch(r"[↩↵←↑↓⤶\s]+", link.get_text("", strip=True)):
         return "backlink"
 
-    # 常见脚注正文以一个裸编号回到正文，随后才是解释文字。它没有 sup/sub
-    # 包装，且位于块首；保守地将其视为 backlink，避免把正文反向注入注释。
+    # Footnotes often begin with a bare backlink number followed by explanatory text, without sup/sub.
+    # Treat that leading link conservatively as a backlink to avoid injecting body text as annotation.
     if marker_wrapper is None and marker_only and link is not block:
         before, after = _surrounding_text(block, link)
         if not before.strip() and after.strip():
@@ -283,11 +287,9 @@ def _annotation_relation(
 
 
 def _nearest_marker_wrapper(link: Tag, block: Tag) -> Tag | None:
-    """返回 link 与当前翻译块之间最近的语义上下标包装。
-
-    除原生 ``sup``/``sub`` 外，一些 EPUB 用带明确 class 或内联样式的
-    ``span`` 配合 CSS 实现角标。此处只接受清晰声明上下标的包装，普通
-    ``span`` 仍会按正文处理。
+    """Find the nearest semantic superscript/subscript wrapper between a link and its block.
+    Besides native sup/sub, accept spans with explicit classes or inline styles indicating
+    super/subscript. Ordinary spans remain body text.
     """
 
     def is_marker_wrapper(node: Tag) -> bool:
@@ -324,7 +326,9 @@ def _has_annotation_hint(
     *,
     allow_short_n: bool = False,
 ) -> bool:
-    """根据明确注释线索判断编号是否确为注释，而非普通内部跳转。"""
+    """Use explicit annotation evidence to distinguish note numbers from ordinary internal
+    links.
+    """
     decorated = bool(re.search(r"[^\d\s.·:\-]", marker_text))
     parsed = urlsplit(str(link.get("href", "")))
     attrs: list[str] = [parsed.fragment]
@@ -353,11 +357,11 @@ def _has_annotation_hint(
 
 
 def _range_marker_node(link: Tag) -> Tag | None:
-    """识别范围链接末尾的高置信度注释号，避免误删语义上下标。
-
-    ``H<sub>2</sub>O``、``CO<sub>2</sub>`` 和公式指数都是正文，不能因为
-    使用 ``sup/sub`` 就从送译文本中删除。第一版只接受位于链接末尾、文字
-    形似编号，并且 href/id/class/语义属性或装饰符提供注释线索的节点。
+    """Recognize high-confidence trailing note markers without deleting semantic
+    super/subscripts.
+    Chemical subscripts and formula exponents are body content, not removable merely because
+    they use sup/sub. Accept only trailing number-like markers supported by href, id, class,
+    semantic attributes or decorations.
     """
     significant = [
         child for child in link.children if not (_is_text_string(child) and not str(child).strip())
@@ -371,8 +375,8 @@ def _range_marker_node(link: Tag) -> Tag | None:
     if not marker_text or not _ANNOTATION_MARKER_ONLY.fullmatch(marker_text):
         return None
 
-    # 数字下标几乎总是化学式或数学正文；只有带括号、星号、箭头等明显
-    # 注释装饰时才允许把 sub 当标记。
+    # Numeric subscripts are usually chemical or mathematical content. Treat sub as a note marker
+    # only when clear decorations such as brackets, asterisks or arrows support that interpretation.
     decorated = bool(re.search(r"[^\d\s.·:\-]", marker_text))
     if candidate.name == "sub" and not decorated:
         return None
@@ -384,7 +388,7 @@ def _range_marker_node(link: Tag) -> Tag | None:
 
 
 def _semantic_link_text(link: Tag, marker_node: Tag | None = None) -> str:
-    """返回链接正文，只排除已确认的末尾注释号。"""
+    """Return link body text, excluding only confirmed trailing annotation numbers."""
     parts: list[str] = []
 
     def collect(parent: Tag) -> None:
@@ -405,10 +409,12 @@ def _annotation_roots(
     anchor: str,
     resource_href: str,
 ) -> dict[int, dict[str, object]]:
-    """识别段内链接，给其 DOM 根节点编号并返回临时提取规格。"""
-    # ``block`` 自身若是普通 a（典型为 ``li > a``），writer 替换其子文字时
-    # 天然保留 href，无需再请求模型定位。只有内部还带 sup/sub 注释号时才
-    # 记录自身，以免 clear() 一并删除标记结构。
+    """Identify inline links, number their DOM roots and return temporary extraction
+    specifications.
+    """
+    # When block itself is an ordinary link, such as li > a, replacing its child text preserves href.
+    # No model alignment is needed. Record the root only if it also contains sup/sub note markers
+    # that clear() would otherwise erase.
     links: list[Tag] = []
     if block.name == "a" and block.has_attr("href") and block.find(["sup", "sub"]):
         links.append(block)
@@ -433,8 +439,8 @@ def _annotation_roots(
         range_marker = None if marker_wrapper is not None else _range_marker_node(link)
         semantic_text = _semantic_link_text(link, range_marker)
         if not semantic_text and marker_wrapper is None:
-            # 纯图片链接及空锚点没有需要跨语言定位的正文。让既有原子内联
-            # 机制原样保留整个 ``a`` 外壳，避免把图片误当脚注并清空。
+            # Image-only links and empty anchors have no text needing cross-language alignment. Preserve
+            # the entire link through atomic inline handling instead of misclassifying and clearing it as a note.
             continue
         marker_shaped = bool(_ANNOTATION_MARKER_ONLY.fullmatch(semantic_text))
         marker_only = bool(
@@ -455,8 +461,8 @@ def _annotation_roots(
             marker_only=marker_only,
         )
 
-        # 一个结构根只记录一次。规范 XHTML 中不会嵌套 a，但此防线可避免
-        # 损坏文档让同一 sup/sub 被多个链接重复编号。
+        # Record each structural root once. Valid XHTML does not nest links, but this guard prevents
+        # malformed documents from assigning multiple IDs to the same sup/sub marker.
         if id(root) in roots:
             continue
 
@@ -484,7 +490,7 @@ def _normalize_html_text(
     raw_text: str,
     offsets: list[int],
 ) -> tuple[str, list[int]]:
-    """折叠 HTML 排版空白，并把原始字符边界映射到规范化文本。"""
+    """Collapse HTML layout whitespace and map raw character boundaries to normalized text."""
     output: list[str] = []
     boundary_map = [0] * (len(raw_text) + 1)
     for index, char in enumerate(raw_text):
@@ -511,10 +517,10 @@ def _segment_content(
     anchor: str,
     annotation_roots: dict[int, dict[str, object]] | None = None,
 ) -> tuple[str, dict[str, object]]:
-    """提取可翻译文本，并给内联非文本节点写入稳定 ID 和位置元数据。
-
-    XHTML 源码中的排版空白按浏览器规则折叠。``br`` 已在选择翻译
-    目标时拆成独立视觉行，因此不会进入单个 Segment 的文本。
+    """Extract translatable text and assign stable IDs/positions to inline nontext nodes.
+    Collapse XHTML formatting whitespace as browsers do. Translation-target selection
+    already splits br-separated visual lines, so br does not enter an individual Segment's
+    text.
     """
     annotations = annotation_roots or {}
     marker_node_ids: set[int] = set()
@@ -532,17 +538,17 @@ def _segment_content(
     raw_length = 0
 
     def append_text(value: str) -> None:
-        """追加原始文字，并维护 DOM 边界对应的字符位置。"""
+        """Append raw text while tracking character positions at DOM boundaries."""
         nonlocal raw_length
         text_parts.append(value)
         raw_length += len(value)
 
     def walk(parent: Tag, *, inside_range: bool = False) -> None:
-        """递归收集正文文本节点，并记录需保留节点的源文偏移。"""
+        """Recursively collect body text and source offsets for nodes that must be preserved."""
         for child in parent.children:
             if isinstance(child, Tag):
                 if child.name == "ruby":
-                    # 汉字进正文；假名写成 〘…〙 紧随其后，供翻译/审校消歧。
+                    # Include base kanji in body text and append marked kana readings for translation/review disambiguation.
                     base_start = raw_length
                     walk(child, inside_range=inside_range)
                     reading = "".join(rt.get_text() for rt in child.find_all("rt")).strip()
@@ -550,11 +556,11 @@ def _segment_content(
                         append_text(f"{_RUBY_MARK_LEFT}{reading}{_RUBY_MARK_RIGHT}")
                     continue
                 if child.name in {"rt", "rp"}:
-                    # 振假名节点本身不进正文（已在 ruby 分支写成 〘…〙）；
-                    # 模板仍保留 <rt>/<rp> 供双语导出。
+                    # Exclude standalone reading nodes from body text; the ruby branch already emits reading hints.
+                    # Retain rt/rp elements in the template for bilingual export.
                     continue
                 if inside_range and id(child) in marker_node_ids:
-                    # range 链接的注释号属于结构标记，不进入待译文字。
+                    # Annotation numbers in range links are structural markers, not translatable text.
                     continue
                 annotation = annotations.get(id(child))
                 if annotation is not None:
@@ -576,8 +582,8 @@ def _segment_content(
                     and isinstance(child.next_sibling, Tag)
                     and id(child.next_sibling) in marker_node_ids
                 ):
-                    # range 注释号通常位于链接末尾。源码为缩进而留在
-                    # sup/sub 前的换行不是正文，去掉标记时也去掉该尾空白。
+                    # Range note numbers are usually trailing. Formatting newlines before sup/sub are not body text;
+                    # remove that trailing whitespace with the marker.
                     value = value.rstrip(" \t\r\n\f\v")
                 if inside_range and not value.strip():
                     previous = child.previous_sibling
@@ -592,7 +598,7 @@ def _segment_content(
                         and id(previous) in marker_node_ids
                         and not has_later_text
                     ):
-                        # 注释号之后、range 链接闭合前的缩进同样不是正文。
+                        # Indentation after the note number and before the range link closes is also not body text.
                         continue
                 append_text(value)
 
@@ -668,21 +674,23 @@ def _segment_content(
 
 
 def strip_ruby_markers(text: str) -> str:
-    """去掉正文注音标记 ``〘…〙``；术语匹配与译文误抄兜底共用。"""
+    """Strip pronunciation hint markers for glossary matching and accidental-copy recovery."""
     if not text or _RUBY_MARK_LEFT not in text:
         return text
     return _RUBY_MARK_RE.sub("", text)
 
 
 def _has_meaningful_descendant_block(element: Tag) -> bool:
-    """块内若已有更细粒度的正文块，则外层只作为布局容器保留。"""
+    """Retain an outer block only as layout when it contains finer-grained body blocks."""
     return any(
         descendant.get_text(strip=True) for descendant in element.find_all(_BLOCK_CANDIDATE_TAGS)
     )
 
 
 def _list_item_link_target(element: Tag) -> Tag | None:
-    """当直接链接是列表项唯一正文时返回它，避免清空 ``li`` 和子列表。"""
+    """Return the direct link when it is a list item's only body text, preserving li and nested
+    lists.
+    """
     link = element.find("a", recursive=False)
     if not isinstance(link, Tag) or not link.get_text(strip=True):
         return None
@@ -690,7 +698,7 @@ def _list_item_link_target(element: Tag) -> Tag | None:
         if child is link:
             continue
         if isinstance(child, Tag):
-            # 子列表/子正文块由自己的叶节点负责；它们不属于当前 li 的正文。
+            # Nested lists/body blocks have their own leaf targets and are not part of this li's text.
             if child.name in _BLOCK_CANDIDATE_TAGS or child.name in {"ul", "ol", "dl"}:
                 continue
             if child.get_text(strip=True):
@@ -700,12 +708,14 @@ def _list_item_link_target(element: Tag) -> Tag | None:
             if str(child).strip():
                 return None
             continue
-        # Comment / ProcessingInstruction 等非正文节点忽略
+        # Ignore non-body nodes such as comments and processing instructions.
     return link
 
 
 def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
-    """把直接 ``br`` 分隔的可见行包装为独立翻译目标，原 ``br`` 不动。"""
+    """Wrap visible lines separated by direct br elements as independent targets; leave br
+    unchanged.
+    """
     children = list(element.children)
     if not any(isinstance(child, Tag) and child.name == "br" for child in children):
         return [element]
@@ -717,7 +727,7 @@ def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
         elif isinstance(child, Tag):
             runs[-1].append(child)
         elif _is_text_string(child):
-            # PI/Comment 留在 runs 外当兄弟，导出时不被 clear()
+            # Keep processing instructions and comments outside runs so export clear() preserves them.
             runs[-1].append(child)
 
     targets: list[Tag] = []
@@ -744,10 +754,9 @@ def _translation_targets(
     *,
     skip_navigation: bool,
 ) -> list[Tag]:
-    """按文档顺序选择可安全替换内容的最细粒度 EPUB 节点。
-
-    含子正文块的 ``div``/``blockquote`` 等仅作为容器保留；``li`` 的
-    直接链接文字单独成为翻译目标，从而同时保留列表层级和 ``href``。
+    """Select the finest safely replaceable EPUB nodes in document order.
+    Keep div/blockquote elements with child body blocks as containers. Direct link text
+    inside li becomes its own target, preserving list hierarchy and href.
     """
     targets: list[Tag] = []
     for element in soup.find_all(_BLOCK_CANDIDATE_TAGS):
@@ -769,16 +778,16 @@ def _translation_targets(
 
 
 def _find_opf_path(zf: zipfile.ZipFile) -> str:
-    """从 container.xml 解析 EPUB 包文档的 zip 内路径。"""
+    """Resolve the EPUB package document ZIP path from container.xml."""
     data = zf.read(_CONTAINER)
     root = ET.fromstring(data)
-    # container.xml 用了默认命名空间，按 localname 匹配
+    # Match local names because container.xml uses a default namespace.
     for el in root.iter():
         if el.tag.rsplit("}", 1)[-1] == "rootfile":
             path = el.attrib.get("full-path", "").strip()
             if path:
                 return path
-    raise ValueError("EPUB 损坏：container.xml 未找到有效的 rootfile full-path")
+    raise ValueError("Invalid EPUB: container.xml has no valid rootfile full-path")
 
 
 def _zip_href(base_path: str, href: str) -> str:
@@ -787,11 +796,11 @@ def _zip_href(base_path: str, href: str) -> str:
 
 
 def _parse_opf(zf: zipfile.ZipFile, opf_path: str) -> tuple[str, list[str], list[str]]:
-    """返回 (书名, spine 顺序的 XHTML zip 路径列表, TOC/NAV 文件路径列表)。"""
+    """Return the book title, spine-ordered XHTML ZIP paths and TOC/NAV paths."""
     root = ET.fromstring(zf.read(opf_path))
 
     def local(tag: str) -> str:
-        """去掉 XML 命名空间并返回标签本地名。"""
+        """Remove the XML namespace and return the local tag name."""
         return tag.rsplit("}", 1)[-1]
 
     title = ""
@@ -830,12 +839,12 @@ def _parse_opf(zf: zipfile.ZipFile, opf_path: str) -> tuple[str, list[str], list
             continue
         resolved_href = _zip_href(opf_path, href)
         if resolved_href and resolved_href not in hrefs:
-            # 同一物理资源可被 spine 重复引用，但 zip 中仍只有一份
-            # XHTML；只标注一次，避免生成无法回填的第二套锚点。
+            # The spine may reference one physical resource repeatedly, but the ZIP contains only one XHTML.
+            # Annotate it once to avoid a second set of anchors that cannot be backfilled.
             hrefs.append(resolved_href)
 
-    # EPUB3 NAV 是主目录；没有 NAV 时优先使用 spine.toc 指定的
-    # EPUB2 NCX。其它目录仍保留供标题回填，但不与主目录混合切章。
+    # Prefer EPUB3 NAV as the main TOC, then the EPUB2 NCX named by spine.toc. Retain other TOCs
+    # for title backfill without mixing their chapter boundaries with those of the main TOC.
     nav_ids = [
         item_id for item_id, (_href, _media, props) in manifest.items() if "nav" in props.split()
     ]
@@ -856,7 +865,7 @@ def _parse_opf(zf: zipfile.ZipFile, opf_path: str) -> tuple[str, list[str], list
 
 
 def _manifest_xhtml_hrefs(zf: zipfile.ZipFile, opf_path: str) -> list[str]:
-    """返回 OPF manifest 中全部 XHTML/HTML 资源，用于解析非 spine 注释。"""
+    """List all OPF XHTML/HTML resources so annotations outside the spine can be parsed."""
     root = ET.fromstring(zf.read(opf_path))
     hrefs: list[str] = []
     for element in root.iter():
@@ -874,13 +883,15 @@ def _manifest_xhtml_hrefs(zf: zipfile.ZipFile, opf_path: str) -> list[str]:
 
 
 def _decode_markup(data: bytes) -> str:
-    """按 XML/HTML 声明与字节特征解码 XHTML，最后才使用 UTF-8 替换兜底。"""
+    """Decode XHTML using declarations and byte signatures; use UTF-8 replacement only as a
+    last resort.
+    """
     decoded = UnicodeDammit(data).unicode_markup
     return decoded if decoded is not None else data.decode("utf-8", errors="replace")
 
 
 def _looks_like_internal_title(title: str, href: str, book_title: str = "") -> bool:
-    """判断 XHTML title 是否只是内部文件名或重复的全书书名。"""
+    """Check whether an XHTML title is merely an internal filename or repeated book title."""
     base = posixpath.basename(href).rsplit(".", 1)[0]
     stripped = title.strip()
     return (bool(base) and stripped == base) or (
@@ -896,10 +907,9 @@ def annotate_epub_resource(
     book_title: str = "",
     skip_navigation: bool = False,
 ) -> tuple[str, list[Segment], str]:
-    """标注单个物理 XHTML，返回标题、Segment 和可回填模板。
-
-    锚点使用物理资源序号而非最终 Chapter 序号，因此即使改用其它
-    逻辑切章策略，writer 重建模板时仍能生成相同的 ``data-tn-id``。
+    """Annotate one physical XHTML and return its title, segments and backfill template.
+    Use the physical resource index in anchors rather than the final Chapter index, so
+    writers rebuild identical data-tn-id values even if logical chapter policies change.
     """
     soup = BeautifulSoup(html, "html.parser")
     segments: list[Segment] = []
@@ -927,22 +937,22 @@ def annotate_epub_resource(
                     id(parent) in marker_ids for parent in node.parents if parent is not root
                 ):
                     protected_annotation_nodes.add(id(node))
-        # 带文字的内联 id/name 包装会在回填纯译文时被拍平。先把它
-        # 改成同位置的空锚点，便可复用现有内联非文本节点恢复机制。
+        # Text-bearing inline id/name wrappers are flattened during target backfill. Convert them first
+        # to empty anchors at the same position so the existing nontext restoration mechanism preserves them.
         for descendant in list(el.find_all(True)):
             if not descendant.get_text(strip=True):
                 continue
             if id(descendant) in protected_annotation_nodes:
-                # point 根、range 根及其已确认的注释号必须保留属性；range
-                # 内其它语义包装仍按普通规则把 id/name 迁成空锚点，writer
-                # 才能在清空源文节点后恢复这些跳转目标。
+                # Preserve attributes on point roots, range roots and confirmed note markers. Move id/name from
+                # other semantic wrappers inside ranges into empty anchors, allowing the writer to restore
+                # those destinations after clearing source nodes.
                 continue
             anchor_attrs = {
                 key: descendant.attrs.pop(key) for key in ("id", "name") if key in descendant.attrs
             }
             if anchor_attrs:
-                # HTML 不允许 a 内再嵌套 a；范围链接内部的跳转目标改用
-                # 等价的空 span，保留 id/name 而不破坏外层链接结构。
+                # HTML forbids nested anchors. Replace destinations inside range links with equivalent empty spans
+                # that preserve id/name without breaking the outer link.
                 inside_range_link = any(
                     id(parent) in range_annotation_roots for parent in descendant.parents
                 )
@@ -960,7 +970,7 @@ def annotate_epub_resource(
         if not text:
             continue
         el["data-tn-id"] = anchor
-        # 页码等 PI 挪到块前，回填 clear 目标块时仍保留在模板中。
+        # Move page-number processing instructions before blocks so backfill clear() preserves them.
         _hoist_processing_instructions(el)
         kind = (
             KIND_HEADING
@@ -986,10 +996,10 @@ def annotate_epub_resource(
         )
         idx += 1
 
-    # 物理资源的备用标题：首个 heading → 非内部文件名/书名的
-    # <title> → 无标题。逻辑章标题在后续切章时直接取完整 TOC 节点。
-    # 一些 EPUB 把 XHTML 文件名写进 <title>，如 cUH.xhtml 的 <title>cUH</title>，
-    # 或把全书书名写进每个 <title>，这不是读者可见章节标题，不能进入目录或标题翻译。
+    # Physical-resource title fallback: first heading, then a title that is neither an internal filename
+    # nor the book title, then empty. Logical chapter titles later come from complete TOC nodes.
+    # Some EPUBs place internal filenames or the complete book title in every XHTML title element.
+    # These are not reader-visible chapter titles and must not enter TOC or title translation.
     title = " ".join(heading_title_parts)
     if not title and soup.title and soup.title.string:
         candidate = soup.title.string.strip()
@@ -1000,10 +1010,10 @@ def annotate_epub_resource(
 
 
 def _inside_navigation_list(element: Tag) -> bool:
-    """判断块元素是否属于 EPUB3 ``nav`` 的目录列表结构。
-
-    这里只保护 ``li`` 及其内部块，避免普通回填清空链接和嵌套 ``ol``；
-    位于 ``nav`` 内但不属于列表的可见标题/说明文字仍应进入翻译流程。
+    """Check whether a block belongs to an EPUB3 nav TOC list.
+    Protect li elements and their internal blocks from backfill that would erase links or
+    nested ol elements. Visible headings or descriptions elsewhere inside nav still need
+    translation.
     """
     inside_nav = False
     inside_list_item = element.name == "li"
@@ -1019,10 +1029,9 @@ def _inside_navigation_list(element: Tag) -> bool:
 
 
 def _fragment_anchor_map(template: str) -> dict[str, str | None]:
-    """把 XHTML 中的 id/name 定位到 Segment 锚点。
-
-    值为 ``None`` 表示 ID 确实存在，但它位于该资源最后一个
-    可翻译块之后；这与“fragment 根本不存在”必须区分。
+    """Map XHTML id/name values to Segment anchors.
+    None means the ID exists after the resource's final translatable block. Keep this
+    distinct from a fragment that does not exist at all.
     """
     soup = BeautifulSoup(template, "html.parser")
     mapping: dict[str, str | None] = {}
@@ -1044,7 +1053,9 @@ def _fragment_anchor_map(template: str) -> dict[str, str | None]:
 
 
 def _fragment_nodes(soup: BeautifulSoup, fragment: str) -> list[Tag]:
-    """返回 fragment 精确命中的唯一 DOM 节点列表，保留重复 ID 供判歧义。"""
+    """Return unique DOM nodes exactly matching a fragment, retaining duplicate IDs for
+    ambiguity checks.
+    """
     nodes: list[Tag] = []
     seen: set[int] = set()
     for node in soup.find_all(True):
@@ -1057,7 +1068,9 @@ def _fragment_nodes(soup: BeautifulSoup, fragment: str) -> list[Tag]:
 
 
 def _semantic_note_scope(node: Tag) -> Tag | None:
-    """返回包含目标锚点的最近显式 footnote/endnote 语义容器。"""
+    """Find the nearest explicit footnote/endnote semantic container enclosing the destination
+    anchor.
+    """
     for candidate in (node, *node.parents):
         if isinstance(candidate, Tag) and _semantic_tokens(candidate) & _NOTE_BODY_SEMANTICS:
             return candidate
@@ -1065,7 +1078,7 @@ def _semantic_note_scope(node: Tag) -> Tag | None:
 
 
 def _note_context_scope(node: Tag, fragment: str) -> tuple[Tag, bool]:
-    """选择注释正文的 DOM 范围，并返回目标是否有明确注释身份。"""
+    """Select an annotation body's DOM scope and report whether its note identity is explicit."""
     semantic = _semantic_note_scope(node)
     if semantic is not None:
         return semantic, True
@@ -1080,12 +1093,12 @@ def _note_context_scope(node: Tag, fragment: str) -> tuple[Tag, bool]:
     if short_scope is not None and (
         short_scope.has_attr("data-tn-id") or short_scope.find(True, attrs={"data-tn-id": True})
     ):
-        # ``n1`` 本身不足以升级普通链接，但已确认的角标 noteref 可用它
-        # 取得整条列表注释，而不是只取编号锚点。
+        # An n1 ID alone cannot promote an ordinary link to a note, but a confirmed noteref can use it
+        # to obtain the complete list annotation instead of just the numbered anchor.
         return short_scope, False
 
-    # 无语义标注的旧 EPUB 常把一条多段脚注包在 li/dd/aside 中；带明确
-    # note/fn 身份的 div/section 也可安全收集其全部正文块。
+    # Older EPUBs often wrap multi-paragraph notes in li/dd/aside without semantic attributes.
+    # A div/section with explicit note/fn identity can also safely supply all its body blocks.
     has_note_identity = bool(_NOTE_TARGET_HINT.search(fragment)) or _has_note_identity(node)
     if node.name in {"aside", "li", "dd"} or (
         node.name in {"div", "section"} and has_note_identity
@@ -1103,7 +1116,7 @@ def _note_context_scope(node: Tag, fragment: str) -> tuple[Tag, bool]:
 
 
 def _scope_segment_anchors(scope: Tag) -> list[str]:
-    """按 DOM 顺序返回注释范围内的翻译块锚点。"""
+    """Return translation-block anchors within the annotation scope in DOM order."""
     candidates = [scope] if scope.has_attr("data-tn-id") else []
     candidates.extend(scope.find_all(True, attrs={"data-tn-id": True}))
     anchors: list[str] = []
@@ -1118,7 +1131,9 @@ def _build_epub_annotation_contexts(
     reference_resources: list[dict[str, object]],
     lookup_resources: list[dict[str, object]],
 ) -> dict[str, object]:
-    """解析正向注释引用，建立去重、不可变的源文上下文索引。"""
+    """Resolve forward annotation references into a deduplicated immutable source-context
+    index.
+    """
     lookup_by_href = {
         str(resource.get("href")): resource
         for resource in lookup_resources
@@ -1168,7 +1183,7 @@ def _build_epub_annotation_contexts(
                     continue
                 target_nodes = _fragment_nodes(target_soup, resolved.fragment)
                 if len(target_nodes) != 1:
-                    # 重复 id/name 的损坏文档无法确定引用所有权，宁可不注入。
+                    # Duplicate id/name values make reference ownership ambiguous; omit that context.
                     continue
                 scope, semantic_note = _note_context_scope(target_nodes[0], resolved.fragment)
                 relation = item.get("relation")
@@ -1183,7 +1198,7 @@ def _build_epub_annotation_contexts(
                 anchors = [anchor for anchor in anchors if anchor in source_map]
                 if not anchors:
                     continue
-                # 自指链接不提供新信息，也不能作为自己的注释定义。
+                # Self-links provide no new information and cannot define their own annotations.
                 if (
                     resolved.resource_href == segment.resource_href
                     and isinstance(segment.anchor, str)
@@ -1213,11 +1228,10 @@ def _toc_collapsed_to_single_boundary(
     canonical_toc_path: str,
     resources: list[dict[str, object]],
 ) -> bool:
-    """判断目录是否因全部指向同一资源而退化为单边界。
-
-    坏 NCX/NAV 会让多个顶层节点解析到同一位置，去重后只剩一条边界。
-    仅当目录里确实存在多个可定位顶层节点，且 spine 仍包含多个带正文的
-    资源时才视为退化，从而退回按 spine 资源切章。
+    """Detect TOCs collapsed to one boundary because all nodes target the same resource.
+    Treat a TOC as degenerate only when it has multiple resolvable top-level nodes and the
+    spine still contains multiple body-bearing resources. Then fall back to spine-resource
+    chapter boundaries.
     """
     top_level = 0
     for entry in toc_entries:
@@ -1242,10 +1256,10 @@ def _logical_chapters(
     resources: list[dict[str, object]],
     toc_entries: list[dict[str, object]],
 ) -> tuple[list[Chapter], str, str]:
-    """按当前策略把物理资源流切成逻辑 Chapter。
-
-    无可用目录边界时回退为每个非空 spine XHTML 一章，与历来行为
-    一致。如首个目录边界前仍有正文，它会成为独立前置章，不丢内容。
+    """Split physical resources into logical Chapters using the current policy.
+    Without usable TOC boundaries, preserve legacy behavior with one chapter per nonempty
+    spine XHTML. Any body text before the first TOC boundary becomes a separate front-matter
+    chapter rather than being lost.
     """
     all_segments: list[Segment] = []
     anchor_positions: dict[str, int] = {}
@@ -1274,8 +1288,8 @@ def _logical_chapters(
         raw_fragment_map = resource.get("fragment_anchors")
         fragment_map = raw_fragment_map if isinstance(raw_fragment_map, dict) else {}
         if has_fragment and fragment not in fragment_map:
-            # 损坏的 fragment 不能悄悄退回到资源开头，否则会在
-            # 错误位置切章，并把首个 heading 的译文写给错误目录项。
+            # An invalid fragment must not silently fall back to the resource start; that would split chapters
+            # at the wrong point and assign the first heading's translation to the wrong TOC entry.
             continue
         segment_anchor = fragment_map.get(fragment) if has_fragment else None
         if not has_fragment:
@@ -1296,16 +1310,16 @@ def _logical_chapters(
                 if isinstance(raw_segments, list)
                 else 0
             )
-            # fragment 存在但位于最后一个文本块之后。
+            # The fragment exists but follows the final text block.
             entry["boundary_position"] = resource_starts[href] + segment_count
         else:
-            # 无文字标题页也是有效目录边界：它会在流中占据当前
-            # 位置，后续 spine 正文因此仍能归入该逻辑章。
+            # An empty title page remains a valid boundary at the current stream position,
+            # allowing subsequent spine body text to belong to that logical chapter.
             entry["boundary_position"] = resource_starts[href]
 
-    # NAV <span> 或宽容 NCX 可以用无 href/content 的节点表示“部”。
-    # 这类分组节点继承第一个可定位后代的边界，但不继承
-    # segment_anchor，以免把子章 heading 的译文误当成分组标题译文。
+    # NAV spans or permissive NCX grouping nodes may represent parts without href/content.
+    # Inherit the first resolvable descendant's boundary but not its segment_anchor,
+    # so a child chapter heading's translation cannot become the grouping title.
     toc_paths = {
         str(entry.get("toc_path"))
         for entry in toc_entries
@@ -1322,8 +1336,8 @@ def _logical_chapters(
             if isinstance(entry.get("boundary_position"), int):
                 continue
             if entry.get("raw_href"):
-                # 只有无链接的结构分组可以继承子节点；已显式给出
-                # 但无法解析的链接属于损坏数据，不应被悄悄改成别的目标。
+                # Only structural groups without links may inherit a child destination. Explicit links that
+                # cannot resolve are damaged data and must not silently change to another destination.
                 continue
             node_index = entry.get("node_index")
             if not isinstance(node_index, int):
@@ -1355,14 +1369,14 @@ def _logical_chapters(
             [entry for entry in toc_entries if entry.get("toc_path") == toc_path]
         )
         if candidates:
-            # EPUB3 NAV 仍由 _parse_opf 排在 NCX 前；仅当较优先目录
-            # 完全无法提供章边界时，才退到下一份可用目录。
+            # _parse_opf prioritizes EPUB3 NAV over NCX. Fall back to the next TOC only when the preferred
+            # one cannot provide any chapter boundaries.
             canonical_toc_path = toc_path
             boundaries = candidates
             break
 
     def boundary_position(entry: dict[str, object]) -> int:
-        """返回已由切章策略验证过的整数边界位置。"""
+        """Return an integer boundary position already validated by the chapter policy."""
         value = entry.get("boundary_position")
         if not isinstance(value, int):
             raise ValueError("EPUB chapter boundary is missing an integer position")
@@ -1373,9 +1387,9 @@ def _logical_chapters(
     if len(boundaries) == 1 and _toc_collapsed_to_single_boundary(
         toc_entries, canonical_toc_path, resources
     ):
-        # 坏目录可能把所有顶层节点都指向同一资源，去重后只剩一条边界，
-        # 整本书被压成一章。此时若 spine 仍有多个带正文的资源，就退回
-        # 按 spine 资源切章，避免丢失全书结构。
+        # A damaged TOC may collapse every top-level entry onto one resource, reducing the book to one
+        # chapter. If the spine still contains multiple body-bearing resources, fall back to resource
+        # boundaries to preserve the book's structure.
         boundaries = []
 
     if not boundaries:
@@ -1447,11 +1461,9 @@ def _logical_chapters(
 
 
 def peek_epub_title(path: str) -> str:
-    """只读 OPF 取书名，不逐资源 annotate；供定位已有状态目录使用。
-
-    只解析 container.xml 和 OPF 两个小 XML，不触碰任何 XHTML 正文，因此远比
-    ``read_epub`` 便宜。与 ``read_epub`` 计算 ``Document.title`` 的规则保持一致（OPF 缺
-    标题时退回文件名词干），否则定位到的状态目录会和 ``prepare`` 时创建的对不上。
+    """Read the book title from OPF without annotating resources, for locating existing state.
+    Parse only container.xml and OPF, not XHTML body text. Use the same Document.title rule
+    as read_epub, including filename-stem fallback, so state lookup agrees with preparation.
     """
 
     with zipfile.ZipFile(path, "r") as zf:
@@ -1461,7 +1473,7 @@ def peek_epub_title(path: str) -> str:
 
 
 def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
-    """按 spine 读取物理资源，再按顶层目录锚点生成逻辑章节。"""
+    """Read physical spine resources and construct logical chapters from top-level TOC anchors."""
     with zipfile.ZipFile(path, "r") as zf:
         names = set(zf.namelist())
         opf_path = _find_opf_path(zf)
@@ -1492,8 +1504,8 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
                 }
             )
 
-        # 注释正文有时只列在 manifest、没有 spine itemref。它不进入正式
-        # Chapter/回填资源，但仍可作为引用段的不可变源文辅助上下文。
+        # Annotation bodies may appear in the manifest without a spine reference. They do not become
+        # formal chapters or backfill resources, but can supply immutable context to referring paragraphs.
         auxiliary_resources: list[dict[str, object]] = []
         spine_hrefs = {str(resource["href"]) for resource in resources}
         for auxiliary_ordinal, href in enumerate(manifest_xhtml_hrefs):
@@ -1520,8 +1532,8 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             [*resources, *auxiliary_resources],
         )
         chapters, split_strategy, split_toc_path = _logical_chapters(resources, toc_entries)
-        # XHTML 模板和内联布局都可从原始 EPUB 确定性重建，不写入运行状态。
-        # Segment.meta 中其它格式或后续阶段添加的信息仍原样保留。
+        # Rebuild XHTML templates and inline layout deterministically from the original EPUB, not state.
+        # Preserve other format metadata and fields added by later stages unchanged.
         for chapter in chapters:
             chapter.template = None
             for segment in chapter.segments:

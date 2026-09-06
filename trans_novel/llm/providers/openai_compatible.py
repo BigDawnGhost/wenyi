@@ -1,4 +1,4 @@
-"""任意 OpenAI Chat Completions 兼容端点及其思考参数方言。"""
+"""Arbitrary OpenAI Chat Completions-compatible endpoints and reasoning dialects."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from ._openai_compatible import (
 
 
 class OpenAICompatibleTierOptions(BaseModel):
-    """通用兼容端点选项；未知字段通过 request_overrides 透传。"""
+    """Generic compatible-endpoint options; pass unknown fields through request_overrides."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -32,7 +32,7 @@ def _reasoning_body(
     options: OpenAICompatibleTierOptions,
     reasoning_style: ReasoningStyle,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """返回 SDK 参数和需要作为原始请求体透传的方言字段。"""
+    """Return SDK arguments and dialect fields that require raw request-body forwarding."""
     kwargs: dict[str, Any] = {}
     extra_body: dict[str, Any] = {}
     if reasoning_style == "deepseek":
@@ -56,7 +56,7 @@ def build_request_kwargs(
     max_tokens: int | None = None,
     reasoning_style: ReasoningStyle = "none",
 ) -> dict[str, Any]:
-    """按配置的思考方言组装通用兼容端点请求参数。"""
+    """Build compatible request arguments according to the configured reasoning dialect."""
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
     reasoning_kwargs, extra_body = _reasoning_body(
         tier_config.options,
@@ -85,7 +85,9 @@ class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleTierOpti
         default_api_key_env: str | None = None,
         requires_api_key: bool = False,
     ) -> None:
-        """初始化可自定义端点、密钥要求和思考参数方言的兼容客户端。"""
+        """Initialize a compatible client with configurable endpoint, credentials and reasoning
+        dialect.
+        """
         tiers = resolve_provider_tiers(
             cfg.tiers,
             options_type=OpenAICompatibleTierOptions,
@@ -105,7 +107,7 @@ class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleTierOpti
         tier_config: ResolvedTier[OpenAICompatibleTierOptions],
         message: Any,
     ) -> str | None:
-        """仅按档位显式配置读取非标准 ``reasoning_content`` JSON。"""
+        """Read nonstandard reasoning_content JSON only when explicitly enabled for the tier."""
         if tier_config.options.json_response_fallback != "reasoning_content":
             return None
         value = getattr(message, "reasoning_content", None)
@@ -119,7 +121,7 @@ class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleTierOpti
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """构造当前兼容端点档位的最终请求参数。"""
+        """Build final request arguments for the selected compatible-endpoint tier."""
         return build_request_kwargs(
             tier_config,
             messages,

@@ -1,0 +1,8 @@
+{
+  "types": {
+    "人物": "person", "地名": "place", "组织": "organization", "术语": "term",
+    "招式": "technique", "物品": "item", "设定": "setting", "称谓": "appellation",
+    "敬称": "honorific", "口癖": "speech", "固定表达": "fixed_expression"
+  },
+  "genders": {"男": "male", "女": "female", "未知": "", "unknown": ""}
+}

@@ -1,4 +1,4 @@
-"""SRT 字幕解析、并发翻译与 CLI 分流测试。"""
+"""SRT parsing, concurrent translation and CLI routing tests."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class TestSrtTranslate(unittest.TestCase):
             self.assertIn("你好世界。", body)
             self.assertIn("00:00:01,000 --> 00:00:02,000", body)
 
-            # 新 state 布局：cues / usage / events，无 translations.json / glossary
+            # New subtitle state uses cues, usage and events, without translations.json or a glossary.
             run_dir = result["run_dir"]
             self.assertTrue(os.path.isfile(os.path.join(run_dir, "manifest.json")))
             self.assertTrue(os.path.isfile(os.path.join(run_dir, "cues.jsonl")))
@@ -122,7 +122,7 @@ class TestSrtTranslate(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(first["run_dir"], "usage.json")))
 
             second = translate_srt(path, config, client=FakeClient(handler=handler))
-            self.assertEqual(calls["n"], first_calls)  # 续跑不重复请求
+            self.assertEqual(calls["n"], first_calls)  # Resume must not repeat requests.
             self.assertEqual(second["translated"], 3)
             self.assertTrue(os.path.isfile(os.path.join(second["run_dir"], "cues.jsonl")))
 
@@ -149,7 +149,7 @@ class TestSrtTranslate(unittest.TestCase):
                 result = CliRunner().invoke(app, ["translate", path])
             self.assertEqual(result.exit_code, 0, result.output)
             translate_srt_mock.assert_called_once()
-            self.assertIn("字幕翻译完成", result.output)
+            self.assertIn("Subtitle translation complete", result.output)
 
 
 if __name__ == "__main__":

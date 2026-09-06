@@ -1,4 +1,4 @@
-"""线程安全的 Token 用量统计、增量计算与持久化合并。"""
+"""Thread-safe token usage accounting, deltas and persisted merges."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _USAGE_FIELDS = (
 
 @dataclass(frozen=True)
 class UsageSample:
-    """provider 原始 usage 标准化后的单次调用用量。"""
+    """Normalized provider usage for one call."""
 
     prompt_tokens: int
     completion_tokens: int
@@ -28,7 +28,7 @@ class UsageSample:
 
 
 def read_usage_value(usage: Any, name: str) -> Any:
-    """从 SDK 对象或字典读取字段，保留缺失与 0 的区别。"""
+    """Read a field from an SDK object or dictionary, distinguishing absence from zero."""
     if usage is None:
         return None
     value = getattr(usage, name, None)
@@ -38,7 +38,7 @@ def read_usage_value(usage: Any, name: str) -> Any:
 
 
 def read_usage_int(usage: Any, name: str) -> int:
-    """从响应 usage 对象/字典读取整数字段，缺失或非数返回 0。"""
+    """Read integer usage fields; return zero for missing or nonnumeric values."""
     value = read_usage_value(usage, name)
     try:
         return int(value) if value is not None else 0
@@ -52,7 +52,7 @@ def make_usage_sample(
     cache_hit_tokens: int = 0,
     cache_miss_tokens: int = 0,
 ) -> UsageSample | None:
-    """读取各 API 共用的 token 字段，组装 provider 无关的用量记录。"""
+    """Build a provider-independent usage record from common API token fields."""
     if usage is None:
         return None
     prompt_tokens = read_usage_int(usage, "prompt_tokens")
@@ -68,7 +68,7 @@ def make_usage_sample(
 
 
 def _hit_rate(hit: int, miss: int) -> float:
-    """计算缓存 token 命中率，无可统计 token 时返回 0。"""
+    """Compute the cache-token hit rate, or zero when no tokens are available."""
     total = hit + miss
     return round(hit / total, 4) if total else 0.0
 
@@ -76,7 +76,7 @@ def _hit_rate(hit: int, miss: int) -> float:
 def _normalize_usage_group(
     group: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, Any]]:
-    """规范化一组用量槽位，并重新计算各槽位缓存命中率。"""
+    """Normalize usage slots and recompute each slot's cache hit rate."""
     normalized: dict[str, dict[str, Any]] = {
         name: {field: read_usage_int(values, field) for field in _USAGE_FIELDS}
         for name, values in group.items()
@@ -90,7 +90,9 @@ def _usage_summary(
     by_tier: dict[str, dict[str, int]],
     by_stage: dict[str, dict[str, int]],
 ) -> dict[str, Any]:
-    """生成规范汇总；总计仅由 tier 计算，stage 是同一用量的另一种归因维度。"""
+    """Build normalized totals from tiers only; stages are another attribution of the same
+    usage.
+    """
     tiers = _normalize_usage_group(by_tier)
     stages = _normalize_usage_group(by_stage)
     totals: dict[str, Any] = dict.fromkeys(_USAGE_FIELDS, 0)
@@ -104,7 +106,7 @@ def _usage_summary(
 def _usage_group_delta(
     current: dict[str, dict[str, int]], previous: dict[str, dict[str, int]]
 ) -> dict[str, dict[str, int]]:
-    """按槽位计算累计用量的非负字段增量，并移除全零槽位。"""
+    """Compute nonnegative cumulative deltas by slot and remove all-zero slots."""
     delta: dict[str, dict[str, int]] = {}
     for name, values in current.items():
         old = previous.get(name) or {}
@@ -123,7 +125,7 @@ def _usage_group_delta(
 def _merge_usage_groups(
     *groups: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, int]]:
-    """按槽位逐字段累加多组 token 用量。"""
+    """Add usage records field by field within each slot."""
     merged: dict[str, dict[str, int]] = {}
     for group in groups:
         for name, values in group.items():
@@ -134,24 +136,24 @@ def _merge_usage_groups(
 
 
 def usage_delta(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
-    """计算两个累计快照之间的非负增量，用于避免重复落盘。"""
+    """Compute a nonnegative delta between cumulative snapshots to avoid duplicate persistence."""
     tier_delta = _usage_group_delta(current["by_tier"], previous["by_tier"])
     stage_delta = _usage_group_delta(current["by_stage"], previous["by_stage"])
     return _usage_summary(tier_delta, stage_delta)
 
 
 def merge_usage_summaries(accumulated: dict[str, Any], increment: dict[str, Any]) -> dict[str, Any]:
-    """把一次运行增量合并进某本书的历史累计用量。"""
+    """Merge one run's usage delta into the book's historical totals."""
     tiers = _merge_usage_groups(accumulated["by_tier"], increment["by_tier"])
     stages = _merge_usage_groups(accumulated["by_stage"], increment["by_stage"])
     return _usage_summary(tiers, stages)
 
 
 class UsageTracker:
-    """线程安全地累加标准化用量，按 tier 和调用 stage 分别归因。"""
+    """Accumulate normalized usage under a lock, attributing independently by tier and stage."""
 
     def __init__(self) -> None:
-        """初始化 tier 与调用阶段两种归因视图；总计始终以 tier 为准。"""
+        """Initialize tier and stage attribution views; derive totals from tiers only."""
         self._lock = threading.Lock()
         self._by_tier: dict[str, dict[str, int]] = {}
         self._by_stage: dict[str, dict[str, int]] = {}
@@ -162,7 +164,7 @@ class UsageTracker:
         sample: UsageSample | None,
         stage: str | None = None,
     ) -> None:
-        """累加 provider 标准化后的用量；缺失时静默跳过。"""
+        """Accumulate normalized provider usage; silently skip absent records."""
         if sample is None:
             return
         with self._lock:
@@ -178,7 +180,7 @@ class UsageTracker:
                 slot["cache_miss_tokens"] += sample.cache_miss_tokens
 
     def summary(self) -> dict[str, Any]:
-        """返回 totals、by_tier 和 by_stage，各槽位含 cache_hit_rate。"""
+        """Return totals, by_tier and by_stage, each with cache_hit_rate."""
         with self._lock:
             by_tier = {tier: dict(values) for tier, values in self._by_tier.items()}
             by_stage = {stage: dict(values) for stage, values in self._by_stage.items()}

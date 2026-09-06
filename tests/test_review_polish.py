@@ -1,4 +1,4 @@
-"""审校 / 润色测试（离线）。"""
+"""Offline review and polishing tests."""
 
 from __future__ import annotations
 
@@ -60,10 +60,13 @@ class TestReviewer(unittest.TestCase):
         r = Reviewer(client, _cfg())
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
-        self.assertEqual(client.calls[-1]["tier"], "cheap")  # 审校走廉价档
+        self.assertEqual(client.calls[-1]["tier"], "cheap")  # Review uses the cheap tier.
+        self.assertIn('"reviewed_segments":2', client.calls[-1]["messages"][0]["content"])
 
     def test_reviewer_drops_fields_outside_the_initial_issue_contract(self):
-        """廉价初审不能绕过强档 Agent 注入跨块一致性 claim。"""
+        """Cheap initial review cannot bypass the strong agent to inject cross-block
+        consistency claims.
+        """
         issues = [
             {
                 "index": 0,
@@ -239,7 +242,9 @@ class TestReviewer(unittest.TestCase):
                 events = [json.loads(line) for line in file]
 
         self.assertEqual([item["index"] for item in issues], [0, 1, 2, 3])
-        self.assertEqual(len(client.calls), 7)  # 4 段二叉拆分：1 + 2 + 4
+        self.assertEqual(
+            len(client.calls), 7
+        )  # Binary splitting of four paragraphs makes 1 + 2 + 4 calls.
         splits = [event for event in events if event["event"] == "review_chunk_split"]
         self.assertEqual(len(splits), 3)
         self.assertTrue(all(event["chapter"] == 7 for event in splits))
@@ -301,7 +306,9 @@ class TestReviewer(unittest.TestCase):
             )
 
         cfg = _cfg()
-        cfg.segment.max_chars_per_batch = 1  # 审校预算=3，使两个 3 字段落各成一块
+        cfg.segment.max_chars_per_batch = (
+            1  # A budget of three gives each three-character paragraph its own review block.
+        )
         cfg.pipeline.review_concurrency = 2
         orch = Orchestrator(cfg, client=FakeClient(handler=handler))
         segments = [
@@ -333,7 +340,9 @@ class TestPolisher(unittest.TestCase):
         )
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
-        self.assertEqual(out, ["甲", "乙"])  # 段数不符 → 保守保留原译
+        self.assertEqual(
+            out, ["甲", "乙"]
+        )  # Preserve the original translation on paragraph-count mismatch.
 
 
 if __name__ == "__main__":

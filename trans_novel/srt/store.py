@@ -1,11 +1,7 @@
-"""字幕翻译的轻量状态目录（不含术语库）。
-
-目录结构（state/srt/<slug>/）：
-  manifest.json   源身份 + 滑窗配置 + 进度
-  cues.jsonl      每行一条字幕（含 target/status）
-  batches/        滑窗批次原始模型结果（续跑跳过用）
-  usage.json      跨 resume 累计 LLM token 用量
-  events.jsonl    追加式行为 / LLM 重试日志
+"""Lightweight subtitle state without a glossary.
+The selected state/srt run directory contains manifest.json for source identity/window
+settings/progress, cues.jsonl for targets/status, batches/ for raw cached responses,
+usage.json for cumulative tokens and events.jsonl for append-only actions/retries.
 """
 
 from __future__ import annotations
@@ -17,7 +13,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
-from ..pipeline.runstore import slugify, source_sha256
+from ..i18n.languages import validate_run_languages
+from ..pipeline.runstore import source_sha256, translation_run_dir
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
@@ -25,7 +22,7 @@ STATUS_FAILED = "failed"
 
 
 class SrtRunStore:
-    """``state/srt/<slug>/``：manifest + cues + 批次缓存 + usage/events。"""
+    """Subtitle run storage: manifest, cues, batch cache, usage and events."""
 
     def __init__(self, run_dir: str):
         self.run_dir = run_dir
@@ -33,10 +30,10 @@ class SrtRunStore:
         os.makedirs(self.batches_dir, exist_ok=True)
 
     @classmethod
-    def for_source(cls, state_dir: str, source_path: str) -> "SrtRunStore":
-        """按源文件名 slug 定位字幕状态目录。"""
+    def for_source(cls, state_dir: str, source_path: str, target_lang: str = "zh") -> "SrtRunStore":
+        """Locate subtitle state by source filename slug."""
         stem = os.path.splitext(os.path.basename(source_path))[0]
-        run_dir = os.path.join(state_dir, "srt", slugify(stem))
+        run_dir = translation_run_dir(os.path.join(state_dir, "srt"), stem, target_lang)
         return cls(run_dir)
 
     @property
@@ -57,7 +54,7 @@ class SrtRunStore:
 
     @contextmanager
     def _file_lock(self, filename: str) -> Iterator[None]:
-        """用状态目录内的指定锁文件串行化跨进程操作。"""
+        """Serialize cross-process operations using the named lock file within state."""
         os.makedirs(self.run_dir, exist_ok=True)
         lock_path = os.path.join(self.run_dir, filename)
         with open(lock_path, "a+b") as lock_file:
@@ -86,7 +83,7 @@ class SrtRunStore:
 
     @contextmanager
     def event_lock(self) -> Iterator[None]:
-        """串行化 JSONL 事件追加，避免并发交错写入同一行。"""
+        """Serialize JSONL appends so concurrent writers cannot interleave one line."""
         with self._file_lock(".events.lock"):
             yield
 
@@ -102,13 +99,16 @@ class SrtRunStore:
         overlap_size: int = 10,
         max_concurrent: int = 100,
     ) -> dict[str, Any]:
-        """首次写入或校验同源后返回 manifest。"""
+        """Initialize or validate source identity, then return the manifest."""
         digest = source_sha256(source_path)
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         if os.path.isfile(self.manifest_path):
             manifest = self._read_json(self.manifest_path)
+            validate_run_languages(manifest, source_lang, target_lang)
             if manifest.get("source_sha256") != digest:
-                raise ValueError("字幕源文件与现有状态不一致；请更换 state 目录或删除旧状态后重跑")
+                raise ValueError(
+                    "Subtitle source does not match existing state; use a separate state directory."
+                )
             return manifest
         stem = os.path.splitext(os.path.basename(source_path))[0]
         manifest = {
@@ -131,7 +131,7 @@ class SrtRunStore:
         return manifest
 
     def update_manifest(self, **fields: Any) -> dict[str, Any]:
-        """合并更新 manifest 字段并刷新 updated_at。"""
+        """Merge manifest fields and refresh updated_at."""
         manifest = self._read_json(self.manifest_path) if os.path.isfile(self.manifest_path) else {}
         manifest.update(fields)
         manifest["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -139,7 +139,7 @@ class SrtRunStore:
         return manifest
 
     def load_cues(self) -> dict[str, dict[str, Any]]:
-        """读取 cues.jsonl，按 index 建表；文件不存在时返回空表。"""
+        """Read cues.jsonl indexed by cue number, or return an empty mapping if absent."""
         if not os.path.isfile(self.cues_path):
             return {}
         cues: dict[str, dict[str, Any]] = {}
@@ -161,7 +161,7 @@ class SrtRunStore:
         return cues
 
     def save_cues(self, cues: dict[str, dict[str, Any]]) -> None:
-        """按 index 数值序原子重写整个 cues.jsonl。"""
+        """Atomically rewrite cues.jsonl in numeric index order."""
 
         def sort_key(index: str) -> tuple[int, int, str]:
             try:
@@ -180,9 +180,8 @@ class SrtRunStore:
         self,
         source_cues: list[tuple[str, str, str]],
     ) -> dict[str, dict[str, Any]]:
-        """用源字幕初始化或补齐 cues；保留已有 target/status。
-
-        ``source_cues`` 每项为 ``(index, timestamp, source_text)``。
+        """Initialize or fill cues from source while preserving existing target/status.
+        Each source_cues item contains index, timestamp and source text.
         """
         existing = self.load_cues()
         merged: dict[str, dict[str, Any]] = {}
@@ -208,7 +207,7 @@ class SrtRunStore:
         return merged
 
     def translations_from_cues(self, cues: dict[str, dict[str, Any]]) -> dict[str, str]:
-        """从 cues 提取已完成译文映射。"""
+        """Extract completed translations from the cue mapping."""
         out: dict[str, str] = {}
         for index, row in cues.items():
             target = row.get("target")
@@ -226,7 +225,7 @@ class SrtRunStore:
         *,
         status: str = STATUS_DONE,
     ) -> dict[str, dict[str, Any]]:
-        """把译文写回 cues 内存表（不落盘）。"""
+        """Update translations in the in-memory cue mapping without persisting."""
         for index, target in translations.items():
             key = str(index)
             row = cues.get(key)
@@ -256,17 +255,17 @@ class SrtRunStore:
         )
 
     def save_usage(self, data: dict[str, Any]) -> None:
-        """原子保存累计 token 用量。"""
+        """Atomically save cumulative token usage."""
         self._write_json(self.usage_path, data)
 
     def load_usage(self) -> dict[str, Any] | None:
-        """读取累计 token 用量；文件尚不存在时返回 None。"""
+        """Read cumulative token usage, or return None if absent."""
         if not os.path.isfile(self.usage_path):
             return None
         return self._read_json(self.usage_path)
 
     def log_event(self, event: str, **data: Any) -> None:
-        """追加一条 JSONL 事件。"""
+        """Append one JSONL event."""
         os.makedirs(self.run_dir, exist_ok=True)
         row = {
             "ts": datetime.now().astimezone().isoformat(timespec="seconds"),

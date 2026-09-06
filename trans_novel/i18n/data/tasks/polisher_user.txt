@@ -1,0 +1,10 @@
+[Characters / Style guide]
+$style
+
+[Glossary]
+$glossary
+
+[$tgt_label translation to polish] ($n paragraphs)
+$numbered_target
+
+Return JSON: {"polished":[...]}, with exactly $n items.

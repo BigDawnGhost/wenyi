@@ -1,4 +1,4 @@
-"""回填（TXT / EPUB）、报告、一致性 的测试（离线）。"""
+"""Offline tests for TXT/EPUB assembly, reports and consistency."""
 
 from __future__ import annotations
 
@@ -95,7 +95,9 @@ def _write_vertical_epub(path: str) -> None:
 
 
 def _write_linked_notes_epub(path: str) -> None:
-    """写入正文与注释分处两个 XHTML、且具有双向 fragment 链接的 EPUB。"""
+    """Build an EPUB with body and notes in separate XHTML files and bidirectional fragment
+    links.
+    """
     container = """<?xml version="1.0" encoding="UTF-8"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/content.opf"
@@ -184,7 +186,7 @@ class TestAssembleText(unittest.TestCase):
             self.assertEqual(os.path.dirname(out), os.path.join(d, "output"))
             with open(out, encoding="utf-8") as f:
                 content = f.read()
-            self.assertIn("润0", content)  # 译文已写入
+            self.assertIn("润0", content)  # Translations have been written.
 
     def test_about_page_is_not_written_when_opf_cannot_reference_it(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -254,7 +256,7 @@ class TestAssembleText(unittest.TestCase):
                     name for name in names if name.endswith("trans-novel-about.xhtml")
                 )
                 self.assertIn("关于此翻译", z.read(about_name).decode("utf-8"))
-            # 重新解析生成的 EPUB，应能读出章节且含译文
+            # Reparse the generated EPUB and verify that chapters contain translations.
             doc = load_document(out, "ja", "zh")
             self.assertGreaterEqual(len(doc.chapters), 2)
             alltext = "".join(s.source for c in doc.chapters for s in c.text_segments)
@@ -619,7 +621,7 @@ data-tn-annotation-id="ann-0" href="notes.xhtml#note-1">border tunnel
                             "marker_text": "12",
                         },
                     ],
-                    # 过期摘要强制两条注释都降级为段末回退标记。
+                    # Stale hashes force both annotations to paragraph-end fallback markers.
                     "target_digest": "stale",
                     "placements": [],
                 }
@@ -636,7 +638,7 @@ data-tn-annotation-id="ann-0" href="notes.xhtml#note-1">border tunnel
         assert isinstance(paragraph, Tag)
         links = paragraph.find_all("a")
         self.assertEqual([link.get_text() for link in links], ["11", "12"])
-        # 两个降级标记之间必须有顿号分隔，否则连写成无法轨读的 "1112"。
+        # Separate adjacent fallback markers so their numbers do not merge into an unreadable sequence.
         self.assertIn("11、12", paragraph.get_text())
         self.assertNotIn("1112", paragraph.get_text())
 
@@ -696,7 +698,7 @@ now.</p></body></html>"""
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
     def test_bilingual_internal_links_stay_with_their_language(self):
-        """同 XHTML 的原文和译文分别使用自己的脚注跳转闭环。"""
+        """Source and translation in one XHTML must each have a complete footnote-link cycle."""
         html = """<html><body>
 <p id="body"><a id="ref-1" href="#note-1">border tunnel
 <sup id="key-1">1</sup></a> opens.</p>
@@ -746,7 +748,9 @@ now.</p></body></html>"""
                         self.assertIn(href[1:], ids)
 
     def test_bilingual_source_anchor_avoids_existing_id_collision(self):
-        """原书已有 synthetic ID 同名项时，为原文锚点稳定追加序号。"""
+        """Append stable numeric suffixes when original IDs collide with synthetic source
+        anchors.
+        """
         html = """<html><body>
 <span id="tn-source-tn0_0"></span>
 <p id="body"><a data-tn-annotation-id="ref" href="#note-1">body</a></p>
@@ -937,7 +941,7 @@ data-tn-annotation-id="ann-0" href="chapter.xhtml#part">Chapter
             chapter.segments[0].source += " changed"
             store.save_chapter(chapter)
 
-            with self.assertRaisesRegex(ValueError, "内容已变化"):
+            with self.assertRaisesRegex(ValueError, "content changed"):
                 assemble(
                     store,
                     epub,
@@ -1121,7 +1125,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
         self.assertIsNone(source.find("img"))
 
     def test_bilingual_cross_file_links_only_rewrite_source_fragments(self):
-        """跨 XHTML 脚注保留相对路径，并分别闭合原文和译文链接。"""
+        """Preserve relative cross-XHTML paths and separate source/target footnote cycles."""
         with tempfile.TemporaryDirectory() as directory:
             source_path = os.path.join(directory, "linked-notes.epub")
             output_path = os.path.join(directory, "linked-notes-bi.epub")
@@ -1195,9 +1199,9 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
                 about = z.read("OEBPS/trans-novel-about.xhtml").decode("utf-8")
                 opf = BeautifulSoup(z.read("OEBPS/content.opf"), "xml")
-            self.assertIn("润0", html)  # 译文已替换
-            self.assertNotIn("data-tn-id", html)  # 占位标记已清除
-            self.assertNotIn("綾小路は教室", html)  # 原文已被替换
+            self.assertIn("润0", html)  # Translations replaced the original text.
+            self.assertNotIn("data-tn-id", html)  # Placeholder attributes have been removed.
+            self.assertNotIn("綾小路は教室", html)  # Source text has been replaced.
             self.assertIn("关于此翻译", about)
             about_item = opf.find("item", href="trans-novel-about.xhtml")
             self.assertIsNotNone(about_item)
@@ -1409,14 +1413,14 @@ class TestTitleTranslation(unittest.TestCase):
             ep = os.path.join(d, "novel.epub")
             write_sample_epub(ep)
             store, _ = _run(ep, os.path.join(d, "state"))
-            # 书名不翻译；章节标题译出并写回 manifest（fake：标题0/1）
+            # Keep the original book title; translate chapter titles and persist them in the manifest.
             m = store.load_manifest()
             self.assertNotIn("title_translated", m)
             self.assertTrue(all(c.get("title_translated") for c in m["chapters"]))
             out = assemble(store, ep, out_format="epub")
             with zipfile.ZipFile(out) as z:
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
-            # 书名不翻译，导出时在原书名后追加 Wenyi 和目标语言标记
+            # Append Wenyi and the target-language marker to the original title during export.
             self.assertIn("<dc:title>サンプル小説-wenyi-zh</dc:title>", opf)
             self.assertIn("<dc:language>zh-Hans</dc:language>", opf)
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
@@ -1465,9 +1469,9 @@ class TestTitleTranslation(unittest.TestCase):
 
 
 class TestEpubTocMisdetectRegression(unittest.TestCase):
-    """回归：带「返回目录」链接的正文页不应被当成 TOC 改写。
-
-    对应 #183 / #184：章节标题变成「目录」、目录条目重复 / 悬空 fallback。
+    """Regression: a body page with a return-to-contents link is not a TOC.
+    Issues #183/#184 produced contents-titled chapters and duplicate or dangling fallback
+    entries.
     """
 
     def test_is_nav_rejects_chapter_body_with_content_toc_link(self):
@@ -1479,7 +1483,7 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
             b'<h1><a href="content-toc.xhtml">CHAPTER 1</a></h1>'
             b"<p>Body text.</p></section></body></html>"
         )
-        # 旧逻辑只查 epub:type + toc 子串，会把这类正文误判为导航页。
+        # Checking only epub:type and a toc substring incorrectly classified this body page as navigation.
         self.assertFalse(_is_nav(chapter))
 
     def test_is_nav_accepts_explicit_toc_nav(self):
@@ -1522,7 +1526,9 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertEqual(out, chapter)
 
     def test_heading_wrapped_in_toc_link_keeps_translation_inside_anchor(self):
-        """整段源文被 <a href=content-toc> 包住且无对齐时，译文进链接，不挂悬空 ↩。"""
+        """A whole source paragraph wrapped in a contents link keeps target text inside the
+        link without a dangling marker.
+        """
         target = "第一章"
         source = "CHAPTER 1"
         template = (
@@ -1550,7 +1556,7 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
                             "marker_text": "",
                         }
                     ],
-                    # 故意不给可用 placement / digest；须覆盖整段 source 才走整块回填。
+                    # Omit valid placement/hash metadata deliberately; full-source coverage must trigger whole-block backfill.
                 }
             },
         )
@@ -1584,7 +1590,7 @@ class TestReport(unittest.TestCase):
             g.close()
             s = report["summary"]
             self.assertEqual(s["chapters_done"], s["chapters_total"])
-            self.assertEqual(s["empty_targets"], 0)  # 全部段都有译文
+            self.assertEqual(s["empty_targets"], 0)  # Every paragraph has a translation.
             self.assertGreaterEqual(s["terms"], 1)
             self.assertNotIn("low_confidence_terms", report)
             self.assertNotIn("chapters_reviewed", s)

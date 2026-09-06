@@ -95,7 +95,7 @@ class TestPdfIngest(unittest.TestCase):
                     "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
                     side_effect=RuntimeError("connection reset"),
                 ),
-                self.assertRaisesRegex(MinerUError, "PDF 转换失败") as raised,
+                self.assertRaisesRegex(MinerUError, "PDF conversion failed") as raised,
             ):
                 load_document(
                     pdf_path,
@@ -310,7 +310,7 @@ class TestPdfIngest(unittest.TestCase):
                     "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
                     side_effect=convert,
                 ),
-                self.assertRaisesRegex(ValueError, "转换或解析期间发生变化"),
+                self.assertRaisesRegex(ValueError, "changed during conversion or parsing"),
             ):
                 Orchestrator(config, client=FakeClient()).prepare(pdf_path)
 

@@ -1,7 +1,7 @@
-"""字幕翻译：平行于书本 pipeline 的轻量路径。
-
-``ingest.srt_reader`` / ``assemble.srt_writer`` 负责读写；本包负责
-``state/srt/<slug>/`` 状态与滑窗并发翻译。不依赖 Orchestrator、术语库或 Review。
+"""Lightweight subtitle workflow independent of the book pipeline.
+ingest.srt_reader and assemble.srt_writer handle I/O. This package owns state/srt run state
+and concurrent sliding-window translation, without Orchestrator, glossary or review
+dependencies.
 """
 
 from .store import SrtRunStore

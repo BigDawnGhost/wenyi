@@ -1,0 +1,5 @@
+[Source samples ($src_label)]
+$sample
+
+Analyze the samples and return the requested JSON. Identify names, places and specialized terms comprehensively. Use natural $tgt_label names suitable for fiction.
+Samples may come from the beginning, middle and end of the book, as labeled. Consider the overall style and how it develops.

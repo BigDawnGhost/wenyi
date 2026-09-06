@@ -1,0 +1,11 @@
+{
+  "label": "English",
+  "english_name": "English",
+  "source_guidance": "Interpret English tense, relative clauses and implicit references. Brother/sister alone does not establish relative age, and a form of address does not establish kinship.",
+  "target_guidance": "Use natural English fiction prose, handling tense, articles, pronouns and dialogue rhythm. Do not copy source-language word order.",
+  "punctuation_rule": "Use English punctuation and spacing. Preserve the structure and pairing of quotation marks, brackets, dashes, ellipses and special symbols; do not apply another writing system’s full-width punctuation rules.",
+  "title_rule": "Use conventional English chapter titles and translate section labels by meaning, for example Chapter 3, Prologue and Epilogue.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

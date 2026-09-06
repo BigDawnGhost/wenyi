@@ -1,4 +1,4 @@
-"""通过 OpenAI 官方 Chat Completions 接口调用模型。"""
+"""Call models through the official OpenAI Chat Completions endpoint."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 
 
 class OpenAITierOptions(BaseModel):
-    """OpenAI 档位的专属请求选项。"""
+    """OpenAI-specific tier request options."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -37,7 +37,7 @@ def build_request_kwargs(
     json_mode: bool = False,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """构造 OpenAI 请求，并使用 max_completion_tokens 限制输出。"""
+    """Build OpenAI request arguments and limit output with max_completion_tokens."""
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
     kwargs["reasoning_effort"] = (
         tier_config.options.reasoning_effort if tier_config.options.thinking else "none"
@@ -53,7 +53,7 @@ def build_request_kwargs(
 
 class OpenAIClient(OpenAICompatibleBaseClient[OpenAITierOptions]):
     def __init__(self, cfg: LLMConfig):
-        """校验 OpenAI 专属档位选项并初始化官方端点客户端。"""
+        """Validate OpenAI tier options and initialize the official endpoint client."""
         tiers = resolve_provider_tiers(
             cfg.tiers,
             options_type=OpenAITierOptions,
@@ -75,7 +75,7 @@ class OpenAIClient(OpenAICompatibleBaseClient[OpenAITierOptions]):
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """构造当前 OpenAI 档位的最终请求参数。"""
+        """Build final request arguments for the selected OpenAI tier."""
         return build_request_kwargs(
             tier_config,
             messages,

@@ -1,4 +1,4 @@
-"""Google Gemini API Provider 实现（基于 google-genai 官方 SDK）。"""
+"""Google Gemini provider using the official google-genai SDK."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ FALLBACK_API_KEY_ENV = "GOOGLE_API_KEY"
 
 
 class GeminiTierOptions(BaseModel):
-    """Gemini 档位的专属请求选项。"""
+    """Gemini-specific tier request options."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -33,14 +33,14 @@ class GeminiTierOptions(BaseModel):
 
     @model_validator(mode="after")
     def validate_thinking_options(self) -> GeminiTierOptions:
-        """验证 thinking_level 与 thinking_budget 互斥。"""
+        """Require thinking_level and thinking_budget to be mutually exclusive."""
         if self.thinking_level is not None and self.thinking_budget is not None:
-            raise ValueError("thinking_level 与 thinking_budget 互斥，不能同时设置")
+            raise ValueError("thinking_level and thinking_budget are mutually exclusive")
         return self
 
 
 def _default_tiers() -> dict[str, ResolvedTier[GeminiTierOptions]]:
-    """返回 Gemini 内置的 strong、cheap、fast 三档默认配置。"""
+    """Return built-in Gemini defaults for strong, cheap and fast tiers."""
     return {
         "strong": ResolvedTier(
             model="gemini-3.6-flash",
@@ -60,11 +60,9 @@ def _default_tiers() -> dict[str, ResolvedTier[GeminiTierOptions]]:
 def convert_messages_to_gemini(
     messages: Messages,
 ) -> tuple[str | None, list[dict[str, Any]]]:
-    """把 OpenAI 风格的 messages 转换为 Gemini 的 system_instruction 与 contents 列表。
-
-    - role == "system" 提取并合并为 system_instruction
-    - role == "user" 保持为 role="user"
-    - role == "assistant" 转换为 role="model"
+    """Convert OpenAI-style messages into Gemini system_instruction and contents.
+    Merge system messages into system_instruction, keep user roles and convert assistant
+    roles to model.
     """
     system_parts: list[str] = []
     contents: list[dict[str, Any]] = []
@@ -96,12 +94,8 @@ def convert_messages_to_gemini(
 
 
 def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
-    """提取并标准化 Gemini API 的 UsageMetadata。
-
-    包含:
-    - prompt_token_count (及 cached_content_token_count)
-    - candidates_token_count 与 thoughts_token_count
-    - total_token_count
+    """Normalize Gemini UsageMetadata, including prompt/cached-content tokens,
+    candidate/thought tokens and total tokens.
     """
     if usage_metadata is None:
         return None
@@ -129,10 +123,8 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
 
 
 def get_api_key_from_env(custom_env: str | None = None) -> tuple[str | None, str]:
-    """按照优先级获取 Gemini API Key:
-    1. custom_env (如果指定)
-    2. GEMINI_API_KEY
-    3. GOOGLE_API_KEY
+    """Resolve the Gemini API key from custom_env first, then GEMINI_API_KEY, then
+    GOOGLE_API_KEY.
     """
     if custom_env:
         val = os.environ.get(custom_env, "").strip()
@@ -152,7 +144,7 @@ def get_api_key_from_env(custom_env: str | None = None) -> tuple[str | None, str
 
 
 class GeminiClient(LLMClient):
-    """Google Gemini 官方 SDK 客户端包装。"""
+    """Wrapper for the official Google Gemini SDK client."""
 
     def __init__(self, cfg: LLMConfig) -> None:
         super().__init__()
@@ -166,21 +158,23 @@ class GeminiClient(LLMClient):
         self._client_lock = threading.Lock()
 
     def validate_credentials(self) -> None:
-        """校验 Gemini API Key 配置。"""
+        """Validate Gemini API-key configuration."""
         api_key, target_env = get_api_key_from_env(self.cfg.api_key_env)
         if not api_key:
-            raise RuntimeError(f"未设置环境变量 {target_env}（或 {FALLBACK_API_KEY_ENV}）")
+            raise RuntimeError(
+                f"Environment variable {target_env} (or {FALLBACK_API_KEY_ENV}) is not set"
+            )
 
     def _ensure_client(self) -> Any:
-        """惰性创建并校验 google.genai.Client 实例。"""
+        """Create and validate google.genai.Client lazily."""
         with self._client_lock:
             if self._client is None:
                 try:
                     from google import genai
                 except ImportError as error:
                     raise RuntimeError(
-                        "需要 google-genai SDK：pip install google-genai"
-                        "（或运行 uv add google-genai）"
+                        "The google-genai SDK is required: pip install google-genai"
+                        " (or run uv add google-genai)"
                     ) from error
 
                 self.validate_credentials()
@@ -188,8 +182,8 @@ class GeminiClient(LLMClient):
 
                 kwargs: dict[str, Any] = {
                     "api_key": api_key,
-                    # LLMConfig.timeout 以秒表示，google-genai HttpOptions
-                    # 则要求毫秒。
+                    # LLMConfig.timeout is expressed in seconds; google-genai HttpOptions
+                    # expects milliseconds.
                     "http_options": {"timeout": self.cfg.timeout * 1000},
                 }
                 if self.cfg.base_url:
@@ -209,13 +203,13 @@ class GeminiClient(LLMClient):
         max_tokens: int | None = None,
         stage: str | None = None,
     ) -> str:
-        """调用 Gemini 模型并支持重试、JSON 模式与用量归因。"""
+        """Call Gemini with retries, JSON mode and usage attribution."""
         tier_config: ResolvedTier[GeminiTierOptions] = resolve_tier(self.tiers, tier)
         client = self._ensure_client()
 
         system_instruction, contents = convert_messages_to_gemini(messages)
 
-        # 构造 GenerateContentConfig 配置
+        # Build GenerateContentConfig.
         config_kwargs: dict[str, Any] = {}
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
@@ -223,7 +217,7 @@ class GeminiClient(LLMClient):
         if json_mode:
             config_kwargs["response_mime_type"] = "application/json"
 
-        # max_output_tokens 处理
+        # Apply the output-token limit.
         effective_max_tokens = max_tokens or tier_config.options.max_output_tokens
         if effective_max_tokens is not None:
             config_kwargs["max_output_tokens"] = effective_max_tokens
@@ -231,7 +225,7 @@ class GeminiClient(LLMClient):
         if tier_config.options.temperature is not None:
             config_kwargs["temperature"] = tier_config.options.temperature
 
-        # thinking 配置处理
+        # Apply thinking options.
         if (
             tier_config.options.thinking_level is not None
             or tier_config.options.thinking_budget is not None
@@ -267,23 +261,25 @@ class GeminiClient(LLMClient):
                 config=config_kwargs,
             )
 
-            # 统计用量
+            # Record usage.
             sample = extract_gemini_usage(getattr(response, "usage_metadata", None))
             self.usage.record(tier, sample, stage)
 
-            # 检查响应有效性与安全拦截
+            # Validate the response and check safety blocking.
             candidates = getattr(response, "candidates", None)
             if not candidates:
-                raise RuntimeError("Gemini API 未返回任何候选结果 (candidates 为空)")
+                raise RuntimeError("Gemini API returned no candidates")
 
             candidate = candidates[0]
             finish_reason = str(getattr(candidate, "finish_reason", ""))
             if "SAFETY" in finish_reason.upper() or "BLOCK" in finish_reason.upper():
-                raise RuntimeError(f"Gemini API 响应被安全拦截 (finish_reason={finish_reason})")
+                raise RuntimeError(
+                    f"Gemini API blocked the response (finish_reason={finish_reason})"
+                )
 
             text = getattr(response, "text", None)
             if not isinstance(text, str):
-                # 尝试从 parts 读取
+                # Try reading text from parts.
                 content = getattr(candidate, "content", None)
                 parts = getattr(content, "parts", []) if content else []
                 parts_text = [
@@ -305,7 +301,7 @@ class GeminiClient(LLMClient):
         max_tokens: int | None = None,
         stage: str | None = None,
     ) -> Any:
-        """请求 Gemini 输出 JSON 并使用 parse_json_loose 容错解析。"""
+        """Request Gemini JSON output and parse it tolerantly with parse_json_loose."""
         text = self.complete(
             messages,
             tier=tier,

@@ -129,7 +129,7 @@ def toc_chapter_starts(pdf_path: str | Path) -> list[tuple[int, str]]:
         from pypdf import PdfReader
     except ImportError as error:
         raise BabeldocBridgeError(
-            "读取 PDF TOC 需要 pypdf（项目已声明依赖）。请先 uv sync。"
+            "Reading the PDF TOC requires pypdf, a declared dependency. Run uv sync first."
         ) from error
 
     reader = PdfReader(str(pdf_path))
@@ -280,9 +280,9 @@ def read_pdf_babeldoc(
     """Call bridge ``/extract`` and map paragraphs into TOC-based chapters."""
     if _is_image_only_pdf(path, pages=pages):
         raise BabeldocBridgeError(
-            "BabelDOC 后端检测到所选 PDF 页面只有扫描图片，没有可提取的文本层，"
-            "无法可靠解析。请改用 MinerU 后端（pipeline.pdf_backend: mineru），"
-            "或先用 OCR 工具生成可搜索文本层后再选择 babeldoc。"
+            "BabelDOC found only scanned images with no extractable text layer on the selected PDF pages. "
+            "Use the MinerU backend (pipeline.pdf_backend: mineru), "
+            "or add a searchable text layer with OCR before using babeldoc."
         )
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)
     payload = client.extract(path, pages=pages)
@@ -290,9 +290,9 @@ def read_pdf_babeldoc(
     paragraphs_doc = payload.get("paragraphs") or {}
     paragraphs = paragraphs_doc.get("paragraphs") or []
     if not isinstance(session_id, str) or not session_id:
-        raise BabeldocBridgeError("bridge extract 未返回 session_id")
+        raise BabeldocBridgeError("bridge extract returned no session_id")
     if not isinstance(paragraphs, list) or not paragraphs:
-        raise BabeldocBridgeError("bridge extract 未返回段落")
+        raise BabeldocBridgeError("bridge extract returned no paragraphs")
 
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
@@ -340,8 +340,8 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
     bridge_url = meta.get("babeldoc_bridge_url")
     if not session_id or not bridge_url:
         raise BabeldocBridgeError(
-            "状态中缺少 babeldoc_session_id / babeldoc_bridge_url；"
-            "请用 pdf_backend=babeldoc 重新解析，并保持 bridge 进程不退出。"
+            "State lacks babeldoc_session_id / babeldoc_bridge_url. "
+            "Parse again with pdf_backend=babeldoc and keep the bridge process running."
         )
 
     mapping: dict[str, str] = {}
@@ -358,5 +358,7 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
                 continue
             mapping[str(pid)] = str(text)
     if not mapping:
-        raise BabeldocBridgeError("没有带 babeldoc_id 的译文可回填")
+        raise BabeldocBridgeError(
+            "No translated paragraphs with babeldoc_id are available for backfill"
+        )
     return str(session_id), str(bridge_url), mapping

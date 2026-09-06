@@ -1,4 +1,4 @@
-"""单次流水线运行的可复现实验账本。"""
+"""Reproducible experiment ledger for one pipeline run."""
 
 from __future__ import annotations
 
@@ -40,7 +40,9 @@ _SENSITIVE_KEY_PARTS = (
 
 
 def _package_version() -> str:
-    """读取已安装包版本；源码树未安装时稳定降级。"""
+    """Read the installed package version with a stable fallback for an uninstalled source
+    tree.
+    """
     try:
         return version("trans-novel")
     except PackageNotFoundError:
@@ -48,12 +50,12 @@ def _package_version() -> str:
 
 
 def _now_iso() -> str:
-    """返回带本地时区、可排序的秒级时间。"""
+    """Return sortable second-resolution time with the local timezone."""
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def _safe_value(value: Any, *, key: str = "") -> Any:
-    """把配置值转换为可序列化数据，并隐藏可能的凭据。"""
+    """Convert configuration values to serializable data and redact possible credentials."""
     if _is_sensitive_key(key):
         return "<redacted>"
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -69,13 +71,13 @@ def _safe_value(value: Any, *, key: str = "") -> Any:
 
 
 def _is_sensitive_key(key: str) -> bool:
-    """判断配置键是否可能承载凭据。"""
+    """Detect configuration keys that may contain credentials."""
     normalized = key.lower().replace("-", "_")
     return normalized == "token" or any(part in normalized for part in _SENSITIVE_KEY_PARTS)
 
 
 def _fingerprint(data: Any) -> str:
-    """计算规范 JSON 的 SHA-256，用于比较输入和配置是否相同。"""
+    """Hash canonical JSON with SHA-256 for input/configuration comparisons."""
     encoded = json.dumps(
         data,
         ensure_ascii=False,
@@ -90,7 +92,7 @@ def _safe_base_url(
     *,
     include_path: bool = False,
 ) -> str | None:
-    """保留端点身份所需部分，同时去掉 URL 中可能携带的凭据和查询参数。"""
+    """Preserve endpoint identity while removing possible URL credentials and query parameters."""
     if not value:
         return value
     try:
@@ -111,12 +113,14 @@ def _safe_base_url(
             query = urlencode(safe_query)
         return urlunsplit((parsed.scheme, hostname, path, query, ""))
     except ValueError:
-        # 非法端口等畸形 URL 也不能原样写入账本。
+        # Never persist malformed URLs, including invalid ports, verbatim in the ledger.
         return "<invalid-url>"
 
 
 def config_identity(config: Config) -> dict[str, Any]:
-    """提取影响翻译结果的非敏感配置，并给出稳定指纹。"""
+    """Extract nonsensitive configuration affecting translation and compute a stable
+    fingerprint.
+    """
     base_url = config.llm.base_url
     endpoint_identity = _safe_base_url(base_url, include_path=True)
     summary = {
@@ -150,13 +154,13 @@ def config_identity(config: Config) -> dict[str, Any]:
 
 
 def input_identity(input_path: str) -> dict[str, Any]:
-    """记录输入文件的名称、大小和内容指纹，不保存完整路径或正文。"""
+    """Record input filename, size and content fingerprint, excluding full paths and body text."""
     identity, _signature = _capture_input_identity(input_path)
     return identity
 
 
 def _source_signature(path: Path) -> tuple[int, int, int, int, int] | None:
-    """返回用于发现普通文件替换/改写的廉价稳定签名。"""
+    """Return a cheap stable signature for detecting ordinary file replacement or edits."""
     try:
         stat = path.stat()
     except OSError:
@@ -167,7 +171,9 @@ def _source_signature(path: Path) -> tuple[int, int, int, int, int] | None:
 def _capture_input_identity(
     input_path: str,
 ) -> tuple[dict[str, Any], tuple[int, int, int, int, int] | None]:
-    """一次性捕获输入身份和签名；哈希期间变化时不返回可复用签名。"""
+    """Capture input identity and signature together; do not reuse a signature if hashing saw
+    changes.
+    """
     path = Path(input_path)
     identity: dict[str, Any] = {
         "name": path.name,
@@ -190,7 +196,7 @@ def _capture_input_identity(
 
 
 def _git_output(repo_root: Path, *args: str) -> str | None:
-    """读取 Git 身份信息；非 Git 安装或超时时静默降级。"""
+    """Read Git identity, falling back silently outside Git installations or on timeout."""
     try:
         completed = subprocess.run(
             ["git", "-C", str(repo_root), *args],
@@ -208,7 +214,7 @@ def _git_output(repo_root: Path, *args: str) -> str | None:
 
 
 def code_identity() -> dict[str, Any]:
-    """记录包版本和 Git 提交，令不同分支的实验可追溯。"""
+    """Record package version and Git commit to trace experiments across branches."""
     repo_root = Path(__file__).resolve().parents[2]
     revision = _git_output(repo_root, "rev-parse", "HEAD")
     branch = _git_output(repo_root, "branch", "--show-current")
@@ -222,7 +228,7 @@ def code_identity() -> dict[str, Any]:
 
 
 def _state_summary(store: RunStore) -> dict[str, int]:
-    """汇总结束时的章节和正文段完成度，不复制书籍内容。"""
+    """Summarize final chapter/paragraph completion without copying book content."""
     manifest = store.load_manifest()
     chapters = manifest.get("chapters", [])
     summary = {
@@ -243,7 +249,7 @@ def _state_summary(store: RunStore) -> dict[str, int]:
 
 @dataclass
 class RunMetricsRecorder:
-    """收集一次顶层操作的耗时、用量和可复现身份。"""
+    """Collect timing, usage and reproducible identity for one top-level operation."""
 
     operation: str
     requested_steps: list[str]
@@ -282,7 +288,7 @@ class RunMetricsRecorder:
         client: LLMClient,
         invocation: dict[str, Any] | None = None,
     ) -> RunMetricsRecorder:
-        """在任何模型调用之前抓取本次运行的基线和非配置参数。"""
+        """Capture the run baseline and nonconfiguration arguments before any model call."""
         started_at = _now_iso()
         started = time.perf_counter()
         input_info, input_signature = _capture_input_identity(input_path)
@@ -300,7 +306,7 @@ class RunMetricsRecorder:
         )
 
     def verify_input_sha256(self, input_path: str) -> str | None:
-        """廉价确认源文件未变；签名改变时重新哈希并与启动快照比较。"""
+        """Check the source cheaply; rehash changed signatures against the startup snapshot."""
         expected = self.input.get("sha256")
         if not isinstance(expected, str):
             return None
@@ -317,21 +323,27 @@ class RunMetricsRecorder:
         refreshed, signature = _capture_input_identity(input_path)
         actual = refreshed.get("sha256")
         if not isinstance(actual, str) or actual != expected:
-            raise ValueError("源文件在本次命令执行期间发生变化；请确认文件稳定后重试。")
+            raise ValueError(
+                "Source changed during this command; ensure the file is stable and retry."
+            )
         self._input_signature = signature
         self.input.update(refreshed)
         return actual
 
     def attach_store(self, store: RunStore) -> None:
-        """绑定状态目录；只接受本次操作实际使用的第一本书。"""
+        """Bind the state directory, accepting only the first book actually used by this
+        operation.
+        """
         if self._store is None:
             self._store = store
             return
         if self._store.run_dir != store.run_dir:
-            raise ValueError("一次运行账本不能跨越多个书籍状态目录")
+            raise ValueError("A run ledger cannot span multiple book state directories")
 
     def capture_state(self, store: RunStore) -> None:
-        """从调用方保证一致的实时状态或只读快照冻结本次结束状态。"""
+        """Freeze final state from live state or a snapshot whose consistency the caller
+        guarantees.
+        """
         self.attach_store(store)
         try:
             self._state_snapshot = _state_summary(store)
@@ -340,7 +352,7 @@ class RunMetricsRecorder:
 
     @contextmanager
     def stage(self, name: str) -> Iterator[None]:
-        """累加一个阶段的墙钟时间；同名嵌套只计算一次。"""
+        """Accumulate stage wall time, counting nested stages with the same name only once."""
         depth = self._stage_depth.get(name, 0)
         self._stage_depth[name] = depth + 1
         if depth == 0:
@@ -361,7 +373,9 @@ class RunMetricsRecorder:
         status: str,
         error: BaseException | None = None,
     ) -> str | None:
-        """完成并持久化账本；未能建立状态目录时不额外创建孤立记录。"""
+        """Finalize and persist the ledger without creating orphan records if state
+        initialization failed.
+        """
         if self._finished:
             return None
         self._finished = True

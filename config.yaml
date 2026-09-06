@@ -1,20 +1,20 @@
-# trans-novel 配置（多语言小说 → 中文）
-# 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
+# trans-novel configuration (experimental multilingual fiction translation)
+# Configure model providers, workflow stages and output here; no code changes are needed.
 
 language:
-  source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
-  target: zh # 译文语言
+  source: auto # auto detects the source language; use an explicit code such as ja / en / ko / ru / de to override
+  target: zh # Target: zh / zh-Hant / en / ja / ko / fr / de / es / it / pt / ru; run languages for the full list
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
   # deepseek | openai | openrouter | orcarouter | openai-compatible | ollama | vllm | fake
-  # OrcaRouter 默认使用 https://api.orcarouter.ai/v1 和 ORCAROUTER_API_KEY；
-  # 切换为 provider: orcarouter 时，请把 tiers.*.model 改为账户可用的模型 ID。
+  # OrcaRouter defaults to https://api.orcarouter.ai/v1 and ORCAROUTER_API_KEY.
+  # When using provider: orcarouter, set tiers.*.model to IDs available to your account.
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
   timeout: 600
-  max_retries: 4 # Wenyi 统一执行的瞬时错误重试次数；SDK 内置重试已关闭
+  max_retries: 4 # Transient-error retries managed by Wenyi; SDK retries are disabled
   tiers:
     strong:
       model: deepseek-v4-pro
@@ -31,55 +31,55 @@ llm:
       options:
         thinking: true
 
-# ── 切分 ─────────────────────────────────────────────────────────────────
+# ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:
-  # 一个翻译批次（句群）的目标大小，按字符粗略估算 token。
+  # Target batch size in characters, used as a rough token estimate.
   max_chars_per_batch: 1800
-  # 单个段落超过该长度时按句末标点再切成多段（续段回填时并回同段），避免超长段。
+  # Split longer paragraphs at sentence boundaries; merge continuations back during export.
   max_chars_per_segment: 1200
 
-# ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
+# ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
-  review: true # 默认开启；全书翻译完成后自动执行最终审校，可用 --no-review 关闭
+  review: true # Run final review after whole-book translation; disable with --no-review
   align_retry_limit: 2
-  polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
-  rolling_context_segments: 6 # 注入的前文译文尾段数
+  polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
   book_understanding:
-    true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译（让译者对全书有理解）；关掉省去预扫成本
-  prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-  annotation_alignment: true # 每个含注释逻辑段译完后串行定位链接；关闭时仅译文侧退化为段末标记
-  annotation_alignment_concurrency: 4 # 单个逻辑段内注释数 >1 时，按条并发请求定位的最大并发数（降低多注释段落回退率）
-  review_concurrency: 4 # 最终审校连续分块的并发数（只读最终译文/术语快照，1=串行）
-  review_output_retries: 2 # 单段审校输出畸形时额外重试次数（初次+2=最多 3 次）
-  review_agent_loop: true # 初审发现候选后，使用强档按需取证并复核
-  review_agent_tier: strong # Review Agent Loop 与全书冲突仲裁使用的模型档位
-  review_agent_max_evidence_rounds: 2 # 最多两轮选择性取证，之后必须给出最终裁决
-  review_conflict_arbitration: true # 全部审校块完成后，对互相矛盾的统一建议再做终局仲裁
-  review_fix_loop: true # 只在内存影子译文上暂改并盲复审，不写回正式正文
-  review_fix_max_rounds: 2 # 最多生成两轮临时替换；完整 Review 轮数另受连续 clean 确认影响
-  review_clean_confirmations: 2 # 连续两轮未发现问题才视为影子译文通过
-  review_autofix: true # 默认开启；将 Review 建议写回正式章节，可用 --no-autofix 保持只读
-  glossary_scope: chapter # chapter=只注入本章出现的词条（长书省 token）；full=全量表
-  # PDF 后端：babeldoc（默认，保留版式，需外部 AGPL HTTP bridge）| mineru（支持扫描件）
+    true # Prescan the source for a whole-book synopsis and chapter digests; disable to save prescan cost
+  prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
+  annotation_alignment: true # Align links after each annotated logical paragraph; if disabled, target links fall back to paragraph ends
+  annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
+  review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
+  review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
+  review_agent_loop: true # Use evidence-based verification after the initial review identifies candidates
+  review_agent_tier: strong # Model tier for the review agent loop and whole-book conflict arbitration
+  review_agent_max_evidence_rounds: 2 # At most two rounds of selective evidence requests before a final decision
+  review_conflict_arbitration: true # Arbitrate contradictory consistency proposals after all review blocks finish
+  review_fix_loop: true # Revise an in-memory shadow translation and review it blindly; this loop does not publish changes
+  review_fix_max_rounds: 2 # At most two replacement rounds; consecutive clean confirmations also affect total review rounds
+  review_clean_confirmations: 2 # Require two consecutive clean rounds to accept the shadow translation
+  review_autofix: true # Publish review revisions to formal chapters; use --no-autofix for recommendations only
+  glossary_scope: chapter # chapter=terms occurring in this chapter (saves tokens); full=entire glossary
+  # PDF backend: babeldoc (default, preserves layout, requires an external AGPL HTTP bridge) | mineru (supports scans)
   pdf_backend: babeldoc
   babeldoc_bridge_url: http://127.0.0.1:8765
-  # babeldoc_pages: "15"   # 可选；限制 bridge 处理页（1-based）
+  # babeldoc_pages: "15"   # Optional page restriction for the bridge (one-based)
   babeldoc_timeout: 600
 
-# ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────
+# ── Honorific strategy (language-specific rules apply where available)────────────────────
 honorific:
-  # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
+  # keep_style: preserve relationship and tone; normalize: apply consistent conventions; drop: omit where meaning permits
   strategy: keep_style
 
-# ── 路径 ─────────────────────────────────────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────
 paths:
-  state_dir: state # 运行状态、各章中间产物、术语库
+  state_dir: state # Run state, intermediate chapter files and glossary
 
-# ── 输出 ───────────────────────────────────────────────────────────────────
+# ── Output ───────────────────────────────────────────────────────────────────
 output:
-  mono: true            # 产出单语中文版
-  bilingual: false      # 产出双语版（原文淡化，与译文对照）
-  bilingual_order: target_first  # target_first=译文在上原文在下; source_first=原文在上
-  bilingual_preserve_source_style: false # true=原文继承原书样式；false=灰色淡化显示
-  about_page: true      # 在书末附加“关于此翻译”说明页
-  punctuation_normalize: true # 仅规范导出副本，不改写 state 中的正式译文
+  mono: true            # Monolingual output in language.target
+  bilingual: false      # Bilingual output with visually muted source text
+  bilingual_order: target_first  # target_first=translation first; source_first=source first
+  bilingual_preserve_source_style: false # true=preserve original source styling; false=render source in muted gray
+  about_page: true      # Append an About This Translation page
+  punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state

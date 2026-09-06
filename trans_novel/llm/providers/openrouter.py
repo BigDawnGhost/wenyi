@@ -1,4 +1,4 @@
-"""通过 OpenRouter 的 OpenAI 兼容接口调用模型。"""
+"""Call models through OpenRouter's OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
 
 
 class OpenRouterTierOptions(BaseModel):
-    """OpenRouter 档位的专属请求选项。"""
+    """OpenRouter-specific tier request options."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -37,7 +37,7 @@ def build_request_kwargs(
     json_mode: bool = False,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """把档位选项转换成 OpenRouter reasoning 请求体。"""
+    """Convert tier options into an OpenRouter reasoning request body."""
     kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
     extra_body = {
         "reasoning": (
@@ -56,7 +56,7 @@ def build_request_kwargs(
 
 class OpenRouterClient(OpenAICompatibleBaseClient[OpenRouterTierOptions]):
     def __init__(self, cfg: LLMConfig):
-        """校验 OpenRouter 档位选项并初始化官方兼容端点。"""
+        """Validate OpenRouter tier options and initialize its compatible endpoint."""
         tiers = resolve_provider_tiers(
             cfg.tiers,
             options_type=OpenRouterTierOptions,
@@ -78,7 +78,7 @@ class OpenRouterClient(OpenAICompatibleBaseClient[OpenRouterTierOptions]):
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """构造当前 OpenRouter 档位的最终请求参数。"""
+        """Build final request arguments for the selected OpenRouter tier."""
         return build_request_kwargs(
             tier_config,
             messages,

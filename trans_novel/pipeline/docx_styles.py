@@ -1,7 +1,6 @@
-"""DOCX 段内混排样式：仿 EPUB 注释，译后用标记对齐（整段同质不走此路径）。
-
-模型职责：每个样式跨度单独请求，只在不可变译文上插入位置标记。
-加粗/斜体/颜色/字号等属性一律从原文 ``items`` 继承，不经模型。
+"""Align mixed DOCX character styles after translation using immutable-text markers.
+Request one placement per style span. Inherit bold, italic, color and size from source
+items, never from model output. Uniform paragraphs bypass this path.
 """
 
 from __future__ import annotations
@@ -16,12 +15,12 @@ from .runstore import RunStore
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
-# 写出时从原文 item 继承的字段（不含原文 font）
+# Source-item fields inherited during export, excluding the source font.
 _INHERIT_KEYS = ("bold", "italic", "underline", "color", "size_pt")
 
 
 def _style_fields(item: dict[str, Any]) -> dict[str, Any]:
-    """从样式 item 中取出可写出的字符属性（继承自原文，非模型输出）。"""
+    """Extract exportable character properties from source metadata, not model output."""
     out: dict[str, Any] = {}
     for key in _INHERIT_KEYS:
         if key in item:
@@ -30,7 +29,7 @@ def _style_fields(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _needs_alignment(item: dict[str, Any]) -> bool:
-    """仅对含加粗/斜体/下划线/颜色的跨度请求模型定位。"""
+    """Request alignment only for spans with bold, italic, underline or color styling."""
     return any(key in item for key in ("bold", "italic", "underline", "color"))
 
 
@@ -39,7 +38,7 @@ def proportional_range_placement(
     target: str,
     item: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """单个 span 的比例回退 placement。"""
+    """Build a proportional fallback placement for one span."""
     item_id = item.get("id")
     start = item.get("source_start")
     end = item.get("source_end")
@@ -78,7 +77,9 @@ def proportional_range_placements(
     target: str,
     items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """把源文 range 按比例映到译文（对齐失败时的样式兜底，优于段末零宽）。"""
+    """Map a source range proportionally to target as a style fallback, avoiding zero-width end
+    markers.
+    """
     out: list[dict[str, Any]] = []
     for item in items:
         row = proportional_range_placement(source, target, item)
@@ -88,7 +89,7 @@ def proportional_range_placements(
 
 
 def _placement_usable(row: dict[str, Any]) -> bool:
-    """LLM 对齐成功且非「段末零宽」占位。"""
+    """Check for successful LLM alignment rather than a zero-width paragraph-end placeholder."""
     if row.get("status") == "fallback":
         return False
     if row.get("method") == "paragraph_end":
@@ -104,9 +105,8 @@ def merge_align_results(
     items: list[dict[str, Any]],
     placements: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
-    """按 span 合并：成功的保留位置并从原文继承样式；失败的单独比例回退。
-
-    返回 (placements, any_fallback)。
+    """Merge by span: keep successful positions with source styles and proportionally map
+    failed spans. Return placements and whether any fallback occurred.
     """
     by_id = {str(item.get("id")): item for item in items if isinstance(item.get("id"), str)}
     place_by_id = {
@@ -135,13 +135,13 @@ def merge_align_results(
         if fallback is not None:
             any_fallback = True
             merged.append(fallback)
-    # 保持与 by_id 一致；若 align 多返回了未知 id 则忽略
+    # Match by_id and ignore unknown IDs returned by alignment.
     _ = by_id
     return merged, any_fallback
 
 
 class DocxStyleService:
-    """仅处理 ``meta.docx_styles.items`` 混排；``docx_style`` 整段同质不调用模型。"""
+    """Align only mixed docx_styles.items; uniform docx_style needs no model call."""
 
     def __init__(self, runtime: PipelineRuntime):
         self._runtime = runtime
@@ -153,7 +153,9 @@ class DocxStyleService:
         start_position: int,
         store: RunStore,
     ) -> None:
-        """对一个逻辑段（含 cont）做混排样式对齐并写回 meta。"""
+        """Align mixed styles for one logical paragraph including continuations and persist
+        metadata.
+        """
         segments = chapter.text_segments
         if not 0 <= start_position < len(segments):
             return
@@ -198,7 +200,7 @@ class DocxStyleService:
         ):
             return
 
-        # 模型只看位置：每个 span 单独请求（AnnotationAligner 对 N>1 会拆开）
+        # The model locates positions only; AnnotationAligner splits multiple spans into individual requests.
         align_items = []
         for item in items:
             item_id = item.get("id")
@@ -229,10 +231,10 @@ class DocxStyleService:
         try:
             result = self._runtime.annotation_aligner.align_unit(unit)
             raw_placements = [dict(row) for row in result.placements]
-            # 按 span 合并：成功保留 LLM 位置 + 原文样式；失败仅该 span 比例回退
+            # Keep successful model positions with source styles and proportionally map only failed spans.
             merged, any_fallback = merge_align_results(source, target, items, raw_placements)
             used_fallback = any_fallback
-        except Exception as error:  # noqa: BLE001 - 样式失败不得挡住译文
+        except Exception as error:  # noqa: BLE001 - Styling failures must not block translation.
             merged = proportional_range_placements(source, target, items)
             used_fallback = True
             store.log_event(
@@ -262,7 +264,7 @@ class DocxStyleService:
         count: int,
         store: RunStore,
     ) -> None:
-        """处理当前批次内已译完且含混排样式的逻辑段。"""
+        """Process completed mixed-style logical paragraphs touched by this batch."""
         segments = chapter.text_segments
         for logical_start in AnnotationService.completed_logical_starts_in_range(
             segments, start, count

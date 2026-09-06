@@ -1,9 +1,8 @@
-"""EPUB 目录解析与链接定位。
-
-NCX/NAV 是逻辑目录，spine 中的 XHTML 是物理资源：一个 XHTML
-可以包含多个目录节点，一个目录章也可以跨越多个 XHTML。本模块
-保留每个目录节点的顺序、层级、原始 href 和 fragment，避免过早压成
-``href -> title`` 字典后丢失同文件的子标题。
+"""Parse EPUB TOCs and resolve links.
+NCX/NAV defines logical structure while spine XHTML files are physical resources. One XHTML
+may contain several TOC nodes, and a chapter may span several resources. Preserve node
+order, hierarchy, raw href and fragment instead of collapsing early into an href-to-title
+dictionary that loses same-file subtitles.
 """
 
 from __future__ import annotations
@@ -21,10 +20,9 @@ from bs4.element import Tag
 
 @dataclass(frozen=True)
 class ResolvedEpubHref:
-    """一个目录 href 的结构化结果。
-
-    ``raw_href`` 仅用于原样保留；``resource_href`` 是已相对目录文件
-    解析的 zip 成员路径；``fragment`` 是已百分号解码的锚点。
+    """Structured TOC href.
+    raw_href preserves the original value. resource_href is the ZIP member resolved relative
+    to the TOC file. fragment is the percent-decoded anchor.
     """
 
     raw_href: str
@@ -34,18 +32,17 @@ class ResolvedEpubHref:
 
     @property
     def target_key(self) -> str:
-        """返回内容目标的稳定键；它不是目录节点的唯一 ID。"""
+        """Return a stable content-destination key, not a unique TOC node ID."""
         if not self.resource_href:
             return ""
         return f"{self.resource_href}#{self.fragment}" if self.fragment else self.resource_href
 
 
 def resolve_epub_href(base_path: str, raw_href: str) -> ResolvedEpubHref:
-    """相对 ``base_path`` 解析 EPUB 内部链接，同时不改写原始 href。
-
-    百分号编码使用 :func:`urllib.parse.unquote` 解码，故 ``+`` 仍是文件名
-    中的加号，不会被错误当作空格。带 scheme/host 的 URL 被标记为外部
-    链接，不参与章节切分或回填定位。
+    """Resolve an internal EPUB link against base_path without rewriting raw_href.
+    Decode percent escapes with urllib.parse.unquote, preserving literal plus signs in
+    filenames. Mark URLs with schemes or hosts as external and exclude them from chapter
+    splitting and backfill lookup.
     """
     raw = raw_href or ""
     parsed = urlsplit(raw)
@@ -61,7 +58,7 @@ def resolve_epub_href(base_path: str, raw_href: str) -> ResolvedEpubHref:
         base_dir = posixpath.dirname(base_path)
         resource = posixpath.normpath(posixpath.join(base_dir, decoded_path))
     else:
-        # ``#fragment`` 指向目录文件自身。
+        # A fragment-only href targets the TOC file itself.
         resource = posixpath.normpath(base_path)
     if resource == ".":
         resource = ""
@@ -69,12 +66,12 @@ def resolve_epub_href(base_path: str, raw_href: str) -> ResolvedEpubHref:
 
 
 def _local(tag: str) -> str:
-    """去掉 XML 命名空间并返回标签本地名。"""
+    """Remove the XML namespace and return the local tag name."""
     return tag.rsplit("}", 1)[-1]
 
 
 def _direct_xml_child(element: ET.Element, name: str) -> ET.Element | None:
-    """返回指定本地名的第一个直接 XML 子元素。"""
+    """Return the first direct XML child with the requested local name."""
     return next((child for child in element if _local(child.tag) == name), None)
 
 
@@ -89,7 +86,7 @@ def _entry(
     title: str,
     raw_href: str,
 ) -> dict[str, Any]:
-    """构造一个可 JSON 序列化的目录节点记录。"""
+    """Construct a JSON-serializable TOC node record."""
     resolved = resolve_epub_href(toc_path, raw_href) if raw_href else None
     resource_href = resolved.resource_href if resolved else ""
     fragment = resolved.fragment if resolved else ""
@@ -111,7 +108,7 @@ def _entry(
 
 
 def _parse_ncx(data: bytes, toc_path: str) -> list[dict[str, Any]]:
-    """按 preorder 解析 NCX navPoint，只在当前节点直接子树取标签/链接。"""
+    """Parse NCX navPoint elements in preorder, reading labels/links only from direct children."""
     root = ET.fromstring(data)
     nav_map = next((node for node in root.iter() if _local(node.tag) == "navMap"), None)
     if nav_map is None:
@@ -119,7 +116,7 @@ def _parse_ncx(data: bytes, toc_path: str) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
     def visit(node: ET.Element, depth: int, parent_index: int | None) -> None:
-        """递归展开 navPoint，并记录父子关系。"""
+        """Recursively expand navPoint elements and record parent-child relationships."""
         node_index = len(entries)
         nav_label = _direct_xml_child(node, "navLabel")
         label_node = (
@@ -156,17 +153,16 @@ def _parse_ncx(data: bytes, toc_path: str) -> list[dict[str, Any]]:
 
 
 def _direct_tag(parent: Tag, name: str) -> Tag | None:
-    """返回 BeautifulSoup 节点的第一个指定直接子标签。"""
+    """Return the first matching direct child of a BeautifulSoup node."""
     found = parent.find(name, recursive=False)
     return found if isinstance(found, Tag) else None
 
 
 def nav_toc_scopes(soup: BeautifulSoup) -> list[Tag | BeautifulSoup]:
-    """返回 NAV 目录搜索范围，兼容缺少 ``epub:type="toc"`` 的旧书。
-
-    标准 EPUB3 优先使用显式 TOC nav；非规范文件则选择第一块 nav，连
-    nav 都没有时才在整份文档内寻找首个有序列表。reader 与 writer 共用
-    此规则，保证 ``node_index`` 在解析和回填阶段完全一致。
+    """Find NAV scope, including older books without explicit epub:type="toc".
+    Prefer an explicit EPUB3 TOC nav, then the first nav, then the first ordered list in the
+    document. Share this rule between reader and writer so node_index remains identical
+    during parsing and backfill.
     """
     typed = [
         nav
@@ -180,7 +176,7 @@ def nav_toc_scopes(soup: BeautifulSoup) -> list[Tag | BeautifulSoup]:
 
 
 def nav_root_list(scope: Tag | BeautifulSoup) -> Tag | None:
-    """返回一个 NAV 范围内的根 ``ol``，必要时宽容查找后代节点。"""
+    """Find the root ol within a NAV scope, tolerating descendant lookup if needed."""
     direct = scope.find("ol", recursive=False)
     if isinstance(direct, Tag):
         return direct
@@ -189,12 +185,12 @@ def nav_root_list(scope: Tag | BeautifulSoup) -> Tag | None:
 
 
 def _parse_nav(data: bytes, toc_path: str) -> list[dict[str, Any]]:
-    """按 ``ol/li`` preorder 解析 EPUB3 NAV 目录。"""
+    """Parse EPUB3 NAV in ol/li preorder."""
     soup = BeautifulSoup(data, "html.parser")
     entries: list[dict[str, Any]] = []
 
     def visit_li(li: Tag, depth: int, parent_index: int | None) -> None:
-        """记录 li 的直接 a/span 标签，然后递归其子 ol。"""
+        """Record each li's direct a/span, then recurse into child ol elements."""
         label = _direct_tag(li, "a") or _direct_tag(li, "span")
         current_parent = parent_index
         if label is not None:
@@ -230,10 +226,9 @@ def _parse_nav(data: bytes, toc_path: str) -> list[dict[str, Any]]:
 
 
 def parse_toc_entries(zf: zipfile.ZipFile, toc_paths: list[str]) -> list[dict[str, Any]]:
-    """解析所有已存在的 NCX/NAV 文件，返回有序目录节点。
-
-    每份目录独立容错：损坏的兼容 NCX 不应阻断有效的主 NAV。除常见
-    ``.ncx`` 后缀外，也会根据 XML 根节点识别媒体类型为 NCX 的 ``.xml``。
+    """Parse existing NCX/NAV files into ordered TOC nodes.
+    Handle each TOC independently so a damaged compatibility NCX cannot block a valid
+    primary NAV. Besides .ncx extensions, recognize NCX XML roots in .xml files.
     """
     names = set(zf.namelist())
     entries: list[dict[str, Any]] = []

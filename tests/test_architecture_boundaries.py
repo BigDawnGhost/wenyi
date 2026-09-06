@@ -1,12 +1,8 @@
-"""轻量架构边界测试：防止 orchestrator.py 再次直接依赖领域实现。
-
-校验：
-  * orchestrator.py 不导入 agents / ingest / glossary / assemble / postprocess / llm；
-  * 不使用 ThreadPoolExecutor / concurrent.futures；
-  * 不直接调用 load_document / complete_json / build_report / assemble；
-  * 装配全部拆分出的服务模块；
-  * 任何下层模块都不得反向导入 orchestrator.py；
-  * agents 不得反向依赖 pipeline 编排模块（只允许依赖顶层 review 纯模型）。
+"""Lightweight architecture tests protecting the thin orchestrator facade.
+Forbid direct agents/ingest/glossary/assemble/postprocess/llm imports, thread pools and
+direct parsing/model/report/export calls. Require every extracted service to be assembled.
+Forbid lower-layer imports of orchestrator and agent imports of pipeline; agents may use
+top-level review models.
 """
 
 from __future__ import annotations
@@ -29,7 +25,7 @@ SERVICE_MODULES = (
     "finalization",
 )
 
-# 不得反向导入 orchestrator 的下层模块（含 language 这类共享工具）。
+# Lower modules, including shared language helpers, must not import orchestrator.
 LOWER_MODULES = SERVICE_MODULES + ("language",)
 
 FORBIDDEN_TOP_LEVEL = (
@@ -41,7 +37,7 @@ FORBIDDEN_TOP_LEVEL = (
     "llm",
 )
 
-# agents 不得从 pipeline 拉取编排/状态机；review 纯模型在顶层 review/。
+# Agents cannot import pipeline orchestration/state machines; pure review models live at top level.
 FORBIDDEN_PIPELINE_MODULES_FOR_AGENTS = (
     "orchestrator",
     "runtime",
@@ -73,7 +69,7 @@ def _agent_sources() -> list[tuple[str, str]]:
 
 class TestArchitectureBoundaries(unittest.TestCase):
     def test_orchestrator_has_no_domain_imports(self):
-        """编排器只允许依赖 config 与同级流水线服务模块。"""
+        """Allow the orchestrator to depend only on config and sibling pipeline services."""
         source = _module_source("orchestrator")
         tree = ast.parse(source)
         for node in ast.walk(tree):
@@ -87,7 +83,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
             )
 
     def test_orchestrator_has_no_thread_pool(self):
-        """线程池属于各领域服务，编排器不得直接使用。"""
+        """Thread pools belong to domain services, not the orchestrator."""
         source = _module_source("orchestrator")
         self.assertNotIn("concurrent.futures", source)
         tree = ast.parse(source)
@@ -99,7 +95,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
                     self.assertNotIn("futures", alias.name)
 
     def test_orchestrator_does_not_call_domain_functions(self):
-        """编排器不得直接调用解析、LLM、报告或导出实现。"""
+        """Forbid direct parsing, model, report and export calls in the orchestrator."""
         source = _module_source("orchestrator")
         for forbidden in ("load_document(", "complete_json(", "build_report("):
             self.assertNotIn(forbidden, source)
@@ -111,18 +107,20 @@ class TestArchitectureBoundaries(unittest.TestCase):
                 self.assertNotIn(node.func.attr, ("load_document", "complete_json", "build_report"))
 
     def test_orchestrator_does_not_touch_glossary_store_directly(self):
-        """术语库生命周期归 ReportService / ReviewService，编排器不得直接引用。"""
+        """Report/Review services own glossary lifetime; the orchestrator cannot reference it
+        directly.
+        """
         source = _module_source("orchestrator")
         self.assertNotIn("GlossaryStore", source)
 
     def test_orchestrator_wires_all_services(self):
-        """编排器必须装配全部拆分出的服务模块。"""
+        """Require the orchestrator to assemble every extracted service."""
         source = _module_source("orchestrator")
         for name in SERVICE_MODULES:
             self.assertIn(f"from .{name} import", source, f"缺少 {name} 的装配")
 
     def test_no_lower_module_imports_orchestrator(self):
-        """依赖方向固定：任何下层模块都不得反向导入 orchestrator.py。"""
+        """Forbid reverse imports of orchestrator from lower layers."""
         for name in LOWER_MODULES:
             tree = ast.parse(_module_source(name))
             for node in ast.walk(tree):
@@ -148,7 +146,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
                         )
 
     def test_runtime_uses_neutral_language_module(self):
-        """共享 Runtime 不得反向依赖具体准备阶段。"""
+        """Shared Runtime cannot depend on the preparation service."""
         tree = ast.parse(_module_source("runtime"))
         relative_imports = {
             node.module
@@ -159,7 +157,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
         self.assertNotIn("preparation", relative_imports)
 
     def test_services_exist_as_pure_modules(self):
-        """拆分出的模块可独立导入，且提供对应服务类。"""
+        """Extracted modules must import independently and expose their service classes."""
         import importlib
 
         classes = {
@@ -178,7 +176,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
         self.assertTrue(hasattr(finalization, "AssemblyService"))
 
     def test_agents_do_not_import_pipeline_orchestration(self):
-        """agents 只可依赖顶层 review 纯模型，不得倒挂 pipeline 编排模块。"""
+        """Agents may use pure top-level review models, never pipeline orchestration."""
         for filename, source in _agent_sources():
             tree = ast.parse(source)
             for node in ast.walk(tree):
@@ -205,7 +203,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
                         )
 
     def test_review_package_exports_core_types(self):
-        """顶层 review 包提供证据索引与运行目录模型。"""
+        """The top-level review package provides evidence and run-storage models."""
         import importlib
 
         review = importlib.import_module("trans_novel.review")

@@ -28,14 +28,14 @@ class BabeldocBridgeClient:
             return response.json()
         except Exception as error:
             raise BabeldocBridgeError(
-                f"无法连接 BabelDOC bridge（{self.base_url}）：{error}\n"
-                "请先在独立仓库启动：wenyi-babeldoc-bridge"
+                f"Cannot connect to BabelDOC bridge ({self.base_url}): {error}\n"
+                "Start wenyi-babeldoc-bridge from its separate repository first."
             ) from error
 
     def extract(self, pdf_path: str | Path, *, pages: str | None = None) -> dict[str, Any]:
         pdf_path = Path(pdf_path)
         if not pdf_path.is_file():
-            raise BabeldocBridgeError(f"PDF 不存在：{pdf_path}")
+            raise BabeldocBridgeError(f"PDF does not exist: {pdf_path}")
         self.health()
         data: dict[str, str] = {}
         if pages:
@@ -51,13 +51,13 @@ class BabeldocBridgeClient:
                 )
             if response.status_code >= 400:
                 raise BabeldocBridgeError(
-                    f"extract 失败 HTTP {response.status_code}: {response.text[:500]}"
+                    f"extract failed with HTTP {response.status_code}: {response.text[:500]}"
                 )
             return response.json()
         except BabeldocBridgeError:
             raise
         except Exception as error:
-            raise BabeldocBridgeError(f"extract 请求失败：{error}") from error
+            raise BabeldocBridgeError(f"extract request failed: {error}") from error
 
     def fillback(
         self,
@@ -77,14 +77,14 @@ class BabeldocBridgeClient:
             )
             if response.status_code >= 400:
                 raise BabeldocBridgeError(
-                    f"fillback 失败 HTTP {response.status_code}: {response.text[:500]}"
+                    f"fillback failed with HTTP {response.status_code}: {response.text[:500]}"
                 )
             out_path.write_bytes(response.content)
             return str(out_path)
         except BabeldocBridgeError:
             raise
         except Exception as error:
-            raise BabeldocBridgeError(f"fillback 请求失败：{error}") from error
+            raise BabeldocBridgeError(f"fillback request failed: {error}") from error
 
     def delete_session(self, session_id: str) -> None:
         try:

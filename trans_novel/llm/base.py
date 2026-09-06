@@ -1,4 +1,4 @@
-"""LLM provider 的稳定抽象接口。"""
+"""Stable abstraction for LLM providers."""
 
 from __future__ import annotations
 
@@ -17,36 +17,38 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class LLMClient(ABC):
-    """所有 provider 实现此接口。"""
+    """Interface implemented by every provider."""
 
     def __init__(self) -> None:
-        """为 provider 初始化独立的用量统计器和可选事件出口。"""
+        """Initialize independent usage accounting and an optional event sink for the provider."""
         self.usage = UsageTracker()
         self._event_sink: EventSink | None = None
         self._event_sink_lock = threading.Lock()
 
     def set_event_sink(self, sink: EventSink | None) -> None:
-        """绑定运行事件出口；Orchestrator 用它把重试实时写入书籍日志。"""
+        """Bind the run event sink so the pipeline can append retry events to the book log."""
         with self._event_sink_lock:
             self._event_sink = sink
 
     def _emit_event(self, event: str, **data: Any) -> None:
-        """线程安全地发送 provider 事件，日志失败不得掩盖原始模型异常。"""
+        """Emit provider events safely across threads; logging failures must not hide model
+        exceptions.
+        """
         with self._event_sink_lock:
             sink = self._event_sink
             if sink is None:
                 return
             try:
                 sink(event, **data)
-            except Exception:  # noqa: BLE001 - 可观察性故障不能改变模型调用语义
+            except Exception:  # noqa: BLE001 - Observability failures must not change model-call semantics.
                 _LOGGER.exception("Failed to write LLM event: %s", event)
 
     def usage_summary(self) -> dict[str, Any]:
-        """返回累计 token 用量快照（totals + by_tier + cache_hit_rate）。"""
+        """Return cumulative token usage with totals, tiers and cache hit rates."""
         return self.usage.summary()
 
     def validate_credentials(self) -> None:
-        """校验 provider 调用所需凭据；本地或测试 provider 默认免检。"""
+        """Validate provider credentials; local and test providers are exempt by default."""
 
     @abstractmethod
     def complete(
@@ -58,7 +60,7 @@ class LLMClient(ABC):
         max_tokens: int | None = None,
         stage: str | None = None,
     ) -> str:
-        """返回模型回复的纯文本；stage 仅用于用量归因。"""
+        """Return plain model response text; stage is used only for usage attribution."""
         raise NotImplementedError
 
     def complete_json(
@@ -69,7 +71,7 @@ class LLMClient(ABC):
         max_tokens: int | None = None,
         stage: str | None = None,
     ) -> Any:
-        """要求 JSON 输出并解析。"""
+        """Request and parse JSON output."""
         text = self.complete(
             messages, tier=tier, json_mode=True, max_tokens=max_tokens, stage=stage
         )

@@ -1,7 +1,6 @@
-"""从 RunStore 重建 Word .docx：标题导航 + 段落样式 + 简易表格。
-
-- ``meta.docx_style``：整段同质，直接套到译文 run（不经 AI）
-- ``meta.docx_styles.placements``：混排对齐结果，按 target 偏移切 run
+"""Rebuild Word documents from RunStore with heading navigation, styles and basic tables.
+meta.docx_style applies uniform paragraph styling directly to target runs without AI.
+meta.docx_styles.placements splits mixed-style runs at aligned target offsets.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from .writer_common import (
     _seg_text,
 )
 
-# 译文侧不沿用原文西文字体；中文目标默认宋体（含东亚字形）。
+# Do not inherit source Western fonts on the target side; Chinese output defaults to SimSun.
 _ZH_FONT = "宋体"
 
 _ALIGN_MAP = {
@@ -41,7 +40,7 @@ _ALIGN_MAP = {
 
 
 def _set_outline_level(paragraph, level: int) -> None:
-    """确保段落带 outlineLvl，便于 Word 导航窗格。"""
+    """Ensure the paragraph has outlineLvl for the Word navigation pane."""
     level = max(1, min(9, level))
     p_pr = paragraph._p.get_or_add_pPr()  # noqa: SLF001
     outline = p_pr.find(qn("w:outlineLvl"))
@@ -52,7 +51,7 @@ def _set_outline_level(paragraph, level: int) -> None:
 
 
 def _set_run_font(run, font_name: str) -> None:
-    """设置 run 的 ascii/hAnsi/eastAsia 字体，避免只改西文名。"""
+    """Set ascii/hAnsi/eastAsia fonts on a run, not just the Western font name."""
     name = font_name.strip()
     if not name:
         return
@@ -67,7 +66,7 @@ def _set_run_font(run, font_name: str) -> None:
 
 
 def _target_output_font(target_lang: str | None) -> str | None:
-    """目标语言对应的写出字体；中文用宋体，其它语言不强行改字体。"""
+    """Return the target font: SimSun for Chinese, otherwise leave the font unspecified."""
     normalized = (target_lang or "zh").strip().lower().replace("_", "-")
     if normalized == "zh" or normalized.startswith("zh-"):
         return _ZH_FONT
@@ -81,7 +80,9 @@ def _font_for_text(
     output_text: str,
     is_source_side: bool = False,
 ) -> str | None:
-    """译文用目标字体；未翻译回退原文或双语原文侧不套宋体。"""
+    """Use the target font only for translations, not source fallbacks or bilingual source
+    text.
+    """
     if is_source_side or not output_font:
         return None
     if not output_text.strip() or output_text == source:
@@ -95,7 +96,7 @@ def _apply_run_style(
     *,
     output_font: str | None = None,
 ) -> None:
-    """把 meta 中的字符样式应用到 run；不沿用原文 font，改用 output_font。"""
+    """Apply metadata character styles to a run, using output_font instead of the source font."""
     if style:
         if "bold" in style:
             run.bold = bool(style["bold"])
@@ -117,7 +118,7 @@ def _apply_run_style(
 
 
 def _set_run_color_value(run, value: str) -> None:
-    """写入直写颜色，清掉 themeColor，避免 Heading 默认主题蓝。"""
+    """Set explicit color and remove themeColor to override default blue heading themes."""
     r_pr = run._r.get_or_add_rPr()  # noqa: SLF001
     for child in list(r_pr):
         if child.tag == qn("w:color"):
@@ -131,7 +132,7 @@ def _neutralize_heading_theme_color(
     paragraph,
     style: dict[str, Any] | None,
 ) -> None:
-    """python-docx 默认 Heading 带 accent 蓝；无显式颜色时改为黑色。"""
+    """Use black when no explicit heading color is supplied instead of the default accent blue."""
     explicit = None
     if isinstance(style, dict):
         color = style.get("color")
@@ -144,7 +145,7 @@ def _neutralize_heading_theme_color(
 
 
 def _list_style_name(list_fmt: str | None, ilvl: int) -> str:
-    """映射到 python-docx 内置列表样式名。"""
+    """Map to built-in python-docx list style names."""
     level = max(0, min(2, int(ilvl)))
     bullet = (list_fmt or "").lower() in {"bullet", "none"}
     if bullet:
@@ -153,7 +154,7 @@ def _list_style_name(list_fmt: str | None, ilvl: int) -> str:
 
 
 def _abstract_num_id_for_style(doc: DocxDocument, style_name: str) -> int | None:
-    """从段落样式上的 numPr 找到 abstractNumId。"""
+    """Find abstractNumId through numPr on the paragraph style."""
     try:
         style = doc.styles[style_name]
     except KeyError:
@@ -191,7 +192,7 @@ def _next_num_id(numbering_root) -> int:
 
 
 def _restart_list_numbering(doc: DocxDocument, paragraph, *, style_name: str, ilvl: int) -> None:
-    """为列表首项新建带 startOverride 的 numId，使各组列表从 1 重开。"""
+    """Create a numId with startOverride for the first item so each list restarts at 1."""
     abstract_id = _abstract_num_id_for_style(doc, style_name)
     if abstract_id is None:
         return
@@ -224,7 +225,7 @@ def _style_slices(
     style: dict[str, Any] | None,
     placements: list[dict[str, Any]] | None,
 ) -> list[tuple[str, dict[str, Any] | None]]:
-    """把文本切成 (fragment, style) 列表；无混排时整段一个切片。"""
+    """Split text into fragment/style pairs; return one slice for uniform styling."""
     if not text:
         return []
     if not placements:
@@ -264,7 +265,7 @@ def _style_slices(
 
 
 def _apply_paragraph_align(paragraph, align: str | None) -> None:
-    """应用段落对齐。"""
+    """Apply paragraph alignment."""
     if not align:
         return
     value = _ALIGN_MAP.get(str(align).strip().lower())
@@ -273,7 +274,7 @@ def _apply_paragraph_align(paragraph, align: str | None) -> None:
 
 
 def _apply_paragraph_shade(paragraph, shade: str | None) -> None:
-    """应用段落底纹填充色。"""
+    """Apply paragraph background shading."""
     if not shade:
         return
     p_pr = paragraph._p.get_or_add_pPr()  # noqa: SLF001
@@ -297,7 +298,7 @@ def _fill_paragraph(
     output_font: str | None = None,
     dim: bool = False,
 ) -> None:
-    """清空并按样式切片写入段落。"""
+    """Clear the paragraph and write styled text slices."""
     paragraph.clear()
     _apply_paragraph_align(paragraph, align)
     _apply_paragraph_shade(paragraph, shade)
@@ -344,7 +345,7 @@ def _add_heading(
         shade=shade,
         output_font=output_font,
     )
-    # 覆盖模板 Heading 的 accent 主题蓝：原文无显式色则用黑色
+    # Override the template heading accent color with black when the source has no explicit color.
     _neutralize_heading_theme_color(paragraph, style)
 
 
@@ -421,7 +422,7 @@ def _add_bilingual_paragraphs(
             output_font=target_font,
         )
         return
-    # 译文侧可用宋体；原文侧保持默认/不强制目标字体
+    # Use SimSun on the translated side where applicable; preserve source-side font defaults.
     if order == "source_first":
         _add_normal(doc, src, dim=False, align=align, shade=shade, output_font=None)
         _add_normal(
@@ -452,10 +453,10 @@ def _segment_style_payload(
     source: str,
     output_text: str,
 ) -> tuple[dict[str, Any] | None, list | None, str | None, str | None]:
-    """返回 (整段样式, 混排 placements, align, shade)。
-
-    若混排尚无有效 placements（未对齐、摘要失配或未翻译就导出），按源文偏移比例
-    映到当前写出文本，这样「Adam Kuper」加粗等在回退原文导出时也不会丢。
+    """Return paragraph style, mixed placements, alignment and shading.
+    If mixed-style placements are missing or invalid because alignment, hashes or
+    translation are unavailable, map source offsets proportionally to the output text. This
+    preserves styling such as bold names when exporting a source fallback.
     """
     align = meta.get("align") if isinstance(meta.get("align"), str) else None
     shade = meta.get("shade") if isinstance(meta.get("shade"), str) else None
@@ -512,7 +513,7 @@ def _flush_table(
                             output_font=None,
                         )
                         paragraph.add_run("\n")
-                        # 译文另起逻辑：简化为同一段内第二行
+                        # Place the translation on a second line within the same paragraph.
                         for fragment, frag_style in _style_slices(target, style, placements):
                             run = paragraph.add_run(fragment)
                             _apply_run_style(run, frag_style, output_font=target_font)
@@ -560,7 +561,7 @@ def _emit_chapter_blocks(
     order: str,
     output_font: str | None = None,
 ) -> None:
-    """按段顺序写出；连续同 table_id 聚合成一张表；cont 续段并回上一段。"""
+    """Write in paragraph order, group contiguous table IDs and merge continuation segments."""
     i = 0
     segs = chapter.segments
     last_list_num_id: int | None = None
@@ -692,7 +693,7 @@ def _assemble_docx(
     bilingual: bool = False,
     order: str = "target_first",
 ) -> str:
-    """按章节重建 .docx；标题带 outline，样式与表格按 meta 重建。"""
+    """Rebuild a DOCX by chapter, restoring heading outlines, styles and tables from metadata."""
     manifest = store.load_manifest()
     output_font = _target_output_font(_manifest_target_lang(manifest))
     doc = open_docx()

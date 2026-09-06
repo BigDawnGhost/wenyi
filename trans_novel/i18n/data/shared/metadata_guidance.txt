@@ -1,0 +1,4 @@
+Write all human-readable metadata in $tgt_label, including every note, genre, tone, style guide and character description. The English instructions and schema examples do not determine the output language. Existing notes in another language are evidence, not a language template.
+Use the established target-language names when referring to characters in prose. Quote original-language names or phrases only when needed as evidence, and explain them in $tgt_label.
+Preserve source and aliases exactly in their original language for matching. reading records only evidence-backed pronunciation. Put translated or transliterated names in target; never overwrite source with a target-language name.
+JSON keys and enum values are language-independent: use English type values and male|female|unknown for gender. Do not infer gender, kinship or relative age solely from names, forms of address or tone. Explain uncertainty in $tgt_label and preserve it rather than inventing facts.

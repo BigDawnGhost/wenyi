@@ -1,8 +1,7 @@
-"""独立 HTML 文件输出。
-
-读取 manifest 和章节数据，判断是否存在可回填的 HTML/PDF 模板。
-有模板时使用 html_renderer 回填章节节点，通过 html_resources 解析和物化资源；
-无模板时按当前结构重建标题、段落和双语内容。
+"""Standalone HTML output.
+Read the manifest and chapters to find reusable HTML/PDF templates. Backfill template nodes
+with html_renderer and materialize assets with html_resources; otherwise reconstruct
+headings, paragraphs and bilingual content.
 """
 
 from __future__ import annotations
@@ -34,13 +33,13 @@ def _assemble_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
 ) -> str:
-    """回填 HTML 原文：逐章渲染 template，拼接为完整 HTML 输出。"""
+    """Backfill chapter templates and combine them into a complete HTML document."""
     m = store.load_manifest()
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
-    # 始终确保 charset 声明，否则浏览器无法正确识别编码导致中文乱码
+    # Always declare the charset so browsers decode Unicode text correctly.
     if "charset" not in head_html.replace(" ", "").lower():
         head_html = '<meta charset="utf-8"/>\n' + head_html
     if bilingual and not preserve_source_style and _BILINGUAL_STYLE_ID not in head_html:
@@ -79,7 +78,7 @@ def _assemble_html(
     for c in [] if rendered_epub else m["chapters"]:
         ch = store.load_chapter(c["index"])
         if ch.template:
-            # 复用 EPUB 的章节渲染（替换 data-tn-id → 译文，处理 cont 续段与双语）
+            # Reuse EPUB rendering for data-tn-id replacement, continuations and bilingual content.
             body_parts.append(
                 _render_chapter_html(
                     ch,
@@ -90,7 +89,7 @@ def _assemble_html(
             )
             continue
 
-        # TXT / Markdown 等无 HTML 模板的输入也必须能导出正文。
+        # Template-free inputs such as TXT and Markdown must also export their body text.
         for kind, target, source in _merged_paragraphs(ch):
             if kind == KIND_HEADING:
                 level = ch.meta.get("heading_level", 1)

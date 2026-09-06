@@ -1,4 +1,4 @@
-"""有界 Review Agent Loop 与全书跨块冲突仲裁。"""
+"""Bounded review agent loop and cross-block conflict arbitration."""
 
 from __future__ import annotations
 
@@ -24,12 +24,12 @@ _ARBITRATION_SAMPLE_TEXT_LIMIT = 1500
 
 
 class ReviewLoopProtocolError(ValueError):
-    """Agent Loop 返回了不符合动作协议的内容。"""
+    """The agent loop returned content that violates the action protocol."""
 
 
 @dataclass(frozen=True)
 class ReviewLoopOutcome:
-    """一个审校叶块经 Agent Loop 核验后的结果。"""
+    """The verified result of one review leaf block."""
 
     issues: list[dict[str, Any]]
     dismissed: list[dict[str, Any]]
@@ -37,22 +37,26 @@ class ReviewLoopOutcome:
 
 
 def _text(value: Any) -> str:
-    """只接受字符串并去除首尾空白。"""
+    """Accept strings only and strip surrounding whitespace."""
     return value.strip() if isinstance(value, str) else ""
 
 
 def _normalized(value: str) -> str:
-    """统一兼容字符、宽度和大小写以比较建议值。"""
+    """Normalize compatibility characters, width and case when comparing proposed values."""
     return unicodedata.normalize("NFKC", value).casefold().strip()
 
 
 def _identity_text(value: Any) -> str:
-    """规整问题身份字段中的空白和兼容字符，降低跨轮措辞抖动。"""
+    """Normalize issue identity whitespace and compatibility forms to reduce variation across
+    rounds.
+    """
     return re.sub(r"\s+", " ", _normalized(_text(value)))
 
 
 def _review_issue_key(issue: dict[str, Any]) -> str:
-    """生成跨 Review 轮次稳定、与临时 ``issue_id`` 无关的问题键。"""
+    """Generate a stable issue key across review rounds, independent of temporary issue_id
+    values.
+    """
     consistency = issue.get("consistency")
     consistency_key = (
         _identity_text(consistency.get("key")) if isinstance(consistency, dict) else ""
@@ -72,12 +76,12 @@ def _review_issue_key(issue: dict[str, Any]) -> str:
 
 
 def _safe_id(value: str) -> str:
-    """把 agent/conflict ID 转为安全文件名。"""
+    """Convert agent or conflict IDs to safe filenames."""
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "agent"
 
 
 class _ActionLoop:
-    """在普通 messages 接口上模拟 request-evidence/final 工具循环。"""
+    """Implement a request-evidence/final loop using the ordinary messages interface."""
 
     def __init__(
         self,
@@ -101,14 +105,18 @@ class _ActionLoop:
         allowed_refs: set[str],
         validate_final: Callable[[dict[str, Any], set[str]], Any],
     ) -> tuple[Any | None, str]:
-        """执行最多 N 轮取证加一次最终调用；失败返回原因而不抛出。"""
+        """Run up to N evidence rounds plus a final call; return a failure reason instead of
+        raising.
+        """
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
         max_rounds = self.config.pipeline.review_agent_max_evidence_rounds
         if max_rounds == 0:
-            messages[-1]["content"] += "\n本次不允许取证；当前响应必须直接输出 final。"
+            messages[-1]["content"] += (
+                "\nEvidence requests are disabled for this call; return final immediately."
+            )
         trace: dict[str, Any] = {
             "agent_id": agent_id,
             "stage": stage,
@@ -116,7 +124,7 @@ class _ActionLoop:
             "turns": [],
         }
         relative = f"agents/{_safe_id(agent_id)}.json"
-        # 断点续跑：先探测已有 trace（必须先 load 再写，否则覆盖自己）
+        # Resume: load an existing trace before writing, or the trace would overwrite itself.
         existing = self.debug.load_json(relative)
         resume_turns: list[dict[str, Any]] = []
         if existing is not None:
@@ -149,9 +157,9 @@ class _ActionLoop:
         seen_requests: set[tuple[str, str]] = set()
         start_turn = 1
         if resume_turns:
-            # 断点续跑：重放已完成取证轮，重建消息历史与去重状态。
-            # 消息顺序、证据 JSON 与取证轮次提示必须与原始运行逐字节
-            # 一致，后续 in-flight 调用才能无缝续上。
+            # Replay completed evidence rounds to restore message history and deduplication state.
+            # Message order, evidence JSON and round instructions must match the original run byte for byte
+            # so an in-flight call can resume seamlessly.
             first_messages = resume_turns[0].get("messages")
             if isinstance(first_messages, list):
                 messages = [dict(message) for message in first_messages]
@@ -167,14 +175,12 @@ class _ActionLoop:
                 if not isinstance(cached_results, list) or not isinstance(cached_raw, str):
                     continue
                 messages.append({"role": "assistant", "content": cached_raw})
-                evidence_message = "【证据工具返回 JSON】\n" + json.dumps(
+                evidence_message = "[Evidence tool results (JSON)]\n" + json.dumps(
                     cached_results, ensure_ascii=False, indent=2
                 )
                 evidence_rounds += 1
                 if evidence_rounds >= max_rounds:
-                    evidence_message += (
-                        "\n取证轮次已用完。下一次响应只能输出 action=final，不得再次请求证据。"
-                    )
+                    evidence_message += "\nEvidence rounds are exhausted. The next response must use action=final; do not request more evidence."
                 messages.append({"role": "user", "content": evidence_message})
                 allowed_refs.update(self.evidence.evidence_refs(cached_results))
                 cached_parsed = cached.get("parsed")
@@ -191,8 +197,8 @@ class _ActionLoop:
                             seen_requests.add(
                                 (tool, json.dumps(arguments, ensure_ascii=False, sort_keys=True))
                             )
-            # 从第一个未完成 turn 续跑：最后一个缓存 turn 若无证据结果
-            # （in-flight 请求、取证执行中或 final 已解析未落盘）原地重入。
+            # Resume at the first unfinished turn. Re-enter the final cached turn if it lacks evidence results
+            # because a request, evidence operation or parsed final response was not yet persisted.
             start_turn = len(resume_turns)
             if "evidence_results" in resume_turns[-1]:
                 start_turn += 1
@@ -240,8 +246,8 @@ class _ActionLoop:
                     turn["raw_response"] = raw
                 self.debug.write_json(relative, trace)
 
-                # 仅当 raw 与 parsed 都来自同一缓存响应时才复用 parsed；
-                # 无 raw 的残留 parsed（手工篡改/损坏 trace）不得遮蔽新调用结果。
+                # Reuse parsed only when raw and parsed come from the same cached response.
+                # Orphaned parsed data from a damaged or edited trace must not hide a fresh response.
                 if (
                     cached_turn is not None
                     and isinstance(cached_turn.get("raw_response"), str)
@@ -328,7 +334,7 @@ class _ActionLoop:
                             "tool": request["tool"],
                             "ok": False,
                             "error": "evidence_batch_too_large",
-                            "hint": "减少同轮请求数或缩小各请求的上下文范围。",
+                            "hint": "Reduce the requests per round or the context range of each request.",
                         }
                         encoded_size = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
                     results.append(result)
@@ -353,15 +359,13 @@ class _ActionLoop:
                     refs=sorted(self.evidence.evidence_refs(results)),
                 )
                 messages.append({"role": "assistant", "content": raw})
-                evidence_message = "【证据工具返回 JSON】\n" + json.dumps(
+                evidence_message = "[Evidence tool results (JSON)]\n" + json.dumps(
                     results, ensure_ascii=False, indent=2
                 )
                 if evidence_rounds >= max_rounds:
-                    evidence_message += (
-                        "\n取证轮次已用完。下一次响应只能输出 action=final，不得再次请求证据。"
-                    )
+                    evidence_message += "\nEvidence rounds are exhausted. The next response must use action=final; do not request more evidence."
                 messages.append({"role": "user", "content": evidence_message})
-        except Exception as error:  # noqa: BLE001 - Loop 失败按产品约定回退初审
+        except Exception as error:  # noqa: BLE001 - Loop failures fall back to the initial review by contract.
             reason = (
                 str(error)
                 if isinstance(error, ReviewLoopProtocolError)
@@ -384,7 +388,7 @@ class _ActionLoop:
 
 
 class ReviewAgentLoop:
-    """核验一个成功初审叶块，并允许在该块内补充问题。"""
+    """Verify a successfully reviewed leaf block and allow additional issues within that block."""
 
     def __init__(
         self,
@@ -400,7 +404,9 @@ class ReviewAgentLoop:
 
     @staticmethod
     def _consistency(value: Any) -> dict[str, str]:
-        """清洗跨块一致性 claim；普通问题返回空字典。"""
+        """Normalize cross-block consistency claims; return an empty dictionary for ordinary
+        issues.
+        """
         if value is None or value == {}:
             return {}
         if not isinstance(value, dict):
@@ -420,7 +426,7 @@ class ReviewAgentLoop:
 
     @staticmethod
     def _refs(value: Any, allowed_refs: set[str]) -> list[str]:
-        """验证最终输出只引用当前 Loop 实际取得的证据。"""
+        """Verify that final output references only evidence actually obtained by this loop."""
         if value is None:
             return []
         if not isinstance(value, list) or any(not isinstance(ref, str) for ref in value):
@@ -440,7 +446,7 @@ class ReviewAgentLoop:
         initial_issues: list[dict[str, Any]],
         review_round: int | None = None,
     ) -> ReviewLoopOutcome:
-        """运行块级有界取证；失败时原样保留所有初审候选。"""
+        """Run bounded block-level evidence review; preserve all initial candidates on failure."""
         candidates: list[dict[str, Any]] = []
         for ordinal, issue in enumerate(initial_issues):
             candidate = dict(issue)
@@ -494,7 +500,9 @@ class ReviewAgentLoop:
         allowed_refs = set(current_refs.values())
 
         def issue_refs(index: int, value: Any, valid_refs: set[str]) -> list[str]:
-            """把当前段自身 ref 自动并入模型显式引用，保证建议始终可追溯。"""
+            """Include the current segment reference with explicit citations so suggestions
+            remain traceable.
+            """
             refs = self._refs(value, valid_refs)
             current = current_refs.get(index)
             return list(dict.fromkeys([*([current] if current else []), *refs]))
@@ -634,7 +642,9 @@ def normalize_review_issues(
     issues: list[dict[str, Any]],
     evidence: BookEvidenceIndex,
 ) -> list[dict[str, Any]]:
-    """确定性清洗，并生成轮内 ID 与跨轮稳定的问题键。"""
+    """Normalize deterministically and assign round-local IDs and stable cross-round issue
+    keys.
+    """
     prepared: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for issue in sorted(
@@ -688,7 +698,9 @@ def normalize_review_issues(
 
 
 def build_conflict_groups(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """找出不同审校块对同一一致性主题提出的互斥值。"""
+    """Find mutually exclusive values proposed for one consistency subject across review
+    blocks.
+    """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for issue in issues:
         consistency = issue.get("consistency")
@@ -728,11 +740,11 @@ def apply_review_arbitrations(
     issues: list[dict[str, Any]],
     arbitrations: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """把终局仲裁应用到建议视图，不修改正文或术语库。
-
-    ``suggested`` 冲突保留所有已确认的问题：原建议值落选的位置仍然需要修正，
-    因此把其建议改写为最终统一值，同时另存仲裁前版本供逐轮审计。
-    ``unresolved`` 冲突保留全部问题并附上未解决标记。
+    """Apply final arbitration to the recommendation view without modifying text or glossary.
+    For suggested conflicts, retain every confirmed issue: locations whose original
+    proposals lost still need correction. Rewrite their suggestions to the chosen value and
+    retain pre-arbitration versions for round auditing. For unresolved conflicts, keep all
+    issues and mark them unresolved.
     """
     by_id = {
         str(issue["issue_id"]): dict(issue)
@@ -761,8 +773,12 @@ def apply_review_arbitrations(
                     previous_suggestion = _text(issue.get("suggestion"))
                     issue["pre_arbitration_detail"] = previous_detail
                     issue["pre_arbitration_suggestion"] = previous_suggestion
-                    issue["detail"] = f"该处相关表达需按终局仲裁统一为「{recommended}」。"
-                    issue["suggestion"] = f"按终局仲裁将相关表达统一为「{recommended}」。"
+                    issue["detail"] = (
+                        f"Final arbitration requires the expression here to use “{recommended}” consistently."
+                    )
+                    issue["suggestion"] = (
+                        f"Use “{recommended}” consistently for this expression as determined by final arbitration."
+                    )
                     if isinstance(consistency, dict):
                         issue["consistency"] = {
                             **consistency,
@@ -788,7 +804,9 @@ def apply_review_arbitrations(
 
 
 class ReviewConflictArbiter:
-    """在全部审校块完成后，对每个互斥一致性建议给出只读裁决建议。"""
+    """Produce read-only recommendations for conflicting consistency proposals after all blocks
+    finish.
+    """
 
     def __init__(
         self,
@@ -803,12 +821,14 @@ class ReviewConflictArbiter:
         self._loop = _ActionLoop(client, config, evidence, debug)
 
     def arbitrate(self, conflict: dict[str, Any]) -> dict[str, Any]:
-        """仲裁一个冲突组；失败时保留全部问题并标记 unresolved。"""
+        """Arbitrate one conflict; retain all issues and mark unresolved on failure."""
         conflict_id = str(conflict["conflict_id"])
         issue_ids = [str(issue["issue_id"]) for issue in conflict["issues"]]
 
         def unresolved(reason: str, refs: set[str] | None = None) -> dict[str, Any]:
-            """构造不丢问题的保守结果，并记录未完成仲裁的原因。"""
+            """Build a conservative result that preserves issues and records why arbitration
+            was incomplete.
+            """
             self.debug.log_event(
                 "review_arbitration_unresolved",
                 conflict_id=conflict_id,
@@ -832,7 +852,9 @@ class ReviewConflictArbiter:
             proposed = _text(issue["consistency"]["proposed_value"])
             proposal_groups.setdefault(_normalized(proposed), []).append(issue)
         if len(proposal_groups) > _MAX_ARBITRATION_PROPOSALS:
-            return unresolved(f"互斥建议值过多（{len(proposal_groups)}），超过选择性仲裁上限。")
+            return unresolved(
+                f"Too many conflicting values ({len(proposal_groups)}) for selective arbitration."
+            )
 
         sampled_refs: set[str] = set()
         proposal_rows: list[dict[str, Any]] = []
@@ -892,7 +914,9 @@ class ReviewConflictArbiter:
         }
         compact_json = json.dumps(compact, ensure_ascii=False, indent=2)
         if len(compact_json.encode("utf-8")) > _MAX_ARBITRATION_PAYLOAD_BYTES:
-            return unresolved("选择性仲裁样本仍超过输入大小上限。", sampled_refs)
+            return unresolved(
+                "Selective arbitration samples still exceed the input size limit.", sampled_refs
+            )
 
         system = prompts.render(
             "review_arbiter_system",
@@ -906,8 +930,8 @@ class ReviewConflictArbiter:
             tgt=self.config.target_lang,
             conflict_json=compact_json,
         )
-        # 只预授权提示词里实际附有正文的样本 ref。块级 Agent 曾取到但未
-        # 展示给仲裁器的证据，必须由仲裁器重新按需查询。
+        # Preauthorize only sample refs whose text appears in the arbiter prompt. Evidence previously
+        # obtained by a block agent but not shown here must be requested again by the arbiter.
         allowed_refs = set(sampled_refs)
 
         def validate_final(data: dict[str, Any], valid_refs: set[str]) -> dict[str, Any]:
@@ -965,4 +989,4 @@ class ReviewConflictArbiter:
         )
         if result is not None:
             return result
-        return unresolved(f"仲裁 Agent 未能完成：{reason}", allowed_refs)
+        return unresolved(f"Arbitration agent did not complete: {reason}", allowed_refs)

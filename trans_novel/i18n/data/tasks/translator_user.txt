@@ -1,0 +1,22 @@
+[Characters / Style guide]
+$style
+
+[Whole-book synopsis]
+$book_synopsis
+
+[Chapter digest]
+$chapter_digest
+
+[Glossary] (required mappings)
+$glossary
+
+[Paragraph-specific annotation references] (JSON; only for paragraphs in applies_to, not text to translate)
+$annotation_contexts
+
+[Recent translations]
+$context
+
+[$src_label paragraphs to translate] ($n paragraphs, numbered 0 through ${n_minus_1})
+$numbered_source
+
+Translate every paragraph. Return JSON: {"translations":[...]}, with exactly $n items.

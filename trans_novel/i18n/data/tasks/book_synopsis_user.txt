@@ -1,0 +1,7 @@
+[Preliminary analysis]
+$analysis
+
+[Chapter digests]
+$digests
+
+Synthesize a whole-book synopsis of at most $synopsis_length.

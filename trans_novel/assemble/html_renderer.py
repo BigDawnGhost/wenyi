@@ -1,8 +1,7 @@
-"""DOM 渲染：把 Chapter/Segment 译文回填到 BeautifulSoup 节点。
-
-本模块负责将 Segment 译文回填到 HTML 模板的 data-tn-id 锚点节点上，
-处理 cont 续段合并、双语原文插入、日文 ruby 保留、注释链接恢复和行内标签。
-渲染函数只操作 DOM 并返回 HTML 字符串，不执行文件 I/O。
+"""Render Chapter/Segment translations into BeautifulSoup DOM nodes.
+Backfill data-tn-id anchors, merge continuations, insert bilingual source text, preserve
+Japanese ruby, and restore annotation links and inline elements. Rendering changes only the
+DOM and returns HTML without file I/O.
 """
 
 from __future__ import annotations
@@ -17,10 +16,10 @@ from ..ingest.epub_toc import resolve_epub_href
 from ..ingest.models import KIND_HEADING, Chapter, Segment
 from .writer_common import _bilingual_source, _ordered_pair, _seg_text
 
-# 双语原文样式 ID，用于在 <head> 中注入或检测已有样式
+# Bilingual source style ID for injection and detection in head.
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
 
-# 双语原文淡化和深色模式适配样式
+# Muted source styles with dark-mode support.
 _BILINGUAL_CSS = """\
 .tn-source {
   font-size: 0.88em;
@@ -40,7 +39,7 @@ _BILINGUAL_CSS = """\
 }
 """
 
-# 行内图片等元素的元数据键和属性名
+# Metadata keys and attributes for inline elements such as images.
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
 _ANNOTATION_META_KEY = "epub_annotations"
@@ -59,12 +58,10 @@ def _render_paragraph_html(
     preserve_source_style: bool = True,
     heading_level: int | None = None,
 ) -> list[str]:
-    """渲染单个段落为 HTML 片段列表。
-
-    目前由 ``epub_writer._build_epub_from_chapters`` 调用：
-    - heading_level 为 None 时 heading 用 h1；传入正整数则用 h{level}。
-    - preserve_source_style=True 时原文块用纯 tn-source 类；
-    - preserve_source_style=False 时追加 ibooks-dark-theme-use-custom-text-color。
+    """Render one paragraph into HTML fragments for EPUB chapter construction.
+    Use h1 for headings when heading_level is None, otherwise h{level}. With
+    preserve_source_style, use only tn-source; otherwise add
+    ibooks-dark-theme-use-custom-text-color.
     """
     if kind == KIND_HEADING:
         level = heading_level if heading_level is not None else 1
@@ -91,11 +88,11 @@ def _bilingual_source_markup(
     resource_href: str,
     source_link_targets: dict[tuple[str, str], str],
 ) -> str:
-    """为双语原文保留注释链接，以及日语原文的 ruby 注音。
-
-    原文注释在源 EPUB 中已经拥有准确位置，无需复用译文定位结果。这里只
-    保留注释根及其后代；其它普通内联标签仍拍平成干净文本。克隆节点中的
-    ``id``/``name`` 会移除，避免与译文侧保留的原节点产生重复锚点。
+    """Preserve annotation links and Japanese ruby in bilingual source text.
+    Source links already have accurate positions in the original EPUB, so target placements
+    are unnecessary. Keep annotation roots and descendants while flattening other inline
+    tags to clean text. Remove cloned id/name attributes to avoid duplicate anchors on the
+    target side.
     """
     normalized_lang = source_lang.strip().replace("_", "-").lower()
     keep_ruby = normalized_lang == "ja" or normalized_lang.startswith("ja-")
@@ -174,9 +171,9 @@ def _bilingual_source_markup(
     ):
         root.attrs.pop(attr, None)
 
-    # 译文继续使用原书 fragment；原文镜像只在目标也有原文块时改写到
-    # synthetic source anchor。路径和 query 原样保留，故跨 XHTML 链接仍
-    # 按原书相对关系解析；未命中映射时保留原链接，避免制造悬空锚点。
+    # Translations retain original fragments. Rewrite source mirrors to synthetic anchors only when
+    # the destination also has a source block. Preserve paths and queries so cross-XHTML links
+    # keep their original relative resolution; preserve unmapped links to avoid dangling anchors.
     links = [root] if root.name == "a" else []
     links.extend(root.find_all("a", href=True))
     for link in links:
@@ -194,7 +191,7 @@ def _bilingual_source_markup(
 
 
 def _append_source(soup: BeautifulSoup, element: Tag, source: str, markup: str) -> None:
-    """向双语原文块写入纯文本，或写入已净化的注释/ruby 片段。"""
+    """Write plain text or sanitized annotation/ruby markup into a bilingual source block."""
     if not markup:
         element.append(source)
         return
@@ -204,7 +201,7 @@ def _append_source(soup: BeautifulSoup, element: Tag, source: str, markup: str) 
 
 
 def _append_text_with_breaks(soup: BeautifulSoup, element: Tag, text: str) -> None:
-    """向元素追加文本，并把译文换行转换为 XHTML ``br``。"""
+    """Append text, converting translation newlines into XHTML br elements."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     for index, line in enumerate(lines):
         if line:
@@ -217,10 +214,10 @@ def _merge_epub_render_meta(
     stored: dict[str, object],
     fresh: dict[str, object],
 ) -> dict[str, object]:
-    """合并持久化的定位结果与从原 EPUB 重建的临时 DOM 元数据。
-
-    原书重解析得到的 ``items`` 和内联节点位置是 DOM 的权威来源；模型生成的
-    目标文本定位只存在章节状态中，不能被新解析出的元数据覆盖。
+    """Merge persisted placements with temporary DOM metadata rebuilt from the original EPUB.
+    Reparsed items and inline-node positions are authoritative for the DOM. Model-generated
+    target placements exist only in chapter state and must not be overwritten by newly
+    parsed metadata.
     """
     merged = dict(stored)
     merged.update(fresh)
@@ -239,14 +236,14 @@ def _merge_epub_render_meta(
 
 
 def _clean_annotation_attrs(node: Tag) -> None:
-    """移除仅供回填定位使用的临时属性，避免其泄漏到成品 EPUB。"""
+    """Remove temporary backfill attributes so they cannot leak into the exported EPUB."""
     node.attrs.pop(_ANNOTATION_ID_ATTR, None)
     for descendant in node.find_all(True, attrs={_ANNOTATION_ID_ATTR: True}):
         descendant.attrs.pop(_ANNOTATION_ID_ATTR, None)
 
 
 def _range_marker_nodes(root: Tag, marker_text: str) -> list[Tag]:
-    """从范围链接中取出脚注标记节点，丢弃待替换的源文正文节点。"""
+    """Extract footnote markers from range links and discard source body nodes being replaced."""
     if not marker_text:
         return []
     candidates = root.find_all(["sup", "sub"])
@@ -265,7 +262,9 @@ def _fallback_annotation_node(
     mode: str,
     marker_text: str,
 ) -> Tag:
-    """把无法可靠定位的链接降级为段末标记，同时保留原链接属性。"""
+    """Fall back to paragraph-end markers when links cannot be aligned reliably; preserve
+    attributes.
+    """
     _clean_annotation_attrs(root)
     if mode != "range":
         return root
@@ -284,7 +283,7 @@ def _annotation_restorations(
     text: str,
     meta: dict[str, object],
 ) -> tuple[list[tuple[int, int, Tag]], list[tuple[int, int, int, Tag, list[Tag]]], list[Tag]]:
-    """提取注释 DOM，并分成点定位、范围定位和安全降级三组。"""
+    """Extract annotation DOM into point, range and safe-fallback groups."""
     raw_annotations = meta.get(_ANNOTATION_META_KEY)
     annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
     raw_items = annotations.get("items")
@@ -368,7 +367,7 @@ def _annotation_restorations(
             continue
         fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
 
-    # HTML 链接不能相互交叉或嵌套。异常范围统一降级，避免生成破损 DOM。
+    # HTML links cannot cross or nest. Degrade invalid ranges to avoid producing a broken DOM.
     last_end = -1
     for start, end, order, root, markers, marker_text in sorted(pending_ranges):
         if start < last_end:
@@ -399,7 +398,7 @@ def _render_text_with_nodes(
     ranges: list[tuple[int, int, int, Tag, list[Tag]]],
     fallbacks: list[Tag],
 ) -> None:
-    """按目标文本偏移回填普通内联节点、注释点和非重叠注释范围。"""
+    """Backfill inline nodes, annotation points and nonoverlapping ranges at target offsets."""
     ordered_nodes = sorted(nodes, key=lambda value: (value[0], value[1]))
     node_index = 0
 
@@ -426,7 +425,7 @@ def _render_text_with_nodes(
         if cursor < end:
             _append_text_with_breaks(soup, parent, text[cursor:end])
 
-    # annotate 通常已把 PI 提到块前；此处再兜底，避免漏网 PI 被 clear 掉。
+    # Annotation normally moves processing instructions before the block; protect any remaining ones.
     if el.parent is not None:
         for node in list(el.descendants):
             if isinstance(node, ProcessingInstruction):
@@ -436,15 +435,15 @@ def _render_text_with_nodes(
     for start, end, _order, root, markers in sorted(ranges):
         append_until(el, cursor, start)
         root.clear()
-        # 范围结束边界上的点注释是原链接之后的兄弟，不能塞进 a 形成嵌套链接。
+        # Point annotations at a range's end are siblings after the link, not nested anchors inside it.
         append_until(root, start, end, include_end=False)
         for marker in markers:
             root.append(marker)
         el.append(root)
         cursor = end
     append_until(el, cursor, len(text))
-    # 多条降级注释挤在段末时，相邻链接之间原本没有任何分隔文本，脚注数字会
-    # 连写成一串（如 11、12、13 会读成 111213）；插入顿号让它们可辨读。
+    # Adjacent fallback links at paragraph ends have no separating text, so footnote numbers can
+    # merge (11, 12, 13 becomes 111213). Insert a separator to keep them readable.
     for index, fallback in enumerate(fallbacks):
         if index > 0:
             el.append("、")
@@ -457,9 +456,9 @@ def _replace_block_content(
     text: str,
     meta: dict[str, object],
 ) -> None:
-    """用译文替换块内容，并恢复普通内联节点与可跳转注释链接。"""
-    # 列表项常直接把 ``a`` 本身作为翻译块。通常只需保留链接外壳；若其中
-    # 还带 sup/sub 注释号，则必须先取出标记，避免 clear() 一并删除。
+    """Replace block content and restore inline nodes and navigable annotation links."""
+    # List items may use the a element itself as a translation block. Preserve its shell and extract
+    # any sup/sub annotation markers first so clear() cannot delete them.
     self_markers: list[Tag] = []
     self_annotation_id = el.get(_ANNOTATION_ID_ATTR)
     if isinstance(self_annotation_id, str):
@@ -510,12 +509,12 @@ def _replace_block_content(
             target_offset = round(offset * len(text) / source_length)
         restored.append((target_offset, len(nodes) + order, node))
 
-    # 普通内联节点必须先从原 DOM 中取出：范围链接可能同时包裹图片，若先
-    # 提取并清空链接根，后续便无法找回其中的原子节点。
+    # Extract ordinary inline nodes first: range links may contain images, which become inaccessible
+    # after the link root has been extracted and cleared.
     annotation_points, annotation_ranges, annotation_fallbacks = _annotation_restorations(
         el, text, meta
     )
-    # 注释节点与普通内联节点共享稳定排序；同偏移下点状注释排在普通节点前。
+    # Use stable shared ordering for annotations and inline nodes, with point annotations first at ties.
     restored = list(annotation_points) + restored
 
     _render_text_with_nodes(
@@ -538,7 +537,9 @@ def _segment_render_maps(
     dict[str, str],
     dict[str, dict[str, object]],
 ]:
-    """按 anchor 合并续段，返回译文、原文、类型和持久化元数据映射。"""
+    """Merge continuations by anchor and return target, source, kind and persisted metadata
+    mappings.
+    """
     by_anchor: dict[str, str] = {}
     src_by_anchor: dict[str, str] = {}
     kind_by_anchor: dict[str, str] = {}
@@ -558,10 +559,9 @@ def _segment_render_maps(
 
 
 def _index_soup_ids(soup: BeautifulSoup) -> tuple[set[str], dict[str, Tag]]:
-    """一次 find_all 同时建立已占用 id/name 集合和 data-tn-id → Tag 索引。
-
-    回填需要对每个锚点做可能数百次查找；若每次都重新 ``soup.find()``，单页耗时与
-    「段数 × DOM 规模」成正比。这里只遍历一遍全页标签，后续查找降为 O(1) 字典查找。
+    """Build occupied id/name sets and the data-tn-id index in one find_all traversal.
+    Repeated soup.find calls make backfill scale with paragraph count times DOM size. Index
+    the page once so subsequent anchor lookup is O(1).
     """
     occupied: set[str] = set()
     tn_id_index: dict[str, Tag] = {}
@@ -583,8 +583,10 @@ def _build_source_anchor_ids(
     tn_id_index: dict[str, Tag],
     occupied: set[str],
 ) -> dict[str, str]:
-    """为实际输出的原文块分配稳定且不与原书冲突的 synthetic ID。"""
-    occupied = set(occupied)  # 本函数会不断加入新分配的 id，不能直接复用调用方的集合
+    """Assign stable synthetic IDs to actual source blocks without colliding with original IDs."""
+    occupied = set(
+        occupied
+    )  # Copy the caller's set because this function adds every newly allocated ID.
     assigned: dict[str, str] = {}
     for anchor, target in by_anchor.items():
         if kind_by_anchor.get(anchor) == KIND_HEADING:
@@ -616,19 +618,16 @@ def _render_segments_html(
     source_ids_by_anchor: dict[str, str] | None = None,
     source_link_targets: dict[tuple[str, str], str] | None = None,
 ) -> str:
-    """把同一物理 HTML 资源内的译文按锚点一次性回填。
-
-    EPUB 的逻辑章节边界可以落在同一个 XHTML 中，也可以跨越多个 XHTML。
-    因此真正的回填单位是物理资源而不是 ``Chapter``；调用方须先把属于同一
-    ``resource_href`` 的 Segment 聚合后再调用本函数。
-
-    ``preserve_source_style`` 开启时复用原块的 class/style 并不注入
-    淡化样式；``tn-source`` 仅作为结构标记保留。
+    """Backfill translations once per physical HTML resource, indexed by anchor.
+    Logical EPUB chapters may share one XHTML or span several. Callers must first group
+    segments by resource_href, since physical resources are the backfill unit.
+    With preserve_source_style, reuse original class/style attributes without muted CSS;
+    retain tn-source only as a structural marker.
     """
     soup = BeautifulSoup(template, "html.parser")
     by_anchor, src_by_anchor, kind_by_anchor, stored_meta_by_anchor = _segment_render_maps(segments)
-    # 一次建索引，后续按 anchor 查找 data-tn-id 节点都是 O(1)，避免每个锚点都
-    # 重新 soup.find() 扫一遍全页 DOM。
+    # Index once so anchor lookups are O(1), avoiding a full DOM scan with soup.find for every anchor.
+    # Reuse the resulting index throughout this resource.
     occupied_ids, tn_id_index = _index_soup_ids(soup)
     if bilingual and source_ids_by_anchor is None:
         source_ids_by_anchor = _build_source_anchor_ids(
@@ -640,8 +639,8 @@ def _render_segments_html(
         )
     source_ids_by_anchor = source_ids_by_anchor or {}
     if bilingual and source_link_targets is None:
-        # 直接调用本函数时仍支持同 XHTML 内链接；完整 EPUB 导出会传入
-        # 全书映射，从而同时覆盖跨资源链接。
+        # Direct calls support same-XHTML links. Complete EPUB exports supply the book-wide mapping
+        # to support links across resources as well.
         from ..ingest.epub_reader import _fragment_anchor_map
 
         source_link_targets = {
@@ -682,9 +681,9 @@ def _render_segments_html(
         del el["data-tn-id"]
         if not src:
             continue
-        # p 的原文可作为相邻段落插入；li/blockquote 则必须留在原容器内，
-        # 避免生成 <ul><li>...</li><p>...</p></ul> 之类的非法列表结构，
-        # 同时保留引用块的语义和样式。
+        # Source text for p can be an adjacent paragraph. Keep li/blockquote content inside its container
+        # to avoid invalid structures such as <ul><li>...</li><p>...</p></ul>
+        # and preserve blockquote semantics and styling.
         nested_source = el.name in {"li", "blockquote"}
         src_el = soup.new_tag("span" if line_wrapper else "div" if nested_source else "p")
         source_classes = ["tn-source"]
@@ -718,7 +717,7 @@ def _render_segments_html(
             el.insert_before(src_el)
         else:
             el.insert_after(src_el)
-    # br 拆行包装只用于提供独立回填锚点；完成后去掉 span，恢复干净 DOM。
+    # Line-break wrappers provide temporary backfill anchors; unwrap them afterward for a clean DOM.
     for wrapper in list(soup.find_all(True, attrs={_LINE_WRAPPER_ATTR: True})):
         wrapper.unwrap()
     for node in soup.find_all(True, attrs={_ANNOTATION_ID_ATTR: True}):
@@ -736,10 +735,9 @@ def _render_chapter_html(
     preserve_source_style: bool = False,
     source_lang: str = "",
 ) -> str:
-    """回填一个旧式“每章一个模板”的 HTML/EPUB 章节。
-
-    该包装仍供普通 HTML 输出和 0.3.x 以前的 EPUB 状态使用；新 EPUB 状态
-    由 :func:`_render_segments_html` 按物理资源聚合回填。
+    """Backfill a legacy HTML/EPUB chapter with one template per chapter.
+    This wrapper remains for ordinary HTML output and EPUB state from before 0.3.x. Newer
+    EPUB state is grouped by physical resource through _render_segments_html.
     """
     return _render_segments_html(
         chapter.template or "",

@@ -1,7 +1,6 @@
-"""PDF 输出：WeasyPrint 和 fpdf2 两种引擎适配。
-
-先调用 html_writer 生成打印用临时 HTML，再根据 pdf_engine 分派到
-WeasyPrint（系统渲染库）或 fpdf2（纯 Python）路径。
+"""PDF output through WeasyPrint or fpdf2.
+Generate temporary print HTML with html_writer, then dispatch by pdf_engine to WeasyPrint's
+system rendering libraries or the pure-Python fpdf2 path.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from bs4.element import Comment, Tag
 from ..pipeline.runstore import RunStore
 from .html_writer import _assemble_html
 
-# 打印专用 CSS：A5 版面、页码、CJK 字体和分页控制
+# Print CSS: A5 pages, page numbers, CJK fonts and page-break control.
 _PRINT_CSS = """\
 @page {
   size: A5;
@@ -73,7 +72,7 @@ def _assemble_pdf_weasyprint(
         HTML = getattr(importlib.import_module("weasyprint"), "HTML")
     except (ImportError, OSError, AttributeError) as error:
         raise ImportError(
-            "实验性 PDF 输出需要 WeasyPrint，请运行：uv sync --extra pdf-output"
+            "Experimental PDF output requires WeasyPrint; run: uv sync --extra pdf-output"
         ) from error
 
     with tempfile.TemporaryDirectory(prefix="trans-novel-pdf-") as directory:
@@ -123,8 +122,8 @@ def _find_fpdf_font() -> str:
         if candidate and os.path.isfile(candidate):
             return candidate
     raise RuntimeError(
-        "fpdf2 PDF 输出需要中文字体。请设置 TRANS_NOVEL_PDF_FONT，"
-        "指向一个包含中文字符的 TTF/OTF/TTC 字体文件。"
+        "fpdf2 PDF output requires a CJK-capable font. Set TRANS_NOVEL_PDF_FONT "
+        "to a TTF/OTF/TTC font with the required characters."
     )
 
 
@@ -263,7 +262,7 @@ def _assemble_pdf_fpdf2(
         FontFace = getattr(fpdf_module, "FontFace")
     except (ImportError, AttributeError) as error:
         raise ImportError(
-            "fpdf2 PDF 输出需要可选依赖，请运行：uv sync --extra pdf-output-lite"
+            "fpdf2 PDF output requires optional dependencies; run: uv sync --extra pdf-output-lite"
         ) from error
 
     font_path = _find_fpdf_font()
@@ -361,4 +360,4 @@ def _assemble_pdf(
             order=order,
             preserve_source_style=preserve_source_style,
         )
-    raise ValueError("不支持的 PDF 引擎：" + engine + "（可选 weasyprint / fpdf2）")
+    raise ValueError("Unsupported PDF engine: " + engine + " (choose weasyprint / fpdf2)")

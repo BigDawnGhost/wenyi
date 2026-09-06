@@ -1,0 +1,7 @@
+[Glossary]
+$glossary
+
+[Paragraph pairs] ($n paragraphs)
+$pairs
+
+Review all $n paragraphs and return JSON. The final two fields must be "reviewed_segments":$n followed by "complete":true. They confirm that the batch is complete and must not be emitted early.

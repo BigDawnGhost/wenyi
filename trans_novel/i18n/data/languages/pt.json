@@ -1,0 +1,11 @@
+{
+  "label": "Portuguese",
+  "english_name": "Portuguese",
+  "source_guidance": "Interpret Portuguese tense, omitted subjects and differences in forms of address. Do not infer character identity from grammatical gender.",
+  "target_guidance": "Use natural Portuguese with consistent forms of address, tense, gender/number agreement and the selected regional usage.",
+  "punctuation_rule": "Follow Portuguese punctuation and quotation conventions. Preserve accents, nasal marks and symbol pairing.",
+  "title_rule": "Use conventional Portuguese titles and section labels.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

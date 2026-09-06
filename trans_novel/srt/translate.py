@@ -1,4 +1,4 @@
-"""字幕翻译：滑窗批次 + 高并发，复用 Wenyi strong 档，无术语库。"""
+"""Concurrent sliding-window subtitle translation using the strong tier without a glossary."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from typing import Any
 
 from ..assemble.srt_writer import default_srt_out_paths, write_srt_outputs
 from ..config import Config
+from ..i18n.languages import profile, require_language
+from ..i18n.prompts import render
+from ..i18n.resources import prompt_fingerprint
 from ..ingest.srt_reader import parse_srt
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
@@ -28,10 +31,7 @@ _JSON_OBJECT = re.compile(r"(\{.*\})", re.DOTALL)
 
 
 def _target_language_name(code: str) -> str:
-    normalized = (code or "zh").strip().lower().replace("_", "-")
-    if normalized.startswith("zh"):
-        return "Simplified Chinese"
-    return code or "Simplified Chinese"
+    return profile(code)["english_name"]
 
 
 def _parse_batch_json(text: str) -> dict[str, str] | None:
@@ -56,18 +56,23 @@ def _translate_batch(
     batch: dict[str, str],
     *,
     target_language: str,
+    source_language: str = "auto",
 ) -> dict[str, str] | None:
     indices = sorted(int(key) for key in batch)
     start_idx, end_idx = indices[0], indices[-1]
-    user = (
-        f"You are a professional movie subtitle translator. Translate the following "
-        f"subtitles to {target_language}. Maintain the original tone and flow. "
-        f"Return ONLY a valid JSON object mapping subtitle index strings to translations. "
-        f"Target range: {start_idx} to {end_idx}.\n"
-        f"Input:\n{json.dumps(batch, ensure_ascii=False)}"
+    user = render(
+        "srt_batch_user",
+        src=source_language,
+        tgt=target_language,
+        start_idx=start_idx,
+        end_idx=end_idx,
+        batch_json=json.dumps(batch, ensure_ascii=False),
     )
     messages = [
-        {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+        {
+            "role": "system",
+            "content": render("srt_batch_system", src=source_language, tgt=target_language),
+        },
         {"role": "user", "content": user},
     ]
     for _attempt in range(RETRY_LIMIT):
@@ -81,24 +86,32 @@ def _translate_batch(
             parsed = _parse_batch_json(raw)
             if parsed is not None:
                 return parsed
-        except Exception:  # noqa: BLE001 - 批次失败由上层补漏/重试消化
+        except Exception:  # noqa: BLE001 - Higher-level gap filling/retries handle batch failures.
             continue
     return None
 
 
-def _translate_single(client: LLMClient, text: str, *, target_language: str) -> str:
+def _translate_single(
+    client: LLMClient, text: str, *, target_language: str, source_language: str = "auto"
+) -> str:
     if not text.strip():
         return ""
     messages = [
         {
+            "role": "system",
+            "content": render("srt_single_system", src=source_language, tgt=target_language),
+        },
+        {
             "role": "user",
-            "content": f"Translate this movie subtitle to {target_language}: {text!r}",
-        }
+            "content": render(
+                "srt_single_user", src=source_language, tgt=target_language, source=repr(text)
+            ),
+        },
     ]
     try:
         raw = client.complete(messages, tier="strong", stage="srt_translate_fallback")
         return raw.strip().strip('"')
-    except Exception:  # noqa: BLE001 - 单条失败回退原文
+    except Exception:  # noqa: BLE001 - Individual cue failures fall back to source text.
         return text
 
 
@@ -128,7 +141,9 @@ def _flush_usage(
     *,
     scope: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """把 client 尚未落盘的用量增量合并到 usage.json，返回 (cumulative, new_checkpoint)。"""
+    """Merge unpersisted client usage into usage.json; return cumulative usage and the new
+    checkpoint.
+    """
     current = client.usage_summary()
     increment = usage_delta(current, checkpoint)
     accumulated = store.load_usage() or {
@@ -159,14 +174,22 @@ def translate_srt(
     bilingual: bool | None = None,
     progress: ProgressFn | None = None,
 ) -> dict[str, Any]:
-    """翻译 SRT：高并发滑窗、轻量 state 续跑，写出 output 下的字幕文件。"""
+    """Translate SRT with concurrent windows, lightweight resume state and output subtitle
+    files.
+    """
+    source_language = require_language(config.source_lang, allow_auto=True)
+    target_language = require_language(config.target_lang)
+    if source_language == target_language:
+        raise ValueError(
+            f"Source and target languages are identical ({target_language}); no translation is needed."
+        )
     cues = parse_srt(source_path)
     write_mono = config.output.mono if mono is None else mono
     write_bilingual = config.output.bilingual if bilingual is None else bilingual
     if not write_mono and not write_bilingual:
         write_mono = True
 
-    store = SrtRunStore.for_source(config.state_dir, source_path)
+    store = SrtRunStore.for_source(config.state_dir, source_path, target_language)
     store.ensure_manifest(
         source_path,
         cue_count=len(cues),
@@ -188,12 +211,12 @@ def translate_srt(
         source_path=os.path.abspath(source_path),
         cue_count=len(cues),
         run_dir=store.run_dir,
+        prompt_fingerprint=prompt_fingerprint(),
     )
 
     source_map = {cue.index: cue.text for cue in cues}
     segment_items = list(source_map.items())
     step = BATCH_SIZE - OVERLAP_SIZE
-    target_language = _target_language_name(config.target_lang)
 
     jobs: list[tuple[int, dict[str, str], bool, bool]] = []
     for start in range(0, len(segment_items), step):
@@ -215,7 +238,7 @@ def translate_srt(
         and not _batch_active_complete(final_translations, segment_items, job)
     ]
 
-    # 已缓存批次先合并进内存
+    # Merge cached batches into memory first.
     for start, _batch, is_first, is_last in jobs:
         cached = store.load_batch(start)
         if cached is not None:
@@ -231,13 +254,15 @@ def translate_srt(
     total = len(pending)
     done = 0
     if progress:
-        progress(0, max(total, 1), "翻译字幕…")
+        progress(0, max(total, 1), "Translating subtitles…")
 
     def run_job(
         job: tuple[int, dict[str, str], bool, bool],
     ) -> tuple[int, dict[str, str] | None, bool, bool]:
         start, batch, is_first, is_last = job
-        result = _translate_batch(llm, batch, target_language=target_language)
+        result = _translate_batch(
+            llm, batch, target_language=target_language, source_language=source_language
+        )
         return start, result, is_first, is_last
 
     if pending:
@@ -263,7 +288,7 @@ def translate_srt(
                     store.log_event("srt_batch_failed", batch_start=start)
                 done += 1
                 if progress:
-                    progress(done, max(total, 1), "翻译字幕…")
+                    progress(done, max(total, 1), "Translating subtitles…")
         usage_cumulative, usage_checkpoint = _flush_usage(
             store, llm, usage_checkpoint, scope="srt_batches"
         )
@@ -274,7 +299,7 @@ def translate_srt(
     if missing:
         store.log_event("srt_fallback", missing_count=len(missing))
         if progress:
-            progress(0, len(missing), "补漏字幕…")
+            progress(0, len(missing), "Translating missing subtitles…")
         with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT, len(missing))) as executor:
             future_map = {
                 executor.submit(
@@ -282,6 +307,7 @@ def translate_srt(
                     llm,
                     source_map[key],
                     target_language=target_language,
+                    source_language=source_language,
                 ): key
                 for key in missing
             }
@@ -291,7 +317,7 @@ def translate_srt(
                 final_translations[key] = future.result() or source_map[key]
                 finished += 1
                 if progress:
-                    progress(finished, len(missing), "补漏字幕…")
+                    progress(finished, len(missing), "Translating missing subtitles…")
         store.apply_translations(cue_rows, final_translations)
         store.save_cues(cue_rows)
         usage_cumulative, usage_checkpoint = _flush_usage(
@@ -308,6 +334,7 @@ def translate_srt(
         out=out,
         mono=write_mono,
         bilingual=write_bilingual,
+        target_lang=target_language,
     )
     outputs = write_srt_outputs(
         cues,
@@ -317,7 +344,7 @@ def translate_srt(
     )
 
     usage_cumulative, _ = _flush_usage(store, llm, usage_checkpoint, scope="srt_finish")
-    # 即使本轮无 token 增量（如 FakeClient），也落盘空壳，便于续跑合并与 CLI 对账
+    # Persist even empty usage, such as FakeClient runs, for resume merging and CLI accounting.
     if not os.path.isfile(store.usage_path):
         store.save_usage(usage_cumulative)
     store.log_event(

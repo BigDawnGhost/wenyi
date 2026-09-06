@@ -74,6 +74,7 @@ jobs:
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
           --paths . --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
+          --collect-data trans_novel.i18n
           --copy-metadata trans-novel
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
           --distpath dist trans_novel/__main__.py
@@ -82,6 +83,7 @@ jobs:
         run: |
           ${{ matrix.binary }} --help
           ${{ matrix.binary }} --version
+          ${{ matrix.binary }} languages
 
       - name: Verify Windows executable
         if: runner.os == 'Windows'

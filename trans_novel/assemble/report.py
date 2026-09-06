@@ -1,4 +1,4 @@
-"""翻译报告：汇总正式流水线中需要人工关注的持久化问题。"""
+"""Summarize persisted translation issues that need human attention."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from ..pipeline.runstore import STATUS_DONE, RunStore
 
 
 def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
-    """汇总完成进度、空译文、术语冲突和最新 Review 摘要。"""
+    """Summarize progress, empty translations, glossary conflicts and the latest review."""
     m = store.load_manifest()
     chapters_total = len(m["chapters"])
     chapters_done = sum(1 for c in m["chapters"] if c["status"] == STATUS_DONE)

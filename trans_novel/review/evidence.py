@@ -1,4 +1,4 @@
-"""Review Agent Loop 使用的只读全书证据索引。"""
+"""Read-only whole-book evidence index for the review agent loop."""
 
 from __future__ import annotations
 
@@ -15,24 +15,24 @@ from ..ingest.models import Chapter
 
 
 def _normalized(value: str) -> str:
-    """统一兼容字符、宽度和大小写，供术语/建议键比较。"""
+    """Normalize compatibility forms, width and case for comparing term/suggestion keys."""
     return unicodedata.normalize("NFKC", value).casefold().strip()
 
 
 def _clip(value: Any, limit: int) -> str:
-    """把术语字段限制在证据消息可控的长度内。"""
+    """Bound glossary field lengths within evidence messages."""
     return str(value or "")[:limit]
 
 
 def _glossary_ref(source: str) -> str:
-    """为术语条目生成不泄露任意字符到 ID 的稳定引用。"""
+    """Generate stable glossary references without leaking arbitrary characters into IDs."""
     digest = sha256(source.encode("utf-8")).hexdigest()[:16]
     return f"glossary:{digest}"
 
 
 @dataclass(frozen=True)
 class SegmentRef:
-    """全书中的一个可审校段落及其稳定位置。"""
+    """A reviewable paragraph with its stable book position."""
 
     global_ordinal: int
     chapter: int
@@ -46,11 +46,11 @@ class SegmentRef:
 
     @property
     def ref(self) -> str:
-        """返回可在调试输出和 Agent 证据中引用的稳定 ID。"""
+        """Return a stable ID for diagnostics and agent evidence references."""
         return f"ch{self.chapter}:text{self.text_index}:seg{self.segment_index}"
 
     def compact(self) -> dict[str, Any]:
-        """序列化为证据载荷。"""
+        """Serialize as an evidence payload."""
         limit = 4000
         payload = {
             "ref": self.ref,
@@ -75,7 +75,7 @@ class SegmentRef:
 
 
 class BookEvidenceIndex:
-    """以查询驱动方式提供跨章上下文和第 N 次术语出现证据。"""
+    """Provide cross-chapter context and selected term occurrences through bounded queries."""
 
     def __init__(
         self,
@@ -85,11 +85,10 @@ class BookEvidenceIndex:
         *,
         target_overrides: Mapping[tuple[int, int], str] | None = None,
     ):
-        """构建全书只读证据索引。
-
-        ``target_overrides`` 以 ``(chapter.index, text_index)`` 为键，为指定
-        段落提供仅在本索引中生效的影子译文。未覆盖的位置仍读取章节中的正式
-        译文，因此默认调用方式及持久化数据均不受影响。
+        """Build the read-only whole-book evidence index.
+        target_overrides maps chapter.index/text_index pairs to shadow translations visible
+        only in this index. Uncovered locations use formal chapter targets, preserving
+        ordinary calls and persisted data.
         """
         flattened: list[SegmentRef] = []
         by_location: dict[tuple[int, int], int] = {}
@@ -138,12 +137,12 @@ class BookEvidenceIndex:
         self._cache_lock = Lock()
 
     def segment_ref(self, chapter: int, text_index: int) -> SegmentRef | None:
-        """按章号和 text_segments 下标返回段落引用。"""
+        """Return a paragraph reference by chapter and text_segments index."""
         position = self._by_location.get((chapter, text_index))
         return self.segments[position] if position is not None else None
 
     def canonical_term(self, query: str) -> tuple[GlossaryTerm | None, list[str]]:
-        """把 source/alias 解析为规范术语；歧义时返回所有候选 source。"""
+        """Resolve a source/alias to a canonical term; return candidate sources when ambiguous."""
         stripped = query.strip()
         exact = self._exact_source_lookup.get(stripped)
         if exact is not None:
@@ -165,7 +164,7 @@ class BookEvidenceIndex:
         return None, []
 
     def _occurrences(self, query: str) -> tuple[str, tuple[SegmentRef, ...], list[str]]:
-        """懒扫描并缓存一个规范术语或字面短语的命中段落。"""
+        """Scan and cache matching paragraphs lazily for a canonical term or literal phrase."""
         term, ambiguous = self.canonical_term(query)
         if ambiguous:
             return "", (), ambiguous
@@ -192,7 +191,7 @@ class BookEvidenceIndex:
 
     @staticmethod
     def _selector_positions(selectors: list[Any], total: int) -> tuple[list[int], list[Any]]:
-        """把 1-based/first/middle/last 选择器转为去重后的零基位置。"""
+        """Convert one-based/first/middle/last selectors to deduplicated zero-based positions."""
         positions: list[int] = []
         invalid: list[Any] = []
         for selector in selectors[:8]:
@@ -216,13 +215,13 @@ class BookEvidenceIndex:
         return positions, invalid
 
     def _context(self, position: int, before: int, after: int) -> list[dict[str, Any]]:
-        """按全书连续顺序返回跨章上下文。"""
+        """Return cross-chapter context in continuous book order."""
         start = max(0, position - before)
         end = min(len(self.segments), position + after + 1)
         return [segment.compact() for segment in self.segments[start:end]]
 
     def term_occurrences(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """选择性返回一个术语在全书中的第 N 个命中段落。"""
+        """Return selected occurrence paragraphs for one term across the book."""
         query = arguments.get("term")
         if not isinstance(query, str) or not query.strip() or len(query) > 128:
             return {"ok": False, "error": "invalid_term"}
@@ -263,7 +262,7 @@ class BookEvidenceIndex:
 
     @staticmethod
     def _term_evidence(term: GlossaryTerm) -> dict[str, Any]:
-        """把单个术语压缩为可引用的只读证据。"""
+        """Condense one glossary term into citable read-only evidence."""
         return {
             "ref": _glossary_ref(term.source),
             "source": _clip(term.source, 256),
@@ -277,7 +276,7 @@ class BookEvidenceIndex:
         }
 
     def glossary_term(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """按 source 或 alias 返回一个规范术语条目，不允许枚举全表。"""
+        """Return one canonical term by source or alias; do not enumerate the full glossary."""
         query = arguments.get("term")
         if not isinstance(query, str) or not query.strip() or len(query) > 128:
             return {"ok": False, "error": "invalid_term"}
@@ -296,7 +295,7 @@ class BookEvidenceIndex:
         }
 
     def segment_context(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """返回指定段落附近的跨章原译文。"""
+        """Return source/target context around a paragraph across chapter boundaries."""
         chapter = arguments.get("chapter")
         text_index = arguments.get("index")
         before = arguments.get("before", 2)
@@ -324,7 +323,7 @@ class BookEvidenceIndex:
         }
 
     def book_context(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """按 section 返回有限的书级或章节级分析信息。"""
+        """Return bounded book-level or chapter-level analysis for the requested section."""
         section = arguments.get("section")
         if section == "style_guide":
             value = self.analysis.get("style_guide", "")
@@ -354,7 +353,7 @@ class BookEvidenceIndex:
         }
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
-        """验证并执行一个 JSON 证据请求，始终返回结构化结果。"""
+        """Validate and execute a JSON evidence request, always returning a structured result."""
         request_id = request.get("request_id")
         tool = request.get("tool")
         arguments = request.get("arguments", {})
@@ -390,13 +389,13 @@ class BookEvidenceIndex:
                 "tool": tool,
                 "ok": False,
                 "error": "evidence_result_too_large",
-                "hint": "减少 selectors、context_radius、before 或 after 后重试。",
+                "hint": "Reduce selectors, context_radius, before or after and retry.",
             }
         return result
 
     @staticmethod
     def evidence_refs(value: Any) -> set[str]:
-        """递归收集证据载荷中的稳定 ref。"""
+        """Collect stable references recursively from evidence payloads."""
         refs: set[str] = set()
         if isinstance(value, dict):
             ref = value.get("ref")

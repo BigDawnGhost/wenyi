@@ -1,4 +1,4 @@
-"""tests/test_llm_gemini.py - Gemini LLM Provider 完整单元测试"""
+"""Complete unit tests for the Gemini LLM provider."""
 
 from __future__ import annotations
 
@@ -23,19 +23,21 @@ from trans_novel.llm.providers.gemini import (
 
 
 def test_gemini_tier_options_thinking_mutual_exclusion():
-    """测试 thinking_level 与 thinking_budget 的互斥校验。"""
+    """Test mutual exclusion of thinking_level and thinking_budget."""
     opt1 = GeminiTierOptions(thinking_level="high")
     assert opt1.thinking_level == "high"
 
     opt2 = GeminiTierOptions(thinking_budget=1024)
     assert opt2.thinking_budget == 1024
 
-    with pytest.raises(ValidationError, match="thinking_level 与 thinking_budget 互斥"):
+    with pytest.raises(
+        ValidationError, match="thinking_level and thinking_budget are mutually exclusive"
+    ):
         GeminiTierOptions(thinking_level="high", thinking_budget=1024)
 
 
 def test_api_key_env_precedence():
-    """测试 API Key 获取的环境变量优先级与退避规则。"""
+    """Test API-key environment-variable precedence and fallbacks."""
     with patch.dict(
         os.environ,
         {
@@ -70,7 +72,7 @@ def test_api_key_env_precedence():
 
 
 def test_convert_messages_to_gemini():
-    """测试 OpenAI 格式转换到 Gemini 格式。"""
+    """Test conversion from OpenAI-style messages to Gemini format."""
     messages = [
         {"role": "system", "content": "You are a translator."},
         {"role": "system", "content": "Translate carefully."},
@@ -87,7 +89,7 @@ def test_convert_messages_to_gemini():
 
 
 def test_extract_gemini_usage():
-    """测试 Gemini Token 用量与缓存 Token 提取计算。"""
+    """Test extraction and accounting of Gemini tokens and cache tokens."""
     usage_meta = SimpleNamespace(
         prompt_token_count=100,
         candidates_token_count=50,
@@ -105,12 +107,12 @@ def test_extract_gemini_usage():
 
 
 def test_gemini_client_validate_credentials():
-    """测试客户端凭据校验。"""
+    """Test client credential validation."""
     cfg = LLMConfig(provider="gemini", api_key_env="TEST_MISSING_ENV_KEY")
     client = GeminiClient(cfg)
 
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(RuntimeError, match="未设置环境变量"):
+        with pytest.raises(RuntimeError, match="Environment variable"):
             client.validate_credentials()
 
     with patch.dict(os.environ, {"TEST_MISSING_ENV_KEY": "valid_key"}):
@@ -118,7 +120,7 @@ def test_gemini_client_validate_credentials():
 
 
 def test_gemini_client_applies_timeout_in_milliseconds():
-    """通用秒级 timeout 应转换为 google-genai 使用的毫秒值。"""
+    """Convert the shared timeout in seconds to google-genai milliseconds."""
     cfg = LLMConfig(
         provider="gemini",
         api_key_env="TEST_GEMINI_KEY",
@@ -138,7 +140,7 @@ def test_gemini_client_applies_timeout_in_milliseconds():
 
 
 def test_gemini_client_complete_and_usage():
-    """测试 GeminiClient.complete 流程与用量归因。"""
+    """Test GeminiClient.complete and usage attribution."""
     cfg = LLMConfig(
         provider="gemini",
         api_key_env="TEST_GEMINI_KEY",
@@ -181,7 +183,7 @@ def test_gemini_client_complete_and_usage():
 
 
 def test_gemini_client_retries_server_error_and_records_wait():
-    """Gemini 5xx 使用统一策略重试，并发送等待事件。"""
+    """Retry Gemini 5xx errors through the shared policy and emit wait events."""
     cfg = LLMConfig(
         provider="gemini",
         max_retries=1,
@@ -213,7 +215,7 @@ def test_gemini_client_retries_server_error_and_records_wait():
 
 
 def test_gemini_client_does_not_retry_client_error():
-    """Gemini 永久 4xx 错误立即向上抛出。"""
+    """Propagate permanent Gemini 4xx errors immediately."""
     cfg = LLMConfig(
         provider="gemini",
         max_retries=4,
@@ -235,7 +237,7 @@ def test_gemini_client_does_not_retry_client_error():
 
 
 def test_gemini_client_json_mode():
-    """测试 json_mode=True 时触发 response_mime_type 并成功解析。"""
+    """JSON mode must set response_mime_type and parse the result successfully."""
     cfg = LLMConfig(
         provider="gemini",
         api_key_env="TEST_GEMINI_KEY",
@@ -261,7 +263,7 @@ def test_gemini_client_json_mode():
 
 
 def test_gemini_client_safety_block():
-    """测试安全策略拦截捕获。"""
+    """Test detection of provider safety blocking."""
     cfg = LLMConfig(
         provider="gemini",
         api_key_env="TEST_GEMINI_KEY",
@@ -279,12 +281,12 @@ def test_gemini_client_safety_block():
     client = GeminiClient(cfg)
     client._client = mock_client_instance
 
-    with pytest.raises(RuntimeError, match="安全拦截"):
+    with pytest.raises(RuntimeError, match="blocked the response"):
         client.complete([{"role": "user", "content": "unsafe content"}])
 
 
 def test_factory_build_client_gemini():
-    """测试 factory build_client 工厂函数对 gemini 和 google 的路由构建。"""
+    """Test factory routing for gemini and google aliases."""
     raw_config = {
         "llm": {
             "provider": "gemini",

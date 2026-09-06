@@ -1,13 +1,13 @@
-"""输入文档解析和预处理的用户可见异常。"""
+"""User-visible exceptions for document parsing and preprocessing."""
 
 
 class IngestError(RuntimeError):
-    """表示可向 CLI 用户直接展示的输入处理错误。"""
+    """An input-processing error suitable for direct CLI display."""
 
 
 class MinerUError(IngestError):
-    """表示 MinerU 请求、解析或结果处理失败。"""
+    """A MinerU request, parsing or result-processing failure."""
 
 
 class MinerUTimeoutError(MinerUError):
-    """表示 MinerU 任务在限定时间内未完成。"""
+    """A MinerU task that did not finish within its time limit."""

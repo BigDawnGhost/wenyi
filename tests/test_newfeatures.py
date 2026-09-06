@@ -1,4 +1,4 @@
-"""新功能测试（离线）：模型语言检测、标点规范化、术语 AI 审计统一、连续全流程。"""
+"""Offline language detection, punctuation, glossary audit and complete-workflow tests."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = self._cfg(os.path.join(d, "state"))
 
             def handler(messages, tier, json_mode):
-                if "语言识别器" in messages[0]["content"]:
+                if "language detector" in messages[0]["content"]:
                     return json.dumps({"language": "russian"}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
@@ -58,11 +58,11 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = self._cfg(os.path.join(d, "state"))
 
             def handler(messages, tier, json_mode):
-                if "语言识别器" in messages[0]["content"]:
+                if "language detector" in messages[0]["content"]:
                     return json.dumps({"language": ""}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
-            with self.assertRaisesRegex(RuntimeError, "language.source"):
+            with self.assertRaisesRegex(ValueError, "language.source"):
                 Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
 
     def test_explicit_same_source_and_target_stops_before_model_calls(self):
@@ -78,7 +78,9 @@ class TestModelLanguageDetection(unittest.TestCase):
             )
             client = FakeClient(handler=routing_handler)
 
-            with self.assertRaisesRegex(ValueError, "源语言与目标语言相同（ja）"):
+            with self.assertRaisesRegex(
+                ValueError, "Source and target languages are identical .*ja"
+            ):
                 Orchestrator(cfg, client=client).prepare(txt)
 
             self.assertEqual(client.calls, [])
@@ -90,11 +92,13 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = self._cfg(os.path.join(d, "state"))
 
             def handler(messages, tier, json_mode):
-                if "语言识别器" in messages[0]["content"]:
+                if "language detector" in messages[0]["content"]:
                     return json.dumps({"language": "chinese"}, ensure_ascii=False)
                 raise AssertionError("相同语言不应继续进入分析或翻译")
 
-            with self.assertRaisesRegex(ValueError, "源语言与目标语言相同（zh）"):
+            with self.assertRaisesRegex(
+                ValueError, "Source and target languages are identical .*zh"
+            ):
                 Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
 
 
@@ -135,7 +139,7 @@ class TestPunct(unittest.TestCase):
         )
 
     def test_continuation_flags_must_align_with_texts(self):
-        with self.assertRaisesRegex(ValueError, "数量必须一致"):
+        with self.assertRaisesRegex(ValueError, "must have the same length"):
             normalize_zh_segments(["第一段"], [])
 
     def test_non_chinese_target_does_not_enable_chinese_normalization(self):
@@ -173,7 +177,7 @@ class TestPunct(unittest.TestCase):
             )
 
             def handler(messages, tier, json_mode):
-                if "文学翻译" in messages[0]["content"]:
+                if "literary translator" in messages[0]["content"]:
                     return json.dumps({"translations": ["他说,真的吗?"]}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
@@ -235,6 +239,7 @@ class TestPunct(unittest.TestCase):
                 )
             )
 
+            store.save_manifest({"target_lang": "zh"})
             exported = ExportViewStore(store, punctuation_normalize=True).load_chapter(0)
 
             self.assertEqual(exported.segments[0].target, after)
@@ -254,7 +259,7 @@ class TestLanguageProfile(unittest.TestCase):
     def test_keep_style_requires_stable_honorific_choice(self):
         rule = honorific_rule("keep_style")
 
-        self.assertIn("确定后同一关系全书沿用", rule)
+        self.assertIn("use it consistently for that relationship throughout the book", rule)
         self.assertNotIn("可酌情保留", rule)
 
 
@@ -288,10 +293,10 @@ class TestRunAll(unittest.TestCase):
             )
             self.assertTrue(result["output"].endswith(".epub"))
             self.assertTrue(zipfile.is_zipfile(result["output"]))
-            # 进度回调被触发，且最终 done==total
+            # Progress callbacks run and finish with done equal to total.
             self.assertTrue(seen)
             self.assertEqual(seen[-1][0], seen[-1][1])
-            # auto 通过模型检测把源语言定为 ja
+            # Model detection resolves auto source to ja.
             self.assertEqual(cfg.source_lang, "ja")
             with open(result["store"].event_log_path, "r", encoding="utf-8") as f:
                 events = [json.loads(line) for line in f if line.strip()]

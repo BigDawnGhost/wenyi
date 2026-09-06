@@ -1,7 +1,6 @@
-"""EPUB 模板回填、目录重写、资源复制和新 EPUB 构建。
-
-负责在原 EPUB ZIP 上按物理资源回填译文、精确替换 NCX/NAV 目录标题、
-更新 OPF 元数据和语言代码；也负责从 TXT/FB2 章节或 HTML 模板新建 EPUB。
+"""EPUB template backfill, TOC rewriting, resource copying and new EPUB construction.
+Replace translations by physical resource in the original ZIP, update exact NCX/NAV titles
+and OPF metadata/language, or build a new EPUB from TXT/FB2 chapters or HTML templates.
 """
 
 from __future__ import annotations
@@ -43,10 +42,10 @@ from .writer_common import (
     _sanitize_filename,
 )
 
-# XHTML/HTML 文件扩展名，用于判断 ZIP 条目是否需要回填
+# XHTML/HTML extensions identify ZIP entries that require translation backfill.
 _HTML_EXTS = (".xhtml", ".html", ".htm")
 
-# 竖排排版标记：检测 writing-mode、page-progression-direction 和 vrtl 类名
+# Detect vertical layout through writing-mode, page-progression-direction and vrtl classes.
 _VERTICAL_MARKERS = (
     re.compile(
         rb"(?:-epub-|-webkit-)?writing-mode\s*:\s*(?:vertical-rl|vertical-lr|tb-rl)",
@@ -68,18 +67,18 @@ _XML_ENCODING = re.compile(
 )
 
 
-# ── 路径与属性辅助 ─────────────────────────────────────────────────────────────
+# Path and attribute helpers.
 def _base_no_frag(href: str) -> str:
-    """取 href 的文件名（去目录、去 #锚点），用于跨文件相对路径匹配。"""
+    """Return the href basename without directories or fragments for relative-path matching."""
     return os.path.basename((href or "").split("#", 1)[0])
 
 
 def _attr_str(value: object) -> str:
-    """把 BeautifulSoup 属性安全收窄为字符串。"""
+    """Safely narrow a BeautifulSoup attribute to a string."""
     return value if isinstance(value, str) else ""
 
 
-# ── OPF 元数据 ─────────────────────────────────────────────────────────────────
+# OPF metadata.
 def _rewrite_opf_metadata(
     data: bytes,
     *,
@@ -87,7 +86,7 @@ def _rewrite_opf_metadata(
     lang: str,
     force_horizontal: bool,
 ) -> bytes:
-    """更新 OPF 元数据：标记 Wenyi 版本及语言，译后语言改为目标语言。"""
+    """Update OPF metadata with the Wenyi version and target language."""
     try:
         soup = BeautifulSoup(data, "xml")
         if book_title:
@@ -115,7 +114,7 @@ def _rewrite_opf_metadata(
 
 
 def _epub_looks_vertical(zf: zipfile.ZipFile) -> bool:
-    """粗略检测 EPUB 是否声明了竖排排版。"""
+    """Detect whether an EPUB declares vertical layout."""
     for info in zf.infolist():
         low = info.filename.lower()
         if not low.endswith((".opf", ".css", ".xhtml", ".html", ".htm")):
@@ -143,7 +142,7 @@ def _rewrite_html_document(
     force_horizontal: bool,
     bilingual: bool = False,
 ) -> bytes:
-    """给 XHTML/HTML 写入译后语言；必要时注入横排覆盖样式/双语原文样式。"""
+    """Set the target HTML language and inject horizontal-layout or bilingual styles as needed."""
     try:
         if isinstance(data, bytes):
             text = UnicodeDammit(data).unicode_markup
@@ -198,19 +197,18 @@ def _rewrite_html_document(
         return data if isinstance(data, bytes) else data.encode("utf-8")
 
 
-# ── 目录（TOC）回填 ──────────────────────────────────────────────────────────────
+# Table-of-contents backfill.
 def _direct_child(parent: Tag | BeautifulSoup, name: str) -> Tag | None:
-    """返回 ``parent`` 的首个指定直接子元素。"""
+    """Return the first direct child matching the requested tag."""
     child = parent.find(name, recursive=False)
     return child if isinstance(child, Tag) else None
 
 
 def _nav_label_nodes(soup: BeautifulSoup) -> list[tuple[Tag, str]]:
-    """按 reader 的 preorder 规则列出 EPUB3 TOC 条目标签及原始 href。
-
-    每个 TOC ``li`` 优先取直接子 ``a``，其次取直接子 ``span``；没有这两种
-    标签的 ``li`` 不计入 ``node_index``。分组 ``span`` 也属于可翻译目录项，
-    但没有内容目标。嵌套列表递归处理，以保证编号与解析阶段完全一致。
+    """Enumerate EPUB3 TOC tags and original hrefs in the reader's preorder.
+    Prefer each li's direct a child, then its direct span. Exclude li elements with neither
+    from node_index. Grouping spans are translatable TOC entries without content targets.
+    Recurse through nested lists to keep indices identical to ingestion.
     """
     labels: list[tuple[Tag, str]] = []
 
@@ -233,7 +231,7 @@ def _nav_label_nodes(soup: BeautifulSoup) -> list[tuple[Tag, str]]:
 
 
 def _ncx_nav_points(soup: BeautifulSoup) -> list[Tag]:
-    """按 reader 的直接子节点 preorder 规则列出 NCX ``navPoint``。"""
+    """Enumerate NCX navPoint elements using the reader's direct-child preorder."""
     nav_map = soup.find("navMap")
     if not isinstance(nav_map, Tag):
         return []
@@ -251,7 +249,7 @@ def _ncx_nav_points(soup: BeautifulSoup) -> list[Tag]:
 
 
 def _translated_toc_title(entry: dict[str, object]) -> str:
-    """返回一个目录条目的有效译名，缺失时回退原标题。"""
+    """Return a valid translated TOC title, falling back to the original."""
     value = entry.get("title_translated") or entry.get("title")
     return value.strip() if isinstance(value, str) else ""
 
@@ -259,7 +257,7 @@ def _translated_toc_title(entry: dict[str, object]) -> str:
 def _indexed_toc_entries(
     entries: list[dict[str, object]], toc_path: str
 ) -> dict[int, dict[str, object]]:
-    """按 ``toc_path + node_index`` 建立目录节点的精确索引。"""
+    """Index exact TOC nodes by toc_path and node_index."""
     indexed: dict[int, dict[str, object]] = {}
     for entry in entries:
         if entry.get("toc_path") != toc_path:
@@ -277,10 +275,10 @@ def _rewrite_toc(
     is_ncx: bool,
     toc_path: str = "",
 ) -> bytes:
-    """回填 NCX/NAV 的可见标题，同时原样保留 ``src``/``href``。
-
-    按 ``toc_path + node_index`` 定位节点；同一 XHTML 的多个片段可有不同译名，
-    也不会因不同目录下的同名文件互相覆盖。无匹配条目时保留原标题。
+    """Replace visible NCX/NAV titles while preserving src/href unchanged.
+    Locate nodes by toc_path and node_index so fragments in one XHTML can have distinct
+    titles and identical basenames in different directories cannot overwrite one another.
+    Preserve the original title when no entry matches.
     """
     try:
         exact_entries = _indexed_toc_entries(entries, toc_path)
@@ -298,7 +296,7 @@ def _rewrite_toc(
                 raw_src = _attr_str(content.get("src")) if content else ""
                 expected = entry.get("raw_href")
                 if isinstance(expected, str) and expected != raw_src:
-                    # 源 EPUB 与状态记录不一致时宁可保留原标题，也不改错节点。
+                    # Preserve original titles when source and state disagree instead of changing the wrong node.
                     continue
                 title = _translated_toc_title(entry)
                 if title:
@@ -306,7 +304,7 @@ def _rewrite_toc(
                     label.append(title)
             return soup.encode()
 
-        # EPUB3 nav.xhtml：仅枚举 epub:type="toc" 范围内的直接 li 标签。
+        # EPUB3 nav.xhtml: enumerate direct li entries only within nav elements with epub:type="toc".
         soup = BeautifulSoup(data, "html.parser")
         toc_navs = [
             node
@@ -341,9 +339,11 @@ def _rewrite_toc(
         return data
 
 
-# ── 物理资源与 Segment 映射 ──────────────────────────────────────────────────────
+# Physical resource and Segment mapping.
 def _epub_resource_specs(meta: dict[str, object]) -> list[tuple[int, str]]:
-    """读取新状态中的物理 XHTML 清单，过滤损坏或重复的记录。"""
+    """Read the physical XHTML inventory from newer state, excluding damaged or duplicate
+    records.
+    """
     raw_resources = meta.get("epub_resources")
     if not isinstance(raw_resources, list):
         return []
@@ -363,7 +363,7 @@ def _epub_resource_specs(meta: dict[str, object]) -> list[tuple[int, str]]:
 
 
 def _segments_by_resource(chapters: list[Chapter]) -> dict[str, list[Segment]]:
-    """按源文顺序聚合逻辑章节中的 EPUB Segment 到物理资源。"""
+    """Group EPUB segments from logical chapters by physical resource in source order."""
     grouped: dict[str, list[Segment]] = {}
     for chapter in chapters:
         for segment in chapter.segments:
@@ -384,11 +384,11 @@ def _render_epub_resources(
     preserve_source_style: bool,
     source_lang: str,
 ) -> dict[str, str]:
-    """从原 EPUB 重建稳定模板，并将每个物理 XHTML 仅渲染一次。
-
-    解析状态只保存 Segment 和 ``resource_href``，原始 EPUB 仍是排版与内联
-    元素的权威来源。重新执行确定性的锚点标注，比把整份 XHTML 模板复制到
-    每个逻辑章节更节省状态空间，也避免同一物理文件被多章分别写回而覆盖。
+    """Rebuild stable templates from the original EPUB and render each physical XHTML once.
+    State stores only segments and resource_href; the original EPUB remains authoritative
+    for layout and inline elements. Repeating deterministic anchor annotation saves space
+    compared with copying XHTML into every logical chapter and avoids multiple chapter
+    writes overwriting one physical file.
     """
     resources = _epub_resource_specs(meta)
     grouped = _segments_by_resource(chapters)
@@ -397,9 +397,11 @@ def _render_epub_resources(
     declared_hrefs = {href for _index, href in resources}
     undeclared = sorted(set(grouped) - declared_hrefs)
     if undeclared:
-        raise ValueError("EPUB 翻译状态引用了未登记的正文资源：" + ", ".join(undeclared[:3]))
+        raise ValueError(
+            "EPUB state refers to undeclared body resources: " + ", ".join(undeclared[:3])
+        )
 
-    # 延迟导入避免 reader -> models / writer 模块加载期间形成不必要的依赖环。
+    # Import lazily to avoid unnecessary reader/models/writer dependency cycles during loading.
     from ..ingest.epub_reader import _fragment_anchor_map, annotate_epub_resource
 
     names = set(zin.namelist())
@@ -418,7 +420,7 @@ def _render_epub_resources(
         if not segments:
             continue
         if href not in names:
-            raise ValueError(f"EPUB 正文资源不存在：{href}")
+            raise ValueError(f"EPUB body resource not found: {href}")
         source_data = zin.read(href)
         html = UnicodeDammit(source_data).unicode_markup
         if html is None:
@@ -431,7 +433,7 @@ def _render_epub_resources(
             skip_navigation=href in toc_paths,
         )
 
-        # 状态和源书不匹配时不能静默漏回填；这种情况通常表示用户替换了原书。
+        # Never silently omit backfill when source and state disagree; the source may have been replaced.
         available_anchors = {segment.anchor for segment in annotated_segments if segment.anchor}
         required_anchors = {
             segment.anchor for segment in segments if segment.anchor and not segment.cont
@@ -439,7 +441,9 @@ def _render_epub_resources(
         missing = sorted(required_anchors - available_anchors)
         if missing:
             preview = ", ".join(missing[:3])
-            raise ValueError(f"EPUB 正文与翻译状态不匹配：{href} 缺少回填锚点 {preview}")
+            raise ValueError(
+                f"EPUB body does not match translation state: {href} lacks backfill anchors {preview}"
+            )
 
         fresh_by_anchor = {
             segment.anchor: segment for segment in annotated_segments if segment.anchor
@@ -461,7 +465,9 @@ def _render_epub_resources(
         ]
         if changed_anchors:
             preview = ", ".join(changed_anchors[:3])
-            raise ValueError(f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）")
+            raise ValueError(
+                f"EPUB source does not match translation state: {href} content changed ({preview})"
+            )
         fresh_meta_by_anchor = {anchor: segment.meta for anchor, segment in fresh_by_anchor.items()}
         prepared[href] = (segments, template, fresh_meta_by_anchor)
 
@@ -508,7 +514,7 @@ def _render_epub_resources(
     return rendered
 
 
-# ── EPUB 回填入口 ─────────────────────────────────────────────────────────────────
+# EPUB backfill entry point.
 def _assemble_epub(
     store: RunStore,
     source_path: str,
@@ -518,7 +524,9 @@ def _assemble_epub(
     order: str = "target_first",
     preserve_source_style: bool = False,
 ) -> str:
-    """复制原 EPUB，并按物理资源替换正文、精确回填目录及目标语言元数据。"""
+    """Copy the EPUB and replace physical body resources, exact TOC titles and target-language
+    metadata.
+    """
     m = store.load_manifest()
     target_lang_code = _manifest_target_lang(m)
     target_lang = _epub_lang(target_lang_code)
@@ -561,7 +569,7 @@ def _assemble_epub(
             zin,
             chapters,
             meta,
-            # 回填标注仍用原书名，避免把导出版后缀误判成正文标题。
+            # Use the original book title for annotation so export suffixes cannot be mistaken for body titles.
             book_title=source_title,
             bilingual=bilingual,
             order=order,
@@ -621,7 +629,7 @@ def _assemble_epub(
 
 
 def _is_nav(data: bytes) -> bool:
-    """判断 HTML 资源是否包含 EPUB3 目录导航（nav epub:type=toc）。"""
+    """Detect EPUB3 TOC navigation in an HTML resource (nav epub:type=toc)."""
     return b"<nav" in data and (
         b'epub:type="toc"' in data
         or b"epub:type='toc'" in data
@@ -631,8 +639,9 @@ def _is_nav(data: bytes) -> bool:
 
 
 def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: str) -> None:
-    """ebooklib 写盘时按模板重建每章 <head>，内联样式会被丢弃；这里对写好的 zip
-    做一次后处理，把双语样式补回各章节 head（复用 _rewrite_html_document）。"""
+    """ebooklib rebuilds chapter heads from templates and drops inline styles. Postprocess the
+    written ZIP to restore bilingual styles through _rewrite_html_document.
+    """
     with zipfile.ZipFile(out_path, "r") as zin:
         infos = zin.infolist()
         entries = {info.filename: zin.read(info.filename) for info in infos}
@@ -664,7 +673,7 @@ def _build_epub_from_chapters(
     order: str = "target_first",
     preserve_source_style: bool = False,
 ) -> str:
-    """从章节数据生成规范 EPUB3，供无原始 EPUB 模板的输入格式使用。"""
+    """Build a standard EPUB3 from chapters when no original EPUB template exists."""
     from ebooklib import epub
 
     m = store.load_manifest()

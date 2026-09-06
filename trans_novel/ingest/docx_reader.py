@@ -1,11 +1,10 @@
-"""Word .docx 读取：段落 + 简易表格 → Document。
-
-标题样式（Heading / 标题 / outlineLvl）映射为 heading segments，并按一级标题切章。
-表格按文档顺序抽出，单元格合并为一段，meta 记录行列供写出时重建。
-
-字符样式：
-- 整段同质 → ``meta["docx_style"]``（写出整段套用，无需 AI 对齐）
-- 段内混排 → ``meta["docx_styles"]["items"]``（源文偏移 + bold/color 等，译后对齐）
+"""Read Word paragraphs and basic tables into a Document.
+Map heading styles and outlineLvl to heading segments and split chapters at level-one
+headings. Extract tables in document order, combine cell text into paragraphs and retain
+row/column metadata for reconstruction.
+Store uniform character styles in meta["docx_style"] for direct export without AI alignment.
+Store mixed source spans and bold/color attributes in meta["docx_styles"]["items"] for
+alignment after translation.
 """
 
 from __future__ import annotations
@@ -28,10 +27,10 @@ _HEADING_NAME = re.compile(
 )
 
 _STYLE_KEYS = ("bold", "italic", "underline", "color", "size_pt", "font")
-# 只有这些差异才值得混排对齐；font/size 单独变化不拆 span（中文导出也不保留西文字体）
+# Align only meaningful visible differences; font/size changes alone do not split style spans.
 _ALIGN_STYLE_KEYS = ("bold", "italic", "underline", "color")
 
-# 正文已自带可见序号时（如目录「1. Title」），不再套 Word 自动编号，避免双重序号
+# Skip automatic Word numbering when body text already includes a visible prefix such as 1. Title.
 _VISIBLE_LIST_PREFIX = re.compile(
     r"^(?:"
     r"\d+\."  # 1.
@@ -46,7 +45,7 @@ _VISIBLE_LIST_PREFIX = re.compile(
 
 
 def _iter_body_blocks(doc: DocxDocument):
-    """按 body 顺序产出段落与表格。"""
+    """Yield paragraphs and tables in body order."""
     for child in doc.element.body:
         if child.tag == qn("w:p"):
             yield DocxParagraph(child, doc)
@@ -55,14 +54,14 @@ def _iter_body_blocks(doc: DocxDocument):
 
 
 def _outline_level(paragraph: DocxParagraph) -> int | None:
-    """从段落样式名或 outlineLvl 解析标题级别 1–9。"""
+    """Resolve heading levels 1–9 from the style name or outlineLvl."""
     style = paragraph.style
     if style is not None and style.name:
         match = _HEADING_NAME.match(style.name.strip())
         if match:
             return int(match.group(1))
     try:
-        p_pr = paragraph._p.pPr  # noqa: SLF001 - python-docx 无稳定公开 API
+        p_pr = paragraph._p.pPr  # noqa: SLF001 - python-docx has no stable public API for this operation.
     except AttributeError:
         p_pr = None
     if p_pr is not None:
@@ -80,15 +79,15 @@ def _outline_level(paragraph: DocxParagraph) -> int | None:
 
 
 def _text_has_visible_list_prefix(text: str) -> bool:
-    """正文是否已含可见序号（目录常见「1. Title」）。"""
+    """Detect visible numbering already present in body text, such as 1. Title in a TOC."""
     return bool(_VISIBLE_LIST_PREFIX.match((text or "").lstrip()))
 
 
 def _list_meta(paragraph: DocxParagraph, numbering_root) -> dict[str, Any] | None:
-    """读取 Word 自动编号：list_num_id / list_ilvl / list_fmt（decimal|bullet|…）。
-
-    编号可能写在段落 ``w:numPr``，也可能只挂在段落样式上（如 List Number）。
-    ``numId<=0`` 视为无效；正文已自带「1.」等前缀时不返回列表 meta，避免导出双重序号。
+    """Read Word list_num_id, list_ilvl and list_fmt (decimal, bullet, etc.).
+    Numbering may come from paragraph w:numPr or its style, such as List Number. Treat
+    numId<=0 as invalid and omit list metadata when visible numbering already exists to
+    avoid duplicate prefixes during export.
     """
     num_pr = None
     try:
@@ -151,7 +150,7 @@ def _list_meta(paragraph: DocxParagraph, numbering_root) -> dict[str, Any] | Non
 
 
 def _paragraph_align(paragraph: DocxParagraph) -> str | None:
-    """读取段落对齐：center / left / right / both / distribute。"""
+    """Read paragraph alignment: center, left, right, both or distribute."""
     alignment = paragraph.alignment
     if alignment is not None:
         mapping = {
@@ -185,7 +184,7 @@ def _paragraph_align(paragraph: DocxParagraph) -> str | None:
 
 
 def _run_style(run) -> dict[str, Any]:
-    """抽取单个 run 的可见字符样式（仅显式设置的字段）。"""
+    """Extract explicitly set visible character styles from one run."""
     style: dict[str, Any] = {}
     if run.bold is True:
         style["bold"] = True
@@ -207,7 +206,7 @@ def _run_style(run) -> dict[str, Any]:
     if color is not None and color.rgb is not None:
         style["color"] = str(color.rgb)
     else:
-        # 主题色/直写 w:color 时 rgb 可能为空，回退读 XML
+        # Theme or explicit w:color values may have no rgb; fall back to XML.
         try:
             r_pr = run._r.rPr  # noqa: SLF001
         except AttributeError:
@@ -225,7 +224,7 @@ def _run_style(run) -> dict[str, Any]:
 
 
 def _paragraph_shade(paragraph: DocxParagraph) -> str | None:
-    """读取段落底纹填充色（w:shd/@w:fill）。"""
+    """Read paragraph background fill from w:shd/@w:fill."""
     try:
         p_pr = paragraph._p.pPr  # noqa: SLF001
     except AttributeError:
@@ -246,12 +245,14 @@ def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 
 def _align_style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
-    """仅含需定位的可见样式，用于判断是否真·混排。"""
+    """Keep only visible styles requiring placement to determine whether a paragraph is mixed."""
     return tuple((key, style[key]) for key in _ALIGN_STYLE_KEYS if key in style)
 
 
 def _meaningful_align_style(style: dict[str, Any]) -> dict[str, Any]:
-    """对齐/写出时继承的样式；可带 size_pt，但不含原文 font。"""
+    """Return inherited alignment/export styles, including size_pt but excluding the source
+    font.
+    """
     out: dict[str, Any] = {}
     for key in _ALIGN_STYLE_KEYS:
         if key in style:
@@ -265,7 +266,7 @@ def _paragraph_text_and_style_meta(
     paragraph: DocxParagraph,
     numbering_root=None,
 ) -> tuple[str, dict[str, Any]]:
-    """合并段落 runs 为纯文本，并生成 align / list / docx_style / docx_styles meta。"""
+    """Merge runs into text and produce alignment, list and character-style metadata."""
     align = _paragraph_align(paragraph)
     list_meta = _list_meta(paragraph, numbering_root)
     spans: list[dict[str, Any]] = []
@@ -287,7 +288,7 @@ def _paragraph_text_and_style_meta(
             meta = {**meta, "align": align}
         if shade:
             meta = {**meta, "shade": shade}
-        # 目录等正文已写「1. …」时，忽略自动编号，防止 List Number 再叠一层
+        # Ignore automatic numbering when TOC/body text already contains a prefix such as 1.
         if list_meta and not _text_has_visible_list_prefix(text):
             meta = {**meta, **list_meta}
         return meta
@@ -295,7 +296,7 @@ def _paragraph_text_and_style_meta(
     if not text:
         return "", _with_para_props({})
 
-    # strip() 可能去掉首尾空白：按 strip 后的文本重算相对偏移
+    # Recompute offsets after strip() removes leading or trailing whitespace.
     leading = len("".join(parts)) - len("".join(parts).lstrip())
     stripped = "".join(parts).strip()
     if stripped != "".join(parts):
@@ -312,7 +313,7 @@ def _paragraph_text_and_style_meta(
     if not spans:
         return text, _with_para_props({})
 
-    # 合并相邻 run：仅按「需对齐的可见样式」判断，避免 font/size 把整段拆碎
+    # Merge adjacent runs by visible styles requiring alignment, avoiding fragmentation by font/size.
     merged: list[dict[str, Any]] = []
     for span in spans:
         if (
@@ -322,7 +323,7 @@ def _paragraph_text_and_style_meta(
             == _align_style_fingerprint(span["style"])
         ):
             merged[-1]["end"] = span["end"]
-            # 保留一份 size 供写出继承
+            # Preserve a size value for export inheritance.
             if "size_pt" in span["style"] and "size_pt" not in merged[-1]["style"]:
                 merged[-1]["style"]["size_pt"] = span["style"]["size_pt"]
         else:
@@ -332,14 +333,14 @@ def _paragraph_text_and_style_meta(
 
     align_fps = {_align_style_fingerprint(item["style"]) for item in merged}
     if len(align_fps) <= 1:
-        # 无 bold/italic/color 混排：整段同质（可带统一 size）
+        # Without mixed bold/italic/color, treat the paragraph as uniform, optionally with a common size.
         style = _meaningful_align_style(merged[0]["style"])
         return text, _with_para_props({"docx_style": style} if style else {})
 
     items: list[dict[str, Any]] = []
     for index, span in enumerate(merged):
         meaningful = _meaningful_align_style(span["style"])
-        # 普通正文（无加粗/斜体/颜色）不进对齐列表，写出时当默认 run
+        # Plain body text needs no style alignment and exports as a default run.
         if not any(key in meaningful for key in _ALIGN_STYLE_KEYS):
             continue
         items.append(
@@ -360,7 +361,7 @@ def _paragraph_text_and_style_meta(
 
 
 def _cell_text_and_style(cell, numbering_root=None) -> tuple[str, dict[str, Any]]:
-    """合并单元格段落；样式取自首个非空段落。"""
+    """Combine cell paragraphs, taking styles from the first nonempty paragraph."""
     texts: list[str] = []
     style_meta: dict[str, Any] = {}
     for paragraph in cell.paragraphs:
@@ -374,11 +375,11 @@ def _cell_text_and_style(cell, numbering_root=None) -> tuple[str, dict[str, Any]
 
 
 def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
-    """读取 .docx，识别标题切章，抽出段落与简易表格。"""
+    """Read DOCX headings, paragraphs and basic tables, splitting chapters by headings."""
     try:
         docx = open_docx(path)
-    except Exception as error:  # noqa: BLE001 - 统一为可读的输入错误
-        raise ValueError(f"无法读取 Word 文档：{error}") from error
+    except Exception as error:  # noqa: BLE001 - Convert reader failures to actionable input errors.
+        raise ValueError(f"Cannot read Word document: {error}") from error
 
     numbering_root = None
     try:
@@ -440,7 +441,7 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
             table_id += 1
 
     if not blocks:
-        raise ValueError("Word 文档中未解析到可翻译段落或表格")
+        raise ValueError("No translatable paragraphs or tables found in the Word document")
 
     chapter_specs: list[tuple[str | None, int, list[dict[str, Any]]]] = []
     current_title: str | None = None

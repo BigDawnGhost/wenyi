@@ -1,7 +1,6 @@
-"""术语抽取 Agent（廉价档）+ 入库（含冲突记录）。
-
-每翻完一章，从"原文 + 译文"里抽取应进表的专有名词，
-依据实际译法入库；不同译法由 GlossaryStore.upsert_term 记录，等待人工裁决。
+"""Extract glossary terms with an economical model and persist actual translations.
+Extract proper names from source/target pairs after translation. GlossaryStore.upsert_term
+records alternate translations as conflicts for human resolution.
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from ..agents.base import Agent
 from ..config import Config
 from ..llm.base import LLMClient
 from .store import (
+    TYPE_TERM,
     GlossaryOccurrenceMatcher,
     GlossaryStore,
     GlossaryTerm,
@@ -23,7 +23,7 @@ from .store import (
 
 
 def _text(value: object, default: str = "") -> str:
-    """把模型返回的标量字段规整为字符串。"""
+    """Normalize scalar model fields to strings."""
     if isinstance(value, str):
         return value.strip()
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -33,7 +33,7 @@ def _text(value: object, default: str = "") -> str:
 
 @dataclass(frozen=True)
 class TranslatedSegmentEvidence:
-    """一个已翻译段落及其书内位置，供新术语回查首次译法。"""
+    """A translated paragraph and its book position for tracing a new term's first translation."""
 
     chapter: int
     segment: int
@@ -53,7 +53,9 @@ class GlossaryExtractor(Agent):
         terms: list[GlossaryTerm],
         source_corpus: str,
     ) -> list[GlossaryTerm]:
-        """返回全书至少出现两次的既有术语，并缓存逐条全文匹配结果。"""
+        """Return existing terms occurring at least twice in the book and cache per-term
+        matches.
+        """
         if source_corpus is not self._recurrence_corpus:
             self._recurrence_corpus = source_corpus
             self._recurrence_matcher = GlossaryOccurrenceMatcher(source_corpus)
@@ -84,7 +86,7 @@ class GlossaryExtractor(Agent):
     def extract(
         self, source_text: str, target_text: str, existing: list[GlossaryTerm]
     ) -> list[GlossaryTerm]:
-        """从一组原译文中抽取有效术语，并清洗模型返回的字段类型。"""
+        """Extract valid terms from source/target pairs and normalize model field types."""
         system = prompts.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
         user = prompts.render(
             "glossary_extractor_user",
@@ -109,8 +111,8 @@ class GlossaryExtractor(Agent):
                     source=source,
                     target=target,
                     reading=_text(d.get("reading")),
-                    type=_text(d.get("type"), "术语"),
-                    gender="" if gender == "未知" else gender,
+                    type=_text(d.get("type"), TYPE_TERM),
+                    gender=gender,
                     aliases=[alias for a in aliases if (alias := _text(a))],
                     note=_text(d.get("note")),
                 )
@@ -124,7 +126,9 @@ class GlossaryExtractor(Agent):
         history: Iterable[TranslatedSegmentEvidence],
         before: tuple[int, int],
     ) -> dict[str, TranslatedSegmentEvidence]:
-        """找到尚未入库术语在指定位置之前的首个已译段落。"""
+        """Find the first translated paragraph before the given position for terms not yet
+        stored.
+        """
         pending = {term.source for term in terms if store.get_term(term.source) is None}
         if not pending:
             return {}
@@ -148,7 +152,9 @@ class GlossaryExtractor(Agent):
         terms: list[GlossaryTerm],
         occurrences: dict[str, TranslatedSegmentEvidence],
     ) -> tuple[list[GlossaryTerm], int, int]:
-        """用首次译文校准候选译名；无法可靠判定的历史命中项暂不入库。"""
+        """Align candidates with their first translations; defer terms whose historical mapping
+        is uncertain.
+        """
         if not occurrences:
             return terms, 0, 0
 
@@ -209,14 +215,15 @@ class GlossaryExtractor(Agent):
         before: tuple[int, int] | None = None,
         source_corpus: str | None = None,
     ) -> dict[str, int]:
-        """抽取术语并入库；新术语优先沿用其首次历史译法。
-
-        ``history`` 仅包含已有译文证据。若新术语在 ``before`` 位置之前出现，
-        会先用首次出现的原译文校准 target；历史证据无法判定时暂不入库，
-        避免把后出的候选译名锁定并污染后文。
-
-        传入 ``source_corpus`` 时，抽取提示词只注入在全书源文中累计出现至少
-        两次的既有术语。低频术语仍保留在数据库中，只是不再反复占用抽取上下文。
+        """Extract and store terms, preferring the translation at their first historical
+        occurrence.
+        history contains translated evidence only. If a new term appears before the supplied
+        position, align target against its first source/target pair. Defer uncertain
+        mappings instead of locking a later candidate into the glossary and contaminating
+        subsequent text.
+        With source_corpus, inject only existing terms occurring at least twice in the
+        source. Low-frequency terms remain stored but do not repeatedly consume extraction
+        context.
         """
         all_existing = store.all_terms()
         existing = (

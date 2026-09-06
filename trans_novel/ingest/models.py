@@ -1,11 +1,9 @@
-"""核心数据结构：Document → Chapter → Segment。
-
-Segment 是最小可对齐 / 可回填的翻译单元（通常一个段落或一个标题）。
-翻译时多个 Segment 组成一个 batch 一起发给模型，模型必须返回等长的译文数组，
-据此做句段对齐校验、防止整段漏译。
-
-用 pydantic v2 BaseModel 做校验与序列化；to_dict()/from_dict() 包装保留，
-供 runstore 断点续跑与既有调用方使用。
+"""Core Document, Chapter and Segment models.
+Segment is the smallest alignable/backfillable translation unit, usually a paragraph or
+heading. Send batches of segments to the model and require an equal-length translation array
+to detect alignment errors and prevent missing paragraphs.
+Use Pydantic v2 for validation and serialization. Keep to_dict/from_dict wrappers for
+RunStore resume and existing callers.
 """
 
 from __future__ import annotations
@@ -14,61 +12,65 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# Segment 类型
+# Segment kinds.
 KIND_TEXT = "text"
 KIND_HEADING = "heading"
 
 
 class Segment(BaseModel):
-    """一个可翻译单元。"""
+    """One translatable unit."""
 
-    index: int  # 章内序号（从 0 起）
-    source: str  # 原文
+    index: int  # Zero-based index within the chapter.
+    source: str  # Source text.
     kind: str = KIND_TEXT  # text | heading
-    target: str | None = None  # 译文（翻译/润色后填入）
-    target_before_polish: str | None = None  # 润色前译文（未开启润色时为 None）
-    anchor: str | None = None  # 回填定位标记（EPUB 用占位符 id）
-    resource_href: str | None = None  # EPUB: Segment 所属的物理 XHTML 路径
-    cont: bool = False  # 超长段被拆分后的续段：回填时并回上一段，不另起段落
+    target: str | None = None  # Target text, populated after translation/polishing.
+    target_before_polish: str | None = (
+        None  # Translation before polishing, or None when polishing is disabled.
+    )
+    anchor: str | None = None  # Backfill anchor; EPUB uses a placeholder ID.
+    resource_href: str | None = None  # EPUB physical XHTML resource containing this segment.
+    cont: bool = False  # Continuation of a split long paragraph; merge back during export instead of creating a paragraph.
     meta: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化为可写入章节状态文件的普通字典。"""
+        """Serialize to a plain dictionary for chapter state files."""
         return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Segment:
-        """校验普通字典并恢复一个 Segment。"""
+        """Validate a dictionary and restore a Segment."""
         return cls.model_validate(d)
 
 
 class Chapter(BaseModel):
-    """一章：有序的 Segment 列表 + 回填所需的结构信息。"""
+    """A chapter: ordered segments and structural information for backfill."""
 
-    index: int  # 全书章序号（从 0 起）
+    index: int  # Zero-based chapter index within the book.
     title: str = ""
     segments: list[Segment] = Field(default_factory=list)
-    href: str | None = None  # EPUB: 逻辑章起始物理资源路径（兼容展示）
-    template: str | None = None  # HTML/旧 EPUB: 带占位符的回填模板
+    href: str | None = (
+        None  # EPUB physical resource where the logical chapter begins, retained for display compatibility.
+    )
+    template: str | None = None  # HTML/legacy EPUB backfill template with placeholders.
     meta: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def text_segments(self) -> list[Segment]:
-        """需要送翻译的非空 Segment。"""
+        """Nonempty segments that need translation."""
         return [s for s in self.segments if s.source.strip()]
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化章节及其全部段落为普通字典。"""
+        """Serialize the chapter and all its segments to a plain dictionary."""
         return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Chapter:
-        """校验普通字典并恢复一个 Chapter。"""
+        """Validate a dictionary and restore a Chapter."""
         return cls.model_validate(d)
 
 
 class Document(BaseModel):
-    """整本书。"""
+    """A complete book."""
 
     title: str = ""
     source_lang: str
@@ -79,10 +81,10 @@ class Document(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化整本文档及章节数据为普通字典。"""
+        """Serialize the document and chapters to a plain dictionary."""
         return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Document:
-        """校验普通字典并恢复一个 Document。"""
+        """Validate a dictionary and restore a Document."""
         return cls.model_validate(d)

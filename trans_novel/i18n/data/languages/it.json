@@ -1,0 +1,11 @@
+{
+  "label": "Italian",
+  "english_name": "Italian",
+  "source_guidance": "Interpret omitted Italian subjects, tense and register. Distinguish grammatical gender from facts about characters.",
+  "target_guidance": "Use natural Italian with consistent tense, gender/number agreement, articles and the register of forms of address.",
+  "punctuation_rule": "Follow Italian punctuation and quotation conventions. Preserve accents, apostrophes and symbol pairing.",
+  "title_rule": "Use conventional Italian titles and section labels.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

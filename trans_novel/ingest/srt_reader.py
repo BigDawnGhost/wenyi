@@ -1,4 +1,4 @@
-"""SRT 字幕解析。"""
+"""Parse SRT subtitles."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _SRT_BLOCK = re.compile(
 
 @dataclass(frozen=True)
 class SrtCue:
-    """一条字幕：序号、时间轴、正文。"""
+    """A subtitle cue with index, timing and body text."""
 
     index: str
     timestamp: str
@@ -22,7 +22,7 @@ class SrtCue:
 
 
 def _decode_srt_bytes(raw: bytes) -> str:
-    """按常见编码尝试解码；全部失败时用替换策略保证可跑。"""
+    """Try common encodings, then use replacement decoding if all fail."""
     for encoding in ("utf-8-sig", "utf-8", "gb18030", "utf-16", "latin-1"):
         try:
             return raw.decode(encoding)
@@ -32,15 +32,15 @@ def _decode_srt_bytes(raw: bytes) -> str:
 
 
 def parse_srt(path: str) -> list[SrtCue]:
-    """读取并解析 SRT；文件不可读或无有效块时抛 ValueError。"""
+    """Read SRT cues; raise ValueError when the file is unreadable or has no valid blocks."""
     try:
         with open(path, "rb") as handle:
             raw = handle.read()
     except OSError as error:
-        raise ValueError(f"无法读取字幕文件：{error}") from error
+        raise ValueError(f"Cannot read subtitle file: {error}") from error
 
     content = _decode_srt_bytes(raw)
     matches = _SRT_BLOCK.findall(content)
     if not matches:
-        raise ValueError("未解析到有效 SRT 字幕块")
+        raise ValueError("No valid SRT subtitle blocks found")
     return [SrtCue(index=m[0], timestamp=m[1], text=m[2].strip()) for m in matches]

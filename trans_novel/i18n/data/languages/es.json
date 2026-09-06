@@ -1,0 +1,11 @@
+{
+  "label": "Spanish",
+  "english_name": "Spanish",
+  "source_guidance": "Interpret omitted Spanish subjects, tense and tú/usted register. Distinguish grammatical gender from facts about characters.",
+  "target_guidance": "Use natural Spanish with consistent tense, gender/number agreement and forms of address. Preserve accents.",
+  "punctuation_rule": "Use Spanish punctuation, including paired ¿? and ¡!. Preserve dialogue and other symbol structure and pairing.",
+  "title_rule": "Use natural Spanish titles and section labels with conventional capitalization.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

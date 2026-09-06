@@ -1,0 +1,30 @@
+[Characters / Style guide]
+$style
+
+[Whole-book synopsis]
+$book_synopsis
+
+[Chapter digest]
+$chapter_digest
+
+[Relevant glossary] (required mappings)
+$glossary
+
+[Nearby source / shadow translation]
+$nearby_pairs
+
+[Confirmed issues]
+$issues_json
+
+[Current paragraph identity]
+segment_ref: $segment_ref
+before_hash: $before_hash
+issue_ids: $issue_ids_json
+
+[Complete current source ($src_label)]
+$source
+
+[Complete current $tgt_label translation]
+$current_target
+
+Make only the minimum edits that address every confirmed issue and return the complete revised paragraph. Follow the system JSON protocol exactly, with complete as the final field.

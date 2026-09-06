@@ -1,4 +1,4 @@
-"""摄取与切分的冒烟测试。"""
+"""Ingestion and segmentation smoke tests."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class TestTextIngest(unittest.TestCase):
         self.assertEqual(len(doc.chapters), 2)
         ch1 = doc.chapters[0]
         self.assertEqual(ch1.title, "第一章　出会い")
-        # 标题 heading + 3 段正文
+        # One heading and three body paragraphs.
         self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
         self.assertEqual(len(ch1.text_segments), 4)
 
@@ -94,10 +94,10 @@ class TestTextIngest(unittest.TestCase):
             write_sample_txt(p)
             doc = load_document(p, "ja", "zh")
         batches = chapter_batches(doc.chapters[0], max_chars=60)
-        # 总段数守恒
+        # Preserve total segment count.
         total = sum(len(b) for b in batches)
         self.assertEqual(total, len(doc.chapters[0].text_segments))
-        self.assertGreater(len(batches), 1)  # 60 字符预算应切出多批
+        self.assertGreater(len(batches), 1)  # A 60-character budget should produce several batches.
 
 
 _FB2_FLAT = """\
@@ -123,7 +123,7 @@ _FB2_BODY_TITLE = """\
 </FictionBook>
 """
 
-# 嵌套：部 → 章（section 套 section）。容器节正文不得丢失。
+# Nested part/chapter sections must preserve container body text.
 _FB2_NESTED = """\
 <?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
@@ -139,7 +139,7 @@ _FB2_NESTED = """\
 """
 
 
-# subtitle / poem / cite / text-author 等正文块不得丢字
+# Preserve subtitle, poetry, citation and attribution content.
 _FB2_BLOCKS = """\
 <?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
@@ -192,12 +192,12 @@ class TestFb2Ingest(unittest.TestCase):
         doc = self._load(_FB2_FLAT)
         self.assertEqual(doc.fmt, "fb2")
         self.assertEqual(doc.title, "平铺之书")
-        self.assertEqual(len(doc.chapters), 2)  # notes body 不计入
+        self.assertEqual(len(doc.chapters), 2)  # Exclude the notes body.
         ch1 = doc.chapters[0]
         self.assertEqual(ch1.title, "第一章")
         self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
-        self.assertEqual(len(ch1.text_segments), 3)  # 标题 + 2 段
-        # 注释正文不应出现在任何章中
+        self.assertEqual(len(ch1.text_segments), 3)  # A heading and two paragraphs.
+        # Annotation body text must not appear in any chapter.
         all_src = [s.source for ch in doc.chapters for s in ch.segments]
         self.assertNotIn("这是注释，应被跳过。", all_src)
 
@@ -271,13 +271,13 @@ class TestFb2Ingest(unittest.TestCase):
             "结尾段落。",
         ]:
             self.assertIn(expect, texts)
-        # subtitle 作为 heading
+        # Treat subtitles as headings.
         headings = [s.source for s in ch.segments if s.kind == KIND_HEADING]
         self.assertIn("场景小标题", headings)
 
     def test_nested_sections_not_lost(self):
         doc = self._load(_FB2_NESTED)
-        # 部标题成一章 + 两个子章，正文一段不丢
+        # Preserve a part-title chapter and two child chapters without losing body paragraphs.
         titles = [ch.title for ch in doc.chapters]
         self.assertEqual(titles, ["第一部", "第一章", "第二章"])
         all_text = [
@@ -315,7 +315,7 @@ class TestFb2Ingest(unittest.TestCase):
 
 class TestSplitLongSegments(unittest.TestCase):
     def test_split_by_sentence_and_cont_flag(self):
-        long_src = "第一句。" * 10  # 40 字符
+        long_src = "第一句。" * 10  # Forty characters.
         ch = Chapter(
             index=0,
             title="章",
@@ -326,16 +326,16 @@ class TestSplitLongSegments(unittest.TestCase):
             ],
         )
         split_long_segments([ch], max_chars=30)
-        # 长段被拆成多段：首段保留 anchor，续段 cont=True 且无 anchor
+        # Split a long paragraph, retaining the first anchor and marking unanchored continuations.
         conts = [s.cont for s in ch.segments]
         self.assertIn(True, conts)
         long_parts = [s for s in ch.segments if not s.cont and s.anchor == "a1"]
-        self.assertEqual(len(long_parts), 1)  # 首段唯一带 a1
+        self.assertEqual(len(long_parts), 1)  # Only the first segment retains a1.
         cont_parts = [s for s in ch.segments if s.cont]
         self.assertTrue(all(s.anchor is None for s in cont_parts))
-        # index 连续重排
+        # Reassign consecutive indices.
         self.assertEqual([s.index for s in ch.segments], list(range(len(ch.segments))))
-        # 拼回去等于原文
+        # Rejoining must reproduce the original text.
         joined = "".join(s.source for s in ch.segments if s.anchor == "a1" or s.cont)
         self.assertEqual(joined, long_src)
 
@@ -373,7 +373,9 @@ class TestSplitLongSegments(unittest.TestCase):
         self.assertFalse(ch.segments[0].cont)
 
     def test_oversized_single_sentence_hard_split(self):
-        chunks = _split_text("あ" * 50, 20)  # 无句末标点的超长串
+        chunks = _split_text(
+            "あ" * 50, 20
+        )  # An oversized string without sentence-ending punctuation.
         self.assertTrue(all(len(c) <= 20 for c in chunks))
         self.assertEqual("".join(chunks), "あ" * 50)
 
@@ -776,7 +778,7 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(first_item["raw_href"], "notes.xhtml#note-1")
         self.assertEqual(first_item["target_key"], "notes.xhtml#note-1")
         self.assertEqual(first_item["relation"], "noteref")
-        # 没有 marker 的普通范围链接，只有在目标具有显式 note 语义后才升级。
+        # Promote a marker-free range link only when its destination explicitly identifies a note.
         self.assertEqual(second_item["relation"], "noteref")
         context = document.meta["epub_annotation_contexts"]["contexts"]["notes.xhtml#note-1"]
         self.assertEqual(
@@ -1084,7 +1086,7 @@ class TestEpubIngest(unittest.TestCase):
             [segment.source for segment in segments],
             ["満足に与〘あずか〙りがちな疲れ"],
         )
-        # 术语匹配只对「去注音」文本，避免 与り 被括号拆散
+        # Strip reading hints before glossary matching so inserted markers cannot split a word.
         self.assertTrue(source_matches_text("与り", segments[0].source))
         self.assertTrue(source_matches_text("与", segments[0].source))
         self.assertEqual(strip_ruby_markers(segments[0].source), "満足に与りがちな疲れ")
@@ -1230,7 +1232,7 @@ class TestEpubIngest(unittest.TestCase):
         ch1 = doc.chapters[0]
         self.assertEqual(ch1.title, "第一章　出会い")
         self.assertEqual(len(ch1.text_segments), 3)  # h1 + 2 p
-        # 状态只保留稳定定位信息；模板和内联布局在导出时从原 EPUB 重建。
+        # Persist stable identity only; rebuild templates and inline layout from the original EPUB during export.
         self.assertIsNone(ch1.template)
         for s in ch1.text_segments:
             self.assertIsNotNone(s.anchor)
@@ -1373,7 +1375,9 @@ class TestEpubIngest(unittest.TestCase):
         )
 
     def test_peek_epub_title_matches_full_document_title(self):
-        """轻量 OPF 书名须与完整 read_epub 的 Document.title 一致，否则 locate 会找错 state。"""
+        """Lightweight OPF title lookup must match read_epub's Document.title for correct state
+        lookup.
+        """
         with tempfile.TemporaryDirectory() as d:
             with_title = os.path.join(d, "named.epub")
             write_sample_epub(with_title)
@@ -1418,7 +1422,7 @@ class TestEpubIngest(unittest.TestCase):
 
 
 class TestPagebreakProcessingInstruction(unittest.TestCase):
-    """源书 XHTML 的 <?pagebreak number="N"?> 页码标记不得进入翻译源文。"""
+    """XHTML page-break processing instructions must never enter translatable source text."""
 
     def test_pagebreak_pi_is_excluded_from_segment_source(self):
         html = '<html><body><p><?pagebreak number="69"?>At first I was meek.</p></body></html>'

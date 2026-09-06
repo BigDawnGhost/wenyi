@@ -1,4 +1,4 @@
-"""通过 OrcaRouter 的 OpenAI 兼容接口调用模型。"""
+"""Call models through OrcaRouter's OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ DEFAULT_API_KEY_ENV = "ORCAROUTER_API_KEY"
 
 class OrcaRouterClient(OpenAICompatibleClient):
     def __init__(self, cfg: LLMConfig):
-        """使用 OrcaRouter 默认端点和密钥环境变量初始化兼容客户端。"""
+        """Initialize a compatible client with OrcaRouter's default endpoint and key
+        environment variable.
+        """
         super().__init__(
             cfg,
             provider_name="OrcaRouter",

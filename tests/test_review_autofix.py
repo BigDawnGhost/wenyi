@@ -1,4 +1,4 @@
-"""Review Autofix 发布阶段测试（离线）。"""
+"""Offline review-autofix publication tests."""
 
 from __future__ import annotations
 
@@ -205,10 +205,10 @@ class TestReviewAutofix(unittest.TestCase):
         def handler(messages, tier, json_mode):
             system = messages[0]["content"]
             user = messages[-1]["content"]
-            if "取证审校 Agent" in system:
+            if "evidence-based review agent" in system:
                 seen_agent_users.append(user)
                 return _agent_final(user)
-            if "谨慎修订编辑" in system:
+            if "cautious revision editor" in system:
                 seen_fixer_users.append(user)
                 return _fix_json(user, "Agent 终局译文。")
             return "{}"
@@ -249,7 +249,10 @@ class TestReviewAutofix(unittest.TestCase):
             self.assertEqual(len(seen_agent_users), 1)
             self.assertIn("change 工作译文。", seen_agent_users[0])
             self.assertEqual(len(seen_fixer_users), 1)
-            self.assertIn("当前完整中文译文】\nchange 工作译文。", seen_fixer_users[0])
+            self.assertIn(
+                "Complete current Simplified Chinese translation]\nchange 工作译文。",
+                seen_fixer_users[0],
+            )
             index = json.loads(
                 Path(outcome.run_dir, "autofix", "index.json").read_text(encoding="utf-8")
             )
@@ -274,9 +277,9 @@ class TestReviewAutofix(unittest.TestCase):
     def test_failed_final_fixer_keeps_applied_change_and_records_issue(self):
         def handler(messages, tier, json_mode):
             system = messages[0]["content"]
-            if "取证审校 Agent" in system:
+            if "evidence-based review agent" in system:
                 return _agent_final(messages[-1]["content"])
-            if "谨慎修订编辑" in system:
+            if "cautious revision editor" in system:
                 return "{"
             return "{}"
 

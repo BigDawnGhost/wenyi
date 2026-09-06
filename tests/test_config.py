@@ -1,4 +1,4 @@
-"""配置文件创建与加载测试。"""
+"""Configuration-file creation and loading tests."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertTrue(cfg.llm.tiers["fast"].options["thinking"])
             self.assertFalse(hasattr(cfg.llm, "api_key"))
             generated = path.read_text(encoding="utf-8")
-            self.assertIn("# trans-novel 配置", generated)
+            self.assertIn("# trans-novel configuration", generated)
             self.assertIn("  base_url: https://api.deepseek.com", generated)
             self.assertIn("  api_key_env: DEEPSEEK_API_KEY", generated)
             self.assertIn("  tiers:\n", generated)
@@ -70,7 +70,7 @@ class TestConfigFileCreation(unittest.TestCase):
             )
 
     def test_partial_config_uses_yaml_pipeline_defaults(self):
-        """缺失的流水线字段必须与自动生成的 YAML 默认值一致。"""
+        """Missing pipeline fields must match the generated YAML defaults."""
         cfg = Config.from_dict({"pipeline": {"review": False}})
 
         self.assertFalse(cfg.pipeline.review)

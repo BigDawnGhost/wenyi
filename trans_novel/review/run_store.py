@@ -1,4 +1,4 @@
-"""正式但只读的全书 Review 运行记录，支持断点续跑。"""
+"""Persistent read-only whole-book review records with resume support."""
 
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ def review_candidate_id(
     ordinal: int,
     review_round: int | None = None,
 ) -> str:
-    """生成初审快照与 Agent 协议共用的确定性候选 ID。"""
+    """Generate deterministic candidate IDs shared by initial snapshots and the agent protocol."""
     prefix = f"r{review_round}-" if review_round is not None else ""
     return f"{prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
 
 
 @dataclass(frozen=True)
 class ReviewOutcome:
-    """一次已完成 Review 的正式结果及目录。"""
+    """A completed review's result and directory."""
 
     run_dir: str
     result: dict[str, Any]
@@ -35,17 +35,17 @@ class ReviewOutcome:
 
     @property
     def issues(self) -> list[dict[str, Any]]:
-        """返回盲复审结束后仍存在的问题。"""
+        """Return issues remaining after blind rechecks."""
         return list(self.result.get("issues") or [])
 
     @property
     def changes(self) -> list[dict[str, Any]]:
-        """返回折叠后的最终影子修改建议。"""
+        """Return collapsed final shadow-change recommendations."""
         return list(self.result.get("changes") or [])
 
 
 class ReviewRunStore:
-    """管理一次只读 Review 的结果、事件与逐轮记录。"""
+    """Manage results, events and round records for one read-only review."""
 
     def __init__(self, book_run_dir: str, *, now: datetime | None = None):
         moment = (now or datetime.now().astimezone()).astimezone()
@@ -77,7 +77,7 @@ class ReviewRunStore:
 
     @staticmethod
     def _atomic_json(path: str, data: Any) -> None:
-        """把 JSON 原子写入目标路径，避免中断留下半个文件。"""
+        """Write JSON atomically so interruption cannot leave a partial file."""
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as file:
@@ -85,14 +85,14 @@ class ReviewRunStore:
         os.replace(tmp, path)
 
     def path(self, relative: str) -> str:
-        """返回本次 Review 目录内的绝对路径。"""
+        """Return an absolute path within this review directory."""
         if self._active_round is not None:
             relative = f"rounds/{self._active_round:03d}/{relative}"
         return os.path.join(self.run_dir, relative)
 
     @contextmanager
     def round_scope(self, round_number: int) -> Iterator[None]:
-        """把并发 trace 与阶段产物隔离到指定 Review 轮次。"""
+        """Scope concurrent traces and stage artifacts to the specified review round."""
         if self._active_round is not None:
             raise RuntimeError("Review round scopes cannot be nested")
         self._active_round = round_number
@@ -102,13 +102,13 @@ class ReviewRunStore:
             self._active_round = None
 
     def write_json(self, relative: str, data: Any) -> str:
-        """原子保存一个逐轮 JSON 并返回绝对路径。"""
+        """Atomically save round JSON and return its absolute path."""
         path = self.path(relative)
         self._atomic_json(path, data)
         return path
 
     def load_json(self, relative: str) -> dict[str, Any] | None:
-        """按 round 作用域读取一个逐轮 JSON；缺失或损坏时返回 None。"""
+        """Read round-scoped JSON, or return None if missing or damaged."""
         path = self.path(relative)
         try:
             with open(path, encoding="utf-8") as file:
@@ -117,7 +117,7 @@ class ReviewRunStore:
             return None
 
     def log_event(self, event: str, **data: Any) -> None:
-        """线程安全地追加本次 Review 的结构化事件。"""
+        """Append structured review events under a lock."""
         if self._active_round is not None:
             data.setdefault("review_round", self._active_round)
         with self._event_lock:
@@ -138,7 +138,7 @@ class ReviewRunStore:
         chunk_base: int,
         issues: list[dict[str, Any]],
     ) -> None:
-        """线程安全地汇总成功叶块的初审候选。"""
+        """Aggregate initial candidates from successful leaf blocks under a lock."""
         rows = []
         for ordinal, issue in enumerate(issues):
             index = issue.get("index")
@@ -172,7 +172,7 @@ class ReviewRunStore:
         chunk_base: int,
         issues: list[dict[str, Any]],
     ) -> None:
-        """线程安全地汇总被块级 Agent 驳回的候选。"""
+        """Aggregate candidates dismissed by block agents under a lock."""
         rows = [
             {
                 **dict(issue),
@@ -190,7 +190,7 @@ class ReviewRunStore:
         self,
         round_number: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """返回按轮次和书序排列的初审、驳回问题副本。"""
+        """Return copies of initial/dismissed issues ordered by round and book position."""
         with self._result_lock:
             initial = [
                 dict(issue)
@@ -213,9 +213,9 @@ class ReviewRunStore:
         return sorted(initial, key=position), sorted(dismissed, key=position)
 
     def start(self, *, reviewed_content_digest: str, metadata: dict[str, Any]) -> None:
-        """在首个模型调用前创建运行中结果并保存运行参数。
-
-        如果是续跑（status=running），保留已有结果和 metadata 不覆盖。
+        """Create a running result and save parameters before the first model call.
+        On resume with status=running, preserve existing results and metadata instead of
+        overwriting them.
         """
         self._reviewed_content_digest = reviewed_content_digest
         result_path = os.path.join(self.run_dir, "result.json")
@@ -224,7 +224,7 @@ class ReviewRunStore:
                 with open(result_path, "r", encoding="utf-8") as f:
                     existing = json.load(f)
                 if existing.get("status") == "running":
-                    # 续跑：保留已有结果和 metadata，只更新时间戳
+                    # Resume: preserve results and metadata, updating only the timestamp.
                     existing["resumed_at"] = (
                         datetime.now().astimezone().isoformat(timespec="microseconds")
                     )
@@ -234,7 +234,7 @@ class ReviewRunStore:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # 首次运行：保存 metadata 并创建新结果
+        # First run: save metadata and create a new result.
         metadata["reviewed_content_digest"] = reviewed_content_digest
         self.write_json("rounds/metadata.json", metadata)
         self._atomic_json(
@@ -262,7 +262,7 @@ class ReviewRunStore:
         changes: list[dict[str, Any]],
         error: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """写入最终统一结果并返回其内存副本。"""
+        """Persist the final unified result and return an in-memory copy."""
         result: dict[str, Any] = {
             "review_id": self.review_id,
             "status": status,
@@ -288,7 +288,7 @@ class ReviewRunStore:
         return result
 
     def save_usage(self, usage: dict[str, Any]) -> None:
-        """合并保存本次 Review 的 Token 增量（跨进程续跑不丢失）。"""
+        """Merge and persist review token deltas without loss across process resumes."""
         existing = self.load_usage()
         if existing is not None:
             usage = merge_usage_summaries(existing, usage)
@@ -296,7 +296,7 @@ class ReviewRunStore:
         self.log_event("review_usage_recorded", **usage["totals"])
 
     def load_usage(self) -> dict[str, Any] | None:
-        """读取已落盘的 Review 用量；文件缺失时返回 None。"""
+        """Read persisted review usage, or return None if absent."""
         path = os.path.join(self.run_dir, "usage.json")
         if not os.path.isfile(path):
             return None
@@ -306,16 +306,16 @@ class ReviewRunStore:
         except (json.JSONDecodeError, OSError):
             return None
 
-    # ── 断点续跑：chunk 级别完成状态 ──────────────────────────────────────
+    # Resume: chunk completion state.
 
     def mark_chunk_done(self, chunk_id: str, result: dict[str, Any]) -> None:
-        """标记一个审校块为已完成，保存结果用于续跑。"""
+        """Mark a review block complete and cache its result for resume."""
         chunks_dir = os.path.join(self.run_dir, "chunks")
         os.makedirs(chunks_dir, exist_ok=True)
         self._atomic_json(os.path.join(chunks_dir, f"{chunk_id}.json"), result)
 
     def load_chunk_result(self, chunk_id: str) -> dict[str, Any] | None:
-        """加载已完成的审校块结果，未完成返回 None。"""
+        """Load a completed block result, or return None if unfinished."""
         path = os.path.join(self.run_dir, "chunks", f"{chunk_id}.json")
         if not os.path.exists(path):
             return None
@@ -326,18 +326,15 @@ class ReviewRunStore:
             return None
 
     def is_chunk_done(self, chunk_id: str) -> bool:
-        """检查审校块是否已完成。"""
+        """Check whether a review block completed."""
         return self.load_chunk_result(chunk_id) is not None
 
     def rebuild_snapshots_from_chunks(self, review_round: int) -> None:
-        """从已落盘的 chunk 缓存重建初审/驳回快照。
-
-        用于 scan_done 断点续跑：跳过整轮扫描后，review_once 不再
-        重放 record_initial_issues/record_dismissed，这里按 chunk 文件
-        恢复内存聚合状态，保证最终报告的数据完整。
-
-        大块优先重建；若父块与拆半残留的子块同时存在（如整块重跑
-        成功后旧叶子未清理），跳过完全包含在已记录块内的子块，避免重复计数。
+        """Rebuild initial/dismissed snapshots from persisted chunk caches.
+        On scan_done resume, review_once no longer replays aggregation calls. Restore them
+        from chunk files so final reports remain complete. Process larger blocks first and
+        skip child blocks fully contained in an already recorded parent, preventing
+        duplicate counts from stale split leaves.
         """
         chunks_dir = os.path.join(self.run_dir, "chunks")
         if not os.path.isdir(chunks_dir):
@@ -360,7 +357,7 @@ class ReviewRunStore:
             except ValueError:
                 continue
             entries.append((chapter, chunk_base, size, cached))
-        # 按 (chapter, -size, base) 排序：大块在前，小块的包含关系可判
+        # Sort by chapter, descending size and base so child containment can be detected.
         entries.sort(key=lambda e: (e[0], -e[2], e[1]))
         covered: dict[int, list[tuple[int, int]]] = {}
         for chapter, chunk_base, size, cached in entries:
@@ -384,14 +381,14 @@ class ReviewRunStore:
                     issues=dismissed,
                 )
 
-    # ── 断点续跑：轮级检查点 ────────────────────────────────────────────
+    # Resume: round checkpoints.
 
     def save_checkpoint(self, state: dict[str, Any]) -> None:
-        """保存轮级检查点，用于续跑恢复 round 循环状态。"""
+        """Save a round checkpoint for restoring the review loop."""
         self._atomic_json(os.path.join(self.run_dir, "checkpoint.json"), state)
 
     def load_checkpoint(self) -> dict[str, Any] | None:
-        """加载轮级检查点，不存在返回 None。"""
+        """Load the round checkpoint, or return None if absent."""
         path = os.path.join(self.run_dir, "checkpoint.json")
         if not os.path.isfile(path):
             return None
@@ -409,10 +406,9 @@ class ReviewRunStore:
         config: dict[str, Any] | None = None,
         glossary_fingerprint: str | None = None,
     ) -> "ReviewRunStore | None":
-        """找到最近一次未完成的 Review 用于续跑，没有则返回 None。
-
-        ``content_digest`` / ``config`` / ``glossary_fingerprint`` 若提供，
-        必须与该次 Review 的 metadata 一致，避免改配置或术语后续跑复用陈旧缓存。
+        """Find the latest unfinished review to resume, or return None.
+        When supplied, content_digest, config and glossary_fingerprint must match its
+        metadata so changed settings or terms cannot reuse stale caches.
         """
         review_root = os.path.join(book_run_dir, "reviews")
         if not os.path.isdir(review_root):
@@ -462,7 +458,7 @@ class ReviewRunStore:
 
     @classmethod
     def _from_existing(cls, run_dir: str, review_id: str) -> "ReviewRunStore":
-        """从已有目录恢复一个 ReviewRunStore 实例。"""
+        """Restore a ReviewRunStore from an existing directory."""
         inst = cls.__new__(cls)
         inst.run_dir = run_dir
         inst.review_id = review_id
@@ -473,9 +469,9 @@ class ReviewRunStore:
         inst._dismissed_issues = []
         inst._active_round = None
         inst._reviewed_content_digest = ""
-        # 恢复事件序号（避免与已有事件重叠）
+        # Restore event sequence numbering to avoid collisions with existing events.
         inst._sequence = cls._read_max_seq(inst._event_path)
-        # 从 result.json 恢复 started_at；缺失则留空。
+        # Restore started_at from result.json, leaving it empty if absent.
         inst.started_at = ""
         result_path = os.path.join(run_dir, "result.json")
         if os.path.isfile(result_path):
@@ -489,16 +485,16 @@ class ReviewRunStore:
 
     @classmethod
     def open_existing(cls, run_dir: str) -> "ReviewRunStore":
-        """打开已有 Review 目录，供后续 Autofix 共用原子写入与事件序列。"""
+        """Open existing review storage so autofix shares its atomic writes and event sequence."""
         normalized = os.path.normpath(run_dir)
         review_id = os.path.basename(normalized)
         if not review_id.startswith("review-") or not os.path.isdir(normalized):
-            raise ValueError("Review 目录无效")
+            raise ValueError("Invalid review directory")
         return cls._from_existing(normalized, review_id)
 
     @staticmethod
     def _read_max_seq(event_path: str) -> int:
-        """从 events.jsonl 读取最大 seq 值。"""
+        """Read the maximum sequence value from events.jsonl."""
         max_seq = 0
         if not os.path.isfile(event_path):
             return max_seq

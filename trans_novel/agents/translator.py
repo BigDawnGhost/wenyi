@@ -1,10 +1,8 @@
-"""翻译 Agent（强档）。
-
-核心保证：句段对齐——输入 N 段，输出必须是 N 段，一一对应。
-策略：
-1. 整批翻译并要求等长 JSON 数组；
-2. 段数不符则重试（最多 align_retry_limit 次）；
-3. 仍不符则逐段单独翻译兜底，从结构上保证 1:1，杜绝整段漏译。
+"""Translation agent using the strong tier.
+Guarantee paragraph alignment: N source paragraphs must produce N corresponding
+translations. Request an equal-length JSON array, retry count mismatches up to
+align_retry_limit, then translate paragraphs individually. This final fallback prevents
+entire paragraphs from being omitted.
 """
 
 from __future__ import annotations
@@ -22,11 +20,10 @@ class AlignmentError(Exception):
 class Translator(Agent):
     @staticmethod
     def _needs_translation(source: str) -> bool:
-        """仅把含语言文字的非空段落发送给模型。
-
-        PDF 表格经常把 ``-``、纯数字或其它占位符解析为独立段落。模型可能
-        把这些内容返回为空字符串，进而触发对齐失败；这类段落原样保留即可。
-        ``str.isalpha`` 覆盖拉丁、中文、日文、韩文等 Unicode 字母。
+        """Send only nonempty paragraphs containing language characters to the model.
+        PDF tables often yield separate hyphens, numbers or placeholders. Models may return
+        them empty and trigger alignment errors; preserve those paragraphs unchanged.
+        str.isalpha covers Unicode letters including Latin, Chinese, Japanese and Korean.
         """
         stripped = source.strip()
         return bool(stripped) and any(character.isalpha() for character in stripped)
@@ -36,30 +33,38 @@ class Translator(Agent):
         sources: list[str],
         annotation_contexts: list[list[dict[str, str]]] | None,
     ) -> list[list[dict[str, str]]]:
-        """校验逐段注释资料，并裁剪为提示词实际使用的稳定字段。"""
+        """Validate paragraph annotation references and retain only stable fields used by the
+        prompt.
+        """
         if annotation_contexts is None:
             return [[] for _ in sources]
         if not isinstance(annotation_contexts, list) or len(annotation_contexts) != len(sources):
-            actual = len(annotation_contexts) if isinstance(annotation_contexts, list) else "非列表"
-            raise ValueError(f"注释上下文数量不匹配：期望 {len(sources)} 组，实际 {actual} 组")
+            actual = (
+                len(annotation_contexts) if isinstance(annotation_contexts, list) else "not a list"
+            )
+            raise ValueError(
+                f"Annotation context count mismatch: expected {len(sources)} groups, got {actual}"
+            )
 
         normalized: list[list[dict[str, str]]] = []
         for segment_index, items in enumerate(annotation_contexts):
             if not isinstance(items, list):
-                raise ValueError(f"第 {segment_index} 段的注释上下文必须是列表")
+                raise ValueError(f"Annotation context for paragraph {segment_index} must be a list")
             segment_items: list[dict[str, str]] = []
             for item_index, item in enumerate(items):
                 if not isinstance(item, dict):
-                    raise ValueError(f"第 {segment_index} 段第 {item_index} 条注释上下文必须是对象")
+                    raise ValueError(
+                        f"Annotation {item_index} in paragraph {segment_index} must be an object"
+                    )
                 target_key = item.get("target_key")
                 source = item.get("source")
                 if not isinstance(target_key, str) or not target_key.strip():
                     raise ValueError(
-                        f"第 {segment_index} 段第 {item_index} 条注释上下文缺少有效 target_key"
+                        f"Annotation {item_index} in paragraph {segment_index} has no valid target_key"
                     )
                 if not isinstance(source, str):
                     raise ValueError(
-                        f"第 {segment_index} 段第 {item_index} 条注释上下文缺少字符串 source"
+                        f"Annotation {item_index} in paragraph {segment_index} has no string source"
                     )
                 segment_items.append({"target_key": target_key, "source": source})
             normalized.append(segment_items)
@@ -75,42 +80,48 @@ class Translator(Agent):
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> list[str]:
-        """调用一次批量翻译，并严格校验输出类型、数量和非空性。"""
+        """Translate one batch and strictly validate output types, count and nonempty content."""
         n = len(sources)
         system = prompts.render(
             "translator_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(self.src, self.config.honorific_strategy),
+            lang_guidance=langprofile.translate_guidance(
+                self.src, self.config.honorific_strategy, self.tgt
+            ),
         )
         user = prompts.render(
             "translator_user",
             src=self.src,
             tgt=self.tgt,
-            style=style or "（无）",
-            book_synopsis=book_synopsis or "（无）",
+            style=style or "(none)",
+            book_synopsis=book_synopsis or "(none)",
             glossary=prompts.render_glossary(glossary_terms),
             annotation_contexts=prompts.render_annotation_contexts(
                 annotation_contexts or [[] for _ in sources]
             ),
-            chapter_digest=chapter_digest or "（无）",
-            context=context or "（无）",
+            chapter_digest=chapter_digest or "(none)",
+            context=context or "(none)",
             n=n,
             n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
         )
-        # Provider 瞬时错误只由传输层重试；这里仅把成功响应中的 JSON
-        # 协议错误归入对齐恢复，避免 401/403/5xx 被业务层再次放大。
+        # Transient provider errors are retried only by the transport. Only JSON protocol errors in
+        # successful responses enter alignment recovery, avoiding duplicate retries for 401/403/5xx errors.
         try:
             items = self._ask_json(system, user, tier="strong", key="translations")
         except JsonParseError as error:
-            raise AlignmentError("模型返回的译文 JSON 无法解析") from error
+            raise AlignmentError(
+                "Cannot parse the translation JSON returned by the model"
+            ) from error
         if not isinstance(items, list):
-            raise AlignmentError("模型未返回译文数组")
+            raise AlignmentError("The model did not return a translation array")
         if len(items) != n:
-            raise AlignmentError(f"译文数量不匹配：期望 {n} 段，实际 {len(items)} 段")
+            raise AlignmentError(
+                f"Translation count mismatch: expected {n} paragraphs, got {len(items)}"
+            )
         if any(not isinstance(item, str) or not item.strip() for item in items):
-            raise AlignmentError("模型返回了空译文或非字符串译文")
+            raise AlignmentError("The model returned an empty or non-string translation")
         return items
 
     def _translate_one(
@@ -123,7 +134,7 @@ class Translator(Agent):
         chapter_digest,
         annotation_context,
     ) -> str:
-        """借用批量协议翻译单段，作为批量对齐失败后的最终兜底。"""
+        """Use the batch protocol for one paragraph as the final alignment fallback."""
         out = self._call_batch(
             [source],
             glossary_terms,
@@ -146,7 +157,7 @@ class Translator(Agent):
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> list[str]:
-        """翻译一批源段，返回与之等长的译文列表。"""
+        """Translate a batch and return the same number of target paragraphs."""
         glossary_terms = glossary_terms or []
         n = len(sources)
         annotation_contexts = self._validate_annotation_contexts(sources, annotation_contexts)
@@ -180,11 +191,11 @@ class Translator(Agent):
                     targets[index] = target
                 return targets
             except AlignmentError:
-                # 只恢复模型输出协议/对齐错误；传输错误已由 provider 统一处理。
+                # Recover only output protocol/alignment errors; the provider handles transport retries.
                 continue
 
-        # 兜底：逐段翻译。任一段仍失败时显式中断，保留已落盘
-        # 批次供续跑；不能用空字符串占位，否则章节会被错误标记为已完成。
+        # Fall back to individual paragraphs. If any still fails, stop explicitly and preserve saved
+        # batches for resume. Empty placeholders would incorrectly mark the chapter complete.
         targets = list(sources)
         for index, source, annotation_context in zip(
             translated_indices,
@@ -202,5 +213,7 @@ class Translator(Agent):
                     annotation_context,
                 )
             except Exception as error:
-                raise AlignmentError(f"逐段兜底翻译在第 {index} 段失败") from error
+                raise AlignmentError(
+                    f"Single-paragraph fallback failed at paragraph {index}"
+                ) from error
         return targets

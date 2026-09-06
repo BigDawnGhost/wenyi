@@ -122,7 +122,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
         with (
             patch("trans_novel.ingest.pdf_babeldoc._is_image_only_pdf", return_value=True),
             patch("trans_novel.ingest.pdf_babeldoc.BabeldocBridgeClient") as client,
-            self.assertRaisesRegex(BabeldocBridgeError, "只有扫描图片.*MinerU"),
+            self.assertRaisesRegex(BabeldocBridgeError, "only scanned images.*MinerU"),
         ):
             read_pdf_babeldoc(
                 "scan.pdf",

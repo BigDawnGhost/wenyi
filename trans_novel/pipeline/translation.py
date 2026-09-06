@@ -1,14 +1,12 @@
-"""翻译服务：批次续跑、章/批翻译、润色、滚动上下文、术语快照与抽取、标题翻译。
-
-服务接收已经生成的全书概览，在调用方持有书级锁时执行正文翻译。保持章内及跨章串行，
-不增加并行化。每批精确顺序：
-
-    翻译 → 批次译文落盘 → 注释定位并落盘 → 更新上下文 → batch 事件
-    → 术语抽取/checkpoint → 更新历史索引 → 下一批
-
-章末执行全章术语兜底，并用 save_chapter_with_status 原子发布模型原始译文和
-done。标点机械规范化只作用于导出副本，不写入正式 target。已有译文但缺失
-glossary checkpoint 时只补抽术语，不重新翻译或覆盖译文。
+"""Translation batches, resume, polishing, rolling context, glossary extraction and titles.
+Use the prepared book synopsis while the caller holds the book lock. Process chapters and
+batches serially. For each batch: translate, persist targets, align/persist annotations,
+update context, append the batch event, extract/checkpoint glossary terms, update history,
+then proceed.
+At chapter end, perform fallback glossary extraction and publish model text plus done
+through save_chapter_with_status. Normalize punctuation only in export copies. If targets
+exist without a glossary checkpoint, extract missing terms without retranslating or
+overwriting targets.
 """
 
 from __future__ import annotations
@@ -33,10 +31,10 @@ ProgressFn = Callable[[int, int, str], None]
 
 
 def _resume_batches(segments, max_chars: int) -> list[list]:
-    """按字符预算分批后，再沿“已完成/待翻译”边界切开。
-
-    用户调整批次预算时，新的批次可能同时包含已有译文和空译文。若直接重跑
-    该混合批次会覆盖已确认内容；按完成状态分组可只补译缺失段。
+    """Split character-budget batches again at completed/pending boundaries.
+    A changed budget may mix saved translations and empty targets in one batch. Group by
+    completion state to translate only missing paragraphs and avoid overwriting confirmed
+    content.
     """
     batches: list[list] = []
     for raw_batch in batch_segments(segments, max_chars):
@@ -55,7 +53,7 @@ def _resume_batches(segments, max_chars: int) -> list[list]:
 
 
 class TranslationService:
-    """正文翻译、术语抽取与标题/目录翻译的领域服务。"""
+    """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
     def __init__(self, runtime: PipelineRuntime, annotations: AnnotationService):
         self._runtime = runtime
@@ -70,10 +68,9 @@ class TranslationService:
         only_chapter: int | None = None,
         progress: ProgressFn | None = None,
     ) -> RunStore:
-        """恢复语言和上下文，依次翻译章节并持续保存用量与进度。
-
-        语言恢复、only_chapter 校验与全书概览生成由调用方（编排器）完成，
-        本方法在书级锁内只执行正文翻译与标题翻译。
+        """Translate chapters serially and persist usage/progress under the book lock.
+        The caller restores languages, validates only_chapter and prepares the synopsis.
+        This method performs body and title translation with restored context.
         """
         manifest = store.load_manifest()
         glossary = GlossaryStore(store.glossary_path)
@@ -118,14 +115,14 @@ class TranslationService:
                     )
                     store.save_context(context.to_dict())
                     self._runtime.flush_usage(store, scope="chapter")
-                # 全书译完后翻译各章标题和目录项（书名保持原文，借术语表保持专名一致）
+                # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
                 if not store.pending_chapters():
                     self.translate_titles(store, glossary, progress=progress)
         finally:
             glossary.close()
             self._runtime.flush_usage(store, scope="translate")
         if progress and total:
-            progress(total, total, "翻译完成")
+            progress(total, total, "Translation complete")
         store.log_event("translate_run_finished", total_segments=total)
         return store
 
@@ -133,7 +130,9 @@ class TranslationService:
     def load_translation_inputs(
         store: RunStore,
     ) -> tuple[dict[tuple[int, int], TranslatedSegmentEvidence], str]:
-        """一次读取章节，重建历史译文索引并拼接完整源文。"""
+        """Read chapters once to rebuild translated-history indices and concatenate the source
+        corpus.
+        """
         history: dict[tuple[int, int], TranslatedSegmentEvidence] = {}
         source_parts: list[str] = []
         manifest = store.load_manifest()
@@ -164,7 +163,7 @@ class TranslationService:
         start_index: int,
         segments,
     ) -> None:
-        """把一批最新原译文写入内存位置索引。"""
+        """Update the in-memory location index with the latest source/target batch."""
         for offset, segment in enumerate(segments):
             target = (segment.target or "").strip()
             if not target:
@@ -178,10 +177,10 @@ class TranslationService:
             )
 
     def progress_counts(self, store: RunStore, chapter_indices: list[int]) -> tuple[int, int]:
-        """按全书批次检查点计算进度，续跑从已有译文数量开始显示。
-
-        只有整批译文齐全时才计入 done；不完整批次会整体重跑，提前计入其中
-        个别已有段会导致完成数重复累加。
+        """Compute progress from batch checkpoints, starting resume at completed translation
+        counts.
+        Count a batch as done only when all its targets exist. Counting partial batches
+        early would duplicate completion counts if the batch reruns.
         """
         total = 0
         done = 0
@@ -211,7 +210,9 @@ class TranslationService:
         done: int = 0,
         total: int = 0,
     ) -> int:
-        """翻译、润色和抽取单章并落盘，返回更新后的完成段数。"""
+        """Translate, polish, extract and persist one chapter; return the updated
+        completed-paragraph count.
+        """
         chapter = store.load_chapter(ci)
         text_segs = chapter.text_segments
         if not text_segs:
@@ -226,28 +227,28 @@ class TranslationService:
 
         batches = _resume_batches(text_segs, self._runtime.config.segment.max_chars_per_batch)
         label = self.chapter_progress_label(chapter.title, ci)
-        # prepare() 的最后一个标签通常是“解析文档…”。续跑首批可能先恢复术语，
-        # 若不在章首刷新，整个模型请求期间都会错误地显示成仍在解析源文件。
+        # Preparation often ends with a parsing label, but resume may first restore glossary terms.
+        # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
         if progress:
             progress(done, total, label)
         glossary_checkpoints = store.completed_batch_glossary_keys(ci)
-        # 章首读一次术语快照供后续真译注入 prompt。glossary_scope=chapter 时按本章
-        # 源文裁剪。之后仅在「术语库可能已变」且「下一批真要翻译」时惰性刷新：
-        # 正常 skip（译文与术语 checkpoint 都在）不抽、不刷；缺 checkpoint 的已译
-        # 批仍补抽并标记 stale，保证中途续跑不漏抽取、又不在纯 skip 上白刷整表。
+        # Read one glossary snapshot at chapter start and filter by source when scope is chapter.
+        # Refresh lazily only if the glossary may have changed and another batch needs translation.
+        # Fully checkpointed skips neither extract nor refresh. Saved translations lacking extraction
+        # still extract and mark the snapshot stale, preserving resume completeness without redundant reads.
         term_snapshot = self.chapter_term_snapshot(glossary, text_segs)
         term_snapshot_stale = False
 
-        # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
-        # 不再并发，换取章内跨批的代词/术语/语气连贯。
-        # 断点续跑（段/批级）：上次中断前已译完并落盘的批次，整批跳过、不重翻，只重建上下文。
-        seg_base = 0  # 当前批首段的章内段号（issue 批内下标 → 章内段号）
+        # Process batches serially: render current context, translate and immediately append targets.
+        # This preserves pronoun, term and voice continuity between batches within a chapter.
+        # Skip saved complete batches on resume and reconstruct context without retranslating them.
+        seg_base = 0  # Chapter-local index of this batch's first paragraph, used to map local issue indices.
         for b in batches:
             batch_start = seg_base
             glossary_key = store.batch_glossary_key(batch_start, len(b))
             existing_targets = [s.target for s in b if s.target and s.target.strip()]
             if len(existing_targets) == len(b):
-                # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
+                # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 self._annotations.align_annotations_after_batch(
                     ci,
                     chapter,
@@ -277,7 +278,7 @@ class TranslationService:
                         "skipped": 1,
                     }
                 else:
-                    # 译文在、术语 checkpoint 不在（旧状态/中断在抽取前）：补抽入库。
+                    # Targets exist but extraction checkpoint is missing: extract and store terms now.
                     summary = self.extract_batch_glossary(
                         glossary,
                         store,
@@ -322,11 +323,11 @@ class TranslationService:
             )
             for s, t in zip(b, targets):
                 s.target = t
-            # 增量持久化译文，下次中断从此批之后续跑。
+            # Persist translations incrementally so interruption resumes after this batch.
             store.save_chapter(chapter)
-            # 只处理当前批次触及的注释逻辑段。多个注释段严格按原文顺序
-            # 一段一次调用；若当前批只有超长段的前半部分，则等最后一个
-            # cont 续段译完后再合并定位。
+            # Handle only annotated logical paragraphs touched by this batch, in source order.
+            # If the batch contains only an initial slice of a long paragraph, wait until its final
+            # continuation finishes before merging and aligning.
             self._annotations.align_annotations_after_batch(
                 ci,
                 chapter,
@@ -366,7 +367,7 @@ class TranslationService:
             seg_base += len(b)
             if progress:
                 progress(done, total, label)
-            # 译文落盘后再抽取术语，避免中断时术语库领先章节产物。
+            # Persist targets before glossary extraction so interruption cannot leave terms ahead of text.
             self.extract_batch_glossary(
                 glossary,
                 store,
@@ -378,11 +379,11 @@ class TranslationService:
             )
             self.update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
-            # 库可能已变；延迟到下一批真译前再刷，末批之后无需再刷。
+            # The glossary may have changed; refresh before the next real translation, not after the final batch.
             term_snapshot_stale = True
 
-        # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
-        # 最终 Review 会在全书翻译完成后读取此时已经稳定的最终术语库。
+        # Keep chapter-wide extraction as a fallback for address, speech and fixed expressions needing context.
+        # Final review reads the stable glossary after the entire book finishes translating.
         src_text = "\n".join(s.source for s in text_segs)
         tgt_text = "\n".join(s.target or "" for s in text_segs)
         chapter_glossary_summary = self._runtime.extractor.extract_and_store(
@@ -410,7 +411,9 @@ class TranslationService:
         return done
 
     def chapter_term_snapshot(self, glossary: GlossaryStore, text_segs) -> list:
-        """返回当前章节要注入的术语快照；实时入库后可重新调用刷新。"""
+        """Return the glossary snapshot for this chapter; call again after writes to refresh
+        it.
+        """
         terms = glossary.all_terms()
         if self._runtime.config.pipeline.glossary_scope != "chapter":
             return terms
@@ -420,9 +423,11 @@ class TranslationService:
 
     @staticmethod
     def chapter_progress_label(title: str, index: int) -> str:
-        """进度展示用章节名：优先用书内标题，避免内部序号与“第一章”等标题冲突。"""
+        """Prefer the book's chapter title for progress so internal indices cannot contradict
+        visible numbering.
+        """
         title = (title or "").strip()
-        return title or f"章节 {index + 1}"
+        return title or f"Chapter {index + 1}"
 
     def extract_batch_glossary(
         self,
@@ -434,7 +439,9 @@ class TranslationService:
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
         source_corpus: str,
     ) -> dict[str, int]:
-        """每批译完/续跑跳过后即时抽取术语，供同章后续批次使用。"""
+        """Extract terms immediately after translating or resuming a batch for use by later
+        chapter batches.
+        """
         src_text = "\n".join(s.source for s in batch)
         tgt_text = "\n".join(s.target or "" for s in batch)
         summary = self._runtime.extractor.extract_and_store(
@@ -461,10 +468,10 @@ class TranslationService:
         segments: list[Segment],
         end: int,
     ) -> None:
-        """用当前章已完成前缀刷新滚动上下文尾部。
-
-        注释逻辑段跨越批次时，最后一个续段完成后会同时定稿此前批次中的
-        target。这里把这些更新同步回内存上下文，确保下一批看到最新正式译文。
+        """Refresh recent context from the chapter's completed prefix.
+        When an annotated logical paragraph spans batches, completing its final continuation
+        can finalize earlier targets too. Copy those updates into context so the next batch
+        sees current formal text.
         """
         prefix = segments[: max(0, min(end, len(segments)))]
         if not prefix or any(not (segment.target and segment.target.strip()) for segment in prefix):
@@ -480,20 +487,19 @@ class TranslationService:
         glossary: GlossaryStore,
         progress: ProgressFn | None = None,
     ) -> None:
-        """翻译所有逻辑章标题和 NCX/NAV 目录节点并写回 manifest。
-
-        目录节点若已定位到正文 heading Segment，直接复用完整译文，
-        使正文与目录严格一致；其它标题再分批调用标题翻译器。每批立即
-        落盘，续跑只处理尚未完成的项。书名始终保持原文。
+        """Translate logical chapter titles and NCX/NAV entries and update the manifest.
+        For TOC entries linked to heading segments, reuse the complete translated heading.
+        Batch remaining titles, persist each batch and resume only unfinished entries.
+        Preserve the original book title.
         """
         from ..agents import prompts
 
         m = store.load_manifest()
         chapters = m.get("chapters", [])
 
-        # 标题压成单行，避免内嵌换行破坏 numbered 对齐
+        # Collapse titles to one line so embedded newlines cannot break numbered alignment.
         def _flat(s: object) -> str:
-            """把标题压缩为不含换行和连续空白的单行文本。"""
+            """Normalize a title to one line without repeated whitespace."""
             return " ".join(str(s or "").split())
 
         raw_meta = m.get("meta")
@@ -506,8 +512,8 @@ class TranslationService:
             if isinstance(entry, dict) and _flat(entry.get("title", ""))
         ]
 
-        # 长 heading 可能在摄取后被拆成首段 + cont；按 anchor 重新并回完整
-        # 译文，且只允许 heading 被目录复用。
+        # Long headings may have continuation slices. Merge their complete translation by anchor,
+        # and allow TOC reuse only for heading segments.
         anchor_targets: dict[str, tuple[str, str, str]] = {}
         loaded_chapters = {
             chapter.get("index"): store.load_chapter(chapter["index"])
@@ -522,7 +528,7 @@ class TranslationService:
             source_parts: list[str],
             parts: list[str],
         ) -> None:
-            """把一个 anchor 的续段译文合并进索引。"""
+            """Merge translated continuations for one anchor into the index."""
             if active_anchor and active_kind == "heading" and complete and parts:
                 anchor_targets[active_anchor] = (
                     active_kind,
@@ -597,7 +603,7 @@ class TranslationService:
         }
 
         def sync_chapter_titles() -> None:
-            """让逻辑 Chapter 复用其起始目录节点的同一译名。"""
+            """Reuse the starting TOC node's translation for its logical chapter."""
             nonlocal changed
             for manifest_chapter in chapters:
                 if manifest_chapter.get("title_translated"):
@@ -610,8 +616,8 @@ class TranslationService:
 
         sync_chapter_titles()
 
-        # spine 回退章没有 toc_entry_id；若章名就是首个 heading，同样复用
-        # 正文译文，避免独立翻译后与页内标题不一致。
+        # Spine-fallback chapters lack toc_entry_id. If their title is the first heading, reuse that
+        # heading's body translation to avoid inconsistent independently translated titles.
         for manifest_chapter in chapters:
             if manifest_chapter.get("title_translated"):
                 continue
@@ -650,9 +656,9 @@ class TranslationService:
             store.log_event("titles_skipped", reason="already_translated_or_reused")
             return
         if progress:
-            progress(0, len(pending), "翻译章节标题…")
+            progress(0, len(pending), "Translating chapter titles…")
 
-        # 目录可能有数百项；同时限制项数和字符数，避免 JSON 输出被截断。
+        # Bound both title count and character count for large TOCs to avoid truncated JSON responses.
         batches: list[list[dict[str, object]]] = []
         current: list[dict[str, object]] = []
         current_chars = 0
@@ -733,7 +739,7 @@ class TranslationService:
             )
             completed += len(batch)
             if progress:
-                progress(completed, len(pending), "翻译章节标题")
+                progress(completed, len(pending), "Translating chapter titles")
 
     def process_batch(
         self,
@@ -745,12 +751,11 @@ class TranslationService:
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
     ) -> list[str]:
-        """单个批次：整批翻译 → 润色。
-
-        每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
-        全书概览/本章梗概作为恒定前缀注入，让译者把握全局。
-        标点机械规范化由导出阶段对一次性副本执行。
-        LLM 审校不在翻译批内做；全书完成后由独立 Review 阶段统一执行。
+        """Translate then polish one batch.
+        Translate every paragraph in its own context without reusing text across positions.
+        Inject the book synopsis and chapter digest as stable prefixes. Normalize
+        punctuation on disposable export copies only. Model review runs separately after
+        whole-book translation, not inside each batch.
         """
         sources = [s.source for s in batch]
         targets = self._runtime.translator.translate_batch(
@@ -762,7 +767,7 @@ class TranslationService:
             chapter_digest=chapter_digest,
             annotation_contexts=annotation_contexts,
         )
-        # 模型偶发把源文注音标记〘假名〙抄进译文时剥掉。
+        # Strip pronunciation markers accidentally copied from source into the model's translation.
         targets = [strip_ruby_markers(target) for target in targets]
 
         if self._runtime.config.pipeline.polish:
@@ -772,7 +777,7 @@ class TranslationService:
             if len(polished) == len(targets):
                 targets = polished
         else:
-            # 段落可能在修改配置后被重译，不应沿用旧的润色前快照。
+            # Retranslation after configuration changes must not retain an older pre-polish snapshot.
             for segment in batch:
                 segment.target_before_polish = None
 

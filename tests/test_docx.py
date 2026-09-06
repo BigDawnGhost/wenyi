@@ -1,4 +1,4 @@
-"""DOCX 输入解析、组装与 CLI 默认导出格式。"""
+"""DOCX ingestion, assembly and default CLI output-format tests."""
 
 from __future__ import annotations
 
@@ -99,12 +99,12 @@ class TestDocxReader(unittest.TestCase):
         self.assertEqual(items[0]["color"], "FF0000")
 
     def test_toc_line_with_visible_number_skips_list_meta(self):
-        """目录「1. Title」正文已含序号时，不应再套自动编号。"""
+        """Visible TOC numbering such as 1. Title must not receive automatic numbering too."""
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "toc.docx")
             doc = DocxDocument()
             doc.add_heading("Contents", level=1)
-            # 模拟带失效 numPr 的目录行：正文已有「1.」
+            # Simulate a TOC line with invalid numPr and an existing visible number.
             doc.add_paragraph("1. The myth of primitive society", style="List Number")
             doc.save(path)
             book = read_docx(path, "en", "zh")
@@ -284,7 +284,7 @@ class TestDocxStyles(unittest.TestCase):
                 }
             )
             chapter = book.chapters[0]
-            # 未翻译：target 为空，写出回退原文
+            # An empty target falls back to source during export.
             chapter.segments[0].target = None
             store.save_chapter(chapter)
             out_path = os.path.join(directory, "out.docx")
@@ -296,7 +296,9 @@ class TestDocxStyles(unittest.TestCase):
             self.assertNotEqual(runs[0].font.name, "宋体")
 
     def test_assemble_preserves_center_and_mixed_bold_without_placements(self):
-        """未跑样式对齐时，导出仍应用居中与混排加粗（比例回退）。"""
+        """Export must preserve centering and mixed bold via proportional fallback before
+        alignment runs.
+        """
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import RGBColor
 
