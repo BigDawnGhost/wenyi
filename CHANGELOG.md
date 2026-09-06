@@ -3,6 +3,7 @@
 All notable changes to this project are documented here following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+- Usage accounting now persists each completed provider attempt synchronously through crash-safe schema-v2 WAL recovery, with real-time visibility and non-retryable local persistence failures.
 - Moved local benchmark specifications, corpora, and run artifacts from the repository root into one ignored `benchmarks/` workspace.
 
 ## [1.1.0] - 2026-09-05

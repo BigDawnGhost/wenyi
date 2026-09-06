@@ -21,6 +21,7 @@ from rich.table import Table
 from trans_novel.cli import common as cli_common
 from trans_novel.cli.tools import tools_app
 from trans_novel.config import Config
+from trans_novel.pipeline import UsagePersistenceError
 from trans_novel.pipeline.execution import ReadinessError, RequiredNodeFailed
 from trans_novel.pipeline.state import STATUS_DONE, IdentityMismatchError
 
@@ -30,7 +31,13 @@ app = typer.Typer(
     help="多 Agent 小说翻译系统（多语言 → 中文）",
 )
 console = cli_common.console
-_TRANSLATION_ERRORS = (RequiredNodeFailed, IdentityMismatchError, ReadinessError, ValueError)
+_TRANSLATION_ERRORS = (
+    RequiredNodeFailed,
+    IdentityMismatchError,
+    ReadinessError,
+    UsagePersistenceError,
+    ValueError,
+)
 
 
 def _show_version(value: bool) -> None:

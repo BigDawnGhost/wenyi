@@ -59,15 +59,19 @@ class FakeClient(LLMClient):
         }
         with self._calls_lock:
             self.calls.append(record)
-        self.usage.record_attempt(agent=agent, operation=operation)
+        self.usage.begin_attempt()
         start = time.monotonic()
         try:
-            if self.handler is not None:
-                return self.handler(messages, agent, operation, json_mode)
-            return "[]" if json_mode else ""
-        except Exception:
-            self.usage.record_attempt_failed(agent=agent, operation=operation)
-            raise
+            try:
+                if self.handler is not None:
+                    result = self.handler(messages, agent, operation, json_mode)
+                else:
+                    result = "[]" if json_mode else ""
+            except Exception:
+                self.usage.record_attempt_result(agent=agent, operation=operation, failed=True)
+                raise
+            self.usage.record_attempt_result(agent=agent, operation=operation)
+            return result
         finally:
             self.usage.record_logical_call(agent, operation, (time.monotonic() - start) * 1000)
 
@@ -121,9 +125,7 @@ class FakeProviderTransport:
             attempt_index = attempt_counter[0]
         else:
             attempt_index = 1
-        self.usage.record_attempt(
-            agent=agent, operation=operation, provider=self.provider, model_ref=model_ref
-        )
+        self.usage.begin_attempt()
         content = "[]" if json_mode else ""
         if self.telemetry_sink is not None:
             try:
@@ -177,4 +179,10 @@ class FakeProviderTransport:
                 )
             except Exception:
                 warn_telemetry_failure()
+        self.usage.record_attempt_result(
+            agent=agent,
+            operation=operation,
+            provider=self.provider,
+            model_ref=model_ref,
+        )
         return content

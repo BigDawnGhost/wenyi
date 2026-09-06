@@ -326,15 +326,103 @@ class UsageTracker:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._totals = dict.fromkeys(_USAGE_FIELDS, 0)
         self._by_agent: dict[str, dict[str, int]] = {}
         self._by_operation: dict[str, dict[str, int]] = {}
         self._by_provider: dict[str, dict[str, int]] = {}
         self._by_model: dict[str, dict[str, int]] = {}
         self._by_stage: dict[str, dict[str, int]] = {}
+        self._persistence: Any = None
+        self._active_attempts = 0
+        self._active_scopes = 0
+
+    def bind_persistence(self, persistence: Any) -> None:
+        with self._lock:
+            if self._active_attempts or self._active_scopes:
+                raise RuntimeError("cannot rebind usage while accounting is active")
+            self._persistence = persistence
+
+    def has_active_work(self) -> bool:
+        with self._lock:
+            return bool(self._active_attempts or self._active_scopes)
+
+    def begin_scope(self) -> None:
+        with self._lock:
+            self._active_scopes += 1
+
+    def end_scope(self) -> None:
+        with self._lock:
+            if self._active_scopes <= 0:
+                raise RuntimeError("usage scope is not active")
+            self._active_scopes -= 1
+
+    def begin_attempt(self) -> None:
+        with self._lock:
+            self._active_attempts += 1
+
+    def _finish_attempt(self) -> None:
+        if self._active_attempts:
+            self._active_attempts -= 1
+
+    def _persist_locked(self) -> None:
+        if self._persistence is not None:
+            self._persistence.persist(self._summary_locked())
+
+    def _summary_locked(self) -> dict[str, Any]:
+        return _usage_summary_from_parts(
+            by_agent={name: dict(values) for name, values in self._by_agent.items()},
+            by_operation={name: dict(values) for name, values in self._by_operation.items()},
+            by_provider={name: dict(values) for name, values in self._by_provider.items()},
+            by_model={name: dict(values) for name, values in self._by_model.items()},
+            by_stage={name: dict(values) for name, values in self._by_stage.items()},
+            totals=dict(self._totals),
+        )
 
     # ── 物理尝试（provider 传输调用）────────────────────────────────────
+    def record_attempt_result(
+        self,
+        *,
+        agent: str,
+        operation: str,
+        provider: str | None = None,
+        model_ref: ModelRef | None = None,
+        usage: Any = None,
+        stage: str | None = None,
+        failed: bool = False,
+    ) -> None:
+        """Atomically account one completed physical attempt and persist it."""
+        normalized = normalize_response_usage(usage) if usage is not None else None
+        with self._lock:
+            self._finish_attempt()
+            for values in (
+                self._by_agent.setdefault(agent, _slot(_AGENT_FIELDS)),
+                self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS)),
+            ):
+                values["attempts"] += 1
+                if failed:
+                    values["failed_attempts"] += 1
+            if provider:
+                values = self._by_provider.setdefault(provider, _slot(_PROVIDER_FIELDS))
+                values["attempts"] += 1
+                if failed:
+                    values["failed_attempts"] += 1
+            if model_ref is not None:
+                values = self._by_model.setdefault(model_ref.full_name, _slot(_MODEL_FIELDS))
+                values["attempts"] += 1
+                if failed:
+                    values["failed_attempts"] += 1
+            if normalized is not None:
+                self._record_usage_locked(
+                    agent=agent,
+                    operation=operation,
+                    provider=provider,
+                    model_ref=model_ref,
+                    stage=stage,
+                    normalized=normalized,
+                )
+            self._persist_locked()
+
     def record_attempt(
         self,
         *,
@@ -343,7 +431,7 @@ class UsageTracker:
         provider: str | None = None,
         model_ref: ModelRef | None = None,
     ) -> None:
-        """物理请求开始时调用：attempts 计入 by_agent/by_operation/by_provider/by_model。"""
+        """Compatibility for non-provider callers; production uses terminal attempts."""
         with self._lock:
             self._by_agent.setdefault(agent, _slot(_AGENT_FIELDS))["attempts"] += 1
             self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS))["attempts"] += 1
@@ -353,6 +441,7 @@ class UsageTracker:
                 self._by_model.setdefault(model_ref.full_name, _slot(_MODEL_FIELDS))[
                     "attempts"
                 ] += 1
+            self._persist_locked()
 
     def record_attempt_failed(
         self,
@@ -362,8 +451,7 @@ class UsageTracker:
         provider: str | None = None,
         model_ref: ModelRef | None = None,
     ) -> None:
-        """请求异常或空响应时调用（每个物理尝试至多一次）：failed_attempts 同时计入
-        by_agent、by_operation、by_provider 和 by_model。"""
+        """Compatibility for non-provider callers."""
         with self._lock:
             self._by_agent.setdefault(agent, _slot(_AGENT_FIELDS))["failed_attempts"] += 1
             self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS))["failed_attempts"] += 1
@@ -375,6 +463,7 @@ class UsageTracker:
                 self._by_model.setdefault(model_ref.full_name, _slot(_MODEL_FIELDS))[
                     "failed_attempts"
                 ] += 1
+            self._persist_locked()
 
     # ── 响应用量（provider 传输调用，响应带 usage 时）────────────────────
     def record(
@@ -387,47 +476,59 @@ class UsageTracker:
         usage: Any = None,
         stage: str | None = None,
     ) -> None:
-        """累加一次带 usage 的响应：token 同时计入 totals 与各归因维度，且每处只计一次。"""
+        """Compatibility for direct callers; provider transports use terminal attempts."""
         if usage is None:
             return
         normalized = normalize_response_usage(usage)
-        token_values = {
-            "prompt_tokens": normalized["prompt_tokens"],
-            "completion_tokens": normalized["completion_tokens"],
-            "total_tokens": normalized["total_tokens"],
-            "cache_hit_tokens": normalized["cache_hit_tokens"],
-            "cache_miss_tokens": normalized["cache_miss_tokens"],
-        }
-        reasoning_tokens = normalized["reasoning_tokens"]
         with self._lock:
-            self._totals["calls"] += 1
+            self._record_usage_locked(
+                agent=agent,
+                operation=operation,
+                provider=provider,
+                model_ref=model_ref,
+                stage=stage,
+                normalized=normalized,
+            )
+            self._persist_locked()
+
+    def _record_usage_locked(
+        self,
+        *,
+        agent: str,
+        operation: str,
+        provider: str | None,
+        model_ref: ModelRef | None,
+        stage: str | None,
+        normalized: dict[str, int],
+    ) -> None:
+        token_values = {field: normalized[field] for field in _TOKEN_DELTAS}
+        reasoning_tokens = normalized["reasoning_tokens"]
+        self._totals["calls"] += 1
+        for field in _TOKEN_DELTAS:
+            self._totals[field] += token_values[field]
+        for values in (
+            self._by_agent.setdefault(agent, _slot(_AGENT_FIELDS)),
+            self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS)),
+        ):
+            values["calls"] += 1
             for field in _TOKEN_DELTAS:
-                self._totals[field] += token_values[field]
-            slot = self._by_agent.setdefault(agent, _slot(_AGENT_FIELDS))
-            slot["calls"] += 1
+                values[field] += token_values[field]
+            values["reasoning_tokens"] += reasoning_tokens
+        for values in (
+            self._by_provider.setdefault(provider, _slot(_PROVIDER_FIELDS)) if provider else None,
+            self._by_model.setdefault(model_ref.full_name, _slot(_MODEL_FIELDS))
+            if model_ref is not None
+            else None,
+        ):
+            if values is not None:
+                values["calls"] += 1
+                for field in _TOKEN_DELTAS:
+                    values[field] += token_values[field]
+        if stage:
+            values = self._by_stage.setdefault(stage, _slot(_USAGE_FIELDS))
+            values["calls"] += 1
             for field in _TOKEN_DELTAS:
-                slot[field] += token_values[field]
-            slot["reasoning_tokens"] += reasoning_tokens
-            slot = self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS))
-            slot["calls"] += 1
-            for field in _TOKEN_DELTAS:
-                slot[field] += token_values[field]
-            slot["reasoning_tokens"] += reasoning_tokens
-            if provider:
-                slot = self._by_provider.setdefault(provider, _slot(_PROVIDER_FIELDS))
-                slot["calls"] += 1
-                for field in _TOKEN_DELTAS:
-                    slot[field] += token_values[field]
-            if model_ref is not None:
-                slot = self._by_model.setdefault(model_ref.full_name, _slot(_MODEL_FIELDS))
-                slot["calls"] += 1
-                for field in _TOKEN_DELTAS:
-                    slot[field] += token_values[field]
-            if stage:
-                slot = self._by_stage.setdefault(stage, _slot(_USAGE_FIELDS))
-                slot["calls"] += 1
-                for field in _TOKEN_DELTAS:
-                    slot[field] += token_values[field]
+                values[field] += token_values[field]
 
     # ── 逻辑调用 / 结果 / 降级（by_agent 与 by_operation 同时计入）────────
     def record_logical_call(self, agent: str, operation: str, elapsed_ms: float) -> None:
@@ -438,6 +539,7 @@ class UsageTracker:
             slot = self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS))
             slot["logical_calls"] += 1
             slot["elapsed_ms"] += round(elapsed_ms)
+            self._persist_locked()
 
     def record_outcome(self, agent: str, operation: str, *, accepted: bool) -> None:
         with self._lock:
@@ -447,25 +549,14 @@ class UsageTracker:
             self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS))[
                 "accepted" if accepted else "rejected"
             ] += 1
+            self._persist_locked()
 
     def record_fallback(self, agent: str, operation: str) -> None:
         with self._lock:
             self._by_agent.setdefault(agent, _slot(_AGENT_FIELDS))["fallbacks"] += 1
             self._by_operation.setdefault(operation, _slot(_AGENT_FIELDS))["fallbacks"] += 1
+            self._persist_locked()
 
     def summary(self) -> dict[str, Any]:
         with self._lock:
-            by_agent = {name: dict(values) for name, values in self._by_agent.items()}
-            by_operation = {name: dict(values) for name, values in self._by_operation.items()}
-            by_provider = {name: dict(values) for name, values in self._by_provider.items()}
-            by_model = {name: dict(values) for name, values in self._by_model.items()}
-            by_stage = {name: dict(values) for name, values in self._by_stage.items()}
-            totals = dict(self._totals)
-        return _usage_summary_from_parts(
-            by_agent=by_agent,
-            by_operation=by_operation,
-            by_provider=by_provider,
-            by_model=by_model,
-            by_stage=by_stage,
-            totals=totals,
-        )
+            return self._summary_locked()

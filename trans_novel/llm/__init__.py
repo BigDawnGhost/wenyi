@@ -15,6 +15,7 @@ from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.router import AgentRouter
 from trans_novel.llm.telemetry import CallAttemptTelemetry, CallTelemetrySink
 from trans_novel.llm.usage import has_response_usage, normalize_response_usage
+from trans_novel.llm.usage_persistence import UsagePersistenceError
 
 __all__ = [
     "AgentRouter",
@@ -29,6 +30,7 @@ __all__ = [
     "ModelRef",
     "ProviderError",
     "UnknownAgentError",
+    "UsagePersistenceError",
     "build_client",
     "has_response_usage",
     "normalize_response_usage",

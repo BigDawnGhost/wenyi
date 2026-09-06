@@ -1,4 +1,4 @@
-"""Workflow runner：锁范围 / 节点生命周期 / 必需 vs 尽力而为延续 / 中断恢复 / 用量落盘。
+"""Workflow runner：锁范围 / 节点生命周期 / 必需 vs 尽力而为延续 / 中断恢复。
 
 只依赖 contracts / definition / planner / state / RunStore 面的协议：
 不 import 任何具体 Agent、具体节点模块、assemble writer 或 provider 实现，
@@ -17,6 +17,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
+from trans_novel.llm.usage_persistence import UsagePersistenceError
 from trans_novel.pipeline.contracts import (
     FAILURE_BUSINESS,
     NodeOutcome,
@@ -71,7 +72,7 @@ class WorkflowRunner:
     - 业务异常失败落盘后按原样抛出，不走 RequiredNodeFailed 包装；
     - 成功产物的 artifacts 按节点键并入共享 map，供同轮后续节点消费；
     - 章链收尾：最后一节章节点执行完成后标 done + 发 chapter_done 事件；
-    - 收尾统一落盘用量增量。
+    - 收尾阶段事件在计划完成后按用量 scope 检查点发出。
     """
 
     def __init__(
@@ -79,11 +80,13 @@ class WorkflowRunner:
         *,
         definition: WorkflowDefinition,
         node_factory: Callable[[str, int | None], WorkflowNode],
-        usage_flush: Callable[[RunRepository, str], Any] | None = None,
+        usage_bind: Callable[[RunRepository, str | None], Any] | None = None,
+        usage_scope_finish: Callable[[str | None], Any] | None = None,
     ):
         self.definition = definition
         self.node_factory = node_factory
-        self.usage_flush = usage_flush
+        self.usage_bind = usage_bind
+        self.usage_scope_finish = usage_scope_finish
 
     # ── 入口 ──────────────────────────────────────────────────────────────
     def run(
@@ -102,15 +105,21 @@ class WorkflowRunner:
         操作）在锁内执行——Application 绝不另行加锁。
         """
         with store.lock():
-            plan = plan_or_builder() if callable(plan_or_builder) else plan_or_builder
-            return self._execute_plan(
-                plan,
-                store=store,
-                input_path=input_path,
-                progress=progress,
-                shared=shared,
-                usage_scope=usage_scope,
-            )
+            if self.usage_bind is not None:
+                self.usage_bind(store, usage_scope)
+            try:
+                plan = plan_or_builder() if callable(plan_or_builder) else plan_or_builder
+                return self._execute_plan(
+                    plan,
+                    store=store,
+                    input_path=input_path,
+                    progress=progress,
+                    shared=shared,
+                    usage_scope=usage_scope,
+                )
+            finally:
+                if self.usage_scope_finish is not None:
+                    self.usage_scope_finish(usage_scope)
 
     def _execute_plan(
         self,
@@ -167,8 +176,6 @@ class WorkflowRunner:
         finally:
             if executor is not None:
                 executor.shutdown(wait=True)
-            if self.usage_flush is not None and usage_scope is not None:
-                self.usage_flush(store, usage_scope)
         return result
 
     # ── 单条目执行 ────────────────────────────────────────────────────────
@@ -207,6 +214,8 @@ class WorkflowRunner:
         self._mark_running(entry.key, store)
         try:
             outcome = node.execute(request)
+        except UsagePersistenceError:
+            raise
         except Exception as exc:
             self._record_failure(entry, store, exc)
             if self.definition.spec(entry.node_id).failure_policy == "best_effort":
@@ -264,6 +273,8 @@ class WorkflowRunner:
                 entry, node = futs[fut]
                 try:
                     outcome = fut.result()
+                except UsagePersistenceError:
+                    raise
                 except Exception as exc:
                     self._record_failure(entry, store, exc)
                     if self.definition.spec(entry.node_id).failure_policy == "best_effort":
@@ -292,6 +303,8 @@ class WorkflowRunner:
                             executor=executor,
                         )
                         outcome.commit(commit_request)
+                    except UsagePersistenceError:
+                        raise
                     except Exception as exc:
                         self._record_failure(entry, store, exc)
                         if self.definition.spec(entry.node_id).failure_policy == "best_effort":

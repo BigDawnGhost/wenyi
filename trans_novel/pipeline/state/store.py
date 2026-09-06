@@ -444,9 +444,6 @@ class RunStore:
         value = self.read_json(self.epub_verification_path)
         return value if isinstance(value, dict) else None
 
-    def save_usage(self, data: dict) -> None:
-        self.write_json(self.usage_path, data)
-
     def load_usage(self) -> dict | None:
         return self.read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
 

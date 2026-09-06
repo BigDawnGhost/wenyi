@@ -14,6 +14,7 @@ from trans_novel.config import Config
 from trans_novel.ingest.models import sanitize_generated_text
 from trans_novel.llm.base import LLMClient
 from trans_novel.llm.errors import JSONParseError, LLMError
+from trans_novel.llm.usage_persistence import UsagePersistenceError
 
 
 def _sanitize_json_value(value: Any) -> Any:
@@ -100,6 +101,8 @@ class Agent:
                 agent=agent,
                 operation=operation,
             )
+        except UsagePersistenceError:
+            raise
         except Exception as exc:
             if default is _RAISE or strict:
                 if strict and isinstance(exc, JSONParseError):
@@ -159,6 +162,8 @@ class Agent:
                 )
                 or ""
             ).strip()
+        except UsagePersistenceError:
+            raise
         except Exception:
             if strict:
                 raise

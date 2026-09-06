@@ -367,6 +367,17 @@ class OpenAICompatibleTransport:
             except Exception:
                 warn_telemetry_failure()
 
+        def finish_attempt(usage: Any = None, *, failed: bool = False) -> None:
+            self.usage.record_attempt_result(
+                agent=agent,
+                operation=operation,
+                provider=self.provider,
+                model_ref=model_ref,
+                usage=usage,
+                stage=stage,
+                failed=failed,
+            )
+
         client = self._ensure_client()
 
         @retry(
@@ -389,12 +400,7 @@ class OpenAICompatibleTransport:
                 attempt_index = attempt_counter[0]
             started_at = _started_at()
             started = time.monotonic()
-            self.usage.record_attempt(
-                agent=agent,
-                operation=operation,
-                provider=self.provider,
-                model_ref=model_ref,
-            )
+            self.usage.begin_attempt()
             try:
                 response = (
                     client.responses.create(**kwargs)
@@ -402,12 +408,7 @@ class OpenAICompatibleTransport:
                     else client.chat.completions.create(**kwargs)
                 )
             except Exception as error:
-                self.usage.record_attempt_failed(
-                    agent=agent,
-                    operation=operation,
-                    provider=self.provider,
-                    model_ref=model_ref,
-                )
+                finish_attempt(failed=True)
                 emit(
                     started_at=started_at,
                     elapsed_ms=round((time.monotonic() - started) * 1000),
@@ -419,6 +420,7 @@ class OpenAICompatibleTransport:
             try:
                 usage = getattr(response, "usage", None)
             except Exception:
+                finish_attempt(failed=True)
                 emit(
                     started_at=started_at,
                     elapsed_ms=round((time.monotonic() - started) * 1000),
@@ -427,14 +429,6 @@ class OpenAICompatibleTransport:
                     response=response,
                 )
                 raise
-            self.usage.record(
-                agent=agent,
-                operation=operation,
-                provider=self.provider,
-                model_ref=model_ref,
-                usage=usage,
-                stage=stage,
-            )
             try:
                 if capabilities.responses_api:
                     content = getattr(response, "output_text", None)
@@ -443,6 +437,7 @@ class OpenAICompatibleTransport:
                     message = getattr(choices[0], "message", None) if choices else None
                     content = getattr(message, "content", None)
             except Exception:
+                finish_attempt(usage, failed=True)
                 emit(
                     started_at=started_at,
                     elapsed_ms=round((time.monotonic() - started) * 1000),
@@ -452,13 +447,9 @@ class OpenAICompatibleTransport:
                     usage=usage,
                 )
                 raise
-            if not isinstance(content, str) or not content.strip():
-                self.usage.record_attempt_failed(
-                    agent=agent,
-                    operation=operation,
-                    provider=self.provider,
-                    model_ref=model_ref,
-                )
+            empty = not isinstance(content, str) or not content.strip()
+            finish_attempt(usage, failed=empty)
+            if empty:
                 emit(
                     started_at=started_at,
                     elapsed_ms=round((time.monotonic() - started) * 1000),

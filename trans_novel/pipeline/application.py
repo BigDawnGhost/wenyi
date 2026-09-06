@@ -4,7 +4,7 @@
 - 语言惰性解析：auto 检测后的源语言由 prepare 写入 RunContext；
 - 应用门面（Application）暴露 CLI 需要的全部目标与服务：
   prepare / prepare_for_translation / run / run_all / run_goal_result /
-  translate_titles / qa / report / assemble / glossary_audit / flush_usage。
+  translate_titles / qa / report / assemble / glossary_audit。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import load_document
 from trans_novel.llm.base import LLMClient
 from trans_novel.llm.factory import build_client
-from trans_novel.llm.usage import merge_usage_summaries, usage_delta
+from trans_novel.llm.usage_persistence import UsagePersistence
 from trans_novel.pipeline.composition import AgentBundle, RunContext, build_node_factory
 from trans_novel.pipeline.contracts import (
     GOAL_PREPARE,
@@ -107,7 +107,7 @@ class Application:
     ):
         self.config = config
         self.client = client or build_client(config)
-        self._usage_checkpoint = self.client.usage_summary()
+        self._usage_persistence = UsagePersistence()
         self.frozen_preparation = frozen_preparation
         self.batch_commit_hook = batch_commit_hook
         self.definition = build_workflow_definition()
@@ -261,7 +261,8 @@ class Application:
             node_factory=build_node_factory(
                 self.client, self.config, shared, goal, self.batch_commit_hook
             ),
-            usage_flush=lambda s, scope: self.flush_usage(s, scope=scope),
+            usage_bind=lambda s, scope: self.bind_usage(s, scope=scope),
+            usage_scope_finish=self.finish_usage,
         )
         return runner.run(
             plan_builder or build,
@@ -381,11 +382,13 @@ class Application:
             self.config.output.mono, self.config.output.bilingual = old_mono, old_bi
 
     def glossary_audit(self, store: RunStore) -> list[dict]:
-        glossary = GlossaryStore(store.glossary_path)
-        try:
-            return audit_glossary(store, glossary, GlossaryAuditor(self.client, self.config))
-        finally:
-            glossary.close()
+        with store.lock():
+            self.bind_usage(store, scope=None)
+            glossary = GlossaryStore(store.glossary_path)
+            try:
+                return audit_glossary(store, glossary, GlossaryAuditor(self.client, self.config))
+            finally:
+                glossary.close()
 
     # ── 服务目标（复用 runner 跑单阶段计划）────────────────────────────────
     def _service_goal(
@@ -410,7 +413,8 @@ class Application:
                 node_factory=build_node_factory(
                     self.client, self.config, shared, goal, self.batch_commit_hook
                 ),
-                usage_flush=lambda s, scope: self.flush_usage(s, scope=scope),
+                usage_bind=lambda s, scope: self.bind_usage(s, scope=scope),
+                usage_scope_finish=self.finish_usage,
             )
 
             def build() -> WorkflowPlan:
@@ -431,33 +435,21 @@ class Application:
         finally:
             shared.close()
 
-    # ── 用量落盘（把 client 尚未落盘的增量合并到本书 usage.json）──────────
-    def flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
-        """把当前 client 尚未落盘的用量增量合并到本书 usage.json。
+    # ── 用量持久化绑定与阶段事件 ──────────────────────────────────────────
+    def bind_usage(self, store: RunStore, *, scope: str | None) -> None:
+        self._usage_persistence.bind(
+            store.usage_path,
+            self.client.usage,
+            event_callback=lambda event_scope, increment: store.log_event(
+                "usage_summary",
+                scope=event_scope,
+                increment=increment,
+            ),
+        )
+        self._usage_persistence.begin_scope(scope)
 
-        持久化门控不能只看 totals.calls：一次完全失败的逻辑调用（Agent 捕获异常
-        回退 default）不会走 usage.record()，但 attempts/failed_attempts/
-        logical_calls 仍会增长——这类仅含归因计数的增量同样必须落盘。
-        """
-        current = self.client.usage_summary()
-        increment = usage_delta(current, self._usage_checkpoint)
-        self._usage_checkpoint = current
-        accumulated = store.load_usage() or {}
-        has_activity = (
-            bool(increment["totals"]["calls"])
-            or bool(increment.get("by_agent"))
-            or bool(increment.get("by_operation"))
-        )
-        if not has_activity:
-            return merge_usage_summaries(accumulated, increment)
-        cumulative = merge_usage_summaries(accumulated, increment)
-        store.save_usage(cumulative)
-        store.log_event(
-            "usage_summary",
-            scope=scope,
-            increment=increment,
-        )
-        return cumulative
+    def finish_usage(self, scope: str | None) -> None:
+        self._usage_persistence.finish_scope(scope)
 
 
 __all__ = ["Application", "build_workflow_definition"]

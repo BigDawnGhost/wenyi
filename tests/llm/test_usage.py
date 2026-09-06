@@ -587,6 +587,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
             first_client = FakeClient()
             first = Application(config, client=first_client)
+            first.bind_usage(store, scope="translate")
             first_client.usage.record(
                 provider="fake",
                 model_ref=ModelRef("fake", "p"),
@@ -594,16 +595,12 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 operation="translate.batch",
                 usage=_make_usage(prompt_tokens=100, completion_tokens=20, total_tokens=120),
             )
-            cumulative = first.flush_usage(store, scope="translate")
-            self.assertEqual(cumulative["totals"]["total_tokens"], 120)
+            self.assertEqual(store.load_usage()["totals"]["total_tokens"], 120)
+            first.finish_usage("translate")
 
-            # 同一进程再次 flush 没有新增调用，不能重复累计。
-            unchanged = first.flush_usage(store, scope="pipeline")
-            self.assertEqual(unchanged["totals"]["total_tokens"], 120)
-
-            # 模拟 resume：新 client / Application 的增量继续累加到同一本书。
             resumed_client = FakeClient()
             resumed = Application(config, client=resumed_client)
+            resumed.bind_usage(store, scope="translate")
             resumed_client.usage.record(
                 provider="fake",
                 model_ref=ModelRef("fake", "p"),
@@ -611,7 +608,8 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 operation="polish.batch",
                 usage=_make_usage(prompt_tokens=40, completion_tokens=10, total_tokens=50),
             )
-            cumulative = resumed.flush_usage(store, scope="translate")
+            cumulative = store.load_usage()
+            resumed.finish_usage("translate")
 
             self.assertEqual(cumulative["totals"]["total_tokens"], 170)
             self.assertEqual(cumulative["totals"]["calls"], 2)
@@ -620,9 +618,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(cumulative["by_operation"]["translate.batch"]["total_tokens"], 120)
             self.assertEqual(cumulative["by_operation"]["polish.batch"]["total_tokens"], 50)
             self.assertEqual(cumulative["by_provider"]["fake"]["total_tokens"], 170)
-            self.assertEqual(store.load_usage(), cumulative)
             self.assertTrue(os.path.isfile(store.usage_path))
-            # usage_summary 事件只带 scope + 增量，不带累计明文（累计只在 usage.json）
             with open(store.event_log_path, encoding="utf-8") as f:
                 events = [json.loads(line) for line in f if line.strip()]
             usage_events = [e for e in events if e["event"] == "usage_summary"]
@@ -633,10 +629,8 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertNotIn("cumulative", usage_events[-1], "累计用量不进事件，只落 usage.json")
             self.assertFalse(any(e["event"] == "usage_snapshot" for e in events))
 
-    def test_operation_only_failure_persists_and_second_flush_does_not_duplicate(self):
-        """由 Agent 的 default 兜底处理的失败调用：totals/by_stage 全零（无成功响应），
-        但 by_agent/by_operation 中的 attempts/failed_attempts/logical_calls 仍会增长——
-        flush_usage 不得因 totals.calls==0 就跳过持久化。"""
+    def test_operation_only_failure_persists_without_stage_flush(self):
+        """失败调用的 attempts/failed_attempts/logical_calls 在响应无 token 时也即时落盘。"""
         from trans_novel.agents.base import Agent
 
         with tempfile.TemporaryDirectory() as d:
@@ -648,26 +642,17 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
             client = FakeClient(handler=_boom)
             orch = Application(config, client=client)
+            orch.bind_usage(store, scope="translate")
             agent = Agent(client, config)
 
             result = agent._ask_json(
                 "sys", "user", default={}, agent="translator", operation="translate.batch"
             )
             self.assertEqual(result, {}, "default 应吞掉异常，Agent 调用方视角照常返回")
-
             before = client.usage_summary()["by_operation"]["translate.batch"]
-            self.assertGreater(before["attempts"], 0)
-            self.assertGreater(before["failed_attempts"], 0)
-            self.assertGreater(before["logical_calls"], 0)
-            self.assertEqual(before["calls"], 0)  # 无成功响应，token/calls 字段不动
-            self.assertEqual(
-                client.usage_summary()["by_agent"]["translator"]["attempts"], before["attempts"]
-            )
-
-            cumulative = orch.flush_usage(store, scope="translate")
             persisted = store.load_usage()
-            self.assertIsNotNone(persisted)
-            assert persisted is not None
+            orch.finish_usage("translate")
+
             self.assertEqual(
                 persisted["by_operation"]["translate.batch"]["attempts"], before["attempts"]
             )
@@ -682,11 +667,6 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(
                 persisted["by_agent"]["translator"]["logical_calls"], before["logical_calls"]
             )
-
-            # 第二次 flush：没有新调用，增量为 0，不得重复累加或再次写盘造成翻倍。
-            unchanged = orch.flush_usage(store, scope="translate")
-            self.assertEqual(unchanged, cumulative)
-            self.assertEqual(store.load_usage(), cumulative)
 
 
 class TestOperationTelemetry(unittest.TestCase):
