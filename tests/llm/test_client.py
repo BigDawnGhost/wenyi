@@ -57,7 +57,7 @@ class TestConfigValidation(unittest.TestCase):
         cfg = Config.from_dict({})
         self.assertEqual(
             cfg.llm.models.translator,
-            ["openrouter/tencent/hy-mt2-30b-a3b-20260521:off"],
+            ["openrouter/tencent/hy-mt2-30b-a3b:off"],
         )
         general = ["opencode-go/muse-spark-1.3-contributor:low"]
         self.assertEqual(cfg.llm.models.analyst, general)
@@ -530,7 +530,10 @@ class TestGenerationOptions(unittest.TestCase):
 
 class TestOpenRouterTranslationCapabilities(unittest.TestCase):
     messages: ClassVar[list[dict[str, str]]] = [{"role": "user", "content": "translate"}]
-    model_ids: ClassVar[tuple[str, ...]] = ("tencent/hy-mt2-30b-a3b-20260521",)
+    model_ids: ClassVar[tuple[str, ...]] = (
+        "tencent/hy-mt2-30b-a3b",
+        "tencent/hy-mt2-30b-a3b-20260521",
+    )
 
     def test_every_hy_mt2_id_accepts_controlled_generation(self):
         from trans_novel.llm.providers.transport import build_request_kwargs

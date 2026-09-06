@@ -48,7 +48,7 @@ class TestCliBootstrap(unittest.TestCase):
             config = Config.load(config_path)
             self.assertEqual(
                 config.llm.models.translator,
-                ["openrouter/tencent/hy-mt2-30b-a3b-20260521:off"],
+                ["openrouter/tencent/hy-mt2-30b-a3b:off"],
             )
             with open(config_path, encoding="utf-8") as stream:
                 self.assertEqual(stream.read(), Config.default_config_text())
