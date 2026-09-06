@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import Any
 
 from trans_novel.agents.glossary_auditor import GlossaryAuditor
+from trans_novel.assemble import preflight_epub
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import load_document
@@ -94,6 +95,25 @@ def build_workflow_definition() -> WorkflowDefinition:
     return WorkflowDefinition(_NODE_SPECS)
 
 
+def _preflight_epub_outputs(config, doc, source_path: str, progress) -> None:
+    if progress:
+        progress(0, 0, "预检 EPUB 输出…")
+    modes = [False] if config.output.mono or not config.output.bilingual else []
+    if config.output.bilingual:
+        modes.append(True)
+    for bilingual in modes:
+        report = preflight_epub(
+            doc,
+            source_path,
+            bilingual=bilingual,
+            order=config.output.bilingual_order,
+        )
+        failures = report["failures"]
+        if failures:
+            examples = "；".join(f"{item['code']} ({item['path']})" for item in failures[:3])
+            raise ValueError(f"EPUB 输出预检失败：{len(failures)} 项；{examples}")
+
+
 class Application:
     """工作流应用门面：CLI 的唯一生产入口（组合根）。"""
 
@@ -154,6 +174,12 @@ class Application:
         *,
         progress: Callable[[int, int, str], None] | None = None,
     ) -> tuple[RunResult, RunStore]:
+        if (
+            doc.fmt == "epub"
+            and goal.out_format == "epub"
+            and ("assemble" in goal.phases or goal.name == "prepare")
+        ):
+            _preflight_epub_outputs(self.config, doc, identity_path, progress)
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
         if store.exists() and doc.fmt == "epub":
@@ -172,12 +198,7 @@ class Application:
         try:
             prep_phases = [p for p in goal.phases if p in self._PREPARE_PHASES]
             if prep_phases:
-                prep_goal = ExecutionGoal(
-                    name=goal.name,
-                    phases=tuple(prep_phases),
-                    out_format=goal.out_format,
-                    out_path=goal.out_path,
-                )
+                prep_goal = ExecutionGoal(name="prepare", phases=tuple(prep_phases))
                 result = self._run_plan(
                     store, shared, policy, prep_goal, identity_path, progress, "prepare"
                 )

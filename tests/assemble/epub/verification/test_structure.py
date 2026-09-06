@@ -560,6 +560,31 @@ class TestEpubNavigationValidation(unittest.TestCase):
                 "missing_backlink", {i["code"] for i in validate_epub(broken)["failures"]}
             )
 
+    def test_document_level_noteref_and_backlink_are_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.epub"
+            output = Path(directory) / "output.epub"
+            write_phase9_epub(str(source))
+            with zipfile.ZipFile(source) as zin:
+                chapter_one = (
+                    zin.read("OEBPS/text/chapter-1.xhtml")
+                    .replace(b' id="intro"', b"")
+                    .replace(b' id="ref-1"', b"")
+                    .replace(b"chapter-2.xhtml#footnote-1", b"chapter-2.xhtml")
+                )
+                chapter_two = zin.read("OEBPS/text/chapter-2.xhtml").replace(
+                    b"chapter-1.xhtml#ref-1", b"chapter-1.xhtml"
+                )
+            _copy_epub(
+                source,
+                output,
+                {
+                    "OEBPS/text/chapter-1.xhtml": chapter_one,
+                    "OEBPS/text/chapter-2.xhtml": chapter_two,
+                },
+            )
+            self.assertTrue(validate_epub(output)["structural_pass"])
+
     def test_checked_counts_include_failed_and_warned_references(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.epub"

@@ -48,13 +48,7 @@ def build_node_factory(
         return shared.style_brief()
 
     builders: dict[str, Callable[[RunContext, int | None], Any]] = {
-        NODE_PREPARE: lambda shared, ci: PrepareNode(
-            client=client,
-            config=config,
-            doc=shared.doc,
-            out_format=goal.out_format,
-            preflight_output=goal.name in {"prepare", "run_all"},
-        ),
+        NODE_PREPARE: lambda shared, ci: PrepareNode(client=client, config=config, doc=shared.doc),
         NODE_ANALYZE: lambda shared, ci: AnalyzeNode(
             analyzer=shared.agents.analyzer,
             config=config,

@@ -3,9 +3,13 @@
 All notable changes to this project are documented here following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [1.2.0] - 2026-09-07
+- Default translation now uses the OpenRouter `tencent/hy-mt2-30b-a3b` model alias.
 - Usage accounting now persists each completed provider attempt synchronously through crash-safe schema-v2 WAL recovery, with real-time visibility and non-retryable local persistence failures.
 - Moved local benchmark specifications, corpora, and run artifacts from the repository root into one ignored `benchmarks/` workspace.
-- EPUB runs now dry-render and verify configured outputs before any model call, and XHTML 1.1 direct table columns are accepted during publication checks.
+- EPUB runs now dry-render and verify configured outputs before any model call or resumed publication, and publication checks accept XHTML 1.1 direct table columns and document-level footnote links.
+- Indeterminate CLI phases now reset stale segment totals and elapsed time instead of appearing frozen after translation completes.
 
 ## [1.1.0] - 2026-09-05
 - OpenRouter models can now constrain provider selection through per-model routing settings.
@@ -119,6 +123,3 @@ All notable changes to this project are documented here following [Keep a Change
 - Added per-run `--quality`, `--source-language`, `--back-matter`, and `--honorifics` overrides.
 - The default `primary` and `fast` roles now both use OpenCode Go `deepseek-v4-flash` to reduce long-form translation cost.
 - Model specifications now accept an `:<thinking-level>` suffix with `off`, `low`, `medium`, `high`, or `max`; startup validates each level against provider and model capabilities, with OpenCode Go `deepseek-v4-flash:high` for `primary` and `:off` for `fast` by default.
-- Default translation now uses the OpenRouter `tencent/hy-mt2-30b-a3b` model alias.
-- Regression coverage now accepts both current and dated Hy-MT2 model IDs.
-- Configuration examples now use the current OpenRouter Hy-MT2 30B alias.

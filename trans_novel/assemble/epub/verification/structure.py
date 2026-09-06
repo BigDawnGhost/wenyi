@@ -302,9 +302,10 @@ def check_footnotes(
         for anchor in soup.find_all("a"):
             href = anchor.get("href")
             epub_type = str(anchor.get("epub:type", ""))
-            if not isinstance(href, str) or (
-                "noteref" not in epub_type and "footnote" not in href.lower()
-            ):
+            if not isinstance(href, str):
+                continue
+            href_path = href.partition("#")[0].partition("?")[0]
+            if "noteref" not in epub_type and "footnote" not in href_path.lower():
                 continue
             checked["footnotes"] += 1
             target, fragment, external = archive_model.resolve(path, href)
@@ -320,17 +321,20 @@ def check_footnotes(
                         )
                     )
                 continue
-            if target is None or fragment is None:
+            if target is None:
                 failures.append(archive_model.item("footnotes", "missing_target", path, "missing"))
                 continue
             target_soup = soups.get(target)
-            if target_soup is None or fragment not in ids_by_path.get(target, set()):
+            if target_soup is None or (
+                fragment is not None and fragment not in ids_by_path.get(target, set())
+            ):
                 failures.append(archive_model.item("footnotes", "missing_target", path, "missing"))
                 continue
-            target_tag = target_soup.find(id=fragment) or target_soup.find(attrs={"name": fragment})
-            if not isinstance(target_tag, Tag):
-                failures.append(archive_model.item("footnotes", "missing_target", path, "missing"))
-                continue
+            target_tag = (
+                target_soup
+                if fragment is None
+                else target_soup.find(id=fragment) or target_soup.find(attrs={"name": fragment})
+            )
             source_id = anchor.get("id") or anchor.get("name")
             if not source_id:
                 parent = anchor.parent
@@ -340,11 +344,6 @@ def check_footnotes(
                         source_id = candidate
                         break
                     parent = parent.parent
-            if not source_id:
-                failures.append(
-                    archive_model.item("footnotes", "missing_backlink", path, "missing")
-                )
-                continue
             backlink = False
             for back in target_tag.find_all("a"):
                 back_href = back.get("href")

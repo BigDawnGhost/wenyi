@@ -10,7 +10,6 @@ from importlib.metadata import version as package_version
 import typer
 from rich.progress import (
     BarColumn,
-    MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
@@ -65,6 +64,20 @@ def _exit_translation_error(error: Exception) -> None:
     if isinstance(error, RequiredNodeFailed):
         console.print("运行状态已保存；再次运行相同命令即可从失败位置继续。")
     raise typer.Exit(2) from None
+
+
+def _update_progress(prog, task, done: int, total: int, label: str):
+    if not total:
+        prog.remove_task(task)
+        return prog.add_task(label, total=None, count="")
+    prog.update(
+        task,
+        completed=done,
+        total=total,
+        description=label,
+        count=f"{done}/{total}",
+    )
+    return task
 
 
 @app.command("init")
@@ -139,14 +152,15 @@ def _translate_impl(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        MofNCompleteColumn(),
+        TextColumn("{task.fields[count]}"),
         TimeElapsedColumn(),
         console=console,
     ) as prog:
-        task = prog.add_task("准备中…", total=None)
+        task = prog.add_task("准备中…", total=None, count="")
 
         def cb(done: int, total: int, label: str) -> None:
-            prog.update(task, completed=done, total=total or None, description=label)
+            nonlocal task
+            task = _update_progress(prog, task, done, total, label)
 
         if prepare:
             try:

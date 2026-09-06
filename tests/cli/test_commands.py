@@ -164,6 +164,40 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["polish"])
 
+    def test_indeterminate_phase_does_not_reuse_translation_total(self):
+        config = Config.from_dict({"llm": fake_llm_dict()})
+
+        class FakeOrchestrator:
+            def __init__(self, _config):
+                pass
+
+            def run_all(self, _input_path, **kwargs):
+                progress = kwargs["progress"]
+                progress(2, 2, "翻译完成")
+                progress(0, 0, "生成译文文件…")
+                return {
+                    "report": {
+                        "summary": {"chapters_done": 1, "chapters_total": 1, "terms": 0},
+                        "repair": {},
+                    },
+                    "audit": [],
+                    "qa_issues": [],
+                    "output": "out.epub",
+                    "store": FakeStore(),
+                }
+
+        with (
+            patch("trans_novel.cli.common.load_config", return_value=config),
+            patch("trans_novel.pipeline.Application", FakeOrchestrator),
+            patch("trans_novel.cli.common.os.path.isfile", return_value=True),
+        ):
+            result = CliRunner().invoke(app, ["translate", "input.txt"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("生成译文文件", plain(result.output))
+        self.assertNotIn("0/2", plain(result.output))
+        self.assertNotIn("0/?", plain(result.output))
+
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
