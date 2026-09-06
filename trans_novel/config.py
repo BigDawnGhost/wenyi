@@ -30,7 +30,7 @@ PRODUCTION_AGENT_IDS: tuple[str, ...] = (
 
 QualityPreset = Literal["economy", "balanced", "quality"]
 
-_DEFAULT_TRANSLATOR_MODEL = "openrouter/tencent/hy-mt2-30b-a3b-20260521:off"
+_DEFAULT_TRANSLATOR_MODEL = "openrouter/tencent/hy-mt2-30b-a3b:off"
 _DEFAULT_GENERAL_MODEL = "opencode-go/muse-spark-1.3-contributor:low"
 _DEPRECATED_ROOT_KEYS = frozenset(
     {"language", "segment", "pipeline", "honorific", "punctuation", "paths", "output"}

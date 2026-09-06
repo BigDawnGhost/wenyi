@@ -99,6 +99,12 @@ _MODEL_CAPABILITIES: dict[tuple[str, str], ModelCapabilities] = {
         supports_temperature=True,
         responses_api=True,
     ),
+    ("openrouter", "tencent/hy-mt2-30b-a3b"): ModelCapabilities(
+        request_dialect=DIALECT_GENERIC,
+        catalogued=True,
+        supports_thinking_disabled=True,
+        supports_temperature=True,
+    ),
     ("openrouter", "tencent/hy-mt2-30b-a3b-20260521"): ModelCapabilities(
         request_dialect=DIALECT_GENERIC,
         catalogued=True,
