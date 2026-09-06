@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
+from tests.fixtures.books import write_phase9_epub
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.agents.polisher import Polisher
 from trans_novel.config import Config
@@ -97,6 +99,24 @@ class TestMinimalPipeline(unittest.TestCase):
             ):
                 self.assertIsNotNone(state.nodes[node_id].started_at)
                 self.assertIsNotNone(state.nodes[node_id].finished_at)
+
+    def test_epub_output_preflight_fails_before_any_llm_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = f"{directory}/broken.epub"
+            write_phase9_epub(source)
+            with zipfile.ZipFile(source) as archive:
+                members = [(info, archive.read(info)) for info in archive.infolist()]
+            with zipfile.ZipFile(source, "w") as archive:
+                for info, data in members:
+                    if info.filename == "OEBPS/text/chapter-1.xhtml":
+                        data = data.replace(b"<table>", b"<table><p>bad</p>", 1)
+                    archive.writestr(info, data)
+            client = FakeClient(handler=lambda *_args: self.fail("preflight must run first"))
+
+            with self.assertRaisesRegex(ValueError, "EPUB 输出预检失败"):
+                Application(_config(f"{directory}/state"), client=client).run_all(source)
+
+            self.assertEqual(client.calls, [])
 
     def test_identical_quality_run_keeps_qa_and_report_fingerprints(self):
         with tempfile.TemporaryDirectory() as d:

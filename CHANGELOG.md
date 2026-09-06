@@ -5,6 +5,7 @@ All notable changes to this project are documented here following [Keep a Change
 ## [Unreleased]
 - Usage accounting now persists each completed provider attempt synchronously through crash-safe schema-v2 WAL recovery, with real-time visibility and non-retryable local persistence failures.
 - Moved local benchmark specifications, corpora, and run artifacts from the repository root into one ignored `benchmarks/` workspace.
+- EPUB runs now dry-render and verify configured outputs before any model call, and XHTML 1.1 direct table columns are accepted during publication checks.
 
 ## [1.1.0] - 2026-09-05
 - OpenRouter models can now constrain provider selection through per-model routing settings.

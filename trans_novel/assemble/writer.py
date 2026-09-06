@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 import re
-from typing import TYPE_CHECKING
+import tempfile
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 from trans_novel.assemble.epub.rendering.generated import build_epub_from_chapters
 from trans_novel.assemble.epub.rendering.source_archive import assemble_epub
 from trans_novel.assemble.text import assemble_text
+from trans_novel.epub.slots import distribute_slot_translation
 
 if TYPE_CHECKING:
+    from trans_novel.ingest.models import Document
     from trans_novel.pipeline.state import RunStore
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
@@ -50,6 +54,47 @@ def _reject_output_alias(source_path: str, out_path: str) -> None:
             raise ValueError("input and output paths must differ")
     except OSError:
         return
+
+
+def preflight_epub(
+    doc: Document,
+    source_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+) -> dict[str, Any]:
+    """Render and verify the source-backed output before paid translation work starts."""
+    doc = doc.model_copy(deep=True)
+    for chapter in doc.chapters:
+        for segment in chapter.segments:
+            if segment.epub_state is not None:
+                marker = f"预检译文 {chapter.index}-{segment.index}"
+                segment.assign_translation(distribute_slot_translation(segment.epub_state, marker))
+    manifest = {
+        "fmt": doc.fmt,
+        "meta": doc.meta,
+        "source_lang": doc.source_lang,
+        "target_lang": doc.target_lang,
+        "chapters": [{"index": chapter.index} for chapter in doc.chapters],
+    }
+    chapters = {chapter.index: chapter for chapter in doc.chapters}
+    store = SimpleNamespace(
+        load_manifest=lambda: manifest,
+        load_chapter=chapters.__getitem__,
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        output = os.path.join(directory, "preflight.epub")
+        assemble_epub(store, source_path, output, bilingual=bilingual, order=order)
+        from trans_novel.assemble.epub.verification import verify_epub
+
+        return verify_epub(
+            output,
+            source_path=source_path,
+            store=store,
+            mode="bilingual" if bilingual else "monolingual",
+            bilingual=bilingual,
+            bilingual_order=order,
+        )
 
 
 def assemble(

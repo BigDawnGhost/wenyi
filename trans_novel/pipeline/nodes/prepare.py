@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from trans_novel.agents.base import WorkflowProtocolError, retry_protocol
+from trans_novel.assemble import preflight_epub
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import Document
@@ -44,10 +45,20 @@ class PrepareNode:
     node_id = NODE_PREPARE
     scope = SCOPE_BOOK
 
-    def __init__(self, *, client: LLMClient, config: Config, doc: Document | None):
+    def __init__(
+        self,
+        *,
+        client: LLMClient,
+        config: Config,
+        doc: Document | None,
+        out_format: str = "epub",
+        preflight_output: bool = False,
+    ):
         self.client = client
         self.config = config
         self.doc = doc
+        self.out_format = out_format
+        self.preflight_output = preflight_output
 
     def execute(self, request: NodeRequest) -> NodeOutcome:
         store = request.store
@@ -75,6 +86,10 @@ class PrepareNode:
 
         # 新建：auto 时只使用模型检测主要语言；失败则要求用户显式指定。
         assert doc is not None, "全新运行必须携带解析后的文档"
+        if self.preflight_output and self.out_format == "epub" and doc.fmt == "epub":
+            if progress:
+                progress(0, 0, "预检 EPUB 输出…")
+            self._preflight_epub(doc, request.input_path)
         if self.config.source_lang in ("auto", "", None):
             if progress:
                 progress(0, 0, "识别语言…")
@@ -112,6 +127,22 @@ class PrepareNode:
         manifest = store.stage_document(doc, identity)
         fp = prepare_input_fingerprint(identity.source_bytes_sha256, source, target)
         return NodeOutcome(fingerprint=fp, artifacts={"manifest": manifest})
+
+    def _preflight_epub(self, doc: Document, source_path: str) -> None:
+        modes = [False] if self.config.output.mono or not self.config.output.bilingual else []
+        if self.config.output.bilingual:
+            modes.append(True)
+        for is_bilingual in modes:
+            report = preflight_epub(
+                doc,
+                source_path,
+                bilingual=is_bilingual,
+                order=self.config.output.bilingual_order,
+            )
+            failures = report["failures"]
+            if failures:
+                examples = "；".join(f"{item['code']} ({item['path']})" for item in failures[:3])
+                raise ValueError(f"EPUB 输出预检失败：{len(failures)} 项；{examples}")
 
     def _detect_language_ai(self, doc: Document) -> str:
         """用模型检测正文主要语言；模型无法判断时返回空串，请求异常直接向上抛出。"""

@@ -170,7 +170,17 @@ def check_nesting(soup: BeautifulSoup, failures: list[dict[str, str]], path: str
     allowed: dict[str, set[str]] = {
         "ul": {"li", "script", "template"},
         "ol": {"li", "script", "template"},
-        "table": {"caption", "colgroup", "thead", "tbody", "tfoot", "tr", "script", "template"},
+        "table": {
+            "caption",
+            "col",
+            "colgroup",
+            "thead",
+            "tbody",
+            "tfoot",
+            "tr",
+            "script",
+            "template",
+        },
         "thead": {"tr", "script", "template"},
         "tbody": {"tr", "script", "template"},
         "tfoot": {"tr", "script", "template"},

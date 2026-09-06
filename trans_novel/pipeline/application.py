@@ -172,7 +172,12 @@ class Application:
         try:
             prep_phases = [p for p in goal.phases if p in self._PREPARE_PHASES]
             if prep_phases:
-                prep_goal = ExecutionGoal(name="prepare", phases=tuple(prep_phases))
+                prep_goal = ExecutionGoal(
+                    name=goal.name,
+                    phases=tuple(prep_phases),
+                    out_format=goal.out_format,
+                    out_path=goal.out_path,
+                )
                 result = self._run_plan(
                     store, shared, policy, prep_goal, identity_path, progress, "prepare"
                 )

@@ -605,6 +605,18 @@ class TestEpubNavigationValidation(unittest.TestCase):
                 "illegal_nesting", {item["code"] for item in validate_epub(output)["failures"]}
             )
 
+    def test_xhtml_table_direct_col_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.epub"
+            output = Path(directory) / "output.epub"
+            write_phase9_epub(str(source))
+            with zipfile.ZipFile(source) as zin:
+                chapter = zin.read("OEBPS/text/chapter-1.xhtml").replace(
+                    b"<table>", b'<table><col width="60%"/>', 1
+                )
+            _copy_epub(source, output, {"OEBPS/text/chapter-1.xhtml": chapter})
+            self.assertTrue(validate_epub(output)["structural_pass"])
+
     def test_manifest_declared_typeless_nav_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.epub"
