@@ -1,0 +1,11 @@
+{
+  "label": "Japanese",
+  "english_name": "Japanese",
+  "source_guidance": "Interpret omitted Japanese subjects and the register of honorifics and self-reference. Read kanji compounds according to Japanese meaning. Source markers 〘…〙 contain furigana pronunciation hints: never include the markers or their kana contents in the translation.",
+  "target_guidance": "Use natural Japanese fiction prose. Maintain the appropriate scope of plain/polite forms and each character’s self-reference. Do not add unsupported identity or gender information.",
+  "punctuation_rule": "Use Japanese stops and commas (、。), dialogue quotes (「」『』) and punctuation conventions. Preserve symbol structure, repetition and pairing.",
+  "title_rule": "Use conventional Japanese titles and section labels, such as 第3章, 序章 and エピローグ.",
+  "term_guidance": "Fill reading with evidence-backed kana pronunciation to disambiguate transliteration. ",
+  "digest_length": "200 characters",
+  "synopsis_length": "500 characters"
+}

@@ -1,6 +1,6 @@
-"""审校 Agent（廉价档）。
-
-Reviewer：逐段比对原文/译文，报漏译、增译、误译、术语违例、人称错误。
+"""Review agent using the cheap tier.
+Compare source and translation paragraph by paragraph for omissions, additions,
+mistranslations, glossary violations and pronoun errors.
 """
 
 from __future__ import annotations
@@ -15,16 +15,16 @@ from .base import Agent
 
 
 class ReviewOutputError(ValueError):
-    """审校模型返回了可通过缩小输入重试的结构化输出错误。"""
+    """Structured review output error that can be retried with a smaller input."""
 
     def __init__(self, reason: str):
-        super().__init__(f"审校输出协议错误：{reason}")
+        super().__init__(f"Review output protocol error: {reason}")
         self.reason = reason
 
 
 @dataclass(frozen=True)
 class ReviewResult:
-    """一次审校调用的结构化结果，以及是否经过本地 JSON 修复。"""
+    """Structured result of one review call, including whether local JSON repair was used."""
 
     issues: list[dict[str, Any]]
     repaired: bool = False
@@ -34,7 +34,7 @@ class Reviewer(Agent):
     def review(
         self, sources: list[str], targets: list[str], glossary_terms=None
     ) -> list[dict[str, Any]]:
-        """返回问题列表：[{index,type,detail,suggestion}]。"""
+        """Return issue dictionaries containing index, type, detail and suggestion."""
         return self.review_result(sources, targets, glossary_terms).issues
 
     def review_result(
@@ -45,10 +45,10 @@ class Reviewer(Agent):
         *,
         trace: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> ReviewResult:
-        """返回带恢复元数据的问题列表；服务异常仍由调用方直接处理。"""
+        """Return issues with recovery metadata; leave service exceptions to the caller."""
         if not sources:
             return ReviewResult([])
-        system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt)
+        system = prompts.render("reviewer_system", src=self.src, tgt=self.tgt, n=len(sources))
         user = prompts.render(
             "reviewer_user",
             src=self.src,
@@ -124,7 +124,9 @@ class Reviewer(Agent):
         issues: list[dict[str, Any]],
         segment_count: int,
     ) -> list[dict[str, Any]]:
-        """规范并验证所有候选，防止坏字段被静默当成“无问题”。"""
+        """Normalize and validate every candidate so malformed fields cannot silently mean no
+        issues.
+        """
         allowed_types = {
             "missing",
             "added",

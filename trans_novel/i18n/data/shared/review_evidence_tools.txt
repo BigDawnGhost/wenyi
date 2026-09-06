@@ -1,0 +1,14 @@
+Available read-only tools and arguments:
+1. glossary_term: read one glossary entry by its source term or alias.
+   {"term":"Source term or alias"}. Do not request or enumerate the entire glossary.
+2. term_occurrences: select matching paragraphs by occurrence order in the book.
+   {"term":"Source term or alias","selectors":[1,3,"first","middle","last"],"context_radius":0}.
+   Use at most 8 selectors and context_radius from 0 to 2. Never request the entire text.
+3. segment_context: read context around a paragraph, including across chapter boundaries.
+   {"chapter":0,"index":0,"before":0,"after":0}.
+   chapter is the chapter index; index is its text_segments index. before and after range from 0 to 6.
+4. book_context: read one book-level information section.
+   {"section":"style_guide|book_synopsis|chapter_digest","chapter":0}; chapter is optional.
+In paragraph evidence, target_origin=formal identifies the frozen baseline translation.
+target_origin=shadow_override identifies an unconfirmed revision from this review/fix loop; baseline_target provides the frozen baseline.
+Repeated shadow_override values are not independent evidence and cannot prove that a glossary entry or revision is correct.

@@ -1,0 +1,11 @@
+{
+  "label": "French",
+  "english_name": "French",
+  "source_guidance": "Interpret French tense, grammatical gender, tu/vous and interpersonal relationships. Grammatical gender alone does not establish a character’s gender.",
+  "target_guidance": "Use natural French with consistent tense, gender/number agreement and tu/vous register. Handle elision and accents correctly.",
+  "punctuation_rule": "Follow French punctuation and quotation spacing conventions. Preserve accents, apostrophes, symbol structure and pairing.",
+  "title_rule": "Use French title and section-label conventions, including French capitalization.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

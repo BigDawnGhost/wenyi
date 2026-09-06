@@ -1,6 +1,5 @@
-"""无模型的廉价校验：句段对齐、长度比异常（疑似漏译/失控）。
-
-这些是不花 token 的第一道关，配合审校 agent 一起用。
+"""Low-cost deterministic checks for paragraph alignment and suspicious length ratios.
+These token-free checks complement model review.
 """
 
 from __future__ import annotations
@@ -22,10 +21,10 @@ def length_flags(
     too_short: float = 0.30,
     too_long: float = 3.0,
 ) -> list[LengthFlag]:
-    """按 译文/原文 字符比标记可疑段。
-
-    粗略按字符比抓异常；过小多半漏译，过大可能失控/增译。
-    阈值偏宽松，只抓明显异常，避免误报。
+    """Flag suspicious translation/source character ratios.
+    Very small ratios may indicate omissions, while very large ratios may indicate added or
+    runaway output. Use permissive thresholds to catch obvious anomalies with fewer false
+    positives.
     """
     flags: list[LengthFlag] = []
     for i, (s, t) in enumerate(zip(sources, targets)):

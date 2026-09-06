@@ -1,0 +1,11 @@
+{
+  "label": "Russian",
+  "english_name": "Russian",
+  "source_guidance": "Interpret Russian inflection, verbal aspect, patronymics and forms of address, preserving their relationship information.",
+  "target_guidance": "Use natural Russian with correct Cyrillic spelling, inflection, verbal aspect and forms of address. Do not transliterate into Latin letters without a reason.",
+  "punctuation_rule": "Follow Russian publishing conventions for quotes, dashes and punctuation. Preserve symbol structure, repetition and pairing.",
+  "title_rule": "Use conventional Russian titles and section labels.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

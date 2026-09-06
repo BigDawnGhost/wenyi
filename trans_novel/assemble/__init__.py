@@ -1,1 +1,1 @@
-"""回填组装：把译文写回 EPUB / 纯文本，并生成翻译报告。"""
+"""Assemble translations into EPUB or text and generate translation reports."""

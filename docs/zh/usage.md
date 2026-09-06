@@ -17,6 +17,26 @@ uv run trans-novel translate book.epub
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
+## 多语言互译（实验性）
+
+先运行 `uv run trans-novel languages` 查看内置语言。将以下片段写入自己的配置文件（模型配置沿用已有设置），即可直接中译英：
+
+```yaml
+language:
+  source: zh
+  target: en
+```
+
+```bash
+uv run trans-novel --config config.yaml translate book.epub --bilingual
+```
+
+输出为 `output/book.en.epub` 和 `output/book.en-bi.epub`。日译英改为 `source: ja`、`target: en`；英译日用 `source: en`、`target: ja`。反向翻译以对应语言的文件为输入，每次选择一个方向。`--out` 仍遵循显式命名及 `-bi` 派生规则。
+
+以下 `.zh.*` 和 `state/<书名>/` 示例均指默认简体中文目标。其它新目标使用目标语言后缀及 `state/<书名>/targets/<目标语言>/`，字幕使用 `state/srt/<slug>/targets/<目标语言>/`；旧目录的兼容规则见[配置说明](configuration.md#语言)。续跑和独立阶段命令使用同一目标配置，完成的译文不会因切换回原目标而重新翻译。EPUB 说明页在简体中文目标下为中文，其它目标暂用标记为英语的英文页，可通过 `about_page: false` 关闭。
+
+CLI 的帮助、进度、表格和错误提示统一使用英语。译文和模型生成的说明性元数据使用 `language.target`；`source` 和 `aliases` 中的原文姓名保留用于匹配。续跑复用已有分析和术语备注，本次更新不会自动翻译旧数据。当前不支持阿拉伯语、希伯来语等 RTL 目标；PDF 字体和外部 bridge 的语言支持仍需单独验证。真实长篇翻译质量尚未完成新旧盲评。
+
 ## Windows
 
 Windows Release 提供 `wenyi-windows-x64.zip`，运行前请使用

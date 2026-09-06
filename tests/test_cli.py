@@ -1,4 +1,4 @@
-"""CLI 配置覆盖行为测试。"""
+"""CLI configuration override tests."""
 
 from __future__ import annotations
 
@@ -33,17 +33,17 @@ class FakeStore:
 class TestCliConfig(unittest.TestCase):
     def test_progress_bridge_reuses_one_task_across_review_stages(self):
         progress = Progress(disable=True)
-        bridge = _RichProgressBridge(progress, "准备全书审校…")
+        bridge = _RichProgressBridge(progress, "Preparing whole-book review…")
 
-        bridge(0, 6386, "全书审校 R1")
-        bridge(6386, 6386, "全书审校 R1")
-        bridge(0, 58, "影子修订 R1")
-        bridge(58, 58, "影子修订 R1")
-        bridge(0, 6386, "全书盲审 R2")
+        bridge(0, 6386, "Whole-book review R1")
+        bridge(6386, 6386, "Whole-book review R1")
+        bridge(0, 58, "Shadow revision R1")
+        bridge(58, 58, "Shadow revision R1")
+        bridge(0, 6386, "Blind whole-book review R2")
 
         self.assertEqual(len(progress.tasks), 1)
         task = progress.tasks[0]
-        self.assertEqual(task.description, "全书盲审 R2")
+        self.assertEqual(task.description, "Blind whole-book review R2")
         self.assertEqual(task.completed, 0)
         self.assertEqual(task.total, 6386)
 
@@ -58,7 +58,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(raised.exception.exit_code, 2)
 
     def test_standalone_tools_restore_manifest_languages(self):
-        cfg = Config.from_dict({"language": {"source": "auto", "target": "zh"}})
+        cfg = Config.from_dict({"language": {"source": "auto", "target": "en"}})
 
         class Store:
             @staticmethod
@@ -227,8 +227,8 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertIn("准备完成", result.output)
-        self.assertIn("预扫 2/2 章", result.output)
+        self.assertIn("Preparation complete", result.output)
+        self.assertIn("prescanned 2/2 chapters", result.output)
 
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
@@ -248,7 +248,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 1, result.output)
         # CliRunner may wrap the message on Windows; compare ignoring whitespace.
         compact = "".join(result.output.split())
-        self.assertIn("--chapter只翻译并保存指定章节", compact)
+        self.assertIn("--chapteronlytranslatesandsavestheselectedchapter", compact)
         self.assertIn("--review/--no-review", compact)
 
     def test_top_level_help_exposes_workflow_without_duplicate_aliases(self):
@@ -265,8 +265,8 @@ class TestCliConfig(unittest.TestCase):
             "glossary",
         ):
             self.assertIn(command, result.output)
-        self.assertNotIn("resume", result.output)
-        self.assertNotIn("tools", result.output)
+        self.assertNotRegex(result.output, r"(?m)^│\s*resume\s{2,}")
+        self.assertNotRegex(result.output, r"(?m)^│\s*tools\s{2,}")
 
     def test_glossary_help_exposes_action_subcommands(self):
         result = CliRunner().invoke(app, ["glossary", "--help"])
@@ -314,7 +314,7 @@ class TestCliConfig(unittest.TestCase):
                 ) as validate:
                     result = CliRunner().invoke(app, args)
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn("输入文件不存在", result.output)
+                self.assertIn("Input file does not exist", result.output)
                 validate.assert_not_called()
 
     def test_api_preflight_skips_help_at_every_level(self):
@@ -344,14 +344,14 @@ class TestCliConfig(unittest.TestCase):
                 captured["input_path"] = input_path
                 captured["kwargs"] = kwargs
                 progress = kwargs["progress"]
-                progress(0, 4, "全书审校 R1")
-                progress(2, 4, "全书审校 R1")
-                progress(4, 4, "全书审校 R1")
-                progress(0, 1, "影子修订 R1")
-                progress(1, 1, "影子修订 R1")
-                progress(0, 4, "全书盲审 R2")
-                progress(4, 4, "全书盲审 R2")
-                progress(1, 2, "干净确认")
+                progress(0, 4, "Whole-book review R1")
+                progress(2, 4, "Whole-book review R1")
+                progress(4, 4, "Whole-book review R1")
+                progress(0, 1, "Shadow revision R1")
+                progress(1, 1, "Shadow revision R1")
+                progress(0, 4, "Blind whole-book review R2")
+                progress(4, 4, "Blind whole-book review R2")
+                progress(1, 2, "Clean confirmation")
                 return {
                     "store": FakeStore(),
                     "review_issues": [{"index": 0, "type": "missing"}],
@@ -374,10 +374,10 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(captured["input_path"], "input.txt")
         self.assertIn("progress", captured["kwargs"])
         self.assertIn("max_rounds", result.output)
-        self.assertIn("仍有 1 项问题", result.output)
-        self.assertIn("生成 1 项修改建议", result.output)
+        self.assertIn("Remaining issues: 1", result.output)
+        self.assertIn("suggested changes: 1", " ".join(result.output.split()))
         self.assertIn("/tmp/reviews/review-20260801-120000", result.output)
-        self.assertIn("干净确认", result.output)
+        self.assertIn("Clean confirmation", result.output)
 
     def test_review_autofix_option_overrides_config_and_reports_writeback(self):
         cfg = Config.from_dict(
@@ -416,23 +416,23 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["autofix"])
-        self.assertIn("Autofix：已写回 1 段，失败 1 项", result.output)
+        self.assertIn("Autofix: published 1 paragraphs, failed issues: 1", result.output)
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
         cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
-            patch("trans_novel.cli.os.path.isfile") as isfile,
+            patch("trans_novel.cli._require_input_file") as require_input,
             patch.dict(os.environ, {}, clear=True),
         ):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertIn("DEEPSEEK_API_KEY", result.output)
-        self.assertNotIn("输入文件不存在", result.output)
+        self.assertNotIn("Input file does not exist", result.output)
         self.assertNotIn("Traceback", result.output)
-        isfile.assert_not_called()
+        require_input.assert_not_called()
 
     def test_assemble_skips_api_preflight(self):
         cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
@@ -444,7 +444,7 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["assemble", "missing.epub"])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("输入文件不存在", result.output)
+        self.assertIn("Input file does not exist", result.output)
         self.assertNotIn("DEEPSEEK_API_KEY", result.output)
 
     def test_assemble_uses_local_orchestrator_entry(self):
@@ -533,7 +533,7 @@ class TestCliConfig(unittest.TestCase):
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
             BabeldocBridgeError("BabelDOC 检测到纯图片 PDF，请改用 MinerU"),
-            ValueError("不支持的输出格式：xml"),
+            ValueError("Unsupported output format：xml"),
         ):
             with self.subTest(error=type(error).__name__):
 
@@ -567,7 +567,7 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "xml"])
 
         self.assertEqual(result.exit_code, 2, result.output)
-        self.assertIn("不支持的输出格式", result.output)
+        self.assertIn("Unsupported output format", result.output)
 
     def test_translate_reports_out_of_range_chapter_without_traceback(self):
         cfg = Config.from_dict({"llm": {"provider": "fake"}})
@@ -608,7 +608,7 @@ class TestCliConfig(unittest.TestCase):
                 result = CliRunner().invoke(app, ["status", src])
 
             self.assertEqual(result.exit_code, 1, result.output)
-            self.assertIn("尚无进度", result.output)
+            self.assertIn("No progress found", result.output)
             self.assertFalse(os.path.exists(state_dir))
 
     def test_state_commands_print_source_identity_errors(self):
@@ -624,13 +624,13 @@ class TestCliConfig(unittest.TestCase):
                     patch("trans_novel.cli.os.path.isfile", return_value=True),
                     patch(
                         "trans_novel.cli._runstore_for",
-                        side_effect=ValueError("输入文件内容与现有状态不一致"),
+                        side_effect=ValueError("Input content does not match existing state"),
                     ),
                 ):
                     result = CliRunner().invoke(app, args)
 
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn("错误：输入文件内容与现有状态不一致", result.output)
+                self.assertIn("Error: Input content does not match existing state", result.output)
                 self.assertNotIn("Traceback", result.output)
 
 

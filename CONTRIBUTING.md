@@ -15,3 +15,5 @@ Contributions are welcome in the following areas:
 - Documentation: usage instructions, configuration explanations, troubleshooting, and translations.
 
 Changes to the core translation pipeline can affect translation quality in subtle ways. Before proposing such a change, test it on a public-domain novel of at least 50,000 words and include a before-and-after comparison that explains the quality impact.
+
+Use standard English for code comments, docstrings, configuration comments, CLI messages, and prompt instructions. Keep language rules and task templates in `trans_novel/i18n/data/`. Generated prose, including glossary notes and analysis descriptions, follows the translation target; original `source` and `aliases` remain unchanged for matching. Preserve language-specific examples and multilingual test fixtures, and keep English and Chinese documentation synchronized.

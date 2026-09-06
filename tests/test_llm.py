@@ -1,4 +1,4 @@
-"""LLM 抽象层与 JSON 解析的测试（离线）。"""
+"""Offline LLM abstraction and JSON-parsing tests."""
 
 from __future__ import annotations
 
@@ -35,19 +35,19 @@ class TestResolveTier(unittest.TestCase):
         cheap = TierConfig(model="flash")
         fast = TierConfig(model="flash", options={"thinking": False})
 
-        # 三档全有 → 各归各
+        # With all three tiers present, use each requested tier directly.
         tiers = {"strong": strong, "cheap": cheap, "fast": fast}
         self.assertIs(resolve_tier(tiers, "fast"), fast)
         self.assertIs(resolve_tier(tiers, "cheap"), cheap)
         self.assertIs(resolve_tier(tiers, "strong"), strong)
-        # 无 fast → 落 cheap（不升到更贵的 strong）
+        # Without fast, fall back to cheap instead of the more expensive strong tier.
         tiers2 = {"strong": strong, "cheap": cheap}
         self.assertIs(resolve_tier(tiers2, "fast"), cheap)
-        # 只有 strong → 都落 strong
+        # With only strong configured, every tier falls back to strong.
         tiers3 = {"strong": strong}
         self.assertIs(resolve_tier(tiers3, "fast"), strong)
         self.assertIs(resolve_tier(tiers3, "cheap"), strong)
-        # 未知档 → 落 strong
+        # Unknown tiers fall back to strong.
         self.assertIs(resolve_tier(tiers, "unknown"), strong)
 
 
@@ -75,7 +75,7 @@ class TestParseJsonLooseRepairs(unittest.TestCase):
         self.assertEqual(repaired.value, {"a": 1})
 
     def test_inner_ascii_quotes_repaired(self):
-        # 真实案例：claude-opus-4.6 经 OpenRouter 输出的译文含未转义英文引号
+        # Regression from a model response containing unescaped English quotation marks.
         raw = '{"translations":["磨到那份锱铢必较里暗含的"小气"二字无声地烫上面颊。"]}'
         got = parse_json_loose(raw)
         self.assertEqual(
@@ -83,7 +83,7 @@ class TestParseJsonLooseRepairs(unittest.TestCase):
         )
 
     def test_trailing_extra_brace(self):
-        # 真实案例：gemini-3.1-pro 输出末尾多一个 }
+        # Regression from a model response with an extra closing brace.
         self.assertEqual(parse_json_loose('{"a": 1}\n}'), {"a": 1})
 
     def test_unescaped_quotes_with_trailing_extra_brace_keeps_object(self):
@@ -119,8 +119,8 @@ class TestProviderRequestKwargs(unittest.TestCase):
         self.assertEqual(messages[0]["content"], "仅输出指定对象。")
 
     def test_json_mode_also_mentions_json_in_user_message(self):
-        # 部分中转网关只校验 user/input 内容里是否含 "json"（比如转发到
-        # Responses API 的 text.format 校验），所以 user 消息也要兜底补一份。
+        # Some gateways check for JSON only in user/input content when forwarding requests,
+        # so the final user message also needs an explicit JSON instruction.
         from trans_novel.llm.providers._openai_compatible import (
             base_request_kwargs,
         )

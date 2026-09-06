@@ -1,4 +1,4 @@
-"""LLM 调用层的稳定公共接口。"""
+"""Stable public interface for LLM calls."""
 
 from .base import LLMClient, Messages
 from .factory import build_client

@@ -5,17 +5,17 @@ description = "A multi-agent long-form novel translation system with context, te
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "openai>=1.40",        # DeepSeek（OpenAI 兼容）调用
-    "pydantic>=2.7",       # 模型 / 配置校验
-    "pyyaml>=6.0",         # 读取 config.yaml
-    "tenacity>=8.2",       # LLM 调用重试/退避
-    "beautifulsoup4>=4.12", # EPUB 正文块提取
-    "httpx>=0.27",         # PDF 转换服务 HTTP 客户端
-    "lxml>=5.0",           # bs4 的 XHTML 解析后端
-    "ebooklib>=0.18",      # EPUB 读写
+    "openai>=1.40",        # OpenAI-compatible provider calls
+    "pydantic>=2.7",       # Model and configuration validation
+    "pyyaml>=6.0",         # Read config.yaml
+    "tenacity>=8.2",       # LLM retry and backoff
+    "beautifulsoup4>=4.12", # EPUB content extraction
+    "httpx>=0.27",         # HTTP client for PDF conversion services
+    "lxml>=5.0",           # XHTML parser for Beautiful Soup
+    "ebooklib>=0.18",      # EPUB reading and writing
     "typer>=0.12",         # CLI
-    "rich>=13.7",          # 表格 / 进度条
-    "json-repair>=0.61,<1", # 仅用于 Reviewer 畸形 JSON 的本地修复
+    "rich>=13.7",          # Tables and progress bars
+    "json-repair>=0.61,<1", # Local repair of malformed model JSON
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
     "python-docx>=1.2.0",
@@ -41,9 +41,9 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-# E/W pycodestyle, F pyflakes, I import 排序
+# E/W: pycodestyle; F: Pyflakes; I: import sorting
 select = ["E", "W", "F", "I"]
-# 超长行主要是中文 prompt 字面量，formatter 不会拆字符串
+# Long lines are mostly string literals, which the formatter does not split.
 ignore = ["E501"]
 
 [tool.pytest.ini_options]

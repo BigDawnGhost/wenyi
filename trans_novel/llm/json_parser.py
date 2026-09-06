@@ -1,4 +1,4 @@
-"""模型 JSON 输出的宽松解析。"""
+"""Tolerant parsing of model JSON output."""
 
 from __future__ import annotations
 
@@ -10,22 +10,21 @@ from json_repair import repair_json
 
 
 class JsonParseError(ValueError):
-    """模型回复在本地修复后仍不是可用 JSON。"""
+    """Model output remains unusable JSON after local repair."""
 
 
 @dataclass(frozen=True)
 class JsonParseResult:
-    """模型 JSON 的解析结果，以及是否经过语法修复。"""
+    """Parsed JSON result and whether syntax repair was needed."""
 
     value: Any
     repaired: bool
 
 
 def parse_json_result(text: str) -> JsonParseResult:
-    """解析模型 JSON，并准确标记结果是否经过语法修复。
-
-    这里显式执行一次 ``json.loads`` 是为了生成 ``repaired`` 标志；失败后
-    调用 json-repair 时设置 ``skip_json_loads=True``，因此不会重复严格解析。
+    """Parse model JSON and accurately record whether syntax repair occurred.
+    Run json.loads once to determine the repaired flag. On failure, call json-repair with
+    skip_json_loads=True to avoid repeating strict parsing.
     """
     raw = (text or "").strip()
     try:
@@ -40,13 +39,13 @@ def parse_json_result(text: str) -> JsonParseResult:
             skip_json_loads=True,
         )
     except Exception as error:
-        raise JsonParseError(f"无法解析为 JSON：{raw[:200]!r}") from error
-    # json-repair 对空文本和纯自然语言返回空串；它们不属于可恢复 JSON。
+        raise JsonParseError(f"Cannot parse JSON: {raw[:200]!r}") from error
+    # json-repair returns an empty string for empty/plain-language input; that is not recoverable JSON.
     if value == "":
-        raise JsonParseError(f"无法解析为 JSON：{raw[:200]!r}")
+        raise JsonParseError(f"Cannot parse JSON: {raw[:200]!r}")
     return JsonParseResult(value, repaired=True)
 
 
 def parse_json_loose(text: str) -> Any:
-    """返回模型 JSON 的值；语法容错由 json-repair 统一实现。"""
+    """Return the parsed value, delegating syntax recovery to json-repair."""
     return parse_json_result(text).value

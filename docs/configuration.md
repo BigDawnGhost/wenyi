@@ -12,7 +12,23 @@ language:
   target: zh
 ```
 
-`source: auto` asks the model to identify the source language. You may instead use an ISO 639-1 code such as `ja`, `en`, `ko`, `ru`, `fr`, `de`, or `es`. The current translation pipeline is primarily designed for Simplified Chinese output.
+`source: auto` asks the model to identify the source language; alternatively, select a language below. Translation runs directly between source and target without pivoting through Chinese. Multilingual quality is experimental. The default CLI, configuration comments, and prompt instructions use English independently of the translation target. The generated configuration still defaults to `target: zh`; choose `en` for English translations.
+
+All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; legacy Chinese values are normalized on read without rewriting saved databases. Resuming an existing project retains its analysis and notes, so changing prompts does not automatically translate old metadata. Use a separate `paths.state_dir` for a fresh analysis and whole-book comparison.
+
+| Codes | Languages |
+|---|---|
+| `zh`, `zh-Hant` | Simplified and Traditional Chinese |
+| `en`, `en-US`, `en-GB` | English, American English, British English |
+| `ja`, `ko` | Japanese, Korean |
+| `fr`, `de`, `es`, `it` | French, German, Spanish, Italian |
+| `pt`, `pt-BR`, `pt-PT`, `ru` | Portuguese, Brazilian/European Portuguese, Russian |
+
+Run `uv run trans-novel languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Compatibility aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, and `ko-KR` → `ko`. Registered script/region variants are preserved rather than truncated to two letters.
+
+Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
+
+See [P10 internationalization implementation and follow-up design](project-review/2026-09-05/p10-multilingual-internationalization.md) for resource layout, compatibility, and validation limits.
 
 ## Model provider
 
@@ -273,12 +289,12 @@ output:
   punctuation_normalize: true
 ```
 
-- `mono`: produce the monolingual Chinese edition as `<book-name>.zh.epub`.
-- `bilingual`: produce a source-and-translation edition as `<book-name>.zh-bi.epub`.
+- `mono`: produce a monolingual edition as `<book-name>.<target-language>.epub` (`.zh.epub` by default).
+- `bilingual`: produce a source-and-translation edition as `<book-name>.<target-language>-bi.epub`.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
-- `punctuation_normalize`: normalize Chinese punctuation only on the in-memory export copy. Formal chapter `target` values, Review input, and resume state remain unchanged.
+- `punctuation_normalize`: normalize punctuation only on the in-memory export copy for Simplified Chinese targets. Traditional Chinese and other targets skip this deterministic conversion. Formal chapter `target` values, Review input, and resume state remain unchanged.
 
 The former top-level `punctuation.normalize` key is not accepted; remove it and configure only `output.punctuation_normalize`.
 
@@ -302,3 +318,5 @@ paths:
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
 - `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.
+
+New non-default book targets use `<state_dir>/<slug>/targets/<target-language>/`; subtitles use `<state_dir>/srt/<slug>/targets/<target-language>/`. Default `zh` retains the legacy path. Existing legacy state with a matching target resumes in place. If the legacy root belongs to another target, a new `zh` project also uses `targets/zh/`. Existing state is never automatically moved or deleted; each directory owns its translations, glossary, context, accounting, and Review.

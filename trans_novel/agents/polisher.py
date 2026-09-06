@@ -1,7 +1,7 @@
-"""润色 Agent（强档）。
-
-在审校通过的直译稿上做中文文学性二次加工：不增删信息、保持段数不变。
-对齐失败（段数不符）时保守地返回原译文，绝不因润色而引入漏译。
+"""Polishing agent using the strong tier.
+Improve literary quality in the target language without changing information or paragraph
+count. Preserve the original translation on alignment failure so polishing cannot drop
+paragraphs.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ class Polisher(Agent):
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
     ) -> list[str]:
-        """润色等长译文列表；调用失败或数量不符时原样返回输入。"""
+        """Polish an aligned list; return the input unchanged on call or length failure."""
         if not targets:
             return []
         n = len(targets)
@@ -29,11 +29,13 @@ class Polisher(Agent):
             src=self.src,
             tgt=self.tgt,
             glossary=prompts.render_glossary(glossary_terms or []),
-            style=style or "（无）",
+            style=style or "(none)",
             n=n,
             numbered_target=prompts.numbered(targets),
         )
         items = self._ask_json(system, user, tier="strong", key="polished", default=None)
         if isinstance(items, list) and len(items) == n:
             return [str(x) for x in items]
-        return list(targets)  # 失败/段数不符 → 保守保留原译
+        return list(
+            targets
+        )  # Preserve the original translation on failure or paragraph-count mismatch.

@@ -1,26 +1,12 @@
-"""FB2 (FictionBook) 读取器。
-
-FB2 即一种 XML 格式（.fb2），常见命名空间为
-http://www.gribuser.ru/xml/fictionbook/2.0；部分文件使用 2.1 或省略命名空间。
-
-结构：
-  <FictionBook>
-    <description><title-info>…</title-info></description>
-    <body>                           ← 正文
-      <section>                      ← 一章（可嵌套子 section：部 → 章）
-        <title><p>章标题</p></title>
-        <subtitle>小标题</subtitle>
-        <p>正文段落…</p>
-        <epigraph>…</epigraph> <cite>…</cite> <poem><stanza><v>诗行</v></stanza></poem>
-        <empty-line/>
-      </section>
-      …
-    </body>
-    <body name="notes">…</body>       ← 注释，跳过
-
-- 嵌套 section 递归展平为扁平章列表（_walk_sections），不丢子章正文。
-- 正文块覆盖 p / subtitle / epigraph / cite / poem(stanza/v) / text-author，避免诗歌引文丢字。
-- 回填：FB2 不回填原始文件（无锚点机制），assemble 走通用 EPUB 生成。
+"""FB2 (FictionBook) reader.
+FB2 is XML, commonly using namespace http://www.gribuser.ru/xml/fictionbook/2.0, with 2.1 or
+no namespace also encountered. FictionBook contains description/title-info, body/section
+chapters with title/p headings, subtitles, paragraphs, epigraphs, citations and
+poem/stanza/v lines; skip body name="notes".
+Recursively flatten nested sections without losing child text. Include p, subtitle,
+epigraph, cite, poem and text-author content. Preserve image references for export. FB2 has
+no backfill anchors, so assembly generates a new EPUB instead of modifying the original
+file.
 """
 
 from __future__ import annotations
@@ -34,12 +20,12 @@ from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 
 def _local(el: ET.Element) -> str:
-    """返回 FB2 元素去除 XML 命名空间后的标签名。"""
+    """Return an FB2 element's local tag name without its XML namespace."""
     return el.tag.rsplit("}", 1)[-1]
 
 
 def _strip_markup(el: ET.Element) -> str:
-    """提取元素内的纯文本，保留基本空白。"""
+    """Extract plain text from an element while retaining basic whitespace."""
     parts: list[str] = []
     for text in el.itertext():
         if text:
@@ -47,7 +33,7 @@ def _strip_markup(el: ET.Element) -> str:
     return "".join(parts)
 
 
-# 容器型块：本身无文字，需下钻其子元素（poem 的 stanza/title、cite 的 p 等）
+# Recurse through containers such as poem/stanza/title and cite/p to reach their text.
 _CONTAINER_BLOCKS = {"epigraph", "cite", "poem", "stanza", "title", "annotation"}
 
 
@@ -63,11 +49,10 @@ def _direct_segments(
     section: ET.Element,
     chapter_index: int,
 ) -> tuple[str, list[Segment], list[dict[str, int | str]]]:
-    """提取本 <section> 的【直接】内容，不下钻子 <section>。
-
-    覆盖 p / subtitle / epigraph / cite / poem(stanza/v) / text-author 等正文块，
-    避免诗歌、引文、小标题被丢字。图片记录其相对段落位置，导出时再从原 FB2
-    的 binary 资源恢复。返回 (标题文本, segments, images)；标题作为 heading 排首。
+    """Extract only a section's direct content, leaving child sections for recursion.
+    Include paragraphs, subtitles, epigraphs, citations, poetry and attributions. Record
+    image positions relative to paragraphs for restoration from original FB2 binaries.
+    Return title, segments and images, with the title first as a heading.
     """
     segments: list[Segment] = []
     images: list[dict[str, int | str]] = []
@@ -75,7 +60,9 @@ def _direct_segments(
     title_text = ""
 
     def add(text: str, kind: str) -> None:
-        """清洗并追加非空段落，同时分配稳定的章内索引和锚点。"""
+        """Normalize and append nonempty paragraphs with stable chapter-local indices and
+        anchors.
+        """
         nonlocal idx
         text = text.strip()
         if text:
@@ -85,28 +72,30 @@ def _direct_segments(
             idx += 1
 
     def emit_block(el: ET.Element) -> None:
-        """递归展开正文容器，收集文字块和图片相对位置。"""
+        """Recursively expand body containers and collect text blocks and relative image
+        positions.
+        """
         tag = _local(el)
         if tag == "image":
             image_id = _image_id(el)
             if image_id:
                 images.append({"id": image_id, "position": len(segments)})
         elif tag == "subtitle":
-            add(_strip_markup(el), KIND_HEADING)  # 节内小标题
-        elif tag in ("p", "v", "text-author"):  # 段落 / 诗行 / 署名
+            add(_strip_markup(el), KIND_HEADING)  # Subheadings within a section.
+        elif tag in ("p", "v", "text-author"):  # Paragraphs, verse lines and attributions.
             for image in el.iter():
                 if image is not el and _local(image) == "image":
                     emit_block(image)
             add(_strip_markup(el), KIND_TEXT)
-        elif tag in _CONTAINER_BLOCKS:  # 容器：下钻
+        elif tag in _CONTAINER_BLOCKS:  # Recurse into containers.
             for sub in el:
                 emit_block(sub)
-        # empty-line / 其它 → 跳过
+        # Skip empty-line and unsupported elements.
 
     for child in section:
         tag = _local(child)
         if tag == "section":
-            continue  # 子节由 _walk_sections 递归处理
+            continue  # _walk_sections handles child sections recursively.
         if tag == "title":
             title_text = _strip_markup(child).strip()
             add(title_text, KIND_HEADING)
@@ -116,17 +105,17 @@ def _direct_segments(
 
 
 def _walk_sections(section: ET.Element, chapters: list[Chapter]) -> None:
-    """递归遍历 <section>：叶子节成一章；含子节者保留自身正文/部标题后再下钻。
-
-    FB2 常见“部 → 章”层级（section 嵌套 section）；只取直接子节内容会丢正文，
-    故此处递归展开为扁平章列表，确保无损。
+    """Recursively flatten sections into chapters while preserving parent content and part
+    titles.
+    FB2 commonly nests chapters within parts. Extracting only direct sections would lose
+    text, so retain each container's own content before descending to its children.
     """
     ci = len(chapters)
     title_text, segs, images = _direct_segments(section, ci)
     child_sections = [c for c in section if _local(c) == "section"]
 
     if child_sections:
-        # 容器节：若有自身正文（标题之外的段落）或仅有部标题，都先成一章保留，避免丢失
+        # Preserve a container section as a chapter if it has its own body paragraphs or even only a part title.
         has_body = any(s.kind == KIND_TEXT for s in segs)
         if has_body or title_text:
             chapters.append(_make_chapter(ci, title_text, segs, images))
@@ -142,17 +131,17 @@ def _make_chapter(
     segments: list[Segment],
     images: list[dict[str, int | str]],
 ) -> Chapter:
-    """用提取结果构造章节，并为无标题章节生成可展示标题。"""
+    """Construct a chapter from extracted content and supply a display title when absent."""
     if not title_text and segments:
         title_text = segments[0].source[:80]
     elif not title_text:
-        title_text = f"第{ci + 1}章"
+        title_text = f"Chapter {ci + 1}"
     meta = {"fb2_images": images} if images else {}
     return Chapter(index=ci, title=title_text, segments=segments, meta=meta)
 
 
 def _body_title_chapter(body: ET.Element) -> Chapter | None:
-    """把正文 ``<body><title>`` 解析为独立的标题页章节。"""
+    """Parse a body/title element as a separate title-page chapter."""
     title_el = next((child for child in body if _local(child) == "title"), None)
     if title_el is None:
         return None
@@ -178,11 +167,11 @@ def _body_title_chapter(body: ET.Element) -> Chapter | None:
 
 
 def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
-    """读取 .fb2 文件并返回 Document。"""
+    """Read an FB2 file into a Document."""
     with open(path, "rb") as f:
         raw = f.read()
 
-    # 剥离 XML 声明中的 encoding（FB2 常见 windows-1251）
+    # Remove encoding from the XML declaration; FB2 often declares windows-1251.
     enc = "utf-8"
     m = re.search(rb"<\?xml.*?encoding\s*=\s*['\"]([^'\"]+)['\"]", raw)
     if m:
@@ -219,7 +208,7 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
             cover_image = _image_id(image)
         break
 
-    # ── 书名 ──
+    # Book title.
     title = os.path.splitext(os.path.basename(path))[0]
     for desc in root.iter():
         if _local(desc) != "title-info":
@@ -230,14 +219,14 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
                     title = child.text.strip()
                 break
 
-    # ── 章节 ──
+    # Chapters.
     chapters: list[Chapter] = []
-    # 只取第一个正文 <body>，跳过 body[name="notes"] 等附属 body
+    # Use only the first main body; skip auxiliary bodies such as body[name="notes"].
     for body in root:
         if _local(body) != "body":
             continue
         body_name = body.attrib.get("name", "")
-        if body_name:  # notes, comments 等附属 body
+        if body_name:  # Auxiliary bodies such as notes and comments.
             continue
         title_chapter = _body_title_chapter(body)
         if title_chapter is not None:
@@ -245,10 +234,10 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
         for section in body:
             if _local(section) == "section":
                 _walk_sections(section, chapters)
-        break  # 只处理第一个 body
+        break  # Process only the first body.
 
     if not chapters:
-        # 兜底：整篇当作一章
+        # Fallback: treat the entire document as one chapter.
         segments: list[Segment] = []
         idx = 0
         for p in root.iter():

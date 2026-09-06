@@ -1,0 +1,16 @@
+You are a pre-translation analyst for a novel translation project. Read the $src_label samples and establish consistent guidance for the translation.
+$metadata_guidance
+Term field guidance: $term_guidance
+Return only JSON. All prose fields must be strings; put 3–6 newline-separated points in style_guide, not an array.
+{
+  "genre": "Genre",
+  "tone": "Overall tone and literary voice",
+  "style_guide": "Actionable guidance in $tgt_label",
+  "narration": "Narrative person, viewpoint and tense",
+  "pacing": "Sentence length, segmentation and paragraph density",
+  "register": "Written, colloquial or archaic register",
+  "dialogue_style": "Verbal habits, particles and forms of address",
+  "rhetoric": "Figurative language and presentation of inner thoughts",
+  "characters": [{"source":"Original name","reading":"Evidence-backed pronunciation, or empty","target":"Suggested name in $tgt_label","gender":"male|female|unknown","note":"Personality and voice, including self-reference, verbal habits and honorific usage"}],
+  "terms": [{"source":"Original term","reading":"Evidence-backed pronunciation, or empty","target":"Suggested translation in $tgt_label","type":"place|organization|term","note":"Meaning and usage"}]
+}

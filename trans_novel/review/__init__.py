@@ -1,7 +1,7 @@
-"""Review 领域纯模型：证据索引与运行目录，不含编排状态机。
-
-``pipeline.review_workflow`` 负责调度；``agents.review_loop`` 只依赖本包的
-数据结构与存储，不得反向依赖编排层。
+"""Pure review models, evidence indices and run storage, without the orchestration state
+machine.
+pipeline.review_workflow schedules work. agents.review_loop may depend on this package's
+data/storage interfaces but must not depend on the pipeline.
 """
 
 from .evidence import BookEvidenceIndex, SegmentRef

@@ -1,7 +1,6 @@
-"""HTML/FB2 资源读取与物化：data URI、本地文件引用、模板资源打包。
-
-负责解析 HTML 模板中的图片/媒体引用，支持本地文件、data URI 和 FB2 binary，
-将资源去重打包或物化到输出目录旁的 .assets 子目录。
+"""Read and materialize HTML/FB2 resources: data URIs, local files and template assets.
+Resolve image/media references from local files, data URIs and FB2 binaries. Deduplicate and
+package them or materialize them in an .assets directory beside the output.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from bs4 import BeautifulSoup
 
 from ..pipeline.runstore import RunStore
 
-# 图片 MIME 类型到扩展名的映射
+# Image MIME types mapped to extensions.
 _IMAGE_EXTENSION_BY_TYPE = {
     "image/gif": ".gif",
     "image/jpeg": ".jpg",
@@ -29,7 +28,7 @@ _IMAGE_EXTENSION_BY_TYPE = {
     "image/webp": ".webp",
 }
 
-# HTML 标签与资源属性的映射，用于批量扫描和重写引用
+# HTML tags and resource attributes for bulk scanning and reference rewriting.
 _RESOURCE_ATTRS = {
     "img": ("src",),
     "source": ("src",),
@@ -173,6 +172,6 @@ def _template_resource_source(
 
         source_hash = manifest.get("source_sha256")
         if not isinstance(source_hash, str):
-            raise ValueError("PDF manifest 缺少有效的 source_sha256")
+            raise ValueError("PDF manifest has no valid source_sha256")
         return pdf_cache_html_path(store.source_dir, source_hash)
     return source_path

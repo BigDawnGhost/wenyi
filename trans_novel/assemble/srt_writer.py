@@ -1,9 +1,10 @@
-"""SRT 字幕写出。"""
+"""Write SRT subtitles."""
 
 from __future__ import annotations
 
 import os
 
+from ..i18n.languages import require_language
 from ..ingest.srt_reader import SrtCue
 from .writer_common import _ensure_parent_dir, bilingual_out_path
 
@@ -14,17 +15,19 @@ def default_srt_out_paths(
     out: str | None = None,
     mono: bool = True,
     bilingual: bool = False,
+    target_lang: str = "zh",
 ) -> tuple[str | None, str | None]:
-    """返回 (单语 .srt, 双语 .srt)；未开启的一侧为 None。"""
+    """Return monolingual and bilingual SRT paths; use None for disabled outputs."""
     mono_path: str | None = None
     bilingual_path: str | None = None
+    language = require_language(target_lang)
     if mono:
         if out is not None:
             mono_path = out if out.lower().endswith(".srt") else f"{out}.srt"
         else:
             output_dir = os.path.join(os.path.dirname(os.path.abspath(source_path)), "output")
             stem = os.path.splitext(os.path.basename(source_path))[0]
-            mono_path = os.path.join(output_dir, f"{stem}.zh.srt")
+            mono_path = os.path.join(output_dir, f"{stem}.{language}.srt")
         _ensure_parent_dir(mono_path)
     if bilingual:
         if out is not None:
@@ -33,7 +36,7 @@ def default_srt_out_paths(
         else:
             output_dir = os.path.join(os.path.dirname(os.path.abspath(source_path)), "output")
             stem = os.path.splitext(os.path.basename(source_path))[0]
-            bilingual_path = os.path.join(output_dir, f"{stem}.zh-bi.srt")
+            bilingual_path = os.path.join(output_dir, f"{stem}.{language}-bi.srt")
         _ensure_parent_dir(bilingual_path)
     return mono_path, bilingual_path
 
@@ -45,7 +48,7 @@ def write_srt_outputs(
     mono_path: str | None,
     bilingual_path: str | None,
 ) -> list[str]:
-    """写出单语 / 双语 SRT；返回实际写入路径列表。"""
+    """Write enabled monolingual/bilingual SRT files and return their paths."""
     written: list[str] = []
     if mono_path:
         blocks = [

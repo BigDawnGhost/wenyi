@@ -1,9 +1,10 @@
-"""Review 服务：只读影子译文的并行审校、证据 Agent Loop、冲突仲裁、Fixer 与盲复审状态机。
-
-Review 每次创建新的独立目录，只修改本次运行的 shadow overlay；正式 chapter、
-manifest 和 glossary 保持只读。保留按输入位置恢复结果顺序、在线程外排序写入恢复
-事件等确定性保证。Review 顶层异常仍须先保存 failed/partial result、诊断记录和本次
-usage，再原样抛出；单个 Fixer 失败继续转成 unresolved 项。
+"""Read-only shadow review with parallel blocks, evidence, arbitration, revisions and blind
+rechecks.
+Each review uses an independent directory and updates only its shadow overlay. Formal
+chapters, manifest and glossary stay read-only. Restore output order by input position and
+write sorted recovery events outside worker threads. Persist failed/partial results,
+diagnostics and usage before propagating top-level exceptions; individual fixer failures
+remain unresolved issues.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from ..agents.review_loop import (
 )
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..i18n.resources import prompt_fingerprint
 from ..llm.usage import usage_delta
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore
@@ -45,7 +47,7 @@ ProgressFn = Callable[[int, int, str], None]
 
 @dataclass(frozen=True)
 class _ReviewRoundResult:
-    """一次全书影子译文 Review 及冲突仲裁后的确定性结果。"""
+    """Deterministic result of one whole-book shadow review and conflict arbitration."""
 
     issues: list[dict[str, Any]]
     pre_arbitration_issues: list[dict[str, Any]]
@@ -59,7 +61,7 @@ def _review_overlay_digest(
     chapters,
     overrides: Mapping[tuple[int, int], str],
 ) -> str:
-    """计算全书有效影子译文指纹，用于检测无进展与 A↔B 振荡。"""
+    """Fingerprint effective shadow text to detect no progress and A/B oscillation."""
     payload = [
         (
             chapter.index,
@@ -78,7 +80,7 @@ def _review_overlay_digest(
 
 
 def _review_content_digest(chapters) -> str:
-    """计算本次 Review 实际读取的正式正文摘要。"""
+    """Hash the formal body text actually read by this review."""
     payload = [
         (
             chapter.index,
@@ -106,7 +108,7 @@ def _review_net_changes(
     patch_records: list[dict[str, Any]],
     active_patches: Mapping[tuple[int, int], dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """把多轮影子补丁折叠成每段一条的最终修改建议。"""
+    """Collapse multiple rounds of shadow patches into one final suggestion per paragraph."""
     baseline = {
         (chapter.index, text_index): segment.target or ""
         for chapter in chapters
@@ -145,7 +147,7 @@ def _review_net_changes(
 
 
 def _review_public_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """裁剪内部审校字段，生成面向用户的稳定问题列表。"""
+    """Remove internal review fields to produce stable user-facing issues."""
     public: dict[str, dict[str, Any]] = {}
     for issue in issues:
         issue_key = issue.get("issue_key")
@@ -178,7 +180,7 @@ def _review_conflict_records(
     groups: list[dict[str, Any]],
     arbitrations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """把冲突组及对应仲裁结果序列化为稳定的逐轮记录。"""
+    """Serialize conflicts and arbitration decisions into stable per-round records."""
     return [
         {
             "conflict_id": group["conflict_id"],
@@ -202,7 +204,7 @@ def _review_conflict_records(
 def _review_unresolved_conflict_records(
     issues: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """从最终未解决问题重建冲突记录，避免被最后一轮空结果掩盖。"""
+    """Rebuild conflicts from final unresolved issues so an empty last round cannot hide them."""
     groups = build_conflict_groups(issues)
     arbitrations: list[dict[str, Any]] = []
     for group in groups:
@@ -232,7 +234,9 @@ def _review_unresolved_conflict_records(
                 "issue_ids": issue_ids,
                 "status": "unresolved",
                 "recommended_value": "",
-                "reason": reasons[-1] if reasons else "最终未解决问题仍包含互斥建议。",
+                "reason": reasons[-1]
+                if reasons
+                else "Final unresolved issues still contain conflicting proposals.",
                 "supported_issue_ids": issue_ids,
                 "rejected_issue_ids": [],
                 "evidence_refs": evidence_refs,
@@ -242,7 +246,7 @@ def _review_unresolved_conflict_records(
 
 
 def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
-    """统计最终未解决问题中仍由降级 Agent 产生的独立审校块。"""
+    """Count distinct degraded review blocks still represented in unresolved issues."""
     return len(
         {
             str(issue.get("_chunk_id") or issue.get("issue_key") or issue.get("issue_id"))
@@ -253,7 +257,7 @@ def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
 
 
 class ReviewService:
-    """只读全书 Agent Review 的领域服务。"""
+    """Domain service for read-only whole-book agent review."""
 
     def __init__(self, runtime: PipelineRuntime):
         self._runtime = runtime
@@ -263,14 +267,18 @@ class ReviewService:
         store: RunStore,
         glossary: GlossaryStore | None = None,
     ) -> list[GlossaryTerm]:
-        """返回本次 Review 使用的最终术语库快照。"""
+        """Return the final glossary snapshot used by this review."""
         if glossary is not None:
             return glossary.all_terms()
         return GlossaryStore.load_terms_readonly(store.glossary_path)
 
     def _review_config_snapshot(self) -> dict[str, Any]:
-        """当前审校相关配置快照，供 metadata 落盘与 skip 判定对比。"""
+        """Snapshot review configuration for persisted metadata and reuse checks."""
         return {
+            "source_lang": self._runtime.config.source_lang,
+            "target_lang": self._runtime.config.target_lang,
+            "honorific_strategy": self._runtime.config.honorific_strategy,
+            "prompt_fingerprint": prompt_fingerprint(),
             "review_concurrency": self._runtime.config.pipeline.review_concurrency,
             "review_output_retries": self._runtime.config.pipeline.review_output_retries,
             "review_agent_loop": self._runtime.config.pipeline.review_agent_loop,
@@ -290,7 +298,7 @@ class ReviewService:
 
     @staticmethod
     def _review_glossary_fingerprint(terms: list[GlossaryTerm]) -> str:
-        """术语表内容指纹：术语表变化后已完成的 Review 结果不得复用。"""
+        """Fingerprint glossary content so changed terms invalidate completed review reuse."""
         ordered = sorted((term.source, term.target, term.type) for term in terms)
         return hashlib.sha256(json.dumps(ordered, ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -300,7 +308,7 @@ class ReviewService:
         latest: dict[str, Any],
         terms: list[GlossaryTerm],
     ) -> bool:
-        """已完成 Review 结果能否安全复用：内容、配置与术语表必须全部一致。"""
+        """Reuse a completed review only when content, configuration and glossary all match."""
         review_id = latest.get("review_id")
         if not isinstance(review_id, str) or not review_id:
             return False
@@ -321,7 +329,7 @@ class ReviewService:
 
     @staticmethod
     def _review_usage_from_dir(store: RunStore, review_id: str) -> dict[str, Any]:
-        """读取已完成的 Review 目录用量；缺失时返回空（调用方容忍）。"""
+        """Read usage from a completed review directory; return empty when unavailable."""
         try:
             with open(
                 os.path.join(store.run_dir, "reviews", review_id, "usage.json"),
@@ -343,11 +351,13 @@ class ReviewService:
         target_overrides: Mapping[tuple[int, int], str],
         progress: ProgressFn | None = None,
     ) -> _ReviewRoundResult:
-        """对同一份只读影子译文完成一轮全书审校和冲突仲裁。"""
+        """Review and arbitrate one immutable whole-book shadow snapshot."""
         total = sum(len(chapter.text_segments) for chapter in loaded)
         done = 0
         review_label = (
-            f"全书审校 R{review_round}" if review_round == 1 else f"全书盲审 R{review_round}"
+            f"Whole-book review R{review_round}"
+            if review_round == 1
+            else f"Blind whole-book review R{review_round}"
         )
         if progress:
             progress(0, total, review_label)
@@ -361,7 +371,9 @@ class ReviewService:
                 term_snapshot = all_terms
 
             def on_chunk_finished(segment_count: int) -> None:
-                """在一个顶层审校块完成后推进本轮全书段落进度。"""
+                """Advance this round's paragraph progress after a top-level review block
+                completes.
+                """
                 nonlocal done
                 done += segment_count
                 if progress:
@@ -395,7 +407,7 @@ class ReviewService:
         conflict_groups = build_conflict_groups(pre_arbitration_issues)
         arbitrations: list[dict[str, Any]] = []
         if conflict_groups and self._runtime.config.pipeline.review_conflict_arbitration:
-            arbitration_label = f"冲突仲裁 R{review_round}"
+            arbitration_label = f"Conflict arbitration R{review_round}"
             arbitration_total = len(conflict_groups)
             if progress:
                 progress(0, arbitration_total, arbitration_label)
@@ -439,7 +451,7 @@ class ReviewService:
                     "issue_ids": [issue["issue_id"] for issue in group["issues"]],
                     "status": "unresolved",
                     "recommended_value": "",
-                    "reason": "配置已关闭全书冲突仲裁。",
+                    "reason": "Whole-book conflict arbitration is disabled in configuration.",
                     "supported_issue_ids": [issue["issue_id"] for issue in group["issues"]],
                     "rejected_issue_ids": [],
                     "evidence_refs": [],
@@ -508,7 +520,9 @@ class ReviewService:
         fix_round: int,
         progress: ProgressFn | None = None,
     ) -> tuple[list[ProvisionalPatch], list[dict[str, Any]]]:
-        """按段聚合已确认问题，并行生成仅供下一轮验证的完整段落替换。"""
+        """Group confirmed issues by paragraph and generate complete replacements for the next
+        round.
+        """
         grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
         skipped: list[dict[str, Any]] = []
         for issue in round_result.issues:
@@ -558,7 +572,7 @@ class ReviewService:
         jobs = sorted(grouped.items())
         if not jobs:
             return [], skipped
-        fix_label = f"影子修订 R{fix_round}"
+        fix_label = f"Shadow revision R{fix_round}"
         fix_total = len(jobs)
         if progress:
             progress(0, fix_total, fix_label)
@@ -630,7 +644,7 @@ class ReviewService:
                     nearby_pairs=nearby_pairs,
                     trace=record,
                 )
-            except Exception as error:  # noqa: BLE001 - 单段 Fix 失败保留为未解决建议
+            except Exception as error:  # noqa: BLE001 - Keep individual fixer failures as unresolved suggestions.
                 trace["status"] = "failed"
                 trace["error"] = {
                     "type": type(error).__name__,
@@ -694,11 +708,11 @@ class ReviewService:
         *,
         progress: ProgressFn | None = None,
     ) -> ReviewOutcome:
-        """在只读影子译文上循环 Review→临时 Fix→盲复审。
-
-        正式 chapter、manifest 和术语库始终不变。每轮 Fix 只更新内存 overlay
-        与本次 Review 目录；下一轮全书 Review 不接收旧问题说明，只读取修改后
-        的影子译文。会话摘要、用量与正式事件在结束时持久化。
+        """Repeat review, temporary revision and blind recheck on shadow text only.
+        Formal chapters, manifest and glossary stay unchanged. Fixes update only the
+        in-memory overlay and current review directory. Subsequent whole-book review
+        receives revised shadow text without previous issue descriptions. Persist summaries,
+        usage and formal events at session end.
         """
         manifest = store.load_manifest()
         pending = [
@@ -709,7 +723,9 @@ class ReviewService:
         if pending:
             joined = ", ".join(str(index) for index in pending[:10])
             suffix = "…" if len(pending) > 10 else ""
-            raise ValueError(f"全书审校要求所有章节先完成翻译；仍待翻译章节：{joined}{suffix}")
+            raise ValueError(
+                f"Whole-book review requires every chapter to be translated; pending chapters: {joined}{suffix}"
+            )
 
         chapter_rows = manifest.get("chapters", [])
         loaded = [store.load_chapter(item["index"]) for item in chapter_rows]
@@ -717,7 +733,7 @@ class ReviewService:
         analysis = store.load_analysis() or {}
         reviewed_content_digest = _review_content_digest(loaded)
 
-        # 跳过已完成 review：内容、配置与术语表指纹一致则复用结果
+        # Reuse completed review results when content, configuration and glossary fingerprints match.
         latest_completed = store.load_latest_review_result()
         if (
             latest_completed is not None
@@ -734,7 +750,7 @@ class ReviewService:
                 usage=self._review_usage_from_dir(store, latest_completed.get("review_id", "")),
             )
 
-        # 断点续跑：未完成 Review 须内容、审校配置、术语表指纹一致
+        # Resume incomplete review only when content, review configuration and glossary fingerprints match.
         debug = ReviewRunStore.find_resumable(
             store.run_dir,
             reviewed_content_digest,
@@ -767,7 +783,7 @@ class ReviewService:
         usage_before = self._runtime.client.usage_summary()
 
         def save_review_usage() -> dict[str, Any]:
-            """保存本次 Review 增量并合并到本书累计用量。"""
+            """Persist this review's usage delta and merge it into cumulative book usage."""
             usage = usage_delta(self._runtime.client.usage_summary(), usage_before)
             debug.save_usage(usage)
             self._runtime.flush_usage(store, scope="review")
@@ -792,14 +808,14 @@ class ReviewService:
             else 1
         )
 
-        # 断点续跑：加载轮级检查点
+        # Resume from the round checkpoint.
         _checkpoint = debug.load_checkpoint()
         _resume_scan_done = False
         _resume_latest: _ReviewRoundResult | None = None
         if _checkpoint is not None:
             start_round = _checkpoint.get("next_round", 1)
-            # 配置收紧（如降低 review_clean_confirmations）后轮次上限可能变小；
-            # 若检查点轮次已超出上限，直接收敛到最后一轮，避免空循环 + RuntimeError。
+            # Tighter settings, such as fewer clean confirmations, may lower the round limit.
+            # Clamp an out-of-range checkpoint to the final round instead of producing an empty loop.
             start_round = min(start_round, max_review_rounds)
             target_overrides = {
                 (o["chapter"], o["index"]): o["target"]
@@ -815,11 +831,11 @@ class ReviewService:
             round_summaries = _checkpoint.get("round_summaries", [])
             clean_streak = _checkpoint.get("clean_streak", 0)
             fix_rounds = _checkpoint.get("fix_rounds", 0)
-            # 恢复 round 内部相位：scan_done 表示扫描已完成，可跳过
+            # Restore the within-round phase; scan_done allows skipping the completed scan.
             if _checkpoint.get("phase") == "scan_done":
                 _resume_scan_done = True
                 start_round = _checkpoint.get("next_round", 1)
-                # 配置收紧导致上限小于检查点轮次时，不能复用旧轮的扫描结果
+                # Do not reuse an old scan when a reduced limit is below the checkpoint's round number.
                 if start_round > max_review_rounds:
                     _resume_scan_done = False
                     _resume_latest = None
@@ -858,7 +874,7 @@ class ReviewService:
             phase: str = "round_done",
             latest: _ReviewRoundResult | None = None,
         ) -> None:
-            """保存轮级检查点。phase: round_done | scan_done"""
+            """Save the round checkpoint with phase round_done or scan_done."""
             state: dict[str, Any] = {
                 "phase": phase,
                 "next_round": current_round + 1 if phase == "round_done" else current_round,
@@ -890,7 +906,9 @@ class ReviewService:
             issues: list[dict[str, Any]],
             failures: list[dict[str, Any]],
         ) -> None:
-            """按稳定问题键保留 Fix 失败项，避免后续 Reviewer 漏报后假 clean。"""
+            """Retain fixer failures by stable issue key so later reviewer omissions cannot
+            create false clean results.
+            """
             by_id = {
                 str(issue["issue_id"]): issue
                 for issue in issues
@@ -918,7 +936,9 @@ class ReviewService:
                     }
 
         def effective_issues(current: _ReviewRoundResult) -> list[dict[str, Any]]:
-            """合并本轮问题与历史未修项，按书序返回公开的未解决问题。"""
+            """Merge current issues and historical unfixed issues into public unresolved issues
+            in book order.
+            """
             combined = {
                 str(issue["issue_key"]): dict(issue)
                 for issue in current.issues
@@ -968,7 +988,7 @@ class ReviewService:
                             for (chapter, index), target in sorted(target_overrides.items())
                         ],
                     )
-                    # 断点续跑：scan_done 恢复时跳过扫描，直接用缓存结果
+                    # When resuming scan_done, skip scanning and use cached results.
                     if (
                         _resume_scan_done
                         and review_round == start_round
@@ -977,7 +997,7 @@ class ReviewService:
                         latest = _resume_latest
                         _resume_scan_done = False
                         _resume_latest = None
-                        # 跳过扫描后重建初审/驳回快照，保证最终报告数据完整
+                        # Rebuild initial/dismissed snapshots after skipping a scan so the final report remains complete.
                         debug.rebuild_snapshots_from_chunks(review_round)
                         debug.log_event("review_scan_skipped", review_round=review_round)
                     else:
@@ -990,9 +1010,9 @@ class ReviewService:
                             target_overrides=target_overrides,
                             progress=progress,
                         )
-                        # 断点续跑：扫描完成，保存 mid-round 检查点
+                        # Persist a mid-round checkpoint after scanning finishes.
                         _save_checkpoint(review_round, phase="scan_done", latest=latest)
-                        # 提前落盘本次扫描用量，避免 fix 阶段崩溃导致用量丢失
+                        # Persist scan usage before fixing so a fixer-stage crash cannot lose accounting.
                         save_review_usage()
                         usage_before = self._runtime.client.usage_summary()
 
@@ -1038,7 +1058,7 @@ class ReviewService:
                         if blocked_issues:
                             clean_streak = 0
                             if progress:
-                                progress(0, required_clean, "干净确认")
+                                progress(0, required_clean, "Clean confirmation")
                             termination = "unresolved_fixes"
                             round_summary["clean_streak_after"] = 0
                             round_summary["patch_count"] = 0
@@ -1049,7 +1069,7 @@ class ReviewService:
                             break
                         clean_streak += 1
                         if progress:
-                            progress(clean_streak, required_clean, "干净确认")
+                            progress(clean_streak, required_clean, "Clean confirmation")
                         round_summary["clean_streak_after"] = clean_streak
                         round_summary["patch_count"] = 0
                         if clean_streak >= required_clean:
@@ -1064,7 +1084,7 @@ class ReviewService:
                         continue
 
                     if clean_streak and progress:
-                        progress(0, required_clean, "干净确认")
+                        progress(0, required_clean, "Clean confirmation")
                     clean_streak = 0
                     round_summary["clean_streak_after"] = 0
                     if not fix_loop:
@@ -1230,7 +1250,7 @@ class ReviewService:
                 termination = "max_rounds"
                 _save_checkpoint(max_review_rounds)
 
-            if latest is None:  # pragma: no cover - max_review_rounds 至少为 1
+            if latest is None:  # pragma: no cover - max_review_rounds is at least one.
                 raise RuntimeError("Review loop finished without a review round")
 
             unresolved = effective_issues(latest)
@@ -1395,13 +1415,12 @@ class ReviewService:
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
     ) -> list[dict]:
-        """把一章切成连续块并行审校，返回映射到章内段号的问题。
-
-        块 = 连续段序列（约 3 倍翻译批大小，减少调用次数与重复注入的输入 token）；
-        块内 reviewer 返回的 index 是块内下标，加块首段偏移映射回章内段号；
-        越界 index 直接丢弃（模型幻觉防御）。各块只读固定译文和术语快照，
-        可并行调用；结构化输出畸形时递归拆半，单段按配置有限重试；
-        结果始终按原块顺序合并，保持确定性。
+        """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
+        Use blocks around three translation batches to reduce calls and repeated context.
+        Convert valid block-local indices by the block offset and reject invalid positions.
+        Read fixed target/glossary snapshots. Recursively bisect malformed output and retry
+        single paragraphs a bounded number of times. Merge results in original block order
+        for determinism.
         """
         budget = self._runtime.config.segment.max_chars_per_batch * 3
         chunks = self.pack_contiguous(text_segs, budget)
@@ -1418,17 +1437,21 @@ class ReviewService:
         recovery_lock = Lock()
 
         def record_recovery(event: str, **data: Any) -> None:
-            """线程安全地暂存恢复事件，待并行任务结束后由主线程写日志。"""
+            """Buffer recovery events under a lock; write them from the main thread after
+            workers finish.
+            """
             with recovery_lock:
                 recovery_events.append({"event": event, **data})
 
         def review_once(chunk_base: int, chunk: list, *, attempt: int = 1) -> list[dict]:
-            """调用一次审校，并把合法块内索引映射为章内索引。"""
+            """Run one review call and map valid block-local indices to chapter indices."""
             srcs = [s.source for s in chunk]
             overrides = target_overrides or {}
 
             def target_for(local_index: int, segment) -> str:
-                """读取本轮影子译文；无章位置时回退正式译文。"""
+                """Read this round's shadow target, falling back to formal text when chapter
+                position is unavailable.
+                """
                 if chapter_index is None:
                     return segment.target or ""
                 return overrides.get(
@@ -1438,14 +1461,14 @@ class ReviewService:
 
             tgts = [target_for(local_index, segment) for local_index, segment in enumerate(chunk)]
 
-            # 断点续跑：chunk 缓存检查（跳过 reviewer + agent loop LLM 调用）
+            # Check the chunk cache to skip reviewer and evidence-loop model calls on resume.
             round_prefix = f"r{review_round}-" if review_round is not None else ""
             chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
             if debug is not None and debug.is_chunk_done(chunk_id):
                 review_debug = debug
                 cached = review_debug.load_chunk_result(chunk_id)
                 if cached is not None:
-                    # 恢复聚合状态（report 需要 initial/dismissed 数据）
+                    # Restore initial/dismissed aggregation needed by the report.
                     if chapter_index is not None:
                         review_debug.record_initial_issues(
                             chapter=chapter_index,
@@ -1459,9 +1482,9 @@ class ReviewService:
                         )
                     return cached.get("issues", [])
 
-            # 断点续跑：子 chunk 缓存探测（借鉴翻译 _resume_batches 边界切分）
-            # 与 review_adaptive 的递归拆半对齐：如果所有子 chunk 都有缓存，
-            # 直接合并返回，避免触发一次 reviewer LLM 调用。
+            # Probe child chunk caches using boundaries compatible with adaptive recovery.
+            # Match review_adaptive's recursive bisection. If every child is cached,
+            # merge them directly without making a reviewer call.
             if debug is not None and len(chunk) > 1:
                 cached_sub = self._try_cached_subchunks(
                     chunk_base,
@@ -1486,8 +1509,8 @@ class ReviewService:
                     f"-n{len(chunk)}-attempt{attempt}"
                 )
                 initial_path = f"initial/{initial_id}.json"
-                # 断点续跑：初筛已完成的结果直接复用（跳过最贵的 reviewer 调用）。
-                # 结果在首次运行中已校验过块内 index，可直接信任。
+                # Reuse completed initial screening and skip its expensive reviewer call.
+                # The initial run already validated block-local indices.
                 existing_initial = debug.load_json(initial_path)
                 if (
                     existing_initial is not None
@@ -1507,11 +1530,11 @@ class ReviewService:
                     debug.write_json(initial_path, initial_trace)
 
             if reused_initial is not None:
-                # 复用路径与 fresh 路径的错误语义不同：越界 index 不再抛
-                # ReviewOutputError，而是静默丢弃。这有意为之——首次运行已
-                # 校验并通过，越界只可能来自人工篡改；宁可少报也不让恢复
-                # 因陈旧 trace 把整个 chunk 打成 fallback。会话级内容指纹
-                # 守卫已排除正常内容变化场景。
+                # Reuse intentionally handles invalid indices differently from fresh output: discard them
+                # instead of raising ReviewOutputError. The original run already validated these results,
+                # so invalid cached indices indicate edited or stale trace data. Avoid turning the whole chunk
+                # into fallback during recovery. Session-level content fingerprints guard against
+                # ordinary source-content changes.
                 local_issues = [dict(issue) for issue in reused_initial["issues"]]
                 repaired = bool(reused_initial.get("json_repaired"))
                 if repaired:
@@ -1520,7 +1543,7 @@ class ReviewService:
                         start_index=chunk_base,
                         count=len(chunk),
                     )
-                # reused_initial 仅在 debug 非空时赋值；显式收窄供类型检查。
+                # reused_initial is assigned only with nonempty debug data; narrow it explicitly for typing.
                 if debug is not None and chapter_index is not None:
                     debug.record_initial_issues(
                         chapter=chapter_index,
@@ -1531,7 +1554,9 @@ class ReviewService:
             else:
 
                 def trace(event: str, data: dict[str, Any]) -> None:
-                    """逐步保存初审完整请求、原始响应或服务错误。"""
+                    """Persist initial review requests, raw responses or service errors
+                    incrementally.
+                    """
                     if debug is None or initial_trace is None:
                         return
                     initial_trace[event] = data
@@ -1581,7 +1606,7 @@ class ReviewService:
                             issues=local_issues,
                         )
 
-            # 保存 agent loop 前的初始 issues（供 chunk 缓存落盘）
+            # Save initial issues before the evidence loop for the chunk cache.
             local_issues_before_agent = list(local_issues)
             dismissed: list[dict[str, Any]] = []
             fallback_reason = ""
@@ -1639,7 +1664,7 @@ class ReviewService:
                     dismissed_count=len(dismissed),
                     fallback=bool(fallback_reason),
                 )
-            # 断点续跑：落盘 chunk 结果（在 review_once 内，有完整数据）
+            # Persist chunk results inside review_once while complete data is available.
             if debug is not None and chapter_index is not None:
                 debug.mark_chunk_done(
                     chunk_id,
@@ -1653,7 +1678,9 @@ class ReviewService:
             return mapped
 
         def review_adaptive(chunk_base: int, chunk: list) -> list[dict]:
-            """畸形输出时缩小请求；单段仍失败才进行有限同输入重试。"""
+            """Shrink malformed requests; use bounded same-input retries only after reaching
+            one paragraph.
+            """
             try:
                 return review_once(chunk_base, chunk)
             except ReviewOutputError as error:
@@ -1704,7 +1731,7 @@ class ReviewService:
                 raise last_error
 
         def review_one(job: tuple[int, list]) -> list[dict]:
-            """审校一个初始连续块，并在必要时执行局部恢复。"""
+            """Review one initial contiguous block with local recovery as needed."""
             chunk_base, chunk = job
             return review_adaptive(chunk_base, chunk)
 
@@ -1768,14 +1795,11 @@ class ReviewService:
         round_prefix: str,
         chapter_index: int | None,
     ) -> list[dict] | None:
-        """递归探测子 chunk 缓存，与 review_adaptive 的拆半对齐。
-
-        翻译的 ``_resume_batches`` 按完成状态边界切分批，只补译缺失段。
-        借鉴此模式：当父 chunk 缓存未命中时，递归检查所有子 chunk 是否有
-        缓存。如果全部命中，合并返回，跳过 reviewer LLM 调用。
-
-        探测阶段不写 initial/dismissed 快照；仅整棵子树命中后才统一落盘，
-        避免半边命中返回 None 后父块重跑导致重复计数。
+        """Probe child chunk caches recursively using review_adaptive's bisection.
+        Like translation resume boundaries, inspect children when a parent cache misses. If
+        every child is cached, merge them and skip the reviewer call. Do not write
+        initial/dismissed snapshots while probing; persist only after the complete subtree
+        matches, preventing double counts when a partially cached parent must rerun.
         """
         hits: list[tuple[int, dict[str, Any]]] = []
 
@@ -1818,7 +1842,9 @@ class ReviewService:
 
     @staticmethod
     def pack_contiguous(segs, budget: int) -> list[list]:
-        """按源文字符预算把段保序打包成若干连续块。"""
+        """Pack paragraphs into contiguous blocks by source-character budget without changing
+        order.
+        """
         chunks: list[list] = []
         cur: list = []
         size = 0

@@ -1,4 +1,4 @@
-"""根据配置创建内置 LLM provider。"""
+"""Construct a built-in LLM provider from configuration."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from .base import LLMClient
 
 
 def build_client(config: Config) -> LLMClient:
-    """根据 llm.provider 延迟导入并构造对应客户端。"""
+    """Import and construct the client selected by llm.provider lazily."""
     provider = config.llm.provider.strip().lower().replace("_", "-")
     if provider == "deepseek":
         from .providers.deepseek import DeepSeekClient
@@ -46,7 +46,7 @@ def build_client(config: Config) -> LLMClient:
 
         return FakeClient()
     raise ValueError(
-        f"未知 provider：{provider}"
-        "（支持 deepseek / openai / openrouter / orcarouter / "
-        "openai-compatible / ollama / vllm / gemini / fake）"
+        f"Unknown provider: {provider}"
+        " (supported: deepseek / openai / openrouter / orcarouter / "
+        "openai-compatible / ollama / vllm / gemini / fake)"
     )

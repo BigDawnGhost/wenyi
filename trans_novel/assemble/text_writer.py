@@ -1,7 +1,6 @@
-"""纯文本和 Markdown 输出。
-
-从 RunStore 按章读取，使用 _merged_paragraphs 合并段落，
-根据 bilingual 和 order 生成单语或双语对照文本。
+"""Plain-text and Markdown output.
+Read RunStore chapters, merge continuations with _merged_paragraphs and produce monolingual
+or bilingual text according to bilingual and order.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ def _assemble_plain_text(
     order: str = "target_first",
     markdown: bool = False,
 ) -> str:
-    """文本和 Markdown 的共享实现。markdown=True 时标题加 # 前缀。"""
+    """Shared text/Markdown implementation; prefix headings with # when markdown=True."""
     m = store.load_manifest()
     chapter_blocks: list[str] = []
     for c in m["chapters"]:
@@ -46,7 +45,7 @@ def _assemble_plain_text(
     return out_path
 
 
-# ── 纯文本 ──────────────────────────────────────────────────────────────────
+# Plain text.
 def _assemble_text(
     store: RunStore,
     out_path: str,
@@ -54,7 +53,7 @@ def _assemble_text(
     bilingual: bool = False,
     order: str = "target_first",
 ) -> str:
-    """按章节和段落重建 UTF-8 文本，可选插入双语对照原文。"""
+    """Rebuild UTF-8 text by chapter and paragraph, optionally including bilingual source text."""
     return _assemble_plain_text(store, out_path, bilingual=bilingual, order=order)
 
 
@@ -66,5 +65,5 @@ def _assemble_markdown(
     bilingual: bool = False,
     order: str = "target_first",
 ) -> str:
-    """按章节和段落重建 Markdown，标题加 # 前缀，可选双语对照。"""
+    """Rebuild Markdown with # headings and optional bilingual source text."""
     return _assemble_plain_text(store, out_path, bilingual=bilingual, order=order, markdown=True)

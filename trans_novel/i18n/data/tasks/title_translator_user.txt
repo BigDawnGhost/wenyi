@@ -1,0 +1,7 @@
+[Glossary]
+$glossary
+
+[Titles to translate] ($n items)
+$numbered_titles
+
+Return JSON: {"titles":[...]}, with exactly $n items.

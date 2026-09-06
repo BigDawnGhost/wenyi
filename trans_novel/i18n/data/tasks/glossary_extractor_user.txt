@@ -1,0 +1,10 @@
+[Existing glossary (reference; reuse established translations)]
+$glossary
+
+[Source ($src_label)]
+$source
+
+[Translation ($tgt_label)]
+$target
+
+Extract new or newly confirmed terms, forms of address and fixed expressions. Return JSON: {"terms":[...]}.

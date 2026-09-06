@@ -1,0 +1,3 @@
+Translate the subtitle directly from $source_language to $target_language. Return only the translated subtitle text, preserving its line breaks.
+$lang_guidance
+$punct_rule

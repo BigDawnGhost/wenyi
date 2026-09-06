@@ -1,4 +1,4 @@
-"""远端 LLM 的统一选择性重试与事件记录测试。"""
+"""Shared selective retry and event-recording tests for remote LLMs."""
 
 from __future__ import annotations
 

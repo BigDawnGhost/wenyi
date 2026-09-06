@@ -1,10 +1,8 @@
-"""注释服务：EPUB 注释上下文映射、续段重组、串行定位与失败降级。
-
-负责：
-  * 注释上下文到切片的映射（超长段切分后的 point/range 偏移分配）；
-  * 注释逻辑段重组：最后一个 cont 续段译完后才合并完整 source/target；
-  * 注释定位、placement 缓存（target_digest 幂等）及失败降级。
-多个注释逻辑段保持严格串行；每段完成后立即持久化；定位异常仅记录事件并继续。
+"""EPUB annotation context, continuation reconstruction, alignment and safe fallback.
+Map source point/range offsets to translation slices, reconstruct logical paragraphs only
+after the final continuation is translated, and cache placements by target_digest. Process
+logical paragraphs serially and persist each immediately. Record alignment failures as
+events and continue.
 """
 
 from __future__ import annotations
@@ -20,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class AnnotationService:
-    """注释定位与续段重组的领域服务。"""
+    """Domain service for annotation alignment and continuation reconstruction."""
 
     def __init__(self, runtime: PipelineRuntime):
         self._runtime = runtime
@@ -31,12 +29,11 @@ class AnnotationService:
         start: int,
         count: int,
     ) -> list[int]:
-        """返回最后一片落在当前批次内的逻辑原段起点，保持顺序并去重。
-
-        超长原段可能被切成首段和多个 cont 续段，且切分后的翻译批次
-        可能刚好从续段开始。向前追溯到首段，才能在最后一个续段译完时立即
-        合并完整 source/target 并执行一次注释定位。只在逻辑段末片属于当前
-        范围时返回，避免同一组续段跨多个批次时重复处理。
+        """Return ordered, unique logical-paragraph starts whose final slice is in this batch.
+        A batch may begin at a continuation. Walk back to the original first slice so the
+        complete source/target can be merged and aligned once the final continuation
+        finishes. Return only groups whose final slice belongs to the current range,
+        preventing duplicate work across batches.
         """
         if count <= 0 or not segments:
             return []
@@ -61,12 +58,11 @@ class AnnotationService:
         segments: list[Segment],
         registry: dict[str, Any] | None,
     ) -> list[list[dict[str, str]]]:
-        """按源文偏移把书级注释原文分配给对应的实际翻译切片。
-
-        EPUB 布局元数据只保存在一个逻辑段的首片；超长段的 cont
-        续片没有独立 metadata。这里使用首片记录的原始字符偏移和各切片
-        累计边界，把 point 注释分给所在切片、range 注释分给所有相交
-        切片。相同目标在同一切片只注入一次。
+        """Assign book-level annotation source text to actual translation slices by source
+        offsets.
+        Only the first slice holds EPUB layout metadata. Use its original offsets and
+        cumulative slice boundaries to assign point annotations to one slice and ranges to
+        every intersecting slice. Inject each destination only once per slice.
         """
         assigned: list[list[dict[str, str]]] = [[] for _ in segments]
         if not isinstance(registry, dict):
@@ -144,7 +140,7 @@ class AnnotationService:
                         if start < piece_end and end > piece_start
                     ]
                 else:
-                    # 边界上的 point 归前片；位置 0 归首片。
+                    # Assign boundary points to the preceding slice; position zero belongs to the first slice.
                     piece_index = 0
                     if start > 0:
                         piece_index = next(
@@ -173,15 +169,12 @@ class AnnotationService:
         start_position: int,
         store: RunStore,
     ) -> None:
-        """串行定位一个已译完逻辑原段的 EPUB 注释链接。
-
-        超长段会被切成一个带 anchor 的首段和若干 cont 续段；解析元数据
-        只存在首段，因此必须等全部续段都有译文后再合并 source/target。
-        定位模型仅读取正式 target；导出阶段若规范标点，会在副本上同步
-        重映射 placement。
-
-        定位结果无论正常还是确定性 fallback 都会立即写回章节文件。没有注释
-        或译文尚不完整时直接返回，且不会调用模型。
+        """Align EPUB links for one fully translated logical paragraph.
+        Only the first slice has an anchor and parsing metadata, so wait for all
+        continuations before merging source/target. Align against formal target text; export
+        punctuation normalization remaps placements only on a copy.
+        Persist both valid placements and deterministic fallbacks immediately. Skip model
+        calls when annotations are absent or translation is incomplete.
         """
         segments = chapter.text_segments
         if not 0 <= start_position < len(segments):
@@ -245,7 +238,7 @@ class AnnotationService:
 
         try:
             result = self._runtime.annotation_aligner.align_unit(unit)
-        except Exception as error:  # noqa: BLE001 - 单段失败由 writer 安全降级
+        except Exception as error:  # noqa: BLE001 - The writer safely degrades individual alignment failures.
             store.log_event(
                 "annotation_alignment_failed",
                 chapter=ci,
@@ -259,8 +252,8 @@ class AnnotationService:
 
         metadata["target_digest"] = result.target_digest
         metadata["placements"] = [dict(item) for item in result.placements]
-        # 每个逻辑段完成后立即原子落盘；长书被中断时不必重新支付已完成的
-        # 注释定位调用，也能在翻译尚未完成时导出查看当前效果。
+        # Persist each logical paragraph atomically so interruptions do not repeat paid alignment calls
+        # and users can inspect exports before the complete book finishes translating.
         store.save_chapter(chapter)
         store.log_event(
             "annotation_alignment_completed",
@@ -280,7 +273,9 @@ class AnnotationService:
         count: int,
         store: RunStore,
     ) -> None:
-        """按原文顺序串行处理当前批次触及且已完整翻译的注释段。"""
+        """Process complete annotated paragraphs touched by this batch serially in source
+        order.
+        """
         segments = chapter.text_segments
         for logical_start in self.completed_logical_starts_in_range(
             segments,

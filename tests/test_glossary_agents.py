@@ -1,4 +1,4 @@
-"""分析器 / 术语抽取 / 滚动上下文 的测试（离线）。"""
+"""Offline analyzer, glossary-extraction and rolling-context tests."""
 
 from __future__ import annotations
 
@@ -62,8 +62,8 @@ class TestAnalyzer(unittest.TestCase):
             self.assertIsNotNone(organization)
             assert character is not None
             assert organization is not None
-            self.assertEqual(character.gender, "男")
-            self.assertEqual(organization.type, "组织")
+            self.assertEqual(character.gender, "male")
+            self.assertEqual(organization.type, "organization")
             store.close()
 
         brief = a.style_brief(result)
@@ -88,7 +88,7 @@ class TestAnalyzer(unittest.TestCase):
             school = store.get_term("学校")
             self.assertIsNotNone(school)
             assert school is not None
-            self.assertEqual(school.type, "术语")
+            self.assertEqual(school.type, "term")
             store.close()
 
 
@@ -143,10 +143,10 @@ class TestExtractor(unittest.TestCase):
             horikita = store.get_term("堀北")
             self.assertIsNotNone(horikita)
             assert horikita is not None
-            self.assertEqual(horikita.gender, "女")
+            self.assertEqual(horikita.gender, "female")
             self.assertEqual(horikita.aliases, ["堀北さん"])
             self.assertEqual(horikita.first_chapter, 1)
-            # "未知" 应被规整为空
+            # Normalize legacy unknown gender to an empty value.
             rooftop = store.get_term("屋上")
             self.assertIsNotNone(rooftop)
             assert rooftop is not None
@@ -171,7 +171,7 @@ class TestExtractor(unittest.TestCase):
         result = extractor.extract("term", "术语", [])
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].type, "术语")
+        self.assertEqual(result[0].type, "term")
         self.assertEqual(result[0].gender, "")
         self.assertEqual(result[0].aliases, [])
         self.assertEqual(result[0].note, "")
@@ -182,7 +182,7 @@ class TestExtractor(unittest.TestCase):
         def handler(messages, tier, json_mode):
             system = messages[0]["content"]
             calls.append(system)
-            if "术语一致性校准器" in system:
+            if "terminology consistency aligner" in system:
                 user = messages[-1]["content"]
                 self.assertIn("綾小路第一次走进教室。", user)
                 self.assertIn("绫小路第一次走进教室。", user)
@@ -311,8 +311,8 @@ class TestRollingContext(unittest.TestCase):
     def test_render_and_bound(self):
         ctx = RollingContext(max_recent_keep=3)
         ctx.add_targets(["a", "b", "c", "d", "e"])
-        self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # 限长
-        rendered = ctx.render(n_recent=2)  # 只取最近两段
+        self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # Bound retained context length.
+        rendered = ctx.render(n_recent=2)  # Use only the two most recent paragraphs.
         self.assertIn("d", rendered)
         self.assertIn("e", rendered)
         self.assertNotIn("c", rendered)

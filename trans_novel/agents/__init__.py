@@ -1,1 +1,1 @@
-"""各 Agent：分析、翻译、审校与润色。"""
+"""Agents for analysis, translation, review and polishing."""

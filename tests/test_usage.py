@@ -1,4 +1,4 @@
-"""LLM 用量统计契约测试（离线，不发网络请求）。"""
+"""Offline LLM usage contracts without network requests."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _make_usage(
     prompt_cache_hit_tokens: int = 0,
     prompt_cache_miss_tokens: int = 0,
 ) -> Any:
-    """构造普通 class 实例作为 usage（非 dict）。"""
+    """Build usage as a regular class instance instead of a dictionary."""
     u = SimpleNamespace(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
@@ -92,14 +92,14 @@ class _ChatStub:
 
 
 class _ClientStub:
-    """支持 stub.chat.completions.create(**kwargs) 的最小客户端。"""
+    """Minimal client supporting stub.chat.completions.create(**kwargs)."""
 
     def __init__(self, responses: list[Any]) -> None:
         self.chat = _ChatStub(responses)
 
 
 class _MeteredFakeClient(FakeClient):
-    """每次离线调用都写入固定 token，供单次运行账本断言。"""
+    """Record fixed tokens per offline call for per-run ledger assertions."""
 
     def complete(
         self,
@@ -194,7 +194,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         )
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
-            with self.assertRaisesRegex(EmptyResponseError, "备用响应不是合法 JSON"):
+            with self.assertRaisesRegex(EmptyResponseError, "fallback response is invalid JSON"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}],
                 )
@@ -227,7 +227,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         )
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
-            with self.assertRaisesRegex(EmptyResponseError, "content 为空"):
+            with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
                 client.complete(
                     [{"role": "user", "content": "translate"}],
                 )
@@ -239,7 +239,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         response = _make_response("", None, reasoning_content=" \n ")
 
         with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
-            with self.assertRaisesRegex(EmptyResponseError, "content 为空"):
+            with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}],
                 )
@@ -491,7 +491,7 @@ class TestMissingUsage(unittest.TestCase):
         c = DeepSeekClient(cfg)
         msg = SimpleNamespace(content="ok")
         choice = SimpleNamespace(message=msg)
-        # 无 usage 属性
+        # No usage attribute.
         resp = SimpleNamespace(choices=[choice])
         with patch.object(c, "_ensure_client", return_value=_ClientStub([resp])):
             self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "ok")
@@ -502,7 +502,7 @@ class TestMissingUsage(unittest.TestCase):
     def test_missing_total_tokens_falls_back_to_prompt_plus_completion(self):
         tracker = UsageTracker()
         usage = _make_usage(prompt_tokens=40, completion_tokens=10)
-        # 确认未设置 total_tokens
+        # Verify total_tokens is absent.
         self.assertFalse(hasattr(usage, "total_tokens"))
         tracker.record("cheap", make_usage_sample(usage))
         slot = tracker.summary()["by_tier"]["cheap"]
@@ -637,11 +637,11 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             cumulative = first._runtime.flush_usage(store, scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
 
-            # 同一进程再次 flush 没有新增调用，不能重复累计。
+            # A second flush in the same process without new calls must not double-count usage.
             unchanged = first._runtime.flush_usage(store, scope="pipeline")
             self.assertEqual(unchanged["totals"]["total_tokens"], 120)
 
-            # 模拟 resume：新 client / Orchestrator 的增量继续累加到同一本书。
+            # Simulate resume with a new client/Orchestrator, adding deltas to the same book.
             resumed_client = FakeClient()
             resumed = Orchestrator(config, client=resumed_client)
             self._record(
@@ -698,7 +698,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 class TestPerRunMetrics(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        # 产品默认关闭账本；本类显式打开以覆盖实现路径。
+        # Run ledgers are disabled by default; enable them explicitly to cover the implementation.
         cls._run_metrics_enabled = patch(
             "trans_novel.pipeline.runtime._RUN_METRICS_ENABLED",
             True,
@@ -1086,7 +1086,9 @@ class TestPerRunMetrics(unittest.TestCase):
             with open(source, "a", encoding="utf-8") as file:
                 file.write("\n追加された本文。\n")
 
-            with self.assertRaisesRegex(ValueError, "内容与现有翻译状态不一致"):
+            with self.assertRaisesRegex(
+                ValueError, "content does not match existing translation state"
+            ):
                 Orchestrator(config, client=FakeClient()).run_report(source)
 
             self.assertNotEqual(store.load_manifest()["source_sha256"], source_sha256(source))
@@ -1128,11 +1130,11 @@ class TestPerRunMetrics(unittest.TestCase):
                     "locate_existing",
                     side_effect=mutate_then_locate,
                 ),
-                self.assertRaisesRegex(ValueError, "本次命令执行期间发生变化"),
+                self.assertRaisesRegex(ValueError, "changed during this command"),
             ):
                 resumed.run_report(source)
 
-    def test_existing_state_restores_both_manifest_languages(self):
+    def test_existing_state_restores_detected_source_for_matching_target(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "novel.txt")
             write_sample_txt(source)
@@ -1143,7 +1145,7 @@ class TestPerRunMetrics(unittest.TestCase):
             ).run_steps(source, {"translate"})
             resumed_config = self._config(directory)
             resumed_config.source_lang = "auto"
-            resumed_config.target_lang = "ja"
+            resumed_config.target_lang = "zh"
             resumed = Orchestrator(resumed_config, client=FakeClient())
 
             resumed.run_report(source)
@@ -1165,7 +1167,7 @@ class TestPerRunMetrics(unittest.TestCase):
                 }
             )
 
-            with self.assertRaisesRegex(ValueError, "缺少有效的 source_sha256"):
+            with self.assertRaisesRegex(ValueError, "has no valid source_sha256"):
                 store.ensure_source_identity(source)
 
     def test_failure_records_only_exception_type(self):
@@ -1247,7 +1249,7 @@ class TestPerRunMetrics(unittest.TestCase):
                 "save_run_metric",
                 side_effect=OSError("disk full"),
             ):
-                with self.assertWarnsRegex(RuntimeWarning, "无法保存"):
+                with self.assertWarnsRegex(RuntimeWarning, "Cannot save"):
                     result = orchestrator.run_steps(source, {"translate"})
 
             store = result["store"]

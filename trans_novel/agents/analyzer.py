@@ -1,7 +1,7 @@
-"""全局分析 Agent（强档）。
-
-通读样章，产出风格指南、角色圣经（含性别/语气）、初始术语候选，
-并把角色/术语种入术语库，作为全书翻译的统一基准。
+"""Global analysis agent using the strong tier.
+Read sample chapters to produce a style guide, character reference with gender and voice,
+and initial term candidates. Seed characters and terms into the glossary as a consistent
+reference for the book.
 """
 
 from __future__ import annotations
@@ -9,12 +9,13 @@ from __future__ import annotations
 from typing import Any
 
 from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
+from ..i18n.metadata import normalize_gender, normalize_term_type
 from . import prompts
 from .base import Agent
 
 
 def _text(value: Any, default: str = "") -> str:
-    """把模型字段规整为文本；嵌套对象等非标量值直接回退。"""
+    """Normalize model fields to text; fall back for non-scalar values such as nested objects."""
     if isinstance(value, str):
         return value.strip()
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -24,13 +25,20 @@ def _text(value: Any, default: str = "") -> str:
 
 class Analyzer(Agent):
     def analyze(self, sample_text: str) -> dict[str, Any]:
-        """分析样本文本，并返回经过类型清洗的风格、角色和术语信息。"""
+        """Analyze samples and return type-checked style, character and terminology data."""
         system = prompts.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = prompts.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
-        # 不传 default：分析失败照常抛出，由调用方决定（prepare 阶段失败应显式暴露）
+        # No default: propagate analysis failures for the caller to handle, including preparation failures.
         data = self._ask_json(system, user, tier="strong")
         if not isinstance(data, dict):
             data = {}
+        # Accept a list of prose bullets as well as the requested string. Never stringify objects.
+        if isinstance(data.get("style_guide"), list):
+            data["style_guide"] = "\n".join(
+                item.strip()
+                for item in data["style_guide"]
+                if isinstance(item, str) and item.strip()
+            )
         for key in (
             "genre",
             "tone",
@@ -44,10 +52,14 @@ class Analyzer(Agent):
             data[key] = _text(data.get(key))
         data["characters"] = self.dict_items(data.get("characters"))
         data["terms"] = self.dict_items(data.get("terms"))
+        for character in data["characters"]:
+            character["gender"] = normalize_gender(_text(character.get("gender")))
+        for term in data["terms"]:
+            term["type"] = normalize_term_type(_text(term.get("type")))
         return data
 
     def seed_glossary(self, store: GlossaryStore, analysis: dict[str, Any]) -> int:
-        """把分析得到的角色/术语种入术语库，返回写入条目数。"""
+        """Seed analyzed characters and terms into the glossary; return the entry count."""
         count = 0
         for ch in self.dict_items(analysis.get("characters")):
             source = _text(ch.get("source"))
@@ -77,7 +89,7 @@ class Analyzer(Agent):
                     source=source,
                     target=target,
                     reading=_text(tm.get("reading")),
-                    type=_text(tm.get("type"), "术语"),
+                    type=normalize_term_type(_text(tm.get("type"))),
                     note=_text(tm.get("note")),
                     first_chapter=0,
                 ),
@@ -87,31 +99,32 @@ class Analyzer(Agent):
         return count
 
     def style_brief(self, analysis: dict[str, Any]) -> str:
-        """把分析结果浓缩成给译者注入的风格/角色简报。"""
+        """Condense analysis into a style and character brief for the translator."""
         lines = []
         if analysis.get("genre"):
-            lines.append(f"体裁：{analysis['genre']}")
+            lines.append(f"Genre: {analysis['genre']}")
         if analysis.get("tone"):
-            lines.append(f"语气文体：{analysis['tone']}")
+            lines.append(f"Tone: {analysis['tone']}")
         if analysis.get("style_guide"):
-            lines.append(f"风格指南：{analysis['style_guide']}")
-        # 细粒度风格维度（旧 analysis.json 缺字段时自动跳过，向后兼容）
+            lines.append(f"Style guide: {analysis['style_guide']}")
+        # Skip missing detailed style fields for compatibility with older analysis.json files.
         for key, tag in (
-            ("narration", "叙事"),
-            ("pacing", "句式节奏"),
-            ("register", "语域"),
-            ("dialogue_style", "对话风格"),
-            ("rhetoric", "修辞"),
+            ("narration", "Narration"),
+            ("pacing", "Pacing"),
+            ("register", "Register"),
+            ("dialogue_style", "Dialogue style"),
+            ("rhetoric", "Rhetoric"),
         ):
             if analysis.get(key):
-                lines.append(f"{tag}：{analysis[key]}")
+                lines.append(f"{tag}: {analysis[key]}")
         chars = self.dict_items(analysis.get("characters"))
         if chars:
-            lines.append("角色：")
+            lines.append("Characters: ")
             for c in chars:
-                g = f"，{c.get('gender')}" if c.get("gender") else ""
-                note = f"，{c.get('note')}" if c.get("note") else ""
+                gender = normalize_gender(_text(c.get("gender")))
+                g = f", {gender}" if gender else ""
+                note = f", {c.get('note')}" if c.get("note") else ""
                 lines.append(
-                    f"  - {c.get('target', c.get('source', ''))}({c.get('source', '')}{g}{note})"
+                    f"  - {c.get('target') or c.get('source', '')} ({c.get('source', '')}{g}{note})"
                 )
         return "\n".join(lines)

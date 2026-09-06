@@ -1,0 +1,5 @@
+{
+  "keep_style": "Express the relationships and tone conveyed by forms of address and honorifics naturally in the target language. Keep each relationship consistent.",
+  "normalize": "Apply consistent honorific conventions, avoiding multiple translations of the same honorific.",
+  "drop": "Omit honorifics only when meaning and relationships remain intact."
+}

@@ -91,6 +91,8 @@ uv run trans-novel translate book.epub
 
 This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
 
+Multilingual translation (experimental): select a direction using `language.source` / `language.target`, such as `zh → en` or `en → ja`. Run `uv run trans-novel languages` for the list. Targets have separate state and output names. See the [usage guide](docs/usage.md#multilingual-translation-experimental).
+
 ### Step-by-step workflow
 
 ```bash
@@ -218,7 +220,7 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## Limitations
 
-- The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
+- Multilingual translation is experimental: Chinese, English, Japanese, Korean, French, German, Spanish, Italian, Portuguese, Russian, and selected variants have built-in profiles. Real-model long-form quality still needs evaluation; the CLI and prompt instructions use English, while generated descriptive metadata follows the translation target.
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
 - PDF input defaults to the BabelDOC bridge. MinerU is optional for scanned pages and requires an API key.

@@ -18,6 +18,26 @@ release version; development builds include their commit distance and hash.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
+## Multilingual translation (experimental)
+
+Run `uv run trans-novel languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:
+
+```yaml
+language:
+  source: zh
+  target: en
+```
+
+```bash
+uv run trans-novel --config config.yaml translate book.epub --bilingual
+```
+
+Outputs are `output/book.en.epub` and `output/book.en-bi.epub`. For Japanese-to-English use `source: ja`, `target: en`; for English-to-Japanese use `source: en`, `target: ja`. A reverse run takes a file in the corresponding source language; each run selects one direction. Explicit `--out` names and their `-bi` derivatives retain their existing behavior.
+
+The `.zh.*` and `state/<book>/` examples below describe the default Simplified Chinese target. Other new targets use their language suffix and `state/<book>/targets/<target-language>/`; subtitles use `state/srt/<slug>/targets/<target-language>/`. See [configuration](configuration.md#languages) for legacy directory compatibility. Resume and standalone stages use the same target configuration; switching back does not retranslate completed work. The EPUB about page is Chinese for Simplified Chinese targets and otherwise temporarily falls back to an English page tagged as English; disable it with `about_page: false`.
+
+The CLI uses English for help, progress, tables, and errors. Translation and generated descriptive metadata follow `language.target`; original names in `source` and `aliases` remain available for matching. Existing analysis and glossary notes are reused when resuming and are not automatically translated by this update. This version does not support RTL targets such as Arabic or Hebrew. PDF fonts and external bridge language capabilities require separate validation. Real-model long-form before/after quality evaluation remains outstanding.
+
 ## Windows
 
 Windows releases provide `wenyi-windows-x64.zip`. Verify the archive against

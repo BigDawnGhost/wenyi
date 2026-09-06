@@ -1,4 +1,4 @@
-"""生成测试用样本：日文 TXT 与最小 EPUB。"""
+"""Generate Japanese TXT and minimal EPUB test fixtures."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ _CH2 = """<?xml version="1.0" encoding="UTF-8"?>
 
 def write_sample_epub(path: str) -> None:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # mimetype 必须最先写且不压缩
+        # Write mimetype first without compression.
         zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
         zf.writestr("META-INF/container.xml", _CONTAINER)
         zf.writestr("OEBPS/content.opf", _OPF)
@@ -138,7 +138,7 @@ def write_nested_toc_epub(
     empty_title_page: bool = False,
     ncx_filename: str = "toc.ncx",
 ) -> None:
-    """生成“同一 XHTML 内两个顶层章 + 两个子标题”的 EPUB。"""
+    """Build an EPUB with two top-level chapters and two subheadings in one XHTML."""
     if toc_kind not in {"ncx", "nav", "both"}:
         raise ValueError(toc_kind)
     toc_item = (
@@ -200,7 +200,7 @@ def write_nested_toc_epub(
 
 
 def write_grouped_nav_epub(path: str) -> None:
-    """生成用无 href ``span`` 表示顶层分部的 EPUB3 NAV。"""
+    """Build EPUB3 NAV with href-free spans as top-level part groups."""
     opf = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Grouped</dc:title></metadata>
@@ -226,7 +226,7 @@ def write_grouped_nav_epub(path: str) -> None:
 
 
 def write_cross_resource_toc_epub(path: str) -> None:
-    """生成第一个逻辑章横跨两个 spine XHTML 的 EPUB2 样本。"""
+    """Build EPUB2 where the first logical chapter spans two spine XHTML resources."""
     opf = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Cross</dc:title></metadata>
@@ -260,10 +260,9 @@ def write_cross_resource_toc_epub(path: str) -> None:
 
 
 def write_degenerate_toc_epub(path: str) -> None:
-    """生成目录所有顶层节点都指向同一 XHTML 的坏 EPUB。
-
-    旧 calibre 生成的坏 NCX 会让每个 navPoint 的 ``content src`` 都指向
-    第一个内容文件，切章策略因此把所有章折叠到同一边界位置。
+    """Build a damaged EPUB whose top-level TOC nodes all target one XHTML.
+    Some older calibre NCX files point every navPoint at the first content file, collapsing
+    chapter boundaries onto one position.
     """
     opf = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
@@ -320,7 +319,7 @@ _INLINE_CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def write_inline_sample_epub(path: str) -> None:
-    """生成与《小王子》相同的“段首图片 + 句子”结构。"""
+    """Build a leading-image-plus-sentence structure matching the illustrated-book regression."""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
         zf.writestr("META-INF/container.xml", _CONTAINER)
