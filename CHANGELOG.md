@@ -121,3 +121,4 @@ All notable changes to this project are documented here following [Keep a Change
 - Model specifications now accept an `:<thinking-level>` suffix with `off`, `low`, `medium`, `high`, or `max`; startup validates each level against provider and model capabilities, with OpenCode Go `deepseek-v4-flash:high` for `primary` and `:off` for `fast` by default.
 - Default translation now uses the OpenRouter `tencent/hy-mt2-30b-a3b` model alias.
 - Regression coverage now accepts both current and dated Hy-MT2 model IDs.
+- Configuration examples now use the current OpenRouter Hy-MT2 30B alias.

@@ -88,7 +88,7 @@ trans-novel translate book.epub --back-matter full
 llm:
   models:
     translator:
-      - openrouter/tencent/hy-mt2-30b-a3b-20260521:off
+      - openrouter/tencent/hy-mt2-30b-a3b:off
     analyst:
       - opencode-go/muse-spark-1.3-contributor:low
     editor:
@@ -99,7 +99,7 @@ llm:
 quality: balanced
 ```
 
-- `translator`：正文翻译，默认使用 Hy-MT2 30B 的固定版本。
+- `translator`：正文翻译，默认使用 OpenRouter 上的 Tencent Hy-MT2 30B。
 - `analyst`：全局分析、定名和标题翻译。
 - `editor`：中文润色与 lint 问题 Repair。
 - `fast`：语言识别、术语挖掘、术语抽取和附属章轻量翻译。
