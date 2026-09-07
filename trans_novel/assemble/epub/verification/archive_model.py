@@ -136,8 +136,8 @@ def parse_xml(data: bytes) -> ET.Element | None:
         return None
 
 
-def local_name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
+def local_name(tag: object) -> str:
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
 
 
 def safe_archive_name(name: str) -> bool:

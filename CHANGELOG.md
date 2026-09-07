@@ -3,6 +3,7 @@
 All notable changes to this project are documented here following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+- EPUB preflight verification now handles navigation XML comments and processing instructions, plus preserved footnote markers excluded from translation slots.
 
 ## [1.2.0] - 2026-09-07
 - Default translation now uses the OpenRouter `tencent/hy-mt2-30b-a3b` model alias.

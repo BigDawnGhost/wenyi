@@ -6,6 +6,7 @@ import unittest
 import zipfile
 from inspect import signature
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, get_type_hints
 
 from lxml import etree
@@ -13,8 +14,9 @@ from lxml import etree
 from tests.fixtures.books import write_phase9_epub
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.assemble.epub import verification as epub_verifier
+from trans_novel.assemble.epub.rendering import BILINGUAL_SOURCE_CLASS
 from trans_novel.assemble.epub.verification import verify_epub
-from trans_novel.assemble.epub.verification.bilingual import _resolve_output_path
+from trans_novel.assemble.epub.verification.bilingual import _resolve_output_path, bilingual_proof
 from trans_novel.assemble.epub.verification.navigation import nav_label_locations
 from trans_novel.assemble.epub.verification.slots import compare_dom
 from trans_novel.assemble.epub.verification.verify import _new_structural_failures
@@ -89,6 +91,36 @@ class TestEpubStage2(unittest.TestCase):
         )
 
         self.assertEqual(_resolve_output_path(root, (0, 1)).get("id"), "second")
+
+    def test_generic_source_pairing_includes_preserved_footnote_text(self) -> None:
+        source = etree.fromstring(
+            b"<html><body><p>Sentence<sup id='note'><a href='#note'>1</a></sup></p></body></html>"
+        )
+        output = etree.fromstring(
+            (
+                f"<html><body><p>Translation</p><p class='{BILINGUAL_SOURCE_CLASS}'>"
+                "Sentence<sup>1</sup></p></body></html>"
+            ).encode()
+        )
+        segment = SimpleNamespace(
+            source="Sentence",
+            target="Translation",
+            kind="text",
+            epub_state=SimpleNamespace(block_path=(0, 0), slots=[]),
+        )
+        failures: list[dict[str, str]] = []
+
+        bilingual_proof(
+            source,
+            output,
+            [segment],
+            source_lang="en",
+            order="target_first",
+            resource="chapter.xhtml",
+            failures=failures,
+        )
+
+        self.assertNotIn("source_target_pair_mismatch", {item["code"] for item in failures})
 
     def test_public_facade_signatures_preserve_annotations(self) -> None:
         validate = get_type_hints(epub_verifier.validate_epub)
@@ -278,6 +310,16 @@ class TestEpubStage2(unittest.TestCase):
                     for item in mismatch_report["failures"]
                 )
             )
+
+    def test_ncx_navigation_ignores_comments_and_processing_instructions(self) -> None:
+        root = etree.fromstring(
+            b"<ncx><!--keep--><?keep pi?><navMap><navPoint><navLabel>"
+            b"<text>Chapter</text></navLabel></navPoint></navMap></ncx>"
+        )
+
+        labels = nav_label_locations(root, is_ncx=True)
+
+        self.assertEqual([label.text for label, _ in labels], ["Chapter"])
 
     def test_ncx_root_language_and_comment_pi_contents_are_immutable(self) -> None:
         from trans_novel.assemble.epub.rendering import rewrite_toc_lxml as _rewrite_toc_lxml

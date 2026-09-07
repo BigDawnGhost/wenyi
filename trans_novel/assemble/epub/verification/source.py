@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from lxml import etree
@@ -25,6 +26,11 @@ def expected_insertions(root_source: etree._Element, segments: list[Any], source
     expected_total = 0
     container_paths: set[tuple[int, ...]] = set()
     direct_source_keys: set[tuple[tuple[int, ...], tuple[int, ...] | str]] = set()
+    block_counts = Counter(
+        tuple(segment.epub_state.block_path)
+        for segment in segments
+        if segment_needs_source(segment) and segment.epub_state is not None
+    )
     for segment in segments:
         if not segment_needs_source(segment):
             continue
@@ -77,7 +83,15 @@ def expected_insertions(root_source: etree._Element, segments: list[Any], source
                     direct_source_keys.add(key)
                     expected_total += 1
         else:
-            expected.append((segment.source, block_path))
+            source_text = segment.source
+            if source_block is not None and block_counts[block_path] == 1:
+                source_tag = archive_model.local_name(source_block.tag).lower()
+                source_tag = source_tag if source_tag in {"p", "div"} else "p"
+                expected_source = japanese_ruby_source_copy(source_block, source_lang, source_tag)
+                if expected_source is None:
+                    expected_source = sanitized_source_copy(source_block, source_tag)
+                source_text = dom.source_node_visible_text(expected_source)
+            expected.append((source_text, block_path))
             expected_total += 1
     return expected, expected_total
 
