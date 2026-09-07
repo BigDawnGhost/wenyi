@@ -1,21 +1,28 @@
 <div align="center">
 
-# 📚 Wenyi
+<h1>
+  <img src="docs/images/wenyi-emblem.png" alt="" width="280">
+  <br>
+  <img src="docs/images/wenyi-wordmark-en.svg" alt="Wenyi" width="180" height="54">
+</h1>
 
-**One command, from EPUB to a readable Chinese translation.**
+**Carry stories across languages.**
 
-Whole-book analysis · Real-time glossary · Multi-stage review
+Translation for books and long-form writing, with the whole work in view.
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square)](https://www.python.org/)
-[![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square)](https://github.com/BigDawnGhost/wenyi/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
-<a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
+Whole-book understanding · Consistent terminology · Evidence-based review
+
+[![Python](https://img.shields.io/badge/python-3.10%2B-D4B56A?style=flat-square&labelColor=00263D)](https://www.python.org/)
+[![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
+[![License](https://img.shields.io/badge/license-MIT-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
+[![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
+
+[Quick start](#quick-start) · [Language support](docs/usage.md#multilingual-translation-experimental) · [Documentation](#documentation)
 
 **English** | [简体中文](docs/zh/README.md)
 
-<img src="docs/images/bilingual-preview.png" alt="Wenyi bilingual EPUB preview" width="720">
+<a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
 
 </div>
 
@@ -46,6 +53,12 @@ Whole-book analysis · Real-time glossary · Multi-stage review
 | Raw model output, no systematic quality process | Translate → polish → evidence-driven whole-book review |
 
 Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
+
+<p align="center">
+  <img src="docs/images/bilingual-preview.png" alt="Wenyi bilingual EPUB preview" width="720">
+  <br>
+  <sub>A bilingual reading sample: translation alongside visually subdued source text.</sub>
+</p>
 
 ---
 
