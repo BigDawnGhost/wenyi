@@ -7,6 +7,7 @@ paragraphs.
 from __future__ import annotations
 
 from ..glossary.store import GlossaryTerm
+from ..i18n.prompts import render
 from . import prompts
 from .base import Agent
 
@@ -23,8 +24,8 @@ class Polisher(Agent):
         if not targets:
             return []
         n = len(targets)
-        system = prompts.render("polisher_system", src=self.src, tgt=self.tgt, n=n)
-        user = prompts.render(
+        system = render("polisher_system", src=self.src, tgt=self.tgt, n=n)
+        user = render(
             "polisher_user",
             src=self.src,
             tgt=self.tgt,

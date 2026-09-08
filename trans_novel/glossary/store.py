@@ -385,8 +385,7 @@ class GlossaryStore:
     @staticmethod
     def terms_in(terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         """Filter a prefetched term list by source/alias occurrences in text.
-        Equivalent to terms_in_text, but avoids querying the database for every batch while
-        using a chapter glossary snapshot.
+        Use a chapter glossary snapshot without querying the database for every batch.
         """
         out: list[GlossaryTerm] = []
         normalized_text = _match_text(text)
@@ -414,12 +413,6 @@ class GlossaryStore:
             terms,
             min_occurrences=min_occurrences,
         )
-
-    def terms_in_text(self, text: str) -> list[GlossaryTerm]:
-        """Return terms whose source or aliases occur in the text for translation prompt
-        injection.
-        """
-        return self.terms_in(self.all_terms(), text)
 
     def mark_conflicts_resolved(self, source: str) -> None:
         """Mark every unresolved conflict for the given source term as handled."""

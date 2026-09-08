@@ -668,7 +668,10 @@ class TestOrchestrator(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "temporary model failure"):
                 Orchestrator(cfg, client=FakeClient(handler=fail_analysis)).prepare(txt)
 
-            run_dirs = [os.path.join(cfg.state_dir, name) for name in os.listdir(cfg.state_dir)]
+            run_dirs = [
+                os.path.join(cfg.state_dir, name, "targets", "zh")
+                for name in os.listdir(cfg.state_dir)
+            ]
             self.assertEqual(len(run_dirs), 1)
             self.assertFalse(os.path.isfile(os.path.join(run_dirs[0], "manifest.json")))
 
@@ -2640,7 +2643,7 @@ class TestReviewReporting(unittest.TestCase):
 
 class TestStyleAnalysis(unittest.TestCase):
     def test_style_brief_new_fields(self):
-        """Render new style dimensions and safely skip fields absent from older analysis."""
+        """Render supported style dimensions and omit dimensions without evidence."""
         from trans_novel.agents.analyzer import Analyzer
         from trans_novel.llm.providers.fake import FakeClient as FC
 
@@ -2659,10 +2662,10 @@ class TestStyleAnalysis(unittest.TestCase):
         self.assertIn("Register: 口语", brief)
         self.assertIn("Dialogue style: 语气词丰富", brief)
         self.assertIn("Narration: 第一人称", brief)
-        # Legacy analysis with only older fields.
-        old = ana.style_brief({"genre": "校园", "tone": "冷峻"})
-        self.assertIn("Genre: 校园", old)
-        self.assertNotIn("Pacing:", old)
+        # Sparse model output can omit unsupported dimensions.
+        sparse = ana.style_brief({"genre": "校园", "tone": "冷峻"})
+        self.assertIn("Genre: 校园", sparse)
+        self.assertNotIn("Pacing:", sparse)
 
 
 class TestGlossaryScope(unittest.TestCase):
@@ -2678,10 +2681,10 @@ class TestGlossaryScope(unittest.TestCase):
         store = orch.prepare(txt)
         g = GlossaryStore(store.glossary_path)
         # Include an absent character, an unrelated term and an entity whose alias occurs in the chapter.
-        g.upsert_term(GlossaryTerm(source="外部人物X", target="外部译名", type="人物"))
-        g.upsert_term(GlossaryTerm(source="無関係用語", target="无关术语", type="术语"))
+        g.upsert_term(GlossaryTerm(source="外部人物X", target="外部译名", type="person"))
+        g.upsert_term(GlossaryTerm(source="無関係用語", target="无关术语", type="term"))
         g.upsert_term(
-            GlossaryTerm(source="ホリキタ", target="堀北译名", aliases=["堀北"], type="术语")
+            GlossaryTerm(source="ホリキタ", target="堀北译名", aliases=["堀北"], type="term")
         )
         g.close()
 
@@ -2737,7 +2740,7 @@ class TestGlossaryScope(unittest.TestCase):
                             {
                                 "source": "夏帆ちゃん",
                                 "target": "小夏帆",
-                                "type": "称谓",
+                                "type": "appellation",
                                 "aliases": ["夏帆"],
                                 "note": "亲昵称呼",
                             }
@@ -2839,7 +2842,7 @@ class TestGlossaryScope(unittest.TestCase):
                             {
                                 "source": "夏帆ちゃん",
                                 "target": "小夏帆",
-                                "type": "称谓",
+                                "type": "appellation",
                                 "aliases": ["夏帆"],
                                 "note": "亲昵称呼",
                             }
@@ -2958,7 +2961,7 @@ class TestLocateExistingStore(unittest.TestCase):
             digest = source_sha256(epub)
             # Use the same slug rule for the sample EPUB's OPF title as preparation does.
             store = RunStore(
-                os.path.join(directory, "state", slugify("サンプル小説")),
+                os.path.join(directory, "state", slugify("サンプル小説"), "targets", "zh"),
             )
             store.save_manifest(
                 {

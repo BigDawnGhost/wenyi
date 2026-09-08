@@ -68,9 +68,6 @@ _XML_ENCODING = re.compile(
 
 
 # Path and attribute helpers.
-def _base_no_frag(href: str) -> str:
-    """Return the href basename without directories or fragments for relative-path matching."""
-    return os.path.basename((href or "").split("#", 1)[0])
 
 
 def _attr_str(value: object) -> str:
@@ -341,7 +338,7 @@ def _rewrite_toc(
 
 # Physical resource and Segment mapping.
 def _epub_resource_specs(meta: dict[str, object]) -> list[tuple[int, str]]:
-    """Read the physical XHTML inventory from newer state, excluding damaged or duplicate
+    """Read the physical XHTML inventory from state, excluding damaged or duplicate
     records.
     """
     raw_resources = meta.get("epub_resources")
@@ -796,8 +793,7 @@ def _build_epub_from_html_templates(
     from ebooklib import epub
 
     manifest = store.load_manifest()
-    raw_target_lang = manifest.get("target_lang", "zh")
-    target_lang_code = raw_target_lang if isinstance(raw_target_lang, str) else "zh"
+    target_lang_code = _manifest_target_lang(manifest)
     raw_title = manifest.get("title", "translated")
     title = _export_book_title(
         raw_title if isinstance(raw_title, str) else "translated",

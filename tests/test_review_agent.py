@@ -75,7 +75,7 @@ class TestBookEvidenceIndex(unittest.TestCase):
             ),
             _chapter(1, [("ANN returned.", "安回来了。"), ("End.", "结束。")]),
         ]
-        self.term = GlossaryTerm(source="Ann", target="安", aliases=["Annie"], type="人物")
+        self.term = GlossaryTerm(source="Ann", target="安", aliases=["Annie"], type="person")
         self.index = BookEvidenceIndex(
             self.chapters,
             [self.term],
@@ -129,7 +129,7 @@ class TestBookEvidenceIndex(unittest.TestCase):
         )
 
     def test_exact_source_wins_over_another_terms_same_alias(self):
-        other = GlossaryTerm(source="Anne", target="安妮", aliases=["Ann"], type="人物")
+        other = GlossaryTerm(source="Anne", target="安妮", aliases=["Ann"], type="person")
         index = BookEvidenceIndex(self.chapters, [self.term, other], {})
 
         term, ambiguous = index.canonical_term("Ann")
@@ -138,8 +138,8 @@ class TestBookEvidenceIndex(unittest.TestCase):
         self.assertEqual(ambiguous, [])
 
     def test_exact_case_sensitive_source_wins_and_normalized_collision_is_ambiguous(self):
-        upper = GlossaryTerm(source="ANN", target="甲", aliases=["Alice"], type="人物")
-        title = GlossaryTerm(source="Ann", target="乙", aliases=["Annie"], type="人物")
+        upper = GlossaryTerm(source="ANN", target="甲", aliases=["Alice"], type="person")
+        title = GlossaryTerm(source="Ann", target="乙", aliases=["Annie"], type="person")
         index = BookEvidenceIndex(
             [_chapter(0, [("Alice arrived.", "甲到了。"), ("Annie left.", "乙走了。")])],
             [upper, title],
@@ -172,8 +172,8 @@ class TestBookEvidenceIndex(unittest.TestCase):
         self.assertIn(result["glossary_term"]["ref"], BookEvidenceIndex.evidence_refs(result))
 
     def test_distinct_exact_sources_are_not_merged_into_one_conflict_key(self):
-        upper = GlossaryTerm(source="ANN", target="甲", type="人物")
-        title = GlossaryTerm(source="Ann", target="乙", type="人物")
+        upper = GlossaryTerm(source="ANN", target="甲", type="person")
+        title = GlossaryTerm(source="Ann", target="乙", type="person")
         evidence = BookEvidenceIndex(self.chapters, [upper, title], {})
         issues = normalize_review_issues(
             [
@@ -445,7 +445,7 @@ class TestReadonlyGlossarySnapshot(unittest.TestCase):
             writer = GlossaryStore(path)
             try:
                 writer.upsert_term(
-                    GlossaryTerm(source="Ann", target="安", type="人物"),
+                    GlossaryTerm(source="Ann", target="安", type="person"),
                     chapter=0,
                 )
                 watched = [path, f"{path}-wal", f"{path}-shm"]
@@ -472,12 +472,12 @@ class TestReadonlyGlossarySnapshot(unittest.TestCase):
             writer = GlossaryStore(path)
             try:
                 writer.upsert_term(
-                    GlossaryTerm(source="Ann", target="安", type="人物"),
+                    GlossaryTerm(source="Ann", target="安", type="person"),
                     chapter=0,
                 )
                 writer.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 writer.upsert_term(
-                    GlossaryTerm(source="Bob", target="鲍勃", type="人物"),
+                    GlossaryTerm(source="Bob", target="鲍勃", type="person"),
                     chapter=0,
                 )
                 real_copy = shutil.copy2
@@ -765,7 +765,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                     ],
                 )
             ],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
 
@@ -1731,7 +1731,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
     def test_conflicting_cross_chunk_claims_are_arbitrated(self):
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         issues = normalize_review_issues(
@@ -1800,7 +1800,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
         """Arbitration chooses a value; retain every issue supporting the winning value."""
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann A.", "安。"), ("Ann B.", "安妮。"), ("Ann C.", "安。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         issues = normalize_review_issues(
@@ -1908,7 +1908,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
         """
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         glossary_result = evidence.glossary_term({"term": "Ann"})
@@ -2116,7 +2116,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
     def test_unproposed_suggested_value_falls_back_to_unresolved(self):
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         issues = normalize_review_issues(

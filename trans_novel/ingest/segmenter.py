@@ -185,8 +185,3 @@ def batch_segments(segments: list[Segment], max_chars: int) -> list[list[Segment
     if cur:
         batches.append(cur)
     return batches
-
-
-def chapter_batches(chapter: Chapter, max_chars: int) -> list[list[Segment]]:
-    """Batch a chapter's translatable segments."""
-    return batch_segments(chapter.text_segments, max_chars)

@@ -121,16 +121,6 @@ def _normalize_with_quote_state(
     return text, double_open, single_open
 
 
-def normalize_zh(text: str) -> str:
-    """Normalize a Chinese translation paragraph to Simplified Chinese full-width punctuation."""
-    normalized, _, _ = _normalize_with_quote_state(
-        text,
-        double_open=True,
-        single_open=True,
-    )
-    return normalized
-
-
 def normalize_zh_segments(
     texts: list[str],
     continuations: list[bool] | None = None,

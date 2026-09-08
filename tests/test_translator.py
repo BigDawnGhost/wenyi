@@ -6,11 +6,10 @@ import json
 import re
 import unittest
 
-from trans_novel.agents import prompts
 from trans_novel.agents.translator import Translator
 from trans_novel.config import Config
+from trans_novel.i18n.prompts import template
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.checks import length_flags
 
 
 def _count_segments(user_content: str) -> int:
@@ -141,20 +140,24 @@ class TestTranslatorAlignment(unittest.TestCase):
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_and_dynamic_prompt_sections_have_cache_friendly_order(self):
         self.assertLess(
-            prompts.TRANSLATOR_USER.template.index("[Chapter digest]"),
-            prompts.TRANSLATOR_USER.template.index("[Glossary]"),
+            template("translator_user").template.index("[Chapter digest]"),
+            template("translator_user").template.index("[Glossary]"),
         )
         self.assertLess(
-            prompts.TRANSLATOR_USER.template.index("[Glossary]"),
-            prompts.TRANSLATOR_USER.template.index("[Paragraph-specific annotation references]"),
+            template("translator_user").template.index("[Glossary]"),
+            template("translator_user").template.index(
+                "[Paragraph-specific annotation references]"
+            ),
         )
         self.assertLess(
-            prompts.TRANSLATOR_USER.template.index("[Paragraph-specific annotation references]"),
-            prompts.TRANSLATOR_USER.template.index("[Recent translations]"),
+            template("translator_user").template.index(
+                "[Paragraph-specific annotation references]"
+            ),
+            template("translator_user").template.index("[Recent translations]"),
         )
         self.assertLess(
-            prompts.TRANSLATOR_USER.template.index("[Recent translations]"),
-            prompts.TRANSLATOR_USER.template.index("[$src_label paragraphs to translate]"),
+            template("translator_user").template.index("[Recent translations]"),
+            template("translator_user").template.index("[$src_label paragraphs to translate]"),
         )
 
 
@@ -285,16 +288,6 @@ class TestTranslatorAnnotationContexts(unittest.TestCase):
                 ],
             ],
         )
-
-
-class TestChecks(unittest.TestCase):
-    def test_length_flags(self):
-        sources = ["これは長い日本語の文章です。" * 3, "短い", "x" * 10]
-        targets = ["", "短い但正常的中文译文内容", "x" * 40]
-        flags = length_flags(sources, targets)
-        kinds = {f.index: f.reason for f in flags}
-        self.assertEqual(kinds.get(0), "empty")  # An empty translation.
-        self.assertEqual(kinds.get(2), "too_long")  # An excessive length ratio.
 
 
 if __name__ == "__main__":

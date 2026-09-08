@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.store import GlossaryStore
+from .runstore import source_sha256
 
 if TYPE_CHECKING:
     from .runstore import RunStore
@@ -51,12 +52,7 @@ class ReportService:
 
         if progress:
             progress(0, 0, "Generating report…")
-        report = self._runtime.measure_stage_call(
-            "report",
-            build_report,
-            store,
-            glossary,
-        )
+        report = build_report(store, glossary)
         assert report is not None
         store.save_report(report)
         store.log_event("report_saved", path=store.report_path)
@@ -80,7 +76,8 @@ class AssemblyService:
         pdf_engine: str,
     ) -> list[str]:
         """Generate every configured artifact from live state or a read-only snapshot."""
-        from ..assemble.writer import assemble, bilingual_out_path
+        from ..assemble.writer import assemble
+        from ..assemble.writer_common import bilingual_out_path
 
         if progress:
             progress(0, 0, "Assembling translation…")
@@ -92,9 +89,7 @@ class AssemblyService:
         outputs: list[str] = []
         if do_mono:
             outputs.append(
-                self._runtime.measure_stage_call(
-                    "assemble",
-                    assemble,
+                assemble(
                     store,
                     input_path,
                     out_path=out_path,
@@ -109,9 +104,7 @@ class AssemblyService:
         if do_bilingual:
             bi_out_path = bilingual_out_path(out_path) if out_path else None
             outputs.append(
-                self._runtime.measure_stage_call(
-                    "assemble",
-                    assemble,
+                assemble(
                     store,
                     input_path,
                     out_path=bi_out_path,
@@ -169,13 +162,9 @@ class AssemblyService:
         around rendering.
         """
         with store.assemble_lock():
-            snapshot = self._runtime.measure_stage_call(
-                "prepare",
-                store.create_export_snapshot,
-                actual_sha256=self._runtime.source_sha256(input_path),
-            )
+            snapshot = store.create_export_snapshot(actual_sha256=source_sha256(input_path))
             self._runtime.apply_manifest_languages(snapshot.load_manifest())
-            self._runtime.capture_metrics_state(snapshot)
+
             # The source may change while waiting for another export; validate again immediately before rendering.
             self._runtime.ensure_store_source(store, input_path)
             outputs = self.assemble_outputs(

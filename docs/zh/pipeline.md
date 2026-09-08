@@ -23,9 +23,9 @@
 
 ## 语言规则与状态范围
 
-源语言与目标语言独立选择，正文、标题、术语译名及备注、分析描述、润色、章节梗概和全书概览均明确要求使用目标语言。说明中的人物称呼使用目标语言姓名，`source` 和 `aliases` 保留原文拼写。任务指令统一使用英语，位于 `trans_novel/i18n/data/tasks/`；源语言理解、目标语言表达、语言对敬称差异及元数据语言约束集中在同目录下的 `languages/`、`pairs/`、`shared/`。JSON 键及稳定身份保持不变；新的术语类型/性别值使用英语标识符，旧中文值在读取时归一化，不自动改写已有记录。分析还兼容模型返回的风格指南列表，避免丢弃内容。续跑保留已有分析和备注，资源更新作用于新的模型调用。
+源语言与目标语言独立选择，正文、标题、术语译名及备注、分析描述、润色、章节梗概和全书概览均明确要求使用目标语言。说明中的人物称呼使用目标语言姓名，`source` 和 `aliases` 保留原文拼写。任务指令统一使用英语，位于 `trans_novel/i18n/data/tasks/`；源语言理解、目标语言表达、语言对敬称差异及元数据语言约束集中在同目录下的 `languages/`、`pairs/`、`shared/`。JSON 键及稳定身份保持不变；术语类型/性别值使用英语标识符，不再转换旧中文枚举。分析接受模型返回的风格指南列表，避免丢弃内容。续跑保留已有分析和备注，资源更新作用于新的模型调用。
 
-每个目标拥有独立状态；下文 `state/<书名>/` 是默认目标示例，非默认目标通常在其 `targets/<目标语言>/` 下。已有完成段落继续跳过；资源更新只影响后续模型请求。初始化记录提示词指纹，运行事件记录所用资源，Review 缓存比较语言、敬称策略与资源指纹。保持 manifest 最后提交、原子写入、领域锁及 Review/Autofix 发布边界。详见 [P10](project-review/2026-09-05/p10-multilingual-internationalization.md)。
+所有目标（包括 `zh`）均使用 `state/<书名>/targets/<目标语言>/` 保存独立状态。已有完成段落继续跳过；资源更新只影响后续模型请求。初始化记录提示词指纹，运行事件记录所用资源，Review 缓存比较语言、敬称策略与资源指纹。保持 manifest 最后提交、原子写入、领域锁及 Review/Autofix 发布边界。详见 [P10](project-review/2026-09-05/p10-multilingual-internationalization.md)。
 
 ## 全书理解与上下文
 
@@ -67,7 +67,7 @@ uv run trans-novel review book.epub --autofix
 的 `target`。manifest 和术语库始终不变。最终结果、本次用量、事件和内部记录写入：
 
 ```text
-state/<书名>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
+state/<书名>/targets/<目标语言>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ```
 
 基础 Review 目录包含 `result.json`、`usage.json`、`events.jsonl` 和 `rounds/`。
@@ -92,4 +92,4 @@ Agent 判定、失败原因、目标哈希和发布状态；章节 JSON 不增�
 
 ## 字幕路径（SRT）
 
-`.srt` 走平行轻量路径 `trans_novel.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。
+`.srt` 走平行轻量路径 `trans_novel.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。

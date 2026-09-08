@@ -85,10 +85,3 @@ class BabeldocBridgeClient:
             raise
         except Exception as error:
             raise BabeldocBridgeError(f"fillback request failed: {error}") from error
-
-    def delete_session(self, session_id: str) -> None:
-        try:
-            httpx.delete(f"{self.base_url}/session/{session_id}", timeout=min(30.0, self.timeout))
-        except Exception:
-            # Best-effort cleanup.
-            return

@@ -4,6 +4,8 @@
 
 程序读取当前工作目录的 `config.yaml`。配置文件不存在时会自动创建带注释的默认文件。
 
+顶层配置项为 `language`、`llm`、`segment`、`pipeline`、`output`、`honorific` 和 `paths`。未知配置项会被拒绝；已移除的设置不会自动转换为新格式。
+
 ## 语言
 
 ```yaml
@@ -14,7 +16,7 @@ language:
 
 `source: auto` 会调用模型识别源语言；也可以显式选择下表语言。源语言与目标语言可直接互译，不经中文中转。多语言质量仍属实验性。默认 CLI、配置注释和提示词指令统一使用英语，与翻译目标独立。生成的默认配置仍为 `target: zh`；需要英语译文时选择 `en`。
 
-所有模型生成的说明性元数据（包括术语 `note`、风格指南、人物描述及说明中的人物称呼）均明确要求使用目标语言。人物 `target` 保存翻译或音译后的姓名；`source` 和 `aliases` 保留原文拼写以供匹配，证据引用也可以包含原文。类型和性别使用英语标识符；旧中文值在读取时归一化，不自动改写已有数据库。续跑会保留原有分析和备注，提示词更新不会自动翻译旧元数据。若要重新分析并进行全书比较，请使用独立的 `paths.state_dir`。
+所有模型生成的说明性元数据（包括术语 `note`、风格指南、人物描述及说明中的人物称呼）均明确要求使用目标语言。人物 `target` 保存翻译或音译后的姓名；`source` 和 `aliases` 保留原文拼写以供匹配，证据引用也可以包含原文。类型和性别使用英语标识符，不再转换旧中文枚举。续跑会保留原有分析和备注，提示词更新不会自动翻译旧元数据。若要重新分析并进行全书比较，请使用独立的 `paths.state_dir`。
 
 | 代码 | 语言 |
 |---|---|
@@ -24,11 +26,11 @@ language:
 | `fr`、`de`、`es`、`it` | 法语、德语、西班牙语、意大利语 |
 | `pt`、`pt-BR`、`pt-PT`、`ru` | 葡萄牙语、巴西/欧洲葡萄牙语、俄语 |
 
-运行 `uv run trans-novel languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。兼容别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
+运行 `uv run trans-novel languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
 
 每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
-提示词目录、兼容策略和首版验证范围见 [P10 国际化实现与后续方案](project-review/2026-09-05/p10-multilingual-internationalization.md)。
+提示词目录、状态布局和首版验证范围见 [P10 国际化实现与后续方案](project-review/2026-09-05/p10-multilingual-internationalization.md)。
 
 ## 模型
 
@@ -287,7 +289,7 @@ pipeline:
 译文。默认会在影子循环后发布折叠后的修订；可用 `--no-autofix` 保持本次只读，
 或在配置关闭时用 `--autofix` 强制发布。Autofix 会先应用折叠后的 changes，再让最终未解决
 issues 复用同一套 Agent Loop 和 Fixer，不会另建一套 Autofix loop 或 prompt。
-统一结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
+统一结果和内部逐轮记录会保存到 `state/<书名>/targets/<目标语言>/reviews/review-<时间戳>/`。
 本次 Review 用量既保存为目录内增量，也会计入本书累计用量。
 
 ## 输出
@@ -330,6 +332,6 @@ paths:
 - `max_chars_per_batch`：单个模型翻译批次的目标字符数。
 - `max_chars_per_segment`：超长段落的拆分阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
-- `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。
+- `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/targets/<目标语言>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。
 
-新建非默认目标的书籍状态位于 `<state_dir>/<slug>/targets/<目标语言>/`，字幕对应 `<state_dir>/srt/<slug>/targets/<目标语言>/`。默认 `zh` 保留旧目录；如旧目录已保存相同目标语言，则继续原位续跑。若旧根目录属于其它目标，新的 `zh` 也使用 `targets/zh/`。不自动移动或删除旧状态；每个目录有独立译文、术语、上下文、账本和 Review。
+所有书籍目标（包括默认 `zh`）统一使用 `<state_dir>/<slug>/targets/<目标语言>/`，字幕对应 `<state_dir>/srt/<slug>/targets/<目标语言>/`。每个目录有独立译文、术语、上下文、账本和 Review。不再查找或迁移旧版本保存在书名根目录下的状态。请使用当前配置重新开始翻译，原有文件保持不动。保存的 manifest 必须包含 `source_lang`、`target_lang` 和有效的 `source_sha256`。

@@ -10,7 +10,7 @@ import os
 import sys
 from collections.abc import Sequence
 from importlib.metadata import version as package_version
-from typing import Any, Protocol
+from typing import Any
 
 import typer
 import yaml
@@ -140,12 +140,6 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-class _ManifestStore(Protocol):
-    def load_manifest(self) -> dict[str, Any]:
-        """Return manifest data from the run directory."""
-        ...
-
-
 @app.callback()
 def _root(
     ctx: typer.Context,
@@ -260,18 +254,6 @@ def _runstore_for_cli(config: Config, input_path: str) -> RunStore:
     except (IngestError, OSError, ValueError) as error:
         console.print(f"[red]Error: {error}[/]")
         raise typer.Exit(1) from None
-
-
-def _apply_store_languages(config: Config, store: _ManifestStore) -> None:
-    """Restore the run’s source and target languages for standalone stages."""
-    manifest = store.load_manifest()
-    validate_run_languages(manifest, config.source_lang, config.target_lang)
-    source_lang = manifest.get("source_lang")
-    target_lang = manifest.get("target_lang")
-    if isinstance(source_lang, str) and source_lang:
-        config.source_lang = source_lang
-    if isinstance(target_lang, str) and target_lang:
-        config.target_lang = target_lang
 
 
 def _translate_impl(

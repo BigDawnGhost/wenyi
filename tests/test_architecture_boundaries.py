@@ -25,8 +25,8 @@ SERVICE_MODULES = (
     "finalization",
 )
 
-# Lower modules, including shared language helpers, must not import orchestrator.
-LOWER_MODULES = SERVICE_MODULES + ("language",)
+# Lower pipeline modules must not import orchestrator.
+LOWER_MODULES = SERVICE_MODULES + ("runstore", "context")
 
 FORBIDDEN_TOP_LEVEL = (
     "agents",
@@ -48,10 +48,7 @@ FORBIDDEN_PIPELINE_MODULES_FOR_AGENTS = (
     "review_autofix",
     "finalization",
     "runstore",
-    "metrics",
     "context",
-    "language",
-    "checks",
 )
 
 
@@ -151,9 +148,9 @@ class TestArchitectureBoundaries(unittest.TestCase):
         relative_imports = {
             node.module
             for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.level == 1
+            if isinstance(node, ast.ImportFrom) and node.level > 0
         }
-        self.assertIn("language", relative_imports)
+        self.assertIn("i18n.languages", relative_imports)
         self.assertNotIn("preparation", relative_imports)
 
     def test_services_exist_as_pure_modules(self):

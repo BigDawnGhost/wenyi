@@ -23,9 +23,9 @@ Read input
 
 ## Language rules and state scope
 
-Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `trans_novel/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. New glossary type/gender values use English identifiers, while legacy Chinese values normalize on read without rewriting stored rows. Analysis also accepts a model's list of style-guide bullets without discarding it. Existing analysis and notes remain intact on resume; resource updates apply to new model calls.
+Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `trans_novel/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Existing analysis and notes remain intact on resume; resource updates apply to new model calls.
 
-Each target owns separate state. The `state/<book>/` examples below describe the default target; other new targets generally live under `targets/<target-language>/`. Completed segments still skip model calls; updated resources affect subsequent requests. Initialization records a prompt fingerprint, run events record applied resources, and Review cache identity includes languages, honorific strategy, and the resource fingerprint. Manifest-last initialization, atomic writes, domain locks, and Review/Autofix publication boundaries remain in place. See [P10](project-review/2026-09-05/p10-multilingual-internationalization.md).
+All targets, including `zh`, own separate state under `state/<book>/targets/<target-language>/`. Completed segments still skip model calls; updated resources affect subsequent requests. Initialization records a prompt fingerprint, run events record applied resources, and Review cache identity includes languages, honorific strategy, and the resource fingerprint. Manifest-last initialization, atomic writes, domain locks, and Review/Autofix publication boundaries remain in place. See [P10](project-review/2026-09-05/p10-multilingual-internationalization.md).
 
 ## Whole-book understanding and context
 
@@ -68,7 +68,7 @@ replacing formal chapter `target` values. The manifest and glossary are never ch
 The final result, run-local usage delta, events, and internal traces are written to:
 
 ```text
-state/<book>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
+state/<book>/targets/<target-language>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ```
 
 The base Review directory contains `result.json`, `usage.json`, `events.jsonl`, and
@@ -102,6 +102,6 @@ Each completed translation batch is persisted immediately. When polishing is ena
 `.srt` files take a parallel light path under `trans_novel.srt`, not the book
 Orchestrator above. There is no whole-book prescan, glossary, polishing, or
 Review. Translation uses overlapping cue windows with high concurrency on the
-strong model tier; progress is stored under `state/srt/<slug>/` with
+strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with
 `cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
 [Usage guide — SRT subtitles](usage.md#srt-subtitles).

@@ -161,7 +161,7 @@ read-only. With Autofix, folded changes are applied first and remaining
 issues reuse the existing Review Agent Loop and Fixer against that updated text.
 Only formal segment `target` values are replaced; full history stays in the Review
 directory's `autofix/index.json`. The consolidated result, run usage, events, and
-internal records are written under `state/<book>/reviews/review-<timestamp>/`.
+internal records are written under `state/<book>/targets/<target-language>/reviews/review-<timestamp>/`.
 
 ---
 
@@ -175,7 +175,7 @@ internal records are written under `state/<book>/reviews/review-<timestamp>/`.
 - PDF input defaults to the BabelDOC bridge. MinerU conversion is optional for scanned pages and requires `MINERU_API_KEY`; that HTML is cached and reused.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
-- `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
+- `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/targets/<target-language>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
 - `.docx` input uses the full book pipeline. Headings, simple tables, lists, and common run/paragraph styles are preserved where possible; translated Chinese uses Song (宋体). Default export is `.zh.docx` (override with `--format`). Details: [Usage guide](docs/usage.md#docx-word).
 
 ---

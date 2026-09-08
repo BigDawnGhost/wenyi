@@ -11,7 +11,7 @@ from typing import Any
 
 from ..assemble.srt_writer import default_srt_out_paths, write_srt_outputs
 from ..config import Config
-from ..i18n.languages import profile, require_language
+from ..i18n.languages import require_language
 from ..i18n.prompts import render
 from ..i18n.resources import prompt_fingerprint
 from ..ingest.srt_reader import parse_srt
@@ -28,10 +28,6 @@ MAX_CONCURRENT = 100
 RETRY_LIMIT = 3
 
 _JSON_OBJECT = re.compile(r"(\{.*\})", re.DOTALL)
-
-
-def _target_language_name(code: str) -> str:
-    return profile(code)["english_name"]
 
 
 def _parse_batch_json(text: str) -> dict[str, str] | None:

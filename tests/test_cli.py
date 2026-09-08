@@ -12,7 +12,6 @@ from rich.progress import Progress
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
-    _apply_store_languages,
     _configure_windows_console,
     _RichProgressBridge,
     _validate_pdf_engine,
@@ -56,19 +55,6 @@ class TestCliConfig(unittest.TestCase):
             _validate_pdf_engine("unknown")
 
         self.assertEqual(raised.exception.exit_code, 2)
-
-    def test_standalone_tools_restore_manifest_languages(self):
-        cfg = Config.from_dict({"language": {"source": "auto", "target": "en"}})
-
-        class Store:
-            @staticmethod
-            def load_manifest():
-                return {"source_lang": "ru", "target_lang": "en"}
-
-        _apply_store_languages(cfg, Store())
-
-        self.assertEqual(cfg.source_lang, "ru")
-        self.assertEqual(cfg.target_lang, "en")
 
     def test_every_cli_start_checks_default_config(self):
         runner = CliRunner()

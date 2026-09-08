@@ -70,15 +70,20 @@ def term_guidance(src: str) -> str:
 
 def validate_run_languages(manifest: dict, source: str, target: str) -> None:
     """Reject resuming an existing translation in a different language direction."""
-    saved_target = require_language(manifest.get("target_lang") or "zh")
+    if any(
+        not isinstance(manifest.get(key), str) or not manifest[key].strip()
+        for key in ("source_lang", "target_lang")
+    ):
+        raise ValueError("State is missing source_lang or target_lang; create a new translation.")
+    saved_target = require_language(manifest["target_lang"])
     if saved_target != require_language(target):
         raise ValueError(
             f"Saved target language {saved_target} does not match requested {target}. "
             "Use the matching language.target or a separate paths.state_dir."
         )
     requested_source = require_language(source, allow_auto=True)
-    saved_source = normalize_language(manifest.get("source_lang") or "")
-    if requested_source != "auto" and saved_source and requested_source != saved_source:
+    saved_source = require_language(manifest["source_lang"], allow_auto=True)
+    if requested_source != "auto" and saved_source != "auto" and requested_source != saved_source:
         raise ValueError(
             f"Saved source language {saved_source} does not match requested {source}. "
             "Use the matching language.source or a separate paths.state_dir."

@@ -8,8 +8,10 @@ entire paragraphs from being omitted.
 from __future__ import annotations
 
 from ..glossary.store import GlossaryTerm
+from ..i18n import languages
+from ..i18n.prompts import render
 from ..llm.json_parser import JsonParseError
-from . import langprofile, prompts
+from . import prompts
 from .base import Agent
 
 
@@ -82,15 +84,15 @@ class Translator(Agent):
     ) -> list[str]:
         """Translate one batch and strictly validate output types, count and nonempty content."""
         n = len(sources)
-        system = prompts.render(
+        system = render(
             "translator_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=langprofile.translate_guidance(
+            lang_guidance=languages.translate_guidance(
                 self.src, self.config.honorific_strategy, self.tgt
             ),
         )
-        user = prompts.render(
+        user = render(
             "translator_user",
             src=self.src,
             tgt=self.tgt,

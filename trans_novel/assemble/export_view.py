@@ -9,10 +9,10 @@ import hashlib
 from difflib import SequenceMatcher
 from typing import Any
 
-from ..i18n.languages import normalize_language
 from ..ingest.models import Chapter
 from ..pipeline.runstore import RunStore
 from ..postprocess.punct import normalize_zh_segments
+from .writer_common import _manifest_target_lang
 
 
 def _target_digest(text: str) -> str:
@@ -73,8 +73,7 @@ class ExportViewStore(RunStore):
         super().__init__(store.run_dir, create=False)
         self._store = store
         self._punctuation_normalize = (
-            punctuation_normalize
-            and normalize_language(store.load_manifest().get("target_lang", "zh")) == "zh"
+            punctuation_normalize and _manifest_target_lang(store.load_manifest()) == "zh"
         )
 
     def load_manifest(self) -> dict:

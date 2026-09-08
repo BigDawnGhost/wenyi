@@ -1,6 +1,6 @@
 """The public orchestration facade for workflow control.
 Assemble runtime and preparation, translation, annotation, review, autofix and finalization
-services. Route steps, order stages, choose lock scopes, wrap metrics sessions, forward
+services. Route steps, order stages, choose lock scopes, forward
 progress and propagate exceptions with consistent return structures.
 All parsing, model calls, state I/O, pools, glossary operations, alignment, review state
 machines, reports, exports and accounting belong to domain services. This facade must not
@@ -22,7 +22,7 @@ from .preparation import PreparationService
 from .review_autofix import ReviewAutofixService
 from .review_workflow import ReviewService
 from .runstore import RunStore
-from .runtime import LLMClient, PipelineRuntime, _record_pipeline_metrics, _record_run_metrics
+from .runtime import LLMClient, PipelineRuntime
 from .translation import TranslationService
 
 ProgressFn = Callable[[int, int, str], None]
@@ -52,7 +52,6 @@ class Orchestrator:
         """Parse input and locate state; initialize first runs under the book lock."""
         return self._preparation.prepare(input_path, progress=progress)
 
-    @_record_run_metrics("prepare", ["prepare", "understanding"])
     def prepare_for_translation(
         self,
         input_path: str,
@@ -64,21 +63,11 @@ class Orchestrator:
         prescan chapters and synthesize a synopsis. Every stage resumes by reusing persisted
         results.
         """
-        store = self._runtime.measure_stage_call(
-            "prepare",
-            self._preparation.prepare,
-            input_path,
-            progress=progress,
-        )
+        store = self._preparation.prepare(input_path, progress=progress)
         with store.lock():
             self._preparation.activate(store)
             try:
-                self._runtime.measure_stage_call(
-                    "understanding",
-                    self._preparation.ensure_understanding,
-                    store,
-                    progress=progress,
-                )
+                self._preparation.ensure_understanding(store, progress=progress)
                 self._runtime.log_event(
                     store,
                     "translation_prepared",
@@ -87,14 +76,8 @@ class Orchestrator:
                 )
             finally:
                 self._runtime.flush_usage(store, scope="prepare")
-            self._runtime.capture_metrics_state(store)
         return store
 
-    @_record_run_metrics(
-        "translate",
-        ["translate"],
-        invocation_fields=("only_chapter",),
-    )
     def run(
         self,
         input_path: str,
@@ -103,20 +86,13 @@ class Orchestrator:
         progress: ProgressFn | None = None,
     ) -> RunStore:
         """Prepare state and translate pending chapters under the book lock."""
-        store = self._runtime.measure_stage_call(
-            "prepare",
-            self._preparation.prepare,
-            input_path,
-            progress=progress,
-        )
+        store = self._preparation.prepare(input_path, progress=progress)
         with store.lock():
-            result = self._run_locked(
+            return self._run_locked(
                 store,
                 only_chapter=only_chapter,
                 progress=progress,
             )
-            self._runtime.capture_metrics_state(store)
-            return result
 
     def _run_locked(
         self,
@@ -136,12 +112,7 @@ class Orchestrator:
             raise ValueError(
                 f"Chapter index {only_chapter} does not exist; available range: {valid_range}"
             )
-        book_synopsis = self._runtime.measure_stage_call(
-            "understanding",
-            self._preparation.ensure_understanding,
-            store,
-            progress=progress,
-        )
+        book_synopsis = self._preparation.ensure_understanding(store, progress=progress)
         return self._translation.run(
             store,
             book_synopsis=book_synopsis,
@@ -149,7 +120,6 @@ class Orchestrator:
             progress=progress,
         )
 
-    @_record_run_metrics("review", ["review", "review_autofix"])
     def run_review(
         self,
         input_path: str,
@@ -157,12 +127,7 @@ class Orchestrator:
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
         """Run complete review and publish autofix results when configured."""
-        store = self._runtime.measure_stage_call(
-            "prepare",
-            self._preparation.locate_existing,
-            input_path,
-            progress=progress,
-        )
+        store = self._preparation.locate_existing(input_path, progress=progress)
         with store.lock():
             self._preparation.activate(store)
             terms = self._review.session_terms(store)
@@ -171,7 +136,6 @@ class Orchestrator:
                 terms,
                 progress=progress,
             )
-            self._runtime.capture_metrics_state(store)
         return {
             "store": store,
             "review_issues": outcome.issues,
@@ -190,31 +154,13 @@ class Orchestrator:
         """Run read-only review under the book lock, then enter the separate optional autofix
         publisher.
         """
-        resumed = self._runtime.measure_stage_call(
-            "review_autofix",
-            self._review_autofix.resume_pending,
-            store,
-            progress=progress,
-        )
+        resumed = self._review_autofix.resume_pending(store, progress=progress)
         if resumed is not None:
             return resumed
-        outcome = self._runtime.measure_stage_call(
-            "review",
-            self._review.run_session,
-            store,
-            terms,
-            progress=progress,
-        )
+        outcome = self._review.run_session(store, terms, progress=progress)
         if not self.config.pipeline.review_autofix:
             return outcome
-        return self._runtime.measure_stage_call(
-            "review_autofix",
-            self._review_autofix.run,
-            store,
-            outcome,
-            terms,
-            progress=progress,
-        )
+        return self._review_autofix.run(store, outcome, terms, progress=progress)
 
     def _run_existing_steps(
         self,
@@ -227,15 +173,10 @@ class Orchestrator:
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """Run local finalization from existing state without creating a translation task."""
-        store = self._runtime.measure_stage_call(
-            "prepare",
-            self._preparation.locate_existing,
-            input_path,
-            progress=progress,
-        )
+        store = self._preparation.locate_existing(input_path, progress=progress)
         with store.lock():
             self._preparation.activate(store)
-            result = self._finish_steps_locked(
+            return self._finish_steps_locked(
                 store,
                 input_path=input_path,
                 steps=steps,
@@ -245,28 +186,20 @@ class Orchestrator:
                 out_path=out_path,
                 pdf_engine=pdf_engine,
             )
-            self._runtime.capture_metrics_state(store)
-            return result
 
-    @_record_run_metrics("report", ["report"])
     def run_report(
         self,
         input_path: str,
         *,
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
-        """Regenerate the report from existing state and record independent run metrics."""
+        """Regenerate the report from existing state."""
         return self._run_existing_steps(
             input_path,
             {"report"},
             progress=progress,
         )
 
-    @_record_run_metrics(
-        "assemble",
-        ["assemble"],
-        invocation_fields=("out_format", "pdf_engine"),
-    )
     def run_assemble(
         self,
         input_path: str,
@@ -279,12 +212,7 @@ class Orchestrator:
         """Export an existing-state snapshot without waiting for ongoing whole-book
         translation.
         """
-        store = self._runtime.measure_stage_call(
-            "prepare",
-            self._preparation.locate_existing,
-            input_path,
-            progress=progress,
-        )
+        store = self._preparation.locate_existing(input_path, progress=progress)
         self._runtime.log_event(
             store,
             "run_steps_started",
@@ -311,7 +239,6 @@ class Orchestrator:
             "review_dir": None,
         }
 
-    @_record_pipeline_metrics
     def run_steps(
         self,
         input_path: str,
@@ -349,15 +276,10 @@ class Orchestrator:
         if "translate" in steps:
             store = self.run(input_path, progress=progress)
         else:
-            store = self._runtime.measure_stage_call(
-                "prepare",
-                self._preparation.prepare,
-                input_path,
-                progress=progress,
-            )
+            store = self._preparation.prepare(input_path, progress=progress)
             self._preparation.activate(store)
         with store.lock():
-            result = self._finish_steps_locked(
+            return self._finish_steps_locked(
                 store,
                 input_path=input_path,
                 steps=steps,
@@ -367,8 +289,6 @@ class Orchestrator:
                 out_path=out_path,
                 pdf_engine=pdf_engine,
             )
-            self._runtime.capture_metrics_state(store)
-            return result
 
     def _finish_steps_locked(
         self,
