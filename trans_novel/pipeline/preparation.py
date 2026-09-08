@@ -3,7 +3,7 @@ prescan.
 Own PDF conversion caches, source hashes, sample selection, initial glossary and rolling
 context. Initialize derived chapters/analysis/glossary/context first, atomically commit the
 initialized manifest last, then finish initialization. Build chapter digests and the book
-synopsis as configured. Share pure language normalization with Runtime through language.py.
+synopsis as configured. Share pure language normalization with Runtime through top-level i18n.
 """
 
 from __future__ import annotations
@@ -14,13 +14,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.store import GlossaryStore
+from ..i18n.languages import normalize_language
 from ..i18n.prompts import render
 from ..i18n.resources import prompt_fingerprint
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.segmenter import load_document
 from .context import RollingContext
-from .language import normalize_lang
-from .runstore import RunStore, translation_run_dir
+from .runstore import RunStore, source_sha256, translation_run_dir
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
@@ -74,7 +74,7 @@ class PreparationService:
             raise ValueError("No translation progress found. Run translate first.")
         self._runtime.ensure_store_source(store, input_path)
         self._runtime.bind_llm_events(store)
-        self._runtime.attach_metrics_store(store)
+
         return store
 
     def prepare(
@@ -95,7 +95,7 @@ class PreparationService:
             )
             store = RunStore(run_dir)
             self._runtime.bind_llm_events(store)
-            self._runtime.attach_metrics_store(store)
+
             with store.lock():
                 if store.exists():
                     self._runtime.ensure_store_source(store, input_path)
@@ -107,8 +107,8 @@ class PreparationService:
                     return store
                 if progress:
                     progress(0, 0, "Parsing document…")
-                source_hash = self._runtime.initial_source_sha256(input_path)
-                # Retain a same-source initialization marker on conversion failure so retries preserve the failed ledger.
+                source_hash = source_sha256(input_path)
+                # Preserve the source identity and event history when conversion fails.
                 store.begin_initialization(source_hash)
                 pipeline = self._runtime.config.pipeline
                 doc = load_document(
@@ -123,7 +123,7 @@ class PreparationService:
                     babeldoc_pages=pipeline.babeldoc_pages,
                     babeldoc_timeout=pipeline.babeldoc_timeout,
                 )
-                if self._runtime.source_sha256(input_path) != source_hash:
+                if source_sha256(input_path) != source_hash:
                     raise ValueError(
                         "PDF changed during parsing; ensure the file is stable and retry."
                     )
@@ -137,7 +137,7 @@ class PreparationService:
 
         if progress:
             progress(0, 0, "Parsing document…")
-        source_hash = self._runtime.initial_source_sha256(input_path)
+        source_hash = source_sha256(input_path)
         # Split long paragraphs at sentences and mark continuations for later backfill merging.
         doc = load_document(
             input_path,
@@ -145,14 +145,14 @@ class PreparationService:
             self._runtime.config.target_lang,
             split_segments=self._runtime.config.segment.max_chars_per_segment,
         )
-        if self._runtime.source_sha256(input_path) != source_hash:
+        if source_sha256(input_path) != source_hash:
             raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
         run_dir = translation_run_dir(
             self._runtime.config.state_dir, doc.title, self._runtime.config.target_lang
         )
         store = RunStore(run_dir)
         self._runtime.bind_llm_events(store)
-        self._runtime.attach_metrics_store(store)
+
         with store.lock():
             return self._prepare_locked(
                 doc,
@@ -169,7 +169,7 @@ class PreparationService:
         input_path: str,
         progress: ProgressFn | None,
         *,
-        source_hash: str | None = None,
+        source_hash: str,
     ) -> RunStore:
         """Restore existing state, or write new derived state before atomically committing the
         manifest.
@@ -179,8 +179,7 @@ class PreparationService:
             store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
             return store  # Resume existing progress without reset; run() restores languages from the manifest.
 
-        initialization_hash = source_hash or self._runtime.source_sha256(input_path)
-        store.begin_initialization(initialization_hash)
+        store.begin_initialization(source_hash)
 
         # For new auto-language runs, use model detection only; require an explicit language on failure.
         if self._runtime.config.source_lang in ("auto", "", None):
@@ -201,7 +200,7 @@ class PreparationService:
 
         manifest = store.stage_document(
             doc,
-            source_hash=initialization_hash,
+            source_hash=source_hash,
         )
         glossary = GlossaryStore(store.glossary_path)
         try:
@@ -274,7 +273,7 @@ class PreparationService:
                 stage="language_detect",
             )
             code = (data.get("language") if isinstance(data, dict) else "") or ""
-            return normalize_lang(str(code))
+            return normalize_language(str(code))
         except Exception:  # noqa: BLE001 - provider errors mean detection failed
             return ""
 

@@ -14,32 +14,35 @@ import pytest
 from typer.testing import CliRunner
 
 from tests.fake_llm import routing_handler
-from trans_novel.agents import prompts
 from trans_novel.assemble.writer import assemble
 from trans_novel.assemble.writer_common import _epub_lang
 from trans_novel.cli import app
 from trans_novel.config import Config
-from trans_novel.i18n.languages import profile, supported_languages, validate_run_languages
-from trans_novel.i18n.prompts import template
+from trans_novel.i18n.languages import (
+    normalize_language,
+    profile,
+    supported_languages,
+    validate_run_languages,
+)
+from trans_novel.i18n.prompts import render, template
 from trans_novel.i18n.resources import prompt_fingerprint, read_text
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.language import normalize_lang
 from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.runstore import RunStore, translation_run_dir
+from trans_novel.pipeline.runstore import translation_run_dir
 from trans_novel.srt.translate import translate_srt
 
 
 def test_non_chinese_translation_has_no_chinese_target_instruction():
-    system = prompts.render("translator_system", src="zh", tgt="en")
+    system = render("translator_system", src="zh", tgt="en")
     assert "into English" in system
     assert "简体中文" not in system
     assert "按中文" not in system
 
 
 def test_language_tags_preserve_script_and_region():
-    assert normalize_lang("zh-Hant") == "zh-Hant"
-    assert normalize_lang("en_US") == "en-US"
-    assert normalize_lang("not-a-language") == ""
+    assert normalize_language("zh-Hant") == "zh-Hant"
+    assert normalize_language("en_US") == "en-US"
+    assert normalize_language("not-a-language") == ""
     assert _epub_lang("en_US") == "en-US"
     assert _epub_lang("zh-TW") == "zh-Hant"
 
@@ -183,7 +186,7 @@ def test_every_profile_renders_all_tasks_without_missing_fields(target):
             key = match.group("named") or match.group("braced")
             if key:
                 variables[key] = "fixture"
-        rendered = prompts.render(name, src="en", tgt=target, **variables)
+        rendered = render(name, src="en", tgt=target, **variables)
         assert "$tgt_label" not in rendered
     for name in (
         "translator_system",
@@ -194,7 +197,7 @@ def test_every_profile_renders_all_tasks_without_missing_fields(target):
         "chapter_digest_system",
         "book_synopsis_system",
     ):
-        rendered = prompts.render(name, src="ja", tgt=target)
+        rendered = render(name, src="ja", tgt=target)
         if target not in {"zh", "zh-Hant"}:
             assert "简体中文" not in rendered
             assert "中文译" not in rendered
@@ -202,28 +205,48 @@ def test_every_profile_renders_all_tasks_without_missing_fields(target):
 
 def test_strict_template_and_literal_source_payload():
     with pytest.raises(ValueError, match="missing argument"):
-        prompts.render("translator_user", src="en", tgt="ja")
+        render("translator_user", src="en", tgt="ja")
     source = '${tgt_label} $n {"translations": []}'
-    assert source in prompts.render("chapter_digest_user", source=source)
+    assert source in render("chapter_digest_user", source=source)
     with pytest.raises(ValueError, match="Unsupported"):
-        prompts.render("translator_system", src="en", tgt="zz")
+        render("translator_system", src="en", tgt="zz")
     with pytest.raises(ValueError):
         read_text("../config.yaml")
 
 
-def test_legacy_non_chinese_state_is_preserved_and_languages_are_checked():
-    with tempfile.TemporaryDirectory() as directory:
-        legacy = RunStore(str(Path(directory) / "book"))
-        legacy.save_manifest({"source_lang": "ja", "target_lang": "en"})
-        before = Path(legacy.manifest_path).read_bytes()
-        assert translation_run_dir(directory, "book", "en") == legacy.run_dir
-        assert translation_run_dir(directory, "book", "zh") == str(
-            Path(legacy.run_dir) / "targets/zh"
-        )
-        for source, target in (("en", "en"), ("auto", "zh")):
-            with pytest.raises(ValueError, match="does not match"):
-                validate_run_languages(legacy.load_manifest(), source, target)
-        assert Path(legacy.manifest_path).read_bytes() == before
+@pytest.mark.parametrize("target", ["zh", "en", "zh-Hant", "ja"])
+@pytest.mark.parametrize("root_manifest", ['{"target_lang":"en"}', "{invalid JSON"])
+def test_all_targets_ignore_old_root_state(tmp_path, target, root_manifest):
+    root = tmp_path / "book"
+    root.mkdir()
+    manifest = root / "manifest.json"
+    manifest.write_text(root_manifest)
+
+    assert translation_run_dir(str(tmp_path), "book", target) == str(root / "targets" / target)
+    assert manifest.read_text() == root_manifest
+    assert not (root / "targets").exists()
+
+
+@pytest.mark.parametrize("source,target", [("en", "en"), ("auto", "zh")])
+def test_saved_language_direction_must_match(source, target):
+    with pytest.raises(ValueError, match="does not match"):
+        validate_run_languages({"source_lang": "ja", "target_lang": "en"}, source, target)
+
+
+@pytest.mark.parametrize("missing", ["source_lang", "target_lang"])
+def test_state_requires_explicit_language_fields(missing):
+    manifest = {"source_lang": "en", "target_lang": "zh"}
+    del manifest[missing]
+    with pytest.raises(ValueError, match="missing source_lang or target_lang"):
+        validate_run_languages(manifest, "auto", "zh")
+
+
+@pytest.mark.parametrize("key", ["source_lang", "target_lang"])
+@pytest.mark.parametrize("value", [None, "", " ", 1])
+def test_state_rejects_invalid_language_fields(key, value):
+    manifest = {"source_lang": "en", "target_lang": "zh", key: value}
+    with pytest.raises(ValueError, match="missing source_lang or target_lang"):
+        validate_run_languages(manifest, "auto", "zh")
 
 
 def test_srt_target_isolation_traditional_script_and_resume():

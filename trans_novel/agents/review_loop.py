@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..config import Config
+from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from ..review.evidence import BookEvidenceIndex
@@ -468,7 +469,7 @@ class ReviewAgentLoop:
             segment_count=len(sources),
             candidate_count=len(candidates),
         )
-        system = prompts.render(
+        system = render(
             "review_agent_system",
             src=self.config.source_lang,
             tgt=self.config.target_lang,
@@ -479,7 +480,7 @@ class ReviewAgentLoop:
             for local_index in range(len(sources))
             if (ref := self.evidence.segment_ref(chapter, chunk_base + local_index)) is not None
         }
-        user = prompts.render(
+        user = render(
             "review_agent_user",
             src=self.config.source_lang,
             tgt=self.config.target_lang,
@@ -918,13 +919,13 @@ class ReviewConflictArbiter:
                 "Selective arbitration samples still exceed the input size limit.", sampled_refs
             )
 
-        system = prompts.render(
+        system = render(
             "review_arbiter_system",
             src=self.config.source_lang,
             tgt=self.config.target_lang,
             max_evidence_rounds=(self.config.pipeline.review_agent_max_evidence_rounds),
         )
-        user = prompts.render(
+        user = render(
             "review_arbiter_user",
             src=self.config.source_lang,
             tgt=self.config.target_lang,

@@ -98,9 +98,15 @@ class TestConfigFileCreation(unittest.TestCase):
 
         self.assertFalse(cfg.output.punctuation_normalize)
 
-    def test_legacy_punctuation_config_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "output.punctuation_normalize"):
-            Config.from_dict({"punctuation": {"normalize": False}})
+    def test_unknown_config_sections_are_rejected(self):
+        for section in ("punctuation", "pipline"):
+            with self.subTest(section=section):
+                with self.assertRaisesRegex(ValueError, "Unknown configuration sections"):
+                    Config.from_dict({section: {}})
+
+    def test_config_root_must_be_a_mapping(self):
+        with self.assertRaisesRegex(ValueError, "must be a mapping"):
+            Config.from_dict(["pipeline"])
 
     def test_compatible_reasoning_style_is_loaded(self):
         cfg = Config.from_dict(

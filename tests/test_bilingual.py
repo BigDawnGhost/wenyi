@@ -14,11 +14,9 @@ from typer.testing import CliRunner
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_epub, write_sample_txt
-from trans_novel.assemble.writer import (
-    _default_out,
-    _render_chapter_html,
-    assemble,
-)
+from trans_novel.assemble.html_renderer import _render_chapter_html
+from trans_novel.assemble.writer import assemble
+from trans_novel.assemble.writer_common import _default_out
 from trans_novel.cli import app
 from trans_novel.config import Config
 from trans_novel.ingest.epub_reader import annotate_epub_resource

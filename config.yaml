@@ -61,7 +61,7 @@ pipeline:
   review_autofix: true # Publish review revisions to formal chapters; use --no-autofix for recommendations only
   glossary_scope: chapter # chapter=terms occurring in this chapter (saves tokens); full=entire glossary
   # PDF backend: babeldoc (default, preserves layout, requires an external AGPL HTTP bridge) | mineru (supports scans)
-  pdf_backend: babeldoc
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # Optional page restriction for the bridge (one-based)
   babeldoc_timeout: 600

@@ -23,7 +23,7 @@ def routing_handler(messages, tier, json_mode):
                 "genre": "校园",
                 "tone": "冷峻",
                 "style_guide": "克制",
-                "characters": [{"source": "綾小路", "target": "绫小路", "gender": "男"}],
+                "characters": [{"source": "綾小路", "target": "绫小路", "gender": "male"}],
                 "terms": [],
             },
             ensure_ascii=False,
@@ -54,7 +54,7 @@ def routing_handler(messages, tier, json_mode):
 
     if "terminology" in system and "extractor" in system:
         return json.dumps(
-            {"terms": [{"source": "堀北", "target": "堀北", "type": "人物", "gender": "女"}]},
+            {"terms": [{"source": "堀北", "target": "堀北", "type": "person", "gender": "female"}]},
             ensure_ascii=False,
         )
 

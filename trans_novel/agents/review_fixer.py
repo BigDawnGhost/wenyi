@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ..glossary.store import GlossaryTerm
+from ..i18n import languages
+from ..i18n.prompts import render
 from ..llm.json_parser import parse_json_result
 from . import prompts
 from .base import Agent
@@ -219,17 +221,17 @@ class ReviewFixer(Agent):
 
         issue_ids, issue_payload = self._issues(issues, chapter=chapter, index=index)
         before_hash = self.target_hash(current_target)
-        system = prompts.render(
+        system = render(
             "review_fixer_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=prompts.langprofile.translate_guidance(
+            lang_guidance=languages.translate_guidance(
                 self.src,
                 self.config.honorific_strategy,
                 self.tgt,
             ),
         )
-        user = prompts.render(
+        user = render(
             "review_fixer_user",
             src=self.src,
             tgt=self.tgt,

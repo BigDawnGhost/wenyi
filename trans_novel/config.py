@@ -236,6 +236,14 @@ class Config(BaseModel):
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Config:
         """Convert a nested YAML dictionary into the runtime configuration model."""
+        if not isinstance(raw, dict):
+            raise ValueError("Configuration must be a mapping of sections.")
+        sections = {"language", "llm", "segment", "pipeline", "output", "honorific", "paths"}
+        unknown = set(raw) - sections
+        if unknown:
+            raise ValueError(
+                "Unknown configuration sections: " + ", ".join(sorted(map(str, unknown)))
+            )
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})
         tiers = {
@@ -253,10 +261,6 @@ class Config(BaseModel):
         )
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
-        if "punctuation" in raw:
-            raise ValueError(
-                "punctuation.normalize has moved to output.punctuation_normalize; remove the old setting."
-            )
         output = OutputConfig.model_validate(raw.get("output", {}) or {})
         return cls(
             source_lang=lang.get("source", "auto"),

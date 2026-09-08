@@ -19,7 +19,7 @@ from tests.sample_data import (
     write_sample_epub,
     write_sample_txt,
 )
-from trans_novel.assemble.writer import _render_chapter_html
+from trans_novel.assemble.html_renderer import _render_chapter_html
 from trans_novel.glossary.store import source_matches_text
 from trans_novel.ingest.epub_reader import (
     _decode_markup,
@@ -34,7 +34,7 @@ from trans_novel.ingest.fb2_reader import read_fb2_binaries
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from trans_novel.ingest.segmenter import (
     _split_text,
-    chapter_batches,
+    batch_segments,
     load_document,
     split_long_segments,
 )
@@ -93,7 +93,7 @@ class TestTextIngest(unittest.TestCase):
             p = os.path.join(d, "novel.txt")
             write_sample_txt(p)
             doc = load_document(p, "ja", "zh")
-        batches = chapter_batches(doc.chapters[0], max_chars=60)
+        batches = batch_segments(doc.chapters[0].text_segments, max_chars=60)
         # Preserve total segment count.
         total = sum(len(b) for b in batches)
         self.assertEqual(total, len(doc.chapters[0].text_segments))

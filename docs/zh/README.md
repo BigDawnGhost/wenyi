@@ -157,7 +157,7 @@ uv run trans-novel review book.epub --autofix
 后，会先应用折叠后的 changes，再让剩余 issues 基于更新译文复用现有 Review Agent Loop
 和 Fixer。只有正式段落的 `target`
 会被覆盖，完整历史保存在 Review 目录的 `autofix/index.json`；统一结果仍写入
-`state/<书名>/reviews/review-<时间戳>/result.json`。
+`state/<书名>/targets/<目标语言>/reviews/review-<时间戳>/result.json`。
 
 ---
 
@@ -171,7 +171,7 @@ uv run trans-novel review book.epub --autofix
 - PDF 输入默认走 BabelDOC bridge。扫描件可改用 MinerU，首次转换需 `MINERU_API_KEY`，生成的 HTML 会缓存复用。
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
 - 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
-- `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
+- `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/targets/<目标语言>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
 - `.docx` 走完整书籍管线：尽量保留标题导航、简易表格、列表与常见字符/段落样式；已译中文用宋体。默认导出 `.zh.docx`（可用 `--format` 覆盖）。详见[使用指南](usage.md#docxword)。
 
 ---
@@ -228,7 +228,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 憧憬与不足
 
-本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入默认依赖 BabelDOC bridge，扫描件才走 MinerU。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/`。多语言互译现为实验性功能，支持中、英、日、韩、法、德、西、意、葡、俄及部分变体；真实模型长篇质量仍待验证，CLI 和提示词指令统一使用英语，模型生成的说明性元数据使用翻译目标语言。
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入默认依赖 BabelDOC bridge，扫描件才走 MinerU。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/targets/<目标语言>/`。多语言互译现为实验性功能，支持中、英、日、韩、法、德、西、意、葡、俄及部分变体；真实模型长篇质量仍待验证，CLI 和提示词指令统一使用英语，模型生成的说明性元数据使用翻译目标语言。
 
 未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
 

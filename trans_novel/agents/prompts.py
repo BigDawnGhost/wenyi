@@ -1,39 +1,10 @@
-"""Prompt compatibility entry point; task and language text lives in trans_novel/i18n/data."""
+"""Format glossary, annotation and segment payloads for agent prompts."""
 
 from __future__ import annotations
 
 import json
 
 from ..glossary.store import GlossaryTerm
-from ..i18n.prompts import render, template
-from . import langprofile
-
-__all__ = ["render", "langprofile"]
-
-TRANSLATOR_SYSTEM = template("translator_system")
-TRANSLATOR_USER = template("translator_user")
-REVIEWER_SYSTEM = template("reviewer_system")
-REVIEWER_USER = template("reviewer_user")
-REVIEW_AGENT_SYSTEM = template("review_agent_system")
-REVIEW_AGENT_USER = template("review_agent_user")
-REVIEW_ARBITER_SYSTEM = template("review_arbiter_system")
-REVIEW_ARBITER_USER = template("review_arbiter_user")
-REVIEW_FIXER_SYSTEM = template("review_fixer_system")
-REVIEW_FIXER_USER = template("review_fixer_user")
-POLISHER_SYSTEM = template("polisher_system")
-POLISHER_USER = template("polisher_user")
-TITLE_TRANSLATOR_SYSTEM = template("title_translator_system")
-TITLE_TRANSLATOR_USER = template("title_translator_user")
-ANALYZER_SYSTEM = template("analyzer_system")
-ANALYZER_USER = template("analyzer_user")
-GLOSSARY_EXTRACTOR_SYSTEM = template("glossary_extractor_system")
-GLOSSARY_EXTRACTOR_USER = template("glossary_extractor_user")
-GLOSSARY_HISTORY_SYSTEM = template("glossary_history_system")
-GLOSSARY_HISTORY_USER = template("glossary_history_user")
-CHAPTER_DIGEST_SYSTEM = template("chapter_digest_system")
-CHAPTER_DIGEST_USER = template("chapter_digest_user")
-BOOK_SYNOPSIS_SYSTEM = template("book_synopsis_system")
-BOOK_SYNOPSIS_USER = template("book_synopsis_user")
 
 
 def render_glossary(terms: list[GlossaryTerm]) -> str:

@@ -21,7 +21,7 @@ from .html_renderer import (
     _render_chapter_html,
 )
 from .html_resources import _materialize_html_resources, _template_resource_source
-from .writer_common import _bilingual_source, _epub_lang, _merged_paragraphs
+from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
 
 
 def _assemble_html(
@@ -108,7 +108,7 @@ def _assemble_html(
                 body_parts.extend((target_html, source_html))
 
     full_html = f"""<!DOCTYPE html>
-<html lang="{escape(_epub_lang(m.get("target_lang", "zh")))}">
+<html lang="{escape(_epub_lang(_manifest_target_lang(m)))}">
 <head>
 {head_html}
 </head>

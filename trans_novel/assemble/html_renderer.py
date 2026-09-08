@@ -735,10 +735,7 @@ def _render_chapter_html(
     preserve_source_style: bool = False,
     source_lang: str = "",
 ) -> str:
-    """Backfill a legacy HTML/EPUB chapter with one template per chapter.
-    This wrapper remains for ordinary HTML output and EPUB state from before 0.3.x. Newer
-    EPUB state is grouped by physical resource through _render_segments_html.
-    """
+    """Backfill a chapter template for HTML/PDF input and generated HTML output."""
     return _render_segments_html(
         chapter.template or "",
         chapter.segments,
