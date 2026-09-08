@@ -234,7 +234,7 @@ class Config(BaseModel):
         return cls.from_dict(raw)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Config:
+    def from_dict(cls, raw: Any) -> Config:
         """Convert a nested YAML dictionary into the runtime configuration model."""
         if not isinstance(raw, dict):
             raise ValueError("Configuration must be a mapping of sections.")
