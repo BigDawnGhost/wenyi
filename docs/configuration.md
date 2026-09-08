@@ -48,7 +48,7 @@ Selecting `deepseek` is enough for the built-in defaults:
 
 API keys are always read from environment variables so they are not accidentally committed with the configuration. Use `provider: fake` for offline tests that must not make network requests.
 
-When `pipeline.pdf_backend` is `mineru`, the first PDF import also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`. The default BabelDOC backend does not use this key.
+The first PDF import with the default MinerU backend also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`. The optional BabelDOC backend does not use this key.
 
 Add the advanced fields only when you need a proxy, custom environment variable, timeout, retry policy, or model override:
 
@@ -238,7 +238,7 @@ pipeline:
   review_clean_confirmations: 2
   review_autofix: true
   glossary_scope: chapter
-  pdf_backend: babeldoc
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   babeldoc_timeout: 600
 ```
@@ -261,7 +261,7 @@ pipeline:
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `review_autofix`: enabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. Pass `--no-autofix` or set this to `false` to keep Review from writing formal `target` values. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
-- `pdf_backend`: default `babeldoc` preserves PDF layout through the external AGPL HTTP bridge. Use `mineru` for scanned pages that have no extractable text layer.
+- `pdf_backend`: default `mineru` converts PDF via MinerU HTML. Use `babeldoc` for layout-preserving export through the external AGPL HTTP bridge.
 - `babeldoc_bridge_url`: BabelDOC bridge base URL; default `http://127.0.0.1:8765`.
 - `babeldoc_timeout`: HTTP timeout in seconds for bridge extract and fillback.
 - `babeldoc_pages`: optional 1-based page selection such as `"15"` or `"6-8"`; omit it to process the whole file.
