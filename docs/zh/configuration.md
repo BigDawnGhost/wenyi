@@ -48,9 +48,9 @@ llm:
 
 API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
 
-当 `pipeline.pdf_backend` 为 `mineru` 时，PDF 输入的首次解析另外读取
-`MINERU_API_KEY`，用于调用 MinerU 转换服务。该密钥与 LLM provider 配置无关，
-也不写入 `config.yaml`。默认的 BabelDOC 后端不使用此密钥。
+默认 MinerU 后端首次解析 PDF 时另外读取 `MINERU_API_KEY`，用于调用 MinerU
+转换服务。该密钥与 LLM provider 配置无关，也不写入 `config.yaml`。可选的
+BabelDOC 后端不使用此密钥。
 
 需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
 
@@ -254,7 +254,7 @@ pipeline:
   review_clean_confirmations: 2
   review_autofix: true
   glossary_scope: chapter
-  pdf_backend: babeldoc
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   babeldoc_timeout: 600
 ```
@@ -277,7 +277,7 @@ pipeline:
 - `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
 - `review_autofix`：默认开启。只读 Review 引擎结束后，先把折叠后的 `changes` 叠加到工作译文，再让每段剩余 issue 基于更新后的译文复用现有有界 Review Agent Loop，确认项继续交给现有 Review Fixer。可用 `--no-autofix` 或设为 `false`，避免写回正式 `target`。生成的完整单段译文只覆盖正式章节的 `target`，不修改 manifest 和术语库。完整前后版本链、issue ID、判定、失败原因和写回状态保存在本次 Review 的 `autofix/index.json`，不会给章节 JSON 新增历史字段。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
-- `pdf_backend`：默认 `babeldoc`，经外部 AGPL HTTP bridge 保留 PDF 版式。扫描件、无文本层页面请改用 `mineru`。
+- `pdf_backend`：默认 `mineru`，经 MinerU 转 HTML。需要尽量保留版式时改用 `babeldoc`（外部 AGPL HTTP bridge）。
 - `babeldoc_bridge_url`：BabelDOC bridge 地址，默认 `http://127.0.0.1:8765`。
 - `babeldoc_timeout`：bridge extract / fillback 的 HTTP 超时秒数。
 - `babeldoc_pages`：可选的 1-based 页码，如 `"15"` 或 `"6-8"`；省略则处理全书。

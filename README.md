@@ -172,7 +172,7 @@ internal records are written under `state/<book>/targets/<target-language>/revie
 | EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX | EPUB (monolingual / bilingual), TXT, HTML, Markdown, DOCX |
 | SRT (movie / series subtitles) | `.zh.srt` (monolingual) and optional `.zh-bi.srt` (bilingual) |
 
-- PDF input defaults to the BabelDOC bridge. MinerU conversion is optional for scanned pages and requires `MINERU_API_KEY`; that HTML is cached and reused.
+- PDF input defaults to MinerU and requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused. The BabelDOC bridge is optional for layout-preserving PDFs.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
 - `.srt` input is auto-detected by `translate`. It uses a light concurrent path (no glossary, polish, or whole-book review). State lives under `state/srt/<slug>/targets/<target-language>/`; outputs default to the source file's `output/` directory. Details: [Usage guide](docs/usage.md#srt-subtitles).
@@ -236,7 +236,7 @@ Translated state directories for public-domain books may be shared through [weny
 - Multilingual translation is experimental: Chinese, English, Japanese, Korean, French, German, Spanish, Italian, Portuguese, Russian, and selected variants have built-in profiles. Real-model long-form quality still needs evaluation; the CLI and prompt instructions use English, while generated descriptive metadata follows the translation target.
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
-- PDF input defaults to the BabelDOC bridge. MinerU is optional for scanned pages and requires an API key.
+- PDF input defaults to MinerU and requires an API key for the initial conversion. The BabelDOC bridge is optional for layout-preserving PDFs.
 - SRT translation is a light concurrent path: no glossary, polishing, or whole-book review, and slug collision is possible for identically named files in different folders.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large state directories; storage requirements grow with book length.

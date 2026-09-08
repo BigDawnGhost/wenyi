@@ -168,7 +168,7 @@ uv run trans-novel review book.epub --autofix
 | EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX | EPUB（单语 / 双语）、TXT、HTML、Markdown、DOCX |
 | SRT（影视字幕） | 单语 `.zh.srt`，可选双语 `.zh-bi.srt` |
 
-- PDF 输入默认走 BabelDOC bridge。扫描件可改用 MinerU，首次转换需 `MINERU_API_KEY`，生成的 HTML 会缓存复用。
+- PDF 输入默认走 MinerU，首次转换需 `MINERU_API_KEY`，生成的 HTML 会缓存复用。可选 BabelDOC bridge 用于尽量保留版式。
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
 - 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
 - `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/targets/<目标语言>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
@@ -228,7 +228,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 
 ## 憧憬与不足
 
-本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入默认依赖 BabelDOC bridge，扫描件才走 MinerU。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/targets/<目标语言>/`。多语言互译现为实验性功能，支持中、英、日、韩、法、德、西、意、葡、俄及部分变体；真实模型长篇质量仍待验证，CLI 和提示词指令统一使用英语，模型生成的说明性元数据使用翻译目标语言。
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入默认依赖 MinerU 外部服务（首次转换需 API Key），可选 BabelDOC bridge 保留版式。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/targets/<目标语言>/`。多语言互译现为实验性功能，支持中、英、日、韩、法、德、西、意、葡、俄及部分变体；真实模型长篇质量仍待验证，CLI 和提示词指令统一使用英语，模型生成的说明性元数据使用翻译目标语言。
 
 未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
 

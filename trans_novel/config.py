@@ -72,8 +72,8 @@ pipeline:
   review_clean_confirmations: 2 # Require two consecutive clean rounds to accept the shadow translation
   review_autofix: true # Publish review revisions to formal chapters; use --no-autofix for recommendations only
   glossary_scope: chapter # chapter=terms relevant to this chapter; full=entire glossary
-  # PDF backend: babeldoc (default, preserves layout, requires an external AGPL HTTP bridge) | mineru (supports scans)
-  pdf_backend: babeldoc
+  # PDF backend: mineru (default, supports scans) | babeldoc (optional, preserves layout via external AGPL HTTP bridge)
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # Optional page restriction for the bridge (one-based)
   babeldoc_timeout: 600
@@ -174,8 +174,8 @@ class PipelineConfig(BaseModel):
     glossary_scope: str = (
         "chapter"  # chapter=terms occurring in this chapter (saves tokens); full=entire glossary
     )
-    # PDF: babeldoc=external AGPL HTTP bridge (default, no imports); mineru=HTML path for scans
-    pdf_backend: Literal["mineru", "babeldoc"] = "babeldoc"
+    # PDF: mineru=HTML path for scans (default); babeldoc=external AGPL HTTP bridge (no imports)
+    pdf_backend: Literal["mineru", "babeldoc"] = "mineru"
     babeldoc_bridge_url: str = "http://127.0.0.1:8765"
     babeldoc_pages: str | None = None  # For example "15" / "6-8"; None=whole book
     babeldoc_timeout: float = 600.0
