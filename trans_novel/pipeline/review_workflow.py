@@ -364,11 +364,6 @@ class ReviewService:
         raw_issues: list[dict[str, Any]] = []
         for chapter in loaded:
             text_segs = chapter.text_segments
-            if self._runtime.config.pipeline.glossary_scope == "chapter":
-                source_text = "\n".join(segment.source for segment in text_segs)
-                term_snapshot = GlossaryStore.terms_in(all_terms, source_text)
-            else:
-                term_snapshot = all_terms
 
             def on_chunk_finished(segment_count: int) -> None:
                 """Advance this round's paragraph progress after a top-level review block
@@ -381,7 +376,7 @@ class ReviewService:
 
             chapter_issues = self.review_chapter(
                 text_segs,
-                term_snapshot,
+                all_terms,
                 chapter_index=chapter.index,
                 evidence=evidence,
                 debug=debug,
@@ -728,8 +723,16 @@ class ReviewService:
             )
 
         chapter_rows = manifest.get("chapters", [])
-        loaded = [store.load_chapter(item["index"]) for item in chapter_rows]
+        if progress:
+            progress(0, len(chapter_rows), "Loading review chapters")
+        loaded = []
+        for position, item in enumerate(chapter_rows, start=1):
+            loaded.append(store.load_chapter(item["index"]))
+            if progress:
+                progress(position, len(chapter_rows), "Loading review chapters")
         total = sum(len(chapter.text_segments) for chapter in loaded)
+        if progress:
+            progress(0, 0, "Restoring review checkpoint…")
         analysis = store.load_analysis() or {}
         reviewed_content_digest = _review_content_digest(loaded)
 
@@ -964,6 +967,8 @@ class ReviewService:
 
         try:
             for review_round in range(start_round, max_review_rounds + 1):
+                if progress:
+                    progress(0, 0, f"Preparing review R{review_round}…")
                 overlay_digest = _review_overlay_digest(loaded, target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,
@@ -1406,7 +1411,7 @@ class ReviewService:
     def review_chapter(
         self,
         text_segs,
-        terms,
+        terms: list[GlossaryTerm],
         *,
         chapter_index: int | None = None,
         evidence: BookEvidenceIndex | None = None,
@@ -1418,6 +1423,8 @@ class ReviewService:
         """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
         Use blocks around three translation batches to reduce calls and repeated context.
         Convert valid block-local indices by the block offset and reject invalid positions.
+        Filter the chapter glossary only when a fresh reviewer request needs it; completed
+        chunks and initial traces bypass matching. Share one snapshot across workers.
         Read fixed target/glossary snapshots. Recursively bisect malformed output and retry
         single paragraphs a bounded number of times. Merge results in original block order
         for determinism.
@@ -1435,6 +1442,19 @@ class ReviewService:
 
         recovery_events: list[dict[str, Any]] = []
         recovery_lock = Lock()
+        term_snapshot: list[GlossaryTerm] | None = None
+        term_lock = Lock()
+
+        def reviewer_terms() -> list[GlossaryTerm]:
+            """Build the chapter-wide glossary once, after all reusable caches miss."""
+            nonlocal term_snapshot
+            if self._runtime.config.pipeline.glossary_scope != "chapter":
+                return terms
+            with term_lock:
+                if term_snapshot is None:
+                    source_text = "\n".join(segment.source for segment in text_segs)
+                    term_snapshot = GlossaryStore.terms_in(terms, source_text)
+                return term_snapshot
 
         def record_recovery(event: str, **data: Any) -> None:
             """Buffer recovery events under a lock; write them from the main thread after
@@ -1464,18 +1484,17 @@ class ReviewService:
             # Check the chunk cache to skip reviewer and evidence-loop model calls on resume.
             round_prefix = f"r{review_round}-" if review_round is not None else ""
             chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
-            if debug is not None and debug.is_chunk_done(chunk_id):
-                review_debug = debug
-                cached = review_debug.load_chunk_result(chunk_id)
+            if debug is not None:
+                cached = debug.load_chunk_result(chunk_id)
                 if cached is not None:
                     # Restore initial/dismissed aggregation needed by the report.
                     if chapter_index is not None:
-                        review_debug.record_initial_issues(
+                        debug.record_initial_issues(
                             chapter=chapter_index,
                             chunk_base=chunk_base,
                             issues=cached.get("initial_issues", []),
                         )
-                        review_debug.record_dismissed(
+                        debug.record_dismissed(
                             chapter=chapter_index,
                             chunk_base=chunk_base,
                             issues=cached.get("dismissed", []),
@@ -1566,7 +1585,7 @@ class ReviewService:
                     review_result = self._runtime.reviewer.review_result(
                         srcs,
                         tgts,
-                        terms,
+                        reviewer_terms(),
                         trace=trace if debug is not None else None,
                     )
                 except Exception as error:
@@ -1807,11 +1826,10 @@ class ReviewService:
             if not pieces:
                 return []
             chunk_id = f"{round_prefix}ch{chapter_index}-base{base}-n{len(pieces)}"
-            if debug.is_chunk_done(chunk_id):
-                cached = debug.load_chunk_result(chunk_id)
-                if cached is not None:
-                    hits.append((base, cached))
-                    return list(cached.get("issues", []))
+            cached = debug.load_chunk_result(chunk_id)
+            if cached is not None:
+                hits.append((base, cached))
+                return list(cached.get("issues", []))
             if len(pieces) <= 1:
                 return None
             mid = len(pieces) // 2

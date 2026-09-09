@@ -61,8 +61,14 @@ uv run trans-novel review book.epub
 uv run trans-novel review book.epub --autofix
 ```
 
-即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。每次运行都会从头
-审查完整译文。Review 引擎先更新本次运行内存中的影子译文；发布默认开启，设置
+即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。内容、配置与术语库指纹匹配时，
+复用已完成的结果，或从中断的轮次、审校块与 Agent 记录续跑；不匹配时重新开始全书审校。
+命中审校块缓存或已完成初审记录时跳过章节术语筛选；需要新 Reviewer 请求时，同章请求共享
+一次筛选得到的完整章节术语快照。CLI 在段落审校前显示章节加载和检查点准备阶段。
+耗时显示本次启动中当前阶段的运行时间，等待模型响应时继续走动；段落计数在顶层审校块
+完成时推进，也包括从缓存恢复的块。
+
+Review 引擎先更新本次运行内存中的影子译文；发布默认开启，设置
 `pipeline.review_autofix: false` 或传入 `--no-autofix` 后，不会覆盖正式章节
 的 `target`。manifest 和术语库始终不变。最终结果、本次用量、事件和内部记录写入：
 
