@@ -1334,6 +1334,16 @@ class TestReviewReporting(unittest.TestCase):
             self.assertEqual([done for done, _ in stage], sorted(done for done, _ in stage))
             self.assertTrue(any(0 < done < total for done, total in stage))
         self.assertEqual(clean, [(1, 2), (2, 2)])
+        loading = [
+            (done, total) for done, total, label in events if label == "Loading review chapters"
+        ]
+        self.assertTrue(loading)
+        self.assertEqual(loading[0][0], 0)
+        self.assertEqual(loading[-1][0], loading[-1][1])
+        labels = [label for _, _, label in events]
+        self.assertLess(
+            labels.index("Restoring review checkpoint…"), labels.index("Whole-book review R1")
+        )
 
     def test_review_accepts_numeric_string_index(self):
         def handler(messages, tier, json_mode):
@@ -1555,7 +1565,11 @@ class TestReviewReporting(unittest.TestCase):
 
             meter = MeteredFakeClient(handler=self._handler())
             orch2 = Orchestrator(cfg, client=meter)
-            orch2.run_review(txt)
+            with patch.object(
+                GlossaryStore, "terms_in", wraps=GlossaryStore.terms_in
+            ) as match_terms:
+                orch2.run_review(txt)
+            match_terms.assert_not_called()
 
             reused_stages = [
                 call["stage"]

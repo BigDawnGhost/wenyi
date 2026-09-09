@@ -116,10 +116,16 @@ class _RichProgressBridge:
     def __init__(self, progress: Progress, initial_description: str) -> None:
         self.progress = progress
         self.task = progress.add_task(initial_description, total=None)
+        self._stage: tuple[str, int | None] = (initial_description, None)
 
     def __call__(self, done: int, total: int, label: str) -> None:
         """Refresh the current stage and counts without accumulating progress bars."""
+        stage = (label, total if total > 0 else None)
         if total > 0:
+            if stage != self._stage:
+                # A completed Rich task retains its finished time until reset.
+                self.progress.reset(self.task, total=total, completed=done, description=label)
+            self._stage = stage
             self.progress.update(
                 self.task,
                 completed=done,
@@ -127,10 +133,13 @@ class _RichProgressBridge:
                 description=label,
             )
             return
+        if stage == self._stage:
+            return
         # Rich update(total=None) leaves the total unchanged. Recreate the task
         # to restore indeterminate progress and clear the previous stage’s counts.
         self.progress.remove_task(self.task)
         self.task = self.progress.add_task(label, total=None)
+        self._stage = stage
 
 
 def _version_callback(value: bool) -> None:

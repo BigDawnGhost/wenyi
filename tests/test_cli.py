@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import typer
-from rich.progress import Progress
+from rich.progress import Progress, TimeElapsedColumn
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
@@ -30,6 +30,38 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_progress_clock_advances_after_completed_stage(self):
+        now = 10.0
+        progress = Progress(disable=True, get_time=lambda: now)
+        bridge = _RichProgressBridge(progress, "Preparing translation…")
+        bridge(1674, 1674, "Translation complete")
+        self.assertTrue(progress.tasks[0].finished)
+
+        now = 20.0
+        bridge(0, 1674, "Whole-book review R1")
+        bridge(777, 1674, "Whole-book review R1")
+        task = progress.tasks[0]
+        self.assertFalse(task.finished)
+        now = 25.0
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+        now = 35.0
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:15")
+        bridge(778, 1674, "Whole-book review R1")
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:15")
+
+    def test_indeterminate_progress_updates_preserve_elapsed_time(self):
+        now = 10.0
+        progress = Progress(disable=True, get_time=lambda: now)
+        bridge = _RichProgressBridge(progress, "Preparing review…")
+        bridge(1, 1, "Loading review chapters")
+        bridge(0, 0, "Restoring review checkpoint…")
+        now = 15.0
+        bridge(0, 0, "Restoring review checkpoint…")
+        task = progress.tasks[0]
+        self.assertIsNone(task.total)
+        self.assertFalse(task.finished)
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+
     def test_progress_bridge_reuses_one_task_across_review_stages(self):
         progress = Progress(disable=True)
         bridge = _RichProgressBridge(progress, "Preparing whole-book review…")
@@ -45,6 +77,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(task.description, "Blind whole-book review R2")
         self.assertEqual(task.completed, 0)
         self.assertEqual(task.total, 6386)
+        self.assertFalse(task.finished)
 
     def test_pdf_engine_validation_accepts_both_backends(self):
         self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")

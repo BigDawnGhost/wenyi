@@ -60,9 +60,17 @@ uv run trans-novel review book.epub
 uv run trans-novel review book.epub --autofix
 ```
 
-The explicit command runs even when `pipeline.review` is disabled. Every invocation
-reviews the complete translated book from the beginning. The Review engine first
-updates a run-local shadow translation. Publishing is enabled by default;
+The explicit command runs even when `pipeline.review` is disabled. Matching completed
+results are reused; an interrupted Review resumes its saved rounds, chunks, and agent
+traces when content, configuration, and glossary fingerprints match. Otherwise, a new
+whole-book Review starts. Cached chunks and completed initial screening skip chapter
+glossary matching; pending reviewer requests share one chapter-wide glossary snapshot.
+The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
+Elapsed time measures the current stage of this invocation and continues advancing
+while model requests are pending; paragraph counts advance when a top-level chunk
+finishes, including chunks restored from cache.
+
+The Review engine first updates a run-local shadow translation. Publishing is enabled by default;
 set `pipeline.review_autofix: false` or pass `--no-autofix` to keep Review from
 replacing formal chapter `target` values. The manifest and glossary are never changed.
 The final result, run-local usage delta, events, and internal traces are written to:
