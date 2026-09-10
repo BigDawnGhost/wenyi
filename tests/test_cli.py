@@ -8,11 +8,13 @@ import unittest
 from unittest.mock import patch
 
 import typer
+from rich.cells import cell_len
 from rich.progress import Progress, TimeElapsedColumn
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
     _configure_windows_console,
+    _progress_columns,
     _RichProgressBridge,
     _validate_pdf_engine,
     app,
@@ -62,6 +64,16 @@ class TestCliConfig(unittest.TestCase):
         self.assertIsNone(task.total)
         self.assertFalse(task.finished)
         self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+
+    def test_long_progress_description_is_ellipsized_without_hiding_bar(self):
+        progress = Progress(*_progress_columns(), disable=True)
+        bridge = _RichProgressBridge(progress, "Preparing…")
+
+        bridge(1, 2, "这是一个特别特别长而且不应该挤掉右侧进度条的章节标题")
+
+        description = progress.tasks[0].description
+        self.assertTrue(description.endswith("…"))
+        self.assertLessEqual(cell_len(description), 28)
 
     def test_progress_bridge_reuses_one_task_across_review_stages(self):
         progress = Progress(disable=True)
