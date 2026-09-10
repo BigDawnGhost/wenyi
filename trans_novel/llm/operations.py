@@ -91,9 +91,17 @@ OPERATIONS = register_operations(
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),
-        OperationSpec("translation.body", "Translate body paragraphs", "strong"),
+        OperationSpec(
+            "translation.body", "Translate body paragraphs", "strong", protocol_version=2
+        ),
         OperationSpec("translation.title", "Translate chapter and TOC titles", "strong"),
-        OperationSpec("polish.body", "Polish translated paragraphs", "strong", flags=("polish",)),
+        OperationSpec(
+            "polish.body",
+            "Polish translated paragraphs",
+            "strong",
+            flags=("polish",),
+            protocol_version=2,
+        ),
         OperationSpec("glossary.extract", "Extract glossary candidates", "fast"),
         OperationSpec("glossary.align_history", "Align terms with earlier translations", "fast"),
         OperationSpec(

@@ -7,4 +7,7 @@ $glossary
 [$tgt_label translation to polish] ($n paragraphs)
 $numbered_target
 
+[Following source paragraph] (reference only; do not translate)
+$next_source
+
 Return JSON: {"polished":[...]}, with exactly $n items.

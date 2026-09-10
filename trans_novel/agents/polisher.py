@@ -19,6 +19,7 @@ class Polisher(Agent):
         *,
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
+        next_source: str = "",
     ) -> list[str]:
         """Polish an aligned list; return the input unchanged on call or length failure."""
         if not targets:
@@ -33,6 +34,7 @@ class Polisher(Agent):
             style=style or "(none)",
             n=n,
             numbered_target=prompts.numbered(targets),
+            next_source=prompts.render_source_reference(next_source),
         )
         items = self._ask_json(system, user, operation="polish.body", key="polished", default=None)
         if isinstance(items, list) and len(items) == n:
