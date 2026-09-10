@@ -28,9 +28,9 @@ class TestConfigFileCreation(unittest.TestCase):
                 provider_spec("deepseek").adapter_type().default_api_key_env, "DEEPSEEK_API_KEY"
             )
             self.assertEqual(set(cfg.llm.tiers), {"strong", "cheap", "fast"})
-            self.assertEqual(cfg.llm.models[cfg.llm.tiers["strong"]].model, "deepseek-v4-flash")
-            self.assertEqual(cfg.llm.models[cfg.llm.tiers["cheap"]].model, "deepseek-v4-flash")
-            self.assertEqual(cfg.llm.models[cfg.llm.tiers["fast"]].model, "deepseek-v4-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["strong"]].model, "deepseek-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["cheap"]].model, "deepseek-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["fast"]].model, "deepseek-flash")
             self.assertTrue(cfg.llm.models[cfg.llm.tiers["fast"]].options["thinking"])
             for profile in cfg.llm.models.values():
                 self.assertEqual(profile.options["reasoning_effort"], "high")

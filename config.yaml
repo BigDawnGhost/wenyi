@@ -7,7 +7,7 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  preset: deepseek # All tiers: deepseek-v4-flash, thinking enabled, reasoning_effort high
+  preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
   # Add providers, models and routes to override individual operations.
   # Inspect effective settings with: trans-novel models list
 

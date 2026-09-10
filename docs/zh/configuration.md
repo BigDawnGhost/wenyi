@@ -41,7 +41,7 @@ llm:
   preset: deepseek
 ```
 
-该预设展开为连接 `default`、模型配置 `default_strong` / `default_cheap` / `default_fast`，以及三个档位映射。内置产品默认值为 `https://api.deepseek.com`、环境变量 `DEEPSEEK_API_KEY`；三个档位均使用 `deepseek-v4-flash`，开启 thinking，`reasoning_effort` 为 `high`。模型 ID 与默认推理设置依据 [DeepSeek 官方 API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。档位保持独立映射，便于之后分别覆盖模型；预设不会自动查询远端能力。也支持 `preset: gemini` 和离线的 `preset: fake`。
+该预设展开为连接 `default`、模型配置 `default_strong` / `default_cheap` / `default_fast`，以及三个档位映射。内置产品默认值为 `https://api.deepseek.com`、环境变量 `DEEPSEEK_API_KEY`；三个档位均使用 `deepseek-flash`，开启 thinking，`reasoning_effort` 为 `high`。模型 ID 与默认推理设置依据 [DeepSeek 官方 API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。档位保持独立映射，便于之后分别覆盖模型；预设不会自动查询远端能力。也支持 `preset: gemini` 和离线的 `preset: fake`。
 
 例如，单独配置润色与取证模型：
 

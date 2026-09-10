@@ -303,10 +303,8 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
 
         self.assertEqual(client.adapter("default").base_url, DEFAULT_BASE_URL)
         self.assertEqual(client.adapter("default").api_key_env, DEFAULT_API_KEY_ENV)
-        self.assertEqual(
-            client.routes["translation.body"].request_model().model, "deepseek-v4-flash"
-        )
-        self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-v4-flash")
+        self.assertEqual(client.routes["translation.body"].request_model().model, "deepseek-flash")
+        self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-flash")
         self.assertTrue(client.routes["translation.body"].request_model().options.thinking)
         self.assertTrue(client.routes["synopsis.chapter"].request_model().options.thinking)
 
@@ -330,10 +328,8 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         )
 
         self.assertEqual(client.routes["synopsis.chapter"].request_model().model, "custom-fast")
-        self.assertEqual(
-            client.routes["translation.body"].request_model().model, "deepseek-v4-flash"
-        )
-        self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-v4-flash")
+        self.assertEqual(client.routes["translation.body"].request_model().model, "deepseek-flash")
+        self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-flash")
 
     def test_provider_option_can_be_overridden_without_repeating_model(self):
         client = RoutedLLMClient(
@@ -344,9 +340,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
             )
         )
 
-        self.assertEqual(
-            client.routes["synopsis.chapter"].request_model().model, "deepseek-v4-flash"
-        )
+        self.assertEqual(client.routes["synopsis.chapter"].request_model().model, "deepseek-flash")
         self.assertTrue(client.routes["synopsis.chapter"].request_model().options.thinking)
 
     def test_unknown_provider_option_is_rejected(self):

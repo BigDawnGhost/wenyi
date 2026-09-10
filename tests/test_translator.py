@@ -30,8 +30,8 @@ class TestTranslatorAlignment(unittest.TestCase):
                 "llm": {
                     "preset": "fake",
                     "models": {
-                        "default_strong": {"provider": "default", "model": "deepseek-v4-pro"},
-                        "default_cheap": {"provider": "default", "model": "deepseek-v4-flash"},
+                        "default_strong": {"provider": "default", "model": "deepseek-pro"},
+                        "default_cheap": {"provider": "default", "model": "deepseek-flash"},
                     },
                 },
                 "pipeline": {"align_retry_limit": 1},

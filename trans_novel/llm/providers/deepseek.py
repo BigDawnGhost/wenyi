@@ -43,15 +43,15 @@ def preset_models() -> dict[str, ResolvedModel[DeepSeekOptions]]:
     """Return built-in DeepSeek defaults for strong, cheap and fast tiers."""
     return {
         "strong": ResolvedModel(
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             options=DeepSeekOptions(),
         ),
         "cheap": ResolvedModel(
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             options=DeepSeekOptions(),
         ),
         "fast": ResolvedModel(
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             options=DeepSeekOptions(),
         ),
     }

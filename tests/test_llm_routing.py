@@ -181,7 +181,7 @@ def test_native_and_compatible_adapters_can_run_together():
             client.complete, [{"role": "user", "content": "draft"}], operation="polish.body"
         )
         assert (first.result(), second.result()) == ("translation", "polished")
-    assert requests["compatible"]["model"] == "deepseek-v4-flash"
+    assert requests["compatible"]["model"] == "deepseek-flash"
     assert requests["native"]["model"] == "native-editor"
     assert requests["native"]["config"]["max_output_tokens"] == 2000
     assert "reasoning_effort" not in requests["native"]["config"]
