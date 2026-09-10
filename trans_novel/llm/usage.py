@@ -86,21 +86,74 @@ def _normalize_usage_group(
     return normalized
 
 
-def _usage_summary(
-    by_tier: dict[str, dict[str, int]],
-    by_stage: dict[str, dict[str, int]],
-) -> dict[str, Any]:
-    """Build normalized totals from tiers only; stages are another attribution of the same
-    usage.
-    """
-    tiers = _normalize_usage_group(by_tier)
-    stages = _normalize_usage_group(by_stage)
+_GROUPS = ("by_tier", "by_stage", "by_provider", "by_model")
+USAGE_SCHEMA_VERSION = 2
+
+
+def _usage_summary(groups: dict[str, dict], labels: dict[str, str] | None = None) -> dict[str, Any]:
+    normalized = {name: _normalize_usage_group(groups.get(name, {})) for name in _GROUPS}
     totals: dict[str, Any] = dict.fromkeys(_USAGE_FIELDS, 0)
-    for values in tiers.values():
+    for values in normalized["by_tier"].values():
         for field in _USAGE_FIELDS:
             totals[field] += values[field]
     totals["cache_hit_rate"] = _hit_rate(totals["cache_hit_tokens"], totals["cache_miss_tokens"])
-    return {"totals": totals, "by_tier": tiers, "by_stage": stages}
+    return {
+        "schema_version": USAGE_SCHEMA_VERSION,
+        "totals": totals,
+        **normalized,
+        "labels": dict(labels or {}),
+    }
+
+
+def empty_usage() -> dict[str, Any]:
+    return _usage_summary({})
+
+
+def validate_usage(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Reject nonempty historical ledgers until explicitly converted."""
+    if not value or value == {}:
+        return empty_usage()
+    if not isinstance(value, dict):
+        raise ValueError("Usage ledger must be an object")
+    if value.get("schema_version") != USAGE_SCHEMA_VERSION:
+        if not any(value.get("by_tier", {}).values()) and not any(
+            value.get("totals", {}).get(field, 0) for field in _USAGE_FIELDS
+        ):
+            return empty_usage()
+        raise ValueError(
+            "Usage ledger needs conversion; run trans-novel models migrate-usage RUN_DIR"
+        )
+    if not all(isinstance(value.get(group), dict) for group in _GROUPS):
+        raise ValueError("Invalid usage ledger grouping")
+    if not isinstance(value.get("totals"), dict):
+        raise ValueError("Invalid usage ledger totals")
+    for group in _GROUPS:
+        if not all(isinstance(slot, dict) for slot in value[group].values()):
+            raise ValueError("Invalid usage ledger slot")
+    reconstructed = _usage_summary({"by_tier": value["by_tier"]})["totals"]
+    if any(
+        read_usage_int(value["totals"], field) != reconstructed[field] for field in _USAGE_FIELDS
+    ):
+        raise ValueError("Usage totals disagree with tier attribution")
+    return value
+
+
+def convert_usage_ledger(value: dict[str, Any]) -> dict[str, Any]:
+    """Convert historical attribution explicitly without guessing past providers or models."""
+    if value.get("schema_version") == USAGE_SCHEMA_VERSION:
+        return validate_usage(value)
+    if value.get("schema_version") not in (None, 1):
+        raise ValueError("Unsupported usage ledger version")
+    groups = {name: value.get(name, {}) for name in ("by_tier", "by_stage")}
+    reconstructed = _usage_summary(groups)
+    totals = reconstructed["totals"]
+    for field in _USAGE_FIELDS:
+        if read_usage_int(value.get("totals", {}), field) != totals[field]:
+            raise ValueError(f"Historical usage totals disagree with tiers: {field}")
+    if totals["calls"]:
+        groups["by_provider"] = {"unknown": totals}
+        groups["by_model"] = {"unknown": totals}
+    return _usage_summary(groups, {"unknown": "Historical attribution unavailable"})
 
 
 def _usage_group_delta(
@@ -136,52 +189,57 @@ def _merge_usage_groups(
 
 
 def usage_delta(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
-    """Compute a nonnegative delta between cumulative snapshots to avoid duplicate persistence."""
-    tier_delta = _usage_group_delta(current["by_tier"], previous["by_tier"])
-    stage_delta = _usage_group_delta(current["by_stage"], previous["by_stage"])
-    return _usage_summary(tier_delta, stage_delta)
+    """Compute each attribution delta without adding the independent views together."""
+    current, previous = validate_usage(current), validate_usage(previous)
+    return _usage_summary(
+        {name: _usage_group_delta(current[name], previous[name]) for name in _GROUPS},
+        current.get("labels"),
+    )
 
 
 def merge_usage_summaries(accumulated: dict[str, Any], increment: dict[str, Any]) -> dict[str, Any]:
-    """Merge one run's usage delta into the book's historical totals."""
-    tiers = _merge_usage_groups(accumulated["by_tier"], increment["by_tier"])
-    stages = _merge_usage_groups(accumulated["by_stage"], increment["by_stage"])
-    return _usage_summary(tiers, stages)
+    """Merge one unpersisted increment into cumulative usage."""
+    accumulated, increment = validate_usage(accumulated), validate_usage(increment)
+    return _usage_summary(
+        {name: _merge_usage_groups(accumulated[name], increment[name]) for name in _GROUPS},
+        {**accumulated.get("labels", {}), **increment.get("labels", {})},
+    )
 
 
 class UsageTracker:
-    """Accumulate normalized usage under a lock, attributing independently by tier and stage."""
+    """One thread-safe ledger with independent attribution views."""
 
     def __init__(self) -> None:
-        """Initialize tier and stage attribution views; derive totals from tiers only."""
         self._lock = threading.Lock()
-        self._by_tier: dict[str, dict[str, int]] = {}
-        self._by_stage: dict[str, dict[str, int]] = {}
+        self._groups: dict[str, dict[str, dict[str, int]]] = {name: {} for name in _GROUPS}
+        self._labels: dict[str, str] = {}
 
     def record(
         self,
         tier: str,
         sample: UsageSample | None,
         stage: str | None = None,
+        *,
+        provider: str = "unknown",
+        model: str = "unknown",
+        labels: dict[str, str] | None = None,
     ) -> None:
-        """Accumulate normalized provider usage; silently skip absent records."""
         if sample is None:
             return
+        keys = {
+            "by_tier": tier,
+            "by_stage": stage or "unknown",
+            "by_provider": provider,
+            "by_model": model,
+        }
         with self._lock:
-            slots = [self._by_tier.setdefault(tier, dict.fromkeys(_USAGE_FIELDS, 0))]
-            if stage:
-                slots.append(self._by_stage.setdefault(stage, dict.fromkeys(_USAGE_FIELDS, 0)))
-            for slot in slots:
+            for group, key in keys.items():
+                slot = self._groups[group].setdefault(key, dict.fromkeys(_USAGE_FIELDS, 0))
                 slot["calls"] += 1
-                slot["prompt_tokens"] += sample.prompt_tokens
-                slot["completion_tokens"] += sample.completion_tokens
-                slot["total_tokens"] += sample.total_tokens
-                slot["cache_hit_tokens"] += sample.cache_hit_tokens
-                slot["cache_miss_tokens"] += sample.cache_miss_tokens
+                for field in _USAGE_FIELDS[1:]:
+                    slot[field] += getattr(sample, field)
+            self._labels.update(labels or {})
 
     def summary(self) -> dict[str, Any]:
-        """Return totals, by_tier and by_stage, each with cache_hit_rate."""
         with self._lock:
-            by_tier = {tier: dict(values) for tier, values in self._by_tier.items()}
-            by_stage = {stage: dict(values) for stage, values in self._by_stage.items()}
-        return _usage_summary(by_tier, by_stage)
+            return _usage_summary(self._groups, self._labels)

@@ -155,7 +155,7 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "pipeline": {"book_understanding": False, "pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
@@ -204,8 +204,8 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "fake"}},
+                        "preset": "fake",
+                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
                     },
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
@@ -240,8 +240,8 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "fake"}},
+                        "preset": "fake",
+                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
                     },
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
@@ -300,7 +300,7 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
@@ -335,8 +335,8 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "fake"}},
+                        "preset": "fake",
+                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
                     },
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},

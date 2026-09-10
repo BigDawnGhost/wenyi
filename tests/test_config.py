@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 
 from trans_novel.config import Config
+from trans_novel.llm.registry import provider_spec
+from trans_novel.llm.routing import resolve_routes
 
 
 class TestConfigFileCreation(unittest.TestCase):
@@ -18,20 +20,24 @@ class TestConfigFileCreation(unittest.TestCase):
 
             self.assertTrue(created)
             self.assertTrue(path.is_file())
-            self.assertEqual(cfg.llm.provider, "deepseek")
-            self.assertEqual(cfg.llm.base_url, "https://api.deepseek.com")
-            self.assertEqual(cfg.llm.api_key_env, "DEEPSEEK_API_KEY")
+            self.assertEqual(cfg.llm.providers["default"].kind, "deepseek")
+            self.assertEqual(
+                resolve_routes(cfg.llm)["translation.body"].endpoint, "https://api.deepseek.com"
+            )
+            self.assertEqual(
+                provider_spec("deepseek").adapter_type().default_api_key_env, "DEEPSEEK_API_KEY"
+            )
             self.assertEqual(set(cfg.llm.tiers), {"strong", "cheap", "fast"})
-            self.assertEqual(cfg.llm.tiers["strong"].model, "deepseek-v4-pro")
-            self.assertEqual(cfg.llm.tiers["cheap"].model, "deepseek-v4-flash")
-            self.assertEqual(cfg.llm.tiers["fast"].model, "deepseek-v4-flash")
-            self.assertTrue(cfg.llm.tiers["fast"].options["thinking"])
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["strong"]].model, "deepseek-v4-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["cheap"]].model, "deepseek-v4-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["fast"]].model, "deepseek-v4-flash")
+            self.assertTrue(cfg.llm.models[cfg.llm.tiers["fast"]].options["thinking"])
+            for profile in cfg.llm.models.values():
+                self.assertEqual(profile.options["reasoning_effort"], "high")
             self.assertFalse(hasattr(cfg.llm, "api_key"))
             generated = path.read_text(encoding="utf-8")
             self.assertIn("# trans-novel configuration", generated)
-            self.assertIn("  base_url: https://api.deepseek.com", generated)
-            self.assertIn("  api_key_env: DEEPSEEK_API_KEY", generated)
-            self.assertIn("  tiers:\n", generated)
+            self.assertIn("  preset: deepseek", generated)
             self.assertIn("output:\n", generated)
             self.assertTrue(cfg.output.mono)
             self.assertFalse(cfg.output.bilingual)
@@ -47,7 +53,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
             self.assertEqual(cfg.pipeline.review_output_retries, 2)
             self.assertTrue(cfg.pipeline.review_agent_loop)
-            self.assertEqual(cfg.pipeline.review_agent_tier, "strong")
+            self.assertEqual(resolve_routes(cfg.llm)["review.verify"].tier, "strong")
             self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
             self.assertTrue(cfg.pipeline.review_conflict_arbitration)
             self.assertTrue(cfg.pipeline.review_fix_loop)
@@ -79,7 +85,7 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
         self.assertEqual(cfg.pipeline.review_output_retries, 2)
         self.assertTrue(cfg.pipeline.review_agent_loop)
-        self.assertEqual(cfg.pipeline.review_agent_tier, "strong")
+        self.assertEqual(resolve_routes(cfg.llm)["review.verify"].tier, "strong")
         self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
         self.assertTrue(cfg.pipeline.review_conflict_arbitration)
         self.assertTrue(cfg.pipeline.review_fix_loop)
@@ -112,13 +118,15 @@ class TestConfigFileCreation(unittest.TestCase):
         cfg = Config.from_dict(
             {
                 "llm": {
-                    "provider": "openai-compatible",
-                    "reasoning_style": "deepseek",
+                    "providers": {"local": {"kind": "ollama", "reasoning_style": "deepseek"}},
+                    "models": {"m": {"provider": "local", "model": "m"}},
+                    "tiers": {tier: "m" for tier in ("strong", "cheap", "fast")},
                 }
             }
         )
-
-        self.assertEqual(cfg.llm.reasoning_style, "deepseek")
+        extra = cfg.llm.providers["local"].model_extra
+        assert extra is not None
+        self.assertEqual(extra["reasoning_style"], "deepseek")
 
 
 if __name__ == "__main__":

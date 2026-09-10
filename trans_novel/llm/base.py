@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import signal
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from typing import Any
 
 from .json_parser import parse_json_loose
@@ -47,32 +49,49 @@ class LLMClient(ABC):
         """Return cumulative token usage with totals, tiers and cache hit rates."""
         return self.usage.summary()
 
-    def validate_credentials(self) -> None:
+    def validate_credentials(self, operations: Iterable[str] | None = None) -> None:
         """Validate provider credentials; local and test providers are exempt by default."""
+
+    def cancel(self) -> None:
+        """Stop waiting and future requests when supported by the client."""
+
+    @contextmanager
+    def interrupt_scope(self):
+        """Cancel queued model work before a thread pool joins after Ctrl+C."""
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
+        previous = signal.getsignal(signal.SIGINT)
+
+        def stop(signum, frame):
+            self.cancel()
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGINT, stop)
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGINT, previous)
 
     @abstractmethod
     def complete(
         self,
         messages: Messages,
         *,
-        tier: str = "strong",
+        operation: str,
         json_mode: bool = False,
         max_tokens: int | None = None,
-        stage: str | None = None,
     ) -> str:
-        """Return plain model response text; stage is used only for usage attribution."""
+        """Return model text using the registered operation route."""
         raise NotImplementedError
 
     def complete_json(
         self,
         messages: Messages,
         *,
-        tier: str = "strong",
+        operation: str,
         max_tokens: int | None = None,
-        stage: str | None = None,
     ) -> Any:
         """Request and parse JSON output."""
-        text = self.complete(
-            messages, tier=tier, json_mode=True, max_tokens=max_tokens, stage=stage
-        )
+        text = self.complete(messages, operation=operation, json_mode=True, max_tokens=max_tokens)
         return parse_json_loose(text)

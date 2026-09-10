@@ -124,9 +124,20 @@ class _ActionLoop:
             "status": "running",
             "turns": [],
         }
+        from ..llm.routing import inference_snapshot
+
+        trace["inference"] = inference_snapshot(self.config.llm, (stage,))
         relative = f"agents/{_safe_id(agent_id)}.json"
         # Resume: load an existing trace before writing, or the trace would overwrite itself.
         existing = self.debug.load_json(relative)
+        if existing is not None and existing.get("inference") != trace["inference"]:
+            self.debug.log_event(
+                "review_agent_cache_invalidated",
+                agent_id=agent_id,
+                operation=stage,
+                reason="request_changed",
+            )
+            existing = None
         resume_turns: list[dict[str, Any]] = []
         if existing is not None:
             existing_status = existing.get("status")
@@ -231,9 +242,8 @@ class _ActionLoop:
                     try:
                         raw = self.client.complete(
                             sent_messages,
-                            tier=self.config.pipeline.review_agent_tier,
                             json_mode=True,
-                            stage=stage,
+                            operation=stage,
                         )
                     except Exception as error:
                         turn["status"] = "failed"
@@ -397,7 +407,10 @@ class ReviewAgentLoop:
         config: Config,
         evidence: BookEvidenceIndex,
         debug: ReviewRunStore,
+        *,
+        operation: str = "review.verify",
     ):
+        self.operation = operation
         self.config = config
         self.evidence = evidence
         self.debug = debug
@@ -616,7 +629,7 @@ class ReviewAgentLoop:
             agent_id=agent_id,
             system=system,
             user=user,
-            stage="ReviewAgent",
+            stage=self.operation,
             allowed_refs=allowed_refs,
             validate_final=validate_final,
         )
@@ -984,7 +997,7 @@ class ReviewConflictArbiter:
             agent_id=f"arbiter-{conflict_id}",
             system=system,
             user=user,
-            stage="ReviewArbiter",
+            stage="review.arbitrate",
             allowed_refs=allowed_refs,
             validate_final=validate_final,
         )

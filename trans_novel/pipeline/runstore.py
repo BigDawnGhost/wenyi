@@ -445,6 +445,54 @@ class RunStore:
         """Read cumulative token usage, or return None if absent."""
         return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
 
+    def prepare_usage_commit(self, ledgers: dict[str, dict]) -> None:
+        """Journal complete ledger snapshots before publication, under the book run lock."""
+        from ..llm.routing import identity
+
+        entries = []
+        for relative, value in ledgers.items():
+            path = self._usage_commit_path(relative)
+            before = self._read_json(path) if os.path.isfile(path) else None
+            entries.append({"path": relative, "before": identity(before), "value": value})
+        self._write_json(
+            os.path.join(self.run_dir, "usage-pending.json"), {"version": 1, "entries": entries}
+        )
+
+    def _usage_commit_path(self, relative: str) -> str:
+        """Restrict journal destinations to ledgers in this run, never arbitrary state."""
+        parts = relative.replace("\\", "/").split("/")
+        if relative != "usage.json" and not (
+            len(parts) == 3
+            and parts[0] == "reviews"
+            and parts[1].startswith("review-")
+            and parts[2] == "usage.json"
+        ):
+            raise ValueError("Invalid usage journal destination")
+        return os.path.join(self.run_dir, *parts)
+
+    def recover_usage(self) -> None:
+        """Idempotently finish an interrupted book/review ledger commit under the run lock."""
+        from ..llm.routing import identity
+        from ..llm.usage import validate_usage
+
+        pending = os.path.join(self.run_dir, "usage-pending.json")
+        if not os.path.isfile(pending):
+            return
+        transaction = self._read_json(pending)
+        if transaction.get("version") != 1 or not isinstance(transaction.get("entries"), list):
+            raise ValueError("Invalid usage journal")
+        writes = []
+        for entry in transaction["entries"]:
+            path = self._usage_commit_path(entry["path"])
+            value = validate_usage(entry["value"])
+            current = self._read_json(path) if os.path.isfile(path) else None
+            if identity(current) not in {entry["before"], identity(value)}:
+                raise ValueError("Usage ledger changed outside its pending commit")
+            writes.append((path, value))
+        for path, value in writes:
+            self._write_json(path, value)
+        os.unlink(pending)
+
     def load_latest_review_result(self) -> dict[str, Any] | None:
         """Read the latest completed or failed review result by directory time order."""
         if not os.path.isdir(self.reviews_dir):

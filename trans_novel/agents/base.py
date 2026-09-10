@@ -29,7 +29,7 @@ class Agent:
         system: str,
         user: str,
         *,
-        tier: str,
+        operation: str,
         key: str | None = None,
         default: Any = _RAISE,
         max_tokens: int | None = None,
@@ -45,9 +45,8 @@ class Agent:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                tier=tier,
+                operation=operation,
                 max_tokens=max_tokens,
-                stage=type(self).__name__,
             )
         except Exception:
             if default is _RAISE:
@@ -65,7 +64,7 @@ class Agent:
         system: str,
         user: str,
         *,
-        tier: str,
+        operation: str,
         default: str = "",
         max_tokens: int | None = None,
     ) -> str:
@@ -77,9 +76,8 @@ class Agent:
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    tier=tier,
+                    operation=operation,
                     max_tokens=max_tokens,
-                    stage=type(self).__name__,
                 )
                 or ""
             ).strip()

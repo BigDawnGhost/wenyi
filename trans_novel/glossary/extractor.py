@@ -97,7 +97,7 @@ class GlossaryExtractor(Agent):
             source=source_text,
             target=target_text,
         )
-        raw = self._ask_json(system, user, tier="fast", key="terms", default=[])
+        raw = self._ask_json(system, user, operation="glossary.extract", key="terms", default=[])
         terms: list[GlossaryTerm] = []
         for d in self.dict_items(raw):
             source = _text(d.get("source"))
@@ -184,7 +184,9 @@ class GlossaryExtractor(Agent):
             tgt=self.tgt,
             candidates_json=json.dumps(candidates, ensure_ascii=False, indent=2),
         )
-        raw = self._ask_json(system, user, tier="fast", key="terms", default=[])
+        raw = self._ask_json(
+            system, user, operation="glossary.align_history", key="terms", default=[]
+        )
         resolved = {
             source: target
             for item in self.dict_items(raw)

@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Any
 from ..agents.review_fixer import ProvisionalPatch, ReviewFixer
 from ..agents.review_loop import ReviewAgentLoop
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..llm.usage import usage_delta
+from ..llm.routing import inference_snapshot
+from ..llm.usage import validate_usage
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore, review_candidate_id
 from .docx_styles import DocxStyleService
@@ -115,12 +116,30 @@ class ReviewAutofixService:
         *,
         progress: ProgressFn | None = None,
     ) -> ReviewOutcome:
+        """Flush completed model responses even if planning or publication is interrupted."""
+        if not self._runtime.config.pipeline.review_autofix:
+            return outcome
+        debug = ReviewRunStore.open_existing(outcome.run_dir)
+        try:
+            return self._run(store, outcome, all_terms, progress=progress)
+        finally:
+            self._save_usage_delta(store, debug, scope="review_autofix")
+
+    def _run(
+        self,
+        store: RunStore,
+        outcome: ReviewOutcome,
+        all_terms: list[GlossaryTerm],
+        *,
+        progress: ProgressFn | None = None,
+    ) -> ReviewOutcome:
         """Prepare final candidates and an index for a completed review, then publish
         idempotently.
         """
         if not self._runtime.config.pipeline.review_autofix:
             return outcome
         debug = ReviewRunStore.open_existing(outcome.run_dir)
+        validate_usage(debug.load_usage())
         existing = self._index(outcome.run_dir)
         if existing is not None:
             status = existing.get("status")
@@ -134,6 +153,14 @@ class ReviewAutofixService:
                 )
             if status in {"completed", "partial"}:
                 return self._finish_result(store, debug, existing, outcome.result)
+
+        inference = inference_snapshot(self._runtime.llm_config, ("autofix.verify", "autofix.fix"))
+        plan = debug.load_json("autofix/plan.json")
+        if plan is not None and plan.get("inference") != inference:
+            raise ValueError(
+                "Autofix planning models changed. Restore the prior routes to finish this review."
+            )
+        debug.write_json("autofix/plan.json", {"inference": inference})
 
         manifest = store.load_manifest()
         chapters = [
@@ -312,8 +339,9 @@ class ReviewAutofixService:
             self._runtime.config,
             evidence,
             debug,
+            operation="autofix.verify",
         )
-        fixer = ReviewFixer(self._runtime.client, self._runtime.config)
+        fixer = ReviewFixer(self._runtime.client, self._runtime.config, operation="autofix.fix")
         style = self._runtime.analyzer.style_brief(analysis)
         book_synopsis = str(analysis.get("book_synopsis", "") or "")
         fixer_round = max(
@@ -679,6 +707,7 @@ class ReviewAutofixService:
 
         index = {
             "version": 1,
+            "inference": inference,
             "review_id": debug.review_id,
             "status": "applying",
             "reviewed_content_digest": outcome.result.get("reviewed_content_digest"),
@@ -709,15 +738,7 @@ class ReviewAutofixService:
         scope: str,
     ) -> None:
         """Merge unflushed runtime calls into both the review ledger and whole-book totals."""
-        before = store.load_usage() or {
-            "totals": {},
-            "by_tier": {},
-            "by_stage": {},
-        }
-        cumulative = self._runtime.flush_usage(store, scope=scope)
-        increment = usage_delta(cumulative, before)
-        if increment.get("totals", {}).get("calls"):
-            debug.save_usage(increment)
+        self._runtime.flush_usage(store, scope=scope, review=debug)
 
     def _apply_index(
         self,

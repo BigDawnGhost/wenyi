@@ -113,3 +113,11 @@ Review. Translation uses overlapping cue windows with high concurrency on the
 strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with
 `cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
 [Usage guide — SRT subtitles](usage.md#srt-subtitles).
+
+## Model registration and usage
+
+All model calls use stable operation IDs from `llm/operations.py`; `llm/registry.py` registers provider adapters. Runtime and the separate SRT workflow each own one routed client, reusing SDK connections and sharing invocation concurrency, quotas and usage. Agents select no provider or tier; Orchestrator retains only assembly and workflow routing.
+
+To add a model operation, register an `OperationSpec` with its ID, default tier or inherited operation, output hint, workflow flags and protocol version, then call `complete(..., operation="domain.operation")` in the domain service. Validation, CLI previews and inference fingerprints read the same registry. To add a provider, implement its options, request builder, usage normalization and `ProviderAdapter` under `llm/providers/`, then register a `ProviderSpec`. Keep SDK initialization lazy and SDK retries disabled. Change the relevant protocol version when request semantics change, and cover requests, usage and resume behavior with offline tests. Registries are immutable after startup.
+
+Review compares the effective inference identity of reachable operations. Model, endpoint or option changes create a new Review, while unrelated routes or concurrency changes preserve caches. Pending Autofix publication takes priority; evidence traces are never replayed under another model. Book and Review ledgers journal their snapshots in `usage-pending.json` before updating each `usage.json`, allowing idempotent recovery.

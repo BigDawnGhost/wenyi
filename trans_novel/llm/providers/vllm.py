@@ -1,17 +1,9 @@
-"""Call local models through vLLM's OpenAI-compatible endpoint."""
+"""Connection defaults for vllm."""
 
-from ...config import LLMConfig
 from .openai_compatible import OpenAICompatibleClient
 
 DEFAULT_BASE_URL = "http://localhost:8000/v1"
 
 
 class VLLMClient(OpenAICompatibleClient):
-    def __init__(self, cfg: LLMConfig):
-        """Initialize vLLM's default local endpoint without requiring credentials by default."""
-        super().__init__(
-            cfg,
-            provider_name="vLLM",
-            default_base_url=DEFAULT_BASE_URL,
-            requires_api_key=False,
-        )
+    default_base_url = DEFAULT_BASE_URL

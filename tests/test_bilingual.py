@@ -234,8 +234,11 @@ def _config(state_dir: str, output: dict | None = None):
     raw = {
         "language": {"source": "ja", "target": "zh"},
         "llm": {
-            "provider": "fake",
-            "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+            "preset": "fake",
+            "models": {
+                "default_strong": {"provider": "default", "model": "p"},
+                "default_cheap": {"provider": "default", "model": "f"},
+            },
         },
         "pipeline": {
             "review": True,
@@ -455,7 +458,10 @@ class TestCliBilingualFlags(unittest.TestCase):
     def test_translate_flags_override_output_config(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
             }
         )
         captured = {}
@@ -466,6 +472,7 @@ class TestCliBilingualFlags(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["mono"] = config.output.mono
                 captured["bilingual"] = config.output.bilingual
 

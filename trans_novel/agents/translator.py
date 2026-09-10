@@ -111,7 +111,7 @@ class Translator(Agent):
         # Transient provider errors are retried only by the transport. Only JSON protocol errors in
         # successful responses enter alignment recovery, avoiding duplicate retries for 401/403/5xx errors.
         try:
-            items = self._ask_json(system, user, tier="strong", key="translations")
+            items = self._ask_json(system, user, operation="translation.body", key="translations")
         except JsonParseError as error:
             raise AlignmentError(
                 "Cannot parse the translation JSON returned by the model"

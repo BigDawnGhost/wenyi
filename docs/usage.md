@@ -18,6 +18,16 @@ release version; development builds include their commit distance and hash.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
+## Inspect model routing
+
+```bash
+uv run trans-novel models list
+uv run trans-novel models explain --operation review.fix
+uv run trans-novel models check --for translate
+```
+
+These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion, budgets and `models compare`.
+
 ## Multilingual translation (experimental)
 
 Run `uv run trans-novel languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:

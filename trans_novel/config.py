@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .i18n.languages import require_language
+from .llm.configuration import LLMConfig
 
 _DEFAULT_CONFIG_YAML = """\
 # trans-novel configuration (experimental multilingual fiction translation)
@@ -20,29 +21,9 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  # deepseek | openai | openrouter | orcarouter | openai-compatible | ollama | vllm | fake
-  # OrcaRouter defaults to https://api.orcarouter.ai/v1 and ORCAROUTER_API_KEY.
-  # When using provider: orcarouter, set tiers.*.model to IDs available to your account.
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 600
-  max_retries: 4
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
-        reasoning_effort: high
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
+  preset: deepseek # All tiers: deepseek-v4-flash, thinking enabled, reasoning_effort high
+  # Add providers, models and routes to override individual operations.
+  # Inspect effective settings with: trans-novel models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:
@@ -64,7 +45,6 @@ pipeline:
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
   review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
   review_agent_loop: true # Use evidence-based verification after the initial review identifies candidates
-  review_agent_tier: strong # Model tier for evidence verification and whole-book conflict arbitration
   review_agent_max_evidence_rounds: 2 # At most two rounds of selective evidence requests before a final decision
   review_conflict_arbitration: true # Arbitrate contradictory consistency proposals after all review blocks finish
   review_fix_loop: true # Revise an in-memory shadow translation and review it blindly; this loop does not publish changes
@@ -98,34 +78,14 @@ output:
 """
 
 
-class TierConfig(BaseModel):
-    """Shared tier overrides; each provider interprets its own options."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    model: str | None = None
-    options: dict[str, Any] = Field(default_factory=dict)
-
-
-ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
-
-
-class LLMConfig(BaseModel):
-    provider: str = "deepseek"
-    base_url: str | None = None
-    api_key_env: str | None = None
-    reasoning_style: ReasoningStyle = "none"
-    timeout: int = 600
-    max_retries: int = 4
-    tiers: dict[str, TierConfig] = Field(default_factory=dict)
-
-
 class SegmentConfig(BaseModel):
     max_chars_per_batch: int = 1800
     max_chars_per_segment: int = 1200
 
 
 class PipelineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     review: bool = True
     align_retry_limit: int = (
         2  # Retry misaligned batches this many times before falling back to single paragraphs
@@ -156,7 +116,6 @@ class PipelineConfig(BaseModel):
     review_agent_loop: bool = (
         True  # Start the bounded evidence agent loop when initial review finds candidates
     )
-    review_agent_tier: Literal["strong", "cheap", "fast"] = "strong"
     review_agent_max_evidence_rounds: int = Field(
         default=2,
         ge=0,
@@ -246,19 +205,7 @@ class Config(BaseModel):
             )
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})
-        tiers = {
-            name: TierConfig.model_validate(t)
-            for name, t in (llm_raw.get("tiers", {}) or {}).items()
-        }
-        llm = LLMConfig(
-            provider=llm_raw.get("provider", "deepseek"),
-            base_url=llm_raw.get("base_url"),
-            api_key_env=llm_raw.get("api_key_env"),
-            reasoning_style=llm_raw.get("reasoning_style", "none"),
-            timeout=llm_raw.get("timeout", 600),
-            max_retries=llm_raw.get("max_retries", 4),
-            tiers=tiers,
-        )
+        llm = LLMConfig.model_validate({} if llm_raw is None else llm_raw)
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
         output = OutputConfig.model_validate(raw.get("output", {}) or {})

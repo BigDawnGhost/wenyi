@@ -26,7 +26,7 @@ class Synopsizer(Agent):
         system = render("chapter_digest_system", src=self.src, tgt=self.tgt)
         user = render("chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000])
         # Use the fast tier with output headroom above the language-specific digest budget.
-        return self._ask_text(system, user, tier="fast", max_tokens=600)
+        return self._ask_text(system, user, operation="synopsis.chapter")
 
     def book_synopsis(self, digests: list[str], analysis_brief: str) -> str:
         """Combine chapter digests and analysis into a book synopsis; use map-reduce for long
@@ -76,4 +76,4 @@ class Synopsizer(Agent):
             digests=numbered,
         )
         # Use the fast tier with a bounded output budget for the synopsis.
-        return self._ask_text(system, user, tier="fast", max_tokens=1200)
+        return self._ask_text(system, user, operation="synopsis.book")

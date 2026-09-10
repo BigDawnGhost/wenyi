@@ -6,15 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...config import LLMConfig
-from ..base import Messages
+from ..transport import Messages, ResolvedModel
 from ..usage import UsageSample, make_usage_sample, read_usage_int
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
-    ResolvedTier,
     base_request_kwargs,
     deep_merge,
-    resolve_provider_tiers,
 )
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -32,74 +29,60 @@ def normalize_deepseek_usage(usage: Any) -> UsageSample | None:
     )
 
 
-class DeepSeekTierOptions(BaseModel):
-    """DeepSeek-specific tier request options."""
+class DeepSeekOptions(BaseModel):
+    """DeepSeek-specific model request options."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     thinking: bool = True
     reasoning_effort: str = "high"
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
-def _default_tiers() -> dict[str, ResolvedTier[DeepSeekTierOptions]]:
+def preset_models() -> dict[str, ResolvedModel[DeepSeekOptions]]:
     """Return built-in DeepSeek defaults for strong, cheap and fast tiers."""
     return {
-        "strong": ResolvedTier(
-            model="deepseek-v4-pro",
-            options=DeepSeekTierOptions(),
-        ),
-        "cheap": ResolvedTier(
+        "strong": ResolvedModel(
             model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(),
+            options=DeepSeekOptions(),
         ),
-        "fast": ResolvedTier(
+        "cheap": ResolvedModel(
             model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(thinking=True),
+            options=DeepSeekOptions(),
+        ),
+        "fast": ResolvedModel(
+            model="deepseek-v4-flash",
+            options=DeepSeekOptions(),
         ),
     }
 
 
 def build_request_kwargs(
-    tier_config: ResolvedTier[DeepSeekTierOptions],
+    model_config: ResolvedModel[DeepSeekOptions],
     messages: Messages,
     *,
     json_mode: bool = False,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Convert generic arguments into DeepSeek thinking-mode request parameters."""
-    kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
+    kwargs = base_request_kwargs(model_config.model, messages, json_mode=json_mode)
     extra_body: dict[str, Any] = {
-        "thinking": {"type": "enabled" if tier_config.options.thinking else "disabled"}
+        "thinking": {"type": "enabled" if model_config.options.thinking else "disabled"}
     }
-    if tier_config.options.thinking:
-        kwargs["reasoning_effort"] = tier_config.options.reasoning_effort
-    if tier_config.options.extra_body:
-        extra_body = deep_merge(extra_body, tier_config.options.extra_body)
+    if model_config.options.thinking:
+        kwargs["reasoning_effort"] = model_config.options.reasoning_effort
+    if model_config.options.extra_body:
+        extra_body = deep_merge(extra_body, model_config.options.extra_body)
     kwargs["extra_body"] = extra_body
     if max_tokens is not None:
-        kwargs["max_tokens"] = max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
+        kwargs["max_tokens"] = max_tokens
     return kwargs
 
 
-class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
-    def __init__(self, cfg: LLMConfig):
-        """Merge DeepSeek tier defaults and user overrides, then initialize the compatible
-        client.
-        """
-        tiers = resolve_provider_tiers(
-            cfg.tiers,
-            options_type=DeepSeekTierOptions,
-            defaults=_default_tiers(),
-        )
-        super().__init__(
-            cfg,
-            provider_name="DeepSeek",
-            default_base_url=DEFAULT_BASE_URL,
-            default_api_key_env=DEFAULT_API_KEY_ENV,
-            tiers=tiers,
-            requires_api_key=True,
-        )
+class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekOptions]):
+    default_base_url = DEFAULT_BASE_URL
+    default_api_key_env = DEFAULT_API_KEY_ENV
+    requires_api_key = True
 
     def _normalize_usage(self, usage: Any) -> UsageSample | None:
         """Normalize DeepSeek's top-level cache fields into shared usage accounting."""
@@ -107,7 +90,7 @@ class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
 
     def _build_request_kwargs(
         self,
-        tier_config: ResolvedTier[DeepSeekTierOptions],
+        model_config: ResolvedModel[DeepSeekOptions],
         messages: Messages,
         *,
         json_mode: bool,
@@ -115,7 +98,7 @@ class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
     ) -> dict[str, Any]:
         """Build final request arguments for the selected DeepSeek tier."""
         return build_request_kwargs(
-            tier_config,
+            model_config,
             messages,
             json_mode=json_mode,
             max_tokens=max_tokens,

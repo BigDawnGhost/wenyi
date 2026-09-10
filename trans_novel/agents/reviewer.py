@@ -67,9 +67,8 @@ class Reviewer(Agent):
         try:
             text = self.client.complete(
                 messages,
-                tier="cheap",
+                operation="review.scan",
                 json_mode=True,
-                stage=type(self).__name__,
             )
         except Exception as error:
             if trace:
