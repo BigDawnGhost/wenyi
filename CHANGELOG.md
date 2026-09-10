@@ -4,6 +4,10 @@ All notable changes to this project are documented here following [Keep a Change
 
 ## [Unreleased]
 - EPUB preflight verification now handles navigation XML comments and processing instructions, plus preserved footnote markers excluded from translation slots.
+- Translation now advances rolling history within each batch and rebuilds chapter-entry history from saved preceding chapters instead of trusting stale context caches.
+- Translation and optional polishing receive bounded preceding source paragraphs and the chapter title, with no future source window or additional model calls. Style guidance now distinguishes source evidence, book-level defaults, and natural Chinese expression.
+- Runs record a translation policy version. Older runs retain their saved results and can export completed translations, but cannot resume model-driven work under the new policy; start a separate run instead.
+- Removed the resolved translation-node class-size baseline exception.
 
 ## [1.2.0] - 2026-09-07
 - Default translation now uses the OpenRouter `tencent/hy-mt2-30b-a3b` model alias.

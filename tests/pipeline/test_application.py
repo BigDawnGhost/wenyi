@@ -26,6 +26,7 @@ from trans_novel.pipeline.state import (
     NODE_SUCCEEDED,
     ChapterIndex,
     ChapterProgress,
+    IdentityMismatchError,
     NodeState,
     PolishBatch,
     RepairIssue,
@@ -427,6 +428,104 @@ class TestMinimalPipeline(unittest.TestCase):
                 self.assertEqual(client.calls, [])
             finally:
                 glossary.close()
+
+
+class TestTranslationContextRecovery(unittest.TestCase):
+    def test_legacy_policy_exports_without_retranslation_or_invalidation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = _config(f"{directory}/state")
+            source_path = _write_source(directory)
+            goal = ExecutionGoal(name="run_all", phases=GOAL_RUN_ALL.phases, out_format="txt")
+            _, store = Application(
+                config, client=FakeClient(handler=routing_handler)
+            ).run_document_goal(_document(), source_path, goal)
+            manifest = store.load_manifest()
+            manifest["identity"].pop("translation_policy_version", None)
+            for key, node in manifest["nodes"].items():
+                if key.split(":")[0] in {"analyze", "translate", "polish"}:
+                    node["input_fingerprint"] = f"legacy-{key}"
+            store.save_manifest(manifest)
+            before = [s.target for s in store.load_chapter(0).text_segments]
+            client = FakeClient(handler=lambda *_args: self.fail("legacy export must be offline"))
+            app = Application(config, client=client)
+            outputs = app.assemble(
+                store, source_path, out_format="txt", out_path=f"{directory}/legacy.txt"
+            )
+            with open(outputs[0], encoding="utf-8") as stream:
+                exported = stream.read()
+            for target in before:
+                self.assertIn(target, exported)
+            with self.assertRaises(IdentityMismatchError):
+                app.run_document_goal(_document(), source_path, goal)
+            self.assertEqual(client.calls, [])
+            self.assertEqual([s.target for s in store.load_chapter(0).text_segments], before)
+            state = store.load_state()
+            for key, node in manifest["nodes"].items():
+                if key.split(":")[0] in {"analyze", "translate", "polish"}:
+                    self.assertEqual(state.nodes[key].input_fingerprint, node["input_fingerprint"])
+                    self.assertEqual(state.nodes[key].status, node["status"])
+
+    def test_resume_rebuilds_committed_history_without_cached_future(self):
+        sources = [f"Source paragraph {i} has a sentence." for i in range(9)]
+        targets = [f"这是第{i}段的译文。" for i in range(9)]
+
+        def handler(messages, agent, operation, json_mode):
+            if operation == "translate.single":
+                user = messages[-1]["content"].rstrip()
+                index = next(i for i, source in enumerate(sources) if user.endswith(source))
+                return targets[index]
+            return routing_handler(messages, agent, operation, json_mode)
+
+        def document():
+            doc = _document()
+            doc.chapters[0].segments = [
+                Segment(index=i, source=source) for i, source in enumerate(sources)
+            ]
+            return doc
+
+        class InterruptAfterCommit:
+            def after_batch_committed(self, chapter_index, start_index, count):
+                raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = _write_source(directory)
+            goal = ExecutionGoal(name="translate", phases=("prepare", "prescan", "translate"))
+            baseline_client = FakeClient(handler=handler)
+            config = _config(f"{directory}/baseline")
+            config.segment.max_chars_per_batch = 80
+            Application(config, client=baseline_client).run_document_goal(
+                document(), source_path, goal
+            )
+            interrupted_client = FakeClient(handler=handler)
+            config.state_dir = f"{directory}/resumed"
+            app = Application(
+                config, client=interrupted_client, batch_commit_hook=InterruptAfterCommit()
+            )
+            with self.assertRaises(KeyboardInterrupt):
+                app.run_document_goal(document(), source_path, goal)
+            store = RunStore(f"{config.state_dir}/Book")
+            store.save_context({"recent_targets": ["FUTURE-CONTAMINATION"]})
+            resumed_client = FakeClient(handler=handler)
+            Application(config, client=resumed_client).run_document_goal(
+                document(), source_path, goal
+            )
+            baseline = [
+                call["messages"]
+                for call in baseline_client.calls
+                if call["operation"] == "translate.single"
+            ]
+            recovered = [
+                call["messages"]
+                for call in interrupted_client.calls + resumed_client.calls
+                if call["operation"] == "translate.single"
+            ]
+            self.assertEqual(recovered, baseline)
+            self.assertEqual(len(recovered), len(sources))
+            self.assertIn(targets[0], recovered[1][-1]["content"])
+            self.assertNotIn(targets[0], recovered[-1][-1]["content"])
+            self.assertEqual(
+                [segment.target for segment in store.load_chapter(0).text_segments], targets
+            )
 
 
 def _write_source(directory: str) -> str:

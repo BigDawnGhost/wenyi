@@ -37,6 +37,8 @@ class Translator(Agent):
         *,
         agent: str,
         operation: str = "translate.batch",
+        source_context: str = "",
+        chapter_title: str = "",
     ) -> list[str]:
         n = len(sources)
         system = prompts.render(
@@ -53,6 +55,8 @@ class Translator(Agent):
             style=style or "（无）",
             glossary=prompts.render_glossary(glossary_terms),
             context=context or "（无）",
+            source_context=source_context or "（无）",
+            chapter_title=chapter_title or "（无）",
             n=n,
             n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
@@ -77,6 +81,8 @@ class Translator(Agent):
         agent: str,
         operation: str = "translate.batch",
         kind: str | None = None,
+        source_context: str = "",
+        chapter_title: str = "",
     ) -> str:
         if kind == KIND_HEADING:
             system = prompts.render("translator_heading_system", src=self.src)
@@ -96,6 +102,8 @@ class Translator(Agent):
                 glossary=prompts.render_glossary(glossary_terms),
                 style=style or "（无）",
                 context=context or "（无）",
+                source_context=source_context or "（无）",
+                chapter_title=chapter_title or "（无）",
             )
         target = self._ask_text(system, user, agent=agent, operation=operation, strict=True)
         if not target or len(target) > max(256, len(source) * 4):
@@ -113,6 +121,8 @@ class Translator(Agent):
         operation: str,
         kind: str | None,
         retries: int,
+        source_context: str = "",
+        chapter_title: str = "",
     ) -> tuple[str | None, int]:
         request_count = 0
 
@@ -127,6 +137,8 @@ class Translator(Agent):
                 agent=agent,
                 operation=operation,
                 kind=kind,
+                source_context=source_context,
+                chapter_title=chapter_title,
             )
 
         try:
@@ -182,6 +194,8 @@ class Translator(Agent):
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
         context: str = "",
+        source_context: str = "",
+        chapter_title: str = "",
         kind: str | None = None,
     ) -> TranslationBatchResult:
         glossary_terms = glossary_terms or []
@@ -207,6 +221,8 @@ class Translator(Agent):
                     operation=operation,
                     kind=kind,
                     retries=retries,
+                    source_context=source_context,
+                    chapter_title=chapter_title,
                 )
                 request_count += count
                 if target is None and fallback_agent is not None:
@@ -219,6 +235,8 @@ class Translator(Agent):
                         operation=operation,
                         kind=kind,
                         retries=retries,
+                        source_context=source_context,
+                        chapter_title=chapter_title,
                     )
                     request_count += count
                 if target is None:
@@ -241,6 +259,8 @@ class Translator(Agent):
                 context,
                 agent=agent,
                 operation=operation,
+                source_context=source_context,
+                chapter_title=chapter_title,
             )
 
         try:
@@ -267,6 +287,8 @@ class Translator(Agent):
                     agent=agent,
                     operation=operation,
                     kind=kind,
+                    source_context=source_context,
+                    chapter_title=chapter_title,
                 )
 
             try:

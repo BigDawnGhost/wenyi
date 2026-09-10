@@ -24,12 +24,26 @@ from trans_novel.pipeline.state import (
     SCOPE_BOOK,
     SCOPE_CHAPTER,
     STATUS_DONE,
+    IdentityMismatchError,
     RunState,
     RunStore,
     chapter_node_key,
 )
+from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 _CHAIN = (NODE_TRANSLATE, NODE_POLISH)
+_MODEL_WRITING_NODES = frozenset(
+    {
+        NODE_PREPARE,
+        NODE_ANALYZE,
+        NODE_MINE_TERMS,
+        NODE_NAME_TERMS,
+        NODE_TRANSLATE,
+        NODE_POLISH,
+        NODE_TITLES,
+        NODE_REPAIR,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -101,14 +115,18 @@ class Planner:
     ) -> WorkflowPlan:
         self.definition.validate_goal(goal.phases)
         state = store.load_state() if store.exists() else RunState()
+        legacy = (
+            store.exists()
+            and state.identity.translation_policy_version != TRANSLATION_POLICY_VERSION
+        )
         chapters = list(state.chapters)
         if goal.only_chapter is not None and goal.only_chapter not in {c.index for c in chapters}:
             raise ValueError(f"章节编号 {goal.only_chapter} 不存在")
-        if "translate" in goal.phases:
+        if "translate" in goal.phases and not legacy:
             self._reopen_upgraded(store, policy, chapters)
             state = store.load_state()
             chapters = list(state.chapters)
-        if store.exists():
+        if store.exists() and not legacy:
             computed = {}
             for key in state.nodes:
                 base, sep, suffix = key.partition(":")
@@ -173,6 +191,14 @@ class Planner:
             need(NODE_REPORT, force=True)
         if "assemble" in goal.phases:
             need(NODE_ASSEMBLE, force=True)
+        if legacy and any(
+            entry.action == "run" and entry.node_id in _MODEL_WRITING_NODES
+            for entry in needed.values()
+        ):
+            raise IdentityMismatchError(
+                "旧翻译策略的运行缺少所需结果，不能补译或修复；"
+                "请创建新的状态目录重新翻译，原有结果保持不变。"
+            )
         self._schedule(plan, needed, chapters, policy)
         return plan
 

@@ -18,6 +18,7 @@ from trans_novel.llm import FakeClient
 from trans_novel.llm.errors import AllModelsFailedError
 from trans_novel.pipeline.nodes import translate_batch
 from trans_novel.pipeline.quality import count_aligned, length_flags
+from trans_novel.pipeline.state import RollingContext
 
 
 def _count_segments(user_content: str) -> int:
@@ -469,16 +470,21 @@ class TestTranslateNodeHeadingPrompt(unittest.TestCase):
             GlossaryTerm(source="RED SUPERGIANT", target="红超巨星"),
             GlossaryTerm(source="BLACK HOLE", target="黑洞"),
         ]
+        segments = [
+            Segment(index=0, source="Contents", kind=KIND_HEADING),
+            Segment(index=1, source="RED SUPERGIANT", kind=KIND_HEADING),
+            Segment(index=2, source="A paragraph.", kind=KIND_TEXT),
+        ]
         translated = translate_batch(
             node.translator,
-            [
-                Segment(index=0, source="Contents", kind=KIND_HEADING),
-                Segment(index=1, source="RED SUPERGIANT", kind=KIND_HEADING),
-                Segment(index=2, source="A paragraph.", kind=KIND_TEXT),
-            ],
+            segments,
             terms,
-            "CONTEXT_MARKER",
+            RollingContext(recent_targets=["CONTEXT_MARKER"]),
             "STYLE_MARKER",
+            chapter_segments=segments,
+            start_index=0,
+            chapter_title="Chapter",
+            n_recent=6,
         )
 
         self.assertEqual(translated[0], ["目录", "红超巨星", "正文译文"])
@@ -491,13 +497,18 @@ class TestTranslateNodeHeadingPrompt(unittest.TestCase):
     def test_heading_keeps_strict_length_rejection_and_retries(self):
         client = FakeClient(handler=lambda messages, agent, operation, json_mode: "译" * 300)
         node = self._node(client)
+        segments = [Segment(index=0, source="Contents", kind=KIND_HEADING)]
 
         translated = translate_batch(
             node.translator,
-            [Segment(index=0, source="Contents", kind=KIND_HEADING)],
+            segments,
             [],
-            "CONTEXT_MARKER",
+            RollingContext(recent_targets=["CONTEXT_MARKER"]),
             "STYLE_MARKER",
+            chapter_segments=segments,
+            start_index=0,
+            chapter_title="Chapter",
+            n_recent=6,
         )
         self.assertEqual(translated, (["Contents"], 0))
         self.assertEqual(len(client.calls), 2)
@@ -512,12 +523,17 @@ class TestTranslateNodeHeadingPrompt(unittest.TestCase):
 
         client = FakeClient(handler=handler)
         node = self._node(client)
+        segments = [Segment(index=0, source="A paragraph.", kind=KIND_TEXT)]
         translated = translate_batch(
             node.translator,
-            [Segment(index=0, source="A paragraph.", kind=KIND_TEXT)],
+            segments,
             [],
-            "CONTEXT_MARKER",
+            RollingContext(recent_targets=["CONTEXT_MARKER"]),
             "STYLE_MARKER",
+            chapter_segments=segments,
+            start_index=0,
+            chapter_title="Chapter",
+            n_recent=6,
         )
         self.assertEqual(translated[0], ["分析译文"])
         self.assertEqual(translated[1], 3)

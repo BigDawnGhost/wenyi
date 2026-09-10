@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RUN_STATE_SCHEMA_VERSION = 4
 RUN_INPUT_SCHEMA_VERSION = 2
+TRANSLATION_POLICY_VERSION = 1
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
 ChapterStatus = Literal["pending", "done"]
@@ -134,6 +135,7 @@ class RunIdentity(BaseModel):
     model_config = ConfigDict(extra="ignore")
     source_bytes_sha256: str = ""
     run_input_schema_version: int = RUN_INPUT_SCHEMA_VERSION
+    translation_policy_version: int = 0
     source_lang: str = ""
     target_lang: str = ""
 

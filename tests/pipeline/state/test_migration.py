@@ -18,9 +18,9 @@ from trans_novel.pipeline.planning import (
 )
 from trans_novel.pipeline.state import (
     NODE_PENDING,
-    NODE_TRANSLATE,
     RUN_STATE_SCHEMA_VERSION,
     ChapterStatus,
+    IdentityMismatchError,
     NodeStatus,
     RunStore,
 )
@@ -148,16 +148,14 @@ class TestV3Migration(unittest.TestCase):
             self.assertEqual(state.progress[0].back_matter_mode, "light")
             self.assertFalse(any("naturalize" in key for key in state.nodes))
             self.assertEqual(state.nodes["translate:0"].input_fingerprint, "")
-            plan = Planner(build_workflow_definition()).build_plan(
-                goal=GOAL_TRANSLATE, store=store, policy=WorkflowPolicy(), prescan=PrescanInputs()
-            )
-            self.assertFalse(
-                any(
-                    entry.node_id == NODE_TRANSLATE
-                    for stage in plan.stages
-                    for entry in stage.entries
+            with self.assertRaises(IdentityMismatchError):
+                Planner(build_workflow_definition()).build_plan(
+                    goal=GOAL_TRANSLATE,
+                    store=store,
+                    policy=WorkflowPolicy(),
+                    prescan=PrescanInputs(),
                 )
-            )
+            self.assertEqual(RunStore(root).load_chapter(0).segments[1].target.encode(), expected)
 
     def test_v1_routes_through_v2_and_reaches_v3(self):
         with tempfile.TemporaryDirectory() as d:

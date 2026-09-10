@@ -26,7 +26,8 @@ from trans_novel.pipeline.planning.fingerprints import (
     translation_structure_fingerprint_part,
 )
 from trans_novel.pipeline.planning.planner import PrescanInputs, WorkflowPolicy
-from trans_novel.pipeline.state import RunState, normalize_lang_code
+from trans_novel.pipeline.state import IdentityMismatchError, RunState, normalize_lang_code
+from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 
 def sample_text(doc, *, labeled: bool = True) -> str:
@@ -72,11 +73,42 @@ def _build_text_inputs(store, state):
     return source, done_targets, titles
 
 
+def _check_policy(store, state: RunState, goal) -> bool:
+    legacy = (
+        store.exists() and state.identity.translation_policy_version != TRANSLATION_POLICY_VERSION
+    )
+    if legacy and {"prepare", "prescan", "translate", "titles", "repair", "polish"}.intersection(
+        goal.phases
+    ):
+        raise IdentityMismatchError(
+            "翻译策略版本不一致；请创建新的状态目录重新翻译，原有结果保持不变。"
+        )
+    return legacy
+
+
+def _historical_inputs(inputs: PrescanInputs, state: RunState) -> PrescanInputs:
+    def saved(key: str) -> str:
+        node = state.nodes.get(key)
+        return node.input_fingerprint if node else ""
+
+    inputs.prepare_fingerprint = lambda: saved("prepare")
+    inputs.analyze_fingerprint = lambda: saved("analyze")
+    inputs.mine_fingerprint = lambda: saved("mine_terms")
+    inputs.name_terms_fingerprint = lambda: saved("name_terms")
+    inputs.translate_fingerprint = lambda ci: saved(f"translate:{ci}")
+    inputs.polish_fingerprint = lambda ci: saved(f"polish:{ci}")
+    inputs.titles_fingerprint = lambda: saved("titles")
+    inputs.deterministic_qa_fingerprint = lambda: saved("deterministic_qa")
+    inputs.report_fingerprint = lambda: saved("report")
+    return inputs
+
+
 def build_prescan_inputs(
     config: Config, store, policy: WorkflowPolicy, context, goal
 ) -> PrescanInputs:
     cfg = config
     state = store.load_state() if store.exists() else RunState()
+    legacy = _check_policy(store, state, goal)
     src = state.identity.source_lang or normalize_lang_code(cfg.source_lang)
     tgt = state.identity.target_lang or normalize_lang_code(cfg.target_lang)
     source, done_targets, titles = _build_text_inputs(store, state)
@@ -164,7 +196,7 @@ def build_prescan_inputs(
             lint, findings, [t.source for t in context.glossary().all_terms()], report_titles
         )
 
-    return PrescanInputs(
+    inputs = PrescanInputs(
         prepare_fingerprint=prepare_fp,
         analyze_fingerprint=analyze_fp,
         mine_fingerprint=mine_fp,
@@ -184,6 +216,7 @@ def build_prescan_inputs(
             bilingual_order=cfg.output.bilingual_order,
         ),
     )
+    return _historical_inputs(inputs, state) if legacy else inputs
 
 
 __all__ = ["build_prescan_inputs"]

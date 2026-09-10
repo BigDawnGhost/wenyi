@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from trans_novel.config import Config
-from trans_novel.epub.slots import normalize_slot_transport, target_slot_transport
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.pipeline.contracts import BatchCommitHook, NodeOutcome, NodeRequest
 from trans_novel.pipeline.nodes.backmatter import translate_back_matter
-from trans_novel.pipeline.nodes.common import chapter_term_snapshot, resume_batches
+from trans_novel.pipeline.nodes.common import (
+    chapter_term_snapshot,
+    normalize_batch,
+    record_lint,
+    resume_batches,
+    seed_chapter_context,
+    source_context_before,
+)
 from trans_novel.pipeline.nodes.glossary import extract_and_store
 from trans_novel.pipeline.nodes.translation_batch import (
     extract_batch_glossary,
@@ -35,7 +41,6 @@ from trans_novel.pipeline.state import (
     clear,
     stable_digest,
 )
-from trans_novel.postprocess.punct import normalize_zh
 
 
 class TranslateNode:
@@ -102,6 +107,7 @@ class TranslateNode:
         bm = is_back_matter(chapter.title, index=ci, total=request.total_chapters)
         chapter_progress.back_matter_mode = None
         glossary, context, style = self.glossary, self.rolling_context, self.style_brief
+        seed_chapter_context(context, store, ci)
         batches = resume_batches(text_segs, config.segment.max_chars_per_batch)
         label = f"第{ci}章 {chapter.title}"
         if request.progress:
@@ -211,13 +217,14 @@ class TranslateNode:
             remaining_src = "\n".join(s.source for s in text_segs[seg_base + len(batch) :])
             if changed and GlossaryStore.terms_in(changed, remaining_src):
                 term_snapshot = chapter_term_snapshot(glossary, text_segs, self.config)
-        self._record_lint(
+        record_lint(
             [s.source for s in batch],
             [s.target for s in batch],
             request.ci,
             seg_base,
             term_snapshot,
             lint_issues,
+            src_lang=self.translator.src,
             store=None,
         )
         store.log_event(
@@ -255,8 +262,12 @@ class TranslateNode:
             self.translator,
             batch,
             term_snapshot,
-            context.render(self.config.pipeline.rolling_context_segments),
+            context,
             style,
+            chapter_segments=text_segs,
+            start_index=seg_base,
+            chapter_title=chapter.title,
+            n_recent=self.config.pipeline.rolling_context_segments,
             single_segment_translation=self.config.pipeline.single_segment_translation,
         )
         raw_targets = []
@@ -269,25 +280,27 @@ class TranslateNode:
             locked_terms=[t for t in term_snapshot if getattr(t, "locked", 0)],
             src_lang=self.translator.src,
         )
-        self._record_lint(
+        record_lint(
             [s.source for s in batch],
             raw_targets,
             request.ci,
             seg_base,
             term_snapshot,
             lint_issues,
+            src_lang=self.translator.src,
             issues=issues,
             store=store,
         )
         request.shared.segments_done += len(batch)
         batch_start = seg_base
         if self.config.pipeline.polish:
-            context.add_targets(raw_targets)
             chapter_progress.pending_polish.append(PolishBatch(start=batch_start, count=len(batch)))
             event_targets = raw_targets
             normalized = False
         else:
-            event_targets, normalized = self._normalize_batch(batch, raw_targets, context)
+            event_targets, normalized = normalize_batch(
+                batch, raw_targets, punctuation_normalize=self.config.punctuation_normalize
+            )
         chapter_progress.lint_issues = lint_issues
         self._commit_batch(
             batch,
@@ -300,6 +313,7 @@ class TranslateNode:
             event_targets,
             normalized,
         )
+        context.add_targets(event_targets)
         if self.config.pipeline.polish:
             request.shared.polish_futures[(request.ci, batch_start)] = request.executor.submit(
                 self.polisher.polish,
@@ -307,6 +321,11 @@ class TranslateNode:
                 [s.source for s in batch],
                 glossary_terms=list(term_snapshot),
                 style=style,
+                source_contexts=tuple(
+                    source_context_before(text_segs, index)
+                    for index in range(batch_start, batch_start + len(batch))
+                ),
+                chapter_title=chapter.title,
                 strict=True,
             )
         if not bm and self.config.pipeline.inflight_glossary:
@@ -321,72 +340,6 @@ class TranslateNode:
         if request.progress:
             request.progress(request.shared.segments_done, request.shared.segments_total, label)
         return term_snapshot
-
-    def _record_lint(
-        self,
-        sources,
-        targets,
-        chapter,
-        seg_base,
-        term_snapshot,
-        lint_issues,
-        *,
-        issues=None,
-        store,
-    ):
-        if issues is None:
-            issues = lint_targets(
-                sources,
-                targets,
-                locked_terms=[t for t in term_snapshot if getattr(t, "locked", 0)],
-                src_lang=self.translator.src,
-            )
-        if not issues:
-            return
-        payload = [
-            {"index": seg_base + it.index, "type": it.type, "detail": it.detail} for it in issues
-        ]
-        type_counts: dict[str, int] = {}
-        for it in issues:
-            type_counts[it.type] = type_counts.get(it.type, 0) + 1
-            lint_issues.append(
-                {
-                    "chapter": chapter,
-                    "index": seg_base + it.index,
-                    "type": it.type,
-                    "detail": it.detail,
-                    "stage": "lint",
-                    "fixed": False,
-                }
-            )
-        if store is not None:
-            store.log_event(
-                "batch_linted",
-                chapter=chapter,
-                start_index=seg_base,
-                issue_count=len(issues),
-                by_type={t: type_counts[t] for t in sorted(type_counts)},
-                issues_sha256=stable_digest(payload),
-            )
-
-    def _normalize_batch(self, batch, raw_targets, context):
-        if not self.config.punctuation_normalize:
-            context.add_targets(raw_targets)
-            return raw_targets, False
-        for segment in batch:
-            if segment.epub_state is None:
-                target = segment.target or ""
-                if target != segment.source:
-                    segment.assign_translation(normalize_zh(target))
-            else:
-                segment.assign_translation(
-                    normalize_slot_transport(
-                        segment.epub_state, target_slot_transport(segment.epub_state)
-                    )
-                )
-        final_targets = [s.target or "" for s in batch]
-        context.add_targets(final_targets)
-        return final_targets, True
 
     def _commit_batch(
         self,

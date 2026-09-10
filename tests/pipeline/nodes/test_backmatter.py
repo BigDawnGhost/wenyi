@@ -18,7 +18,7 @@ from trans_novel.pipeline import build_workflow_definition
 from trans_novel.pipeline.contracts import GOAL_RUN_ALL, NodeRequest
 from trans_novel.pipeline.nodes import TranslateNode, translate_batch
 from trans_novel.pipeline.planning import Planner, PrescanInputs, WorkflowPolicy, is_back_matter
-from trans_novel.pipeline.state import NODE_TRANSLATE, RunIdentity, RunStore
+from trans_novel.pipeline.state import NODE_TRANSLATE, RollingContext, RunIdentity, RunStore
 
 
 class _StubTranslator:
@@ -189,12 +189,17 @@ class TestBackMatterPolicy(unittest.TestCase):
             style_brief="",
             rolling_context=None,
         )
+        segments = [Segment(index=0, source='"quoted"')]
         raw, call_count = translate_batch(
             node.translator,
-            [Segment(index=0, source='"quoted"')],
+            segments,
             [],
+            RollingContext(),
             "",
-            "",
+            chapter_segments=segments,
+            start_index=0,
+            chapter_title="Chapter",
+            n_recent=6,
             single_segment_translation=node.config.pipeline.single_segment_translation,
         )
         self.assertEqual(raw, ['"quoted"'])
@@ -211,13 +216,18 @@ class TestBackMatterPolicy(unittest.TestCase):
             style_brief="",
             rolling_context=None,
         )
+        segments = [Segment(index=0, source="text")]
         with self.assertRaisesRegex(RuntimeError, "bug"):
             translate_batch(
                 node.translator,
-                [Segment(index=0, source="text")],
+                segments,
                 [],
+                RollingContext(),
                 "",
-                "",
+                chapter_segments=segments,
+                start_index=0,
+                chapter_title="Chapter",
+                n_recent=6,
                 single_segment_translation=node.config.pipeline.single_segment_translation,
             )
 

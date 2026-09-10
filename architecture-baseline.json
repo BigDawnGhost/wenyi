@@ -9,7 +9,7 @@
     "files": [
       {
         "path": "tests/llm/test_usage.py",
-        "lines": 871
+        "lines": 851
       }
     ],
     "symbols": [
@@ -17,13 +17,7 @@
         "path": "trans_novel/llm/providers/transport.py",
         "symbol": "OpenAICompatibleTransport.complete",
         "kind": "function",
-        "lines": 212
-      },
-      {
-        "path": "trans_novel/pipeline/nodes/translate.py",
-        "symbol": "TranslateNode",
-        "kind": "class",
-        "lines": 442
+        "lines": 203
       }
     ],
     "cycles": [],

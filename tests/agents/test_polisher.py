@@ -109,3 +109,35 @@ class TestPolisher(unittest.TestCase):
         self.assertNotIn("BETA_SRC", first)
         self.assertIn("BETA_SRC", second)
         self.assertNotIn("ALPHA_SRC", second)
+
+    def test_source_context_is_segment_local_and_does_not_read_neighbor_targets(self):
+        client = FakeClient(
+            handler=lambda m, a, o, j: json.dumps({"polished": ["润色"]}, ensure_ascii=False)
+        )
+        Polisher(client, _cfg()).polish(
+            ["TARGET_ALPHA", "TARGET_BETA"],
+            ["SOURCE_ALPHA", "SOURCE_BETA"],
+            source_contexts=("PRECEDING_FIRST", "PRECEDING_SECOND"),
+            chapter_title="ORIGINAL_CHAPTER",
+        )
+        first, second = [call["messages"][-1]["content"] for call in client.calls]
+        self.assertIn("PRECEDING_FIRST", first)
+        self.assertNotIn("PRECEDING_SECOND", first)
+        self.assertNotIn("TARGET_BETA", first)
+        self.assertIn("PRECEDING_SECOND", second)
+        self.assertNotIn("PRECEDING_FIRST", second)
+        self.assertNotIn("TARGET_ALPHA", second)
+        for prompt in (first, second):
+            self.assertIn("ORIGINAL_CHAPTER", prompt)
+            self.assertNotIn("{source_context}", prompt)
+            self.assertNotIn("{chapter_title}", prompt)
+
+    def test_source_context_count_mismatch_fails_before_requests(self):
+        client = FakeClient(handler=lambda *args: self.fail("must validate before requests"))
+        with self.assertRaises(ValueError):
+            Polisher(client, _cfg()).polish(
+                ["TARGET_ALPHA", "TARGET_BETA"],
+                ["SOURCE_ALPHA", "SOURCE_BETA"],
+                source_contexts=("ONE_CONTEXT",),
+            )
+        self.assertEqual(client.calls, [])

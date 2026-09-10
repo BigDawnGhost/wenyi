@@ -9,7 +9,7 @@ from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest.segmenter import batch_segments
 from trans_novel.llm.errors import LLM_FALLBACK_ERRORS
 from trans_novel.pipeline.contracts import NodeOutcome, NodeRequest
-from trans_novel.pipeline.nodes.common import chapter_term_snapshot
+from trans_novel.pipeline.nodes.common import chapter_term_snapshot, source_context_before
 from trans_novel.pipeline.nodes.glossary import extract_and_store
 from trans_novel.pipeline.nodes.translation_batch import align_epub_translations
 from trans_novel.pipeline.planning import (
@@ -112,6 +112,30 @@ class PolishNode:
             )
         return NodeOutcome(fingerprint=fp)
 
+    def _submit_pending(
+        self, pending, chapter, text_segs, futures_by_key, executor, style, term_snapshot, ci
+    ) -> None:
+        for entry in pending:
+            start = entry.start
+            key = (ci, start)
+            if key not in futures_by_key:
+                count = entry.count
+                batch = text_segs[start : start + count]
+                raw_plain = [segment.target or "" for segment in batch]
+                futures_by_key[key] = executor.submit(
+                    self.polisher.polish,
+                    raw_plain,
+                    [segment.source for segment in batch],
+                    glossary_terms=list(term_snapshot),
+                    style=style,
+                    source_contexts=tuple(
+                        source_context_before(text_segs, index)
+                        for index in range(start, start + count)
+                    ),
+                    chapter_title=chapter.title,
+                    strict=True,
+                )
+
     def _drain_chapter_polish(
         self,
         chapter,
@@ -129,21 +153,9 @@ class PolishNode:
         pending = list(chapter_progress.pending_polish)
         if not pending:
             return
-        for entry in pending:
-            start = entry.start
-            key = (ci, start)
-            if key not in futures_by_key:
-                count = entry.count
-                batch = text_segs[start : start + count]
-                raw_plain = [segment.target or "" for segment in batch]
-                futures_by_key[key] = executor.submit(
-                    self.polisher.polish,
-                    raw_plain,
-                    [segment.source for segment in batch],
-                    glossary_terms=list(term_snapshot),
-                    style=style,
-                    strict=True,
-                )
+        self._submit_pending(
+            pending, chapter, text_segs, futures_by_key, executor, style, term_snapshot, ci
+        )
         for entry in sorted(pending, key=lambda e: e.start):
             start, count = entry.start, entry.count
             fut = futures_by_key.pop((ci, start), None)

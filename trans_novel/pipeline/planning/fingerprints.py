@@ -11,6 +11,7 @@ import json
 from trans_novel.model_profiles import parse_provider_model
 from trans_novel.pipeline.state import input_fingerprint, normalize_lang_code
 from trans_novel.pipeline.state.frozen import frozen_input_fingerprint  # noqa: F401
+from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 
 def translator_model_profile(config) -> str:
@@ -119,8 +120,8 @@ def prepare_input_fingerprint(source_sha: str, src_lang: str, tgt_lang: str) -> 
 
 
 def analyze_input_fingerprint(sample: str, model: str = "") -> str:
-    """风格/角色分析：样章文本 + 模型路由。"""
-    return input_fingerprint(sample, model)
+    """风格/角色分析：策略版本 + 样章文本 + 模型路由。"""
+    return input_fingerprint(TRANSLATION_POLICY_VERSION, sample, model)
 
 
 def name_terms_input_fingerprint(
@@ -146,6 +147,7 @@ def translate_input_fingerprint(
     model: str = "",
 ) -> str:
     return input_fingerprint(
+        TRANSLATION_POLICY_VERSION,
         source_text,
         normalize_lang_code(src_lang),
         normalize_lang_code(tgt_lang),
@@ -186,6 +188,7 @@ def polish_input_fingerprint(
 ) -> str:
     """润色：源文 + 风格 + 标点配置 + 模型（译文本体由 translate 级联驱动）。"""
     return input_fingerprint(
+        TRANSLATION_POLICY_VERSION,
         source_text,
         normalize_lang_code(src_lang),
         style_brief,

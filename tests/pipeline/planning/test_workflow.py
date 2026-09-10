@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from trans_novel.config import PipelineConfig
+from trans_novel.config import Config, PipelineConfig
 from trans_novel.ingest.models import Chapter, Document, Segment
 from trans_novel.pipeline import build_workflow_definition
-from trans_novel.pipeline.contracts import GOAL_RUN_ALL
-from trans_novel.pipeline.planning import Planner, PrescanInputs, WorkflowPolicy
+from trans_novel.pipeline.contracts import GOAL_RUN_ALL, ExecutionGoal, assemble_goal, qa_goal
+from trans_novel.pipeline.planning import (
+    Planner,
+    PrescanInputs,
+    WorkflowPolicy,
+    build_prescan_inputs,
+    fingerprints,
+)
 from trans_novel.pipeline.state import (
     NODE_ASSEMBLE,
     NODE_DETERMINISTIC_QA,
@@ -21,9 +29,11 @@ from trans_novel.pipeline.state import (
     NODE_REPORT,
     NODE_TITLES,
     NODE_TRANSLATE,
+    IdentityMismatchError,
     RunIdentity,
     RunStore,
 )
+from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 
 class TestPresets(unittest.TestCase):
@@ -135,3 +145,139 @@ class TestPlanner(unittest.TestCase):
                 "assemble",
             }
             self.assertTrue(all(key.split(":", 1)[0] in allowed for key in keys))
+
+
+class TestTranslationPolicy(unittest.TestCase):
+    @staticmethod
+    def _legacy_store(tmp: str) -> RunStore:
+        store = TestPlanner._store(tmp)
+        raw = store.load_manifest()
+        raw["identity"].pop("translation_policy_version")
+        keys = ["prepare", "analyze", "mine_terms", "name_terms", "titles"]
+        keys += ["deterministic_qa", "repair", "report"]
+        for chapter in raw["chapters"]:
+            ci = chapter["index"]
+            keys.extend([f"translate:{ci}", f"polish:{ci}"])
+            raw["progress"][str(ci)]["status"] = "done"
+            saved = store.load_chapter(ci)
+            saved.text_segments[0].target = f"Saved translation {ci}"
+            store.save_chapter(saved)
+        raw["nodes"] = {
+            key: {"node_id": key, "status": "succeeded", "input_fingerprint": f"old-{key}"}
+            for key in keys
+        }
+        store.write_json(store.manifest_path, raw)
+        store.save_analysis({"style_guide": "Saved style"})
+        return store
+
+    def test_old_or_unknown_policy_rejects_writing_before_reading_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._legacy_store(tmp)
+            for version in (None, TRANSLATION_POLICY_VERSION + 1):
+                raw = store.read_json(store.manifest_path)
+                if version is not None:
+                    raw["identity"]["translation_policy_version"] = version
+                    store.write_json(store.manifest_path, raw)
+                before = Path(store.manifest_path).read_bytes()
+                for phase in ("prepare", "prescan", "translate", "titles", "repair", "polish"):
+                    with self.subTest(version=version, phase=phase):
+                        with self.assertRaises(IdentityMismatchError):
+                            build_prescan_inputs(
+                                Config(),
+                                store,
+                                WorkflowPolicy(),
+                                None,
+                                ExecutionGoal(name=phase, phases=(phase,)),
+                            )
+                        self.assertEqual(Path(store.manifest_path).read_bytes(), before)
+                self.assertEqual(
+                    store.load_chapter(0).text_segments[0].target, "Saved translation 0"
+                )
+                self.assertEqual(store.load_analysis(), {"style_guide": "Saved style"})
+
+    def test_old_complete_run_can_plan_qa_and_export_without_reconciliation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._legacy_store(tmp)
+            before = Path(store.manifest_path).read_bytes()
+            self.assertEqual(store.load_state().identity.translation_policy_version, 0)
+            for goal in (qa_goal(), assemble_goal(out_format="txt")):
+                with self.subTest(goal=goal.name):
+                    prescan = build_prescan_inputs(Config(), store, WorkflowPolicy(), None, goal)
+                    plan = Planner(build_workflow_definition()).build_plan(
+                        goal=goal, store=store, policy=WorkflowPolicy(), prescan=prescan
+                    )
+                    self.assertEqual(
+                        plan.entry_keys(),
+                        {"deterministic_qa"} if goal.name == "qa" else {"assemble"},
+                    )
+                    self.assertEqual(Path(store.manifest_path).read_bytes(), before)
+                    self.assertEqual(
+                        store.load_chapter(0).text_segments[0].target, "Saved translation 0"
+                    )
+
+    def test_old_incomplete_export_rejects_implicit_model_work_without_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._legacy_store(tmp)
+            raw = store.read_json(store.manifest_path)
+            del raw["nodes"]["translate:0"]
+            store.write_json(store.manifest_path, raw)
+            before = Path(store.manifest_path).read_bytes()
+            goal = assemble_goal(out_format="txt")
+            prescan = build_prescan_inputs(Config(), store, WorkflowPolicy(), None, goal)
+            with self.assertRaises(IdentityMismatchError):
+                Planner(build_workflow_definition()).build_plan(
+                    goal=goal, store=store, policy=WorkflowPolicy(), prescan=prescan
+                )
+            self.assertEqual(Path(store.manifest_path).read_bytes(), before)
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "Saved translation 0")
+
+    def test_staging_stamps_new_identity_without_mutating_supplied_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunStore(tmp)
+            identity = RunIdentity(source_lang="en", target_lang="zh")
+            doc = Document(
+                title="Book", fmt="text", source_lang="en", target_lang="zh", chapters=[]
+            )
+            store.save_manifest(store.stage_document(doc, identity))
+            self.assertEqual(identity.translation_policy_version, 0)
+            self.assertEqual(
+                store.load_state().identity.translation_policy_version, TRANSLATION_POLICY_VERSION
+            )
+            prescan = build_prescan_inputs(Config(), store, WorkflowPolicy(), None, GOAL_RUN_ALL)
+            plan = Planner(build_workflow_definition()).build_plan(
+                goal=ExecutionGoal(name="prepare", phases=("prepare",)),
+                store=store,
+                policy=WorkflowPolicy(),
+                prescan=prescan,
+            )
+            self.assertEqual(plan.entry_keys(), {"prepare", "analyze"})
+
+    def test_policy_version_changes_analysis_translation_and_polish_fingerprints(self):
+        def values():
+            return (
+                fingerprints.analyze_input_fingerprint("Source"),
+                fingerprints.translate_input_fingerprint(
+                    "Source",
+                    "en",
+                    "zh",
+                    style_brief="",
+                    punctuation_normalize=True,
+                    honorific_strategy="keep_style",
+                    glossary_scope="chapter",
+                    single_segment_translation=True,
+                ),
+                fingerprints.polish_input_fingerprint(
+                    "Source", "en", "", punctuation_normalize=True
+                ),
+            )
+
+        current = values()
+        with patch.object(
+            fingerprints, "TRANSLATION_POLICY_VERSION", TRANSLATION_POLICY_VERSION + 1
+        ):
+            changed = values()
+        for name, before, after in zip(
+            ("analyze", "translate", "polish"), current, changed, strict=True
+        ):
+            with self.subTest(node=name):
+                self.assertNotEqual(before, after)

@@ -48,6 +48,7 @@ from trans_novel.pipeline.state.models import (
     RUN_STATE_SCHEMA_VERSION,
     STATUS_DONE,
     STATUS_PENDING,
+    TRANSLATION_POLICY_VERSION,
     ChapterIndex,
     ChapterProgress,
     IdentityMismatchError,
@@ -266,7 +267,9 @@ class RunStore:
     def stage_document(self, doc: Document, identity: RunIdentity) -> dict:
         state = RunState(
             run_state_schema=RUN_STATE_SCHEMA_VERSION,
-            identity=identity,
+            identity=identity.model_copy(
+                update={"translation_policy_version": TRANSLATION_POLICY_VERSION}
+            ),
             title=doc.title,
             fmt=doc.fmt,
             source_path=doc.source_path,

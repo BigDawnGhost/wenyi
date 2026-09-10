@@ -19,12 +19,18 @@ class Polisher(Agent):
         *,
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
+        source_contexts: tuple[str, ...] | None = None,
+        chapter_title: str = "",
         strict: bool = False,
     ) -> list[str]:
         if len(targets) != len(sources):
             raise ValueError("polish source/target count mismatch")
+        if source_contexts is None:
+            source_contexts = ("",) * len(targets)
+        elif len(source_contexts) != len(targets):
+            raise ValueError("polish source context/target count mismatch")
         polished = []
-        for source, target in zip(sources, targets, strict=True):
+        for source, target, source_context in zip(sources, targets, source_contexts, strict=True):
             if not langprofile.needs_translation(source):
                 polished.append(source)
                 continue
@@ -35,6 +41,8 @@ class Polisher(Agent):
                 tgt=self.tgt,
                 glossary=prompts.render_glossary(glossary_terms or []),
                 style=style or "（无）",
+                source_context=source_context or "（无）",
+                chapter_title=chapter_title or "（无）",
                 n=1,
                 numbered_source=prompts.numbered([source]),
                 numbered_target=prompts.numbered([target]),
