@@ -23,13 +23,13 @@ The first command lists built-in languages without an API key. The second transl
 
 Built-in codes are `zh`, `zh-Hant`, `en`, `ja`, `ko`, `fr`, `de`, `es`, `it`, `pt`, `ru`, plus regional variants `en-US`, `en-GB`, `pt-BR`, and `pt-PT`. Built-in means profiles, configuration, and workflow are available; it does not certify real-model quality for every direction.
 
-`source: auto` retains model detection; targets cannot be `auto`. Unknown codes fail explicitly instead of being truncated. Compatibility aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, and `ja-JP` / `ko-KR` → `ja` / `ko`. These are product aliases: the registry defines supported tags, and this version is not an arbitrary BCP 47 parser. Language tags can encode scripts and regions; a tag standard does not establish translation capability. [RFC 5646](https://www.rfc-editor.org/info/rfc5646/)
+`source: auto` retains model detection; targets cannot be `auto`. Unknown codes fail explicitly instead of being truncated. Registered aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, and `ja-JP` / `ko-KR` → `ja` / `ko`. These are product aliases: the registry defines supported tags, and this version is not an arbitrary BCP 47 parser. Language tags can encode scripts and regions; a tag standard does not establish translation capability. [RFC 5646](https://www.rfc-editor.org/info/rfc5646/)
 
 ## Implementation and previous assumptions
 
 Although source/target fields already existed, body translation, polishing, titles, glossary extraction, digests, and synopses still instructed Chinese output. They now render for the selected target, including pair-dependent honorific guidance. English, Japanese, and Traditional Chinese no longer receive Simplified Chinese full-width punctuation rules.
 
-All generated descriptive metadata, including every glossary `note`, style guidance, character descriptions, and references to characters in prose, is explicitly requested in the target language. Character and term `target` values contain translated or transliterated names. `source` and `aliases` retain original spellings for matching; original-language quotations remain valid evidence. JSON keys, Review actions, and segment identities are unchanged. Type and gender values now use English identifiers; legacy Chinese values normalize on read without rewriting saved rows. A list of style-guide bullets is accepted and retained as text when a model deviates from the requested string schema.
+All generated descriptive metadata, including every glossary `note`, style guidance, character descriptions, and references to characters in prose, is explicitly requested in the target language. Character and term `target` values contain translated or transliterated names. `source` and `aliases` retain original spellings for matching; original-language quotations remain valid evidence. JSON keys, Review actions, and segment identities are unchanged. Type and gender values use English identifiers; older Chinese enum values are no longer converted. A list of style-guide bullets is accepted and retained as text when a model deviates from the requested string schema.
 
 CLI help, progress, tables, and errors use English, as do code comments, docstrings, configuration comments, and prompt instructions. English instructions do not require English translations: generated prose still follows `language.target`, and the generated default configuration still selects `zh`.
 
@@ -45,7 +45,7 @@ trans_novel/i18n/
   resources.py                 # package loading and prompt content fingerprint
   languages.py                 # registry, aliases, composition, resume validation
   prompts.py                   # strict single-pass string.Template rendering
-  metadata.py                  # canonical enums and legacy value compatibility
+  metadata.py                  # current metadata field normalization
   data/
     tasks/*.txt                # translation, titles, analysis, Review, subtitles
     languages/registry.json    # supported codes and explicit aliases
@@ -58,14 +58,13 @@ trans_novel/i18n/
     pairs/ja__zh.json          # Japanese-to-Chinese honorific examples
     shared/honorific.json
     shared/guidance.json       # shared evidence constraints
-    shared/metadata.json       # legacy enum mappings
     shared/metadata_guidance.txt # output language and original-name contracts
     shared/review_evidence_tools.txt
     export/about.zh.xhtml
     export/about.en.xhtml
 ```
 
-`agents/prompts.py` and `agents/langprofile.py` remain compatibility entry points. Agents, SRT, and CLI use the same pure top-level language service. `i18n` imports no Pipeline, RunStore, Agent, or provider. Orchestrator assembly and responsibilities remain unchanged.
+`agents/prompts.py` only formats glossary, annotation, and segment payloads. Callers use `i18n.prompts` and `i18n.languages` directly; the old `agents/langprofile.py` and `pipeline/language.py` entry points have been removed. Agents, SRT, and CLI use the same pure top-level language service. `i18n` imports no Pipeline, RunStore, Agent, or provider. Orchestrator assembly and responsibilities remain unchanged.
 
 Rendering combines task protocol, source understanding, target expression, and a small number of pair-specific differences. A new language generally needs a profile and registry entry rather than full prompt copies for every pair. Regional variants explicitly inherit one base profile; Traditional Chinese does not silently fall back to Simplified Chinese.
 
@@ -73,11 +72,11 @@ Profiles contain `label`, `english_name`, `source_guidance`, `target_guidance`, 
 
 Missing template variables fail immediately. Dollar signs and JSON braces in source text are substitution values and are never recursively interpreted. Existing JSON protocols and annotation-reference constraints remain covered by code and tests. Resources load through `importlib.resources` independently of the working directory; Python supports package resources that are not ordinary filesystem directories. [Python 3.10 importlib.resources](https://docs.python.org/3.10/library/importlib.html#module-importlib.resources)
 
-## State isolation and compatibility
+## State isolation
 
-New default `zh` projects retain `state/<slug>/`; other new targets use `state/<slug>/targets/<target-language>/`. Subtitles use `state/srt/<slug>/targets/<target-language>/`. Each target owns chapters, glossary, analysis, context, Review, accounting, and lock scope. Subtitles still have no glossary or Review.
+All targets, including the default `zh`, use `state/<slug>/targets/<target-language>/`. Subtitles use `state/srt/<slug>/targets/<target-language>/`. Each target owns chapters, glossary, analysis, context, Review, accounting, and lock scope. Subtitles still have no glossary or Review.
 
-If a legacy root already stores a non-Chinese target, matching runs resume there. Different targets use `targets/`, including `targets/zh/` in that case. Existing directories are never automatically moved, cleaned, or overwritten. Full `source_sha256` validation still prevents reusing a target project for different content with the same filename.
+Root-level state under the old `state/<slug>/` layout is no longer discovered or migrated. Start a new translation with the current configuration; existing files remain untouched. Saved manifests must include source and target languages. Full `source_sha256` validation still prevents reusing a target project for different content with the same filename.
 
 State-oriented commands locate the configured target. An explicit source conflicting with saved state fails, while `auto` can restore the saved detected source. The manifest no longer silently switches a newly requested target back to the old one. Reverse translation is a separate run, without mixing multiple formal targets in one project.
 

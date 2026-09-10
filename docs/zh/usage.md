@@ -17,6 +17,16 @@ uv run trans-novel translate book.epub
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
+## 检查模型路由
+
+```bash
+uv run trans-novel models list
+uv run trans-novel models explain --operation review.fix
+uv run trans-novel models check --for translate
+```
+
+这些命令只做本地预览与密钥检查，不发送请求。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换、预算和 `models compare` 用法见[配置说明](configuration.md#模型与操作路由)。
+
 ## 多语言互译（实验性）
 
 先运行 `uv run trans-novel languages` 查看内置语言。将以下片段写入自己的配置文件（模型配置沿用已有设置），即可直接中译英：
@@ -33,7 +43,7 @@ uv run trans-novel --config config.yaml translate book.epub --bilingual
 
 输出为 `output/book.en.epub` 和 `output/book.en-bi.epub`。日译英改为 `source: ja`、`target: en`；英译日用 `source: en`、`target: ja`。反向翻译以对应语言的文件为输入，每次选择一个方向。`--out` 仍遵循显式命名及 `-bi` 派生规则。
 
-以下 `.zh.*` 和 `state/<书名>/` 示例均指默认简体中文目标。其它新目标使用目标语言后缀及 `state/<书名>/targets/<目标语言>/`，字幕使用 `state/srt/<slug>/targets/<目标语言>/`；旧目录的兼容规则见[配置说明](configuration.md#语言)。续跑和独立阶段命令使用同一目标配置，完成的译文不会因切换回原目标而重新翻译。EPUB 说明页在简体中文目标下为中文，其它目标暂用标记为英语的英文页，可通过 `about_page: false` 关闭。
+以下 `.zh.*` 示例指默认简体中文目标。所有目标的书籍状态均位于 `state/<书名>/targets/<目标语言>/`，字幕位于 `state/srt/<slug>/targets/<目标语言>/`。续跑和独立阶段命令使用同一目标配置，完成的译文不会因切换回原目标而重新翻译。EPUB 说明页在简体中文目标下为中文，其它目标暂用标记为英语的英文页，可通过 `about_page: false` 关闭。
 
 CLI 的帮助、进度、表格和错误提示统一使用英语。译文和模型生成的说明性元数据使用 `language.target`；`source` 和 `aliases` 中的原文姓名保留用于匹配。续跑复用已有分析和术语备注，本次更新不会自动翻译旧数据。当前不支持阿拉伯语、希伯来语等 RTL 目标；PDF 字体和外部 bridge 的语言支持仍需单独验证。真实长篇翻译质量尚未完成新旧盲评。
 
@@ -95,7 +105,7 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
-- 书籍状态位于 `state/<书名>/`，含章节中间结果、术语 SQLite 库、用量和报告。字幕运行使用独立目录树 `state/srt/`（见 [SRT 字幕](#srt-字幕)）。
+- 书籍状态位于 `state/<书名>/targets/<目标语言>/`，含章节中间结果、术语 SQLite 库、用量和报告。字幕运行使用独立目录树 `state/srt/`（见 [SRT 字幕](#srt-字幕)）。
 
 ### 实验性 PDF 支持
 
@@ -103,24 +113,16 @@ PDF 输入和 PDF 导出目前均属于实验性支持。
 
 #### PDF 输入
 
-默认走 BabelDOC，经外部 **BabelDOC bridge**（AGPL，独立仓库/进程，HTTP only）保留版式。
-扫描件、无文本层页面请改用 MinerU。
+默认走 MinerU。也可用外部 **BabelDOC bridge**（AGPL，独立仓库/进程，HTTP only）保留版式：
 
 1. 另仓安装并启动 `wenyi-babeldoc-bridge`（默认 `http://127.0.0.1:8765`）
-2. 默认 `config.yaml` 已选择 BabelDOC：
+2. `config.yaml`：
 
 ```yaml
 pipeline:
   pdf_backend: babeldoc
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # 可选，1-based
-```
-
-改用 MinerU：
-
-```yaml
-pipeline:
-  pdf_backend: mineru
 ```
 
 3. `uv run trans-novel translate book.pdf` 后 `assemble --format pdf` 会经 bridge `/fillback` 出 PDF。  
@@ -132,7 +134,7 @@ pipeline:
    `meta.babeldoc_id` 供回填。无书签时退回单章。
 
 BabelDOC 只适合带可提取文本层的 PDF。选择该后端时，Wenyi 会在请求 bridge 前检查所选页面；
-若页面只有扫描图片而没有文本层，会停止并提示改用 MinerU（`pipeline.pdf_backend: mineru`），或先进行 OCR。
+若页面只有扫描图片而没有文本层，会停止并提示改用默认 MinerU，或先进行 OCR。
 
 首次读取 PDF（MinerU）需设置 `MINERU_API_KEY`：
 
@@ -142,7 +144,7 @@ uv run trans-novel translate book.pdf
 ```
 
 MinerU 转换生成的 HTML 会保存到
-`state/<书名>/source/<源文件 SHA-256>/converted.html`。按内容隔离缓存，可避免
+`state/<书名>/targets/<目标语言>/source/<源文件 SHA-256>/converted.html`。按内容隔离缓存，可避免
 初始化中断后把另一份 PDF 的转换结果误用于当前文件。
 后续运行会直接复用该文件，也可人工修正后再续跑。
 
@@ -170,7 +172,7 @@ Windows。
 
 ## DOCX（Word）
 
-`translate book.docx` 走完整书籍 Orchestrator（术语、润色、审校、`state/<slug>/` 续跑）。
+`translate book.docx` 走完整书籍 Orchestrator（术语、润色、审校、`state/<slug>/targets/<目标语言>/` 续跑）。
 
 **结构**
 
@@ -214,10 +216,10 @@ uv run trans-novel translate movie.srt --no-mono --bilingual
 ```
 
 再次对同一源文件执行即可续跑；已缓存的
-`state/srt/<slug>/batches/` 会跳过。目录布局：
+`state/srt/<slug>/targets/<目标语言>/batches/` 会跳过。目录布局：
 
 ```text
-state/srt/<slug>/
+state/srt/<slug>/targets/<目标语言>/
   manifest.json    # 源身份、字幕条数、滑窗配置
   cues.jsonl       # 每行一条：index / timestamp / source / target / status
   batches/         # 模型原始批次结果，供续跑
@@ -228,24 +230,13 @@ state/srt/<slug>/
 字幕路径不会生成 `glossary.db` 或 `reviews/`。包代码在 `trans_novel.srt`
 （store + translate），读写分别在 `ingest.srt_reader` 与 `assemble.srt_writer`。
 
-## 单次运行指标
+## 用量与事件日志
 
-`state/<书名>/usage.json` 继续保存这本书跨续跑累计的 token 总账。`translate`、
-`prepare`、`review`、`assemble` 和 `report` 会各自生成一份
-`state/<书名>/run_metrics/<run-id>.json`，记录：
+每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
 
-- 输入文件 SHA-256、配置、程序包和 Git 提交的指纹；
-- 指定章节、输出格式、PDF 引擎等本次调用参数；
-- 本次请求的阶段、成功或失败状态，以及各阶段墙钟耗时；
-- 仅由本次命令新增的模型调用数与 token；
-- 命令结束时已完成的章节数和正文段数。
+已移除未启用的 `run_metrics/` 实验账本，不再保留对应计时包装层。
 
-每次续跑都会新建一条记录，因此不同分支的全新运行可以公平比较，不会把历史
-成本混在一起。账本不保存完整源文件路径或书籍正文；敏感配置值会被遮蔽，失败
-时也只记录异常类型。
-
-新 manifest 使用 `source_sha256`，不再保存源文件绝对路径。若同名状态目录记录的
-哈希与当前输入不一致，Wenyi 会拒绝续跑；旧版本生成的 manifest 需要重新建立。
+manifest 通过 `source_sha256` 绑定输入内容。同名文件内容不同或状态缺少有效哈希时会拒绝续跑，必须重新建立翻译状态。
 
 ## 常用命令
 
@@ -304,7 +295,7 @@ uv run trans-novel assemble book.epub
 基于更新后的译文复用同一个有界 Review Agent Loop，确认项再复用同一个 Review
 Fixer。最终完整段落只写入章节 `target`，不会给章节 JSON 增加 Review 历史字段，
 也不修改 manifest 和术语库。每次运行会把面向用户的统一 `result.json`、本次模型用量、事件和内部逐轮记录写入
-`state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
+`state/<书名>/targets/<目标语言>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
 本书累计 `usage.json`。Autofix 的完整前后版本链、issue 判定、失败原因和幂等
 写回日志保存在 `autofix/index.json`；发布后会刷新注释与 DOCX 样式偏移。
 `report.json` 保存简短的 Review 与 Autofix 摘要。

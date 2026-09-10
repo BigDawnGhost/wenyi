@@ -7,10 +7,12 @@ import re
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from trans_novel.agents.polisher import Polisher
 from trans_novel.agents.reviewer import Reviewer, ReviewOutputError
 from trans_novel.config import Config
+from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
@@ -22,8 +24,11 @@ def _cfg():
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "p"},
+                    "default_cheap": {"provider": "default", "model": "f"},
+                },
             },
         }
     )
@@ -320,6 +325,62 @@ class TestReviewer(unittest.TestCase):
 
         self.assertEqual([it["index"] for it in issues], [0, 1])
         self.assertEqual([it["detail"] for it in issues], ["甲", "乙"])
+
+    def test_fresh_review_blocks_share_chapter_glossary_after_cache_lookup(self):
+        """A pending block still sees terms from cached neighbors in the same chapter."""
+        for scope in ("chapter", "book"):
+            for cache_first in (False, True):
+                with self.subTest(scope=scope, cache_first=cache_first):
+                    cfg = _cfg()
+                    cfg.segment.max_chars_per_batch = 1
+                    cfg.pipeline.review_concurrency = 2
+                    cfg.pipeline.glossary_scope = scope
+                    expected_calls = 1 if cache_first else 2
+                    barrier = threading.Barrier(expected_calls)
+
+                    def handler(messages, tier, json_mode):
+                        barrier.wait(timeout=2)
+                        return _review_response([], 1)
+
+                    orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+                    segments = [
+                        Segment(index=0, source="Ann", target="Anne"),
+                        Segment(index=1, source="Bob", target="Robert"),
+                    ]
+                    terms = [GlossaryTerm(source=s, target=s) for s in ("Ann", "Bob", "Unused")]
+                    completed = []
+                    with tempfile.TemporaryDirectory() as directory:
+                        debug = ReviewRunStore(directory)
+                        if cache_first:
+                            debug.mark_chunk_done(
+                                "r1-ch0-base0-n1",
+                                {"issues": [], "initial_issues": [], "dismissed": []},
+                            )
+                        reviewer = orch._runtime.reviewer
+                        with (
+                            patch.object(
+                                GlossaryStore, "terms_in", wraps=GlossaryStore.terms_in
+                            ) as matching,
+                            patch.object(
+                                reviewer, "review_result", wraps=reviewer.review_result
+                            ) as reviewing,
+                        ):
+                            issues = orch._review.review_chapter(
+                                segments,
+                                terms,
+                                chapter_index=0,
+                                review_round=1,
+                                debug=debug,
+                                on_chunk_finished=completed.append,
+                            )
+
+                    self.assertEqual(issues, [])
+                    self.assertEqual(completed, [1, 1])
+                    self.assertEqual(matching.call_count, 1 if scope == "chapter" else 0)
+                    self.assertEqual(reviewing.call_count, expected_calls)
+                    expected_terms = terms[:2] if scope == "chapter" else terms
+                    for call in reviewing.call_args_list:
+                        self.assertEqual(call.args[2], expected_terms)
 
 
 class TestPolisher(unittest.TestCase):

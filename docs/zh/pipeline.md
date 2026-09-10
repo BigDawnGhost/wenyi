@@ -23,9 +23,9 @@
 
 ## 语言规则与状态范围
 
-源语言与目标语言独立选择，正文、标题、术语译名及备注、分析描述、润色、章节梗概和全书概览均明确要求使用目标语言。说明中的人物称呼使用目标语言姓名，`source` 和 `aliases` 保留原文拼写。任务指令统一使用英语，位于 `trans_novel/i18n/data/tasks/`；源语言理解、目标语言表达、语言对敬称差异及元数据语言约束集中在同目录下的 `languages/`、`pairs/`、`shared/`。JSON 键及稳定身份保持不变；新的术语类型/性别值使用英语标识符，旧中文值在读取时归一化，不自动改写已有记录。分析还兼容模型返回的风格指南列表，避免丢弃内容。续跑保留已有分析和备注，资源更新作用于新的模型调用。
+源语言与目标语言独立选择，正文、标题、术语译名及备注、分析描述、润色、章节梗概和全书概览均明确要求使用目标语言。说明中的人物称呼使用目标语言姓名，`source` 和 `aliases` 保留原文拼写。任务指令统一使用英语，位于 `trans_novel/i18n/data/tasks/`；源语言理解、目标语言表达、语言对敬称差异及元数据语言约束集中在同目录下的 `languages/`、`pairs/`、`shared/`。JSON 键及稳定身份保持不变；术语类型/性别值使用英语标识符，不再转换旧中文枚举。分析接受模型返回的风格指南列表，避免丢弃内容。续跑保留已有分析和备注，资源更新作用于新的模型调用。
 
-每个目标拥有独立状态；下文 `state/<书名>/` 是默认目标示例，非默认目标通常在其 `targets/<目标语言>/` 下。已有完成段落继续跳过；资源更新只影响后续模型请求。初始化记录提示词指纹，运行事件记录所用资源，Review 缓存比较语言、敬称策略与资源指纹。保持 manifest 最后提交、原子写入、领域锁及 Review/Autofix 发布边界。详见 [P10](project-review/2026-09-05/p10-multilingual-internationalization.md)。
+所有目标（包括 `zh`）均使用 `state/<书名>/targets/<目标语言>/` 保存独立状态。已有完成段落继续跳过；资源更新只影响后续模型请求。初始化记录提示词指纹，运行事件记录所用资源，Review 缓存比较语言、敬称策略与资源指纹。保持 manifest 最后提交、原子写入、领域锁及 Review/Autofix 发布边界。详见 [P10](project-review/2026-09-05/p10-multilingual-internationalization.md)。
 
 ## 全书理解与上下文
 
@@ -61,13 +61,19 @@ uv run trans-novel review book.epub
 uv run trans-novel review book.epub --autofix
 ```
 
-即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。每次运行都会从头
-审查完整译文。Review 引擎先更新本次运行内存中的影子译文；发布默认开启，设置
+即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。内容、配置与术语库指纹匹配时，
+复用已完成的结果，或从中断的轮次、审校块与 Agent 记录续跑；不匹配时重新开始全书审校。
+命中审校块缓存或已完成初审记录时跳过章节术语筛选；需要新 Reviewer 请求时，同章请求共享
+一次筛选得到的完整章节术语快照。CLI 在段落审校前显示章节加载和检查点准备阶段。
+耗时显示本次启动中当前阶段的运行时间，等待模型响应时继续走动；段落计数在顶层审校块
+完成时推进，也包括从缓存恢复的块。
+
+Review 引擎先更新本次运行内存中的影子译文；发布默认开启，设置
 `pipeline.review_autofix: false` 或传入 `--no-autofix` 后，不会覆盖正式章节
 的 `target`。manifest 和术语库始终不变。最终结果、本次用量、事件和内部记录写入：
 
 ```text
-state/<书名>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
+state/<书名>/targets/<目标语言>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 ```
 
 基础 Review 目录包含 `result.json`、`usage.json`、`events.jsonl` 和 `rounds/`。
@@ -92,4 +98,12 @@ Agent 判定、失败原因、目标哈希和发布状态；章节 JSON 不增�
 
 ## 字幕路径（SRT）
 
-`.srt` 走平行轻量路径 `trans_novel.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。
+`.srt` 走平行轻量路径 `trans_novel.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。
+
+## 模型注册与用量
+
+所有模型调用使用 `llm/operations.py` 中的稳定操作 ID；提供商由 `llm/registry.py` 统一注册。Runtime 和独立 SRT 流程各持有一个路由客户端，按连接复用 SDK，并共享该次运行内的并发名额、配额和用量统计。Agent 不选择提供商或档位，Orchestrator 继续只负责装配和流程路由。
+
+新增模型操作时，在 `OperationSpec` 中注册 ID、默认档位或继承操作、输出提示、工作流开关和协议版本，再由领域服务调用 `complete(..., operation="domain.operation")`。校验、CLI 预览和推理指纹共用该注册表。新增提供商时，在 `llm/providers/` 实现选项、请求构建、用量归一化和 `ProviderAdapter`，再注册 `ProviderSpec`。SDK 延迟初始化并关闭内置重试；请求语义变化时更新相应协议版本，并用离线测试覆盖请求、用量和续跑。注册表在启动后不可修改。
+
+Review 比较可达操作的实际推理身份，模型、端点或选项变化会启动新 Review，改动无关路由或并发则保留缓存。Autofix 发布索引优先恢复；多轮取证不跨模型复用轨迹。全书与 Review 账本先写 `usage-pending.json` 再更新各自 `usage.json`，续跑能幂等补完中断提交。

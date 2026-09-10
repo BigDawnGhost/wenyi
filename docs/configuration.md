@@ -4,6 +4,8 @@
 
 Wenyi reads `config.yaml` from the current working directory. If the file is missing, running the program creates a documented default configuration.
 
+Top-level sections are `language`, `llm`, `segment`, `pipeline`, `output`, `honorific`, and `paths`. Unknown sections are rejected; removed settings are not translated to a newer schema.
+
 ## Languages
 
 ```yaml
@@ -14,7 +16,7 @@ language:
 
 `source: auto` asks the model to identify the source language; alternatively, select a language below. Translation runs directly between source and target without pivoting through Chinese. Multilingual quality is experimental. The default CLI, configuration comments, and prompt instructions use English independently of the translation target. The generated configuration still defaults to `target: zh`; choose `en` for English translations.
 
-All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; legacy Chinese values are normalized on read without rewriting saved databases. Resuming an existing project retains its analysis and notes, so changing prompts does not automatically translate old metadata. Use a separate `paths.state_dir` for a fresh analysis and whole-book comparison.
+All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; older Chinese enum values are no longer converted. Resuming an existing project retains its analysis and notes, so changing prompts does not automatically translate old metadata. Use a separate `paths.state_dir` for a fresh analysis and whole-book comparison.
 
 | Codes | Languages |
 |---|---|
@@ -24,195 +26,161 @@ All generated descriptive metadata, including glossary `note`, style guidance, c
 | `fr`, `de`, `es`, `it` | French, German, Spanish, Italian |
 | `pt`, `pt-BR`, `pt-PT`, `ru` | Portuguese, Brazilian/European Portuguese, Russian |
 
-Run `uv run trans-novel languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Compatibility aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, and `ko-KR` → `ko`. Registered script/region variants are preserved rather than truncated to two letters.
+Run `uv run trans-novel languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Registered aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, and `ko-KR` → `ko`. Registered script/region variants are preserved rather than truncated to two letters.
 
 Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
 
-See [P10 internationalization implementation and follow-up design](project-review/2026-09-05/p10-multilingual-internationalization.md) for resource layout, compatibility, and validation limits.
+See [P10 internationalization implementation and follow-up design](project-review/2026-09-05/p10-multilingual-internationalization.md) for resource layout, state layout, and validation limits.
 
-## Model provider
+## Models and operation routing
 
-```yaml
-llm:
-  provider: deepseek
-```
-
-Selecting `deepseek` is enough for the built-in defaults:
-
-- Base URL: `https://api.deepseek.com`
-- API key environment variable: `DEEPSEEK_API_KEY`
-- Strong tier: `deepseek-v4-pro`
-- Cheap and fast tiers: `deepseek-v4-flash`
-
-API keys are always read from environment variables so they are not accidentally committed with the configuration. Use `provider: fake` for offline tests that must not make network requests.
-
-When `pipeline.pdf_backend` is `mineru`, the first PDF import also reads `MINERU_API_KEY` to call the MinerU conversion service. This key is independent of the LLM provider and is not written to `config.yaml`. The default BabelDOC backend does not use this key.
-
-Add the advanced fields only when you need a proxy, custom environment variable, timeout, retry policy, or model override:
+Keep the three convenient tiers, override one operation, or mix provider connections. Start with:
 
 ```yaml
 llm:
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 600
-  max_retries: 4
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        reasoning_effort: high
-        thinking: true
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        reasoning_effort: high
-        thinking: true
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
+  preset: deepseek
 ```
 
-`max_retries` is the number of additional attempts managed by Wenyi itself. Provider SDK retries are disabled to prevent nested requests. Wenyi retries transient transport failures, HTTP 408/409/429 and 5xx responses, plus empty model responses; each wait is recorded in the book's `events.jsonl`.
+This preset expands to connection `default`, profiles `default_strong`, `default_cheap`, and `default_fast`, and all three tier mappings. Its product defaults are `https://api.deepseek.com`, `DEEPSEEK_API_KEY`, `deepseek-v4-flash` for all three tiers, with thinking enabled and `reasoning_effort: high`. The model ID and reasoning defaults follow the [DeepSeek API documentation](https://api-docs.deepseek.com/api/create-chat-completion/). The tiers retain independent mappings for later overrides; presets do not query remote capabilities. `preset: gemini` and `preset: fake` are also available; fake is offline.
 
-Configured tiers override the corresponding provider defaults; omitted tiers continue to use their defaults. When a requested tier is unavailable, Wenyi follows the fallback chain `fast -> cheap -> strong`.
-
-The selected provider owns and validates the contents of `options`. In the example above, `thinking` and `reasoning_effort` are DeepSeek-specific and do not belong to the common LLM interface.
-
-### OpenAI and OpenRouter
-
-OpenAI and OpenRouter have dedicated providers that select their own default Base URL, API key environment variable, request fields, and reasoning format. Their model tiers must be configured explicitly:
+For independent polishing and evidence verification:
 
 ```yaml
 llm:
-  provider: openrouter
-  tiers:
-    strong:
-      model: anthropic/claude-opus-4.6
+  preset: deepseek
+  providers:
+    editorial:
+      kind: gemini
+      api_key_env: GEMINI_API_KEY
+      timeout: 120
+      max_retries: 2
+      max_concurrency: 2
+  models:
+    editor:
+      provider: editorial
+      model: YOUR_EDITOR_MODEL
+      max_output_tokens: 8192
       options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: openai/gpt-5-mini
-      options:
-        thinking: true
-        reasoning_effort: medium
-    fast:
-      model: google/gemini-3-flash
-      options:
-        thinking: false
+        thinking_level: high
+  routes:
+    polish.body: {model: editor}
+    review.verify: {model: editor}
 ```
 
-The OpenAI provider reads `OPENAI_API_KEY`; OpenRouter reads `OPENROUTER_API_KEY`. Both providers allow `base_url` and `api_key_env` to override their defaults.
+Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other operations retain their default tier mappings; `autofix.verify` inherits the resolved `review.verify` route unless explicitly overridden.
 
-### OrcaRouter
+### Configuration rules
 
-OrcaRouter exposes an OpenAI-compatible endpoint. The built-in `orcarouter`
-provider uses `https://api.orcarouter.ai/v1` and reads `ORCAROUTER_API_KEY` by
-default. [Create an OrcaRouter API key](https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a),
-then configure the model IDs available to your account:
+- `providers.<id>` defines a connection: `kind`, optional `base_url`, `api_key_env`, `timeout` (seconds, default 600), `max_retries` (additional attempts, default 4), `max_concurrency` (unlimited unless set), and optional `quota_group`.
+- `models.<id>` defines a request profile: `provider` connection ID, remote `model` ID, optional positive `max_output_tokens`, and adapter-specific `options`.
+- `tiers` maps exactly `strong`, `cheap`, and `fast` to profiles. Without a preset, all three are required; they can select the same profile. Tier names describe preferences, not measured quality or price.
+- `routes.<operation>` selects exactly one of `{model: profile}` or `{tier: strong}`. Unknown operations, fields and references fail before requests. There is no missing-tier fallback.
+- Preset overrides replace whole connection/profile entries by ID. Repeat required fields when replacing an entry; model options are not merged across profiles. Tier and route mappings replace individual keys.
+- An explicit `max_output_tokens` overrides static and dynamic workflow hints. Without it, synopsis and annotation hints retain their prior behavior. OpenAI-compatible thinking profiles expand hints below 4,096 to 4,096; explicit smaller caps are rejected while thinking is enabled. Actual model limits still depend on the service.
+- API keys come only from environment variables. Do not place credentials in endpoints or request overrides. Raw overrides cannot replace model identity, messages, streaming, JSON mode, credentials or output caps.
+
+### Provider options
+
+| Adapter kinds | Connection defaults / options | Model options |
+|---|---|---|
+| `deepseek` | DeepSeek endpoint; `DEEPSEEK_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
+| `openai` | OpenAI endpoint; `OPENAI_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
+| `openrouter` | OpenRouter endpoint; `OPENROUTER_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
+| `gemini` | Native Gemini API; `GEMINI_API_KEY`, falling back to `GOOGLE_API_KEY` when no custom variable is set | `thinking_level` or `thinking_budget`, `temperature`, `extra_body` |
+| `openai-compatible` | Explicit `base_url`; optional `api_key_env`; `reasoning_style` | `thinking`, `reasoning_effort`, `json_response_fallback`, `request_overrides` |
+| `orcarouter` | `https://api.orcarouter.ai/v1`; `ORCAROUTER_API_KEY`; `reasoning_style` | Same as `openai-compatible` |
+| `ollama`, `vllm` | `http://localhost:11434/v1`, `http://localhost:8000/v1`; optional credentials; `reasoning_style` | Same as `openai-compatible` |
+| `fake` | No network or credentials | No provider options |
+
+Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `openai`, or `openrouter`. `json_response_fallback: reasoning_content` is an explicit option for gateways placing JSON there; the default is `none`, and non-JSON reasoning is never accepted. Gemini thinking level and thinking budget are mutually exclusive. Raw extension dictionaries are endpoint-specific; offline validation cannot prove a remote model supports them.
+
+Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
+
+DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. When neither a profile cap nor a workflow hint applies, the service supplies its default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. Workflow hints and explicit `max_output_tokens` still follow the configuration rules above. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
+
+### Registered operations
+
+| Operation | Default tier or inheritance | Purpose |
+|---|---|---|
+| `language.detect` | `cheap` | Detect source language |
+| `analysis.style` | `strong` | Analyze style, characters and seed glossary |
+| `synopsis.chapter` | `fast` | Chapter digest; 600-token hint |
+| `synopsis.book` | `fast` | Book synopsis; 1,200-token hint |
+| `translation.body` | `strong` | Body translation and alignment recovery |
+| `translation.title` | `strong` | Chapter and TOC titles |
+| `polish.body` | `strong` | Prose polishing |
+| `glossary.extract` | `fast` | Glossary extraction |
+| `glossary.align_history` | `fast` | Earlier translation alignment |
+| `annotation.align` | `cheap` | Annotation alignment; dynamic output hint |
+| `review.scan` | `cheap` | Initial and blind review |
+| `review.verify` | `strong` | Evidence verification |
+| `review.arbitrate` | `strong` | Conflict arbitration |
+| `review.fix` | `strong` | Shadow revision |
+| `autofix.verify` | `review.verify` | Publication evidence verification |
+| `autofix.fix` | `review.fix` | Publication revision |
+| `srt.translate` | `strong` | Subtitle batches and single-cue recovery |
+
+### Preview, limits and explicit failover
 
 ```bash
-export ORCAROUTER_API_KEY=sk-orca-...
+uv run trans-novel models list
+uv run trans-novel models list --json
+uv run trans-novel models explain --operation review.verify
+uv run trans-novel models check --for translate
 ```
+
+`list` and `explain` need no keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
+
+Optional local controls, illustrated with an offline provider:
 
 ```yaml
 llm:
-  provider: orcarouter
-  tiers:
-    strong:
-      model: your-model-id
-    cheap:
-      model: your-cheap-model-id
-    fast:
-      model: your-fast-model-id
+  preset: fake
+  providers:
+    default:
+      kind: fake
+      max_concurrency: 2
+      quota_group: account
+  models:
+    bounded:
+      provider: default
+      model: fake
+      max_output_tokens: 2048
+  tiers: {strong: bounded, cheap: bounded, fast: bounded}
+  quotas:
+    account:
+      requests_per_minute: 20
+      tokens_per_minute: 60000
+  budget:
+    max_requests: 100
+    max_tokens: 200000
+    deadline_seconds: 900
 ```
 
-Model tiers must be configured explicitly. OrcaRouter uses the generic
-OpenAI-compatible options described below, including `reasoning_style` and
-per-tier `request_overrides`. You may override `base_url` or `api_key_env` when
-needed.
+Connections sharing a `quota_group` share RPM/TPM reservations within one invocation. Provider concurrency also spans every operation using that connection. These controls do not coordinate other processes or enforce an account's actual remote quota. Token controls reserve a conservative prompt-byte estimate plus an explicit output limit, then adjust it when actual usage arrives; reservations are not billed usage or a currency spending cap. Token limits require finite output limits for every reachable primary and fallback profile.
 
-### Google Gemini
+`deadline_seconds` and Ctrl+C stop queued requests and backoff cooperatively. An in-flight SDK call can finish or reach its connection timeout; completed work is retained for resume. A stopped invocation gets a new budget on restart.
 
-Google Gemini is supported natively through the official `google-genai` SDK using `provider: gemini` (or `provider: google`). It reads `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) from environment variables:
+For stateless requests, an explicit route may use `fallbacks: [backup_profile]`. Wenyi tries that chain only after a retryable transport failure exhausts retries. Authentication, configuration and output-schema errors do not trigger model failover. Resumable `review.verify`, `review.arbitrate`, and `autofix.verify` conversations reject failover to prevent mixed-model traces.
 
-```yaml
-llm:
-  provider: gemini
-  api_key_env: GEMINI_API_KEY
-  tiers:
-    strong:
-      model: gemini-3.6-flash
-    cheap:
-      model: gemini-3.6-flash
-    fast:
-      model: gemini-3.6-flash
+### Usage and resume
+
+One ledger tracks totals with independent `by_tier`, `by_stage` (operation IDs), `by_provider`, and `by_model` views. Direct profile selections use tier `direct`. Physical identities distinguish endpoint, model and inference options even if aliases are reused; aliases and labels never determine totals. Actual response usage is retained even if parsing fails or a retry follows; responses without usage do not invent token charges.
+
+Events record the routing plan and request operation, model, provider, profile, connection, inference fingerprint, call ID and attempt. Full-book and Review usage updates are journaled in `usage-pending.json` before publication, so an interrupted local merge can recover without counting the increment twice. A process killed after remote acceptance but before local persistence can still leave unknown remote usage.
+
+Changing translation, analysis, synopsis or SRT models keeps completed work and uses the new route for pending calls. Review starts a new run when a reachable review model, endpoint, options or protocol changes; unrelated routes, credential rotation, alias renaming and concurrency changes do not invalidate it. Old Review caches lacking inference identity are retained but not reused. Autofix has its own fingerprint: pending indexed publication finishes from saved candidates; unfinished inference planning requires restoring its original routes before continuing.
+
+Retired configuration and nonempty old usage ledgers require explicit conversion:
+
+```bash
+uv run trans-novel models migrate-config old-config.yaml --out routed-config.yaml
+uv run trans-novel models migrate-usage state/BOOK/targets/zh
 ```
 
-Gemini options also support `thinking_level` (e.g. `low`, `high`) or `thinking_budget` (in tokens) for Gemini reasoning models.
+The config converter creates a separate file. The usage converter backs up each selected ledger, preserves totals and old tier/stage attribution, and assigns missing provider/model history to `unknown`. It never processes source books. Run ledger conversion while that target's workflows are stopped. Review directories are preserved. `pipeline.review_agent_tier` is replaced by the separate verification, arbitration and fix routes.
 
-### Other OpenAI-compatible endpoints
-
-Use `openai-compatible` for any endpoint implementing OpenAI Chat Completions:
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  api_key_env: EXAMPLE_API_KEY
-  # deepseek | openai | openrouter | none
-  reasoning_style: deepseek
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        reasoning_effort: high
-        request_overrides:
-          thinking:
-            budget: 8192
-```
-
-`reasoning_style` converts the common `thinking` and `reasoning_effort` options into the request dialect accepted by the endpoint:
-
-- `deepseek`: `thinking.type` plus `reasoning_effort`
-- `openai`: `reasoning_effort`, with `none` sent when reasoning is disabled
-- `openrouter`: `reasoning.effort`, with `reasoning.enabled: false` sent when disabled
-- `none`: no conversion, for endpoints that rely on model defaults or custom request fields
-
-By default Wenyi trusts only the standard `content` response field and retries an empty response. Set `json_response_fallback: reasoning_content` on each applicable tier only for endpoints known to place the final JSON answer in `reasoning_content`; Wenyi then accepts that field only when it contains one complete JSON value.
-
-```yaml
-llm:
-  provider: openai-compatible
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        json_response_fallback: reasoning_content
-```
-
-`request_overrides` is an escape hatch for provider-specific fields that Wenyi does not know about. Its contents are merged recursively into the raw top-level request body after the selected reasoning dialect is generated. For example, an endpoint using `enable_thinking: true` can be configured as follows:
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  reasoning_style: none
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        request_overrides:
-          enable_thinking: true
-```
-
-Choose a reasoning dialect according to the endpoint protocol, not the underlying model name. A relay serving a DeepSeek model should still use `reasoning_style: openai` when that relay expects OpenAI reasoning fields.
-
-Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` providers. Their default addresses are `http://localhost:11434/v1` and `http://localhost:8000/v1`, and neither requires an API key by default. Both require explicit model tiers. Ollama's OpenAI-compatible endpoint may use `reasoning_style: openai`; vLLM reasoning support depends on the model template and server arguments. When necessary, pass `enable_thinking` through `request_overrides.chat_template_kwargs`.
+`models compare --operation translation.body --model writer --model editor --messages fixture.json --out comparison.json` explicitly sends a JSON array of `{role, content}` messages to each selected profile and records outputs, latency and actual usage. It consumes requests; it does not automatically read books or change translations. Use isolated public-domain fixtures before choosing a mixed-model setup. No new quality-ranked model preset is implied by routing support.
 
 ## Pipeline
 
@@ -228,7 +196,6 @@ pipeline:
   review_concurrency: 4
   review_output_retries: 2
   review_agent_loop: true
-  review_agent_tier: strong
   review_agent_max_evidence_rounds: 2
   review_conflict_arbitration: true
   review_fix_loop: true
@@ -236,7 +203,7 @@ pipeline:
   review_clean_confirmations: 2
   review_autofix: true
   glossary_scope: chapter
-  pdf_backend: babeldoc
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   babeldoc_timeout: 600
 ```
@@ -251,7 +218,6 @@ pipeline:
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
 - `review_output_retries`: extra attempts for a single-segment review whose output still lacks a valid completion receipt after local JSON repair and larger-chunk splitting; `2` means at most three attempts including the first call.
 - `review_agent_loop`: after the unchanged initial Reviewer finds candidates in a successful leaf chunk, let an Agent Loop selectively request evidence and confirm, dismiss, or refine those candidates.
-- `review_agent_tier`: model tier used by the evidence loop, cross-chunk arbiter, and provisional Review Fixer. The default is `strong`.
 - `review_agent_max_evidence_rounds`: maximum selective evidence rounds per Agent Loop; the allowed range is `0` to `2`, after which the agent must return a final decision.
 - `review_conflict_arbitration`: after all chunks finish, run a recommendation-only arbiter when consistency proposals for the same term, pronoun, or fixed expression contradict one another.
 - `review_fix_loop`: generate complete provisional segment replacements for confirmed issues in a run-local shadow translation, then blindly review the whole book again. Disabling it keeps the single-pass recommendation-only behavior.
@@ -259,7 +225,7 @@ pipeline:
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `review_autofix`: enabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. Pass `--no-autofix` or set this to `false` to keep Review from writing formal `target` values. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
-- `pdf_backend`: default `babeldoc` preserves PDF layout through the external AGPL HTTP bridge. Use `mineru` for scanned pages that have no extractable text layer.
+- `pdf_backend`: default `mineru` converts PDF via MinerU HTML. Use `babeldoc` for layout-preserving export through the external AGPL HTTP bridge.
 - `babeldoc_bridge_url`: BabelDOC bridge base URL; default `http://127.0.0.1:8765`.
 - `babeldoc_timeout`: HTTP timeout in seconds for bridge extract and fillback.
 - `babeldoc_pages`: optional 1-based page selection such as `"15"` or `"6-8"`; omit it to process the whole file.
@@ -274,7 +240,7 @@ invocation read-only, or `--autofix` to force publishing when the config is off.
 Autofix first applies folded Review changes, then reuses the same Agent
 Loop and Fixer for final unresolved issues; there is no separate Autofix loop or
 prompt. The consolidated result and internal round records are written under
-`state/<book>/reviews/review-<timestamp>/`. Review usage is stored both as the
+`state/<book>/targets/<target-language>/reviews/review-<timestamp>/`. Review usage is stored both as the
 run-local delta and in the book's cumulative usage totals.
 
 ## Output
@@ -317,6 +283,6 @@ paths:
 - `max_chars_per_batch`: approximate source-character budget for one model translation request.
 - `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
-- `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.
+- `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/targets/<target-language>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.
 
-New non-default book targets use `<state_dir>/<slug>/targets/<target-language>/`; subtitles use `<state_dir>/srt/<slug>/targets/<target-language>/`. Default `zh` retains the legacy path. Existing legacy state with a matching target resumes in place. If the legacy root belongs to another target, a new `zh` project also uses `targets/zh/`. Existing state is never automatically moved or deleted; each directory owns its translations, glossary, context, accounting, and Review.
+All book targets, including the default `zh`, use `<state_dir>/<slug>/targets/<target-language>/`; subtitles use `<state_dir>/srt/<slug>/targets/<target-language>/`. Each directory owns its translations, glossary, context, accounting, and Review. Root-level state from earlier versions is no longer discovered or migrated. Start a new translation with the current configuration; existing files remain untouched. Saved manifests must include `source_lang`, `target_lang`, and a valid `source_sha256`.

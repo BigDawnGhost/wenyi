@@ -23,8 +23,11 @@ def _cfg():
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "p"},
+                    "default_cheap": {"provider": "default", "model": "f"},
+                },
             },
         }
     )
@@ -40,12 +43,12 @@ class TestAnalyzer(unittest.TestCase):
                 {
                     "source": "綾小路",
                     "target": "绫小路",
-                    "gender": "男",
+                    "gender": "male",
                     "reading": "あやのこうじ",
                     "note": "第一人称用俺",
                 }
             ],
-            "terms": [{"source": "高度育成高校", "target": "高度育成高中", "type": "组织"}],
+            "terms": [{"source": "高度育成高校", "target": "高度育成高中", "type": "organization"}],
         }
         client = FakeClient(handler=lambda m, t, j: json.dumps(analysis, ensure_ascii=False))
         a = Analyzer(client, _cfg())
@@ -127,11 +130,11 @@ class TestExtractor(unittest.TestCase):
                 {
                     "source": "堀北",
                     "target": "堀北",
-                    "type": "人物",
-                    "gender": "女",
+                    "type": "person",
+                    "gender": "female",
                     "aliases": ["堀北さん"],
                 },
-                {"source": "屋上", "target": "天台", "type": "地名", "gender": "未知"},
+                {"source": "屋上", "target": "天台", "type": "place", "gender": "unknown"},
             ]
         }
         client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
@@ -146,7 +149,7 @@ class TestExtractor(unittest.TestCase):
             self.assertEqual(horikita.gender, "female")
             self.assertEqual(horikita.aliases, ["堀北さん"])
             self.assertEqual(horikita.first_chapter, 1)
-            # Normalize legacy unknown gender to an empty value.
+            # Normalize unknown gender to an empty value.
             rooftop = store.get_term("屋上")
             self.assertIsNotNone(rooftop)
             assert rooftop is not None
@@ -200,8 +203,8 @@ class TestExtractor(unittest.TestCase):
             return json.dumps(
                 {
                     "terms": [
-                        {"source": "綾小路", "target": "凌小路", "type": "人物"},
-                        {"source": "堀北", "target": "掘北", "type": "人物"},
+                        {"source": "綾小路", "target": "凌小路", "type": "person"},
+                        {"source": "堀北", "target": "掘北", "type": "person"},
                     ]
                 },
                 ensure_ascii=False,
@@ -249,7 +252,7 @@ class TestExtractor(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_new_term_without_prior_occurrence_is_inserted_directly(self):
-        terms = {"terms": [{"source": "綾小路", "target": "绫小路", "type": "人物"}]}
+        terms = {"terms": [{"source": "綾小路", "target": "绫小路", "type": "person"}]}
         client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
         extractor = GlossaryExtractor(client, _cfg())
 
@@ -323,7 +326,7 @@ class TestRollingContext(unittest.TestCase):
         self.assertEqual(ctx2.recent_targets, ["x", "y"])
         self.assertEqual(ctx2.max_recent_keep, 75)
 
-    def test_configured_minimum_expands_legacy_context_limit(self):
+    def test_configured_minimum_expands_saved_context_limit(self):
         ctx = RollingContext.from_dict(
             {"recent_targets": [str(i) for i in range(40)]},
             min_recent_keep=100,

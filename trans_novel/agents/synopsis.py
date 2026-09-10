@@ -9,7 +9,7 @@ supports cache reuse. Use grouped map-reduce merging for long books to bound pro
 
 from __future__ import annotations
 
-from . import prompts
+from ..i18n.prompts import render
 from .base import Agent
 
 # Character budget for one digest merge; group and recursively merge larger inputs.
@@ -23,12 +23,10 @@ class Synopsizer(Agent):
         """
         if not source_text.strip():
             return ""
-        system = prompts.render("chapter_digest_system", src=self.src, tgt=self.tgt)
-        user = prompts.render(
-            "chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000]
-        )
+        system = render("chapter_digest_system", src=self.src, tgt=self.tgt)
+        user = render("chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000])
         # Use the fast tier with output headroom above the language-specific digest budget.
-        return self._ask_text(system, user, tier="fast", max_tokens=600)
+        return self._ask_text(system, user, operation="synopsis.chapter")
 
     def book_synopsis(self, digests: list[str], analysis_brief: str) -> str:
         """Combine chapter digests and analysis into a book synopsis; use map-reduce for long
@@ -69,8 +67,8 @@ class Synopsizer(Agent):
     def _synth(self, digests: list[str], analysis_brief: str) -> str:
         """Merge one group of chapter digests and style analysis into a higher-level synopsis."""
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
-        system = prompts.render("book_synopsis_system", src=self.src, tgt=self.tgt)
-        user = prompts.render(
+        system = render("book_synopsis_system", src=self.src, tgt=self.tgt)
+        user = render(
             "book_synopsis_user",
             src=self.src,
             tgt=self.tgt,
@@ -78,4 +76,4 @@ class Synopsizer(Agent):
             digests=numbered,
         )
         # Use the fast tier with a bounded output budget for the synopsis.
-        return self._ask_text(system, user, tier="fast", max_tokens=1200)
+        return self._ask_text(system, user, operation="synopsis.book")

@@ -3,8 +3,8 @@ Within the selected book/target run directory: manifest.json stores book metadat
 chapter status; chapters/ch{n}.json stores segments; source/ caches preprocessing;
 annotation_contexts.json indexes immutable EPUB annotation sources; context.json stores
 recent translations; analysis.json stores global analysis.
-usage.json accumulates tokens across runs; run_metrics/ records per-operation timing, usage
-and versions; glossary.db stores terms/conflicts; report.json summarizes translation;
+usage.json accumulates tokens across runs; glossary.db stores terms/conflicts;
+report.json summarizes translation;
 events.jsonl is append-only; reviews/ holds review results, round records and optional
 autofix publication indices.
 """
@@ -22,7 +22,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from ..i18n.languages import normalize_language, require_language
+from ..i18n.languages import require_language
 from ..ingest.models import Chapter, Document
 
 STATUS_PENDING = "pending"
@@ -36,19 +36,9 @@ def slugify(name: str) -> str:
 
 
 def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
-    """Isolate targets while retaining legacy paths without moving or rewriting existing state."""
+    """Use the same target-isolated layout for every translation language."""
     target = require_language(target_lang)
-    legacy = os.path.join(state_dir, slugify(title))
-    manifest_path = os.path.join(legacy, "manifest.json")
-    if os.path.isfile(manifest_path):
-        with open(manifest_path, encoding="utf-8") as handle:
-            manifest = json.load(handle)
-        if normalize_language(manifest.get("target_lang") or "zh") == target:
-            return legacy
-        return os.path.join(legacy, "targets", target)
-    if target == "zh":
-        return legacy
-    return os.path.join(legacy, "targets", target)
+    return os.path.join(state_dir, slugify(title), "targets", target)
 
 
 def source_sha256(path: str) -> str:
@@ -170,11 +160,6 @@ class RunStore:
         return os.path.join(self.run_dir, "usage.json")
 
     @property
-    def run_metrics_dir(self) -> str:
-        """Return the directory for per-run metrics ledgers."""
-        return os.path.join(self.run_dir, "run_metrics")
-
-    @property
     def event_log_path(self) -> str:
         """Return the append-only JSONL event-log path."""
         return os.path.join(self.run_dir, "events.jsonl")
@@ -216,7 +201,7 @@ class RunStore:
     def begin_initialization(self, source_hash: str) -> None:
         """Clear incomplete derived state and record the current source identity.
         Preserve expensive, hash-isolated PDF conversion caches under source/, plus failed
-        metrics/events for the same source. Rebuild mutable chapters, glossary and analysis
+        events for the same source. Rebuild mutable chapters, glossary and analysis
         so data left before a failed manifest commit cannot contaminate a new task.
         """
         if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
@@ -252,7 +237,6 @@ class RunStore:
 
         if previous_hash != source_hash:
             shutil.rmtree(self.reviews_dir, ignore_errors=True)
-            shutil.rmtree(self.run_metrics_dir, ignore_errors=True)
             try:
                 os.remove(self.event_log_path)
             except FileNotFoundError:
@@ -323,7 +307,7 @@ class RunStore:
         *,
         actual_sha256: str | None = None,
     ) -> str:
-        """Validate that input content belongs to this state; reject legacy state lacking
+        """Validate that input content belongs to this state; reject state lacking
         source identity.
         """
         actual = actual_sha256 or source_sha256(input_path)
@@ -403,12 +387,12 @@ class RunStore:
     def save_chapter(self, chapter: Chapter) -> None:
         """Atomically save a chapter's source, target and stage metadata."""
         with self.state_lock():
-            self._write_json(self.chapter_path(chapter.index), chapter.to_dict())
+            self._write_json(self.chapter_path(chapter.index), chapter.model_dump())
 
     def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
         """Publish final chapter content and its manifest status under the same state lock."""
         with self.state_lock():
-            self._write_json(self.chapter_path(chapter.index), chapter.to_dict())
+            self._write_json(self.chapter_path(chapter.index), chapter.model_dump())
             manifest = self.load_manifest()
             for entry in manifest["chapters"]:
                 if entry["index"] == chapter.index:
@@ -418,7 +402,7 @@ class RunStore:
 
     def load_chapter(self, ci: int) -> Chapter:
         """Read and validate chapter state."""
-        return Chapter.from_dict(self._read_json(self.chapter_path(ci)))
+        return Chapter.model_validate(self._read_json(self.chapter_path(ci)))
 
     # Context, analysis and reports.
     def save_context(self, data: dict) -> None:
@@ -461,6 +445,54 @@ class RunStore:
         """Read cumulative token usage, or return None if absent."""
         return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
 
+    def prepare_usage_commit(self, ledgers: dict[str, dict]) -> None:
+        """Journal complete ledger snapshots before publication, under the book run lock."""
+        from ..llm.routing import identity
+
+        entries = []
+        for relative, value in ledgers.items():
+            path = self._usage_commit_path(relative)
+            before = self._read_json(path) if os.path.isfile(path) else None
+            entries.append({"path": relative, "before": identity(before), "value": value})
+        self._write_json(
+            os.path.join(self.run_dir, "usage-pending.json"), {"version": 1, "entries": entries}
+        )
+
+    def _usage_commit_path(self, relative: str) -> str:
+        """Restrict journal destinations to ledgers in this run, never arbitrary state."""
+        parts = relative.replace("\\", "/").split("/")
+        if relative != "usage.json" and not (
+            len(parts) == 3
+            and parts[0] == "reviews"
+            and parts[1].startswith("review-")
+            and parts[2] == "usage.json"
+        ):
+            raise ValueError("Invalid usage journal destination")
+        return os.path.join(self.run_dir, *parts)
+
+    def recover_usage(self) -> None:
+        """Idempotently finish an interrupted book/review ledger commit under the run lock."""
+        from ..llm.routing import identity
+        from ..llm.usage import validate_usage
+
+        pending = os.path.join(self.run_dir, "usage-pending.json")
+        if not os.path.isfile(pending):
+            return
+        transaction = self._read_json(pending)
+        if transaction.get("version") != 1 or not isinstance(transaction.get("entries"), list):
+            raise ValueError("Invalid usage journal")
+        writes = []
+        for entry in transaction["entries"]:
+            path = self._usage_commit_path(entry["path"])
+            value = validate_usage(entry["value"])
+            current = self._read_json(path) if os.path.isfile(path) else None
+            if identity(current) not in {entry["before"], identity(value)}:
+                raise ValueError("Usage ledger changed outside its pending commit")
+            writes.append((path, value))
+        for path, value in writes:
+            self._write_json(path, value)
+        os.unlink(pending)
+
     def load_latest_review_result(self) -> dict[str, Any] | None:
         """Read the latest completed or failed review result by directory time order."""
         if not os.path.isdir(self.reviews_dir):
@@ -478,29 +510,6 @@ class RunStore:
             if isinstance(result, dict):
                 return result
         return None
-
-    def save_run_metric(self, record: dict[str, Any]) -> str:
-        """Atomically save one run's metrics by run_id and return the path."""
-        run_id = record.get("run_id")
-        if not isinstance(run_id, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", run_id
-        ):
-            raise ValueError(
-                "run_id may contain only letters, digits, dots, underscores, plus signs and hyphens"
-            )
-        path = os.path.join(self.run_metrics_dir, f"{run_id}.json")
-        self._write_json(path, record)
-        return path
-
-    def load_run_metrics(self) -> list[dict[str, Any]]:
-        """Read all per-run ledgers in filename order."""
-        if not os.path.isdir(self.run_metrics_dir):
-            return []
-        return [
-            self._read_json(os.path.join(self.run_metrics_dir, name))
-            for name in sorted(os.listdir(self.run_metrics_dir))
-            if name.endswith(".json")
-        ]
 
     # Batch recovery checkpoints.
     @staticmethod
@@ -576,7 +585,7 @@ class ExportSnapshotStore(RunStore):
         super().__init__(run_dir, create=False)
         self._snapshot_manifest = deepcopy(manifest)
         self._snapshot_chapters = {
-            index: Chapter.from_dict(chapter.to_dict()) for index, chapter in chapters.items()
+            index: chapter.model_copy(deep=True) for index, chapter in chapters.items()
         }
 
     def load_manifest(self) -> dict:
@@ -589,4 +598,4 @@ class ExportSnapshotStore(RunStore):
             chapter = self._snapshot_chapters[ci]
         except KeyError as error:
             raise FileNotFoundError(f"Chapter not found in snapshot: {ci}") from error
-        return Chapter.from_dict(chapter.to_dict())
+        return chapter.model_copy(deep=True)

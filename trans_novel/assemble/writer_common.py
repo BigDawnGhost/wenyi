@@ -133,6 +133,8 @@ def _ordered_pair(source: str, target: str, order: str) -> tuple[str, str]:
 
 
 def _manifest_target_lang(manifest: dict) -> str:
-    """Read the target language from the manifest, defaulting to zh."""
-    raw = manifest.get("target_lang", "zh")
-    return raw if isinstance(raw, str) else "zh"
+    """Require an explicit supported target language in persisted state."""
+    raw = manifest.get("target_lang")
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("State is missing target_lang; create a new translation.")
+    return require_language(raw)

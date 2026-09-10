@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 
 from trans_novel.config import Config
+from trans_novel.llm.registry import provider_spec
+from trans_novel.llm.routing import resolve_routes
 
 
 class TestConfigFileCreation(unittest.TestCase):
@@ -18,20 +20,24 @@ class TestConfigFileCreation(unittest.TestCase):
 
             self.assertTrue(created)
             self.assertTrue(path.is_file())
-            self.assertEqual(cfg.llm.provider, "deepseek")
-            self.assertEqual(cfg.llm.base_url, "https://api.deepseek.com")
-            self.assertEqual(cfg.llm.api_key_env, "DEEPSEEK_API_KEY")
+            self.assertEqual(cfg.llm.providers["default"].kind, "deepseek")
+            self.assertEqual(
+                resolve_routes(cfg.llm)["translation.body"].endpoint, "https://api.deepseek.com"
+            )
+            self.assertEqual(
+                provider_spec("deepseek").adapter_type().default_api_key_env, "DEEPSEEK_API_KEY"
+            )
             self.assertEqual(set(cfg.llm.tiers), {"strong", "cheap", "fast"})
-            self.assertEqual(cfg.llm.tiers["strong"].model, "deepseek-v4-pro")
-            self.assertEqual(cfg.llm.tiers["cheap"].model, "deepseek-v4-flash")
-            self.assertEqual(cfg.llm.tiers["fast"].model, "deepseek-v4-flash")
-            self.assertTrue(cfg.llm.tiers["fast"].options["thinking"])
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["strong"]].model, "deepseek-v4-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["cheap"]].model, "deepseek-v4-flash")
+            self.assertEqual(cfg.llm.models[cfg.llm.tiers["fast"]].model, "deepseek-v4-flash")
+            self.assertTrue(cfg.llm.models[cfg.llm.tiers["fast"]].options["thinking"])
+            for profile in cfg.llm.models.values():
+                self.assertEqual(profile.options["reasoning_effort"], "high")
             self.assertFalse(hasattr(cfg.llm, "api_key"))
             generated = path.read_text(encoding="utf-8")
             self.assertIn("# trans-novel configuration", generated)
-            self.assertIn("  base_url: https://api.deepseek.com", generated)
-            self.assertIn("  api_key_env: DEEPSEEK_API_KEY", generated)
-            self.assertIn("  tiers:\n", generated)
+            self.assertIn("  preset: deepseek", generated)
             self.assertIn("output:\n", generated)
             self.assertTrue(cfg.output.mono)
             self.assertFalse(cfg.output.bilingual)
@@ -47,14 +53,14 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
             self.assertEqual(cfg.pipeline.review_output_retries, 2)
             self.assertTrue(cfg.pipeline.review_agent_loop)
-            self.assertEqual(cfg.pipeline.review_agent_tier, "strong")
+            self.assertEqual(resolve_routes(cfg.llm)["review.verify"].tier, "strong")
             self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
             self.assertTrue(cfg.pipeline.review_conflict_arbitration)
             self.assertTrue(cfg.pipeline.review_fix_loop)
             self.assertEqual(cfg.pipeline.review_fix_max_rounds, 2)
             self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
             self.assertTrue(cfg.pipeline.review_autofix)
-            self.assertEqual(cfg.pipeline.pdf_backend, "babeldoc")
+            self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:
@@ -79,14 +85,14 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
         self.assertEqual(cfg.pipeline.review_output_retries, 2)
         self.assertTrue(cfg.pipeline.review_agent_loop)
-        self.assertEqual(cfg.pipeline.review_agent_tier, "strong")
+        self.assertEqual(resolve_routes(cfg.llm)["review.verify"].tier, "strong")
         self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
         self.assertTrue(cfg.pipeline.review_conflict_arbitration)
         self.assertTrue(cfg.pipeline.review_fix_loop)
         self.assertEqual(cfg.pipeline.review_fix_max_rounds, 2)
         self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
         self.assertTrue(cfg.pipeline.review_autofix)
-        self.assertEqual(cfg.pipeline.pdf_backend, "babeldoc")
+        self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
 
     def test_about_page_can_be_disabled(self):
         cfg = Config.from_dict({"output": {"about_page": False}})
@@ -98,21 +104,29 @@ class TestConfigFileCreation(unittest.TestCase):
 
         self.assertFalse(cfg.output.punctuation_normalize)
 
-    def test_legacy_punctuation_config_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "output.punctuation_normalize"):
-            Config.from_dict({"punctuation": {"normalize": False}})
+    def test_unknown_config_sections_are_rejected(self):
+        for section in ("punctuation", "pipline"):
+            with self.subTest(section=section):
+                with self.assertRaisesRegex(ValueError, "Unknown configuration sections"):
+                    Config.from_dict({section: {}})
+
+    def test_config_root_must_be_a_mapping(self):
+        with self.assertRaisesRegex(ValueError, "must be a mapping"):
+            Config.from_dict(["pipeline"])
 
     def test_compatible_reasoning_style_is_loaded(self):
         cfg = Config.from_dict(
             {
                 "llm": {
-                    "provider": "openai-compatible",
-                    "reasoning_style": "deepseek",
+                    "providers": {"local": {"kind": "ollama", "reasoning_style": "deepseek"}},
+                    "models": {"m": {"provider": "local", "model": "m"}},
+                    "tiers": {tier: "m" for tier in ("strong", "cheap", "fast")},
                 }
             }
         )
-
-        self.assertEqual(cfg.llm.reasoning_style, "deepseek")
+        extra = cfg.llm.providers["local"].model_extra
+        assert extra is not None
+        self.assertEqual(extra["reasoning_style"], "deepseek")
 
 
 if __name__ == "__main__":

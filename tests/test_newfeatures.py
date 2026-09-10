@@ -12,14 +12,14 @@ from pathlib import Path
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
-from trans_novel.agents.langprofile import honorific_rule
 from trans_novel.assemble.export_view import ExportViewStore
 from trans_novel.config import Config
+from trans_novel.i18n.languages import honorific_rule
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
-from trans_novel.postprocess.punct import normalize_zh, normalize_zh_segments
+from trans_novel.postprocess.punct import normalize_zh_segments
 
 
 class TestModelLanguageDetection(unittest.TestCase):
@@ -28,8 +28,11 @@ class TestModelLanguageDetection(unittest.TestCase):
             {
                 "language": {"source": "auto", "target": "zh"},
                 "llm": {
-                    "provider": "fake",
-                    "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                    "preset": "fake",
+                    "models": {
+                        "default_strong": {"provider": "default", "model": "p"},
+                        "default_cheap": {"provider": "default", "model": "f"},
+                    },
                 },
                 "pipeline": {"book_understanding": False},
                 "paths": {"state_dir": state},
@@ -72,7 +75,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "ja-JP"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "paths": {"state_dir": os.path.join(d, "state")},
                 }
             )
@@ -104,21 +107,21 @@ class TestModelLanguageDetection(unittest.TestCase):
 
 class TestPunct(unittest.TestCase):
     def test_japanese_quotes(self):
-        self.assertEqual(normalize_zh("「你好」"), "“你好”")
-        self.assertEqual(normalize_zh("『书名』"), "‘书名’")
+        self.assertEqual(normalize_zh_segments(["「你好」"])[0], "“你好”")
+        self.assertEqual(normalize_zh_segments(["『书名』"])[0], "‘书名’")
 
     def test_halfwidth_to_full_in_cjk(self):
-        self.assertEqual(normalize_zh("他说,真的吗?"), "他说，真的吗？")
+        self.assertEqual(normalize_zh_segments(["他说,真的吗?"])[0], "他说，真的吗？")
 
     def test_no_harm_to_english_numbers(self):
-        self.assertEqual(normalize_zh("9.11 vs 9.8"), "9.11 vs 9.8")
-        self.assertEqual(normalize_zh("Mr.王"), "Mr.王")
+        self.assertEqual(normalize_zh_segments(["9.11 vs 9.8"])[0], "9.11 vs 9.8")
+        self.assertEqual(normalize_zh_segments(["Mr.王"])[0], "Mr.王")
 
     def test_ellipsis_and_dash(self):
-        self.assertEqual(normalize_zh("等等...走了--他笑了"), "等等……走了——他笑了")
+        self.assertEqual(normalize_zh_segments(["等等...走了--他笑了"])[0], "等等……走了——他笑了")
 
     def test_word_final_apostrophe_is_a_right_apostrophe(self):
-        self.assertEqual(normalize_zh("James' book"), "James’ book")
+        self.assertEqual(normalize_zh_segments(["James' book"])[0], "James’ book")
 
     def test_quotes_are_paired_across_split_continuations(self):
         self.assertEqual(
@@ -147,7 +150,7 @@ class TestPunct(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "zh", "target": "en"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "paths": {"state_dir": os.path.join(directory, "state")},
                 }
             )
@@ -163,8 +166,11 @@ class TestPunct(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                        "preset": "fake",
+                        "models": {
+                            "default_strong": {"provider": "default", "model": "p"},
+                            "default_cheap": {"provider": "default", "model": "f"},
+                        },
                     },
                     "pipeline": {
                         "book_understanding": False,
@@ -273,8 +279,11 @@ class TestRunAll(unittest.TestCase):
                 {
                     "language": {"source": "auto", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                        "preset": "fake",
+                        "models": {
+                            "default_strong": {"provider": "default", "model": "p"},
+                            "default_cheap": {"provider": "default", "model": "f"},
+                        },
                     },
                     "pipeline": {
                         "review": True,

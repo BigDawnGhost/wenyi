@@ -8,18 +8,20 @@ import unittest
 from unittest.mock import patch
 
 import typer
-from rich.progress import Progress
+from rich.cells import cell_len
+from rich.progress import Progress, TimeElapsedColumn
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
-    _apply_store_languages,
     _configure_windows_console,
+    _progress_columns,
     _RichProgressBridge,
     _validate_pdf_engine,
     app,
 )
 from trans_novel.config import Config
 from trans_novel.ingest.errors import MinerUError
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pdf_bridge import BabeldocBridgeError
 
 
@@ -31,6 +33,48 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_progress_clock_advances_after_completed_stage(self):
+        now = 10.0
+        progress = Progress(disable=True, get_time=lambda: now)
+        bridge = _RichProgressBridge(progress, "Preparing translation…")
+        bridge(1674, 1674, "Translation complete")
+        self.assertTrue(progress.tasks[0].finished)
+
+        now = 20.0
+        bridge(0, 1674, "Whole-book review R1")
+        bridge(777, 1674, "Whole-book review R1")
+        task = progress.tasks[0]
+        self.assertFalse(task.finished)
+        now = 25.0
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+        now = 35.0
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:15")
+        bridge(778, 1674, "Whole-book review R1")
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:15")
+
+    def test_indeterminate_progress_updates_preserve_elapsed_time(self):
+        now = 10.0
+        progress = Progress(disable=True, get_time=lambda: now)
+        bridge = _RichProgressBridge(progress, "Preparing review…")
+        bridge(1, 1, "Loading review chapters")
+        bridge(0, 0, "Restoring review checkpoint…")
+        now = 15.0
+        bridge(0, 0, "Restoring review checkpoint…")
+        task = progress.tasks[0]
+        self.assertIsNone(task.total)
+        self.assertFalse(task.finished)
+        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+
+    def test_long_progress_description_is_ellipsized_without_hiding_bar(self):
+        progress = Progress(*_progress_columns(), disable=True)
+        bridge = _RichProgressBridge(progress, "Preparing…")
+
+        bridge(1, 2, "这是一个特别特别长而且不应该挤掉右侧进度条的章节标题")
+
+        description = progress.tasks[0].description
+        self.assertTrue(description.endswith("…"))
+        self.assertLessEqual(cell_len(description), 28)
+
     def test_progress_bridge_reuses_one_task_across_review_stages(self):
         progress = Progress(disable=True)
         bridge = _RichProgressBridge(progress, "Preparing whole-book review…")
@@ -46,6 +90,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(task.description, "Blind whole-book review R2")
         self.assertEqual(task.completed, 0)
         self.assertEqual(task.total, 6386)
+        self.assertFalse(task.finished)
 
     def test_pdf_engine_validation_accepts_both_backends(self):
         self.assertEqual(_validate_pdf_engine("WeasyPrint"), "weasyprint")
@@ -56,19 +101,6 @@ class TestCliConfig(unittest.TestCase):
             _validate_pdf_engine("unknown")
 
         self.assertEqual(raised.exception.exit_code, 2)
-
-    def test_standalone_tools_restore_manifest_languages(self):
-        cfg = Config.from_dict({"language": {"source": "auto", "target": "en"}})
-
-        class Store:
-            @staticmethod
-            def load_manifest():
-                return {"source_lang": "ru", "target_lang": "en"}
-
-        _apply_store_languages(cfg, Store())
-
-        self.assertEqual(cfg.source_lang, "ru")
-        self.assertEqual(cfg.target_lang, "en")
 
     def test_every_cli_start_checks_default_config(self):
         runner = CliRunner()
@@ -99,7 +131,10 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
                 "pipeline": {"polish": True},
             }
         )
@@ -107,6 +142,7 @@ class TestCliConfig(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
 
@@ -138,7 +174,10 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
                 "pipeline": {"polish": True},
             }
         )
@@ -146,6 +185,7 @@ class TestCliConfig(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
 
@@ -185,7 +225,10 @@ class TestCliConfig(unittest.TestCase):
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
             }
         )
         captured = {}
@@ -208,6 +251,7 @@ class TestCliConfig(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["config"] = config
 
             def prepare_for_translation(self, input_path, **kwargs):
@@ -233,7 +277,10 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
             }
         )
         with (
@@ -287,10 +334,10 @@ class TestCliConfig(unittest.TestCase):
                     "trans_novel.cli._validate_api_configuration",
                     side_effect=RuntimeError("missing key"),
                 ) as validate:
-                    result = CliRunner().invoke(app, [command])
+                    result = CliRunner().invoke(app, [command, "input.txt"])
                 self.assertEqual(result.exit_code, 1, result.output)
                 self.assertIn("missing key", result.output)
-                validate.assert_called_once_with()
+                self.assertEqual(validate.call_count, 1)
 
     def test_api_preflight_skips_local_commands(self):
         for args in (
@@ -331,13 +378,17 @@ class TestCliConfig(unittest.TestCase):
     def test_review_command_runs_full_read_only_review(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
             }
         )
         captured = {}
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["config"] = config
 
             def run_review(self, input_path, **kwargs):
@@ -382,7 +433,10 @@ class TestCliConfig(unittest.TestCase):
     def test_review_autofix_option_overrides_config_and_reports_writeback(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
                 "pipeline": {"review_autofix": False},
             }
         )
@@ -390,6 +444,7 @@ class TestCliConfig(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["autofix"] = config.pipeline.review_autofix
 
             def run_review(self, input_path, **kwargs):
@@ -420,7 +475,7 @@ class TestCliConfig(unittest.TestCase):
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
-        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        cfg = Config.from_dict({"llm": {"preset": "deepseek"}})
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.cli._require_input_file") as require_input,
@@ -435,7 +490,7 @@ class TestCliConfig(unittest.TestCase):
         require_input.assert_not_called()
 
     def test_assemble_skips_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"provider": "deepseek"}})
+        cfg = Config.from_dict({"llm": {"preset": "deepseek"}})
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
             patch("trans_novel.cli.os.path.isfile", return_value=False),
@@ -448,11 +503,12 @@ class TestCliConfig(unittest.TestCase):
         self.assertNotIn("DEEPSEEK_API_KEY", result.output)
 
     def test_assemble_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"preset": "fake"}})
         captured = {}
 
         class FakeOrchestrator:
             def __init__(self, config, client=None):
+                self.client = FakeClient()
                 del client
                 captured["mono"] = config.output.mono
                 captured["bilingual"] = config.output.bilingual
@@ -490,7 +546,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("out.pdf", result.output)
 
     def test_report_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"preset": "fake"}})
         captured = {}
 
         class ReportStore:
@@ -498,6 +554,7 @@ class TestCliConfig(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config, client=None):
+                self.client = FakeClient()
                 del client
                 captured["config"] = config
 
@@ -528,7 +585,14 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("state/book/report.json", result.output)
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}}})
+        cfg = Config.from_dict(
+            {
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                }
+            }
+        )
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),
@@ -539,6 +603,7 @@ class TestCliConfig(unittest.TestCase):
 
                 class FakeOrchestrator:
                     def __init__(self, config):
+                        self.client = FakeClient()
                         pass
 
                     def run_all(self, input_path, **kwargs):
@@ -559,7 +624,7 @@ class TestCliConfig(unittest.TestCase):
                 self.assertNotIn("Traceback", result.output)
 
     def test_translate_rejects_unknown_output_format_after_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"preset": "fake"}})
         with (
             patch("trans_novel.cli.os.path.isfile", return_value=True),
             patch("trans_novel.cli._load_config", return_value=cfg),
@@ -570,10 +635,11 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("Unsupported output format", result.output)
 
     def test_translate_reports_out_of_range_chapter_without_traceback(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"preset": "fake"}})
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 pass
 
             def run(self, input_path, **kwargs):
@@ -599,7 +665,7 @@ class TestCliConfig(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "paths": {"state_dir": state_dir},
                 }
             )

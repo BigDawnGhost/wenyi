@@ -26,7 +26,6 @@ _HEADING_NAME = re.compile(
     re.IGNORECASE,
 )
 
-_STYLE_KEYS = ("bold", "italic", "underline", "color", "size_pt", "font")
 # Align only meaningful visible differences; font/size changes alone do not split style spans.
 _ALIGN_STYLE_KEYS = ("bold", "italic", "underline", "color")
 
@@ -238,10 +237,6 @@ def _paragraph_shade(paragraph: DocxParagraph) -> str | None:
     if isinstance(fill, str) and fill and fill.lower() not in {"auto", "nil"}:
         return fill.upper()
     return None
-
-
-def _style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
-    return tuple((key, style[key]) for key in _STYLE_KEYS if key in style)
 
 
 def _align_style_fingerprint(style: dict[str, Any]) -> tuple[tuple[str, Any], ...]:

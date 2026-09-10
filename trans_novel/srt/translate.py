@@ -11,7 +11,7 @@ from typing import Any
 
 from ..assemble.srt_writer import default_srt_out_paths, write_srt_outputs
 from ..config import Config
-from ..i18n.languages import profile, require_language
+from ..i18n.languages import require_language
 from ..i18n.prompts import render
 from ..i18n.resources import prompt_fingerprint
 from ..ingest.srt_reader import parse_srt
@@ -28,10 +28,6 @@ MAX_CONCURRENT = 100
 RETRY_LIMIT = 3
 
 _JSON_OBJECT = re.compile(r"(\{.*\})", re.DOTALL)
-
-
-def _target_language_name(code: str) -> str:
-    return profile(code)["english_name"]
 
 
 def _parse_batch_json(text: str) -> dict[str, str] | None:
@@ -79,9 +75,8 @@ def _translate_batch(
         try:
             raw = client.complete(
                 messages,
-                tier="strong",
+                operation="srt.translate",
                 json_mode=True,
-                stage="srt_translate",
             )
             parsed = _parse_batch_json(raw)
             if parsed is not None:
@@ -109,7 +104,7 @@ def _translate_single(
         },
     ]
     try:
-        raw = client.complete(messages, tier="strong", stage="srt_translate_fallback")
+        raw = client.complete(messages, operation="srt.translate")
         return raw.strip().strip('"')
     except Exception:  # noqa: BLE001 - Individual cue failures fall back to source text.
         return text
@@ -202,7 +197,11 @@ def translate_srt(
     cue_rows = store.ensure_cues([(c.index, c.timestamp, c.text) for c in cues])
 
     llm = client or build_client(config)
-    llm.validate_credentials()
+    from ..llm.routing import inference_snapshot
+    from ..llm.usage import validate_usage
+
+    validate_usage(store.load_usage())
+    llm.validate_credentials(("srt.translate",))
     llm.set_event_sink(store.log_event)
     usage_checkpoint = llm.usage_summary()
 
@@ -212,6 +211,7 @@ def translate_srt(
         cue_count=len(cues),
         run_dir=store.run_dir,
         prompt_fingerprint=prompt_fingerprint(),
+        inference=inference_snapshot(config.llm, ("srt.translate",)),
     )
 
     source_map = {cue.index: cue.text for cue in cues}
@@ -267,7 +267,7 @@ def translate_srt(
 
     if pending:
         workers = min(MAX_CONCURRENT, len(pending))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with llm.interrupt_scope(), ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(run_job, job): job[0] for job in pending}
             for future in as_completed(futures):
                 start, result, is_first, is_last = future.result()
@@ -300,7 +300,10 @@ def translate_srt(
         store.log_event("srt_fallback", missing_count=len(missing))
         if progress:
             progress(0, len(missing), "Translating missing subtitles…")
-        with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT, len(missing))) as executor:
+        with (
+            llm.interrupt_scope(),
+            ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT, len(missing))) as executor,
+        ):
             future_map = {
                 executor.submit(
                     _translate_single,

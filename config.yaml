@@ -7,29 +7,9 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  # deepseek | openai | openrouter | orcarouter | openai-compatible | ollama | vllm | fake
-  # OrcaRouter defaults to https://api.orcarouter.ai/v1 and ORCAROUTER_API_KEY.
-  # When using provider: orcarouter, set tiers.*.model to IDs available to your account.
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 600
-  max_retries: 4 # Transient-error retries managed by Wenyi; SDK retries are disabled
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
-        reasoning_effort: high
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
+  preset: deepseek # All tiers: deepseek-v4-flash, thinking enabled, reasoning_effort high
+  # Add providers, models and routes to override individual operations.
+  # Inspect effective settings with: trans-novel models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:
@@ -52,7 +32,6 @@ pipeline:
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
   review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
   review_agent_loop: true # Use evidence-based verification after the initial review identifies candidates
-  review_agent_tier: strong # Model tier for the review agent loop and whole-book conflict arbitration
   review_agent_max_evidence_rounds: 2 # At most two rounds of selective evidence requests before a final decision
   review_conflict_arbitration: true # Arbitrate contradictory consistency proposals after all review blocks finish
   review_fix_loop: true # Revise an in-memory shadow translation and review it blindly; this loop does not publish changes
@@ -60,8 +39,8 @@ pipeline:
   review_clean_confirmations: 2 # Require two consecutive clean rounds to accept the shadow translation
   review_autofix: true # Publish review revisions to formal chapters; use --no-autofix for recommendations only
   glossary_scope: chapter # chapter=terms occurring in this chapter (saves tokens); full=entire glossary
-  # PDF backend: babeldoc (default, preserves layout, requires an external AGPL HTTP bridge) | mineru (supports scans)
-  pdf_backend: babeldoc
+  # PDF backend: mineru (default, supports scans) | babeldoc (optional, preserves layout via external AGPL HTTP bridge)
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # Optional page restriction for the bridge (one-based)
   babeldoc_timeout: 600

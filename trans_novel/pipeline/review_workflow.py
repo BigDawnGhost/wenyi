@@ -33,7 +33,6 @@ from ..agents.review_loop import (
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.resources import prompt_fingerprint
-from ..llm.usage import usage_delta
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore
 from .runstore import STATUS_DONE
@@ -274,15 +273,24 @@ class ReviewService:
 
     def _review_config_snapshot(self) -> dict[str, Any]:
         """Snapshot review configuration for persisted metadata and reuse checks."""
+        from ..llm.operations import configured_operations
+        from ..llm.routing import inference_snapshot
+
         return {
             "source_lang": self._runtime.config.source_lang,
             "target_lang": self._runtime.config.target_lang,
             "honorific_strategy": self._runtime.config.honorific_strategy,
             "prompt_fingerprint": prompt_fingerprint(),
-            "review_concurrency": self._runtime.config.pipeline.review_concurrency,
             "review_output_retries": self._runtime.config.pipeline.review_output_retries,
             "review_agent_loop": self._runtime.config.pipeline.review_agent_loop,
-            "review_agent_tier": self._runtime.config.pipeline.review_agent_tier,
+            "inference": inference_snapshot(
+                self._runtime.llm_config,
+                (
+                    operation
+                    for operation in configured_operations(self._runtime.config, "review")
+                    if operation.startswith("review.")
+                ),
+            ),
             "review_agent_max_evidence_rounds": (
                 self._runtime.config.pipeline.review_agent_max_evidence_rounds
             ),
@@ -364,11 +372,6 @@ class ReviewService:
         raw_issues: list[dict[str, Any]] = []
         for chapter in loaded:
             text_segs = chapter.text_segments
-            if self._runtime.config.pipeline.glossary_scope == "chapter":
-                source_text = "\n".join(segment.source for segment in text_segs)
-                term_snapshot = GlossaryStore.terms_in(all_terms, source_text)
-            else:
-                term_snapshot = all_terms
 
             def on_chunk_finished(segment_count: int) -> None:
                 """Advance this round's paragraph progress after a top-level review block
@@ -381,7 +384,7 @@ class ReviewService:
 
             chapter_issues = self.review_chapter(
                 text_segs,
-                term_snapshot,
+                all_terms,
                 chapter_index=chapter.index,
                 evidence=evidence,
                 debug=debug,
@@ -715,6 +718,7 @@ class ReviewService:
         usage and formal events at session end.
         """
         manifest = store.load_manifest()
+        self._runtime.flush_usage(store, scope="before_review")
         pending = [
             chapter["index"]
             for chapter in manifest.get("chapters", [])
@@ -728,8 +732,16 @@ class ReviewService:
             )
 
         chapter_rows = manifest.get("chapters", [])
-        loaded = [store.load_chapter(item["index"]) for item in chapter_rows]
+        if progress:
+            progress(0, len(chapter_rows), "Loading review chapters")
+        loaded = []
+        for position, item in enumerate(chapter_rows, start=1):
+            loaded.append(store.load_chapter(item["index"]))
+            if progress:
+                progress(position, len(chapter_rows), "Loading review chapters")
         total = sum(len(chapter.text_segments) for chapter in loaded)
+        if progress:
+            progress(0, 0, "Restoring review checkpoint…")
         analysis = store.load_analysis() or {}
         reviewed_content_digest = _review_content_digest(loaded)
 
@@ -758,6 +770,9 @@ class ReviewService:
             glossary_fingerprint=self._review_glossary_fingerprint(all_terms),
         )
         if debug is not None:
+            from ..llm.usage import validate_usage
+
+            validate_usage(debug.load_usage())
             debug.log_event("review_resumed_from_checkpoint", review_id=debug.review_id)
         else:
             debug = ReviewRunStore(store.run_dir)
@@ -780,14 +795,13 @@ class ReviewService:
             review_dir=debug.run_dir,
             reviewed_content_digest=reviewed_content_digest,
         )
-        usage_before = self._runtime.client.usage_summary()
 
         def save_review_usage() -> dict[str, Any]:
             """Persist this review's usage delta and merge it into cumulative book usage."""
-            usage = usage_delta(self._runtime.client.usage_summary(), usage_before)
-            debug.save_usage(usage)
-            self._runtime.flush_usage(store, scope="review")
-            return usage
+            from ..llm.usage import empty_usage
+
+            self._runtime.flush_usage(store, scope="review", review=debug)
+            return debug.load_usage() or empty_usage()
 
         target_overrides: dict[tuple[int, int], str] = {}
         seen_overlays = {_review_overlay_digest(loaded, target_overrides)}
@@ -964,6 +978,8 @@ class ReviewService:
 
         try:
             for review_round in range(start_round, max_review_rounds + 1):
+                if progress:
+                    progress(0, 0, f"Preparing review R{review_round}…")
                 overlay_digest = _review_overlay_digest(loaded, target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,
@@ -1014,7 +1030,6 @@ class ReviewService:
                         _save_checkpoint(review_round, phase="scan_done", latest=latest)
                         # Persist scan usage before fixing so a fixer-stage crash cannot lose accounting.
                         save_review_usage()
-                        usage_before = self._runtime.client.usage_summary()
 
                     current_issue_keys = {
                         str(issue["issue_key"])
@@ -1356,7 +1371,11 @@ class ReviewService:
                 result=result,
                 usage=usage,
             )
-        except Exception as error:
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                save_review_usage()
+                debug.log_event("review_interrupted", error_type=type(error).__name__)
+                raise
             initial_issues, dismissed = debug.result_snapshots()
             partial_issues = effective_issues(latest) if latest is not None else []
             public_issues = _review_public_issues(partial_issues)
@@ -1406,7 +1425,7 @@ class ReviewService:
     def review_chapter(
         self,
         text_segs,
-        terms,
+        terms: list[GlossaryTerm],
         *,
         chapter_index: int | None = None,
         evidence: BookEvidenceIndex | None = None,
@@ -1418,6 +1437,8 @@ class ReviewService:
         """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
         Use blocks around three translation batches to reduce calls and repeated context.
         Convert valid block-local indices by the block offset and reject invalid positions.
+        Filter the chapter glossary only when a fresh reviewer request needs it; completed
+        chunks and initial traces bypass matching. Share one snapshot across workers.
         Read fixed target/glossary snapshots. Recursively bisect malformed output and retry
         single paragraphs a bounded number of times. Merge results in original block order
         for determinism.
@@ -1435,6 +1456,19 @@ class ReviewService:
 
         recovery_events: list[dict[str, Any]] = []
         recovery_lock = Lock()
+        term_snapshot: list[GlossaryTerm] | None = None
+        term_lock = Lock()
+
+        def reviewer_terms() -> list[GlossaryTerm]:
+            """Build the chapter-wide glossary once, after all reusable caches miss."""
+            nonlocal term_snapshot
+            if self._runtime.config.pipeline.glossary_scope != "chapter":
+                return terms
+            with term_lock:
+                if term_snapshot is None:
+                    source_text = "\n".join(segment.source for segment in text_segs)
+                    term_snapshot = GlossaryStore.terms_in(terms, source_text)
+                return term_snapshot
 
         def record_recovery(event: str, **data: Any) -> None:
             """Buffer recovery events under a lock; write them from the main thread after
@@ -1464,18 +1498,17 @@ class ReviewService:
             # Check the chunk cache to skip reviewer and evidence-loop model calls on resume.
             round_prefix = f"r{review_round}-" if review_round is not None else ""
             chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
-            if debug is not None and debug.is_chunk_done(chunk_id):
-                review_debug = debug
-                cached = review_debug.load_chunk_result(chunk_id)
+            if debug is not None:
+                cached = debug.load_chunk_result(chunk_id)
                 if cached is not None:
                     # Restore initial/dismissed aggregation needed by the report.
                     if chapter_index is not None:
-                        review_debug.record_initial_issues(
+                        debug.record_initial_issues(
                             chapter=chapter_index,
                             chunk_base=chunk_base,
                             issues=cached.get("initial_issues", []),
                         )
-                        review_debug.record_dismissed(
+                        debug.record_dismissed(
                             chapter=chapter_index,
                             chunk_base=chunk_base,
                             issues=cached.get("dismissed", []),
@@ -1566,7 +1599,7 @@ class ReviewService:
                     review_result = self._runtime.reviewer.review_result(
                         srcs,
                         tgts,
-                        terms,
+                        reviewer_terms(),
                         trace=trace if debug is not None else None,
                     )
                 except Exception as error:
@@ -1807,11 +1840,10 @@ class ReviewService:
             if not pieces:
                 return []
             chunk_id = f"{round_prefix}ch{chapter_index}-base{base}-n{len(pieces)}"
-            if debug.is_chunk_done(chunk_id):
-                cached = debug.load_chunk_result(chunk_id)
-                if cached is not None:
-                    hits.append((base, cached))
-                    return list(cached.get("issues", []))
+            cached = debug.load_chunk_result(chunk_id)
+            if cached is not None:
+                hits.append((base, cached))
+                return list(cached.get("issues", []))
             if len(pieces) <= 1:
                 return None
             mid = len(pieces) // 2

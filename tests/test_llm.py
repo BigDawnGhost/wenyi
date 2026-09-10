@@ -26,44 +26,28 @@ class TestParseJsonLoose(unittest.TestCase):
             parse_json_loose("没有任何 JSON 内容")
 
 
-class TestResolveTier(unittest.TestCase):
-    def test_fallback_chain(self):
-        from trans_novel.config import TierConfig
-        from trans_novel.llm.tiers import resolve_tier
-
-        strong = TierConfig(model="pro")
-        cheap = TierConfig(model="flash")
-        fast = TierConfig(model="flash", options={"thinking": False})
-
-        # With all three tiers present, use each requested tier directly.
-        tiers = {"strong": strong, "cheap": cheap, "fast": fast}
-        self.assertIs(resolve_tier(tiers, "fast"), fast)
-        self.assertIs(resolve_tier(tiers, "cheap"), cheap)
-        self.assertIs(resolve_tier(tiers, "strong"), strong)
-        # Without fast, fall back to cheap instead of the more expensive strong tier.
-        tiers2 = {"strong": strong, "cheap": cheap}
-        self.assertIs(resolve_tier(tiers2, "fast"), cheap)
-        # With only strong configured, every tier falls back to strong.
-        tiers3 = {"strong": strong}
-        self.assertIs(resolve_tier(tiers3, "fast"), strong)
-        self.assertIs(resolve_tier(tiers3, "cheap"), strong)
-        # Unknown tiers fall back to strong.
-        self.assertIs(resolve_tier(tiers, "unknown"), strong)
-
-
 class TestFakeClient(unittest.TestCase):
     def test_default(self):
         c = FakeClient()
-        self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "")
-        self.assertEqual(c.complete_json([{"role": "user", "content": "x"}]), [])
+        self.assertEqual(
+            c.complete([{"role": "user", "content": "x"}], operation="translation.body"), ""
+        )
+        self.assertEqual(
+            c.complete_json([{"role": "user", "content": "x"}], operation="translation.body"), []
+        )
 
     def test_handler(self):
         def handler(messages, tier, json_mode):
             return '["A","B"]' if json_mode else "hello"
 
         c = FakeClient(handler=handler)
-        self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "hello")
-        self.assertEqual(c.complete_json([{"role": "user", "content": "x"}]), ["A", "B"])
+        self.assertEqual(
+            c.complete([{"role": "user", "content": "x"}], operation="translation.body"), "hello"
+        )
+        self.assertEqual(
+            c.complete_json([{"role": "user", "content": "x"}], operation="translation.body"),
+            ["A", "B"],
+        )
         self.assertEqual(len(c.calls), 2)
 
 
@@ -148,15 +132,15 @@ class TestProviderRequestKwargs(unittest.TestCase):
         self.assertEqual(kwargs["messages"][-1]["content"], "请输出 JSON 数组。")
 
     def test_deepseek_dialect_and_recursive_extra_body(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.deepseek import (
-            DeepSeekTierOptions,
+            DeepSeekOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        tier = ResolvedTier(
+        tier = ResolvedModel(
             model="m",
-            options=DeepSeekTierOptions(
+            options=DeepSeekOptions(
                 extra_body={"thinking": {"budget": 8192}},
             ),
         )
@@ -168,9 +152,9 @@ class TestProviderRequestKwargs(unittest.TestCase):
             {"thinking": {"type": "enabled", "budget": 8192}},
         )
 
-        disabled = ResolvedTier(
+        disabled = ResolvedModel(
             model="m",
-            options=DeepSeekTierOptions(thinking=False),
+            options=DeepSeekOptions(thinking=False),
         )
         disabled_kwargs = build_request_kwargs(disabled, self.messages)
         self.assertNotIn("reasoning_effort", disabled_kwargs)
@@ -180,19 +164,19 @@ class TestProviderRequestKwargs(unittest.TestCase):
         )
 
     def test_openrouter_dialect_and_explicit_disable(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openrouter import (
-            OpenRouterTierOptions,
+            OpenRouterOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        enabled = ResolvedTier(
+        enabled = ResolvedModel(
             model="m",
-            options=OpenRouterTierOptions(reasoning_effort="high"),
+            options=OpenRouterOptions(reasoning_effort="high"),
         )
-        disabled = ResolvedTier(
+        disabled = ResolvedModel(
             model="m",
-            options=OpenRouterTierOptions(thinking=False),
+            options=OpenRouterOptions(thinking=False),
         )
 
         self.assertEqual(
@@ -205,39 +189,39 @@ class TestProviderRequestKwargs(unittest.TestCase):
         )
 
     def test_openai_dialect(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openai import (
-            OpenAITierOptions,
+            OpenAIOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        tier = ResolvedTier(
+        tier = ResolvedModel(
             model="m",
-            options=OpenAITierOptions(reasoning_effort="low"),
+            options=OpenAIOptions(reasoning_effort="low"),
         )
         kwargs = build_request_kwargs(tier, self.messages)
 
         self.assertEqual(kwargs["reasoning_effort"], "low")
         self.assertNotIn("extra_body", kwargs)
 
-        disabled = ResolvedTier(
+        disabled = ResolvedModel(
             model="m",
-            options=OpenAITierOptions(thinking=False),
+            options=OpenAIOptions(thinking=False),
         )
         disabled_kwargs = build_request_kwargs(disabled, self.messages)
         self.assertEqual(disabled_kwargs["reasoning_effort"], "none")
 
     def test_openai_uses_max_completion_tokens(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openai import (
-            OpenAITierOptions,
+            OpenAIOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        enabled = ResolvedTier(model="m", options=OpenAITierOptions())
-        disabled = ResolvedTier(
+        enabled = ResolvedModel(model="m", options=OpenAIOptions())
+        disabled = ResolvedModel(
             model="m",
-            options=OpenAITierOptions(thinking=False),
+            options=OpenAIOptions(thinking=False),
         )
 
         enabled_kwargs = build_request_kwargs(
@@ -251,20 +235,20 @@ class TestProviderRequestKwargs(unittest.TestCase):
             max_tokens=100,
         )
         self.assertNotIn("max_tokens", enabled_kwargs)
-        self.assertEqual(enabled_kwargs["max_completion_tokens"], 4096)
+        self.assertEqual(enabled_kwargs["max_completion_tokens"], 100)
         self.assertNotIn("max_tokens", disabled_kwargs)
         self.assertEqual(disabled_kwargs["max_completion_tokens"], 100)
 
     def test_generic_compatible_endpoint_maps_reasoning_dialects(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openai_compatible import (
-            OpenAICompatibleTierOptions,
+            OpenAICompatibleOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        tier = ResolvedTier(
+        tier = ResolvedModel(
             model="m",
-            options=OpenAICompatibleTierOptions(
+            options=OpenAICompatibleOptions(
                 thinking=True,
                 reasoning_effort="medium",
                 request_overrides={"thinking": {"budget": 8192}},
@@ -292,7 +276,7 @@ class TestProviderRequestKwargs(unittest.TestCase):
             deepseek["extra_body"],
             {"thinking": {"type": "enabled", "budget": 8192}},
         )
-        self.assertEqual(deepseek["max_tokens"], 4096)
+        self.assertEqual(deepseek["max_tokens"], 100)
         self.assertEqual(openai["reasoning_effort"], "medium")
         self.assertEqual(
             openai["extra_body"],
@@ -307,15 +291,15 @@ class TestProviderRequestKwargs(unittest.TestCase):
         )
 
     def test_generic_compatible_endpoint_explicitly_disables_reasoning(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openai_compatible import (
-            OpenAICompatibleTierOptions,
+            OpenAICompatibleOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        tier = ResolvedTier(
+        tier = ResolvedModel(
             model="m",
-            options=OpenAICompatibleTierOptions(thinking=False),
+            options=OpenAICompatibleOptions(thinking=False),
         )
 
         self.assertEqual(
@@ -344,15 +328,15 @@ class TestProviderRequestKwargs(unittest.TestCase):
         )
 
     def test_generic_compatible_endpoint_can_only_use_raw_overrides(self):
-        from trans_novel.llm.providers._openai_compatible import ResolvedTier
         from trans_novel.llm.providers.openai_compatible import (
-            OpenAICompatibleTierOptions,
+            OpenAICompatibleOptions,
             build_request_kwargs,
         )
+        from trans_novel.llm.transport import ResolvedModel
 
-        tier = ResolvedTier(
+        tier = ResolvedModel(
             model="m",
-            options=OpenAICompatibleTierOptions(
+            options=OpenAICompatibleOptions(
                 thinking=True,
                 request_overrides={"enable_thinking": True},
             ),
@@ -361,7 +345,7 @@ class TestProviderRequestKwargs(unittest.TestCase):
 
         self.assertNotIn("reasoning_effort", kwargs)
         self.assertEqual(kwargs["extra_body"], {"enable_thinking": True})
-        self.assertEqual(kwargs["max_tokens"], 4096)
+        self.assertEqual(kwargs["max_tokens"], 100)
 
 
 class TestProviderFactory(unittest.TestCase):
@@ -374,15 +358,20 @@ class TestProviderFactory(unittest.TestCase):
     ):
         from trans_novel.config import Config
 
-        llm = {
-            "provider": provider,
-            "tiers": {"strong": {"model": "m"}},
-        }
+        connection = {"kind": provider}
         if base_url is not None:
-            llm["base_url"] = base_url
+            connection["base_url"] = base_url
         if reasoning_style is not None:
-            llm["reasoning_style"] = reasoning_style
-        return Config.from_dict({"llm": llm})
+            connection["reasoning_style"] = reasoning_style
+        return Config.from_dict(
+            {
+                "llm": {
+                    "providers": {"default": connection},
+                    "models": {"m": {"provider": "default", "model": "m"}},
+                    "tiers": {tier: "m" for tier in ("strong", "cheap", "fast")},
+                }
+            }
+        )
 
     def test_builds_each_provider_from_its_own_module(self):
         from trans_novel.llm.factory import build_client
@@ -399,7 +388,6 @@ class TestProviderFactory(unittest.TestCase):
             ("openai", OpenAIClient, None),
             ("openrouter", OpenRouterClient, None),
             ("orcarouter", OrcaRouterClient, None),
-            ("orca-router", OrcaRouterClient, None),
             ("openai-compatible", OpenAICompatibleClient, "https://example.test/v1"),
             ("ollama", OllamaClient, None),
             ("vllm", VLLMClient, None),
@@ -407,7 +395,7 @@ class TestProviderFactory(unittest.TestCase):
         for provider, expected_type, base_url in cases:
             with self.subTest(provider=provider):
                 self.assertIsInstance(
-                    build_client(self._config(provider, base_url=base_url)),
+                    build_client(self._config(provider, base_url=base_url)).adapter("default"),
                     expected_type,
                 )
 
@@ -416,11 +404,11 @@ class TestProviderFactory(unittest.TestCase):
         from trans_novel.llm.providers.orcarouter import OrcaRouterClient
 
         client = build_client(self._config("orcarouter"))
-        assert isinstance(client, OrcaRouterClient)
+        assert isinstance(client.adapter("default"), OrcaRouterClient)
 
-        self.assertEqual(client.base_url, "https://api.orcarouter.ai/v1")
-        self.assertEqual(client.api_key_env, "ORCAROUTER_API_KEY")
-        self.assertTrue(client.requires_api_key)
+        self.assertEqual(client.adapter("default").base_url, "https://api.orcarouter.ai/v1")
+        self.assertEqual(client.adapter("default").api_key_env, "ORCAROUTER_API_KEY")
+        self.assertTrue(client.adapter("default").requires_api_key)
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "ORCAROUTER_API_KEY"):
                 client.validate_credentials()
@@ -434,13 +422,13 @@ class TestProviderFactory(unittest.TestCase):
 
         ollama = build_client(self._config("ollama"))
         vllm = build_client(self._config("vllm"))
-        assert isinstance(ollama, OllamaClient)
-        assert isinstance(vllm, VLLMClient)
+        assert isinstance(ollama.adapter("default"), OllamaClient)
+        assert isinstance(vllm.adapter("default"), VLLMClient)
 
-        self.assertEqual(ollama.base_url, "http://localhost:11434/v1")
-        self.assertEqual(vllm.base_url, "http://localhost:8000/v1")
-        self.assertFalse(ollama.requires_api_key)
-        self.assertFalse(vllm.requires_api_key)
+        self.assertEqual(ollama.adapter("default").base_url, "http://localhost:11434/v1")
+        self.assertEqual(vllm.adapter("default").base_url, "http://localhost:8000/v1")
+        self.assertFalse(ollama.adapter("default").requires_api_key)
+        self.assertFalse(vllm.adapter("default").requires_api_key)
 
         with patch.dict(os.environ, {}, clear=True):
             ollama.validate_credentials()
@@ -479,13 +467,16 @@ class TestProviderFactory(unittest.TestCase):
         )
         ollama = build_client(self._config("ollama", reasoning_style="openai"))
         vllm = build_client(self._config("vllm", reasoning_style="openrouter"))
-        assert isinstance(compatible, OpenAICompatibleClient)
-        assert isinstance(ollama, OllamaClient)
-        assert isinstance(vllm, VLLMClient)
+        compatible_adapter = compatible.adapter("default")
+        ollama_adapter = ollama.adapter("default")
+        vllm_adapter = vllm.adapter("default")
+        assert isinstance(compatible_adapter, OpenAICompatibleClient)
+        assert isinstance(ollama_adapter, OllamaClient)
+        assert isinstance(vllm_adapter, VLLMClient)
 
-        self.assertEqual(compatible.reasoning_style, "deepseek")
-        self.assertEqual(ollama.reasoning_style, "openai")
-        self.assertEqual(vllm.reasoning_style, "openrouter")
+        self.assertEqual(compatible_adapter.reasoning_style, "deepseek")
+        self.assertEqual(ollama_adapter.reasoning_style, "openai")
+        self.assertEqual(vllm_adapter.reasoning_style, "openrouter")
 
 
 if __name__ == "__main__":

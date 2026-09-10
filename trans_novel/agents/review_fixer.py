@@ -8,7 +8,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ..config import Config
 from ..glossary.store import GlossaryTerm
+from ..i18n import languages
+from ..i18n.prompts import render
+from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from . import prompts
 from .base import Agent
@@ -124,6 +128,10 @@ def _glossary_text(
 class ReviewFixer(Agent):
     """Generate strictly validated complete-paragraph patches that cannot publish themselves."""
 
+    def __init__(self, client: LLMClient, config: Config, *, operation: str = "review.fix"):
+        super().__init__(client, config)
+        self.operation = operation
+
     @staticmethod
     def target_hash(target: str) -> str:
         """Return the current translation hash used by the Fixer protocol."""
@@ -219,17 +227,17 @@ class ReviewFixer(Agent):
 
         issue_ids, issue_payload = self._issues(issues, chapter=chapter, index=index)
         before_hash = self.target_hash(current_target)
-        system = prompts.render(
+        system = render(
             "review_fixer_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=prompts.langprofile.translate_guidance(
+            lang_guidance=languages.translate_guidance(
                 self.src,
                 self.config.honorific_strategy,
                 self.tgt,
             ),
         )
-        user = prompts.render(
+        user = render(
             "review_fixer_user",
             src=self.src,
             tgt=self.tgt,
@@ -262,9 +270,8 @@ class ReviewFixer(Agent):
         try:
             raw = self.client.complete(
                 messages,
-                tier=self.config.pipeline.review_agent_tier,
+                operation=self.operation,
                 json_mode=True,
-                stage=type(self).__name__,
             )
         except Exception as error:
             if trace:

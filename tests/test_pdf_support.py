@@ -12,7 +12,8 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 
-from trans_novel.assemble.writer import _normalize_html_for_fpdf, assemble
+from trans_novel.assemble.pdf_writer import _normalize_html_for_fpdf
+from trans_novel.assemble.writer import assemble
 from trans_novel.cli import _runstore_for
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
@@ -145,7 +146,7 @@ class TestPdfIngest(unittest.TestCase):
             conversion.assert_called_once()
             self.assertIn("Fresh retry.", document.chapters[0].segments[1].source)
 
-    def test_pdf_failed_conversion_metric_survives_successful_retry(self):
+    def test_pdf_failed_preparation_preserves_identity_for_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             pdf_path = os.path.join(directory, "sample.pdf")
             with open(pdf_path, "wb") as file:
@@ -154,40 +155,39 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "pipeline": {"book_understanding": False, "pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
             )
 
-            with patch("trans_novel.pipeline.runtime._RUN_METRICS_ENABLED", True):
-                with (
-                    patch(
-                        "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
-                        side_effect=RuntimeError("temporary outage"),
-                    ),
-                    self.assertRaises(MinerUError),
-                ):
-                    Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
-
-                def convert_fresh(_input: str, output: str, **_kwargs) -> None:
-                    os.makedirs(os.path.dirname(output), exist_ok=True)
-                    with open(output, "w", encoding="utf-8") as file:
-                        file.write(_HTML)
-
-                with patch(
+            with (
+                patch(
                     "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
-                    side_effect=convert_fresh,
-                ):
-                    store = Orchestrator(
-                        config,
-                        client=FakeClient(),
-                    ).prepare_for_translation(pdf_path)
+                    side_effect=RuntimeError("temporary outage"),
+                ),
+                self.assertRaises(MinerUError),
+            ):
+                Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
 
-                self.assertEqual(
-                    [metric["status"] for metric in store.load_run_metrics()],
-                    ["failed", "completed"],
-                )
+            partial = RunStore(os.path.join(state_dir, "sample", "targets", "zh"), create=False)
+            self.assertFalse(partial.exists())
+            self.assertTrue(os.path.isfile(partial.initialization_path))
+
+            def convert_fresh(_input: str, output: str, **_kwargs) -> None:
+                os.makedirs(os.path.dirname(output), exist_ok=True)
+                with open(output, "w", encoding="utf-8") as file:
+                    file.write(_HTML)
+
+            with patch(
+                "trans_novel.ingest.pdf_to_html.convert_pdf_to_html",
+                side_effect=convert_fresh,
+            ):
+                store = Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
+
+            self.assertTrue(store.exists())
+            self.assertEqual(store.load_manifest()["source_sha256"], source_sha256(pdf_path))
+            self.assertFalse(os.path.exists(store.initialization_path))
 
     def test_orchestrator_uses_state_cache_and_resume_skips_pdf_parse(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -195,7 +195,7 @@ class TestPdfIngest(unittest.TestCase):
             with open(pdf_path, "wb") as file:
                 file.write(b"not accessed when cached HTML exists")
             state_dir = os.path.join(directory, "state")
-            cache_dir = os.path.join(state_dir, "sample", "source")
+            cache_dir = os.path.join(state_dir, "sample", "targets", "zh", "source")
             cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
             os.makedirs(os.path.dirname(cached_html))
             with open(cached_html, "w", encoding="utf-8") as file:
@@ -204,8 +204,8 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "fake"}},
+                        "preset": "fake",
+                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
                     },
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
@@ -218,7 +218,7 @@ class TestPdfIngest(unittest.TestCase):
             resumed = orchestrator.prepare(pdf_path)
             serialized_manifest = str(store.load_manifest())
 
-        self.assertEqual(store.run_dir, os.path.join(state_dir, "sample"))
+        self.assertEqual(store.run_dir, os.path.join(state_dir, "sample", "targets", "zh"))
         self.assertEqual(resumed.run_dir, store.run_dir)
         self.assertFalse(os.path.exists(cached_html))
         self.assertNotIn(os.path.abspath(pdf_path), serialized_manifest)
@@ -230,7 +230,7 @@ class TestPdfIngest(unittest.TestCase):
             with open(pdf_path, "wb") as file:
                 file.write(b"old PDF")
             state_dir = os.path.join(directory, "state")
-            cache_root = os.path.join(state_dir, "sample", "source")
+            cache_root = os.path.join(state_dir, "sample", "targets", "zh", "source")
             stale_hash = source_sha256(pdf_path)
             stale_html = pdf_cache_html_path(cache_root, stale_hash)
             os.makedirs(os.path.dirname(stale_html))
@@ -240,8 +240,8 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "fake"}},
+                        "preset": "fake",
+                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
                     },
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
@@ -253,7 +253,7 @@ class TestPdfIngest(unittest.TestCase):
             ):
                 Orchestrator(config, client=FakeClient()).prepare(pdf_path)
 
-            partial_store = RunStore(os.path.join(state_dir, "sample"))
+            partial_store = RunStore(os.path.join(state_dir, "sample", "targets", "zh"))
             stale_glossary = GlossaryStore(partial_store.glossary_path)
             stale_glossary.upsert_term(GlossaryTerm(source="OldBook", target="旧书"))
             stale_glossary.close()
@@ -300,7 +300,7 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
@@ -316,12 +316,14 @@ class TestPdfIngest(unittest.TestCase):
 
             stale_cache = os.path.dirname(
                 pdf_cache_html_path(
-                    os.path.join(state_dir, "sample", "source"),
+                    os.path.join(state_dir, "sample", "targets", "zh", "source"),
                     original_hash,
                 )
             )
             self.assertFalse(os.path.exists(stale_cache))
-            self.assertFalse(os.path.isfile(os.path.join(state_dir, "sample", "manifest.json")))
+            self.assertFalse(
+                os.path.isfile(os.path.join(state_dir, "sample", "targets", "zh", "manifest.json"))
+            )
 
     def test_cli_tools_locate_pdf_state_without_parsing_source(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -333,8 +335,8 @@ class TestPdfIngest(unittest.TestCase):
                 {
                     "language": {"source": "en", "target": "zh"},
                     "llm": {
-                        "provider": "fake",
-                        "tiers": {"strong": {"model": "fake"}},
+                        "preset": "fake",
+                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
                     },
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
@@ -347,7 +349,7 @@ class TestPdfIngest(unittest.TestCase):
             ):
                 store = _runstore_for(config, pdf_path)
 
-        self.assertEqual(store.run_dir, os.path.join(state_dir, "sample"))
+        self.assertEqual(store.run_dir, os.path.join(state_dir, "sample", "targets", "zh"))
 
     def test_pdf_generated_epub_packages_images_from_converted_html(self):
         with tempfile.TemporaryDirectory() as directory:

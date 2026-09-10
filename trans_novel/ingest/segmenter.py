@@ -117,7 +117,7 @@ def load_document(
     *,
     cache_dir: str | None = None,
     source_hash: str | None = None,
-    pdf_backend: str = "babeldoc",
+    pdf_backend: str = "mineru",
     babeldoc_bridge_url: str = "http://127.0.0.1:8765",
     babeldoc_pages: str | None = None,
     babeldoc_timeout: float = 600.0,
@@ -185,8 +185,3 @@ def batch_segments(segments: list[Segment], max_chars: int) -> list[list[Segment
     if cur:
         batches.append(cur)
     return batches
-
-
-def chapter_batches(chapter: Chapter, max_chars: int) -> list[list[Segment]]:
-    """Batch a chapter's translatable segments."""
-    return batch_segments(chapter.text_segments, max_chars)

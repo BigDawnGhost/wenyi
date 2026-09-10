@@ -14,11 +14,9 @@ from typer.testing import CliRunner
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_epub, write_sample_txt
-from trans_novel.assemble.writer import (
-    _default_out,
-    _render_chapter_html,
-    assemble,
-)
+from trans_novel.assemble.html_renderer import _render_chapter_html
+from trans_novel.assemble.writer import assemble
+from trans_novel.assemble.writer_common import _default_out
 from trans_novel.cli import app
 from trans_novel.config import Config
 from trans_novel.ingest.epub_reader import annotate_epub_resource
@@ -236,8 +234,11 @@ def _config(state_dir: str, output: dict | None = None):
     raw = {
         "language": {"source": "ja", "target": "zh"},
         "llm": {
-            "provider": "fake",
-            "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+            "preset": "fake",
+            "models": {
+                "default_strong": {"provider": "default", "model": "p"},
+                "default_cheap": {"provider": "default", "model": "f"},
+            },
         },
         "pipeline": {
             "review": True,
@@ -457,7 +458,10 @@ class TestCliBilingualFlags(unittest.TestCase):
     def test_translate_flags_override_output_config(self):
         cfg = Config.from_dict(
             {
-                "llm": {"provider": "fake", "tiers": {"strong": {"model": "p"}}},
+                "llm": {
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "p"}},
+                },
             }
         )
         captured = {}
@@ -468,6 +472,7 @@ class TestCliBilingualFlags(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config):
+                self.client = FakeClient()
                 captured["mono"] = config.output.mono
                 captured["bilingual"] = config.output.bilingual
 

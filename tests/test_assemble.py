@@ -20,14 +20,10 @@ from tests.sample_data import (
     write_sample_txt,
 )
 from trans_novel.assemble.about import append_about_page
+from trans_novel.assemble.epub_writer import _inject_bilingual_style, _rewrite_html_document
+from trans_novel.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from trans_novel.assemble.report import build_report
-from trans_novel.assemble.writer import (
-    _inject_bilingual_style,
-    _render_chapter_html,
-    _render_segments_html,
-    _rewrite_html_document,
-    assemble,
-)
+from trans_novel.assemble.writer import assemble
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest.epub_reader import annotate_epub_resource
@@ -133,8 +129,11 @@ def _config(state_dir: str):
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "p"},
+                    "default_cheap": {"provider": "default", "model": "f"},
+                },
             },
             "pipeline": {"review": True, "review_autofix": False, "polish": True},
             "paths": {"state_dir": state_dir},
@@ -1426,7 +1425,7 @@ class TestTitleTranslation(unittest.TestCase):
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
 
     def test_rewrite_nav_and_ncx_labels(self):
-        from trans_novel.assemble.writer import _rewrite_toc
+        from trans_novel.assemble.epub_writer import _rewrite_toc
 
         toc_path = "toc.xhtml"
         entries = [

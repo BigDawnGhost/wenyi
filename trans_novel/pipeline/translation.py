@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
+from ..i18n.prompts import render
 from ..ingest.epub_reader import strip_ruby_markers
 from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
@@ -97,27 +98,26 @@ class TranslationService:
             total_segments=total,
         )
         try:
-            with self._runtime.metric_stage("translate"):
-                for ci in targets:
-                    done = self.translate_chapter(
-                        ci,
-                        store,
-                        glossary,
-                        context,
-                        style,
-                        book_synopsis,
-                        translation_history=translation_history,
-                        source_corpus=source_corpus,
-                        annotation_context_registry=annotation_context_registry,
-                        progress=progress,
-                        done=done,
-                        total=total,
-                    )
-                    store.save_context(context.to_dict())
-                    self._runtime.flush_usage(store, scope="chapter")
-                # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
-                if not store.pending_chapters():
-                    self.translate_titles(store, glossary, progress=progress)
+            for ci in targets:
+                done = self.translate_chapter(
+                    ci,
+                    store,
+                    glossary,
+                    context,
+                    style,
+                    book_synopsis,
+                    translation_history=translation_history,
+                    source_corpus=source_corpus,
+                    annotation_context_registry=annotation_context_registry,
+                    progress=progress,
+                    done=done,
+                    total=total,
+                )
+                store.save_context(context.to_dict())
+                self._runtime.flush_usage(store, scope="chapter")
+            # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
+            if not store.pending_chapters():
+                self.translate_titles(store, glossary, progress=progress)
         finally:
             glossary.close()
             self._runtime.flush_usage(store, scope="translate")
@@ -677,13 +677,13 @@ class TranslationService:
         glossary_text = prompts.render_glossary(glossary.all_terms())
         for batch_index, batch in enumerate(batches):
             titles = [str(item["source"]) for item in batch]
-            system = prompts.render(
+            system = render(
                 "title_translator_system",
                 src=self._runtime.config.source_lang,
                 tgt=self._runtime.config.target_lang,
                 n=len(titles),
             )
-            user = prompts.render(
+            user = render(
                 "title_translator_user",
                 src=self._runtime.config.source_lang,
                 tgt=self._runtime.config.target_lang,
@@ -697,8 +697,7 @@ class TranslationService:
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    tier="strong",
-                    stage="title_translate",
+                    operation="translation.title",
                 )
             except Exception as error:
                 store.log_event(

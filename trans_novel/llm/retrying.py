@@ -270,7 +270,7 @@ class RetryReporter:
         )
 
 
-def provider_retry(max_retries: int, reporter: RetryReporter):
+def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None):
     """Build the selective retry decorator shared by remote providers."""
 
     def exhausted(retry_state: RetryCallState):
@@ -287,6 +287,7 @@ def provider_retry(max_retries: int, reporter: RetryReporter):
         retry=retry_if_exception(is_retryable_provider_error),
         before_sleep=reporter.before_sleep,
         retry_error_callback=exhausted,
+        **({"sleep": sleep} if sleep is not None else {}),
     )
 
 

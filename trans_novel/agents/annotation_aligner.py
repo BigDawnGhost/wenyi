@@ -457,7 +457,7 @@ class AnnotationAligner(Agent):
                 "Insert the source markers at the corresponding positions in each immutable "
                 "target. Return exactly one output item for every input item and no other "
                 f"content.\n\nINPUT JSON:\n{payload}",
-                tier="cheap",
+                operation="annotation.align",
                 default={},
                 max_tokens=max_tokens,
             )

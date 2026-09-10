@@ -18,6 +18,7 @@ from trans_novel.config import Config
 from trans_novel.ingest.docx_reader import read_docx
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT
 from trans_novel.ingest.segmenter import load_document
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.docx_styles import (
     merge_align_results,
     proportional_range_placements,
@@ -404,6 +405,7 @@ class TestDocxCliDefaults(unittest.TestCase):
 
         class FakeOrchestrator:
             def __init__(self, config, client=None):
+                self.client = FakeClient()
                 del client
                 captured["config"] = config
 
@@ -434,7 +436,7 @@ class TestDocxCliDefaults(unittest.TestCase):
             with (
                 patch(
                     "trans_novel.cli._load_config",
-                    return_value=Config.from_dict({"llm": {"provider": "fake"}}),
+                    return_value=Config.from_dict({"llm": {"preset": "fake"}}),
                 ),
                 patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             ):
@@ -443,11 +445,12 @@ class TestDocxCliDefaults(unittest.TestCase):
         self.assertEqual(captured["kwargs"].get("out_format"), "docx")
 
     def test_format_docx_is_accepted(self):
-        cfg = Config.from_dict({"llm": {"provider": "fake"}})
+        cfg = Config.from_dict({"llm": {"preset": "fake"}})
         captured: dict = {}
 
         class FakeOrchestrator:
             def __init__(self, config, client=None):
+                self.client = FakeClient()
                 del client
 
             def run_all(self, input_path, **kwargs):

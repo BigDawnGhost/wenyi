@@ -18,7 +18,6 @@ from ..pipeline.runstore import source_sha256, translation_run_dir
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
-STATUS_FAILED = "failed"
 
 
 class SrtRunStore:

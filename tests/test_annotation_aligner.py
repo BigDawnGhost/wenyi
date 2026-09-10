@@ -22,10 +22,10 @@ def _config() -> Config:
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {
-                    "strong": {"model": "strong"},
-                    "cheap": {"model": "cheap"},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "strong"},
+                    "default_cheap": {"provider": "default", "model": "cheap"},
                 },
             },
         }
@@ -182,7 +182,7 @@ class TestAnnotationAligner(unittest.TestCase):
         self.assertEqual(result.target_digest, target_digest(unit.target))
         self.assertEqual(result.placements[0]["target_start"], 2)
         self.assertEqual(client.calls[0]["tier"], "cheap")
-        self.assertEqual(client.calls[0]["stage"], "AnnotationAligner")
+        self.assertEqual(client.calls[0]["stage"], "annotation.align")
         self.assertTrue(client.calls[0]["json_mode"])
 
     def test_model_or_json_failure_returns_deterministic_fallback(self):

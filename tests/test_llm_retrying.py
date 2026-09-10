@@ -13,13 +13,15 @@ import httpx
 import pytest
 from openai import APIConnectionError, APITimeoutError
 
-from trans_novel.config import Config, LLMConfig, TierConfig
+from tests.model_fixtures import model_config
+from trans_novel.config import Config, LLMConfig
 from trans_novel.llm.providers.deepseek import DeepSeekClient
 from trans_novel.llm.retrying import (
     EmptyResponseError,
     is_retryable_provider_error,
     retry_reason,
 )
+from trans_novel.llm.router import RoutedLLMClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 
@@ -63,13 +65,13 @@ class _ClientStub:
 
 
 def _config(*, max_retries: int) -> LLMConfig:
-    return LLMConfig(
-        provider="deepseek",
+    return model_config(
+        kind="deepseek",
         base_url="https://example.invalid/v1",
         api_key_env="TEST_LLM_KEY",
         timeout=1,
         max_retries=max_retries,
-        tiers={"strong": TierConfig(model="test-model")},
+        profiles={"strong": dict(model="test-model")},
     )
 
 
@@ -109,12 +111,14 @@ def test_empty_model_response_is_retryable():
 
 
 def test_openai_sdk_retry_is_disabled():
-    client = DeepSeekClient(_config(max_retries=4))
+    client = RoutedLLMClient(_config(max_retries=4))
     with (
         patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}),
         patch("openai.OpenAI") as openai_type,
     ):
-        client._ensure_client()
+        adapter = client.adapter("default")
+        assert isinstance(adapter, DeepSeekClient)
+        adapter._ensure_client()
 
     openai_type.assert_called_once_with(
         api_key="secret",
@@ -125,18 +129,22 @@ def test_openai_sdk_retry_is_disabled():
 
 
 def test_transient_error_retries_once_and_records_wait_event():
-    client = DeepSeekClient(_config(max_retries=1))
+    client = RoutedLLMClient(_config(max_retries=1))
     stub = _ClientStub(
         [
             _HttpError(502, headers={"retry-after-ms": "0"}),
             _response(),
         ]
     )
-    client._client = stub
+    client.adapter("default")._client = stub
     events: list[dict[str, Any]] = []
-    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_event_sink(
+        lambda event, **data: (
+            events.append({"event": event, **data}) if event.startswith("llm_retry_") else None
+        )
+    )
 
-    assert client.complete([{"role": "user", "content": "x"}], stage="Translator") == "ok"
+    assert client.complete([{"role": "user", "content": "x"}], operation="translation.body") == "ok"
     assert stub.completions.calls == 2
     assert [event["event"] for event in events] == ["llm_retry_wait"]
     assert events[0]["reason"] == "http_502"
@@ -144,24 +152,28 @@ def test_transient_error_retries_once_and_records_wait_event():
     assert events[0]["next_attempt"] == 2
     assert events[0]["wait_seconds"] == 0
     assert events[0]["wait_source"] == "server"
-    assert events[0]["stage"] == "Translator"
+    assert events[0]["stage"] == "translation.body"
     assert events[0]["request_id"] == "req-test"
 
 
 def test_retry_exhaustion_is_recorded_and_reraises_last_error():
-    client = DeepSeekClient(_config(max_retries=2))
+    client = RoutedLLMClient(_config(max_retries=2))
     failures = [
         _HttpError(503, headers={"retry-after-ms": "0"}),
         _HttpError(503, headers={"retry-after-ms": "0"}),
         _HttpError(503, headers={"retry-after-ms": "0"}),
     ]
     stub = _ClientStub(failures)
-    client._client = stub
+    client.adapter("default")._client = stub
     events: list[dict[str, Any]] = []
-    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_event_sink(
+        lambda event, **data: (
+            events.append({"event": event, **data}) if event.startswith("llm_retry_") else None
+        )
+    )
 
     with pytest.raises(_HttpError):
-        client.complete([{"role": "user", "content": "x"}], stage="Analyzer")
+        client.complete([{"role": "user", "content": "x"}], operation="analysis.style")
 
     assert stub.completions.calls == 3
     assert [event["event"] for event in events] == [
@@ -170,18 +182,22 @@ def test_retry_exhaustion_is_recorded_and_reraises_last_error():
         "llm_retry_exhausted",
     ]
     assert events[-1]["attempts"] == 3
-    assert events[-1]["stage"] == "Analyzer"
+    assert events[-1]["stage"] == "analysis.style"
 
 
 def test_permanent_error_is_not_retried_or_reported_as_exhaustion():
-    client = DeepSeekClient(_config(max_retries=4))
+    client = RoutedLLMClient(_config(max_retries=4))
     stub = _ClientStub([_HttpError(401)])
-    client._client = stub
+    client.adapter("default")._client = stub
     events: list[dict[str, Any]] = []
-    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_event_sink(
+        lambda event, **data: (
+            events.append({"event": event, **data}) if event.startswith("llm_retry_") else None
+        )
+    )
 
     with pytest.raises(_HttpError):
-        client.complete([{"role": "user", "content": "x"}])
+        client.complete([{"role": "user", "content": "x"}], operation="translation.body")
 
     assert stub.completions.calls == 1
     assert events == []
@@ -190,13 +206,15 @@ def test_permanent_error_is_not_retried_or_reported_as_exhaustion():
 def test_orchestrator_retry_sink_writes_book_event_log():
     with tempfile.TemporaryDirectory() as directory:
         store = RunStore(directory)
-        client = DeepSeekClient(_config(max_retries=0))
+        client = RoutedLLMClient(_config(max_retries=0))
         orchestrator = Orchestrator(Config(), client=client)
         orchestrator._runtime.bind_llm_events(store)
 
         client._emit_event("llm_retry_wait", reason="http_502", wait_seconds=1.0)
 
         with open(store.event_log_path, encoding="utf-8") as file:
-            event = json.loads(file.readline())
+            event = next(
+                json.loads(line) for line in file if json.loads(line)["event"] == "llm_retry_wait"
+            )
         assert event["event"] == "llm_retry_wait"
         assert event["reason"] == "http_502"

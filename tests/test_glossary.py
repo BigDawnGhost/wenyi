@@ -32,7 +32,7 @@ class TestGlossary(unittest.TestCase):
                 source="綾小路",
                 target="绫小路",
                 type=TYPE_PERSON,
-                gender="男",
+                gender="male",
                 aliases=["綾小路くん"],
                 reading="あやのこうじ",
             ),
@@ -44,19 +44,21 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(t.target, "绫小路")
         self.assertEqual(t.gender, "male")
 
-    def test_terms_in_text_matches_alias(self):
+    def test_terms_in_matches_alias(self):
         self.store.upsert_term(
             GlossaryTerm(source="綾小路", target="绫小路", aliases=["綾小路くん"])
         )
-        hits = self.store.terms_in_text("「おはよう、綾小路くん」と堀北が言った。")
+        hits = self.store.terms_in(
+            self.store.all_terms(), "「おはよう、綾小路くん」と堀北が言った。"
+        )
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].source, "綾小路")
 
-    def test_terms_in_text_normalizes_case_and_character_width(self):
+    def test_terms_in_normalizes_case_and_character_width(self):
         self.store.upsert_term(GlossaryTerm(source="OpenAI", target="开放人工智能"))
         self.store.upsert_term(GlossaryTerm(source="ＡＢＣ", target="ABC 组织"))
 
-        hits = self.store.terms_in_text("openai 与 ABC")
+        hits = self.store.terms_in(self.store.all_terms(), "openai 与 ABC")
 
         self.assertEqual(
             {term.source for term in hits},
@@ -81,8 +83,8 @@ class TestGlossary(unittest.TestCase):
                 aliases=["夏帆"],
             )
         )
-        self.assertEqual(self.store.terms_in_text("夏帆は窓の外を見た。"), [])
-        hits = self.store.terms_in_text("「夏帆ちゃん」と母親が言った。")
+        self.assertEqual(self.store.terms_in(self.store.all_terms(), "夏帆は窓の外を見た。"), [])
+        hits = self.store.terms_in(self.store.all_terms(), "「夏帆ちゃん」と母親が言った。")
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].source, "夏帆ちゃん")
 
@@ -194,7 +196,7 @@ class TestGlossary(unittest.TestCase):
         """
         # Insert terms in an order that differs from type/source sorting deliberately.
         self.store.upsert_term(
-            GlossaryTerm(source="乙", target="Yi", type="术语"),
+            GlossaryTerm(source="乙", target="Yi", type="term"),
             chapter=0,
         )
         self.store.upsert_term(

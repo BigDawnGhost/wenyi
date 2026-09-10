@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .i18n.languages import require_language
+from .llm.configuration import LLMConfig
 
 _DEFAULT_CONFIG_YAML = """\
 # trans-novel configuration (experimental multilingual fiction translation)
@@ -20,29 +21,9 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  # deepseek | openai | openrouter | orcarouter | openai-compatible | ollama | vllm | fake
-  # OrcaRouter defaults to https://api.orcarouter.ai/v1 and ORCAROUTER_API_KEY.
-  # When using provider: orcarouter, set tiers.*.model to IDs available to your account.
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 600
-  max_retries: 4
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
-        reasoning_effort: high
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
+  preset: deepseek # All tiers: deepseek-v4-flash, thinking enabled, reasoning_effort high
+  # Add providers, models and routes to override individual operations.
+  # Inspect effective settings with: trans-novel models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:
@@ -64,7 +45,6 @@ pipeline:
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
   review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
   review_agent_loop: true # Use evidence-based verification after the initial review identifies candidates
-  review_agent_tier: strong # Model tier for evidence verification and whole-book conflict arbitration
   review_agent_max_evidence_rounds: 2 # At most two rounds of selective evidence requests before a final decision
   review_conflict_arbitration: true # Arbitrate contradictory consistency proposals after all review blocks finish
   review_fix_loop: true # Revise an in-memory shadow translation and review it blindly; this loop does not publish changes
@@ -72,8 +52,8 @@ pipeline:
   review_clean_confirmations: 2 # Require two consecutive clean rounds to accept the shadow translation
   review_autofix: true # Publish review revisions to formal chapters; use --no-autofix for recommendations only
   glossary_scope: chapter # chapter=terms relevant to this chapter; full=entire glossary
-  # PDF backend: babeldoc (default, preserves layout, requires an external AGPL HTTP bridge) | mineru (supports scans)
-  pdf_backend: babeldoc
+  # PDF backend: mineru (default, supports scans) | babeldoc (optional, preserves layout via external AGPL HTTP bridge)
+  pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   # babeldoc_pages: "15"   # Optional page restriction for the bridge (one-based)
   babeldoc_timeout: 600
@@ -98,34 +78,14 @@ output:
 """
 
 
-class TierConfig(BaseModel):
-    """Shared tier overrides; each provider interprets its own options."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    model: str | None = None
-    options: dict[str, Any] = Field(default_factory=dict)
-
-
-ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
-
-
-class LLMConfig(BaseModel):
-    provider: str = "deepseek"
-    base_url: str | None = None
-    api_key_env: str | None = None
-    reasoning_style: ReasoningStyle = "none"
-    timeout: int = 600
-    max_retries: int = 4
-    tiers: dict[str, TierConfig] = Field(default_factory=dict)
-
-
 class SegmentConfig(BaseModel):
     max_chars_per_batch: int = 1800
     max_chars_per_segment: int = 1200
 
 
 class PipelineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     review: bool = True
     align_retry_limit: int = (
         2  # Retry misaligned batches this many times before falling back to single paragraphs
@@ -156,7 +116,6 @@ class PipelineConfig(BaseModel):
     review_agent_loop: bool = (
         True  # Start the bounded evidence agent loop when initial review finds candidates
     )
-    review_agent_tier: Literal["strong", "cheap", "fast"] = "strong"
     review_agent_max_evidence_rounds: int = Field(
         default=2,
         ge=0,
@@ -174,8 +133,8 @@ class PipelineConfig(BaseModel):
     glossary_scope: str = (
         "chapter"  # chapter=terms occurring in this chapter (saves tokens); full=entire glossary
     )
-    # PDF: babeldoc=external AGPL HTTP bridge (default, no imports); mineru=HTML path for scans
-    pdf_backend: Literal["mineru", "babeldoc"] = "babeldoc"
+    # PDF: mineru=HTML path for scans (default); babeldoc=external AGPL HTTP bridge (no imports)
+    pdf_backend: Literal["mineru", "babeldoc"] = "mineru"
     babeldoc_bridge_url: str = "http://127.0.0.1:8765"
     babeldoc_pages: str | None = None  # For example "15" / "6-8"; None=whole book
     babeldoc_timeout: float = 600.0
@@ -234,29 +193,21 @@ class Config(BaseModel):
         return cls.from_dict(raw)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Config:
+    def from_dict(cls, raw: Any) -> Config:
         """Convert a nested YAML dictionary into the runtime configuration model."""
+        if not isinstance(raw, dict):
+            raise ValueError("Configuration must be a mapping of sections.")
+        sections = {"language", "llm", "segment", "pipeline", "output", "honorific", "paths"}
+        unknown = set(raw) - sections
+        if unknown:
+            raise ValueError(
+                "Unknown configuration sections: " + ", ".join(sorted(map(str, unknown)))
+            )
         lang = raw.get("language", {})
         llm_raw = raw.get("llm", {})
-        tiers = {
-            name: TierConfig.model_validate(t)
-            for name, t in (llm_raw.get("tiers", {}) or {}).items()
-        }
-        llm = LLMConfig(
-            provider=llm_raw.get("provider", "deepseek"),
-            base_url=llm_raw.get("base_url"),
-            api_key_env=llm_raw.get("api_key_env"),
-            reasoning_style=llm_raw.get("reasoning_style", "none"),
-            timeout=llm_raw.get("timeout", 600),
-            max_retries=llm_raw.get("max_retries", 4),
-            tiers=tiers,
-        )
+        llm = LLMConfig.model_validate({} if llm_raw is None else llm_raw)
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
         pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
-        if "punctuation" in raw:
-            raise ValueError(
-                "punctuation.normalize has moved to output.punctuation_normalize; remove the old setting."
-            )
         output = OutputConfig.model_validate(raw.get("output", {}) or {})
         return cls(
             source_lang=lang.get("source", "auto"),
