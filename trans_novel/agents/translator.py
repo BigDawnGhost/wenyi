@@ -81,6 +81,7 @@ class Translator(Agent):
         book_synopsis: str = "",
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
+        next_source: str = "",
     ) -> list[str]:
         """Translate one batch and strictly validate output types, count and nonempty content."""
         n = len(sources)
@@ -107,6 +108,7 @@ class Translator(Agent):
             n=n,
             n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
+            next_source=prompts.render_source_reference(next_source),
         )
         # Transient provider errors are retried only by the transport. Only JSON protocol errors in
         # successful responses enter alignment recovery, avoiding duplicate retries for 401/403/5xx errors.
@@ -135,6 +137,7 @@ class Translator(Agent):
         book_synopsis,
         chapter_digest,
         annotation_context,
+        next_source: str,
     ) -> str:
         """Use the batch protocol for one paragraph as the final alignment fallback."""
         out = self._call_batch(
@@ -145,6 +148,7 @@ class Translator(Agent):
             book_synopsis,
             chapter_digest,
             [annotation_context],
+            next_source=next_source,
         )
         return out[0]
 
@@ -158,8 +162,9 @@ class Translator(Agent):
         book_synopsis: str = "",
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
+        next_source: str = "",
     ) -> list[str]:
-        """Translate a batch and return the same number of target paragraphs."""
+        """Translate aligned paragraphs with one following source segment as reference only."""
         glossary_terms = glossary_terms or []
         n = len(sources)
         annotation_contexts = self._validate_annotation_contexts(sources, annotation_contexts)
@@ -175,6 +180,9 @@ class Translator(Agent):
         translated_annotation_contexts = [
             annotation_contexts[index] for index in translated_indices
         ]
+        # A filtered trailing number or symbol remains the immediate source neighbor.
+        following_index = translated_indices[-1] + 1
+        batch_next_source = sources[following_index] if following_index < n else next_source
 
         attempts = self.config.pipeline.align_retry_limit + 1
         for _ in range(attempts):
@@ -187,6 +195,7 @@ class Translator(Agent):
                     book_synopsis,
                     chapter_digest,
                     translated_annotation_contexts,
+                    next_source=batch_next_source,
                 )
                 targets = list(sources)
                 for index, target in zip(translated_indices, translated):
@@ -213,6 +222,7 @@ class Translator(Agent):
                     book_synopsis,
                     chapter_digest,
                     annotation_context,
+                    next_source=sources[index + 1] if index + 1 < n else next_source,
                 )
             except Exception as error:
                 raise AlignmentError(

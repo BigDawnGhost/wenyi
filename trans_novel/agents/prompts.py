@@ -52,6 +52,11 @@ def numbered(texts: list[str]) -> str:
     return "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
 
 
+def render_source_reference(source: str) -> str:
+    """Quote one following source segment without adding numbered translation inputs."""
+    return json.dumps(source, ensure_ascii=False) if source.strip() else "(none)"
+
+
 def numbered_pairs(sources: list[str], targets: list[str]) -> str:
     """Render aligned source/target pairs for review prompts."""
     out = []

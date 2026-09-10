@@ -19,4 +19,7 @@ $context
 [$src_label paragraphs to translate] ($n paragraphs, numbered 0 through ${n_minus_1})
 $numbered_source
 
+[Following source paragraph] (reference only; do not translate)
+$next_source
+
 Translate every paragraph. Return JSON: {"translations":[...]}, with exactly $n items.

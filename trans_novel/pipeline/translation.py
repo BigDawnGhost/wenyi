@@ -312,6 +312,9 @@ class TranslationService:
                 term_snapshot_stale = False
 
             ctx_text = context.render(self._runtime.config.pipeline.rolling_context_segments)
+            next_index = batch_start + len(b)
+            # Read the immediate source neighbor without changing batches or saved context.
+            next_source = text_segs[next_index].source if next_index < len(text_segs) else ""
             targets = self.process_batch(
                 b,
                 term_snapshot,
@@ -320,6 +323,7 @@ class TranslationService:
                 book_synopsis,
                 chapter_digest,
                 annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
+                next_source=next_source,
             )
             for s, t in zip(b, targets):
                 s.target = t
@@ -749,6 +753,7 @@ class TranslationService:
         book_synopsis: str = "",
         chapter_digest: str = "",
         annotation_contexts: list[list[dict[str, str]]] | None = None,
+        next_source: str = "",
     ) -> list[str]:
         """Translate then polish one batch.
         Translate every paragraph in its own context without reusing text across positions.
@@ -765,6 +770,7 @@ class TranslationService:
             book_synopsis=book_synopsis,
             chapter_digest=chapter_digest,
             annotation_contexts=annotation_contexts,
+            next_source=next_source,
         )
         # Strip pronunciation markers accidentally copied from source into the model's translation.
         targets = [strip_ruby_markers(target) for target in targets]
@@ -772,7 +778,9 @@ class TranslationService:
         if self._runtime.config.pipeline.polish:
             for segment, target in zip(batch, targets):
                 segment.target_before_polish = target
-            polished = self._runtime.polisher.polish(targets, glossary_terms=terms, style=style)
+            polished = self._runtime.polisher.polish(
+                targets, glossary_terms=terms, style=style, next_source=next_source
+            )
             if len(polished) == len(targets):
                 targets = polished
         else:
