@@ -41,7 +41,7 @@ llm:
   preset: deepseek
 ```
 
-This preset expands to connection `default`, profiles `default_strong`, `default_cheap`, and `default_fast`, and all three tier mappings. Its product defaults are `https://api.deepseek.com`, `DEEPSEEK_API_KEY`, `deepseek-v4-flash` for all three tiers, with thinking enabled and `reasoning_effort: high`. The model ID and reasoning defaults follow the [DeepSeek API documentation](https://api-docs.deepseek.com/api/create-chat-completion/). The tiers retain independent mappings for later overrides; presets do not query remote capabilities. `preset: gemini` and `preset: fake` are also available; fake is offline.
+This preset expands to connection `default`, profiles `default_strong`, `default_cheap`, and `default_fast`, and all three tier mappings. Its product defaults are `https://api.deepseek.com`, `DEEPSEEK_API_KEY`, `deepseek-flash` for all three tiers, with thinking enabled and `reasoning_effort: high`. The model ID and reasoning defaults follow the [DeepSeek API documentation](https://api-docs.deepseek.com/api/create-chat-completion/). The tiers retain independent mappings for later overrides; presets do not query remote capabilities. `preset: gemini` and `preset: fake` are also available; fake is offline.
 
 For independent polishing and evidence verification:
 
