@@ -34,7 +34,7 @@ class Polisher(Agent):
             n=n,
             numbered_target=prompts.numbered(targets),
         )
-        items = self._ask_json(system, user, tier="strong", key="polished", default=None)
+        items = self._ask_json(system, user, operation="polish.body", key="polished", default=None)
         if isinstance(items, list) and len(items) == n:
             return [str(x) for x in items]
         return list(

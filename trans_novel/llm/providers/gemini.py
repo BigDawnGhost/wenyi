@@ -3,56 +3,51 @@
 from __future__ import annotations
 
 import os
-import threading
+from math import ceil
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ...config import LLMConfig
-from ..base import LLMClient, Messages
-from ..json_parser import parse_json_loose
-from ..retrying import RetryReporter, provider_retry
-from ..tiers import resolve_tier
+from ..retrying import EmptyResponseError
+from ..transport import Messages, ProviderAdapter, RequestContext, ResolvedModel
 from ..usage import UsageSample, make_usage_sample, read_usage_int
-from ._openai_compatible import ResolvedTier, resolve_provider_tiers
 
 DEFAULT_API_KEY_ENV = "GEMINI_API_KEY"
 FALLBACK_API_KEY_ENV = "GOOGLE_API_KEY"
 
 
-class GeminiTierOptions(BaseModel):
-    """Gemini-specific tier request options."""
+class GeminiOptions(BaseModel):
+    """Gemini-specific model request options."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     thinking_level: str | None = None
     thinking_budget: int | None = None
     temperature: float | None = None
-    max_output_tokens: int | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_thinking_options(self) -> GeminiTierOptions:
+    def validate_thinking_options(self) -> GeminiOptions:
         """Require thinking_level and thinking_budget to be mutually exclusive."""
         if self.thinking_level is not None and self.thinking_budget is not None:
             raise ValueError("thinking_level and thinking_budget are mutually exclusive")
         return self
 
 
-def _default_tiers() -> dict[str, ResolvedTier[GeminiTierOptions]]:
+def preset_models() -> dict[str, ResolvedModel[GeminiOptions]]:
     """Return built-in Gemini defaults for strong, cheap and fast tiers."""
     return {
-        "strong": ResolvedTier(
+        "strong": ResolvedModel(
             model="gemini-3.6-flash",
-            options=GeminiTierOptions(),
+            options=GeminiOptions(),
         ),
-        "cheap": ResolvedTier(
+        "cheap": ResolvedModel(
             model="gemini-3.6-flash",
-            options=GeminiTierOptions(),
+            options=GeminiOptions(),
         ),
-        "fast": ResolvedTier(
+        "fast": ResolvedModel(
             model="gemini-3.6-flash",
-            options=GeminiTierOptions(),
+            options=GeminiOptions(),
         ),
     }
 
@@ -143,19 +138,12 @@ def get_api_key_from_env(custom_env: str | None = None) -> tuple[str | None, str
     return None, target_env
 
 
-class GeminiClient(LLMClient):
+class GeminiClient(ProviderAdapter):
     """Wrapper for the official Google Gemini SDK client."""
 
-    def __init__(self, cfg: LLMConfig) -> None:
-        super().__init__()
-        self.cfg = cfg
-        self.tiers = resolve_provider_tiers(
-            cfg.tiers,
-            options_type=GeminiTierOptions,
-            defaults=_default_tiers(),
-        )
-        self._client: Any = None
-        self._client_lock = threading.Lock()
+    default_api_key_env = DEFAULT_API_KEY_ENV
+    default_base_url = "https://generativelanguage.googleapis.com"
+    requires_api_key = True
 
     def validate_credentials(self) -> None:
         """Validate Gemini API-key configuration."""
@@ -182,31 +170,29 @@ class GeminiClient(LLMClient):
 
                 kwargs: dict[str, Any] = {
                     "api_key": api_key,
-                    # LLMConfig.timeout is expressed in seconds; google-genai HttpOptions
+                    # ProviderConfig.timeout is expressed in seconds; google-genai HttpOptions
                     # expects milliseconds.
-                    "http_options": {"timeout": self.cfg.timeout * 1000},
+                    "http_options": {
+                        "timeout": ceil(self.cfg.timeout * 1000),
+                        "retry_options": {"attempts": 1},
+                    },
                 }
                 if self.cfg.base_url:
-                    kwargs["http_options"].update(
-                        {"api_option": "REST", "base_url": self.cfg.base_url}
-                    )
+                    kwargs["http_options"].update({"base_url": self.cfg.base_url})
 
                 self._client = genai.Client(**kwargs)
         return self._client
 
-    def complete(
+    def _request(
         self,
         messages: Messages,
+        model: ResolvedModel[GeminiOptions],
         *,
-        tier: str = "strong",
-        json_mode: bool = False,
-        max_tokens: int | None = None,
-        stage: str | None = None,
+        json_mode: bool,
+        context: RequestContext,
     ) -> str:
-        """Call Gemini with retries, JSON mode and usage attribution."""
-        tier_config: ResolvedTier[GeminiTierOptions] = resolve_tier(self.tiers, tier)
+        model_config = model
         client = self._ensure_client()
-
         system_instruction, contents = convert_messages_to_gemini(messages)
 
         # Build GenerateContentConfig.
@@ -218,95 +204,63 @@ class GeminiClient(LLMClient):
             config_kwargs["response_mime_type"] = "application/json"
 
         # Apply the output-token limit.
-        effective_max_tokens = max_tokens or tier_config.options.max_output_tokens
+        effective_max_tokens = context.max_tokens
         if effective_max_tokens is not None:
             config_kwargs["max_output_tokens"] = effective_max_tokens
 
-        if tier_config.options.temperature is not None:
-            config_kwargs["temperature"] = tier_config.options.temperature
+        if model_config.options.temperature is not None:
+            config_kwargs["temperature"] = model_config.options.temperature
 
         # Apply thinking options.
         if (
-            tier_config.options.thinking_level is not None
-            or tier_config.options.thinking_budget is not None
+            model_config.options.thinking_level is not None
+            or model_config.options.thinking_budget is not None
         ):
             try:
                 from google.genai import types
 
                 thinking_kwargs: dict[str, Any] = {}
-                if tier_config.options.thinking_level is not None:
-                    thinking_kwargs["thinking_level"] = tier_config.options.thinking_level
-                if tier_config.options.thinking_budget is not None:
-                    thinking_kwargs["thinking_budget"] = tier_config.options.thinking_budget
+                if model_config.options.thinking_level is not None:
+                    thinking_kwargs["thinking_level"] = model_config.options.thinking_level
+                if model_config.options.thinking_budget is not None:
+                    thinking_kwargs["thinking_budget"] = model_config.options.thinking_budget
                 config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
             except (ImportError, AttributeError):  # pragma: no cover
                 pass
 
-        if tier_config.options.extra_body:
-            config_kwargs.update(tier_config.options.extra_body)
+        if model_config.options.extra_body:
+            config_kwargs.update(model_config.options.extra_body)
 
-        reporter = RetryReporter(
-            provider="Gemini",
-            tier=tier,
-            stage=stage,
-            max_attempts=max(1, self.cfg.max_retries + 1),
-            emit=self._emit_event,
+        response = client.models.generate_content(
+            model=model_config.model,
+            contents=contents,
+            config=config_kwargs,
         )
 
-        @provider_retry(self.cfg.max_retries, reporter)
-        def _call() -> str:
-            response = client.models.generate_content(
-                model=tier_config.model,
-                contents=contents,
-                config=config_kwargs,
-            )
+        # Record usage.
+        sample = extract_gemini_usage(getattr(response, "usage_metadata", None))
+        context.record_usage(sample)
 
-            # Record usage.
-            sample = extract_gemini_usage(getattr(response, "usage_metadata", None))
-            self.usage.record(tier, sample, stage)
+        # Validate the response and check safety blocking.
+        candidates = getattr(response, "candidates", None)
+        if not candidates:
+            raise RuntimeError("Gemini API returned no candidates")
 
-            # Validate the response and check safety blocking.
-            candidates = getattr(response, "candidates", None)
-            if not candidates:
-                raise RuntimeError("Gemini API returned no candidates")
+        candidate = candidates[0]
+        finish_reason = str(getattr(candidate, "finish_reason", ""))
+        if "SAFETY" in finish_reason.upper() or "BLOCK" in finish_reason.upper():
+            raise RuntimeError(f"Gemini API blocked the response (finish_reason={finish_reason})")
 
-            candidate = candidates[0]
-            finish_reason = str(getattr(candidate, "finish_reason", ""))
-            if "SAFETY" in finish_reason.upper() or "BLOCK" in finish_reason.upper():
-                raise RuntimeError(
-                    f"Gemini API blocked the response (finish_reason={finish_reason})"
-                )
+        text = getattr(response, "text", None)
+        if not isinstance(text, str):
+            # Try reading text from parts.
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", []) if content else []
+            parts_text = [
+                str(getattr(p, "text", "")) for p in parts if getattr(p, "text", None) is not None
+            ]
+            text = "".join(parts_text) if parts_text else ""
 
-            text = getattr(response, "text", None)
-            if not isinstance(text, str):
-                # Try reading text from parts.
-                content = getattr(candidate, "content", None)
-                parts = getattr(content, "parts", []) if content else []
-                parts_text = [
-                    str(getattr(p, "text", ""))
-                    for p in parts
-                    if getattr(p, "text", None) is not None
-                ]
-                text = "".join(parts_text) if parts_text else ""
-
-            return text or ""
-
-        return _call()
-
-    def complete_json(
-        self,
-        messages: Messages,
-        *,
-        tier: str = "strong",
-        max_tokens: int | None = None,
-        stage: str | None = None,
-    ) -> Any:
-        """Request Gemini JSON output and parse it tolerantly with parse_json_loose."""
-        text = self.complete(
-            messages,
-            tier=tier,
-            json_mode=True,
-            max_tokens=max_tokens,
-            stage=stage,
-        )
-        return parse_json_loose(text)
+        if not text or not text.strip():
+            raise EmptyResponseError("Gemini response content is empty")
+        return text

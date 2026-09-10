@@ -17,6 +17,16 @@ uv run trans-novel translate book.epub
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
+## 检查模型路由
+
+```bash
+uv run trans-novel models list
+uv run trans-novel models explain --operation review.fix
+uv run trans-novel models check --for translate
+```
+
+这些命令只做本地预览与密钥检查，不发送请求。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换、预算和 `models compare` 用法见[配置说明](configuration.md#模型与操作路由)。
+
 ## 多语言互译（实验性）
 
 先运行 `uv run trans-novel languages` 查看内置语言。将以下片段写入自己的配置文件（模型配置沿用已有设置），即可直接中译英：

@@ -20,7 +20,8 @@ from ..glossary.extractor import GlossaryExtractor
 from ..i18n.languages import require_language, validate_run_languages
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
-from ..llm.usage import merge_usage_summaries, usage_delta
+from ..llm.routing import resolve_routes
+from ..llm.usage import empty_usage, merge_usage_summaries, usage_delta, validate_usage
 from .runstore import RunStore, source_sha256
 
 
@@ -30,6 +31,7 @@ class PipelineRuntime:
     def __init__(self, config: Config, client: LLMClient | None = None):
         """Initialize the shared LLM client, usage checkpoint and pipeline agents."""
         self.config = config
+        self.llm_config = config.llm.model_copy(deep=True)
         self.client = client or build_client(config)
         # Client usage is cumulative in-process; checkpoints isolate newly accrued usage at each flush.
         self._usage_checkpoint = self.client.usage_summary()
@@ -48,7 +50,15 @@ class PipelineRuntime:
 
     def bind_llm_events(self, store: RunStore) -> None:
         """Append provider retry events to the current book log as they occur."""
+        validate_usage(store.load_usage())
         self.client.set_event_sink(store.log_event)
+        store.log_event(
+            "llm_routing_plan",
+            routes={
+                operation: route.describe()
+                for operation, route in resolve_routes(self.llm_config).items()
+            },
+        )
 
     def export_punctuation_enabled(self) -> bool:
         """Determine whether export copies should use Simplified Chinese punctuation
@@ -57,20 +67,25 @@ class PipelineRuntime:
         target = (self.config.target_lang or "").lower().replace("_", "-")
         return self.config.output.punctuation_normalize and require_language(target) == "zh"
 
-    def flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
+    def flush_usage(self, store: RunStore, *, scope: str, review=None) -> dict[str, Any]:
         """Merge the client's unpersisted usage delta into the book's usage.json."""
+        store.recover_usage()
         current = self.client.usage_summary()
         increment = usage_delta(current, self._usage_checkpoint)
-        self._usage_checkpoint = current
-        accumulated = store.load_usage() or {
-            "totals": {},
-            "by_tier": {},
-            "by_stage": {},
-        }
+        accumulated = store.load_usage() or empty_usage()
         if not increment["totals"]["calls"]:
+            if review is not None and review.load_usage() is None:
+                review.save_usage(empty_usage())
             return merge_usage_summaries(accumulated, increment)
         cumulative = merge_usage_summaries(accumulated, increment)
-        store.save_usage(cumulative)
+        ledgers = {"usage.json": cumulative}
+        if review is not None:
+            ledgers[f"reviews/{review.review_id}/usage.json"] = merge_usage_summaries(
+                review.load_usage() or empty_usage(), increment
+            )
+        store.prepare_usage_commit(ledgers)
+        self._usage_checkpoint = current
+        store.recover_usage()
         store.log_event(
             "usage_summary",
             scope=scope,

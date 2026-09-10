@@ -28,10 +28,10 @@ class TestTranslatorAlignment(unittest.TestCase):
             {
                 "language": {"source": "ja", "target": "zh"},
                 "llm": {
-                    "provider": "fake",
-                    "tiers": {
-                        "strong": {"model": "deepseek-v4-pro"},
-                        "cheap": {"model": "deepseek-v4-flash"},
+                    "preset": "fake",
+                    "models": {
+                        "default_strong": {"provider": "default", "model": "deepseek-v4-pro"},
+                        "default_cheap": {"provider": "default", "model": "deepseek-v4-flash"},
                     },
                 },
                 "pipeline": {"align_retry_limit": 1},
@@ -166,7 +166,7 @@ class TestTranslatorAnnotationContexts(unittest.TestCase):
         return Config.from_dict(
             {
                 "language": {"source": "en", "target": "zh"},
-                "llm": {"provider": "fake"},
+                "llm": {"preset": "fake"},
                 "pipeline": {"align_retry_limit": 1},
             }
         )

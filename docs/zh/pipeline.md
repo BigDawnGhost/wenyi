@@ -99,3 +99,11 @@ Agent 判定、失败原因、目标哈希和发布状态；章节 JSON 不增�
 ## 字幕路径（SRT）
 
 `.srt` 走平行轻量路径 `trans_novel.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。
+
+## 模型注册与用量
+
+所有模型调用使用 `llm/operations.py` 中的稳定操作 ID；提供商由 `llm/registry.py` 统一注册。Runtime 和独立 SRT 流程各持有一个路由客户端，按连接复用 SDK，并共享该次运行内的并发名额、配额和用量统计。Agent 不选择提供商或档位，Orchestrator 继续只负责装配和流程路由。
+
+新增模型操作时，在 `OperationSpec` 中注册 ID、默认档位或继承操作、输出提示、工作流开关和协议版本，再由领域服务调用 `complete(..., operation="domain.operation")`。校验、CLI 预览和推理指纹共用该注册表。新增提供商时，在 `llm/providers/` 实现选项、请求构建、用量归一化和 `ProviderAdapter`，再注册 `ProviderSpec`。SDK 延迟初始化并关闭内置重试；请求语义变化时更新相应协议版本，并用离线测试覆盖请求、用量和续跑。注册表在启动后不可修改。
+
+Review 比较可达操作的实际推理身份，模型、端点或选项变化会启动新 Review，改动无关路由或并发则保留缓存。Autofix 发布索引优先恢复；多轮取证不跨模型复用轨迹。全书与 Review 账本先写 `usage-pending.json` 再更新各自 `usage.json`，续跑能幂等补完中断提交。

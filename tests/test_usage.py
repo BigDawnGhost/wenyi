@@ -12,9 +12,10 @@ from typing import Any
 from unittest.mock import patch
 
 from tests.fake_llm import routing_handler
+from tests.model_fixtures import model_config
 from tests.sample_data import write_sample_txt
 from trans_novel.agents.base import Agent
-from trans_novel.config import Config, LLMConfig, TierConfig
+from trans_novel.config import Config, LLMConfig
 from trans_novel.ingest.models import Chapter, Document, Segment
 from trans_novel.llm.factory import build_client
 from trans_novel.llm.providers._openai_compatible import (
@@ -27,7 +28,7 @@ from trans_novel.llm.providers.deepseek import (
     DeepSeekClient,
 )
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.llm.providers.openai import OpenAIClient
+from trans_novel.llm.router import RoutedLLMClient
 from trans_novel.llm.usage import (
     UsageSample,
     UsageTracker,
@@ -103,20 +104,18 @@ class _MeteredFakeClient(FakeClient):
         self,
         messages,
         *,
-        tier: str = "strong",
+        operation: str,
         json_mode: bool = False,
         max_tokens: int | None = None,
-        stage: str | None = None,
     ) -> str:
         result = super().complete(
             messages,
-            tier=tier,
+            operation=operation,
             json_mode=json_mode,
             max_tokens=max_tokens,
-            stage=stage,
         )
         self.usage.record(
-            tier,
+            self.routes[operation].tier or "direct",
             UsageSample(
                 prompt_tokens=7,
                 completion_tokens=3,
@@ -124,21 +123,21 @@ class _MeteredFakeClient(FakeClient):
                 cache_hit_tokens=2,
                 cache_miss_tokens=5,
             ),
-            stage,
+            operation,
         )
         return result
 
 
 def _minimal_deepseek_cfg() -> LLMConfig:
-    return LLMConfig(
-        provider="deepseek",
-        base_url="x",
+    return model_config(
+        kind="deepseek",
+        base_url="https://example.invalid/v1",
         api_key_env="X",
         timeout=1,
         max_retries=0,
-        tiers={
-            "strong": TierConfig(model="m1"),
-            "cheap": TierConfig(model="m2"),
+        profiles={
+            "strong": dict(model="m1"),
+            "cheap": dict(model="m2"),
         },
     )
 
@@ -149,58 +148,57 @@ def _minimal_openai_compatible_cfg(
     reasoning_fallback: bool = False,
 ) -> LLMConfig:
     options = {"json_response_fallback": "reasoning_content"} if reasoning_fallback else {}
-    return LLMConfig(
-        provider="openai-compatible",
-        base_url="x",
+    return model_config(
+        kind="openai-compatible",
+        base_url="https://example.invalid/v1",
         max_retries=max_retries,
-        tiers={"strong": TierConfig(model="m", options=options)},
+        profiles={"strong": dict(model="m", options=options)},
     )
 
 
 class TestOpenAICompatibleReasoningContent(unittest.TestCase):
     def test_json_mode_falls_back_to_reasoning_content_when_content_is_empty(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
         reasoning_content = '{"translations":["译文"]}'
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
             reasoning_content=reasoning_content,
         )
 
-        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
             self.assertEqual(
                 client.complete(
                     [{"role": "user", "content": "translate"}],
                     json_mode=True,
+                    operation="translation.body",
                 ),
                 reasoning_content,
             )
 
     def test_complete_json_rejects_mixed_reasoning_content(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
         reasoning_content = (
             '示例：{"translations":["翻译后的中文"]}\n最终输出：{"translations":["越过山口……"]}'
         )
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
             reasoning_content=reasoning_content,
         )
 
-        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
             with self.assertRaisesRegex(EmptyResponseError, "fallback response is invalid JSON"):
                 client.complete_json(
-                    [{"role": "user", "content": "translate"}],
+                    [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
 
     def test_complete_json_rejects_reasoning_content_after_length_finish(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
@@ -208,44 +206,44 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
             finish_reason="length",
         )
 
-        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
             with self.assertRaises(RuntimeError):
                 client.complete_json(
-                    [{"role": "user", "content": "translate"}],
+                    [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
 
     def test_plain_mode_retries_empty_content_instead_of_using_reasoning(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             "",
             None,
             reasoning_content="不要把这段思考当成译文",
         )
 
-        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
             with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
                 client.complete(
-                    [{"role": "user", "content": "translate"}],
+                    [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
 
     def test_enabled_json_fallback_retries_when_reasoning_content_is_blank(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response("", None, reasoning_content=" \n ")
 
-        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
             with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
                 client.complete_json(
-                    [{"role": "user", "content": "translate"}],
+                    [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
 
     def test_default_json_mode_retries_empty_content_without_reading_reasoning(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(max_retries=1))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(max_retries=1))
         responses = [
             _make_response(
                 " \n ",
@@ -256,13 +254,18 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         ]
         stub = _ClientStub(responses)
         events: list[dict[str, Any]] = []
-        client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+        client.set_event_sink(
+            lambda event, **data: (
+                events.append({"event": event, **data}) if event.startswith("llm_retry_") else None
+            )
+        )
 
-        with patch.object(client, "_ensure_client", return_value=stub):
+        with patch.object(client.adapter("default"), "_ensure_client", return_value=stub):
             self.assertEqual(
                 client.complete(
                     [{"role": "user", "content": "translate"}],
                     json_mode=True,
+                    operation="translation.body",
                 ),
                 '{"translations":["正确响应"]}',
             )
@@ -271,21 +274,22 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         self.assertEqual(events[0]["reason"], "empty_response")
 
     def test_json_mode_prefers_content_when_both_fields_exist(self):
-        from trans_novel.llm.providers.openai_compatible import OpenAICompatibleClient
-
         content = '{"translations":["content"]}'
-        client = OpenAICompatibleClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg(reasoning_fallback=True))
         response = _make_response(
             content,
             None,
             reasoning_content="这是一段明显不是 JSON 的推理文本",
         )
 
-        with patch.object(client, "_ensure_client", return_value=_ClientStub([response])):
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
             self.assertEqual(
                 client.complete(
                     [{"role": "user", "content": "translate"}],
                     json_mode=True,
+                    operation="translation.body",
                 ),
                 content,
             )
@@ -293,29 +297,31 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
 
 class TestDeepSeekProviderDefaults(unittest.TestCase):
     def test_provider_only_config_uses_deepseek_defaults(self):
-        client = build_client(Config.from_dict({"llm": {"provider": "deepseek"}}))
-        self.assertIsInstance(client, DeepSeekClient)
-        assert isinstance(client, DeepSeekClient)
+        client = build_client(Config.from_dict({"llm": {"preset": "deepseek"}}))
+        self.assertIsInstance(client.adapter("default"), DeepSeekClient)
+        assert isinstance(client.adapter("default"), DeepSeekClient)
 
-        self.assertEqual(client.base_url, DEFAULT_BASE_URL)
-        self.assertEqual(client.api_key_env, DEFAULT_API_KEY_ENV)
-        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
-        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
-        self.assertTrue(client.tiers["strong"].options.thinking)
-        self.assertTrue(client.tiers["fast"].options.thinking)
+        self.assertEqual(client.adapter("default").base_url, DEFAULT_BASE_URL)
+        self.assertEqual(client.adapter("default").api_key_env, DEFAULT_API_KEY_ENV)
+        self.assertEqual(
+            client.routes["translation.body"].request_model().model, "deepseek-v4-flash"
+        )
+        self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-v4-flash")
+        self.assertTrue(client.routes["translation.body"].request_model().options.thinking)
+        self.assertTrue(client.routes["synopsis.chapter"].request_model().options.thinking)
 
     def test_explicit_config_overrides_provider_defaults(self):
-        client = DeepSeekClient(_minimal_deepseek_cfg())
+        client = RoutedLLMClient(_minimal_deepseek_cfg())
 
-        self.assertEqual(client.base_url, "x")
-        self.assertEqual(client.api_key_env, "X")
-        self.assertEqual(client.tiers["strong"].model, "m1")
+        self.assertEqual(client.adapter("default").base_url, "https://example.invalid/v1")
+        self.assertEqual(client.adapter("default").api_key_env, "X")
+        self.assertEqual(client.routes["translation.body"].request_model().model, "m1")
 
     def test_partial_tier_override_keeps_other_provider_defaults(self):
-        client = DeepSeekClient(
-            LLMConfig(
-                tiers={
-                    "fast": TierConfig(
+        client = RoutedLLMClient(
+            model_config(
+                profiles={
+                    "fast": dict(
                         model="custom-fast",
                         options={"thinking": False},
                     ),
@@ -323,28 +329,32 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
             )
         )
 
-        self.assertEqual(client.tiers["fast"].model, "custom-fast")
-        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
-        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
+        self.assertEqual(client.routes["synopsis.chapter"].request_model().model, "custom-fast")
+        self.assertEqual(
+            client.routes["translation.body"].request_model().model, "deepseek-v4-flash"
+        )
+        self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-v4-flash")
 
     def test_provider_option_can_be_overridden_without_repeating_model(self):
-        client = DeepSeekClient(
-            LLMConfig(
-                tiers={
-                    "fast": TierConfig(options={"thinking": True}),
+        client = RoutedLLMClient(
+            model_config(
+                profiles={
+                    "fast": dict(options={"thinking": True}),
                 }
             )
         )
 
-        self.assertEqual(client.tiers["fast"].model, "deepseek-v4-flash")
-        self.assertTrue(client.tiers["fast"].options.thinking)
+        self.assertEqual(
+            client.routes["synopsis.chapter"].request_model().model, "deepseek-v4-flash"
+        )
+        self.assertTrue(client.routes["synopsis.chapter"].request_model().options.thinking)
 
     def test_unknown_provider_option_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unknown_option"):
-            DeepSeekClient(
-                LLMConfig(
-                    tiers={
-                        "strong": TierConfig(options={"unknown_option": True}),
+            RoutedLLMClient(
+                model_config(
+                    profiles={
+                        "strong": dict(options={"unknown_option": True}),
                     }
                 )
             )
@@ -353,7 +363,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
 class TestDeepSeekUsageByTier(unittest.TestCase):
     def test_records_usage_and_splits_by_tier(self):
         cfg = _minimal_deepseek_cfg()
-        c = DeepSeekClient(cfg)
+        c = RoutedLLMClient(cfg)
         responses = [
             _make_response(
                 "strong-out",
@@ -377,9 +387,11 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
             ),
         ]
         msgs = [{"role": "user", "content": "hi"}]
-        with patch.object(c, "_ensure_client", return_value=_ClientStub(responses)):
-            self.assertEqual(c.complete(msgs, tier="strong", stage="Translator"), "strong-out")
-            self.assertEqual(c.complete(msgs, tier="cheap"), "cheap-out")
+        with patch.object(
+            c.adapter("default"), "_ensure_client", return_value=_ClientStub(responses)
+        ):
+            self.assertEqual(c.complete(msgs, operation="translation.body"), "strong-out")
+            self.assertEqual(c.complete(msgs, operation="review.scan"), "cheap-out")
 
         summary = c.usage_summary()
         totals = summary["totals"]
@@ -398,22 +410,22 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         self.assertEqual(by_tier["cheap"]["calls"], 1)
         self.assertEqual(by_tier["strong"]["prompt_tokens"], 1000)
         self.assertEqual(by_tier["cheap"]["prompt_tokens"], 500)
-        self.assertEqual(list(summary["by_stage"]), ["Translator"])
-        self.assertEqual(summary["by_stage"]["Translator"]["total_tokens"], 1200)
-        self.assertEqual(summary["by_stage"]["Translator"]["cache_hit_rate"], 0.8)
+        self.assertEqual(list(summary["by_stage"]), ["translation.body", "review.scan"])
+        self.assertEqual(summary["by_stage"]["translation.body"]["total_tokens"], 1200)
+        self.assertEqual(summary["by_stage"]["translation.body"]["cache_hit_rate"], 0.8)
 
 
 class TestOpenAIUsageNormalization(unittest.TestCase):
     def test_nested_cached_tokens_are_normalized(self):
-        cfg = LLMConfig(
-            provider="openai",
-            base_url="x",
+        cfg = model_config(
+            kind="openai",
+            base_url="https://example.invalid/v1",
             api_key_env="X",
             timeout=1,
             max_retries=0,
-            tiers={"strong": TierConfig(model="m")},
+            profiles={"strong": dict(model="m")},
         )
-        client = OpenAIClient(cfg)
+        client = RoutedLLMClient(cfg)
         usage = SimpleNamespace(
             prompt_tokens=100,
             completion_tokens=20,
@@ -423,14 +435,14 @@ class TestOpenAIUsageNormalization(unittest.TestCase):
         response = _make_response("ok", usage)
 
         with patch.object(
-            client,
+            client.adapter("default"),
             "_ensure_client",
             return_value=_ClientStub([response]),
         ):
             self.assertEqual(
                 client.complete(
                     [{"role": "user", "content": "x"}],
-                    stage="Translator",
+                    operation="translation.body",
                 ),
                 "ok",
             )
@@ -440,7 +452,7 @@ class TestOpenAIUsageNormalization(unittest.TestCase):
         self.assertEqual(summary["totals"]["cache_miss_tokens"], 60)
         self.assertEqual(summary["totals"]["cache_hit_rate"], 0.4)
         self.assertEqual(
-            summary["by_stage"]["Translator"]["cache_hit_rate"],
+            summary["by_stage"]["translation.body"]["cache_hit_rate"],
             0.4,
         )
 
@@ -471,13 +483,15 @@ class TestMissingUsage(unittest.TestCase):
 
     def test_complete_with_none_usage_does_not_count(self):
         cfg = _minimal_deepseek_cfg()
-        c = DeepSeekClient(cfg)
+        c = RoutedLLMClient(cfg)
         with patch.object(
-            c,
+            c.adapter("default"),
             "_ensure_client",
             return_value=_ClientStub([_make_response("ok", None)]),
         ):
-            self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "ok")
+            self.assertEqual(
+                c.complete([{"role": "user", "content": "x"}], operation="translation.body"), "ok"
+            )
         summary = c.usage_summary()
         self.assertEqual(summary["totals"]["calls"], 0)
         self.assertEqual(summary["totals"]["total_tokens"], 0)
@@ -486,13 +500,15 @@ class TestMissingUsage(unittest.TestCase):
 
     def test_complete_with_missing_usage_attr_does_not_count(self):
         cfg = _minimal_deepseek_cfg()
-        c = DeepSeekClient(cfg)
+        c = RoutedLLMClient(cfg)
         msg = SimpleNamespace(content="ok")
         choice = SimpleNamespace(message=msg)
         # No usage attribute.
         resp = SimpleNamespace(choices=[choice])
-        with patch.object(c, "_ensure_client", return_value=_ClientStub([resp])):
-            self.assertEqual(c.complete([{"role": "user", "content": "x"}]), "ok")
+        with patch.object(c.adapter("default"), "_ensure_client", return_value=_ClientStub([resp])):
+            self.assertEqual(
+                c.complete([{"role": "user", "content": "x"}], operation="translation.body"), "ok"
+            )
         summary = c.usage_summary()
         self.assertEqual(summary["totals"]["calls"], 0)
         self.assertEqual(summary["by_tier"], {})
@@ -573,12 +589,14 @@ class TestUsageThreadSafety(unittest.TestCase):
 class TestAgentStageAttribution(unittest.TestCase):
     def test_agent_helpers_pass_class_name_as_stage(self):
         client = FakeClient()
-        agent = Agent(client, Config.from_dict({"llm": {"provider": "fake"}}))
+        agent = Agent(client, Config.from_dict({"llm": {"preset": "fake"}}))
 
-        agent._ask_text("system", "user", tier="strong")
-        agent._ask_json("system", "user", tier="cheap", default=[])
+        agent._ask_text("system", "user", operation="translation.body")
+        agent._ask_json("system", "user", operation="review.scan", default=[])
 
-        self.assertEqual([call["stage"] for call in client.calls], ["Agent", "Agent"])
+        self.assertEqual(
+            [call["stage"] for call in client.calls], ["translation.body", "review.scan"]
+        )
 
 
 class TestUsageIncrementalPersistence(unittest.TestCase):
@@ -605,23 +623,23 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
     def test_delta_and_merge_do_not_double_count(self):
         client = FakeClient()
-        self._record(client, "strong", prompt=100, completion=20, stage="Translator")
+        self._record(client, "strong", prompt=100, completion=20, stage="translation.body")
         first = client.usage_summary()
-        self._record(client, "strong", prompt=50, completion=10, stage="Translator")
-        self._record(client, "fast", prompt=30, completion=5, stage="Synopsizer")
+        self._record(client, "strong", prompt=50, completion=10, stage="translation.body")
+        self._record(client, "fast", prompt=30, completion=5, stage="synopsis.chapter")
         second = client.usage_summary()
 
         increment = usage_delta(second, first)
         self.assertEqual(increment["totals"]["total_tokens"], 95)
-        self.assertEqual(increment["by_stage"]["Translator"]["total_tokens"], 60)
-        self.assertEqual(increment["by_stage"]["Synopsizer"]["total_tokens"], 35)
+        self.assertEqual(increment["by_stage"]["translation.body"]["total_tokens"], 60)
+        self.assertEqual(increment["by_stage"]["synopsis.chapter"]["total_tokens"], 35)
         merged = merge_usage_summaries(first, increment)
         self.assertEqual(merged, second)
 
     def test_usage_accumulates_across_orchestrators_for_one_book(self):
         with tempfile.TemporaryDirectory() as d:
             store = RunStore(os.path.join(d, "state", "book"))
-            config = Config.from_dict({"llm": {"provider": "fake"}})
+            config = Config.from_dict({"llm": {"preset": "fake"}})
 
             first_client = FakeClient()
             first = Orchestrator(config, client=first_client)
@@ -630,7 +648,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 "strong",
                 prompt=100,
                 completion=20,
-                stage="Translator",
+                stage="translation.body",
             )
             cumulative = first._runtime.flush_usage(store, scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
@@ -647,7 +665,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 "cheap",
                 prompt=40,
                 completion=10,
-                stage="Reviewer",
+                stage="review.scan",
             )
             cumulative = resumed._runtime.flush_usage(store, scope="translate")
 
@@ -655,8 +673,8 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(cumulative["totals"]["calls"], 2)
             self.assertEqual(cumulative["by_tier"]["strong"]["total_tokens"], 120)
             self.assertEqual(cumulative["by_tier"]["cheap"]["total_tokens"], 50)
-            self.assertEqual(cumulative["by_stage"]["Translator"]["total_tokens"], 120)
-            self.assertEqual(cumulative["by_stage"]["Reviewer"]["total_tokens"], 50)
+            self.assertEqual(cumulative["by_stage"]["translation.body"]["total_tokens"], 120)
+            self.assertEqual(cumulative["by_stage"]["review.scan"]["total_tokens"], 50)
             self.assertEqual(store.load_usage(), cumulative)
             self.assertTrue(os.path.isfile(store.usage_path))
 
@@ -667,7 +685,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "ja", "target": "zh"},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                     "pipeline": {"book_understanding": False, "review": False},
                     "paths": {"state_dir": os.path.join(d, "state")},
                 }
@@ -700,19 +718,8 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             {
                 "language": {"source": "ja", "target": "zh"},
                 "llm": {
-                    "provider": "fake",
-                    "base_url": "https://example.invalid/v1",
-                    "reasoning_style": "openai",
-                    "tiers": {
-                        "strong": {
-                            "model": "fake-strong",
-                            "options": {
-                                "api_token": "must-not-be-stored",
-                                "max_tokens": 1024,
-                                "temperature": 0.2,
-                            },
-                        }
-                    },
+                    "preset": "fake",
+                    "models": {"default_strong": {"provider": "default", "model": "fake-strong"}},
                 },
                 "pipeline": {
                     "book_understanding": False,
@@ -1029,7 +1036,7 @@ class TestRunStoreLock(unittest.TestCase):
             completed = threading.Event()
             chapter = Chapter(
                 index=0,
-                segments=[Segment(index=0, source="source", target="translation")],
+                segments=[Segment(index=0, source="source", target="translation.body")],
             )
 
             def publish() -> None:
@@ -1044,7 +1051,7 @@ class TestRunStoreLock(unittest.TestCase):
             self.assertTrue(completed.wait(1))
             worker.join(timeout=1)
             self.assertFalse(worker.is_alive())
-            self.assertEqual(publisher.load_chapter(0).segments[0].target, "translation")
+            self.assertEqual(publisher.load_chapter(0).segments[0].target, "translation.body")
 
 
 if __name__ == "__main__":

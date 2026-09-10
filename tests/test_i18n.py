@@ -143,7 +143,13 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         assert store.load_manifest()["prompt_fingerprint"] == prompt_fingerprint()
         orchestrator.run_review(str(path))
         stages = {call["stage"] for call in client.calls}
-        assert {"Analyzer", "Translator", "Polisher", "Synopsizer", "GlossaryExtractor"} <= stages
+        assert {
+            "analysis.style",
+            "translation.body",
+            "polish.body",
+            "synopsis.chapter",
+            "glossary.extract",
+        } <= stages
         for fmt in ("txt", "markdown", "html", "epub", "docx"):
             for bilingual in (False, True):
                 output = Path(

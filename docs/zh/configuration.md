@@ -32,205 +32,155 @@ language:
 
 提示词目录、状态布局和首版验证范围见 [P10 国际化实现与后续方案](project-review/2026-09-05/p10-multilingual-internationalization.md)。
 
-## 模型
+## 模型与操作路由
+
+保留三个便捷档位，也可以独立覆盖某个操作，或混用多个提供商连接。最简配置：
 
 ```yaml
 llm:
-  provider: deepseek
+  preset: deepseek
 ```
 
-只需选择模型提供商。DeepSeek provider 默认使用：
+该预设展开为连接 `default`、模型配置 `default_strong` / `default_cheap` / `default_fast`，以及三个档位映射。内置产品默认值为 `https://api.deepseek.com`、环境变量 `DEEPSEEK_API_KEY`；三个档位均使用 `deepseek-v4-flash`，开启 thinking，`reasoning_effort` 为 `high`。模型 ID 与默认推理设置依据 [DeepSeek 官方 API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。档位保持独立映射，便于之后分别覆盖模型；预设不会自动查询远端能力。也支持 `preset: gemini` 和离线的 `preset: fake`。
 
-- `https://api.deepseek.com`；
-- `DEEPSEEK_API_KEY` 环境变量；
-- `deepseek-v4-pro` 作为 strong 档；
-- `deepseek-v4-flash` 作为 cheap 和 fast 档。
-
-API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
-
-默认 MinerU 后端首次解析 PDF 时另外读取 `MINERU_API_KEY`，用于调用 MinerU
-转换服务。该密钥与 LLM provider 配置无关，也不写入 `config.yaml`。可选的
-BabelDOC 后端不使用此密钥。
-
-需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
+例如，单独配置润色与取证模型：
 
 ```yaml
 llm:
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 600
-  max_retries: 4
-  tiers:
-    strong:
-      model: deepseek-v4-pro
+  preset: deepseek
+  providers:
+    editorial:
+      kind: gemini
+      api_key_env: GEMINI_API_KEY
+      timeout: 120
+      max_retries: 2
+      max_concurrency: 2
+  models:
+    editor:
+      provider: editorial
+      model: YOUR_EDITOR_MODEL
+      max_output_tokens: 8192
       options:
-        reasoning_effort: high
-        thinking: true
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        reasoning_effort: high
-        thinking: true
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: true
+        thinking_level: high
+  routes:
+    polish.body: {model: editor}
+    review.verify: {model: editor}
 ```
 
-`max_retries` 表示由 Wenyi 统一执行的额外尝试次数。Provider SDK 的内置重试会被关闭，避免请求层层叠加；连接/超时、HTTP 408/409/429、5xx 瞬时错误以及模型空响应会重试，每次等待都会写入本书的 `events.jsonl`。
+将 `YOUR_EDITOR_MODEL` 换成端点支持的模型。其他操作继续使用默认档位；没有单独覆盖时，`autofix.verify` 继承已解析的 `review.verify` 路由。
 
-用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
-运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
-`options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
-只属于 DeepSeek，不会进入通用 LLM 抽象层。
+### 配置规则
 
-### OpenAI 与 OpenRouter
+- `providers.<id>` 定义连接：`kind`、可选的 `base_url`、`api_key_env`、`timeout`（秒，默认 600）、`max_retries`（额外尝试次数，默认 4）、`max_concurrency`（不设置则不限制）和可选 `quota_group`。
+- `models.<id>` 定义请求配置：`provider` 连接 ID、远端 `model` ID、可选的正数 `max_output_tokens` 和提供商专属 `options`。
+- `tiers` 必须恰好将 `strong`、`cheap`、`fast` 映射到模型配置；不用预设时需完整填写，也可以全部指向同一模型。档位表示偏好，不代表实测质量或价格。
+- `routes.<操作>` 必须且只能选择 `{model: 配置名}` 或 `{tier: strong}`。未知操作、字段及引用在请求前报错，不再隐式回退缺失档位。
+- 覆盖预设时，按 ID 整体替换连接或模型配置，需要重复必填字段；不同模型的 options 不合并。档位和路由按各自键替换。
+- 显式 `max_output_tokens` 优先于流程的静态、动态输出提示；不设置时，梗概和注释定位沿用原有提示预算。OpenAI 兼容适配器在 thinking 开启时将低于 4,096 的提示预算提升到 4,096；显式设置更小上限则报错。实际模型限制仍取决于服务端。
+- API Key 只从环境变量读取，不写入地址或原始请求扩展。原始扩展不能覆盖模型身份、消息、流式开关、JSON 模式、密钥和输出上限。
 
-OpenAI 和 OpenRouter 分别维护独立 provider，会自动选择各自的 Base URL、API Key
-环境变量和思考参数格式。模型档位需要显式配置：
+### 提供商选项
 
-```yaml
-llm:
-  provider: openrouter
-  tiers:
-    strong:
-      model: anthropic/claude-opus-4.6
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: openai/gpt-5-mini
-      options:
-        thinking: true
-        reasoning_effort: medium
-    fast:
-      model: google/gemini-3-flash
-      options:
-        thinking: false
-```
+| 适配器 | 连接默认值 / 选项 | 模型选项 |
+|---|---|---|
+| `deepseek` | DeepSeek 端点；`DEEPSEEK_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
+| `openai` | OpenAI 端点；`OPENAI_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
+| `openrouter` | OpenRouter 端点；`OPENROUTER_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
+| `gemini` | 原生 Gemini API；未指定自定义变量时，从 `GEMINI_API_KEY` 回退到 `GOOGLE_API_KEY` | `thinking_level` 或 `thinking_budget`、`temperature`、`extra_body` |
+| `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
+| `orcarouter` | `https://api.orcarouter.ai/v1`；`ORCAROUTER_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
+| `ollama`、`vllm` | `http://localhost:11434/v1`、`http://localhost:8000/v1`；可选密钥；`reasoning_style` | 同 `openai-compatible` |
+| `fake` | 无网络、无需密钥 | 无提供商选项 |
 
-`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+兼容端点的 `reasoning_style` 支持 `none`（默认）、`deepseek`、`openai`、`openrouter`。只有明确配置 `json_response_fallback: reasoning_content`，才会从网关的该字段读取有效 JSON；默认 `none`，非 JSON 推理文本不会被当作结果。Gemini 的 thinking level 和 budget 互斥。原始扩展字典依赖具体端点；离线校验无法保证远端模型接受这些参数。
 
-### OrcaRouter
+SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 
-OrcaRouter 提供 OpenAI 兼容接口。内置 `orcarouter` provider 默认使用
-`https://api.orcarouter.ai/v1`，并从 `ORCAROUTER_API_KEY` 环境变量读取密钥。
-可先[创建 OrcaRouter API Key](https://api.orcarouter.ai/ref/ref_262c8b8e6a274286a90a)，
-再配置当前账户可用的模型 ID：
+DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: false` 显式关闭思考，此时不发送推理强度。未配置输出上限且流程没有输出提示时，由服务采用默认上限：非思考模式 8K、思考模式 64K，`max` 强度下为 128K。流程提示和显式 `max_output_tokens` 仍按上述配置规则处理。详见 [DeepSeek 请求参数](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+### 已注册操作
+
+| 操作 | 默认档位或继承 | 用途 |
+|---|---|---|
+| `language.detect` | `cheap` | 源语言识别 |
+| `analysis.style` | `strong` | 风格、人物与初始术语分析 |
+| `synopsis.chapter` | `fast` | 章节梗概；600 token 输出提示 |
+| `synopsis.book` | `fast` | 全书概要；1,200 token 输出提示 |
+| `translation.body` | `strong` | 正文翻译及段落对齐恢复 |
+| `translation.title` | `strong` | 章节与目录标题 |
+| `polish.body` | `strong` | 译文润色 |
+| `glossary.extract` | `fast` | 术语抽取 |
+| `glossary.align_history` | `fast` | 历史译法对齐 |
+| `annotation.align` | `cheap` | 注释定位；动态输出提示 |
+| `review.scan` | `cheap` | 初审与盲审复查 |
+| `review.verify` | `strong` | 取证核查 |
+| `review.arbitrate` | `strong` | 冲突仲裁 |
+| `review.fix` | `strong` | 影子修订 |
+| `autofix.verify` | `review.verify` | 发布前取证核查 |
+| `autofix.fix` | `review.fix` | 正式发布修订 |
+| `srt.translate` | `strong` | 字幕批次与单条恢复 |
+
+### 预览、限额与显式故障切换
 
 ```bash
-export ORCAROUTER_API_KEY=sk-orca-...
+uv run trans-novel models list
+uv run trans-novel models list --json
+uv run trans-novel models explain --operation review.verify
+uv run trans-novel models check --for translate
 ```
+
+`list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
+
+可选本地控制示例（使用离线提供商）：
 
 ```yaml
 llm:
-  provider: orcarouter
-  tiers:
-    strong:
-      model: your-model-id
-    cheap:
-      model: your-cheap-model-id
-    fast:
-      model: your-fast-model-id
+  preset: fake
+  providers:
+    default:
+      kind: fake
+      max_concurrency: 2
+      quota_group: account
+  models:
+    bounded:
+      provider: default
+      model: fake
+      max_output_tokens: 2048
+  tiers: {strong: bounded, cheap: bounded, fast: bounded}
+  quotas:
+    account:
+      requests_per_minute: 20
+      tokens_per_minute: 60000
+  budget:
+    max_requests: 100
+    max_tokens: 200000
+    deadline_seconds: 900
 ```
 
-模型档位需要显式配置。OrcaRouter 使用下文的通用 OpenAI 兼容选项，包括
-`reasoning_style` 和各档位的 `request_overrides`；需要时也可覆盖 `base_url` 或
-`api_key_env`。
+相同 `quota_group` 的连接在本次运行内共享 RPM/TPM 预留；连接并发限制也覆盖使用它的全部操作。这些控制不协调其他进程，也不能替代服务端的账号配额。Token 控制先按保守的提示词字节估算加显式输出上限预留，再根据返回的实际用量调整；预留量不是实际计费，也不是金额上限。启用 token 限制时，每个可达的主模型和备用模型都必须有有限输出上限。
 
-### Google Gemini
+`deadline_seconds` 和 Ctrl+C 协作式停止排队请求与重试等待；已进入 SDK 的请求仍可能执行到完成或连接超时。完成结果保留供续跑；重新启动会获得一份新的运行预算。
 
-通过官方 `google-genai` SDK 原生支持 Google Gemini 模型，设置 `provider: gemini`（或 `provider: google`）。默认读取 `GEMINI_API_KEY`（或兼容 `GOOGLE_API_KEY`）环境变量：
+无状态请求可以显式设置 `fallbacks: [备用配置名]`。只有可重试的传输错误耗尽重试后才进入该链；认证、配置及输出结构错误不触发模型切换。可续跑的 `review.verify`、`review.arbitrate`、`autofix.verify` 对话禁止故障切换，避免一条取证轨迹混用模型。
 
-```yaml
-llm:
-  provider: gemini
-  api_key_env: GEMINI_API_KEY
-  tiers:
-    strong:
-      model: gemini-3.6-flash
-    cheap:
-      model: gemini-3.6-flash
-    fast:
-      model: gemini-3.6-flash
+### 用量与续跑
+
+单一账本维护总量，以及互相独立的 `by_tier`、`by_stage`（操作 ID）、`by_provider`、`by_model` 视图。直接指定模型的调用归入 `direct` 档位。物理身份区分端点、模型与推理选项，即使复用了别名也不会混为一项；别名和显示标签不参与总量计算。解析失败、随后重试的响应仍保留实际用量；服务端没返回用量时不虚构 token 计费。
+
+事件记录路由计划及请求的操作、模型、提供商、配置名、连接名、推理指纹、调用 ID、尝试次数。全书和 Review 账本先写 `usage-pending.json`，再更新正式账本；本地合并中断后能补完且不重复累计。若进程在远端受理后、本地保存前被强杀，仍可能存在无法确定的远端用量。
+
+翻译、分析、概要、SRT 模型变更会保留完成结果，仅后续请求使用新路由。可达的 Review 模型、端点、选项或协议变化会开启新 Review；无关路由、密钥轮换、别名和并发调整不会使其失效。缺少推理身份的旧 Review 缓存保留供检查，但不复用。Autofix 使用独立指纹：已写发布索引的任务按保存的候选补完；未完成的模型规划需恢复原路由后继续。
+
+旧配置和非空旧用量账本需要显式转换：
+
+```bash
+uv run trans-novel models migrate-config old-config.yaml --out routed-config.yaml
+uv run trans-novel models migrate-usage state/BOOK/targets/zh
 ```
 
-Gemini 专属配置还支持针对思考模型的 `thinking_level`（如 `low` / `high`）与 `thinking_budget` 参数。
+配置转换器生成独立文件；账本转换器逐份备份，保留总量及旧档位/阶段归属，将未知提供商和模型历史标记为 `unknown`，不会处理原书。转换账本前应停止该目标的运行任务。Review 目录保留。`pipeline.review_agent_tier` 由取证、仲裁、修订的独立路由取代。
 
-### 其他 OpenAI 兼容端点
-
-任意兼容 Chat Completions 的端点可使用 `openai-compatible`：
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  api_key_env: EXAMPLE_API_KEY
-  # deepseek | openai | openrouter | none
-  reasoning_style: deepseek
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        reasoning_effort: high
-        request_overrides:
-          thinking:
-            budget: 8192
-```
-
-`reasoning_style` 把统一的 `thinking`、`reasoning_effort` 转换为中转站实际
-接受的请求格式：
-
-- `deepseek`：`thinking.type` 与 `reasoning_effort`；
-- `openai`：`reasoning_effort`，关闭时发送 `none`；
-- `openrouter`：`reasoning.effort`，关闭时发送 `reasoning.enabled: false`；
-- `none`：不转换，适合依赖模型默认行为或使用自定义请求字段。
-
-默认情况下，Wenyi 只信任标准 `content` 字段，并对空响应发起重试。只有
-确认端点会把最终 JSON 放进 `reasoning_content` 时，才应在实际使用的每个
-档位设置 `json_response_fallback: reasoning_content`；启用后也只接受完整、
-合法的单个 JSON 值。
-
-```yaml
-llm:
-  provider: openai-compatible
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        json_response_fallback: reasoning_content
-```
-
-`request_overrides` 是未知中转协议的兜底入口，其内容会作为原始顶层请求体
-字段发送，并在方言生成的字段之后递归合并。例如中转站使用
-`enable_thinking: true` 时可以这样配置：
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  reasoning_style: none
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        request_overrides:
-          enable_thinking: true
-```
-
-方言由中转站协议决定，而不是由实际模型名称决定。例如，中转站即使代理
-DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应选择
-`reasoning_style: openai`。
-
-本地 Ollama 和 vLLM 还可以分别使用 `ollama`、`vllm`，默认地址为
-`http://localhost:11434/v1` 和 `http://localhost:8000/v1`，默认不要求 API Key。
-两者同样需要配置实际部署的模型档位。Ollama 的 OpenAI 兼容接口可使用
-`reasoning_style: openai`；vLLM 是否支持思考开关取决于模型模板和服务端启动
-参数，必要时可通过 `request_overrides.chat_template_kwargs` 传入
-`enable_thinking`。
+`models compare --operation translation.body --model writer --model editor --messages fixture.json --out comparison.json` 会明确向每个模型发送由 `{role, content}` 对象构成的 JSON 消息数组，记录输出、延迟和实际用量。该命令消耗请求，不自动读取书籍或修改译文。选择混用配置前请用隔离的公版样本比较；支持路由不等于已经提供实测质量排序的新预设。
 
 ## 流水线
 
@@ -246,7 +196,6 @@ pipeline:
   review_concurrency: 4
   review_output_retries: 2
   review_agent_loop: true
-  review_agent_tier: strong
   review_agent_max_evidence_rounds: 2
   review_conflict_arbitration: true
   review_fix_loop: true
@@ -269,7 +218,6 @@ pipeline:
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
 - `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
 - `review_agent_loop`：原有 Reviewer 提示词在成功叶块中发现候选后，允许 Agent Loop 选择性请求证据，再确认、驳回或细化这些候选。
-- `review_agent_tier`：取证循环、跨块仲裁和临时 Review Fixer 所用的模型档位，默认 `strong`。
 - `review_agent_max_evidence_rounds`：每个 Agent Loop 最多允许的选择性取证轮数，范围为 `0` 到 `2`；用完后必须给出最终结论。
 - `review_conflict_arbitration`：所有块结束后，同一术语、人称或固定表达的一致性建议若互相矛盾，再执行只给建议、不修改数据的终局仲裁。
 - `review_fix_loop`：针对确认的问题在本次运行的影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。

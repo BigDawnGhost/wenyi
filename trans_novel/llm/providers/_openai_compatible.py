@@ -1,61 +1,20 @@
-"""Shared transport, retries and tier resolution for OpenAI-compatible providers."""
+"""OpenAI-compatible wire protocol and single-attempt response handling."""
 
 from __future__ import annotations
 
 import json
 import os
-import threading
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from ...config import LLMConfig, TierConfig
-from ..base import LLMClient, Messages
-from ..retrying import EmptyResponseError, RetryReporter, provider_retry
-from ..tiers import resolve_tier
-from ..usage import (
-    UsageSample,
-    make_usage_sample,
-    read_usage_int,
-    read_usage_value,
-)
+from ..retrying import EmptyResponseError
+from ..transport import Messages, ProviderAdapter, RequestContext, ResolvedModel
+from ..usage import UsageSample, make_usage_sample, read_usage_int, read_usage_value
 
 OptionsT = TypeVar("OptionsT", bound=BaseModel)
 _JSON_MODE_INSTRUCTION = "Output must be valid json."
-
-
-@dataclass(frozen=True)
-class ResolvedTier(Generic[OptionsT]):
-    """A runtime tier completed and validated by its provider."""
-
-    model: str
-    options: OptionsT
-
-
-def resolve_provider_tiers(
-    overrides: dict[str, TierConfig],
-    *,
-    options_type: type[OptionsT],
-    defaults: dict[str, ResolvedTier[OptionsT]] | None = None,
-) -> dict[str, ResolvedTier[OptionsT]]:
-    """Merge common tier overrides and validate through the provider-specific options model."""
-    tiers = dict(defaults or {})
-    for name, override in overrides.items():
-        current = tiers.get(name)
-        model = override.model or (current.model if current else None)
-        if not model:
-            raise ValueError(f"llm.tiers.{name}.model must not be empty")
-        option_values = current.options.model_dump() if current else {}
-        option_values.update(override.options)
-        tiers[name] = ResolvedTier(
-            model=model,
-            options=options_type.model_validate(option_values),
-        )
-    if "strong" not in tiers:
-        raise ValueError("Configuration is missing llm.tiers.strong.model")
-    return tiers
 
 
 def base_request_kwargs(
@@ -130,146 +89,83 @@ def normalize_openai_usage(usage: Any) -> UsageSample | None:
     )
 
 
-class OpenAICompatibleBaseClient(LLMClient, Generic[OptionsT]):
-    """Shared client for OpenAI Chat Completions-compatible providers."""
-
-    def __init__(
-        self,
-        cfg: LLMConfig,
-        *,
-        provider_name: str,
-        default_base_url: str | None,
-        default_api_key_env: str | None,
-        tiers: dict[str, ResolvedTier[OptionsT]],
-        requires_api_key: bool,
-    ) -> None:
-        """Resolve connection settings and validated tiers; create the SDK client lazily."""
-        super().__init__()
-        self.cfg = cfg
-        self.provider_name = provider_name
-        self.base_url = cfg.base_url or default_base_url
-        self.api_key_env = cfg.api_key_env or default_api_key_env
-        self.tiers = tiers
-        self.requires_api_key = requires_api_key
-        if not self.base_url:
-            raise ValueError(f"{provider_name} requires llm.base_url")
-        self._client: Any = None
-        self._client_lock = threading.Lock()
+class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
+    """Reuse one SDK connection; route selection and usage belong to the caller."""
 
     def _ensure_client(self) -> Any:
-        """Create the OpenAI SDK client lazily under a lock and validate its API key."""
         with self._client_lock:
             if self._client is None:
-                try:
-                    from openai import OpenAI
-                except ImportError as error:  # pragma: no cover
-                    raise RuntimeError(
-                        "The openai SDK is required: pip install openai"
-                        " (or set llm.provider to fake for offline testing)"
-                    ) from error
+                from openai import OpenAI
+
                 self.validate_credentials()
                 api_key = os.environ.get(self.api_key_env) if self.api_key_env else None
                 self._client = OpenAI(
                     api_key=api_key or "no-key",
                     base_url=self.base_url,
                     timeout=self.cfg.timeout,
-                    # Wenyi owns retry classification, backoff and events; disable nested SDK retries.
                     max_retries=0,
                 )
         return self._client
 
-    def validate_credentials(self) -> None:
-        """Report a missing API-key environment variable before starting model workflows."""
-        if not self.api_key_env:
-            if self.requires_api_key:
-                raise RuntimeError(f"{self.provider_name} requires llm.api_key_env")
-            return
-        api_key = os.environ.get(self.api_key_env, "").strip()
-        if (self.requires_api_key or self.api_key_env) and not api_key:
-            raise RuntimeError(
-                f"Environment variable {self.api_key_env} ({self.provider_name} API key) is not set"
-            )
+    @classmethod
+    def output_limit(cls, options: BaseModel, hint: int | None, explicit: int | None) -> int | None:
+        thinking = bool(getattr(options, "thinking", False))
+        if explicit is not None:
+            if thinking and explicit < 4096:
+                raise ValueError(
+                    "Thinking mode requires max_output_tokens >= 4096; disable thinking or increase the explicit limit"
+                )
+            return explicit
+        return max(hint, 4096) if thinking and hint is not None else hint
 
     def _normalize_usage(self, usage: Any) -> UsageSample | None:
-        """Read standard OpenAI-compatible cache usage from nested details."""
         return normalize_openai_usage(usage)
 
     def _json_response_fallback(
-        self,
-        tier_config: ResolvedTier[OptionsT],
-        message: Any,
+        self, model_config: ResolvedModel[OptionsT], message: Any
     ) -> str | None:
-        """Return explicitly enabled JSON fallback fields; distrust nonstandard fields by
-        default.
-        """
         return None
 
     @abstractmethod
     def _build_request_kwargs(
         self,
-        tier_config: ResolvedTier[OptionsT],
+        model_config: ResolvedModel[OptionsT],
         messages: Messages,
         *,
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """Convert a generic call to the provider's request dialect."""
         raise NotImplementedError
 
-    def complete(
+    def _request(
         self,
         messages: Messages,
+        model: ResolvedModel[OptionsT],
         *,
-        tier: str = "strong",
-        json_mode: bool = False,
-        max_tokens: int | None = None,
-        stage: str | None = None,
+        json_mode: bool,
+        context: RequestContext,
     ) -> str:
-        """Call the compatible endpoint at the requested tier with retries and normalized usage
-        accounting.
-        """
-        tier_config = resolve_tier(self.tiers, tier)
+        model_config = model
         kwargs = self._build_request_kwargs(
-            tier_config,
-            messages,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
+            model, messages, json_mode=json_mode, max_tokens=context.max_tokens
         )
-        client = self._ensure_client()
-
-        reporter = RetryReporter(
-            provider=self.provider_name,
-            tier=tier,
-            stage=stage,
-            max_attempts=max(1, self.cfg.max_retries + 1),
-            emit=self._emit_event,
-        )
-
-        @provider_retry(self.cfg.max_retries, reporter)
-        def _call() -> str:
-            """Perform one request; let the tenacity retry decorator handle exceptions."""
-            response = client.chat.completions.create(**kwargs)
-            sample = self._normalize_usage(getattr(response, "usage", None))
-            self.usage.record(tier, sample, stage)
-            choice = response.choices[0]
-            message = choice.message
-            raw_content = getattr(message, "content", None)
-            content = raw_content if isinstance(raw_content, str) else ""
-            if not content.strip():
-                if str(getattr(choice, "finish_reason", "")).lower() == "length":
-                    raise RuntimeError(
-                        "OpenAI-compatible response was truncated at the token limit"
-                    )
-                fallback = self._json_response_fallback(tier_config, message) if json_mode else None
-                if fallback is None or not fallback.strip():
-                    raise EmptyResponseError(f"{self.provider_name} response content is empty")
-                try:
-                    json.loads(fallback)
-                except json.JSONDecodeError as error:
-                    raise EmptyResponseError(
-                        f"{self.provider_name} configured JSON fallback response is invalid JSON"
-                    ) from error
-                content = fallback
-            return content
-
-        return _call()
+        response = self._ensure_client().chat.completions.create(**kwargs)
+        context.record_usage(self._normalize_usage(getattr(response, "usage", None)))
+        choice = response.choices[0]
+        message = choice.message
+        raw_content = getattr(message, "content", None)
+        content = raw_content if isinstance(raw_content, str) else ""
+        if not content.strip():
+            if str(getattr(choice, "finish_reason", "")).lower() == "length":
+                raise RuntimeError("OpenAI-compatible response was truncated at the token limit")
+            fallback = self._json_response_fallback(model_config, message) if json_mode else None
+            if fallback is None or not fallback.strip():
+                raise EmptyResponseError(f"{self.cfg.kind} response content is empty")
+            try:
+                json.loads(fallback)
+            except json.JSONDecodeError as error:
+                raise EmptyResponseError(
+                    f"{self.cfg.kind} configured JSON fallback response is invalid JSON"
+                ) from error
+            content = fallback
+        return content

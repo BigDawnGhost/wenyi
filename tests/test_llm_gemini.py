@@ -11,29 +11,31 @@ import pytest
 from google.genai.errors import ClientError, ServerError
 from pydantic import ValidationError
 
-from trans_novel.config import Config, LLMConfig, TierConfig
+from tests.model_fixtures import model_config
+from trans_novel.config import Config
 from trans_novel.llm.factory import build_client
 from trans_novel.llm.providers.gemini import (
     GeminiClient,
-    GeminiTierOptions,
+    GeminiOptions,
     convert_messages_to_gemini,
     extract_gemini_usage,
     get_api_key_from_env,
 )
+from trans_novel.llm.router import RoutedLLMClient
 
 
 def test_gemini_tier_options_thinking_mutual_exclusion():
     """Test mutual exclusion of thinking_level and thinking_budget."""
-    opt1 = GeminiTierOptions(thinking_level="high")
+    opt1 = GeminiOptions(thinking_level="high")
     assert opt1.thinking_level == "high"
 
-    opt2 = GeminiTierOptions(thinking_budget=1024)
+    opt2 = GeminiOptions(thinking_budget=1024)
     assert opt2.thinking_budget == 1024
 
     with pytest.raises(
         ValidationError, match="thinking_level and thinking_budget are mutually exclusive"
     ):
-        GeminiTierOptions(thinking_level="high", thinking_budget=1024)
+        GeminiOptions(thinking_level="high", thinking_budget=1024)
 
 
 def test_api_key_env_precedence():
@@ -108,8 +110,8 @@ def test_extract_gemini_usage():
 
 def test_gemini_client_validate_credentials():
     """Test client credential validation."""
-    cfg = LLMConfig(provider="gemini", api_key_env="TEST_MISSING_ENV_KEY")
-    client = GeminiClient(cfg)
+    cfg = model_config(kind="gemini", api_key_env="TEST_MISSING_ENV_KEY")
+    client = RoutedLLMClient(cfg)
 
     with patch.dict(os.environ, {}, clear=True):
         with pytest.raises(RuntimeError, match="Environment variable"):
@@ -121,8 +123,8 @@ def test_gemini_client_validate_credentials():
 
 def test_gemini_client_applies_timeout_in_milliseconds():
     """Convert the shared timeout in seconds to google-genai milliseconds."""
-    cfg = LLMConfig(
-        provider="gemini",
+    cfg = model_config(
+        kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
         timeout=17,
     )
@@ -131,20 +133,22 @@ def test_gemini_client_applies_timeout_in_milliseconds():
         patch.dict(os.environ, {"TEST_GEMINI_KEY": "valid_key"}, clear=True),
         patch("google.genai.Client") as client_type,
     ):
-        GeminiClient(cfg)._ensure_client()
+        adapter = RoutedLLMClient(cfg).adapter("default")
+        assert isinstance(adapter, GeminiClient)
+        adapter._ensure_client()
 
     client_type.assert_called_once_with(
         api_key="valid_key",
-        http_options={"timeout": 17_000},
+        http_options={"timeout": 17_000, "retry_options": {"attempts": 1}},
     )
 
 
 def test_gemini_client_complete_and_usage():
     """Test GeminiClient.complete and usage attribution."""
-    cfg = LLMConfig(
-        provider="gemini",
+    cfg = model_config(
+        kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        tiers={"strong": TierConfig(model="gemini-3.6-flash", options={"temperature": 0.3})},
+        profiles={"strong": dict(model="gemini-3.6-flash", options={"temperature": 0.3})},
     )
 
     mock_client_instance = MagicMock()
@@ -166,10 +170,10 @@ def test_gemini_client_complete_and_usage():
     )
     mock_client_instance.models.generate_content.return_value = mock_response
 
-    client = GeminiClient(cfg)
-    client._client = mock_client_instance
+    client = RoutedLLMClient(cfg)
+    client.adapter("default")._client = mock_client_instance
 
-    res = client.complete([{"role": "user", "content": "test"}], stage="translation")
+    res = client.complete([{"role": "user", "content": "test"}], operation="translation.body")
 
     assert res == "翻译结果测试"
     mock_client_instance.models.generate_content.assert_called_once()
@@ -184,10 +188,10 @@ def test_gemini_client_complete_and_usage():
 
 def test_gemini_client_retries_server_error_and_records_wait():
     """Retry Gemini 5xx errors through the shared policy and emit wait events."""
-    cfg = LLMConfig(
-        provider="gemini",
+    cfg = model_config(
+        kind="gemini",
         max_retries=1,
-        tiers={"strong": TierConfig(model="gemini-3.6-flash")},
+        profiles={"strong": dict(model="gemini-3.6-flash")},
     )
     request = httpx.Request("POST", "https://example.invalid")
     failure_response = httpx.Response(
@@ -203,12 +207,18 @@ def test_gemini_client_retries_server_error_and_records_wait():
     )
     sdk = MagicMock()
     sdk.models.generate_content.side_effect = [failure, success]
-    client = GeminiClient(cfg)
-    client._client = sdk
+    client = RoutedLLMClient(cfg)
+    client.adapter("default")._client = sdk
     events = []
-    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_event_sink(
+        lambda event, **data: (
+            events.append({"event": event, **data}) if event.startswith("llm_retry_") else None
+        )
+    )
 
-    assert client.complete([{"role": "user", "content": "test"}]) == "ok"
+    assert (
+        client.complete([{"role": "user", "content": "test"}], operation="translation.body") == "ok"
+    )
     assert sdk.models.generate_content.call_count == 2
     assert [item["event"] for item in events] == ["llm_retry_wait"]
     assert events[0]["reason"] == "http_503"
@@ -216,21 +226,25 @@ def test_gemini_client_retries_server_error_and_records_wait():
 
 def test_gemini_client_does_not_retry_client_error():
     """Propagate permanent Gemini 4xx errors immediately."""
-    cfg = LLMConfig(
-        provider="gemini",
+    cfg = model_config(
+        kind="gemini",
         max_retries=4,
-        tiers={"strong": TierConfig(model="gemini-3.6-flash")},
+        profiles={"strong": dict(model="gemini-3.6-flash")},
     )
     failure = ClientError(401, {"message": "unauthorized"})
     sdk = MagicMock()
     sdk.models.generate_content.side_effect = failure
-    client = GeminiClient(cfg)
-    client._client = sdk
+    client = RoutedLLMClient(cfg)
+    client.adapter("default")._client = sdk
     events = []
-    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    client.set_event_sink(
+        lambda event, **data: (
+            events.append({"event": event, **data}) if event.startswith("llm_retry_") else None
+        )
+    )
 
     with pytest.raises(ClientError):
-        client.complete([{"role": "user", "content": "test"}])
+        client.complete([{"role": "user", "content": "test"}], operation="translation.body")
 
     assert sdk.models.generate_content.call_count == 1
     assert events == []
@@ -238,10 +252,10 @@ def test_gemini_client_does_not_retry_client_error():
 
 def test_gemini_client_json_mode():
     """JSON mode must set response_mime_type and parse the result successfully."""
-    cfg = LLMConfig(
-        provider="gemini",
+    cfg = model_config(
+        kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        tiers={"strong": TierConfig(model="gemini-3.6-flash")},
+        profiles={"strong": dict(model="gemini-3.6-flash")},
     )
 
     mock_client_instance = MagicMock()
@@ -252,10 +266,12 @@ def test_gemini_client_json_mode():
     )
     mock_client_instance.models.generate_content.return_value = mock_response
 
-    client = GeminiClient(cfg)
-    client._client = mock_client_instance
+    client = RoutedLLMClient(cfg)
+    client.adapter("default")._client = mock_client_instance
 
-    json_res = client.complete_json([{"role": "user", "content": "return json"}])
+    json_res = client.complete_json(
+        [{"role": "user", "content": "return json"}], operation="translation.body"
+    )
     assert json_res == {"status": "ok", "result": 123}
 
     config_arg = mock_client_instance.models.generate_content.call_args.kwargs["config"]
@@ -264,10 +280,10 @@ def test_gemini_client_json_mode():
 
 def test_gemini_client_safety_block():
     """Test detection of provider safety blocking."""
-    cfg = LLMConfig(
-        provider="gemini",
+    cfg = model_config(
+        kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        tiers={"strong": TierConfig(model="gemini-3.6-flash")},
+        profiles={"strong": dict(model="gemini-3.6-flash")},
     )
 
     mock_client_instance = MagicMock()
@@ -278,33 +294,19 @@ def test_gemini_client_safety_block():
     )
     mock_client_instance.models.generate_content.return_value = mock_response
 
-    client = GeminiClient(cfg)
-    client._client = mock_client_instance
+    client = RoutedLLMClient(cfg)
+    client.adapter("default")._client = mock_client_instance
 
     with pytest.raises(RuntimeError, match="blocked the response"):
-        client.complete([{"role": "user", "content": "unsafe content"}])
+        client.complete(
+            [{"role": "user", "content": "unsafe content"}], operation="translation.body"
+        )
 
 
 def test_factory_build_client_gemini():
-    """Test factory routing for gemini and google aliases."""
-    raw_config = {
-        "llm": {
-            "provider": "gemini",
-            "api_key_env": "TEST_KEY",
-            "tiers": {"strong": {"model": "gemini-3.6-flash"}},
-        }
-    }
-    cfg = Config.from_dict(raw_config)
+    cfg = Config.from_dict({"llm": {"preset": "gemini"}})
     client = build_client(cfg)
-    assert isinstance(client, GeminiClient)
-
-    raw_config_google = {
-        "llm": {
-            "provider": "google",
-            "api_key_env": "TEST_KEY",
-            "tiers": {"strong": {"model": "gemini-3.6-flash"}},
-        }
-    }
-    cfg_google = Config.from_dict(raw_config_google)
-    client_google = build_client(cfg_google)
-    assert isinstance(client_google, GeminiClient)
+    assert isinstance(client, RoutedLLMClient)
+    assert isinstance(client.adapter("default"), GeminiClient)
+    with pytest.raises(ValueError, match="Unknown provider"):
+        Config.from_dict({"llm": {"preset": "google"}})

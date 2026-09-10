@@ -33,7 +33,6 @@ from ..agents.review_loop import (
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.resources import prompt_fingerprint
-from ..llm.usage import usage_delta
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore
 from .runstore import STATUS_DONE
@@ -274,15 +273,24 @@ class ReviewService:
 
     def _review_config_snapshot(self) -> dict[str, Any]:
         """Snapshot review configuration for persisted metadata and reuse checks."""
+        from ..llm.operations import configured_operations
+        from ..llm.routing import inference_snapshot
+
         return {
             "source_lang": self._runtime.config.source_lang,
             "target_lang": self._runtime.config.target_lang,
             "honorific_strategy": self._runtime.config.honorific_strategy,
             "prompt_fingerprint": prompt_fingerprint(),
-            "review_concurrency": self._runtime.config.pipeline.review_concurrency,
             "review_output_retries": self._runtime.config.pipeline.review_output_retries,
             "review_agent_loop": self._runtime.config.pipeline.review_agent_loop,
-            "review_agent_tier": self._runtime.config.pipeline.review_agent_tier,
+            "inference": inference_snapshot(
+                self._runtime.llm_config,
+                (
+                    operation
+                    for operation in configured_operations(self._runtime.config, "review")
+                    if operation.startswith("review.")
+                ),
+            ),
             "review_agent_max_evidence_rounds": (
                 self._runtime.config.pipeline.review_agent_max_evidence_rounds
             ),
@@ -710,6 +718,7 @@ class ReviewService:
         usage and formal events at session end.
         """
         manifest = store.load_manifest()
+        self._runtime.flush_usage(store, scope="before_review")
         pending = [
             chapter["index"]
             for chapter in manifest.get("chapters", [])
@@ -761,6 +770,9 @@ class ReviewService:
             glossary_fingerprint=self._review_glossary_fingerprint(all_terms),
         )
         if debug is not None:
+            from ..llm.usage import validate_usage
+
+            validate_usage(debug.load_usage())
             debug.log_event("review_resumed_from_checkpoint", review_id=debug.review_id)
         else:
             debug = ReviewRunStore(store.run_dir)
@@ -783,14 +795,13 @@ class ReviewService:
             review_dir=debug.run_dir,
             reviewed_content_digest=reviewed_content_digest,
         )
-        usage_before = self._runtime.client.usage_summary()
 
         def save_review_usage() -> dict[str, Any]:
             """Persist this review's usage delta and merge it into cumulative book usage."""
-            usage = usage_delta(self._runtime.client.usage_summary(), usage_before)
-            debug.save_usage(usage)
-            self._runtime.flush_usage(store, scope="review")
-            return usage
+            from ..llm.usage import empty_usage
+
+            self._runtime.flush_usage(store, scope="review", review=debug)
+            return debug.load_usage() or empty_usage()
 
         target_overrides: dict[tuple[int, int], str] = {}
         seen_overlays = {_review_overlay_digest(loaded, target_overrides)}
@@ -1019,7 +1030,6 @@ class ReviewService:
                         _save_checkpoint(review_round, phase="scan_done", latest=latest)
                         # Persist scan usage before fixing so a fixer-stage crash cannot lose accounting.
                         save_review_usage()
-                        usage_before = self._runtime.client.usage_summary()
 
                     current_issue_keys = {
                         str(issue["issue_key"])
@@ -1361,7 +1371,11 @@ class ReviewService:
                 result=result,
                 usage=usage,
             )
-        except Exception as error:
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                save_review_usage()
+                debug.log_event("review_interrupted", error_type=type(error).__name__)
+                raise
             initial_issues, dismissed = debug.result_snapshots()
             partial_issues = effective_issues(latest) if latest is not None else []
             public_issues = _review_public_issues(partial_issues)

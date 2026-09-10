@@ -22,8 +22,8 @@ def _config(state_dir: str) -> Config:
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}},
+                "preset": "fake",
+                "models": {"default_strong": {"provider": "default", "model": "p"}},
             },
             "pipeline": {
                 "review_autofix": True,
@@ -353,6 +353,9 @@ class TestReviewAutofix(unittest.TestCase):
             chapter.text_segments[0].target = "正式译文。"
             store.save_chapter(chapter)
 
+            cfg.llm.models["default_strong"] = cfg.llm.models["default_strong"].model_copy(
+                update={"model": "changed-after-publication-started"}
+            )
             client = FakeClient(handler=lambda *_args, **_kwargs: "model must not run")
             resumed = Orchestrator(cfg, client=client)._review_autofix.resume_pending(store)
 

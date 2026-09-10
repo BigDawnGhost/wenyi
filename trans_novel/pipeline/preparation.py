@@ -249,6 +249,7 @@ class PreparationService:
 
     def activate(self, store: RunStore) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
+        store.recover_usage()
         manifest = store.load_manifest()
         self._runtime.apply_manifest_languages(manifest)
         store.log_event("language_resources_applied", prompt_fingerprint=prompt_fingerprint())
@@ -269,8 +270,7 @@ class PreparationService:
                     {"role": "system", "content": system},
                     {"role": "user", "content": sample},
                 ],
-                tier="cheap",
-                stage="language_detect",
+                operation="language.detect",
             )
             code = (data.get("language") if isinstance(data, dict) else "") or ""
             return normalize_language(str(code))

@@ -54,7 +54,7 @@ class TestSrtTranslate(unittest.TestCase):
                 {
                     "paths": {"state_dir": os.path.join(directory, "state")},
                     "output": {"mono": True, "bilingual": True},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                 }
             )
             result = translate_srt(
@@ -113,7 +113,7 @@ class TestSrtTranslate(unittest.TestCase):
                 {
                     "paths": {"state_dir": os.path.join(directory, "state")},
                     "output": {"mono": True, "bilingual": False},
-                    "llm": {"provider": "fake"},
+                    "llm": {"preset": "fake"},
                 }
             )
             first = translate_srt(path, config, client=FakeClient(handler=handler))
@@ -121,6 +121,9 @@ class TestSrtTranslate(unittest.TestCase):
             self.assertGreater(first_calls, 0)
             self.assertTrue(os.path.isfile(os.path.join(first["run_dir"], "usage.json")))
 
+            config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
+                update={"model": "changed-subtitle-model"}
+            )
             second = translate_srt(path, config, client=FakeClient(handler=handler))
             self.assertEqual(calls["n"], first_calls)  # Resume must not repeat requests.
             self.assertEqual(second["translated"], 3)
@@ -145,7 +148,7 @@ class TestSrtTranslate(unittest.TestCase):
                     return_value=fake_result,
                 ) as translate_srt_mock,
             ):
-                load_config.return_value = Config.from_dict({"llm": {"provider": "fake"}})
+                load_config.return_value = Config.from_dict({"llm": {"preset": "fake"}})
                 result = CliRunner().invoke(app, ["translate", path])
             self.assertEqual(result.exit_code, 0, result.output)
             translate_srt_mock.assert_called_once()

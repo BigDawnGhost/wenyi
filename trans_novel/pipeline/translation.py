@@ -697,8 +697,7 @@ class TranslationService:
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    tier="strong",
-                    stage="title_translate",
+                    operation="translation.title",
                 )
             except Exception as error:
                 store.log_event(

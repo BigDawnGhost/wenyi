@@ -81,8 +81,11 @@ def _config(state_dir: str):
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "p"},
+                    "default_cheap": {"provider": "default", "model": "f"},
+                },
             },
             "segment": {"max_chars_per_batch": 1800},
             "pipeline": {
@@ -102,27 +105,25 @@ class MeteredFakeClient(FakeClient):
         self,
         messages,
         *,
-        tier="strong",
+        operation,
         json_mode=False,
         max_tokens=None,
-        stage=None,
     ):
         self.usage.record(
-            tier,
+            self.routes[operation].tier or "direct",
             UsageSample(
                 prompt_tokens=5,
                 completion_tokens=3,
                 total_tokens=8,
                 cache_miss_tokens=5,
             ),
-            stage,
+            operation,
         )
         return super().complete(
             messages,
-            tier=tier,
+            operation=operation,
             json_mode=json_mode,
             max_tokens=max_tokens,
-            stage=stage,
         )
 
 
@@ -1191,11 +1192,11 @@ class TestReviewReporting(unittest.TestCase):
             ) as file:
                 review_usage = json.load(file)
             self.assertGreater(review_usage["totals"]["calls"], 0)
-            self.assertIn("Reviewer", review_usage["by_stage"])
-            self.assertNotIn("Translator", review_usage["by_stage"])
-            self.assertIn("Reviewer", (store.load_usage() or {})["by_stage"])
+            self.assertIn("review.scan", review_usage["by_stage"])
+            self.assertNotIn("translation.body", review_usage["by_stage"])
+            self.assertIn("review.scan", (store.load_usage() or {})["by_stage"])
             self.assertGreater(
-                client.usage_summary()["by_stage"]["Reviewer"]["calls"],
+                client.usage_summary()["by_stage"]["review.scan"]["calls"],
                 0,
             )
 
@@ -1574,7 +1575,7 @@ class TestReviewReporting(unittest.TestCase):
             reused_stages = [
                 call["stage"]
                 for call in meter.calls
-                if call["stage"] in ("Reviewer", "ReviewAgent")
+                if call["stage"] in ("review.scan", "review.verify")
             ]
             self.assertEqual(reused_stages, [])
             self.assertTrue(os.path.isfile(removed))  # Persist the chunk again.
@@ -1686,11 +1687,11 @@ class TestReviewReporting(unittest.TestCase):
                 review_usage = json.load(file)
             self.assertEqual(review_usage["totals"]["calls"], 1)
             self.assertEqual(review_usage["totals"]["total_tokens"], 8)
-            self.assertEqual(review_usage["by_stage"]["Reviewer"]["calls"], 1)
+            self.assertEqual(review_usage["by_stage"]["review.scan"]["calls"], 1)
             self.assertNotEqual(Path(store.usage_path).read_bytes(), usage_before)
             self.assertNotEqual(Path(store.event_log_path).read_bytes(), events_before)
-            self.assertEqual((store.load_usage() or {})["by_stage"]["Reviewer"]["calls"], 1)
-            self.assertEqual(client.usage_summary()["by_stage"]["Reviewer"]["calls"], 1)
+            self.assertEqual((store.load_usage() or {})["by_stage"]["review.scan"]["calls"], 1)
+            self.assertEqual(client.usage_summary()["by_stage"]["review.scan"]["calls"], 1)
 
     def test_run_steps_records_review_usage_on_success_and_failure(self):
         """Combined workflows persist pre-review and review usage at their respective stage
@@ -1738,7 +1739,7 @@ class TestReviewReporting(unittest.TestCase):
                 self.assertIsNotNone(usage)
                 assert usage is not None
                 self.assertEqual(usage["by_stage"]["PreReview"]["calls"], 1)
-                self.assertIn("Reviewer", usage["by_stage"])
+                self.assertIn("review.scan", usage["by_stage"])
                 usage_events = [
                     json.loads(line)
                     for line in Path(base_store.event_log_path)
@@ -1747,7 +1748,7 @@ class TestReviewReporting(unittest.TestCase):
                     if json.loads(line).get("event") == "usage_summary"
                 ]
                 self.assertTrue(usage_events)
-                self.assertIn("Reviewer", json.dumps(usage_events, ensure_ascii=False))
+                self.assertIn("review.scan", json.dumps(usage_events, ensure_ascii=False))
 
     def test_non_review_run_does_not_report_a_new_review_directory(self):
         with tempfile.TemporaryDirectory() as d:

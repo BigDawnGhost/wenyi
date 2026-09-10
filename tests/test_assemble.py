@@ -129,8 +129,11 @@ def _config(state_dir: str):
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "p"},
+                    "default_cheap": {"provider": "default", "model": "f"},
+                },
             },
             "pipeline": {"review": True, "review_autofix": False, "polish": True},
             "paths": {"state_dir": state_dir},

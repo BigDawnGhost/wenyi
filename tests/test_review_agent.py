@@ -27,6 +27,7 @@ from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.llm.routing import inference_snapshot
 from trans_novel.review.evidence import BookEvidenceIndex
 from trans_novel.review.run_store import ReviewRunStore, review_candidate_id
 
@@ -36,15 +37,14 @@ def _config() -> Config:
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {
-                    "strong": {"model": "strong"},
-                    "cheap": {"model": "cheap"},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "strong"},
+                    "default_cheap": {"provider": "default", "model": "cheap"},
                 },
             },
             "pipeline": {
                 "review_agent_max_evidence_rounds": 2,
-                "review_agent_tier": "strong",
             },
         }
     )
@@ -580,6 +580,9 @@ class TestReviewRunStore(unittest.TestCase):
     def _usage_summary(calls: int, tokens: int) -> dict:
         """Build usage data with the same shape as usage_delta output."""
         return {
+            "schema_version": 2,
+            "by_provider": {},
+            "by_model": {},
             "totals": {
                 "calls": calls,
                 "prompt_tokens": tokens,
@@ -599,7 +602,7 @@ class TestReviewRunStore(unittest.TestCase):
                 }
             },
             "by_stage": {
-                "Reviewer": {
+                "review.scan": {
                     "calls": calls,
                     "prompt_tokens": tokens,
                     "completion_tokens": 0,
@@ -621,7 +624,7 @@ class TestReviewRunStore(unittest.TestCase):
 
         self.assertEqual(saved["totals"]["calls"], 5)
         self.assertEqual(saved["totals"]["total_tokens"], 150)
-        self.assertEqual(saved["by_stage"]["Reviewer"]["calls"], 5)
+        self.assertEqual(saved["by_stage"]["review.scan"]["calls"], 5)
 
     def test_rebuild_snapshots_skips_stale_subchunks_contained_in_parent(self):
         """When parent and stale child chunks coexist, count once by rebuilding larger blocks
@@ -777,7 +780,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "finished",
                         "turns": [],
                         "result": {"issues": [], "dismissed": []},
@@ -809,7 +813,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "fallback",
                         "fallback_reason": "malformed_json: broken",
                         "turns": [],
@@ -898,7 +903,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "running",
                         "turns": [evidence_turn],
                     },
@@ -1006,7 +1012,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "running",
                         "turns": [
                             {
@@ -1076,7 +1083,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "running",
                         "turns": [
                             {
@@ -1189,7 +1197,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "running",
                         "turns": turns,
                     },
@@ -1254,7 +1263,8 @@ class TestReviewAgentLoop(unittest.TestCase):
                     "agents/r1-chunk-ch0-base0-n2.json",
                     {
                         "agent_id": "r1-chunk-ch0-base0-n2",
-                        "stage": "review_agent",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
                         "status": "running",
                         "turns": [
                             {

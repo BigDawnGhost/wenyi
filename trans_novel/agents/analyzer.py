@@ -29,7 +29,7 @@ class Analyzer(Agent):
         system = render("analyzer_system", src=self.src, tgt=self.tgt)
         user = render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
-        data = self._ask_json(system, user, tier="strong")
+        data = self._ask_json(system, user, operation="analysis.style")
         if not isinstance(data, dict):
             data = {}
         # Accept a list of prose bullets as well as the requested string. Never stringify objects.
