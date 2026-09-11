@@ -4,6 +4,8 @@ All notable changes to this project are documented here following [Keep a Change
 
 ## [Unreleased]
 - EPUB archive resolution and link/backlink verification now use one shared external-scheme policy without changing the accepted protocols.
+- EPUB backlink verification now shares explicit noteref semantics with text extraction, including ARIA references and EPUB namespace aliases, without guessing from filenames or attribute substrings.
+- EPUB footnote exclusion now follows explicit noteref semantics only, preserving ordinary superscripts and text surrounding reference links. Resume and export reject incompatible saved source-slot layouts without migrating translations or overwriting existing outputs.
 - EPUB ingestion and verification now share package parsing and resource classification. Declared HTML media types take precedence over filenames; HTML suffix fallback applies only when media types are missing, and unsupported or unresolved spine entries fail explicitly instead of dropping chapters.
 - EPUB rendering now updates tracked XHTML resources regardless of suffix, and NAV/NCX parsing follows package declarations rather than filename guesses while retaining both navigation sources.
 - EPUB preflight verification now handles navigation XML comments and processing instructions, plus preserved footnote markers excluded from translation slots.

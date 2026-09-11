@@ -7,16 +7,14 @@ import re
 from collections import Counter
 
 from bs4 import BeautifulSoup
-from bs4.element import Tag
+from bs4.element import NamespacedAttribute, Tag
 from lxml import etree
 
 from trans_novel.assemble.epub.verification import archive_model
+from trans_novel.epub.markup import is_noteref
 from trans_novel.epub.navigation import nav_toc_scopes
 
-HTML_MEDIA = archive_model.HTML_MEDIA
-NCX_MEDIA = archive_model.NCX_MEDIA
 MAX_MEMBER_BYTES = archive_model.MAX_MEMBER_BYTES
-EXTERNAL_SCHEMES = {"http", "https", "mailto", "data"}
 INTERNAL_ATTRIBUTES = {"data-tn-id", "data-tn-inline-id", "data-tn-line"}
 BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "td", "th", "dt", "dd"}
 BLOCK_CANDIDATE_TAGS = BLOCK_TAGS | {"div"}
@@ -267,7 +265,7 @@ def check_links(
                     failures.append(
                         archive_model.item(category, "unsafe_reference", path, "unsafe")
                     )
-                elif external in EXTERNAL_SCHEMES:
+                elif external in archive_model.EXTERNAL_SCHEMES:
                     warnings.append(external_warning(value, external, category))
                 else:
                     failures.append(
@@ -297,20 +295,30 @@ def check_footnotes(
     warnings: list[dict[str, str]],
     checked: dict[str, int],
 ) -> None:
-    """Require a noteref/footnote target and a backlink to its own marker."""
+    """对显式脚注引用检查目标及指向原引用的回链。"""
     for path, soup in soups.items():
         for anchor in soup.find_all("a"):
             href = anchor.get("href")
-            epub_type = str(anchor.get("epub:type", ""))
+            epub_type = next(
+                (
+                    str(value)
+                    for key, value in anchor.attrs.items()
+                    if (
+                        key.namespace == "http://www.idpf.org/2007/ops" and key.name == "type"
+                        if isinstance(key, NamespacedAttribute)
+                        else key == "epub:type"
+                    )
+                ),
+                "",
+            )
             if not isinstance(href, str):
                 continue
-            href_path = href.partition("#")[0].partition("?")[0]
-            if "noteref" not in epub_type and "footnote" not in href_path.lower():
+            if not is_noteref(epub_type, str(anchor.get("role", ""))):
                 continue
             checked["footnotes"] += 1
             target, fragment, external = archive_model.resolve(path, href)
             if external is not None:
-                if external in EXTERNAL_SCHEMES:
+                if external in archive_model.EXTERNAL_SCHEMES:
                     warnings.append(
                         archive_model.item("footnotes", "external_skipped", "<reference>", external)
                     )

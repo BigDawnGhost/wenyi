@@ -18,6 +18,7 @@ from trans_novel.assemble import preflight_epub
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import load_document
+from trans_novel.ingest.epub.reader import ensure_slot_compatibility
 from trans_novel.llm.base import LLMClient
 from trans_novel.llm.factory import build_client
 from trans_novel.llm.usage_persistence import UsagePersistence
@@ -183,7 +184,11 @@ class Application:
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
         if store.exists() and doc.fmt == "epub":
-            store.load_manifest()
+            manifest = store.load_manifest()
+            if doc.meta.get("epub_sha256") == manifest.get("meta", {}).get("epub_sha256"):
+                ensure_slot_compatibility(
+                    doc, (store.load_chapter(chapter["index"]) for chapter in manifest["chapters"])
+                )
         shared = RunContext(
             store=store,
             config=self.config,

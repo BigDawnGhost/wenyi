@@ -7,6 +7,11 @@ import io
 from lxml import etree
 
 
+def is_noteref(epub_type: str, role: str) -> bool:
+    """仅识别明确声明的脚注引用语义。"""
+    return "noteref" in epub_type.split() or "doc-noteref" in role.split()
+
+
 def resource_parser(data: bytes) -> tuple[etree._ElementTree, str, list[dict[str, object]]]:
     if len(data) > 512 * 1024 * 1024:
         raise ValueError("EPUB XHTML resource exceeds 512 MiB limit")
@@ -48,4 +53,4 @@ def resource_parser(data: bytes) -> tuple[etree._ElementTree, str, list[dict[str
         return tree, "recovered", diagnostics[:20]
 
 
-__all__ = ["resource_parser"]
+__all__ = ["is_noteref", "resource_parser"]

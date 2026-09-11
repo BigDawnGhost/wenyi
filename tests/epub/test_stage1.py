@@ -260,20 +260,14 @@ class TestEpubStage1(unittest.TestCase):
         self.assertEqual([slot.target_value for slot in segment.epub_state.slots], ["“甲", "乙”"])
         self.assertEqual(segment.target, "“甲乙”")
 
-    def test_unhinted_short_footnote_marker_is_immutable(self):
+    def test_unmarked_superscript_links_remain_in_translation_source(self):
         path = self._book(
             b"<html xmlns='http://www.w3.org/1999/xhtml'><body><p>Lead "
             b"<sup><a href='#x1'>1</a></sup> tail <span class='footnote'><sup>"
             b"<a href='#x2'>2</a></sup></span></p></body></html>"
         )
         segment = read_epub(path, "en", "zh").chapters[0].segments[0]
-        self.assertTrue(
-            all(
-                marker not in slot.source_value
-                for slot in segment.epub_state.slots
-                for marker in ("1", "2")
-            )
-        )
+        self.assertEqual(segment.source, "Lead 1 tail 2")
 
     def test_direct_br_slots_write_each_line_once(self):
         path = self._book(

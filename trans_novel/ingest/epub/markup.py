@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from urllib.parse import urlsplit
 
 from lxml import etree
 
-from trans_novel.epub.markup import resource_parser
+from trans_novel.epub.markup import is_noteref, resource_parser
 from trans_novel.epub.navigation import nav_toc_roots_lxml
 from trans_novel.epub.slots import EpubSegmentState, EpubTextSlot, slot_contract_digest
 from trans_novel.ingest.epub.package import looks_like_internal_title
@@ -17,12 +16,6 @@ from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Segment
 _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "td", "th", "dt", "dd"}
 _BLOCK_CANDIDATE_TAGS = _BLOCK_TAGS | {"div"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-_FOOTNOTE_CLASS_TOKENS = {"sup", "super", "superscript", "sub", "subscript"}
-_FOOTNOTE_HINT_ATTRS = ("id", "name", "class", "title", "aria-label")
-_FOOTNOTE_HINT_RE = re.compile(
-    r"(?:^|[^a-z])(?:footnote|endnote|notes|note|fn)(?=$|[^a-z])", re.IGNORECASE
-)
-_SHORT_MARKER_RE = re.compile(r"[A-Za-z]?[-_]?\d+")
 _IMMUTABLE_TEXT_TAGS = {"script", "style", "rt", "rp"}
 _ATOMIC_TEXT_TAGS = {
     "audio",
@@ -87,70 +80,12 @@ def visible_text(element: etree._Element) -> str:
     return _WS_RE.sub(" ", "".join(parts)).strip()
 
 
-def is_semantic_footnote_wrapper(node: etree._Element) -> bool:
-    tag = node.tag.rsplit("}", 1)[-1].lower() if isinstance(node.tag, str) else ""
-    if tag in {"sup", "sub"}:
-        return True
-    if tag != "span":
-        return False
-    classes = str(node.get("class", "")).split()
-    if any(token.lower() in _FOOTNOTE_CLASS_TOKENS for token in classes):
-        return True
-    for declaration in str(node.get("style", "")).split(";"):
-        name, separator, value = declaration.partition(":")
-        if (
-            separator
-            and name.strip().lower() == "vertical-align"
-            and value.strip().lower() in {"super", "sub"}
-        ):
-            return True
-    return False
-
-
 def is_footnote_marker(element: etree._Element) -> bool:
     tag = element.tag.rsplit("}", 1)[-1].lower() if isinstance(element.tag, str) else ""
-    if tag not in {"sup", "sub", "span", "a"}:
+    if tag != "a":
         return False
-    wrapper = element if is_semantic_footnote_wrapper(element) else None
-    parent = element.getparent()
-    while wrapper is None and parent is not None:
-        parent_tag = parent.tag.rsplit("}", 1)[-1].lower() if isinstance(parent.tag, str) else ""
-        if parent_tag in _BLOCK_TAGS:
-            break
-        if is_semantic_footnote_wrapper(parent):
-            wrapper = parent
-            break
-        parent = parent.getparent()
-    if wrapper is None:
-        return False
-    for link in element.iter():
-        if not isinstance(link.tag, str) or link.tag.rsplit("}", 1)[-1].lower() != "a":
-            continue
-        href = attr_local(link, "href")
-        if not href:
-            continue
-        parts = urlsplit(href)
-        if parts.scheme or parts.netloc or not parts.fragment:
-            continue
-        epub_type = attr_local(link, "type")
-        hints = " ".join(
-            str(node.get(key, "")) for node in (link, wrapper) for key in _FOOTNOTE_HINT_ATTRS
-        )
-        href_hint = bool(
-            _FOOTNOTE_HINT_RE.search(parts.path) or _FOOTNOTE_HINT_RE.search(parts.fragment)
-        )
-        short_marker = any(
-            _SHORT_MARKER_RE.fullmatch("".join(node.itertext()).strip()) is not None
-            for node in (link, wrapper)
-        )
-        if (
-            "noteref" in epub_type.split()
-            or _FOOTNOTE_HINT_RE.search(hints)
-            or href_hint
-            or short_marker
-        ):
-            return True
-    return False
+    epub_type = element.get("{http://www.idpf.org/2007/ops}type", element.get("epub:type", ""))
+    return is_noteref(epub_type, element.get("role", ""))
 
 
 def block_slots(
