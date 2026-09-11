@@ -168,7 +168,7 @@ class Orchestrator:
         steps: set[str],
         *,
         progress: ProgressFn | None,
-        out_format: str = "epub",
+        out_format: str | None = None,
         out_path: str | None = None,
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
@@ -204,7 +204,7 @@ class Orchestrator:
         self,
         input_path: str,
         *,
-        out_format: str = "epub",
+        out_format: str | None = None,
         out_path: str | None = None,
         pdf_engine: str = "weasyprint",
         progress: ProgressFn | None = None,
@@ -245,7 +245,7 @@ class Orchestrator:
         steps,
         *,
         progress: ProgressFn | None = None,
-        out_format: str = "epub",
+        out_format: str | None = None,
         out_path: str | None = None,
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
@@ -298,7 +298,7 @@ class Orchestrator:
         steps: set[str],
         run_steps_input: list[str],
         progress: ProgressFn | None,
-        out_format: str,
+        out_format: str | None,
         out_path: str | None,
         pdf_engine: str,
     ) -> dict[str, Any]:
@@ -378,7 +378,7 @@ class Orchestrator:
         input_path: str,
         *,
         progress: ProgressFn | None = None,
-        out_format: str = "epub",
+        out_format: str | None = None,
         out_path: str | None = None,
         pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:

@@ -225,7 +225,7 @@ pipeline:
 - `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
 - `review_autofix`：默认开启。只读 Review 引擎结束后，先把折叠后的 `changes` 叠加到工作译文，再让每段剩余 issue 基于更新后的译文复用现有有界 Review Agent Loop，确认项继续交给现有 Review Fixer。可用 `--no-autofix` 或设为 `false`，避免写回正式 `target`。生成的完整单段译文只覆盖正式章节的 `target`，不修改 manifest 和术语库。完整前后版本链、issue ID、判定、失败原因和写回状态保存在本次 Review 的 `autofix/index.json`，不会给章节 JSON 新增历史字段。
 - `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
-- `pdf_backend`：默认 `mineru`，经 MinerU 转 HTML。需要尽量保留版式时改用 `babeldoc`（外部 AGPL HTTP bridge）。
+- `pdf_backend`：默认 `mineru`，经 MinerU 转 HTML。需要尽量保留版式时改用 `babeldoc`（外部 AGPL HTTP bridge）。经 BabelDOC 创建的 PDF 状态，在 `translate` 和 `assemble` 中均默认导出 PDF；MinerU 状态仍默认导出 EPUB。显式 `--format` 优先，续跑默认格式以已保存的后端为准。
 - `babeldoc_bridge_url`：BabelDOC bridge 地址，默认 `http://127.0.0.1:8765`。
 - `babeldoc_timeout`：bridge extract / fillback 的 HTTP 超时秒数。
 - `babeldoc_pages`：可选的 1-based 页码，如 `"15"` 或 `"6-8"`；省略则处理全书。
@@ -252,8 +252,8 @@ output:
   punctuation_normalize: true
 ```
 
-- `mono`：生成单语译本，文件名为 `<书名>.<目标语言>.epub`（默认 `.zh.epub`）。
-- `bilingual`：生成原文与译文对照版，文件名为 `<书名>.<目标语言>-bi.epub`。
+- `mono`：生成单语译本，文件名为 `<书名>.<目标语言>.<扩展名>`（通常为 `.zh.epub`，BabelDOC PDF 状态为 `.zh.pdf`，DOCX 输入为 `.zh.docx`）。
+- `bilingual`：请求原文与译文对照版，文件名为 `<书名>.<目标语言>-bi.<扩展名>`，使用与单语输出相同的选定格式。
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
 - `bilingual_preserve_source_style`：设为 `true` 时，原文继承书籍正文样式，不使用灰色淡化背景；仅影响 EPUB 和 HTML。
 - `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。

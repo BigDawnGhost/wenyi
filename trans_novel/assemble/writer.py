@@ -24,6 +24,7 @@ from .writer_common import (
     _ensure_parent_dir,
     _epub_lang,
     _manifest_target_lang,
+    default_output_format,
 )
 
 __all__ = ["assemble"]
@@ -33,7 +34,7 @@ def assemble(
     store: RunStore,
     source_path: str,
     out_path: str | None = None,
-    out_format: str = "epub",
+    out_format: str | None = None,
     *,
     bilingual: bool = False,
     order: str = "target_first",
@@ -43,7 +44,7 @@ def assemble(
     babeldoc_timeout: float = 600.0,
     punctuation_normalize: bool = False,
 ) -> str:
-    """Generate translated output, defaulting to EPUB.
+    """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
     EPUB input reuses the original layout and resources; template-free input produces a
     standard EPUB with headings and paragraphs. TXT and Markdown rebuild chapters. HTML
     prefers source templates and otherwise rebuilds chapters. PDF renders print HTML with
@@ -52,12 +53,14 @@ def assemble(
     reuses original styles instead of muted CSS. about_page appends the translation about
     page. punctuation_normalize changes only export copies, never chapter target state.
     """
-    if out_format not in _OUT_EXT:
+    if out_format is not None and out_format not in _OUT_EXT:
         supported = " / ".join(_OUT_EXT)
         raise ValueError(f"Unsupported output format: {out_format} (supported: {supported})")
 
     store = ExportViewStore(store, punctuation_normalize=punctuation_normalize)
     m = store.load_manifest()
+    if out_format is None:
+        out_format = default_output_format(m)
     target_lang = _manifest_target_lang(m)
     if out_format == "txt":
         out_path = out_path or _default_out(

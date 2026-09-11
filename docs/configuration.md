@@ -225,7 +225,7 @@ pipeline:
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `review_autofix`: enabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. Pass `--no-autofix` or set this to `false` to keep Review from writing formal `target` values. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
 - `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
-- `pdf_backend`: default `mineru` converts PDF via MinerU HTML. Use `babeldoc` for layout-preserving export through the external AGPL HTTP bridge.
+- `pdf_backend`: default `mineru` converts PDF via MinerU HTML. Use `babeldoc` for layout-preserving export through the external AGPL HTTP bridge. PDF state created with BabelDOC defaults to PDF output for both `translate` and `assemble`; MinerU state retains EPUB output. Explicit `--format` overrides this choice, and saved state determines the default on resume.
 - `babeldoc_bridge_url`: BabelDOC bridge base URL; default `http://127.0.0.1:8765`.
 - `babeldoc_timeout`: HTTP timeout in seconds for bridge extract and fillback.
 - `babeldoc_pages`: optional 1-based page selection such as `"15"` or `"6-8"`; omit it to process the whole file.
@@ -255,8 +255,8 @@ output:
   punctuation_normalize: true
 ```
 
-- `mono`: produce a monolingual edition as `<book-name>.<target-language>.epub` (`.zh.epub` by default).
-- `bilingual`: produce a source-and-translation edition as `<book-name>.<target-language>-bi.epub`.
+- `mono`: produce a monolingual edition as `<book-name>.<target-language>.<extension>` (`.zh.epub` normally; `.zh.pdf` for BabelDOC PDF state and `.zh.docx` for DOCX input).
+- `bilingual`: request a source-and-translation edition as `<book-name>.<target-language>-bi.<extension>`, using the same selected format as monolingual output.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.

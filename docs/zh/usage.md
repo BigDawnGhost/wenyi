@@ -100,8 +100,8 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 ## 输入与输出
 
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX、SRT。
-- 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认改为 `<书名>.zh.docx`）；双语版 `*.zh-bi.*` 按需开启。
-- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；未指定时 `.docx`→`docx`，其它书籍→`epub`。该选项不适用于 SRT。
+- 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认为 `<书名>.zh.docx`，BabelDOC PDF 状态默认为 `<书名>.zh.pdf`）；双语版 `*.zh-bi.*` 按需开启。
+- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式格式始终优先；PDF 默认格式依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套默认值。该选项不适用于 SRT。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
@@ -125,7 +125,7 @@ pipeline:
   # babeldoc_pages: "15"   # 可选，1-based
 ```
 
-3. `uv run trans-novel translate book.pdf` 后 `assemble --format pdf` 会经 bridge `/fillback` 出 PDF。  
+3. `uv run trans-novel translate book.pdf` 会自动经 bridge `/fillback` 导出 PDF。之后执行 `assemble book.pdf` 也会根据已保存的 BabelDOC 状态默认导出 PDF，无需指定 `--format pdf`；需要其它格式时显式指定 `--format`。
    回填 PDF 默认不绘制 BabelDOC 的版面定位框，也不输出 plain text / title 等角色标签。  
    bridge 会把抽取后的原始 IL 冻结为持久 session 快照；只要保留 session 目录并使用完全
    相同的 Python/BabelDOC 版本，服务重启后可按原 session ID 懒恢复，不会重跑版面识别。

@@ -101,8 +101,8 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 ## Input and output
 
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX, and SRT.
-- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx` instead). The bilingual `*.zh-bi.*` edition is optional.
-- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, `.docx` → `docx` and other books → `epub`. This flag does not apply to SRT.
+- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx`, and BabelDOC PDF state defaults to `<book-name>.zh.pdf`). The bilingual `*.zh-bi.*` edition is optional.
+- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit format always takes precedence; PDF defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
@@ -127,7 +127,7 @@ pipeline:
   # babeldoc_pages: "15"   # optional, 1-based
 ```
 
-3. After `translate book.pdf`, `assemble --format pdf` calls bridge `/fillback`.
+3. `translate book.pdf` automatically exports PDF through bridge `/fillback`. Later, `assemble book.pdf` also defaults to PDF for that saved BabelDOC state; `--format pdf` is optional. Use an explicit `--format` to select another format.
    The fillback PDF omits BabelDOC layout overlay boxes and role labels
    such as ``plain text`` / ``title`` by default.
    The bridge freezes the post-extraction IL as a durable session snapshot. It can
