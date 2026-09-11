@@ -22,10 +22,12 @@ from rich.progress import (
     Progress,
     ProgressColumn,
     SpinnerColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
 )
 from rich.table import Column, Table
+from rich.text import Text
 from typer.core import TyperGroup
 
 from .config import Config
@@ -34,6 +36,7 @@ from .ingest.errors import IngestError
 from .ingest.segmenter import load_document
 from .model_commands import register_model_commands
 from .pipeline.runstore import STATUS_DONE, RunStore, translation_run_dir
+from .timing import format_duration, load_timing
 
 
 def _configure_windows_console(
@@ -122,6 +125,15 @@ def _short_progress_description(label: str) -> str:
     return f"{prefix}…"
 
 
+class _WorkflowElapsedColumn(TimeElapsedColumn):
+    """Keep elapsed time advancing across stages, including completed-stage waits."""
+
+    def render(self, task: Task) -> Text:
+        started = task.fields.get("workflow_started", task.start_time)
+        elapsed = 0.0 if started is None else task.get_time() - started
+        return Text(format_duration(elapsed), style="progress.elapsed")
+
+
 def _progress_columns() -> tuple[ProgressColumn, ...]:
     """Build Rich columns that keep long stage names from hiding the bar."""
     description_column = Column(
@@ -137,7 +149,7 @@ def _progress_columns() -> tuple[ProgressColumn, ...]:
         ),
         BarColumn(),
         MofNCompleteColumn(),
-        TimeElapsedColumn(),
+        _WorkflowElapsedColumn(),
     )
 
 
@@ -146,7 +158,12 @@ class _RichProgressBridge:
 
     def __init__(self, progress: Progress, initial_description: str) -> None:
         self.progress = progress
-        self.task = progress.add_task(_short_progress_description(initial_description), total=None)
+        self._started = progress.get_time()
+        self.task = progress.add_task(
+            _short_progress_description(initial_description),
+            total=None,
+            workflow_started=self._started,
+        )
         self._stage: tuple[str, int | None] = (initial_description, None)
 
     def __call__(self, done: int, total: int, label: str) -> None:
@@ -170,7 +187,7 @@ class _RichProgressBridge:
         # Rich update(total=None) leaves the total unchanged. Recreate the task
         # to restore indeterminate progress and clear the previous stage’s counts.
         self.progress.remove_task(self.task)
-        self.task = self.progress.add_task(short, total=None)
+        self.task = self.progress.add_task(short, total=None, workflow_started=self._started)
         self._stage = stage
 
 
@@ -379,6 +396,7 @@ def _translate_srt_or_raise(
         f"State directory: {result['run_dir']}"
     )
     _print_usage({"usage": result.get("usage") or {}})
+    _print_timing(result["run_dir"])
     for path in result.get("outputs") or []:
         console.print(f"Translation: [bold]{path}[/]")
 
@@ -465,6 +483,7 @@ def _translate_impl_or_raise(
                 f"[green]Translated chapter {chapter}[/], State directory: {store.run_dir}"
             )
             _print_usage({"usage": store.load_usage() or {}})
+            _print_timing(store.run_dir)
             return
 
         result = orch.run_all(
@@ -480,6 +499,7 @@ def _translate_impl_or_raise(
         f"[bold green]Complete[/]: {s['chapters_done']}/{s['chapters_total']} chapters, terms: {s['terms']}."
     )
     _print_usage({"usage": result["store"].load_usage() or {}})
+    _print_timing(result["store"].run_dir)
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"Translation: [bold]{path}[/]")
     if result.get("review_dir"):
@@ -509,18 +529,7 @@ def _prepare_impl(input_path: str) -> None:
                 console=console,
             ) as prog,
         ):
-            task = prog.add_task(_short_progress_description("Preparing…"), total=None)
-
-            def cb(done: int, total: int, label: str) -> None:
-                """Synchronize preparation progress with the Rich task."""
-                nonlocal task
-                short = _short_progress_description(label)
-                if total > 0:
-                    prog.update(task, completed=done, total=total, description=short)
-                    return
-                prog.remove_task(task)
-                task = prog.add_task(short, total=None)
-
+            cb = _RichProgressBridge(prog, "Preparing…")
             store = orch.prepare_for_translation(input_path, progress=cb)
     except typer.Exit:
         raise
@@ -542,6 +551,22 @@ def _prepare_impl(input_path: str) -> None:
     console.print(f"State directory: [bold]{store.run_dir}[/]")
     console.print("Run translate with the same source file to continue the full translation.")
     _print_usage({"usage": store.load_usage() or {}})
+    _print_timing(store.run_dir)
+
+
+def _print_timing(run_dir: str) -> None:
+    """Show the last invocation and accumulated execution time, including failed runs."""
+    timing = load_timing(run_dir)
+    if timing is None:
+        return
+    last = timing["runs"][-1]
+    count = len(timing["runs"])
+    console.print(
+        f"Time: last run {format_duration(last['elapsed_seconds'])} ({last['status']}), "
+        f"cumulative {format_duration(timing['total_seconds'])} across {count} "
+        f"{'run' if count == 1 else 'runs'}.",
+        highlight=False,
+    )
 
 
 def _print_usage(report: dict) -> None:
@@ -703,6 +728,7 @@ def review(
             "Review produced recommendations only; formal chapter translations are unchanged."
         )
     console.print(f"Review directory: {result['review_dir']}")
+    _print_timing(result["store"].run_dir)
 
 
 # ── Inspection / Individual stages ──────────────────────────────────────────────────────
@@ -748,6 +774,7 @@ def status(
     g = GlossaryStore(store.glossary_path)
     console.print("Glossary: ", g.stats())
     g.close()
+    _print_timing(store.run_dir)
 
 
 @glossary_app.command("list")
@@ -884,6 +911,7 @@ def assemble(
         console.print(f"[red]Error: {error}[/]")
         raise typer.Exit(1) from None
     paths = result["outputs"]
+    _print_timing(result["store"].run_dir)
     for path in paths:
         console.print(f"Translation written: [bold]{path}[/]")
 

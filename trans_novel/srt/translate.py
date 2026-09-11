@@ -18,6 +18,7 @@ from ..ingest.srt_reader import parse_srt
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
+from ..timing import RunTimer
 from .store import STATUS_DONE, SrtRunStore
 
 ProgressFn = Callable[[int, int, str], None]
@@ -172,197 +173,199 @@ def translate_srt(
     """Translate SRT with concurrent windows, lightweight resume state and output subtitle
     files.
     """
-    source_language = require_language(config.source_lang, allow_auto=True)
-    target_language = require_language(config.target_lang)
-    if source_language == target_language:
-        raise ValueError(
-            f"Source and target languages are identical ({target_language}); no translation is needed."
-        )
-    cues = parse_srt(source_path)
-    write_mono = config.output.mono if mono is None else mono
-    write_bilingual = config.output.bilingual if bilingual is None else bilingual
-    if not write_mono and not write_bilingual:
-        write_mono = True
-
-    store = SrtRunStore.for_source(config.state_dir, source_path, target_language)
-    store.ensure_manifest(
-        source_path,
-        cue_count=len(cues),
-        source_lang=config.source_lang or "auto",
-        target_lang=config.target_lang or "zh",
-        batch_size=BATCH_SIZE,
-        overlap_size=OVERLAP_SIZE,
-        max_concurrent=MAX_CONCURRENT,
-    )
-    cue_rows = store.ensure_cues([(c.index, c.timestamp, c.text) for c in cues])
-
-    llm = client or build_client(config)
-    from ..llm.routing import inference_snapshot
-    from ..llm.usage import validate_usage
-
-    validate_usage(store.load_usage())
-    llm.validate_credentials(("srt.translate",))
-    llm.set_event_sink(store.log_event)
-    usage_checkpoint = llm.usage_summary()
-
-    store.log_event(
-        "srt_run_started",
-        source_path=os.path.abspath(source_path),
-        cue_count=len(cues),
-        run_dir=store.run_dir,
-        prompt_fingerprint=prompt_fingerprint(),
-        inference=inference_snapshot(config.llm, ("srt.translate",)),
-    )
-
-    source_map = {cue.index: cue.text for cue in cues}
-    segment_items = list(source_map.items())
-    step = BATCH_SIZE - OVERLAP_SIZE
-
-    jobs: list[tuple[int, dict[str, str], bool, bool]] = []
-    for start in range(0, len(segment_items), step):
-        batch = dict(segment_items[start : start + BATCH_SIZE])
-        jobs.append(
-            (
-                start,
-                batch,
-                start == 0,
-                start + BATCH_SIZE >= len(segment_items),
+    with RunTimer("srt.translate") as timer:
+        source_language = require_language(config.source_lang, allow_auto=True)
+        target_language = require_language(config.target_lang)
+        if source_language == target_language:
+            raise ValueError(
+                f"Source and target languages are identical ({target_language}); no translation is needed."
             )
+        cues = parse_srt(source_path)
+        write_mono = config.output.mono if mono is None else mono
+        write_bilingual = config.output.bilingual if bilingual is None else bilingual
+        if not write_mono and not write_bilingual:
+            write_mono = True
+
+        store = SrtRunStore.for_source(config.state_dir, source_path, target_language)
+        store.ensure_manifest(
+            source_path,
+            cue_count=len(cues),
+            source_lang=config.source_lang or "auto",
+            target_lang=config.target_lang or "zh",
+            batch_size=BATCH_SIZE,
+            overlap_size=OVERLAP_SIZE,
+            max_concurrent=MAX_CONCURRENT,
+        )
+        timer.store = store
+        cue_rows = store.ensure_cues([(c.index, c.timestamp, c.text) for c in cues])
+
+        llm = client or build_client(config)
+        from ..llm.routing import inference_snapshot
+        from ..llm.usage import validate_usage
+
+        validate_usage(store.load_usage())
+        llm.validate_credentials(("srt.translate",))
+        llm.set_event_sink(store.log_event)
+        usage_checkpoint = llm.usage_summary()
+
+        store.log_event(
+            "srt_run_started",
+            source_path=os.path.abspath(source_path),
+            cue_count=len(cues),
+            run_dir=store.run_dir,
+            prompt_fingerprint=prompt_fingerprint(),
+            inference=inference_snapshot(config.llm, ("srt.translate",)),
         )
 
-    final_translations = store.translations_from_cues(cue_rows)
-    pending = [
-        job
-        for job in jobs
-        if store.load_batch(job[0]) is None
-        and not _batch_active_complete(final_translations, segment_items, job)
-    ]
+        source_map = {cue.index: cue.text for cue in cues}
+        segment_items = list(source_map.items())
+        step = BATCH_SIZE - OVERLAP_SIZE
 
-    # Merge cached batches into memory first.
-    for start, _batch, is_first, is_last in jobs:
-        cached = store.load_batch(start)
-        if cached is not None:
-            _merge_batch_result(
-                final_translations,
-                segment_items,
-                cached,
-                start_pos=start,
-                is_first=is_first,
-                is_last=is_last,
+        jobs: list[tuple[int, dict[str, str], bool, bool]] = []
+        for start in range(0, len(segment_items), step):
+            batch = dict(segment_items[start : start + BATCH_SIZE])
+            jobs.append(
+                (
+                    start,
+                    batch,
+                    start == 0,
+                    start + BATCH_SIZE >= len(segment_items),
+                )
             )
 
-    total = len(pending)
-    done = 0
-    if progress:
-        progress(0, max(total, 1), "Translating subtitles…")
+        final_translations = store.translations_from_cues(cue_rows)
+        pending = [
+            job
+            for job in jobs
+            if store.load_batch(job[0]) is None
+            and not _batch_active_complete(final_translations, segment_items, job)
+        ]
 
-    def run_job(
-        job: tuple[int, dict[str, str], bool, bool],
-    ) -> tuple[int, dict[str, str] | None, bool, bool]:
-        start, batch, is_first, is_last = job
-        result = _translate_batch(
-            llm, batch, target_language=target_language, source_language=source_language
-        )
-        return start, result, is_first, is_last
+        # Merge cached batches into memory first.
+        for start, _batch, is_first, is_last in jobs:
+            cached = store.load_batch(start)
+            if cached is not None:
+                _merge_batch_result(
+                    final_translations,
+                    segment_items,
+                    cached,
+                    start_pos=start,
+                    is_first=is_first,
+                    is_last=is_last,
+                )
 
-    if pending:
-        workers = min(MAX_CONCURRENT, len(pending))
-        with llm.interrupt_scope(), ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(run_job, job): job[0] for job in pending}
-            for future in as_completed(futures):
-                start, result, is_first, is_last = future.result()
-                if result:
-                    store.save_batch(start, result)
-                    _merge_batch_result(
-                        final_translations,
-                        segment_items,
-                        result,
-                        start_pos=start,
-                        is_first=is_first,
-                        is_last=is_last,
-                    )
-                    store.apply_translations(cue_rows, final_translations)
-                    store.save_cues(cue_rows)
-                    store.log_event("srt_batch_done", batch_start=start, size=len(result))
-                else:
-                    store.log_event("srt_batch_failed", batch_start=start)
-                done += 1
-                if progress:
-                    progress(done, max(total, 1), "Translating subtitles…")
-        usage_cumulative, usage_checkpoint = _flush_usage(
-            store, llm, usage_checkpoint, scope="srt_batches"
-        )
-    else:
-        usage_cumulative = store.load_usage() or llm.usage_summary()
-
-    missing = [key for key in source_map if key not in final_translations]
-    if missing:
-        store.log_event("srt_fallback", missing_count=len(missing))
+        total = len(pending)
+        done = 0
         if progress:
-            progress(0, len(missing), "Translating missing subtitles…")
-        with (
-            llm.interrupt_scope(),
-            ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT, len(missing))) as executor,
-        ):
-            future_map = {
-                executor.submit(
-                    _translate_single,
-                    llm,
-                    source_map[key],
-                    target_language=target_language,
-                    source_language=source_language,
-                ): key
-                for key in missing
-            }
-            finished = 0
-            for future in as_completed(future_map):
-                key = future_map[future]
-                final_translations[key] = future.result() or source_map[key]
-                finished += 1
-                if progress:
-                    progress(finished, len(missing), "Translating missing subtitles…")
-        store.apply_translations(cue_rows, final_translations)
+            progress(0, max(total, 1), "Translating subtitles…")
+
+        def run_job(
+            job: tuple[int, dict[str, str], bool, bool],
+        ) -> tuple[int, dict[str, str] | None, bool, bool]:
+            start, batch, is_first, is_last = job
+            result = _translate_batch(
+                llm, batch, target_language=target_language, source_language=source_language
+            )
+            return start, result, is_first, is_last
+
+        if pending:
+            workers = min(MAX_CONCURRENT, len(pending))
+            with llm.interrupt_scope(), ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(run_job, job): job[0] for job in pending}
+                for future in as_completed(futures):
+                    start, result, is_first, is_last = future.result()
+                    if result:
+                        store.save_batch(start, result)
+                        _merge_batch_result(
+                            final_translations,
+                            segment_items,
+                            result,
+                            start_pos=start,
+                            is_first=is_first,
+                            is_last=is_last,
+                        )
+                        store.apply_translations(cue_rows, final_translations)
+                        store.save_cues(cue_rows)
+                        store.log_event("srt_batch_done", batch_start=start, size=len(result))
+                    else:
+                        store.log_event("srt_batch_failed", batch_start=start)
+                    done += 1
+                    if progress:
+                        progress(done, max(total, 1), "Translating subtitles…")
+            usage_cumulative, usage_checkpoint = _flush_usage(
+                store, llm, usage_checkpoint, scope="srt_batches"
+            )
+        else:
+            usage_cumulative = store.load_usage() or llm.usage_summary()
+
+        missing = [key for key in source_map if key not in final_translations]
+        if missing:
+            store.log_event("srt_fallback", missing_count=len(missing))
+            if progress:
+                progress(0, len(missing), "Translating missing subtitles…")
+            with (
+                llm.interrupt_scope(),
+                ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT, len(missing))) as executor,
+            ):
+                future_map = {
+                    executor.submit(
+                        _translate_single,
+                        llm,
+                        source_map[key],
+                        target_language=target_language,
+                        source_language=source_language,
+                    ): key
+                    for key in missing
+                }
+                finished = 0
+                for future in as_completed(future_map):
+                    key = future_map[future]
+                    final_translations[key] = future.result() or source_map[key]
+                    finished += 1
+                    if progress:
+                        progress(finished, len(missing), "Translating missing subtitles…")
+            store.apply_translations(cue_rows, final_translations)
+            store.save_cues(cue_rows)
+            usage_cumulative, usage_checkpoint = _flush_usage(
+                store, llm, usage_checkpoint, scope="srt_fallback"
+            )
+
+        store.apply_translations(cue_rows, final_translations, status=STATUS_DONE)
         store.save_cues(cue_rows)
-        usage_cumulative, usage_checkpoint = _flush_usage(
-            store, llm, usage_checkpoint, scope="srt_fallback"
+        done_count = sum(1 for row in cue_rows.values() if row.get("status") == STATUS_DONE)
+        store.update_manifest(done_count=done_count, status="done", cue_count=len(cues))
+
+        mono_path, bilingual_path = default_srt_out_paths(
+            source_path,
+            out=out,
+            mono=write_mono,
+            bilingual=write_bilingual,
+            target_lang=target_language,
+        )
+        outputs = write_srt_outputs(
+            cues,
+            final_translations,
+            mono_path=mono_path,
+            bilingual_path=bilingual_path,
         )
 
-    store.apply_translations(cue_rows, final_translations, status=STATUS_DONE)
-    store.save_cues(cue_rows)
-    done_count = sum(1 for row in cue_rows.values() if row.get("status") == STATUS_DONE)
-    store.update_manifest(done_count=done_count, status="done", cue_count=len(cues))
-
-    mono_path, bilingual_path = default_srt_out_paths(
-        source_path,
-        out=out,
-        mono=write_mono,
-        bilingual=write_bilingual,
-        target_lang=target_language,
-    )
-    outputs = write_srt_outputs(
-        cues,
-        final_translations,
-        mono_path=mono_path,
-        bilingual_path=bilingual_path,
-    )
-
-    usage_cumulative, _ = _flush_usage(store, llm, usage_checkpoint, scope="srt_finish")
-    # Persist even empty usage, such as FakeClient runs, for resume merging and CLI accounting.
-    if not os.path.isfile(store.usage_path):
-        store.save_usage(usage_cumulative)
-    store.log_event(
-        "srt_run_finished",
-        translated=len(final_translations),
-        cue_count=len(cues),
-        outputs=outputs,
-    )
-    return {
-        "outputs": outputs,
-        "run_dir": store.run_dir,
-        "cue_count": len(cues),
-        "translated": len(final_translations),
-        "usage": store.load_usage() or usage_cumulative,
-    }
+        usage_cumulative, _ = _flush_usage(store, llm, usage_checkpoint, scope="srt_finish")
+        # Persist even empty usage, such as FakeClient runs, for resume merging and CLI accounting.
+        if not os.path.isfile(store.usage_path):
+            store.save_usage(usage_cumulative)
+        store.log_event(
+            "srt_run_finished",
+            translated=len(final_translations),
+            cue_count=len(cues),
+            outputs=outputs,
+        )
+        return {
+            "outputs": outputs,
+            "run_dir": store.run_dir,
+            "cue_count": len(cues),
+            "translated": len(final_translations),
+            "usage": store.load_usage() or usage_cumulative,
+        }
 
 
 def _batch_active_complete(

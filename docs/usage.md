@@ -232,6 +232,7 @@ state/srt/<slug>/targets/<target-language>/
   cues.jsonl       # one cue per line: index, timestamp, source, target, status
   batches/         # raw model results for resume
   usage.json       # cumulative token usage across resumes
+  timing.json      # cumulative execution time and individual invocation durations
   events.jsonl     # run events and LLM retry observations
 ```
 
@@ -243,7 +244,25 @@ There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives i
 
 Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
 
-The disabled experimental `run_metrics/` ledger and its timing wrappers have been removed.
+The progress-bar clock measures the entire current workflow, including parsing, model
+waits, translation, polishing, review and export. Switching stages, chapters or review
+rounds does not reset it; completing one stage does not stop it while subsequent work
+is pending. Concurrent model requests contribute wall time, not the sum of request durations.
+
+After `prepare`, `translate` (including `--chapter` and SRT), `review` or `assemble`,
+the CLI prints the last run's duration and cumulative execution time. Each target's
+`timing.json` stores `total_seconds` and a `runs` list with invocation IDs, operations,
+timestamps, durations and completion statuses. Repeating a command adds only that
+invocation's execution time, excluding downtime between runs; nested pipeline stages
+are counted once. Separately launched commands contribute their own durations, even
+when they overlap. Book timing can also be inspected with `trans-novel status book.epub`;
+inspection and report regeneration do not add time.
+
+Once book state has been initialized or validated, failures and normal Ctrl+C exits
+also save the invocation's elapsed time. Timing is committed atomically under its own
+lock, independently of token usage. Older runs have no timing history to recover;
+time is accumulated from this version onward. A forced kill or a failure before state
+initialization cannot save the current invocation's duration.
 
 Manifests bind input content with `source_sha256`. A different file with the same name, or state without a valid hash, cannot resume; create new translation state.
 

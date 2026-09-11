@@ -24,6 +24,7 @@ from typing import Any
 
 from ..i18n.languages import require_language
 from ..ingest.models import Chapter, Document
+from ..timing import save_timing
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
@@ -117,6 +118,11 @@ class RunStore:
         """Serialize book artifact writes without blocking ongoing body translation."""
         with self._file_lock(".assemble.lock"):
             yield
+
+    def record_timing(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Merge invocation timing under a dedicated lock, independent of exports."""
+        with self._file_lock(".timing.lock"):
+            return save_timing(self.run_dir, record)
 
     # Paths.
     @property

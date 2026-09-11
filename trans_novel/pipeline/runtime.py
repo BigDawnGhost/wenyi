@@ -7,6 +7,8 @@ Own event sinks, usage checkpoints/flushes, language restoration and source hash
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from ..agents.analyzer import Analyzer
@@ -22,6 +24,7 @@ from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.routing import resolve_routes
 from ..llm.usage import empty_usage, merge_usage_summaries, usage_delta, validate_usage
+from ..timing import RunTimer
 from .runstore import RunStore, source_sha256
 
 
@@ -33,6 +36,7 @@ class PipelineRuntime:
         self.config = config
         self.llm_config = config.llm.model_copy(deep=True)
         self.client = client or build_client(config)
+        self._timer: RunTimer | None = None
         # Client usage is cumulative in-process; checkpoints isolate newly accrued usage at each flush.
         self._usage_checkpoint = self.client.usage_summary()
         self.analyzer = Analyzer(self.client, config)
@@ -42,6 +46,24 @@ class PipelineRuntime:
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
         self.annotation_aligner = AnnotationAligner(self.client, config)
+
+    @contextmanager
+    def track_workflow(self, operation: str) -> Iterator[None]:
+        """Count nested stage entry points once, as part of their outer workflow."""
+        if self._timer is not None:
+            yield
+            return
+        with RunTimer(operation) as timer:
+            self._timer = timer
+            try:
+                yield
+            finally:
+                self._timer = None
+
+    def bind_timing(self, store: RunStore) -> None:
+        """Attach timing after source validation or a successful manifest commit."""
+        if self._timer is not None:
+            self._timer.store = store
 
     # Events and usage.
     def log_event(self, store: RunStore, event: str, **payload: Any) -> None:
@@ -100,10 +122,12 @@ class PipelineRuntime:
         validate_run_languages(
             store.load_manifest(), self.config.source_lang, self.config.target_lang
         )
-        return store.ensure_source_identity(
+        digest = store.ensure_source_identity(
             input_path,
             actual_sha256=source_sha256(input_path),
         )
+        self.bind_timing(store)
+        return digest
 
     # Language resolution.
     def apply_language(self, lang: str) -> None:
