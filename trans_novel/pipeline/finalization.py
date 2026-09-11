@@ -126,16 +126,20 @@ class AssemblyService:
         *,
         input_path: str,
         progress: ProgressFn | None,
-        out_format: str,
+        out_format: str | None,
         out_path: str | None,
         pdf_engine: str,
     ) -> list[str]:
         """Export under the book run lock, adding the assembly lock to serialize output
         writers.
         """
+        from ..assemble.writer_common import default_output_format
+
         with store.assemble_lock():
             # Export rereads the source template; validate before and after to detect replacement during the run.
             self._runtime.ensure_store_source(store, input_path)
+            if out_format is None:
+                out_format = default_output_format(store.load_manifest())
             outputs = self.assemble_outputs(
                 store,
                 input_path=input_path,
@@ -154,16 +158,20 @@ class AssemblyService:
         *,
         input_path: str,
         progress: ProgressFn | None,
-        out_format: str,
+        out_format: str | None,
         out_path: str | None,
         pdf_engine: str,
     ) -> list[str]:
         """Capture an immutable snapshot under the assembly lock and validate source hashes
         around rendering.
         """
+        from ..assemble.writer_common import default_output_format
+
         with store.assemble_lock():
             snapshot = store.create_export_snapshot(actual_sha256=source_sha256(input_path))
             self._runtime.apply_manifest_languages(snapshot.load_manifest())
+            if out_format is None:
+                out_format = default_output_format(snapshot.load_manifest())
 
             # The source may change while waiting for another export; validate again immediately before rendering.
             self._runtime.ensure_store_source(store, input_path)

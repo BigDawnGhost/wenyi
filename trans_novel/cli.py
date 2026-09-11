@@ -247,10 +247,12 @@ def _validate_output_format(fmt: str) -> str:
     return normalized
 
 
-def _resolve_output_format(input_path: str, fmt: str | None) -> str:
-    """Default to DOCX for .docx input and EPUB otherwise when --format is absent."""
+def _resolve_output_format(input_path: str, fmt: str | None) -> str | None:
+    """Defer PDF defaults to saved backend metadata; keep DOCX and EPUB defaults."""
     if fmt is not None and str(fmt).strip():
         return _validate_output_format(str(fmt))
+    if os.path.splitext(input_path)[1].lower() == ".pdf":
+        return None
     if os.path.splitext(input_path)[1].lower() == ".docx":
         return "docx"
     return "epub"
@@ -422,7 +424,7 @@ def _translate_impl_or_raise(
         config.output.bilingual = bilingual
     if chapter is not None:
         ignored: list[str] = []
-        if fmt != "epub":
+        if fmt not in {None, "epub"}:
             ignored.append("--format")
         if out is not None:
             ignored.append("--out")
@@ -590,7 +592,7 @@ def translate(
     fmt: str | None = typer.Option(
         None,
         "--format",
-        help="Output format: epub / txt / html / markdown / pdf / docx; default: docx for .docx input, epub otherwise",
+        help="Output format: epub / txt / html / markdown / pdf / docx; default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
     ),
     out: str | None = typer.Option(
         None,
@@ -841,7 +843,7 @@ def assemble(
     fmt: str | None = typer.Option(
         None,
         "--format",
-        help="Output format: epub / txt / html / markdown / pdf / docx; default: docx for .docx input, epub otherwise",
+        help="Output format: epub / txt / html / markdown / pdf / docx; default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
     ),
     pdf_engine: str = typer.Option(
         "weasyprint",
