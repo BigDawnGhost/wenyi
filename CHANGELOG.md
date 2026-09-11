@@ -3,6 +3,8 @@
 All notable changes to this project are documented here following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-09-12
 - EPUB archive resolution and link/backlink verification now use one shared external-scheme policy without changing the accepted protocols.
 - EPUB backlink verification now shares explicit noteref semantics with text extraction, including ARIA references and EPUB namespace aliases, without guessing from filenames or attribute substrings.
 - EPUB footnote exclusion now follows explicit noteref semantics only, preserving ordinary superscripts and text surrounding reference links. Resume and export reject incompatible saved source-slot layouts without migrating translations or overwriting existing outputs.
