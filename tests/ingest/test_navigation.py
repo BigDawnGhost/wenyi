@@ -108,7 +108,7 @@ class TestEpubIngest(unittest.TestCase):
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("OEBPS/nav.xhtml", nav)
             with zipfile.ZipFile(path) as archive:
-                entries = parse_toc_entries(archive, ["OEBPS/nav.xhtml"])
+                entries = parse_toc_entries(archive, {"OEBPS/nav.xhtml": "nav"})
 
         self.assertEqual([entry["title"] for entry in entries], ["One"])
         self.assertEqual(entries[0]["resource_href"], "OEBPS/body.xhtml")
@@ -123,11 +123,13 @@ class TestEpubIngest(unittest.TestCase):
                 archive.writestr("OEBPS/nav.xhtml", nav)
                 archive.writestr("OEBPS/toc.ncx", "<ncx><navMap>")
             with zipfile.ZipFile(path) as archive:
-                entries = parse_toc_entries(archive, ["OEBPS/nav.xhtml", "OEBPS/toc.ncx"])
+                entries = parse_toc_entries(
+                    archive, {"OEBPS/nav.xhtml": "nav", "OEBPS/toc.ncx": "ncx"}
+                )
 
         self.assertEqual([entry["title"] for entry in entries], ["One"])
 
-    def test_ncx_with_xml_extension_is_detected_from_document_root(self):
+    def test_ncx_with_xml_extension_uses_manifest_media_type(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "toc-xml.epub")
             write_nested_toc_epub(path, ncx_filename="toc.xml")

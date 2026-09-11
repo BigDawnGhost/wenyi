@@ -3,6 +3,9 @@
 All notable changes to this project are documented here following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+- EPUB archive resolution and link/backlink verification now use one shared external-scheme policy without changing the accepted protocols.
+- EPUB ingestion and verification now share package parsing and resource classification. Declared HTML media types take precedence over filenames; HTML suffix fallback applies only when media types are missing, and unsupported or unresolved spine entries fail explicitly instead of dropping chapters.
+- EPUB rendering now updates tracked XHTML resources regardless of suffix, and NAV/NCX parsing follows package declarations rather than filename guesses while retaining both navigation sources.
 - EPUB preflight verification now handles navigation XML comments and processing instructions, plus preserved footnote markers excluded from translation slots.
 - Translation now advances rolling history within each batch and rebuilds chapter-entry history from saved preceding chapters instead of trusting stale context caches.
 - Translation and optional polishing receive bounded preceding source paragraphs and the chapter title, with no future source window or additional model calls. Style guidance now distinguishes source evidence, book-level defaults, and natural Chinese expression.

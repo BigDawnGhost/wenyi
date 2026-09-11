@@ -12,9 +12,8 @@ from bs4 import BeautifulSoup
 from trans_novel.assemble.epub.rendering import BILINGUAL_CSS
 from trans_novel.assemble.epub.verification import archive_compare as compare
 from trans_novel.assemble.epub.verification import archive_model, structure
-
-HTML_MEDIA = archive_model.HTML_MEDIA
-NCX_MEDIA = archive_model.NCX_MEDIA
+from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA
+from trans_novel.epub.package import read_package as read_package_model
 
 
 def read_package(
@@ -23,55 +22,18 @@ def read_package(
     failures: list[dict[str, str]],
     checked: dict[str, int],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    if "META-INF/container.xml" not in archive:
-        failures.append(
-            archive_model.item(
-                "resources",
-                "missing_container",
-                "META-INF/container.xml",
-                "container.xml is required",
-            )
-        )
-        return None, None
-    model_info = archive_model.archive_model(zf, failures)
-    opf_path = model_info["opf_path"]
-    container_data = archive_model.model_read(zf, "META-INF/container.xml", failures)
-    container = archive_model.parse_xml(container_data) if container_data is not None else None
+    model_info = read_package_model(zf, failures)
     checked["resources"] += 1
-    if container is None:
-        failures.append(
-            archive_model.item(
-                "parse", "invalid_container", "META-INF/container.xml", "malformed XML"
-            )
-        )
-        checked["parse"] += 1
-        return None, None
-    roots = [
-        element.attrib.get("full-path", "").strip()
-        for element in container.iter()
-        if archive_model.local_name(element.tag) == "rootfile"
-    ]
-    if len(roots) != 1 or not archive_model.safe_archive_name(roots[0]) or roots[0] not in archive:
-        failures.append(
-            archive_model.item(
-                "resources", "invalid_rootfile", "META-INF/container.xml", "rootfile unresolved"
-            )
-        )
-        return None, None
-    opf_data = archive_model.model_read(zf, opf_path, failures)
-    opf = archive_model.parse_xml(opf_data) if opf_data is not None else None
     checked["parse"] += 1
-    if opf is None:
-        failures.append(archive_model.item("parse", "invalid_opf", opf_path, "malformed XML"))
+    if not model_info["valid"]:
         return None, None
-    return model_info, archive_model.content_model(opf, opf_path, archive)
+    return model_info, model_info["model"]
 
 
 def check_manifest_resources(
     model: dict[str, Any],
     opf_path: str,
     archive: set[str],
-    source_path: Any,
     failures: list[dict[str, str]],
     checked: dict[str, int],
 ) -> None:
@@ -103,7 +65,7 @@ def check_manifest_resources(
         checked["resources"] += 1
         if not entry["id"] or any(previous["id"] == entry["id"] for previous in items[:item_index]):
             continue
-        target = archive_model.manifest_href(opf_path, entry["href"])
+        target = entry["path"]
         if target is None or target not in archive:
             failures.append(
                 archive_model.item("resources", "missing_manifest_resource", opf_path, entry["id"])
@@ -120,7 +82,7 @@ def check_manifest_resources(
                     "resources",
                     "unmanifested_resource",
                     name,
-                    "output" if source_path else "archive",
+                    "archive",
                 )
             )
     for entry in resolved:
@@ -131,7 +93,7 @@ def check_manifest_resources(
                     "nav", "nav_manifest_media", opf_path, entry["id"] or entry["href"]
                 )
             )
-        if entry["href"].split("#", 1)[0].lower().endswith(".ncx") and entry["media"] != NCX_MEDIA:
+        if model["spine_toc"] and entry["id"] == model["spine_toc"] and entry["media"] != NCX_MEDIA:
             failures.append(
                 archive_model.item(
                     "nav", "ncx_manifest_media", opf_path, entry["id"] or entry["href"]
@@ -175,7 +137,7 @@ def compare_source_archive(
         return
     try:
         with zipfile.ZipFile(source_path, "r") as source_zip:
-            source_info = archive_model.archive_model(source_zip, [])
+            source_info = read_package_model(source_zip, [])
             source_model = source_info["model"]
             source_asset_failures: list[dict[str, str]] = []
             source_assets = archive_model.resource_hashes(

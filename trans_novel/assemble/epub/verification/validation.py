@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from trans_novel.assemble.epub.rendering import BILINGUAL_CSS, BILINGUAL_STYLE_ID
 from trans_novel.assemble.epub.verification import archive_compare as compare
 from trans_novel.assemble.epub.verification import archive_model, dom, package, structure
+from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA, read_package
 
 SCHEMA_VERSION = 1
 CATEGORIES = (
@@ -30,8 +31,6 @@ CATEGORIES = (
 MAX_MEMBER_BYTES = archive_model.MAX_MEMBER_BYTES
 MAX_ARCHIVE_BYTES = archive_model.MAX_ARCHIVE_BYTES
 MAX_ARCHIVE_MEMBERS = archive_model.MAX_ARCHIVE_MEMBERS
-HTML_MEDIA = archive_model.HTML_MEDIA
-NCX_MEDIA = archive_model.NCX_MEDIA
 
 
 def _validate_content(
@@ -178,7 +177,7 @@ def validate_one(
         if model_info is None or model is None:
             return compare.finish(result, failures, warnings, checked)
         opf_path = model_info["opf_path"]
-        package.check_manifest_resources(model, opf_path, archive, source_path, failures, checked)
+        package.check_manifest_resources(model, opf_path, archive, failures, checked)
         soups, _ids_by_path, current_graph, current_assets = _validate_content(
             zf, model_info, model, archive, failures, warnings, checked, bilingual, result
         )
@@ -208,9 +207,9 @@ def validate_one(
                         )
                     )
             try:
-                from trans_novel.ingest import load_document
+                from trans_novel.ingest.epub.reader import read_epub
 
-                reopened = load_document(str(path), "en", "zh")
+                reopened = read_epub(str(path), "en", "zh")
                 checked["bilingual_source"] += 1
                 if not reopened.chapters or not any(ch.text_segments for ch in reopened.chapters):
                     failures.append(
@@ -274,7 +273,7 @@ def validate_epub_triplet(
     if Path(source_path).is_file() and Path(mono_path).is_file() and Path(bilingual_path).is_file():
         try:
             with zipfile.ZipFile(bilingual_path, "r") as zf:
-                info = archive_model.archive_model(zf, proof_failures)
+                info = read_package(zf, proof_failures)
                 model = info["model"]
                 soups: dict[str, BeautifulSoup] = {}
                 for item in model["resolved"]:

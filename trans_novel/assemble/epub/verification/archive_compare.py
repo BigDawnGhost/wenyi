@@ -45,9 +45,7 @@ def compare_source_models(
                 failures.append(
                     archive_model.item("resources", "manifest_metadata_mismatch", path, field)
                 )
-        source_href = archive_model.manifest_href(source_model["opf_path"], source_item["href"])
-        output_href = archive_model.manifest_href(output_model["opf_path"], other["href"])
-        if source_href != output_href:
+        if source_item["path"] != other["path"]:
             failures.append(
                 archive_model.item("resources", "manifest_metadata_mismatch", path, "href")
             )

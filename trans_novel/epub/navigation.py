@@ -275,30 +275,13 @@ def _parse_nav(data: bytes, toc_path: str) -> list[dict[str, Any]]:
     return entries
 
 
-def parse_toc_entries(zf: zipfile.ZipFile, toc_paths: list[str]) -> list[dict[str, Any]]:
-    """解析所有已存在的 NCX/NAV 文件，返回有序目录节点。
-
-    每份目录独立容错：用于兼容旧阅读器的 NCX 即使损坏，也不应影响有效
-    的主 NAV。除常见的 ``.ncx`` 后缀外，还会根据 XML 根节点识别使用
-    ``.xml`` 后缀的 NCX 文件。
-    """
-    names = set(zf.namelist())
+def parse_toc_entries(zf: zipfile.ZipFile, toc_kinds: dict[str, str]) -> list[dict[str, Any]]:
+    """按包模型声明的目录身份解析；单份目录损坏不阻止其他目录。"""
     entries: list[dict[str, Any]] = []
-    for toc_path in toc_paths:
-        if toc_path not in names:
-            continue
+    for toc_path, kind in toc_kinds.items():
         data = read_member(zf, zf.getinfo(toc_path))
-        is_ncx = toc_path.lower().endswith(".ncx")
-        if not is_ncx:
-            try:
-                root = ET.fromstring(data)
-                is_ncx = _local(root.tag).lower() == "ncx" or any(
-                    _local(node.tag) == "navMap" for node in root.iter()
-                )
-            except ET.ParseError:
-                is_ncx = False
         try:
-            parsed = _parse_ncx(data, toc_path) if is_ncx else _parse_nav(data, toc_path)
+            parsed = _parse_ncx(data, toc_path) if kind == "ncx" else _parse_nav(data, toc_path)
         except (ET.ParseError, ValueError):
             continue
         entries.extend(parsed)

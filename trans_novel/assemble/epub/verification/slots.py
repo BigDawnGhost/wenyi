@@ -16,11 +16,10 @@ from trans_novel.assemble.epub.verification import archive_model, dom
 from trans_novel.assemble.epub.verification import bilingual as bilingual_module
 from trans_novel.assemble.epub.verification import navigation as nav_module
 from trans_novel.epub.markup import resource_parser
+from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA, read_package
 from trans_novel.epub.slots import normalized_source_text, slot_contract_digest
 
 MAX_MEMBER_BYTES = archive_model.MAX_MEMBER_BYTES
-HTML_MEDIA = archive_model.HTML_MEDIA
-NCX_MEDIA = archive_model.NCX_MEDIA
 
 
 def compare_dom(
@@ -432,7 +431,7 @@ def slot_proof(
         )
         return differences
     try:
-        archive_info = archive_model.archive_model(source_zip, [])
+        archive_info = read_package(source_zip, [])
         xml_resources = {
             item["path"]
             for item in archive_info.get("model", {}).get("resolved", [])

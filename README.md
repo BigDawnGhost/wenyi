@@ -52,6 +52,8 @@ trans-novel tools assemble book.epub
 - 输入：EPUB、FB2、TXT。
 - 默认输出：中文 EPUB。
 - EPUB 输入会按原 XHTML 模板回填译文，尽量保留原书样式、图片、目录和锚点。
+- EPUB 正文按 manifest 声明的媒体类型识别，阅读顺序以 spine 为准。只有媒体类型缺失时才按 HTML 文件后缀兼容识别；声明冲突或无法处理的 spine 资源会明确报错，不会静默跳过章节。
+- 脚注引用只按 `epub:type="noteref"` 或 `role="doc-noteref"` 识别；无声明的上下标链接按普通文本处理，不根据编号、样式或文件名跳过。
 - TXT 输入会生成新的 EPUB。
 - 需要纯文本时使用 `--format txt`。
 
@@ -82,6 +84,9 @@ trans-novel translate book.epub --back-matter full
 旧运行若缺少当前翻译策略版本，会拒绝续译，不会自动清空或重译已有结果。完整旧运行仍可用
 `tools assemble` 导出；若导出需要先补译或修复，则会拒绝。要使用新策略重新翻译，请保留原
 `state/`，在另一个工作目录中使用源书绝对路径启动新运行；默认状态写入该工作目录的 `state/`。
+
+EPUB 续跑和导出还会比较保存的原文槽位与当前解析结果。布局不一致时会拒绝复用，并保留
+原运行和译文；请新建运行，不要把旧译文强行套入新槽位。布局一致的已保存译文仍可使用。
 
 ## 翻译上下文
 
@@ -253,6 +258,7 @@ thinking 级别由模型规格最右侧的后缀决定。程序按逐 Provider�
 trans_novel/
   config.example.yaml  默认配置的唯一来源，首次运行时复制到工作目录
   ingest/       输入解析、EPUB/FB2/TXT 切分
+  epub/         共享包模型、目录与文本槽位；统一 manifest/spine 解析和资源分类
   llm/          LLM 抽象接口、provider factory、内置 providers、FakeClient
   glossary/     SQLite 术语库、源文候选挖掘、译后抽取（可选）、冲突处理
   agents/       分析、翻译、润色、定名、提示词

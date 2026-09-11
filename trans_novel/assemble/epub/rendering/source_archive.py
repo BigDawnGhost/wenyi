@@ -21,8 +21,7 @@ from trans_novel.assemble.epub.rendering.source_markup import (
 from trans_novel.epub.archive import ZipSafetyError, preflight_zip, read_member
 from trans_novel.epub.slots import slot_contract_digest
 from trans_novel.ingest import Segment
-
-_HTML_EXTS = (".xhtml", ".html", ".htm")
+from trans_novel.ingest.epub.reader import ensure_slot_compatibility, read_epub
 
 
 class _MetadataZipFile(zipfile.ZipFile):
@@ -111,6 +110,8 @@ def _source_state(
         if state.slot_contract_sha256 != slot_contract_digest(state.slots):
             raise ValueError(f"EPUB slot contract digest mismatch: {segment.resource_href}")
         grouped.setdefault(segment.resource_href, []).append(segment)
+    current = read_epub(source_path, source_lang, manifest.get("target_lang", "zh"))
+    ensure_slot_compatibility(current, chapters)
     toc_entries = [entry for entry in meta.get("toc_entries", []) if isinstance(entry, dict)]
     return meta, source_lang, resources_meta, deduped_segments, toc_entries
 
@@ -149,7 +150,6 @@ def _render_source_archive(
                 if name == "mimetype":
                     continue
                 data = read_member(zin, info)
-                low = name.lower()
                 resource_info = resources_meta.get(name)
                 if resource_info is not None and hashlib.sha256(data).hexdigest() != str(
                     resource_info.get("resource_sha256", "")
@@ -200,7 +200,7 @@ def _render_source_archive(
                             expected_mode=expected_mode,
                         ),
                     )
-                elif name in resources_meta and low.endswith(_HTML_EXTS):
+                elif name in resources_meta:
                     resource = resources_meta[name]
                     tree, mode = parse_source_markup(data, str(resource.get("parse_mode", "")))
                     rewrite_markup_languages(tree.getroot(), target_lang)

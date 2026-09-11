@@ -31,17 +31,14 @@ from trans_novel.epub.archive import (
 from trans_novel.epub.archive import (
     read_member as bounded_read_member,
 )
+from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA
 
 SCHEMA_VERSION = 1
 MAX_MEMBER_BYTES = MEMBER_MAX_BYTES
 MAX_ARCHIVE_BYTES = ARCHIVE_MAX_BYTES
 MAX_ARCHIVE_MEMBERS = ARCHIVE_MAX_MEMBERS
-HTML_MEDIA = {"application/xhtml+xml", "text/html"}
-NCX_MEDIA = "application/x-dtbncx+xml"
 
-_EXTERNAL_SCHEMES = {"http", "https", "mailto", "data"}
-HTML_MEDIA = {"application/xhtml+xml", "text/html"}
-NCX_MEDIA = "application/x-dtbncx+xml"
+EXTERNAL_SCHEMES = frozenset({"http", "https", "mailto", "data"})
 _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "td", "th", "dt", "dd"}
 _BLOCK_CANDIDATE_TAGS = _BLOCK_TAGS | {"div"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
@@ -154,7 +151,7 @@ def resolve(base: str, reference: str) -> tuple[str | None, str | None, str | No
     except ValueError:
         return None, None, "unsafe"
     scheme = parsed.scheme.lower()
-    if scheme in _EXTERNAL_SCHEMES:
+    if scheme in EXTERNAL_SCHEMES:
         return None, unquote(parsed.fragment) if parsed.fragment else None, scheme
     if scheme or parsed.netloc:
         return None, None, scheme or "unsupported"
@@ -168,66 +165,6 @@ def resolve(base: str, reference: str) -> tuple[str | None, str | None, str | No
         return None, None, "unsafe"
     fragment = unquote(parsed.fragment) if parsed.fragment else None
     return joined, fragment, None
-
-
-def manifest_href(opf_path: str, href: str) -> str | None:
-    target, _, external = resolve(opf_path, href)
-    return target if external is None else None
-
-
-def manifest_items(root: ET.Element) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for element in root.iter():
-        if local_name(element.tag) != "item":
-            continue
-        attrs = dict(element.attrib)
-        result.append(
-            {
-                "id": attrs.get("id", "").strip(),
-                "href": attrs.get("href", "").strip(),
-                "media": attrs.get("media-type", "").strip(),
-                "properties": attrs.get("properties", "").strip(),
-                "fallback": attrs.get("fallback", "").strip(),
-                "media_overlay": attrs.get("media-overlay", "").strip(),
-                "attrs": attrs,
-            }
-        )
-    return result
-
-
-def content_model(root: ET.Element, opf_path: str, archive: set[str]) -> dict[str, Any]:
-    items = manifest_items(root)
-    by_id: dict[str, dict[str, Any]] = {}
-    for item in items:
-        if item["id"] and item["id"] not in by_id:
-            by_id[item["id"]] = item
-    spine_element = next((e for e in root.iter() if local_name(e.tag) == "spine"), None)
-    spine_ids = [
-        e.attrib.get("idref", "").strip()
-        for e in root.iter()
-        if local_name(e.tag) == "itemref" and e.attrib.get("idref", "").strip()
-    ]
-    resolved: list[dict[str, Any]] = []
-    for item in items:
-        target = manifest_href(opf_path, item["href"])
-        if target in archive:
-            resolved.append({**item, "path": target})
-    nav_items = [item for item in resolved if "nav" in item["properties"].split()]
-    ncx_items = [item for item in resolved if item["media"] == NCX_MEDIA]
-    path_by_id = {item["id"]: item["path"] for item in resolved if item["id"]}
-    spine_paths = [path_by_id[item_id] for item_id in spine_ids if item_id in path_by_id]
-    return {
-        "items": items,
-        "resolved": resolved,
-        "by_id": by_id,
-        "spine_ids": spine_ids,
-        "spine_paths": spine_paths,
-        "spine_toc": spine_element.attrib.get("toc", "").strip()
-        if spine_element is not None
-        else "",
-        "nav_items": nav_items,
-        "ncx_items": ncx_items,
-    }
 
 
 def resource_hashes(
@@ -268,50 +205,6 @@ def model_read(zf: zipfile.ZipFile, name: str, failures: list[dict[str, str]]) -
         code = exc.code if isinstance(exc, MemberError) else "member_read"
         failures.append(item("zip", code, name, "member"))
         return None
-
-
-def archive_model(
-    zf: zipfile.ZipFile, failures: list[dict[str, str]] | None = None
-) -> dict[str, Any]:
-    failures = failures if failures is not None else []
-    names = [info.filename for info in zf.infolist()]
-    archive = set(names)
-    container_data = (
-        model_read(zf, "META-INF/container.xml", failures)
-        if "META-INF/container.xml" in archive
-        else None
-    )
-    container = parse_xml(container_data) if container_data is not None else None
-    roots = (
-        [
-            e.attrib.get("full-path", "").strip()
-            for e in container.iter()
-            if local_name(e.tag) == "rootfile"
-        ]
-        if container is not None
-        else []
-    )
-    opf_path = roots[0] if roots else ""
-    opf_data = model_read(zf, opf_path, failures) if opf_path in archive else None
-    opf = parse_xml(opf_data) if opf_data is not None else None
-    if opf is None:
-        return {
-            "archive": archive,
-            "opf_path": opf_path,
-            "model": {
-                "items": [],
-                "resolved": [],
-                "spine_paths": [],
-                "spine_ids": [],
-                "spine_toc": "",
-                "nav_items": [],
-                "ncx_items": [],
-            },
-            "graphs": Counter(),
-            "ids": set(),
-        }
-    model = content_model(opf, opf_path, archive)
-    return {"archive": archive, "opf_path": opf_path, "model": model}
 
 
 def open_validated_zip(

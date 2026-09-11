@@ -14,6 +14,7 @@ from lxml import etree
 from trans_novel.assemble.epub.metadata import epub_language
 from trans_novel.assemble.epub.verification import archive_model, validation
 from trans_novel.assemble.epub.verification import slots as slot
+from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA, read_package
 
 _REPORT_DETAILS = {
     "active",
@@ -73,8 +74,6 @@ _REPORT_DETAILS = {
 }
 SCHEMA_VERSION = 1
 CATEGORIES = validation.CATEGORIES
-HTML_MEDIA = archive_model.HTML_MEDIA
-NCX_MEDIA = archive_model.NCX_MEDIA
 
 
 def output_label(path: str | os.PathLike[str]) -> str:
@@ -131,8 +130,8 @@ def _check_package(
                 zipfile.ZipFile(source, "r") as source_zip,
                 zipfile.ZipFile(output, "r") as output_zip,
             ):
-                source_info = archive_model.archive_model(source_zip, [])
-                output_info = archive_model.archive_model(output_zip, [])
+                source_info = read_package(source_zip, [])
+                output_info = read_package(output_zip, [])
                 source_opf = source_info.get("opf_path")
                 output_opf = output_info.get("opf_path")
                 if source_opf and output_opf and source_opf == output_opf:
@@ -245,7 +244,7 @@ def _check_source_archive(
                 zipfile.ZipFile(source, "r") as source_zip,
                 zipfile.ZipFile(output, "r") as output_zip,
             ):
-                source_archive_info = archive_model.archive_model(source_zip, [])
+                source_archive_info = read_package(source_zip, [])
                 output_info = {info.filename: info for info in output_zip.infolist()}
                 toc_paths = {
                     item["path"]
@@ -299,25 +298,18 @@ def _new_structural_failures(
     *,
     state_backed_bilingual: bool = False,
 ) -> list[dict[str, str]]:
-    inherited_codes = {"missing_toc", "unmanifested_resource", "missing_backlink"}
     superseded_bilingual_codes = {
         "source_node_count",
         "source_node_misplaced",
         "source_node_unexpected",
     }
-    inherited = Counter(
-        (item.get("code"), item.get("path"))
-        for item in source_failures
-        if item.get("code") in inherited_codes
-    )
+    inherited = Counter(tuple(sorted(item.items())) for item in source_failures)
     result: list[dict[str, str]] = []
     for item in output_failures:
         if state_backed_bilingual and item.get("code") in superseded_bilingual_codes:
             continue
-        if item.get("code") in {"reopen_failed", "reopen_empty"}:
-            continue
-        key = (item.get("code"), item.get("path"))
-        if item.get("code") in inherited_codes and inherited[key]:
+        key = tuple(sorted(item.items()))
+        if inherited[key]:
             inherited[key] -= 1
             continue
         result.append(item)

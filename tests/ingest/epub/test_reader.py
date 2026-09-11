@@ -6,7 +6,6 @@ import os
 import tempfile
 import unittest
 import zipfile
-from unittest.mock import patch
 
 from tests.fixtures.books import (
     write_cross_resource_toc_epub,
@@ -17,7 +16,6 @@ from tests.fixtures.books import (
 )
 from trans_novel.epub.archive import safe_name
 from trans_novel.epub.slots import slot_contract_digest
-from trans_novel.ingest.epub.package import find_opf_path, parse_opf
 from trans_novel.ingest.epub.reader import read_epub
 from trans_novel.ingest.segmenter import (
     load_document,
@@ -107,7 +105,7 @@ _FB2_IMAGES = """\
 class TestEpubIngest(unittest.TestCase):
     # ── epub_toc：NCX/NAV 解析与 href 解析 ──────────────────────────────
 
-    def test_missing_required_opf_attributes_are_reported_or_skipped(self):
+    def test_missing_rootfile_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "book.epub")
             with zipfile.ZipFile(path, "w") as zf:
@@ -115,21 +113,8 @@ class TestEpubIngest(unittest.TestCase):
                     "META-INF/container.xml",
                     "<container><rootfiles><rootfile/></rootfiles></container>",
                 )
-            with zipfile.ZipFile(path) as zf, self.assertRaisesRegex(ValueError, "full-path"):
-                find_opf_path(zf)
-
-            opf_path = os.path.join(d, "opf.epub")
-            with zipfile.ZipFile(opf_path, "w") as zf:
-                zf.writestr(
-                    "content.opf",
-                    """<package><manifest>
-<item href="ignored.xhtml" media-type="application/xhtml+xml"/>
-<item id="valid" href="valid.xhtml" media-type="application/xhtml+xml"/>
-</manifest><spine><itemref/><itemref idref="valid"/></spine></package>""",
-                )
-            with zipfile.ZipFile(opf_path) as zf:
-                _title, hrefs, _toc = parse_opf(zf, "content.opf")
-            self.assertEqual(hrefs, ["valid.xhtml"])
+            with self.assertRaisesRegex(ValueError, "invalid_rootfile"):
+                read_epub(path, "en", "zh")
 
     def test_spine_nav_composes_body_segments_without_toc_links(self):
         """A spine NAV contributes its visible body text, while its TOC list remains immutable."""
@@ -675,10 +660,8 @@ class TestEpubNavigationSelection(unittest.TestCase):
             path = os.path.join(directory, "unsafe.epub")
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("META-INF/x/../container.xml", b"<container/>")
-            with patch("trans_novel.ingest.epub.reader.find_opf_path") as parser:
-                with self.assertRaisesRegex(ValueError, "unsafe_entry"):
-                    read_epub(path, "en", "zh")
-                parser.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "unsafe_entry"):
+                read_epub(path, "en", "zh")
 
 
 if __name__ == "__main__":

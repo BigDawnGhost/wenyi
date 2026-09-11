@@ -14,9 +14,8 @@ from bs4.element import Tag
 from lxml import etree
 
 from trans_novel.assemble.epub.verification import archive_model, structure
+from trans_novel.epub.package import HTML_MEDIA, read_package
 
-HTML_MEDIA = archive_model.HTML_MEDIA
-NCX_MEDIA = archive_model.NCX_MEDIA
 MAX_MEMBER_BYTES = archive_model.MAX_MEMBER_BYTES
 BLOCK_TAGS = structure.BLOCK_TAGS
 HEADING_TAGS = structure.HEADING_TAGS
@@ -66,7 +65,7 @@ def dom_segments(path: Path) -> dict[str, list[tuple[str, str]]]:
     result: dict[str, list[tuple[str, str]]] = defaultdict(list)
     try:
         with zipfile.ZipFile(path, "r") as zf:
-            info = archive_model.archive_model(zf, [])
+            info = read_package(zf, [])
             for item in info["model"]["resolved"]:
                 if item["media"] not in HTML_MEDIA or "nav" in item["properties"].split():
                     continue
