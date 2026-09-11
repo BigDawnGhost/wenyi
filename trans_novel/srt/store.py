@@ -15,6 +15,7 @@ from typing import Any
 
 from ..i18n.languages import validate_run_languages
 from ..pipeline.runstore import source_sha256, translation_run_dir
+from ..timing import save_timing
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
@@ -256,6 +257,11 @@ class SrtRunStore:
     def save_usage(self, data: dict[str, Any]) -> None:
         """Atomically save cumulative token usage."""
         self._write_json(self.usage_path, data)
+
+    def record_timing(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Accumulate subtitle invocation timing independently of token usage."""
+        with self._file_lock(".timing.lock"):
+            return save_timing(self.run_dir, record)
 
     def load_usage(self) -> dict[str, Any] | None:
         """Read cumulative token usage, or return None if absent."""

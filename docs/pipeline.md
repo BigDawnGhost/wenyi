@@ -70,8 +70,10 @@ traces when content, configuration, and glossary fingerprints match. Otherwise, 
 whole-book Review starts. Cached chunks and completed initial screening skip chapter
 glossary matching; pending reviewer requests share one chapter-wide glossary snapshot.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
-Elapsed time measures the current stage of this invocation and continues advancing
-while model requests are pending; paragraph counts advance when a top-level chunk
+Elapsed time measures the entire current workflow and never resets at stage or round
+boundaries. It continues advancing while model requests are pending, even after a stage
+reaches its final count. Each invocation's duration is saved in the target's `timing.json`
+and accumulated across resumes, excluding downtime. Paragraph counts advance when a top-level chunk
 finishes, including chunks restored from cache.
 
 The Review engine first updates a run-local shadow translation. Publishing is enabled by default;

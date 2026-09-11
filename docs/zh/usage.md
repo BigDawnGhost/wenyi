@@ -224,6 +224,7 @@ state/srt/<slug>/targets/<目标语言>/
   cues.jsonl       # 每行一条：index / timestamp / source / target / status
   batches/         # 模型原始批次结果，供续跑
   usage.json       # 跨 resume 累计 token
+  timing.json      # 累计执行时长与每次运行用时
   events.jsonl     # 运行事件与 LLM 重试观察
 ```
 
@@ -234,7 +235,20 @@ state/srt/<slug>/targets/<目标语言>/
 
 每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
 
-已移除未启用的 `run_metrics/` 实验账本，不再保留对应计时包装层。
+进度条时钟显示本次工作流的总用时，覆盖解析、等待模型响应、翻译、润色、审校和导出。
+切换阶段、章节或审校轮次不会归零；一个阶段完成后，如果后续工作仍在进行，时钟仍继续走动。
+并发模型请求按实际经过时间计时，不累加各请求的耗时。
+
+`prepare`、`translate`（包括 `--chapter` 和 SRT）、`review` 或 `assemble` 结束后，CLI 显示
+最近一次运行用时和累计执行时长。每个目标目录的 `timing.json` 保存 `total_seconds`，以及
+包含运行 ID、操作、起止时间、用时和完成状态的 `runs` 列表。重复执行命令只追加本次实际
+执行时长，不计入两次运行之间的停机时间；嵌套流程只计一次。分别启动的命令各自计时，
+即使它们有重叠执行的时间。书籍也可通过 `trans-novel status book.epub` 查看计时记录；
+查看状态和重新生成报告不会增加累计时长。
+
+书籍状态初始化成功或通过身份校验后，异常退出和正常 Ctrl+C 中断也会保存本次用时。
+计时使用独立锁和原子写入，不影响 token 用量账本。旧版本没有可恢复的计时历史，
+累计从本版本开始；强制杀死进程或状态初始化前的失败无法保存本次用时。
 
 manifest 通过 `source_sha256` 绑定输入内容。同名文件内容不同或状态缺少有效哈希时会拒绝续跑，必须重新建立翻译状态。
 

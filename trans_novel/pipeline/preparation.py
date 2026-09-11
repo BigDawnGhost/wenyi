@@ -225,6 +225,7 @@ class PreparationService:
             manifest["initialized"] = True
             manifest["prompt_fingerprint"] = prompt_fingerprint()
             store.save_manifest(manifest)
+            self._runtime.bind_timing(store)
             store.finish_initialization()
             store.log_event(
                 "run_initialized",

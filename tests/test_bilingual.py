@@ -467,6 +467,8 @@ class TestCliBilingualFlags(unittest.TestCase):
         captured = {}
 
         class FakeStore:
+            run_dir = "state/book"
+
             def load_usage(self):
                 return None
 

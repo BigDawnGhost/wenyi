@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import typer
 from rich.cells import cell_len
-from rich.progress import Progress, TimeElapsedColumn
+from rich.progress import Progress
 from typer.testing import CliRunner
 
 from trans_novel.cli import (
@@ -17,6 +17,7 @@ from trans_novel.cli import (
     _progress_columns,
     _RichProgressBridge,
     _validate_pdf_engine,
+    _WorkflowElapsedColumn,
     app,
 )
 from trans_novel.config import Config
@@ -46,24 +47,37 @@ class TestCliConfig(unittest.TestCase):
         task = progress.tasks[0]
         self.assertFalse(task.finished)
         now = 25.0
-        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+        self.assertEqual(_WorkflowElapsedColumn().render(task).plain, "0:00:15")
         now = 35.0
-        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:15")
+        self.assertEqual(_WorkflowElapsedColumn().render(task).plain, "0:00:25")
         bridge(778, 1674, "Whole-book review R1")
-        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:15")
+        self.assertEqual(_WorkflowElapsedColumn().render(task).plain, "0:00:25")
 
     def test_indeterminate_progress_updates_preserve_elapsed_time(self):
         now = 10.0
         progress = Progress(disable=True, get_time=lambda: now)
         bridge = _RichProgressBridge(progress, "Preparing review…")
         bridge(1, 1, "Loading review chapters")
+        now = 12.0
         bridge(0, 0, "Restoring review checkpoint…")
         now = 15.0
         bridge(0, 0, "Restoring review checkpoint…")
         task = progress.tasks[0]
         self.assertIsNone(task.total)
         self.assertFalse(task.finished)
-        self.assertEqual(TimeElapsedColumn().render(task).plain, "0:00:05")
+        self.assertEqual(_WorkflowElapsedColumn().render(task).plain, "0:00:05")
+
+    def test_progress_clock_keeps_running_while_completed_stage_waits(self):
+        now = 10.0
+        progress = Progress(disable=True, get_time=lambda: now)
+        bridge = _RichProgressBridge(progress, "Preparing…")
+        now = 15.0
+        bridge(2, 2, "Translating chapter 1")
+        now = 25.0
+        self.assertEqual(_WorkflowElapsedColumn().render(progress.tasks[0]).plain, "0:00:15")
+        bridge(1, 3, "Translating chapter 2")
+        now = 30.0
+        self.assertEqual(_WorkflowElapsedColumn().render(progress.tasks[0]).plain, "0:00:20")
 
     def test_long_progress_description_is_ellipsized_without_hiding_bar(self):
         progress = Progress(*_progress_columns(), disable=True)
@@ -449,6 +463,7 @@ class TestCliConfig(unittest.TestCase):
 
             def run_review(self, input_path, **kwargs):
                 return {
+                    "store": FakeStore(),
                     "review_result": {
                         "termination": "max_rounds",
                         "summary": {"issue_count": 1, "change_count": 1},
@@ -516,7 +531,7 @@ class TestCliConfig(unittest.TestCase):
             def run_assemble(self, input_path, **kwargs):
                 captured["input"] = input_path
                 captured["kwargs"] = kwargs
-                return {"outputs": ["out.pdf"]}
+                return {"store": FakeStore(), "outputs": ["out.pdf"]}
 
         with (
             patch("trans_novel.cli._load_config", return_value=cfg),
