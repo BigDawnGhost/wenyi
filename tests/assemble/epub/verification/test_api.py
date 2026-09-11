@@ -68,6 +68,46 @@ class TestEpubStage2(unittest.TestCase):
 
         self.assertEqual(failures, [inherited, added])
 
+    def test_inherited_diagnostics_match_all_fields_and_counts(self) -> None:
+        inherited = {
+            "category": "internal_links",
+            "code": "unsupported_scheme",
+            "path": "<reference>",
+            "detail": "custom:original-fingerprint",
+        }
+        changed = [
+            {**inherited, field: "different"} for field in ("category", "code", "path", "detail")
+        ]
+        self.assertEqual(
+            _new_structural_failures(
+                [inherited.copy(), inherited.copy(), *changed], [inherited.copy()]
+            ),
+            [inherited, *changed],
+        )
+
+    def test_preflight_preserves_source_specific_references(self) -> None:
+        from trans_novel.assemble import preflight_epub
+        from trans_novel.ingest import load_document
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.epub"
+            original = Path(directory) / "original.epub"
+            write_phase9_epub(str(original))
+            with zipfile.ZipFile(original) as zin, zipfile.ZipFile(source, "w") as zout:
+                for info in zin.infolist():
+                    data = zin.read(info.filename)
+                    if info.filename == "OEBPS/text/chapter-1.xhtml":
+                        data = data.replace(
+                            b"</body>",
+                            b'<a href="custom:embed:0006?mime=image/jpg">Image</a></body>',
+                        )
+                    zout.writestr(info, data)
+            doc = load_document(str(source), "ja", "zh")
+            for bilingual in (False, True):
+                with self.subTest(bilingual=bilingual):
+                    report = preflight_epub(doc, str(source), bilingual=bilingual)
+                    self.assertTrue(report["passed"], report["failures"])
+
     def test_schema4_bilingual_proof_supersedes_legacy_source_heuristics(self) -> None:
         failures = [
             {"code": "source_node_count"},
@@ -167,7 +207,7 @@ class TestEpubStage2(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(
                 report["authorized_differences"],
-                {"text_slots": 19, "toc_labels": 4, "language_fields": 1, "bilingual_nodes": 0},
+                {"text_slots": 18, "toc_labels": 4, "language_fields": 1, "bilingual_nodes": 0},
             )
 
     def test_nested_nav_label_locator_matches_writer_clear_contract(self) -> None:
@@ -376,3 +416,39 @@ class TestEpubStage2(unittest.TestCase):
                     toc_label_paths={(0,)},
                 )
             )
+
+
+class TestEpubReadability(unittest.TestCase):
+    def test_output_reopen_failures_are_not_discarded(self) -> None:
+        for code in ("reopen_empty", "reopen_failed", None):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.epub"
+                output = Path(directory) / "output.tmp"
+                write_phase9_epub(str(source))
+                with zipfile.ZipFile(source) as zin, zipfile.ZipFile(output, "w") as zout:
+                    for info in zin.infolist():
+                        data = zin.read(info.filename)
+                        if code == "reopen_failed" and info.filename == "OEBPS/content.opf":
+                            data = data.replace(b"application/xhtml+xml", b"image/png")
+                        elif code == "reopen_empty" and info.filename.startswith("OEBPS/text/"):
+                            root = etree.fromstring(data)
+                            body = root.find("{http://www.w3.org/1999/xhtml}body")
+                            assert body is not None
+                            for child in list(body):
+                                if etree.QName(child).localname != "h1":
+                                    body.remove(child)
+                                else:
+                                    child.text = None
+                            etree.SubElement(
+                                body,
+                                "{http://www.w3.org/1999/xhtml}img",
+                                src="../images/figure.png",
+                            )
+                            data = etree.tostring(root)
+                        zout.writestr(info, data)
+                report = verify_epub(output)
+                if code is None:
+                    self.assertTrue(report["passed"], report["failures"])
+                else:
+                    self.assertFalse(report["passed"])
+                    self.assertIn(code, {item["code"] for item in report["failures"]})
