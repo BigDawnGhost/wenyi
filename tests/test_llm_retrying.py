@@ -18,6 +18,7 @@ from trans_novel.config import Config, LLMConfig
 from trans_novel.llm.providers.deepseek import DeepSeekClient
 from trans_novel.llm.retrying import (
     EmptyResponseError,
+    is_resumable_provider_interrupt,
     is_retryable_provider_error,
     retry_reason,
 )
@@ -84,6 +85,16 @@ def test_transient_http_statuses_are_retryable(status: int):
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 422])
 def test_permanent_http_statuses_are_not_retryable(status: int):
     assert not is_retryable_provider_error(_HttpError(status))
+
+
+@pytest.mark.parametrize("status", [402, 408, 429, 500, 503])
+def test_provider_balance_and_transient_stops_are_resumable_interrupts(status: int):
+    assert is_resumable_provider_interrupt(_HttpError(status))
+
+
+def test_insufficient_balance_message_is_resumable_without_status():
+    assert is_resumable_provider_interrupt(RuntimeError("Insufficient Balance"))
+    assert not is_resumable_provider_interrupt(ValueError("invalid review config"))
 
 
 def test_server_retry_override_takes_precedence_over_status():

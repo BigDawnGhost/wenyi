@@ -33,6 +33,7 @@ from ..agents.review_loop import (
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.resources import prompt_fingerprint
+from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore
 from .runstore import STATUS_DONE
@@ -1372,9 +1373,19 @@ class ReviewService:
                 usage=usage,
             )
         except BaseException as error:
+            resumable_interrupt = not isinstance(
+                error, Exception
+            ) or is_resumable_provider_interrupt(error)
             if not isinstance(error, Exception):
                 save_review_usage()
-                debug.log_event("review_interrupted", error_type=type(error).__name__)
+                debug.mark_interrupted(error={"type": type(error).__name__, "message": str(error)})
+                store.log_event(
+                    "review_interrupted",
+                    review_id=debug.review_id,
+                    review_dir=debug.run_dir,
+                    status="interrupted",
+                    error_type=type(error).__name__,
+                )
                 raise
             initial_issues, dismissed = debug.result_snapshots()
             partial_issues = effective_issues(latest) if latest is not None else []
@@ -1385,6 +1396,13 @@ class ReviewService:
                 patch_records,
                 active_patches,
             )
+            summary = {
+                "issue_count": len(public_issues),
+                "change_count": len(partial_changes),
+                "conflict_count": (len(latest.conflict_groups) if latest is not None else 0),
+                "fallback_agent_count": (latest.fallback_agent_count if latest is not None else 0),
+            }
+            error_payload = {"type": type(error).__name__, "message": str(error)}
             debug.write_json("rounds/final/initial_issues.json", initial_issues)
             debug.write_json("rounds/final/dismissed_issues.json", dismissed)
             debug.write_json(
@@ -1393,20 +1411,34 @@ class ReviewService:
             )
             debug.write_json("rounds/final/partial_patches.json", patch_records)
             debug.write_json("rounds/final/fix_failures.json", fix_failures)
+            if resumable_interrupt:
+                # Keep chunk/checkpoint caches eligible for find_resumable after balance,
+                # timeout or transport stops. Formal chapters remain unchanged until Autofix.
+                debug.mark_interrupted(
+                    error=error_payload,
+                    summary=summary,
+                    issues=public_issues,
+                    changes=partial_changes,
+                )
+                save_review_usage()
+                store.log_event(
+                    "review_interrupted",
+                    review_id=debug.review_id,
+                    review_dir=debug.run_dir,
+                    status="interrupted",
+                    issue_count=len(public_issues),
+                    change_count=len(partial_changes),
+                    error_type=type(error).__name__,
+                    error=str(error),
+                )
+                raise
             debug.finish(
                 status="failed",
                 termination="error",
-                summary={
-                    "issue_count": len(public_issues),
-                    "change_count": len(partial_changes),
-                    "conflict_count": (len(latest.conflict_groups) if latest is not None else 0),
-                    "fallback_agent_count": (
-                        latest.fallback_agent_count if latest is not None else 0
-                    ),
-                },
+                summary=summary,
                 issues=public_issues,
                 changes=partial_changes,
-                error={"type": type(error).__name__, "message": str(error)},
+                error=error_payload,
             )
             save_review_usage()
             store.log_event(
