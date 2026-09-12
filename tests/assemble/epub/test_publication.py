@@ -64,7 +64,7 @@ class TestEpubStage2(unittest.TestCase):
             config.state_dir = str(root / "state")
 
             def handler(messages, agent, operation, json_mode):
-                if operation == "polish.segment":
+                if operation == "polish.batch":
                     return '{"polished": []}'
                 return routing_handler(messages, agent, operation, json_mode)
 

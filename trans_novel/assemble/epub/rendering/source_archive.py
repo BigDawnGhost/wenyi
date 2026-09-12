@@ -20,7 +20,7 @@ from trans_novel.assemble.epub.rendering.source_markup import (
 )
 from trans_novel.epub.archive import ZipSafetyError, preflight_zip, read_member
 from trans_novel.epub.slots import slot_contract_digest
-from trans_novel.ingest import Segment
+from trans_novel.ingest import Segment, preserved_toc_entry_ids
 from trans_novel.ingest.epub.reader import ensure_slot_compatibility, read_epub
 
 
@@ -112,7 +112,16 @@ def _source_state(
         grouped.setdefault(segment.resource_href, []).append(segment)
     current = read_epub(source_path, source_lang, manifest.get("target_lang", "zh"))
     ensure_slot_compatibility(current, chapters)
-    toc_entries = [entry for entry in meta.get("toc_entries", []) if isinstance(entry, dict)]
+    raw_toc = meta.get("toc_entries", [])
+    toc_source = raw_toc if isinstance(raw_toc, list) else []
+    preserved_toc_ids = preserved_toc_entry_ids(chapters, toc_source)
+    toc_entries = [
+        {**entry, "preserve_source": True}
+        if entry.get("id") in preserved_toc_ids or entry.get("entry_id") in preserved_toc_ids
+        else entry
+        for entry in toc_source
+        if isinstance(entry, dict)
+    ]
     return meta, source_lang, resources_meta, deduped_segments, toc_entries
 
 
@@ -129,6 +138,13 @@ def _render_source_archive(
     bilingual: bool,
     order: str,
 ) -> None:
+    archive_lang = (
+        source_lang
+        if grouped
+        and all(segment.preserve_source for segments in grouped.values() for segment in segments)
+        and source_lang
+        else target_lang
+    )
     with zipfile.ZipFile(source_path, "r") as zin:
         try:
             preflight_zip(zin)
@@ -157,7 +173,7 @@ def _render_source_archive(
                     raise ValueError(f"EPUB resource digest mismatch: {name}")
                 if name == opf_path:
                     tree, mode = parse_source_markup(data)
-                    _rewrite_opf_language_lxml(tree, target_lang)
+                    _rewrite_opf_language_lxml(tree, archive_lang)
                     _write_source_member(zout, info, serialize_source_tree(tree, data, mode))
                 elif name in grouped:
                     resource = resources_meta.get(name)
@@ -181,7 +197,8 @@ def _render_source_archive(
                             toc_entries,
                             is_ncx=toc_kind == "ncx",
                             toc_path=name,
-                            target_lang=target_lang,
+                            target_lang=archive_lang,
+                            source_lang=source_lang,
                         )
                     _write_source_member(zout, info, rendered)
                 elif toc_kind_at(toc_entries, name) in {"nav", "ncx"}:
@@ -196,14 +213,15 @@ def _render_source_archive(
                             toc_entries,
                             is_ncx=kind == "ncx",
                             toc_path=name,
-                            target_lang=target_lang,
+                            target_lang=archive_lang,
                             expected_mode=expected_mode,
+                            source_lang=source_lang,
                         ),
                     )
                 elif name in resources_meta:
                     resource = resources_meta[name]
                     tree, mode = parse_source_markup(data, str(resource.get("parse_mode", "")))
-                    rewrite_markup_languages(tree.getroot(), target_lang)
+                    rewrite_markup_languages(tree.getroot(), archive_lang)
                     _write_source_member(zout, info, serialize_source_tree(tree, data, mode))
                 else:
                     _write_source_member(zout, info, data)

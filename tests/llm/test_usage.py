@@ -264,10 +264,10 @@ class TestUsageDimensions(unittest.TestCase):
                 provider="deepseek",
                 model_ref=ModelRef("deepseek", "m1"),
                 agent="editor",
-                operation="polish.segment",
+                operation="polish.batch",
                 usage=usage,
             )
-        slot = tracker.summary()["by_operation"]["polish.segment"]
+        slot = tracker.summary()["by_operation"]["polish.batch"]
         self.assertEqual(slot["reasoning_tokens"], 11)
         self.assertEqual(slot["total_tokens"], 60)  # reasoning 不叠加进 total
         self.assertNotIn("reasoning_tokens", tracker.summary()["totals"])
@@ -741,14 +741,14 @@ class TestOperationTelemetry(unittest.TestCase):
 
         def _one(i):
             c.complete(
-                [{"role": "user", "content": str(i)}], agent="editor", operation="polish.segment"
+                [{"role": "user", "content": str(i)}], agent="editor", operation="polish.batch"
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(_one, range(n)))
 
         self.assertEqual(len(c.calls), n)
-        op = c.usage_summary()["by_operation"]["polish.segment"]
+        op = c.usage_summary()["by_operation"]["polish.batch"]
         self.assertEqual(op["logical_calls"], n)
         self.assertEqual(op["attempts"], n)
         self.assertEqual(c.usage_summary()["by_agent"]["editor"]["logical_calls"], n)

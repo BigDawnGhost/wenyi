@@ -22,6 +22,7 @@ from trans_novel.assemble.epub.rendering.bilingual import (
 )
 from trans_novel.assemble.epub.rendering.source_dom import (
     bilingual_source_copy,
+    effective_language,
     indexed_toc_entries,
     parse_source_markup,
     resolve_element_path,
@@ -48,6 +49,7 @@ def rewrite_toc_lxml(
     toc_path: str,
     target_lang: str,
     expected_mode: str | None = None,
+    source_lang: str = "",
 ) -> bytes:
     tree, mode = parse_source_markup(data, expected_mode)
     root = tree.getroot()
@@ -55,7 +57,7 @@ def rewrite_toc_lxml(
     if is_ncx:
         _rewrite_ncx_labels(root, indexed, toc_path)
     else:
-        rewrite_nav_labels(root, indexed, toc_path)
+        rewrite_nav_labels(root, indexed, toc_path, source_lang)
         rewrite_markup_languages(root, target_lang)
     return serialize_source_tree(tree, data, mode)
 
@@ -380,6 +382,35 @@ def add_bilingual_sources(
     return added
 
 
+def _apply_declared_languages(
+    root: etree._Element,
+    segments: list[Segment],
+    *,
+    source_lang: str,
+    target_lang: str,
+    href: str,
+    source_languages: dict[tuple[int, ...], str | None],
+    block_refs: dict[tuple[int, ...], etree._Element],
+) -> None:
+    if segments and all(segment.preserve_source for segment in segments):
+        return
+    rewrite_markup_languages(root, target_lang)
+    by_block: dict[tuple[int, ...], set[bool]] = {}
+    for segment in segments:
+        state = segment.epub_state
+        assert state is not None
+        by_block.setdefault(state.block_path, set()).add(segment.preserve_source)
+    for block_path, decisions in by_block.items():
+        if len(decisions) > 1:
+            raise ValueError(f"EPUB preserve range is ambiguous within one block: {href}")
+        if decisions != {True}:
+            continue
+        expected = source_languages[block_path]
+        block = block_refs[block_path]
+        if expected is not None and effective_language(block) != expected:
+            block.set("{http://www.w3.org/XML/1998/namespace}lang", expected)
+
+
 def render_source_resource(
     data: bytes,
     href: str,
@@ -404,6 +435,7 @@ def render_source_resource(
     writes: list[tuple[etree._Element, str, str]] = []
     source_blocks: dict[tuple[int, ...], etree._Element] = {}
     block_refs: dict[tuple[int, ...], etree._Element] = {}
+    source_languages: dict[tuple[int, ...], str | None] = {}
     for segment in segments:
         state = segment.epub_state
         if state is None:
@@ -414,7 +446,10 @@ def render_source_resource(
             raise ValueError(f"EPUB slot contract digest mismatch: {href}")
         block = resolve_element_path(root, state.block_path)
         block_refs.setdefault(state.block_path, block)
-        if bilingual and state.block_path not in source_blocks:
+        source_languages.setdefault(
+            state.block_path, effective_language(block, source_lang or None)
+        )
+        if (bilingual or segment.preserve_source) and state.block_path not in source_blocks:
             source_blocks[state.block_path] = deepcopy(block)
         expected_fingerprint = hashlib.sha256(
             etree.tostring(block, encoding="utf-8", with_tail=False)
@@ -434,18 +469,28 @@ def render_source_resource(
             value = owner.text if slot.field == "text" else owner.tail
             if value != slot.source_value:
                 raise ValueError(f"EPUB slot source mismatch: {href}")
-            writes.append(
-                (
-                    owner,
-                    slot.field,
-                    slot.target_value if slot.target_value is not None else slot.source_value,
-                )
+            replacement = (
+                slot.source_value
+                if segment.preserve_source
+                else slot.target_value
+                if slot.target_value is not None
+                else slot.source_value
             )
+            writes.append((owner, slot.field, replacement))
     for owner, field, replacement in writes:
         if field == "text":
             owner.text = replacement
         else:
             owner.tail = replacement
+    _apply_declared_languages(
+        root,
+        segments,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        href=href,
+        block_refs=block_refs,
+        source_languages=source_languages,
+    )
     if bilingual:
         added = add_bilingual_sources(
             root,
@@ -459,5 +504,4 @@ def render_source_resource(
             from trans_novel.assemble.epub.rendering.bilingual import append_bilingual_style
 
             append_bilingual_style(root)
-    rewrite_markup_languages(root, target_lang)
     return serialize_source_tree(tree, data, mode)

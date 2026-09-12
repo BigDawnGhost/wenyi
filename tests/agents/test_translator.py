@@ -150,23 +150,6 @@ class TestTranslatorAlignment(unittest.TestCase):
         self.assertEqual(untouched.request_count, 0)
         self.assertEqual(len(client.calls), 1)
 
-    def test_back_matter_light_agent_routing(self):
-        """light 旁路调用显式传 light-translator Agent，agent 原样透传到调用记录。"""
-
-        def handler(messages, agent, operation, json_mode):
-            n = _count_segments(messages[-1]["content"])
-            return json.dumps({"translations": [f"译{i}" for i in range(n)]}, ensure_ascii=False)
-
-        client = FakeClient(handler=handler)
-        t = Translator(client, self._config())
-        result = t.translate_batch(
-            ["あ", "い"], agent="light-translator", operation="translate.back_matter"
-        )
-        self.assertEqual(len(result.translations), 2)
-        self.assertEqual(result.request_count, 1)
-        self.assertEqual(client.calls[0]["agent"], "light-translator")
-        self.assertEqual(client.calls[0]["operation"], "translate.back_matter")
-
     def test_fallback_to_per_segment_on_mismatch(self):
         # 多段批次故意少返回一段；单段调用按源段返回不同译文 → 触发逐段兜底
         def handler(messages, agent, operation, json_mode):

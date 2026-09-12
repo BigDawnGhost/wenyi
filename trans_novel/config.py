@@ -25,7 +25,6 @@ PRODUCTION_AGENT_IDS: tuple[str, ...] = (
     "editor",
     "analyst",
     "preparer",
-    "light-translator",
 )
 
 QualityPreset = Literal["economy", "balanced", "quality"]
@@ -152,7 +151,6 @@ class PipelineConfig(BaseModel):
     rolling_context_segments: int = 6
     prescan_concurrency: int = 4
     glossary_scope: Literal["chapter", "full"] = "chapter"
-    back_matter: Literal["skip", "light", "full"] = "light"
     inflight_glossary: bool = False
 
     @classmethod
@@ -162,23 +160,19 @@ class PipelineConfig(BaseModel):
             "rolling_context_segments": 6,
             "prescan_concurrency": 4,
             "glossary_scope": "chapter",
-            "back_matter": "light",
             "inflight_glossary": False,
         }
         profiles: dict[str, dict[str, Any]] = {
             "economy": {
                 "polish": False,
-                "back_matter": "light",
                 "single_segment_translation": False,
             },
             "balanced": {
                 "polish": False,
-                "back_matter": "full",
                 "single_segment_translation": True,
             },
             "quality": {
                 "polish": True,
-                "back_matter": "full",
                 "single_segment_translation": True,
             },
         }

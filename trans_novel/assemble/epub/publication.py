@@ -105,7 +105,7 @@ def prepare_publication(
         report = verify.verify_epub(
             temp,
             source_path=source_path,
-            store=store if mode in {"monolingual", "bilingual"} else None,
+            store=store,
             mode=mode,
             bilingual=bilingual,
             target_lang=target_lang,

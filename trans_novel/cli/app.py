@@ -108,7 +108,6 @@ def _translate_impl(
     out: str | None = None,
     quality: str | None = None,
     source_language: str | None = None,
-    back_matter: str | None = None,
     honorifics: str | None = None,
     polish: bool | None = None,
     mono: bool | None = None,
@@ -124,10 +123,6 @@ def _translate_impl(
     try:
         if quality is not None:
             config.apply_quality(quality)
-        if back_matter is not None:
-            if back_matter not in {"skip", "light", "full"}:
-                raise ValueError("--back-matter 必须是 skip、light 或 full")
-            config.pipeline.back_matter = back_matter
         if honorifics is not None:
             if honorifics not in {"keep_style", "normalize", "drop"}:
                 raise ValueError("--honorifics 必须是 keep_style、normalize 或 drop")
@@ -205,7 +200,7 @@ def _translate_impl(
         f"解决 {repair.get('resolved', 0)} 项，耗尽 {repair.get('accepted_after_exhaustion', 0)} 项。"
     )
     cli_common.print_usage({"usage": result["store"].load_usage() or {}})
-    cli_common.print_back_matter(result["report"])
+    cli_common.print_chapter_processing(result["report"])
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
     console.print(
@@ -230,9 +225,6 @@ def translate(
     source_language: str | None = typer.Option(
         None, "--source-language", help="源语言代码；默认由模型自动识别"
     ),
-    back_matter: str | None = typer.Option(
-        None, "--back-matter", help="附属章处理：skip | light | full"
-    ),
     honorifics: str | None = typer.Option(
         None, "--honorifics", help="日文敬称策略：keep_style | normalize | drop"
     ),
@@ -255,7 +247,6 @@ def translate(
         out=out,
         quality=quality,
         source_language=source_language,
-        back_matter=back_matter,
         honorifics=honorifics,
         polish=polish,
         mono=mono,

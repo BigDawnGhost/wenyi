@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from trans_novel.epub.archive import ZipSafetyError, preflight_zip, read_member
-from trans_novel.epub.navigation import parse_toc_entries
+from trans_novel.epub.navigation import parse_nav_landmarks, parse_toc_entries
 from trans_novel.epub.package import HTML_MEDIA, read_package
 from trans_novel.ingest.epub.chapters import logical_chapters
 from trans_novel.ingest.epub.markup import annotate_resource
@@ -29,6 +29,24 @@ def _spine_paths(model: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(paths))
 
 
+def _semantic_hints_by_resource(
+    guide_entries: list[dict[str, Any]], landmarks: list[dict[str, Any]]
+) -> dict[str, list[str]]:
+    hints: dict[str, list[str]] = {}
+    for prefix, entries in (("opf:guide", guide_entries), ("nav:landmark", landmarks)):
+        for entry in entries:
+            href = entry.get("resource_href")
+            if not isinstance(href, str) or not href:
+                continue
+            values = [
+                f"{prefix}:{name}={entry[name]}"
+                for name in ("nav_type", "type", "role")
+                if isinstance(entry.get(name), str) and entry[name]
+            ]
+            hints.setdefault(href, []).extend(values)
+    return hints
+
+
 def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
     """Read a source EPUB into schema-4 structural text-slot state."""
     try:
@@ -45,6 +63,8 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             hrefs = _spine_paths(model)
             toc_paths = model["toc_paths"]
             toc_entries = parse_toc_entries(zf, model["toc_kinds"])
+            landmarks = parse_nav_landmarks(zf, [str(item["path"]) for item in model["nav_items"]])
+            resource_hints = _semantic_hints_by_resource(model["guide_entries"], landmarks)
 
             resources: list[dict[str, object]] = []
             archive_hash = hashlib.sha256()
@@ -61,6 +81,11 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
                     skip_navigation=href in toc_paths,
                 )
                 resources.append({**resource, "title": title, "segments": segments})
+                for segment in segments:
+                    existing = segment.meta.get("semantic_hints", [])
+                    segment.meta["semantic_hints"] = list(
+                        dict.fromkeys([*existing, *resource_hints.get(href, [])])
+                    )
             resources_by_href = {resource["href"]: resource for resource in resources}
             spine_resources = [resources_by_href[href] for href in hrefs]
             chapters, split_strategy, split_toc_path = logical_chapters(
@@ -82,6 +107,8 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             "opf_path": opf_path,
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,
+            "guide_entries": model["guide_entries"],
+            "nav_landmarks": landmarks,
             "epub_resources": [
                 {
                     "index": resource["index"],

@@ -153,6 +153,92 @@ class TestAssembleText(unittest.TestCase):
             alltext = "".join(s.source for c in doc.chapters for s in c.text_segments)
             self.assertIn("润", alltext)
 
+    def test_generated_outputs_keep_preserved_chapter_once_in_source_language(self):
+        from trans_novel.assemble.epub.rendering.generated import build_epub_from_chapters
+        from trans_novel.assemble.text import assemble_text
+        from trans_novel.ingest.models import Chapter, ChapterProcessing, Segment
+
+        processing = ChapterProcessing(
+            action="preserve",
+            review_required=False,
+            reason="reference list",
+            source_sha256="source",
+            strategy_version="chapter_semantics_v1",
+        )
+        chapter = Chapter(
+            index=0,
+            title="Chapter 5 Sources",
+            segments=[
+                Segment(index=0, source="Chapter 5 Sources", target="第五章 来源", kind="heading"),
+                Segment(index=1, source="Smith, 2020.", target="史密斯，2020。"),
+            ],
+            processing=processing,
+        )
+
+        class Store:
+            def load_manifest(self):
+                return {
+                    "title": "Sources",
+                    "fmt": "text",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title_translated": "第五章 来源",
+                            "processing": processing.model_dump(),
+                        }
+                    ],
+                }
+
+            def load_chapter(self, index):
+                return chapter
+
+        with tempfile.TemporaryDirectory() as directory:
+            text_output = os.path.join(directory, "preserved.txt")
+            assemble_text(Store(), text_output, bilingual=True)
+            with open(text_output, encoding="utf-8") as rendered_text:
+                plain_text = rendered_text.read()
+            self.assertEqual(plain_text.count("Smith, 2020."), 1)
+            self.assertNotIn("史密斯", plain_text)
+
+            output = os.path.join(directory, "preserved.epub")
+            build_epub_from_chapters(Store(), "unused.txt", output, bilingual=True)
+            with zipfile.ZipFile(output) as archive:
+                chapter_name = next(
+                    name for name in archive.namelist() if name.endswith("/ch0.xhtml")
+                )
+                rendered = BeautifulSoup(archive.read(chapter_name), "xml")
+                nav_name = next(name for name in archive.namelist() if name.endswith("/nav.xhtml"))
+                nav = BeautifulSoup(archive.read(nav_name), "xml")
+            self.assertEqual(rendered.html.get("xml:lang"), "en")
+            self.assertEqual(rendered.get_text().count("Smith, 2020."), 1)
+            self.assertNotIn("史密斯", rendered.get_text())
+            self.assertIsNone(rendered.select_one(".tn-source"))
+            self.assertIn("Chapter 5 Sources", nav.get_text())
+            from trans_novel.assemble.epub.verification import verify_epub
+
+            report = verify_epub(output, store=Store(), mode="generated", bilingual=True)
+            self.assertTrue(report["passed"], report["failures"])
+
+            rendered.find("p").string.replace_with("tampered")
+            with zipfile.ZipFile(output) as archive:
+                entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+            rewritten = output + ".tmp"
+            with zipfile.ZipFile(rewritten, "w") as archive:
+                for info, data in entries:
+                    archive.writestr(
+                        info,
+                        rendered.encode() if info.filename == chapter_name else data,
+                    )
+            os.replace(rewritten, output)
+            report = verify_epub(output, store=Store(), mode="generated", bilingual=True)
+            self.assertIn(
+                "preserved_generated_text_mismatch",
+                {item["code"] for item in report["failures"]},
+            )
+            self.assertNotIn("第五章", nav.get_text())
+
 
 class TestHeadingNumberInWriter(unittest.TestCase):
     """章节标题编号数字风格（阿拉伯 → 汉字）在槽位分配前统一。"""

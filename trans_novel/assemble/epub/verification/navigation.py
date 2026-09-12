@@ -112,3 +112,79 @@ def nav_label_locations(
         if ordered is not None:
             walk_nav(ordered)
     return locations
+
+
+def _allow_cleared_descendants(parent, parent_path, slot_map):
+    element_index = 0
+    for child in parent:
+        if not isinstance(child.tag, str):
+            continue
+        child_path = (*parent_path, element_index)
+        element_index += 1
+        for field, value in (("text", child.text), ("tail", child.tail)):
+            slot_map[(child_path, field)] = {
+                "kind": "toc",
+                "expected": None,
+                "source": value,
+                "count": False,
+            }
+        _allow_cleared_descendants(child, child_path, slot_map)
+
+
+def navigation_slots(
+    root_source,
+    root_output,
+    resource,
+    toc_entries,
+    slot_map,
+    toc_label_paths,
+    language_paths,
+    source_lang,
+    failures,
+):
+    from trans_novel.assemble.epub.metadata import translated_toc_title
+
+    is_ncx = any(
+        archive_model.local_name(node.tag).lower() == "navmap" for node in root_source.iter()
+    )
+    locations = nav_label_locations(root_source, is_ncx=is_ncx)
+    entries = sorted(
+        (
+            entry
+            for entry in toc_entries
+            if entry.get("toc_path") == resource and isinstance(entry.get("node_index"), int)
+        ),
+        key=lambda entry: int(entry["node_index"]),
+    )
+    if entries and len(locations) != len(entries):
+        failures.append(archive_model.item("nav", "label_count_mismatch", resource, "toc"))
+    for entry in entries:
+        index = int(entry["node_index"])
+        if index < 0 or index >= len(locations):
+            failures.append(archive_model.item("nav", "label_locator_missing", resource, "toc"))
+            continue
+        label, path = locations[index]
+        toc_label_paths.add(path)
+        slot_map[(path, "text")] = {
+            "kind": "toc",
+            "expected": translated_toc_title(entry),
+            "source": label.text,
+            "count": True,
+        }
+        _allow_cleared_descendants(label, path, slot_map)
+        if entry.get("preserve_source") is True and source_lang and not is_ncx:
+            language_paths.add(path)
+            output_label = dom.resolve_path_lxml(root_output, path)
+            languages = (
+                {
+                    key: value
+                    for key, value in output_label.attrib.items()
+                    if key.rsplit("}", 1)[-1].split(":", 1)[-1] == "lang"
+                }
+                if output_label is not None
+                else {}
+            )
+            if not languages or any(value != source_lang for value in languages.values()):
+                failures.append(
+                    archive_model.item("nav", "label_language_mismatch", resource, "source")
+                )

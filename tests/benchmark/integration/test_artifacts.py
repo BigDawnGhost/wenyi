@@ -75,7 +75,7 @@ class _InstrumentedFakeClient(FakeClient):
             else self.models[2]
             if agent == "editor"
             else self.models[3]
-            if agent in {"preparer", "light-translator"}
+            if agent == "preparer"
             else self.models[0]
         )
         provider, model = parse_provider_model(model_ref)

@@ -158,7 +158,7 @@ def report(input: str = typer.Argument(..., help="输入文件")):
         f"Repair 检测 {repair.get('detected', 0)} 解决 {repair.get('resolved', 0)} "
         f"耗尽 {repair.get('accepted_after_exhaustion', 0)} 调用 {repair.get('attempts', 0)}"
     )
-    cli_common.print_back_matter(rep)
+    cli_common.print_chapter_processing(rep)
 
 
 tools_app.add_typer(benchmark_app, name="benchmark")

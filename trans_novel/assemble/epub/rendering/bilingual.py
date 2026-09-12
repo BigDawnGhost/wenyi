@@ -334,7 +334,8 @@ def segment_needs_source(segment: object) -> bool:
     source = getattr(segment, "source", None)
     target = getattr(segment, "target", None)
     return (
-        getattr(segment, "epub_state", None) is not None
+        not getattr(segment, "preserve_source", False)
+        and getattr(segment, "epub_state", None) is not None
         and getattr(segment, "kind", None) != "heading"
         and isinstance(source, str)
         and bool(source.strip())

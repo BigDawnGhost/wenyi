@@ -4,8 +4,7 @@ balanced/quality 每次调用只发送一个待译段，并接收纯译文，从
 一一对应。economy 保留批量翻译；批量协议失败时仍逐段兜底。
 
 模型路由按功能 Agent 选择：正文走 translator（operation=translate.batch 或
-translate.single）；附属章旁路走 light-translator（operation=translate.back_matter，
-由调用方显式传 agent）。operation 只作用量/调试归因，不参与路由。
+translate.single）；operation 只作用量/调试归因，不参与路由。
 """
 
 from dataclasses import dataclass

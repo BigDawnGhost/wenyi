@@ -20,7 +20,7 @@ from trans_novel.model_profiles import parse_model_selection, parse_provider_mod
 _TRANSLATOR_AGENTS = frozenset({"translator"})
 _ANALYST_AGENTS = frozenset({"analyst"})
 _EDITOR_AGENTS = frozenset({"editor"})
-_FAST_AGENTS = frozenset({"preparer", "light-translator"})
+_FAST_AGENTS = frozenset({"preparer"})
 
 
 class AgentRouter(LLMClient):

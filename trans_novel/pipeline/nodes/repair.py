@@ -44,6 +44,17 @@ class RepairNode:
 
     def execute(self, request: NodeRequest) -> NodeOutcome:
         store = request.store
+        state = store.load_state()
+        for chapter in state.chapters:
+            if chapter.processing is None or chapter.processing.action != "preserve":
+                continue
+            progress = store.load_progress(chapter.index)
+            pending_repairs = any(
+                issue.status in {"pending", "repairing"}
+                for issue in progress.repair_ledger.values()
+            )
+            if progress.pending_polish or progress.lint_issues or pending_repairs:
+                raise ValueError(f"第{chapter.index}章已标记保留原文，但仍有待处理的译文工作")
         if request.progress:
             request.progress(0, 0, "修复译文问题…")
         initial = self._initial_issues(request)
@@ -125,15 +136,24 @@ class RepairNode:
         )
 
     def _initial_issues(self, request: NodeRequest) -> dict[int, list[dict[str, Any]]]:
+        state = request.store.load_state()
+        preserved = {
+            chapter.index
+            for chapter in state.chapters
+            if chapter.processing is not None and chapter.processing.action == "preserve"
+        }
         payload = request.artifacts.get("deterministic_qa", {})
         raw = payload.get("issues") if isinstance(payload, dict) else None
         if raw is None:
-            state = request.store.load_state()
             node = state.nodes.get("deterministic_qa")
             raw = (node.output or {}).get("issues", []) if node else []
         grouped: dict[int, list[dict[str, Any]]] = {}
         for item in raw or []:
-            if isinstance(item, dict) and isinstance(item.get("chapter"), int):
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("chapter"), int)
+                and item["chapter"] not in preserved
+            ):
                 grouped.setdefault(item["chapter"], []).append(item)
         return grouped or self._book_issues(request.store)
 
@@ -143,6 +163,8 @@ class RepairNode:
         result: dict[int, list[LintIssue]] = {}
         for chapter_meta in state.chapters:
             ci = chapter_meta.index
+            if chapter_meta.processing is not None and chapter_meta.processing.action == "preserve":
+                continue
             chapter = store.load_chapter(ci)
             text_segments = chapter.text_segments
             terms = [term for term in self.glossary.all_terms() if getattr(term, "locked", 0)]
@@ -212,6 +234,8 @@ class RepairNode:
 
     def _attempt(self, ci, target_issue, record, store, request) -> bool:
         chapter = store.load_chapter(ci)
+        if chapter.preserve_source:
+            raise ValueError(f"第{ci}章已标记保留原文，不能执行译文修复")
         segments = chapter.text_segments
         segment = next((s for s in segments if s.index == target_issue.index), None)
         if segment is None:

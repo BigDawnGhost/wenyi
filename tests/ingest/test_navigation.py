@@ -11,6 +11,7 @@ from tests.fixtures.books import (
     write_nested_toc_epub,
 )
 from trans_novel.epub.navigation import parse_toc_entries, resolve_epub_href
+from trans_novel.ingest import Chapter, ChapterProcessing, Segment, preserved_toc_entry_ids
 from trans_novel.ingest.segmenter import (
     load_document,
 )
@@ -150,6 +151,108 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(resolved.resource_href, "OEBPS/text/A+B C.xhtml")
         self.assertEqual(resolved.fragment, "section 1")
         self.assertEqual(resolved.target_key, "OEBPS/text/A+B C.xhtml#section 1")
+
+    def test_preserved_toc_ids_cover_all_navigation_surfaces_and_safe_groups(self):
+        preserved = ChapterProcessing(
+            action="preserve",
+            review_required=False,
+            reason="references",
+            source_sha256="source",
+            strategy_version="chapter_semantics_v1",
+        )
+        chapters = [
+            Chapter(
+                index=0,
+                segments=[
+                    Segment(index=0, source="A", resource_href="text.xhtml", anchor="a"),
+                    Segment(index=1, source="B", resource_href="text.xhtml", anchor="b"),
+                ],
+                processing=preserved,
+                meta={"toc_entry_id": "legacy"},
+            ),
+            Chapter(
+                index=1,
+                segments=[Segment(index=0, source="C", resource_href="text.xhtml", anchor="c")],
+            ),
+        ]
+        entries = [
+            {
+                "entry_id": "nav-a",
+                "toc_path": "nav",
+                "node_index": 0,
+                "raw_href": "text.xhtml#a",
+                "boundary_position": 0,
+            },
+            {
+                "entry_id": "nav-b",
+                "toc_path": "nav",
+                "node_index": 1,
+                "parent_index": 0,
+                "raw_href": "text.xhtml#b",
+                "boundary_position": 1,
+            },
+            {
+                "entry_id": "ncx-a",
+                "toc_path": "ncx",
+                "node_index": 0,
+                "raw_href": "text.xhtml#a",
+                "segment_anchor": "a",
+                "resource_href": "text.xhtml",
+            },
+            {
+                "entry_id": "normal",
+                "toc_path": "nav",
+                "node_index": 2,
+                "raw_href": "text.xhtml#c",
+                "boundary_position": 2,
+            },
+            {"entry_id": "preserved-group", "toc_path": "groups", "node_index": 0, "raw_href": ""},
+            {
+                "entry_id": "preserved-child",
+                "toc_path": "groups",
+                "node_index": 1,
+                "parent_index": 0,
+                "raw_href": "text.xhtml#b",
+                "boundary_position": 1,
+            },
+            {"entry_id": "mixed-group", "toc_path": "groups", "node_index": 2, "raw_href": ""},
+            {
+                "entry_id": "mixed-preserved",
+                "toc_path": "groups",
+                "node_index": 3,
+                "parent_index": 2,
+                "raw_href": "text.xhtml#b",
+                "boundary_position": 1,
+            },
+            {
+                "entry_id": "mixed-normal",
+                "toc_path": "groups",
+                "node_index": 4,
+                "parent_index": 2,
+                "raw_href": "text.xhtml#c",
+                "boundary_position": 2,
+            },
+            {
+                "entry_id": "external",
+                "raw_href": "https://example.test",
+                "boundary_position": 0,
+                "external": True,
+            },
+            {"entry_id": "legacy", "raw_href": "missing.xhtml"},
+        ]
+
+        self.assertEqual(
+            preserved_toc_entry_ids(chapters, entries),
+            {
+                "nav-a",
+                "nav-b",
+                "ncx-a",
+                "preserved-group",
+                "preserved-child",
+                "mixed-preserved",
+                "legacy",
+            },
+        )
 
     # ── schema-4 EPUB extraction and chapter-boundary behavior ─────────────
 

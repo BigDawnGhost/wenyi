@@ -1,4 +1,4 @@
-"""Polisher behavior tests (offline)."""
+"""Polisher batch protocol tests (offline)."""
 
 from __future__ import annotations
 
@@ -6,138 +6,217 @@ import json
 import unittest
 
 from tests.fixtures.fake_llm import fake_llm_dict
-from trans_novel.agents.polisher import Polisher
+from trans_novel.agents.polisher import Polisher, PolishResult
 from trans_novel.config import Config
+from trans_novel.glossary.store import GlossaryTerm
 from trans_novel.llm import FakeClient
 
 
-def _cfg():
+def _cfg(*, retries: int = 1) -> Config:
     config = Config.from_dict({"llm": fake_llm_dict()})
     config.source_lang = "ja"
+    config.pipeline.protocol_retry_limit = retries
     return config
 
 
+def _response(items: list[dict]) -> str:
+    return json.dumps({"polished": items}, ensure_ascii=False)
+
+
+def _prompt_items(messages: list[dict]) -> list[dict]:
+    user = messages[-1]["content"]
+    payload = user.split("【待润色段落（JSON）】\n", 1)[1].split("\n\n", 1)[0]
+    return json.loads(payload)
+
+
 class TestPolisher(unittest.TestCase):
-    def test_polishes_each_segment_independently(self):
-        responses = iter(["润色甲", "润色乙"])
+    def test_batches_reordered_output_and_preserves_skipped_id_gap(self):
         client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps(
-                {"polished": [next(responses)]}, ensure_ascii=False
-            )
+            handler=lambda *_: _response([{"id": 2, "text": "润色丙"}, {"id": 0, "text": "润色甲"}])
         )
 
-        out = Polisher(client, _cfg()).polish(["甲", "乙"], ["a", "b"])
+        result = Polisher(client, _cfg()).polish(
+            ["甲", "错误字面量", "丙"],
+            ["Alpha", "245", "Gamma"],
+            style="简洁",
+            source_context="前文原文",
+            chapter_title="原文标题",
+        )
 
-        self.assertEqual(out, ["润色甲", "润色乙"])
-        self.assertEqual([call["operation"] for call in client.calls], ["polish.segment"] * 2)
-        self.assertTrue(all(call["agent"] == "editor" for call in client.calls))
-
-    def test_machine_and_page_literals_restore_source_and_skip_editor(self):
-        client = FakeClient(handler=lambda *args: self.fail("machine literals must not call LLM"))
-
-        sources = ["{var=a--b}", "245", "258–59", "xix", "xxvi", "xix–xx"]
         self.assertEqual(
-            Polisher(client, _cfg()).polish(["坏译文"] * len(sources), sources, strict=True),
-            sources,
+            result,
+            PolishResult(
+                ["润色甲", "245", "润色丙"],
+                {},
+                {0: "润色甲", 2: "润色丙"},
+            ),
         )
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0]["operation"], "polish.batch")
+        self.assertEqual(client.calls[0]["agent"], "editor")
+        self.assertEqual(
+            _prompt_items(client.calls[0]["messages"]),
+            [
+                {"id": 0, "source": "Alpha", "target": "甲"},
+                {"id": 2, "source": "Gamma", "target": "丙"},
+            ],
+        )
+
+    def test_prompt_system_is_batch_size_independent(self):
+        def echo(messages, *_):
+            return _response(
+                [
+                    {"id": item["id"], "text": item["target"] + "润"}
+                    for item in _prompt_items(messages)
+                ]
+            )
+
+        client = FakeClient(handler=echo)
+        polisher = Polisher(client, _cfg())
+        polisher.polish(["甲"], ["Alpha"])
+        polisher.polish(["甲", "乙"], ["Alpha", "Beta"])
+
+        self.assertEqual(
+            client.calls[0]["messages"][0]["content"],
+            client.calls[1]["messages"][0]["content"],
+        )
+
+    def test_all_literals_bypass_editor_and_restore_sources(self):
+        client = FakeClient(handler=lambda *_: self.fail("literals must not call LLM"))
+        sources = ["{var=a--b}", "245", "258–59", "xix", "xxvi", "xix–xx"]
+
+        result = Polisher(client, _cfg()).polish(["坏译文"] * len(sources), sources, strict=True)
+
+        self.assertEqual(result, PolishResult(sources, {}))
         self.assertEqual(client.calls, [])
 
-    def test_polish_uses_plain_text_contract(self):
+    def test_length_mismatch_fails_before_request(self):
+        client = FakeClient(handler=lambda *_: self.fail("invalid input must not call LLM"))
+
+        with self.assertRaisesRegex(ValueError, "polish source/target count mismatch"):
+            Polisher(client, _cfg()).polish(["甲"], ["Alpha", "Beta"])
+        self.assertEqual(client.calls, [])
+
+    def test_non_strict_partial_response_keeps_valid_items(self):
         client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps({"polished": ["润甲乙"]}, ensure_ascii=False)
-        )
-        polished = Polisher(client, _cfg()).polish(
-            ["甲乙"],
-            ["Alpha Beta"],
-            strict=True,
-        )
-        self.assertEqual(polished, ["润甲乙"])
-        self.assertNotIn("EPUB", client.calls[0]["messages"][-1]["content"])
-
-    def test_invalid_non_strict_item_keeps_only_its_original(self):
-        responses = iter([{"polished": []}, {"polished": ["润色乙"]}])
-        client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps(next(responses), ensure_ascii=False)
+            handler=lambda *_: _response([{"id": 0, "text": " 润色甲 "}, {"id": 1, "text": "  "}])
         )
 
-        out = Polisher(client, _cfg()).polish(["甲", "乙"], ["a", "b"])
+        result = Polisher(client, _cfg()).polish(["甲", "乙", "丙"], ["Alpha", "Beta", "Gamma"])
 
-        self.assertEqual(out, ["甲", "润色乙"])
+        self.assertEqual(result.texts, ["润色甲", "乙", "丙"])
+        self.assertEqual(result.proposals, {0: " 润色甲 "})
+        self.assertEqual(
+            result.fallback_reasons,
+            {1: "polish_item_invalid", 2: "polish_item_missing"},
+        )
+        self.assertEqual(len(client.calls), 1)
 
-    def test_invalid_strict_item_keeps_original_and_continues(self):
+    def test_request_terms_are_detached_before_model_call(self):
+        term = GlossaryTerm(
+            source="Alice",
+            target="爱丽丝",
+            aliases=["Al"],
+            confidence="high",
+            locked=True,
+        )
+
+        def mutate_after_prompt(*_):
+            term.target = "艾丽斯"
+            term.aliases.append("A")
+            return _response([{"id": 0, "text": "润色"}])
+
+        result = Polisher(FakeClient(handler=mutate_after_prompt), _cfg()).polish(
+            ["译文"], ["Alice"], glossary_terms=[term]
+        )
+
+        self.assertEqual(result.locked_terms[0].target, "爱丽丝")
+        self.assertEqual(result.locked_terms[0].aliases, ["Al"])
+        self.assertIsNot(result.locked_terms[0], term)
+
+    def test_strict_retries_entire_batch_after_partial_response(self):
         responses = iter(
             [
-                {"polished": ["润色甲"]},
-                {"polished": []},
-                {"polished": []},
-                {"polished": []},
-                {"polished": ["润色丙"]},
+                _response([{"id": 0, "text": "首次甲"}]),
+                _response([{"id": 1, "text": "最终乙"}, {"id": 0, "text": "最终甲"}]),
             ]
         )
-        client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps(next(responses), ensure_ascii=False)
+        client = FakeClient(handler=lambda *_: next(responses))
+
+        result = Polisher(client, _cfg(retries=1)).polish(
+            ["甲", "乙"], ["Alpha", "Beta"], strict=True
         )
 
         self.assertEqual(
-            Polisher(client, _cfg()).polish(["甲", "乙", "丙"], ["a", "b", "c"], strict=True),
-            ["润色甲", "乙", "润色丙"],
-        )
-        self.assertEqual(len(client.calls), 5)
-
-    def test_invalid_strict_item_retries(self):
-        responses = iter([{"polished": []}, {"polished": ["润色甲"]}])
-        client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps(next(responses), ensure_ascii=False)
-        )
-
-        self.assertEqual(
-            Polisher(client, _cfg()).polish(["甲"], ["a"], strict=True),
-            ["润色甲"],
+            result,
+            PolishResult(["最终甲", "最终乙"], {}, {0: "最终甲", 1: "最终乙"}),
         )
         self.assertEqual(len(client.calls), 2)
-
-    def test_each_prompt_contains_only_its_source(self):
-        client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps({"polished": ["润色"]}, ensure_ascii=False)
+        self.assertEqual(
+            _prompt_items(client.calls[0]["messages"]),
+            _prompt_items(client.calls[1]["messages"]),
         )
 
-        Polisher(client, _cfg()).polish(["甲", "乙"], sources=["ALPHA_SRC", "BETA_SRC"], style="S")
-
-        first = client.calls[0]["messages"][-1]["content"]
-        second = client.calls[1]["messages"][-1]["content"]
-        self.assertIn("ALPHA_SRC", first)
-        self.assertNotIn("BETA_SRC", first)
-        self.assertIn("BETA_SRC", second)
-        self.assertNotIn("ALPHA_SRC", second)
-
-    def test_source_context_is_segment_local_and_does_not_read_neighbor_targets(self):
-        client = FakeClient(
-            handler=lambda m, a, o, j: json.dumps({"polished": ["润色"]}, ensure_ascii=False)
+    def test_strict_exhaustion_uses_only_last_partial_attempt(self):
+        responses = iter(
+            [
+                _response([{"id": 0, "text": "早先甲"}]),
+                _response([{"id": 1, "text": "最终乙"}]),
+            ]
         )
-        Polisher(client, _cfg()).polish(
-            ["TARGET_ALPHA", "TARGET_BETA"],
-            ["SOURCE_ALPHA", "SOURCE_BETA"],
-            source_contexts=("PRECEDING_FIRST", "PRECEDING_SECOND"),
-            chapter_title="ORIGINAL_CHAPTER",
-        )
-        first, second = [call["messages"][-1]["content"] for call in client.calls]
-        self.assertIn("PRECEDING_FIRST", first)
-        self.assertNotIn("PRECEDING_SECOND", first)
-        self.assertNotIn("TARGET_BETA", first)
-        self.assertIn("PRECEDING_SECOND", second)
-        self.assertNotIn("PRECEDING_FIRST", second)
-        self.assertNotIn("TARGET_ALPHA", second)
-        for prompt in (first, second):
-            self.assertIn("ORIGINAL_CHAPTER", prompt)
-            self.assertNotIn("{source_context}", prompt)
-            self.assertNotIn("{chapter_title}", prompt)
+        client = FakeClient(handler=lambda *_: next(responses))
 
-    def test_source_context_count_mismatch_fails_before_requests(self):
-        client = FakeClient(handler=lambda *args: self.fail("must validate before requests"))
-        with self.assertRaises(ValueError):
-            Polisher(client, _cfg()).polish(
-                ["TARGET_ALPHA", "TARGET_BETA"],
-                ["SOURCE_ALPHA", "SOURCE_BETA"],
-                source_contexts=("ONE_CONTEXT",),
-            )
-        self.assertEqual(client.calls, [])
+        result = Polisher(client, _cfg(retries=1)).polish(
+            ["甲", "乙"], ["Alpha", "Beta"], strict=True
+        )
+
+        self.assertEqual(result.texts, ["甲", "最终乙"])
+        self.assertEqual(result.fallback_reasons, {0: "polish_item_missing"})
+        self.assertEqual(result.proposals, {1: "最终乙"})
+        self.assertEqual(len(client.calls), 2)
+
+    def test_invalid_final_attempt_erases_earlier_partial(self):
+        responses = iter([_response([{"id": 0, "text": "早先甲"}]), "not json"])
+        client = FakeClient(handler=lambda *_: next(responses))
+
+        result = Polisher(client, _cfg(retries=1)).polish(
+            ["甲", "乙"], ["Alpha", "Beta"], strict=True
+        )
+
+        self.assertEqual(result.texts, ["甲", "乙"])
+        self.assertEqual(
+            result.fallback_reasons,
+            {0: "polish_batch_invalid", 1: "polish_batch_invalid"},
+        )
+        self.assertEqual(result.proposals, {})
+        self.assertEqual(len(client.calls), 2)
+
+    def test_batch_shape_and_id_violations_reject_every_eligible_item(self):
+        invalid_responses = [
+            {"polished": [{"id": 0, "text": "甲"}, {"id": 0, "text": "重复"}]},
+            {"polished": [{"id": 3, "text": "未知"}]},
+            {"polished": [{"id": True, "text": "布尔"}]},
+            {"polished": ["不是对象"]},
+            {"polished": "不是列表"},
+            [],
+        ]
+        for response in invalid_responses:
+            with self.subTest(response=response):
+                client = FakeClient(handler=lambda *_, value=response: json.dumps(value))
+                result = Polisher(client, _cfg()).polish(["甲", "乙"], ["Alpha", "Beta"])
+                self.assertEqual(result.texts, ["甲", "乙"])
+                self.assertEqual(
+                    result.fallback_reasons,
+                    {0: "polish_batch_invalid", 1: "polish_batch_invalid"},
+                )
+                self.assertEqual(len(client.calls), 1)
+
+    def test_provider_and_program_errors_propagate(self):
+        for strict in (False, True):
+            with self.subTest(strict=strict):
+                client = FakeClient(
+                    handler=lambda *_: (_ for _ in ()).throw(RuntimeError("provider failed"))
+                )
+                with self.assertRaisesRegex(RuntimeError, "provider failed"):
+                    Polisher(client, _cfg()).polish(["甲"], ["Alpha"], strict=strict)
+                self.assertEqual(len(client.calls), 1)

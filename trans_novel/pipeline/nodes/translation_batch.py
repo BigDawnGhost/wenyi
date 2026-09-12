@@ -106,22 +106,6 @@ def translate_batch(
         return safe_batch_fallback(batch)
 
 
-def translate_back_matter_batch(translator, batch) -> tuple[list[object], int]:
-    """Translate one light back-matter batch with its dedicated prompt."""
-    try:
-        result = translator.translate_batch(
-            [s.source for s in batch],
-            agent="light-translator",
-            operation="translate.back_matter",
-            glossary_terms=[],
-            style="",
-            context="",
-        )
-        return align_epub_translations(batch, list(result.translations)), result.request_count
-    except LLM_FALLBACK_ERRORS:
-        return safe_batch_fallback(batch)
-
-
 def extract_batch_glossary(
     extractor, glossary, store, chapter: int, start_index: int, batch, existing_terms=None
 ):
@@ -147,6 +131,5 @@ __all__ = [
     "align_epub_translations",
     "extract_batch_glossary",
     "safe_batch_fallback",
-    "translate_back_matter_batch",
     "translate_batch",
 ]

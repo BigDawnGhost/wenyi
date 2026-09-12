@@ -79,6 +79,27 @@ def _content_model(root: ET.Element | None, opf_path: str, archive: set[str]) ->
         item["path"]: "ncx" if item["media"] == NCX_MEDIA else "nav"
         for item in nav_items + ordered_ncx
     }
+    guide_entries = []
+    guide_references = (
+        element
+        for guide in elements
+        if _local_name(guide.tag) == "guide"
+        for element in guide.iter()
+        if _local_name(element.tag) == "reference"
+    )
+    for element in guide_references:
+        raw_href = element.attrib.get("href", "").strip()
+        resolved_href = _manifest_path(opf_path, raw_href)
+        if resolved_href is None:
+            continue
+        guide_entries.append(
+            {
+                "type": element.attrib.get("type", "").strip(),
+                "title": element.attrib.get("title", "").strip(),
+                "raw_href": raw_href,
+                "resource_href": resolved_href,
+            }
+        )
     return {
         "title": next(
             (e.text.strip() for e in elements if _local_name(e.tag) == "title" and e.text), ""
@@ -96,6 +117,7 @@ def _content_model(root: ET.Element | None, opf_path: str, archive: set[str]) ->
         ),
         "toc_paths": list(toc_kinds),
         "toc_kinds": toc_kinds,
+        "guide_entries": guide_entries,
     }
 
 

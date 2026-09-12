@@ -49,7 +49,7 @@ class _InstrumentedFakeClient(FakeClient):
     def complete(self, messages, *, json_mode=False, max_tokens=None, stage=None, agent, operation):
         response = super().complete(messages, json_mode=json_mode, max_tokens=max_tokens, stage=stage, agent=agent, operation=operation)
         self._attempts += 1
-        model_ref = self.models[1] if agent == 'analyst' else self.models[2] if agent == 'editor' else self.models[3] if agent in {'preparer', 'light-translator'} else self.models[0]
+        model_ref = self.models[1] if agent == 'analyst' else self.models[2] if agent == 'editor' else self.models[3] if agent == 'preparer' else self.models[0]
         provider, model = parse_provider_model(model_ref)
         selection = parse_model_selection(model)
         started = '2026-01-01T00:00:00.000Z'
@@ -234,21 +234,32 @@ class TestBenchmarkIntegrationPreflightTelemetry(unittest.TestCase):
         self.assertEqual(evidence['translate_call_count'], 6)
         self.assertEqual(evidence['model_mismatch_count'], 5)
 
-    def test_telemetry_accepts_only_light_translator_back_matter(self):
+    def test_telemetry_accepts_current_and_historical_polish_operations(self):
+        candidate = Candidate.model_validate({'candidate_id': 'candidate-a', 'translator_model': 'fake/model:off', 'analyst_model': 'fake/model:off', 'editor_model': 'fake/model:off', 'fast_model': 'fake/model:off', 'pipeline_variant': 'polish'})
+        candidate_spec = CandidateSpec.model_validate({'schema_version': 3, 'benchmark_id': 'phase9', 'temperature': 0.1, 'seed': None, 'replicates': 1, 'candidates': [candidate.model_dump()]})
+        records = [_telemetry_record(operation, agent='editor', index=index) for index, operation in enumerate(('polish.batch', 'polish.segment'), start=1)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'telemetry.jsonl'
+            path.write_text(''.join(json.dumps(record.model_dump()) + '\n' for record in records), encoding='utf-8')
+            evidence = telemetry_evidence(path, candidate=candidate, candidate_spec=candidate_spec)
+        self.assertTrue(evidence['valid'])
+        self.assertEqual(evidence['model_mismatch_count'], 0)
+
+    def test_telemetry_accepts_chapter_classification_on_analyst(self):
         candidate = Candidate.model_validate({'candidate_id': 'candidate-a', 'translator_model': 'fake/model:off', 'analyst_model': 'fake/model:off', 'editor_model': 'fake/model:off', 'fast_model': 'fake/model:off', 'pipeline_variant': 'minimal'})
         candidate_spec = CandidateSpec.model_validate({'schema_version': 3, 'benchmark_id': 'phase9', 'temperature': 0.1, 'seed': None, 'replicates': 1, 'candidates': [candidate.model_dump()]})
-        legitimate = _telemetry_record('translate.back_matter', agent='light-translator', index=1)
-        ordinary_batch = _telemetry_record('translate.batch', agent='light-translator', index=2)
+        legitimate = _telemetry_record('chapter.classify', agent='analyst', index=1)
+        wrong_agent = _telemetry_record('chapter.classify', agent='preparer', index=2)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'telemetry.jsonl'
             path.write_text(json.dumps(legitimate.model_dump()) + '\n', encoding='utf-8')
             legitimate_evidence = telemetry_evidence(path, candidate=candidate, candidate_spec=candidate_spec)
-            path.write_text(''.join(json.dumps(record.model_dump()) + '\n' for record in (legitimate, ordinary_batch)), encoding='utf-8')
+            path.write_text(''.join(json.dumps(record.model_dump()) + '\n' for record in (legitimate, wrong_agent)), encoding='utf-8')
             mixed_evidence = telemetry_evidence(path, candidate=candidate, candidate_spec=candidate_spec)
         self.assertEqual(legitimate_evidence['model_mismatch_count'], 0)
         self.assertEqual(legitimate_evidence['translate_call_count'], 0)
         self.assertEqual(mixed_evidence['model_mismatch_count'], 1)
-        self.assertEqual(mixed_evidence['translate_call_count'], 1)
+        self.assertEqual(mixed_evidence['translate_call_count'], 0)
 
     def test_translator_call_count_counts_first_attempts_across_clients(self):
         first_client_attempt = _telemetry_record('translate.batch', index=1)

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from trans_novel.config import Config
+from trans_novel.epub.slots import source_passthrough_transport
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.pipeline.contracts import BatchCommitHook, NodeOutcome, NodeRequest
-from trans_novel.pipeline.nodes.backmatter import translate_back_matter
 from trans_novel.pipeline.nodes.common import (
     chapter_term_snapshot,
     normalize_batch,
@@ -20,12 +22,8 @@ from trans_novel.pipeline.nodes.translation_batch import (
     translate_batch,
 )
 from trans_novel.pipeline.planning import (
-    back_matter_mode,
-    back_matter_translate_input_fingerprint,
-    fast_translation_model_profile,
     frozen_input_fingerprint,
-    is_back_matter,
-    is_back_matter_upgrade,
+    preserve_source_input_fingerprint,
     translate_input_fingerprint,
     translation_model_profile,
     translation_structure_fingerprint_part,
@@ -35,7 +33,6 @@ from trans_novel.pipeline.state import (
     NODE_TRANSLATE,
     SCOPE_CHAPTER,
     STATUS_DONE,
-    STATUS_PENDING,
     PolishBatch,
     begin_translate,
     clear,
@@ -44,7 +41,7 @@ from trans_novel.pipeline.state import (
 
 
 class TranslateNode:
-    """逐章批翻译：滚动上下文、lint 清单、检查点落盘、附属章旁路。"""
+    """逐章处理：语义保留原文，或执行批翻译与检查点。"""
 
     node_id = NODE_TRANSLATE
     scope = SCOPE_CHAPTER
@@ -79,33 +76,52 @@ class TranslateNode:
         store = request.store
         chapter = store.load_chapter(ci)
         text_segs = chapter.text_segments
-        bm_mode = back_matter_mode(self.config.pipeline, chapter.title, ci, request.total_chapters)
         if not text_segs:
             store.set_chapter_status(ci, STATUS_DONE)
             store.log_event("chapter_skipped", chapter=ci, reason="empty")
-            fp = self._fingerprint("", store, bm_mode, ci, request.shared)
+            fp = self._fingerprint("", store, chapter.processing, ci, request.shared)
             return NodeOutcome(chapter_finalized=True, fingerprint=fp)
-        if store.chapter_status(ci) == STATUS_DONE:
-            self._reopen_if_upgraded(ci, chapter, store, request.total_chapters)
-        if bm_mode:
-            return translate_back_matter(
-                bm_mode,
-                ci,
-                chapter,
-                text_segs,
-                store,
-                request,
-                translator=self.translator,
-                config=self.config,
-                fingerprint=self._fingerprint,
-            )
+        if chapter.preserve_source:
+            return self._preserve_source(chapter, text_segs, store, request)
         return self._translate_regular(chapter, text_segs, store, request)
+
+    def _preserve_source(self, chapter, text_segs, store, request) -> NodeOutcome:
+        progress = store.load_progress(request.ci)
+        if progress.pending_polish:
+            raise ValueError(f"第{request.ci}章已标记保留原文，但仍有待润色译文")
+        for segment in text_segs:
+            segment.assign_translation(
+                segment.source
+                if segment.epub_state is None
+                else source_passthrough_transport(segment.epub_state)
+            )
+        progress.pending_polish = []
+        progress.lint_issues = []
+        store.save_chapter(chapter)
+        store.save_progress(request.ci, progress)
+        request.shared.segments_done += len(text_segs)
+        if request.progress:
+            request.progress(
+                request.shared.segments_done,
+                request.shared.segments_total,
+                f"第{request.ci}章 {chapter.title}",
+            )
+        store.log_event(
+            "chapter_source_preserved",
+            chapter=request.ci,
+            reason=chapter.processing.reason,
+            source_sha256=chapter.processing.source_sha256,
+        )
+        source_text = "\n".join(segment.source for segment in text_segs)
+        return NodeOutcome(
+            fingerprint=self._fingerprint(
+                source_text, store, chapter.processing, request.ci, request.shared
+            )
+        )
 
     def _translate_regular(self, chapter, text_segs, store, request) -> NodeOutcome:
         ci, config = request.ci, self.config
         chapter_progress = store.load_progress(ci)
-        bm = is_back_matter(chapter.title, index=ci, total=request.total_chapters)
-        chapter_progress.back_matter_mode = None
         glossary, context, style = self.glossary, self.rolling_context, self.style_brief
         seed_chapter_context(context, store, ci)
         batches = resume_batches(text_segs, config.segment.max_chars_per_batch)
@@ -119,13 +135,12 @@ class TranslateNode:
             chapter_progress,
             store,
             request,
-            bm,
             glossary,
             context,
             style,
             label,
         )
-        if not bm and config.pipeline.inflight_glossary and not config.pipeline.polish:
+        if config.pipeline.inflight_glossary and not config.pipeline.polish:
             src_text, tgt_text = (
                 "\n".join(s.source for s in text_segs),
                 "\n".join(s.target or "" for s in text_segs),
@@ -136,7 +151,11 @@ class TranslateNode:
         store.save_progress(ci, chapter_progress)
         store.save_context(context.to_dict())
         fp = self._fingerprint(
-            "\n".join(s.source for s in text_segs), store, None, ci, request.shared
+            "\n".join(s.source for s in text_segs),
+            store,
+            chapter.processing,
+            ci,
+            request.shared,
         )
         return NodeOutcome(fingerprint=fp)
 
@@ -148,7 +167,6 @@ class TranslateNode:
         chapter_progress,
         store,
         request,
-        bm,
         glossary,
         context,
         style,
@@ -165,7 +183,6 @@ class TranslateNode:
                     chapter_progress,
                     store,
                     request,
-                    bm,
                     glossary,
                     context,
                     label,
@@ -181,7 +198,6 @@ class TranslateNode:
                     chapter_progress,
                     store,
                     request,
-                    bm,
                     glossary,
                     context,
                     style,
@@ -200,7 +216,6 @@ class TranslateNode:
         chapter_progress,
         store,
         request,
-        bm,
         glossary,
         context,
         label,
@@ -210,7 +225,7 @@ class TranslateNode:
     ):
         context.add_targets([s.target for s in batch])
         summary = None
-        if not bm and self.config.pipeline.inflight_glossary:
+        if self.config.pipeline.inflight_glossary:
             summary, changed = extract_batch_glossary(
                 self.extractor, glossary, store, request.ci, seg_base, batch
             )
@@ -249,7 +264,6 @@ class TranslateNode:
         chapter_progress,
         store,
         request,
-        bm,
         glossary,
         context,
         style,
@@ -315,20 +329,22 @@ class TranslateNode:
         )
         context.add_targets(event_targets)
         if self.config.pipeline.polish:
-            request.shared.polish_futures[(request.ci, batch_start)] = request.executor.submit(
+            request_terms = tuple(deepcopy(term_snapshot))
+            future = request.executor.submit(
                 self.polisher.polish,
                 [s.target or "" for s in batch],
                 [s.source for s in batch],
-                glossary_terms=list(term_snapshot),
+                glossary_terms=request_terms,
                 style=style,
-                source_contexts=tuple(
-                    source_context_before(text_segs, index)
-                    for index in range(batch_start, batch_start + len(batch))
-                ),
+                source_context=source_context_before(text_segs, batch_start),
                 chapter_title=chapter.title,
                 strict=True,
             )
-        if not bm and self.config.pipeline.inflight_glossary:
+            request.shared.polish_futures[(request.ci, batch_start)] = (
+                future,
+                request_terms,
+            )
+        if self.config.pipeline.inflight_glossary:
             batch_src = "\n".join(s.source for s in batch)
             existing = GlossaryStore.terms_in(term_snapshot, batch_src)
             _summary, changed = extract_batch_glossary(
@@ -383,7 +399,7 @@ class TranslateNode:
         self,
         source_text: str,
         store,
-        bm_mode: str | None,
+        processing,
         chapter_index: int | None = None,
         shared=None,
     ) -> str:
@@ -392,6 +408,8 @@ class TranslateNode:
             source_text += "\n" + translation_structure_fingerprint_part(
                 store.load_chapter(chapter_index).text_segments
             )
+        if processing is not None and processing.action == "preserve":
+            return preserve_source_input_fingerprint(source_text, processing)
         if self.frozen_book is not None and self.frozen_preparation is not None:
             return frozen_input_fingerprint(
                 self.frozen_preparation.preparation_sha256,
@@ -399,14 +417,7 @@ class TranslateNode:
                 (self.frozen_book.book_id, shared.frozen_chapter_index(chapter_index)),
                 source_text,
             )
-        if (state := store.load_state()) and bm_mode:
-            return back_matter_translate_input_fingerprint(
-                source_text,
-                state.identity.source_lang or self.config.source_lang,
-                state.identity.target_lang or self.config.target_lang,
-                punctuation_normalize=self.config.punctuation_normalize,
-                model=fast_translation_model_profile(self.config),
-            )
+        state = store.load_state()
         return translate_input_fingerprint(
             source_text,
             state.identity.source_lang or self.config.source_lang,
@@ -417,22 +428,8 @@ class TranslateNode:
             glossary_scope=self.config.pipeline.glossary_scope,
             single_segment_translation=self.config.pipeline.single_segment_translation,
             model=translation_model_profile(self.config),
+            processing=processing,
         )
-
-    def _reopen_if_upgraded(self, ci: int, chapter, store, n_ch: int) -> None:
-        progress = store.load_progress(ci)
-        prev = progress.back_matter_mode
-        current = back_matter_mode(self.config.pipeline, chapter.title, ci, n_ch) or "full"
-        if not is_back_matter_upgrade(prev, current):
-            return
-        for segment in chapter.segments:
-            segment.reset_translation()
-        progress.back_matter_mode = None
-        progress.pending_polish = []
-        progress.lint_issues = []
-        store.save_progress(ci, progress)
-        store.save_chapter(chapter)
-        store.set_chapter_status(ci, STATUS_PENDING)
 
 
 __all__ = ["TranslateNode"]

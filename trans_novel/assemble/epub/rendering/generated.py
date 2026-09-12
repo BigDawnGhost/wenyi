@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import zipfile
+from html import escape
 
 from lxml import etree
 
@@ -27,7 +28,11 @@ _IMAGE_EXTENSION_BY_TYPE = {
 }
 
 
-def _inject_generated_bilingual_style(out_path: str, chapter_filenames: set[str]) -> None:
+def _inject_generated_bilingual_style(
+    out_path: str, chapter_filenames: dict[str, str], chapters, bilingual: bool
+) -> None:
+    if not bilingual or all(chapter.preserve_source for _, chapter in chapters):
+        return
     """Add bilingual style to generated chapter documents."""
     with zipfile.ZipFile(out_path, "r") as zin:
         infos = zin.infolist()
@@ -97,20 +102,27 @@ def build_epub_from_chapters(
     order: str = "target_first",
 ) -> str:
     """Generate EPUB 3 from translated chapters and restore FB2 images."""
-    from html import escape
-
     from ebooklib import epub
 
     manifest = store.load_manifest()
     title = manifest.get("title", "translated")
-    lang = epub_language(manifest.get("target_lang", "zh"))
+    chapters, target_lang, source_lang = (
+        [
+            (chapter_meta, store.load_chapter(chapter_meta["index"]))
+            for chapter_meta in manifest["chapters"]
+        ],
+        epub_language(manifest.get("target_lang", "zh")),
+        str(manifest.get("source_lang") or ""),
+    )
+    all_preserved = chapters and all(chapter.preserve_source for _, chapter in chapters)
+    lang = source_lang if all_preserved else target_lang
     book = epub.EpubBook()
     book.set_identifier(f"trans-novel-{title}")
     book.set_title(title)
     book.set_language(lang)
     spine: list = ["nav"]
     toc: list = []
-    chapter_filenames: set[str] = set()
+    chapter_filenames: dict[str, str] = {}
     image_hrefs: dict[str, str] = {}
     raw_meta = manifest.get("meta")
     manifest_meta = raw_meta if isinstance(raw_meta, dict) else {}
@@ -140,9 +152,11 @@ def build_epub_from_chapters(
                         content=payload,
                     )
                 )
-    for chapter_meta in manifest["chapters"]:
-        chapter = store.load_chapter(chapter_meta["index"])
-        chapter_title = _ch_title(chapter_meta) or chapter.title
+    for chapter_meta, chapter in chapters:
+        chapter_lang = source_lang if chapter.preserve_source and source_lang else target_lang
+        chapter_title = (
+            chapter.title if chapter.preserve_source else _ch_title(chapter_meta) or chapter.title
+        )
         body_parts: list[str] = []
         images_by_position: dict[int, list[str]] = {}
         raw_images = chapter.meta.get("fb2_images")
@@ -166,7 +180,11 @@ def build_epub_from_chapters(
             )
             tag = "h1" if kind == KIND_HEADING else "p"
             target_html = f"<{tag}>{escape(target)}</{tag}>"
-            src = bilingual_source(source, target) if bilingual and kind != KIND_HEADING else ""
+            src = (
+                bilingual_source(source, target)
+                if bilingual and kind != KIND_HEADING and not chapter.preserve_source
+                else ""
+            )
             if not src:
                 body_parts.append(target_html)
             else:
@@ -179,9 +197,9 @@ def build_epub_from_chapters(
             for href in images_by_position.get(len(paragraphs), [])
         )
         filename = f"ch{chapter_meta['index']}.xhtml"
-        chapter_filenames.add(filename)
-        item = epub.EpubHtml(title=chapter_title, file_name=filename, lang=lang)
-        item.content = f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}"><head><title>{escape(chapter_title)}</title></head><body>{"".join(body_parts)}</body></html>'
+        chapter_filenames[filename] = chapter_lang
+        item = epub.EpubHtml(title=chapter_title, file_name=filename, lang=chapter_lang)
+        item.content = f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{chapter_lang}"><head><title>{escape(chapter_title)}</title></head><body>{"".join(body_parts)}</body></html>'
         book.add_item(item)
         spine.append(item)
         toc.append(item)
@@ -190,8 +208,10 @@ def build_epub_from_chapters(
     book.add_item(epub.EpubNav())
     book.spine = spine
     epub.write_epub(out_path, book)
-    if bilingual:
-        _inject_generated_bilingual_style(out_path, chapter_filenames)
+    _inject_generated_bilingual_style(out_path, chapter_filenames, chapters, bilingual)
+    from trans_novel.assemble.epub.rendering.generated_finalize import annotate_generated_navigation
+
+    annotate_generated_navigation(out_path, chapter_filenames, lang)
     return out_path
 
 

@@ -76,21 +76,29 @@ def runstore_for(config: Config, input_path: str) -> RunStore:
     return resolve_runstore(config, input_path)
 
 
-def print_back_matter(report: dict) -> None:
-    bm = report.get("back_matter_chapters") or []
-    if not bm:
+def print_chapter_processing(report: dict) -> None:
+    processing = report.get("chapter_processing")
+    if isinstance(processing, dict):
+        preserved = processing.get("preserved") or []
+        review_required = processing.get("review_required") or []
+        if preserved:
+            console.print("[yellow]以下章节按原文保留：[/]")
+            for chapter in preserved:
+                console.print(
+                    f"  第{chapter['chapter']}章 {chapter['title']} —— {chapter['reason']}"
+                )
+        if review_required:
+            console.print("[yellow]以下章节已翻译，但建议人工复核：[/]")
+            for chapter in review_required:
+                console.print(
+                    f"  第{chapter['chapter']}章 {chapter['title']} —— {chapter['reason']}"
+                )
         return
-    mode_desc = {"skip": "保留原文，未翻译", "light": "快速粗翻，未精校润色"}
-    console.print(
-        "[yellow]以下章节被识别为附属内容（致谢、作者简介、注释、索引、版权页等），"
-        "为节省成本只做了简化处理：[/]"
-    )
-    for b in bm:
-        console.print(f"  第{b['chapter']}章 {b['title']} —— {mode_desc.get(b['mode'], b['mode'])}")
-    console.print(
-        "如果这里混进了需要完整翻译的正文章节，请用 "
-        "`--back-matter full` 重新运行，程序会自动重译这些章节。"
-    )
+    back_matter = report.get("back_matter_chapters") or []
+    if back_matter:
+        console.print("[yellow]历史运行中的附属章节：[/]")
+        for chapter in back_matter:
+            console.print(f"  第{chapter['chapter']}章 {chapter['title']} —— {chapter['mode']}")
 
 
 def print_usage(report: dict) -> None:
@@ -126,7 +134,7 @@ __all__ = [
     "configure_windows_console",
     "console",
     "load_config",
-    "print_back_matter",
+    "print_chapter_processing",
     "print_usage",
     "require_input_file",
     "runstore_for",

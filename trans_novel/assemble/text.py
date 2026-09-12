@@ -11,26 +11,37 @@ def merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:
     paras: list[list[str]] = []
     srcs: list[list[str]] = []
     kinds: list[str] = []
+    preserved: list[bool] = []
     for segment in chapter.segments:
         if not segment.source.strip():
             continue
-        target = segment.target if segment.target and segment.target.strip() else segment.source
+        target = (
+            segment.source
+            if segment.preserve_source
+            else segment.target
+            if segment.target and segment.target.strip()
+            else segment.source
+        )
         if segment.cont and paras:
             paras[-1].append(target)
             srcs[-1].append(segment.source)
+            preserved[-1] = preserved[-1] and segment.preserve_source
         else:
             paras.append([target])
             srcs.append([segment.source])
             kinds.append(segment.kind)
+            preserved.append(segment.preserve_source)
     return [
         (
             kind,
-            normalize_heading_numbering("".join(target))
-            if kind == KIND_HEADING
-            else "".join(target),
+            (
+                normalize_heading_numbering("".join(target))
+                if kind == KIND_HEADING and not preserve
+                else "".join(target)
+            ),
             "".join(source),
         )
-        for kind, target, source in zip(kinds, paras, srcs, strict=False)
+        for kind, target, source, preserve in zip(kinds, paras, srcs, preserved, strict=False)
     ]
 
 
@@ -48,7 +59,11 @@ def assemble_text(
         chapter = store.load_chapter(chapter_meta["index"])
         blocks: list[str] = []
         for kind, target, source in merged_paragraphs(chapter):
-            src = bilingual_source(source, target) if bilingual and kind != KIND_HEADING else ""
+            src = (
+                bilingual_source(source, target)
+                if bilingual and kind != KIND_HEADING and not chapter.preserve_source
+                else ""
+            )
             if not src:
                 blocks.append(target)
             elif order == "source_first":

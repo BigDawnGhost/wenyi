@@ -4,6 +4,13 @@ All notable changes to this project are documented here following [Keep a Change
 
 ## [Unreleased]
 
+- Polishing now sends one ID-addressed multi-paragraph request per existing chapter checkpoint, sharing one preceding source window and preserving per-segment quality checks and EPUB alignment.
+- Exhausted polish protocol retries retain valid items from the final response and keep affected raw translations; ambiguous IDs reject the whole batch without per-segment rescue calls. Fallbacks are counted as rejected rather than accepted.
+- New polishing calls use `polish.batch`, and completed batches record `checkpoint_batch_v1`; compatible runs keep completed results and resume pending checkpoints without a fingerprint or state-schema migration.
+- New runs classify complete chapter source with the analyst role before style analysis and terminology seeding. Reference-only chapters preserve one original copy, including headings and navigation, in mono/bilingual output; large chapters use persisted source chunks, and mixed reference/prose chapters, uncertain observations, or conflicting chunk observations translate with review flags.
+- Removed `--back-matter`, the `back_matter` setting, and the `skip/light/full` execution modes. Translation policy 2 requires a new run for incompatible model-driven work; completed legacy runs retain existing export eligibility without reclassification or migration.
+- Rejected polishing proposals now require durable `events.jsonl` evidence before chapter/checkpoint commit, including full source and pre-polish/proposal text, checked text, lint details, request-time locked terms, locators, hashes, and configured editor candidates. Invalid or unavailable proposals remain null; this is decoded proposal evidence, not raw HTTP logging, and may contain private or copyrighted text.
+
 ## [1.3.0] - 2026-09-12
 - EPUB archive resolution and link/backlink verification now use one shared external-scheme policy without changing the accepted protocols.
 - EPUB backlink verification now shares explicit noteref semantics with text extraction, including ARIA references and EPUB namespace aliases, without guessing from filenames or attribute substrings.

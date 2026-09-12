@@ -3,22 +3,20 @@
 from __future__ import annotations
 
 from trans_novel.config import Config
-from trans_novel.ingest import Chapter, Document
-from trans_novel.pipeline.planning.backmatter import is_back_matter
+from trans_novel.ingest import Chapter, Document, preserved_toc_entry_ids
 from trans_novel.pipeline.planning.fingerprints import (
     analyst_model_profile,
     analyze_input_fingerprint,
     assemble_input_fingerprint,
-    back_matter_translate_input_fingerprint,
     deterministic_qa_input_fingerprint,
     fast_model_profile,
-    fast_translation_model_profile,
     glossary_semantic_fingerprint_part,
     mine_terms_input_fingerprint,
     name_terms_input_fingerprint,
     polish_input_fingerprint,
     polish_model_profile,
     prepare_input_fingerprint,
+    preserve_source_input_fingerprint,
     report_input_fingerprint,
     titles_input_fingerprint,
     translate_input_fingerprint,
@@ -32,11 +30,15 @@ from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 def sample_text(doc, *, labeled: bool = True) -> str:
     """取风格分析样章。labeled=True 多点采样带中文标注；False 返回单段纯源文（语言检测用）。"""
-    texts = ["\n".join(s.source for s in ch.text_segments) for ch in doc.chapters]
+    chapters = [
+        chapter
+        for chapter in doc.chapters
+        if chapter.processing is None or chapter.processing.action != "preserve"
+    ]
+    texts = ["\n".join(s.source for s in ch.text_segments) for ch in chapters]
     texts = [t for t in texts if len(t) > 200]
-    if not texts:  # 兜底：全书都是短章
-        joined = "\n".join(s.source for ch in doc.chapters[:2] for s in ch.text_segments)
-        return joined[:6000]
+    if not texts:
+        return "\n".join(s.source for ch in chapters[:2] for s in ch.text_segments)[:6000]
     if not labeled:
         return texts[0][:6000]
     picks = [(0, "开头样章"), (len(texts) // 2, "中部样章"), (len(texts) - 1, "结尾样章")]
@@ -56,18 +58,27 @@ def _build_text_inputs(store, state):
     def source(ci):
         return "\n".join(s.source for s in store.load_chapter(ci).text_segments)
 
-    def done_targets():
+    def done_targets(*, include_preserved: bool = False):
         return "\n".join(
             "\n".join(s.target or "" for s in store.load_chapter(c.index).text_segments)
             for c in state.chapters
             if store.load_progress(c.index).status == "done"
+            and (include_preserved or c.processing is None or c.processing.action != "preserve")
         )
 
     def titles():
-        values = [c.title for c in state.chapters if c.title]
         toc = state.meta.get("toc_entries") if isinstance(state.meta, dict) else []
+        stored_chapters = [store.load_chapter(chapter.index) for chapter in state.chapters]
+        preserved_entries = preserved_toc_entry_ids(stored_chapters, toc)
+        values = [
+            c.title
+            for c in state.chapters
+            if c.title and (c.processing is None or c.processing.action != "preserve")
+        ]
         return values + [
-            str(x.get("title", "")) for x in toc if isinstance(x, dict) and x.get("title")
+            str(x.get("title", ""))
+            for x in toc
+            if isinstance(x, dict) and x.get("title") and x.get("entry_id") not in preserved_entries
         ]
 
     return source, done_targets, titles
@@ -117,7 +128,10 @@ def build_prescan_inputs(
     def analyze_fp():
         chapters = [
             Chapter(
-                index=c.index, title=c.title, segments=store.load_chapter(c.index).text_segments
+                index=c.index,
+                title=c.title,
+                segments=store.load_chapter(c.index).text_segments,
+                processing=c.processing,
             )
             for c in state.chapters
         ]
@@ -135,7 +149,7 @@ def build_prescan_inputs(
         [
             source(c.index)
             for c in state.chapters
-            if not is_back_matter(c.title, index=c.index, total=len(state.chapters))
+            if c.processing is None or c.processing.action != "preserve"
         ],
         src,
         policy.prescan_concurrency,
@@ -149,16 +163,8 @@ def build_prescan_inputs(
             + translation_structure_fingerprint_part(store.load_chapter(ci).text_segments)
         )
         chapter = next(c for c in state.chapters if c.index == ci)
-        if policy.back_matter in {"skip", "light"} and is_back_matter(
-            chapter.title, index=ci, total=len(state.chapters)
-        ):
-            return back_matter_translate_input_fingerprint(
-                source_text,
-                src,
-                tgt,
-                punctuation_normalize=cfg.punctuation_normalize,
-                model=fast_translation_model_profile(cfg),
-            )
+        if chapter.processing is not None and chapter.processing.action == "preserve":
+            return preserve_source_input_fingerprint(source_text, chapter.processing)
         return translate_input_fingerprint(
             source_text,
             src,
@@ -169,6 +175,7 @@ def build_prescan_inputs(
             glossary_scope=cfg.pipeline.glossary_scope,
             single_segment_translation=cfg.pipeline.single_segment_translation,
             model=translation_model_profile(cfg),
+            processing=chapter.processing,
         )
 
     polish_fp = lambda ci: polish_input_fingerprint(  # noqa: E731
@@ -209,7 +216,7 @@ def build_prescan_inputs(
         deterministic_qa_fingerprint=qa_fp,
         report_fingerprint=report_fp,
         assemble_fingerprint=lambda: assemble_input_fingerprint(
-            done_targets(),
+            done_targets(include_preserved=True),
             mono=cfg.output.mono,
             bilingual=cfg.output.bilingual,
             out_format=goal.out_format,

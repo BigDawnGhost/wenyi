@@ -288,6 +288,33 @@ def parse_toc_entries(zf: zipfile.ZipFile, toc_kinds: dict[str, str]) -> list[di
     return entries
 
 
+def parse_nav_landmarks(zf: zipfile.ZipFile, nav_paths: list[str]) -> list[dict[str, Any]]:
+    """提取 EPUB3 landmark 链接语义，但不把它们加入目录切章边界。"""
+    landmarks: list[dict[str, Any]] = []
+    for nav_path in nav_paths:
+        soup = BeautifulSoup(read_member(zf, zf.getinfo(nav_path)), "html.parser")
+        for nav in soup.find_all("nav"):
+            nav_type = str(nav.get("epub:type") or nav.get("type") or "").strip()
+            if "landmarks" not in nav_type.split():
+                continue
+            for link in nav.find_all("a", href=True):
+                raw_href = str(link.get("href") or "")
+                resolved = resolve_epub_href(nav_path, raw_href)
+                if resolved.external or not resolved.resource_href:
+                    continue
+                landmarks.append(
+                    {
+                        "nav_type": nav_type,
+                        "type": str(link.get("epub:type") or link.get("type") or "").strip(),
+                        "role": str(link.get("role") or "").strip(),
+                        "raw_href": raw_href,
+                        "resource_href": resolved.resource_href,
+                        "fragment": resolved.fragment,
+                    }
+                )
+    return landmarks
+
+
 MIN_CHAPTER_CHARS = 3000
 """章节切片字符数中位数的下限。对 8 本真实 EPUB 的实测结果显示：
 采用“部—章”两级目录的书（Thinking Fast and Slow、Price of Time、
@@ -415,6 +442,7 @@ __all__ = [
     "nav_root_list",
     "nav_toc_roots_lxml",
     "nav_toc_scopes",
+    "parse_nav_landmarks",
     "parse_toc_entries",
     "resolve_epub_href",
     "select_boundaries",

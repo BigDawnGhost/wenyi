@@ -51,6 +51,7 @@ def build_node_factory(
         NODE_PREPARE: lambda shared, ci: PrepareNode(client=client, config=config, doc=shared.doc),
         NODE_ANALYZE: lambda shared, ci: AnalyzeNode(
             analyzer=shared.agents.analyzer,
+            classifier=shared.agents.classifier,
             config=config,
             doc=shared.doc,
             glossary=shared.glossary(),

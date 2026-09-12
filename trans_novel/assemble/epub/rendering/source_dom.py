@@ -14,6 +14,18 @@ from trans_novel.assemble.epub.rendering.bilingual import (
 from trans_novel.epub.markup import resource_parser
 from trans_novel.epub.navigation import nav_toc_roots_lxml
 
+_XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
+
+
+def effective_language(element: etree._Element, fallback: str | None = None) -> str | None:
+    """返回节点继承后的源语言；显式空值保持为空。"""
+    for node in (element, *element.iterancestors()):
+        if _XML_LANG in node.attrib:
+            return node.attrib[_XML_LANG]
+        if "lang" in node.attrib:
+            return node.attrib["lang"]
+    return fallback
+
 
 def indexed_toc_entries(
     entries: list[dict[str, object]], toc_path: str
@@ -151,7 +163,10 @@ def nav_labels(root: etree._Element) -> list[tuple[etree._Element, str]]:
 
 
 def rewrite_nav_labels(
-    root: etree._Element, indexed: dict[int, dict[str, object]], toc_path: str
+    root: etree._Element,
+    indexed: dict[int, dict[str, object]],
+    toc_path: str,
+    source_lang: str = "",
 ) -> None:
     for node_index, (label, raw_href) in enumerate(nav_labels(root)):
         entry = indexed.get(node_index)
@@ -163,6 +178,9 @@ def rewrite_nav_labels(
         title = translated_toc_title(entry)
         if title:
             set_visible_label(label, title)
+        if entry.get("preserve_source") is True and source_lang:
+            label.set("lang", source_lang)
+            label.set("{http://www.w3.org/XML/1998/namespace}lang", source_lang)
 
 
 def toc_kind_at(toc_entries: list[dict[str, object]], name: str) -> str | None:

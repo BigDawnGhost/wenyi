@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 
 from trans_novel.glossary.store import GlossaryTerm
-from trans_novel.pipeline.quality import lint_targets
+from trans_novel.pipeline.quality import lint_targets, polish_gate
 
 
 def _types(issues, index=None):
@@ -542,6 +542,26 @@ class TestNumberMismatchProductionFixtures(unittest.TestCase):
         tgt = "她轻轻跟他击了个掌，好像今天的大任务已经完成了。"
         issues = lint_targets([src], [tgt], src_lang="en")
         self.assertIn("number_mismatch", _types(issues, 0))
+
+
+class TestPolishGateEvidence(unittest.TestCase):
+    def test_rejection_retains_raw_and_proposal_lint_details(self):
+        result = polish_gate(
+            '"Hello," she said.',
+            "“你好，”她说。",
+            "你好，她说。",
+            src_lang="en",
+            normalize_punctuation=False,
+        )
+
+        self.assertFalse(result.accepted)
+        self.assertEqual(result.checked_raw, "“你好，”她说。")
+        self.assertEqual(result.checked_proposal, "你好，她说。")
+        self.assertEqual(result.raw_issues, [])
+        self.assertEqual(
+            [(issue.type, issue.detail) for issue in result.proposal_issues],
+            [("quote_loss", "原文含直接引语，译文丢失引号，必须保留成对引号")],
+        )
 
 
 if __name__ == "__main__":

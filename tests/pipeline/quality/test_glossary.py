@@ -11,7 +11,7 @@ from tests.fixtures.books import write_sample_txt
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
-from trans_novel.ingest.models import Chapter, Segment
+from trans_novel.ingest.models import Chapter, ChapterProcessing, Segment
 from trans_novel.llm import FakeClient
 from trans_novel.pipeline import Application
 from trans_novel.pipeline.state import (
@@ -234,6 +234,46 @@ class TestGlossaryAudit(unittest.TestCase):
                 self.assertIn("after", e)
                 self.assertIn("term_source", e)
                 self.assertIn("term_target", e)
+
+    def test_preserved_chapters_are_immune_to_all_glossary_rewrites(self):
+        from trans_novel.pipeline.quality import fix_latin_residue, rewrite_targets
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(os.path.join(directory, "state"))
+            processing = ChapterProcessing(
+                action="preserve",
+                review_required=False,
+                reason="reference list",
+                source_sha256="source",
+                strategy_version="chapter_semantics_v1",
+            )
+            store.save_state(
+                RunState(
+                    identity=RunIdentity(source_bytes_sha256="test-hash"),
+                    title="T",
+                    fmt="text",
+                    source_lang="en",
+                    target_lang="zh",
+                    chapters=[ChapterIndex(index=0, title="Sources", processing=processing)],
+                    progress={0: ChapterProgress()},
+                )
+            )
+            chapter = Chapter(
+                index=0,
+                title="Sources",
+                segments=[Segment(index=0, source="Smith Kaho", target="Smith Kaho 中文")],
+                processing=processing,
+            )
+            store.save_chapter(chapter)
+            glossary = GlossaryStore(store.glossary_path)
+            glossary.upsert_term(
+                GlossaryTerm(source="Kaho", target="佳穂", confidence="high", locked=True)
+            )
+
+            self.assertEqual(rewrite_targets(store, glossary, {"Smith": "史密斯"}), 0)
+            self.assertEqual(fix_latin_residue(store, glossary), [])
+            self.assertEqual(store.load_chapter(0).segments[0].target, "Smith Kaho 中文")
+            glossary.close()
 
 
 if __name__ == "__main__":

@@ -61,6 +61,18 @@ def attr_local(element: etree._Element, name: str) -> str:
     return ""
 
 
+def _semantic_hints(element: etree._Element) -> list[str]:
+    """保留正文块及其祖先显式声明的 XHTML 语义。"""
+    hints: list[str] = []
+    for node in (element, *element.iterancestors()):
+        tag = node.tag.rsplit("}", 1)[-1].lower() if isinstance(node.tag, str) else ""
+        for name in ("type", "role"):
+            value = attr_local(node, name).strip()
+            if value:
+                hints.append(f"xhtml:{tag}:{name}={value}")
+    return list(dict.fromkeys(hints))
+
+
 def visible_text(element: etree._Element) -> str:
     parts: list[str] = []
 
@@ -279,6 +291,7 @@ def _segments_for_blocks(
                     anchor=run_anchor,
                     resource_href=href,
                     epub_state=state,
+                    meta={"semantic_hints": _semantic_hints(block)},
                 )
             )
     return segments

@@ -7,7 +7,6 @@ from trans_novel.agents.term_miner import TermMiner
 from trans_novel.config import Config
 from trans_novel.glossary.store import TYPE_PERSON, GlossaryStore
 from trans_novel.pipeline.contracts import NodeOutcome, NodeRequest
-from trans_novel.pipeline.planning import is_back_matter
 from trans_novel.pipeline.planning.fingerprints import (
     analyst_model_profile,
     fast_model_profile,
@@ -49,11 +48,10 @@ class MineTermsNode:
             )
             return NodeOutcome(fingerprint=fp, artifacts={"candidates": []})
         state = store.load_state()
-        total = len(state.chapters)
         src_chapters = [
             (c.index, "\n".join(s.source for s in store.load_chapter(c.index).text_segments))
             for c in state.chapters
-            if not is_back_matter(c.title, index=c.index, total=total)
+            if c.processing is None or c.processing.action != "preserve"
         ]
         on_progress = (
             (lambda i, n: request.progress(i, n, "查找专有名词…")) if request.progress else None

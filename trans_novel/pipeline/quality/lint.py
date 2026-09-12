@@ -8,7 +8,7 @@ Repair agent 去判断语义类问题。阈值/规则均以两本已交付书的
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from trans_novel.agents import langprofile
 from trans_novel.glossary.store import GlossaryTerm
@@ -525,6 +525,10 @@ class PolishGateResult:
     selected: str
     accepted: bool
     rejection_reasons: tuple[str, ...] = ()
+    raw_issues: list[LintIssue] = field(default_factory=list)
+    proposal_issues: list[LintIssue] = field(default_factory=list)
+    checked_raw: str = ""
+    checked_proposal: str = ""
 
 
 def polish_gate(
@@ -541,27 +545,35 @@ def polish_gate(
 
     raw_normalized = normalize_zh(raw) if normalize_punctuation and raw else raw
     proposed = normalize_zh(proposal) if normalize_punctuation and proposal else proposal
-    raw_types = {
-        issue.type
-        for issue in lint_targets(
-            [source], [raw_normalized], locked_terms=locked_terms, src_lang=src_lang
-        )
-    }
-    proposal_types = {
-        issue.type
-        for issue in lint_targets(
-            [source], [proposed], locked_terms=locked_terms, src_lang=src_lang
-        )
-    }
-    introduced = tuple(sorted(proposal_types - raw_types))
+    raw_issues = lint_targets(
+        [source], [raw_normalized], locked_terms=locked_terms, src_lang=src_lang
+    )
+    proposal_issues = lint_targets(
+        [source], [proposed], locked_terms=locked_terms, src_lang=src_lang
+    )
+    introduced = tuple(
+        sorted({issue.type for issue in proposal_issues} - {issue.type for issue in raw_issues})
+    )
     if introduced:
         return PolishGateResult(
             proposal=proposed,
             selected=raw_normalized,
             accepted=False,
             rejection_reasons=introduced,
+            raw_issues=raw_issues,
+            proposal_issues=proposal_issues,
+            checked_raw=raw_normalized,
+            checked_proposal=proposed,
         )
-    return PolishGateResult(proposal=proposed, selected=proposed, accepted=True)
+    return PolishGateResult(
+        proposal=proposed,
+        selected=proposed,
+        accepted=True,
+        raw_issues=raw_issues,
+        proposal_issues=proposal_issues,
+        checked_raw=raw_normalized,
+        checked_proposal=proposed,
+    )
 
 
 evaluate_polish_gate = polish_gate

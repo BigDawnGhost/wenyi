@@ -21,8 +21,16 @@ def target_corpus(store) -> str:
     parts: list[str] = []
     for chapter in manifest["chapters"]:
         loaded = store.load_chapter(chapter["index"])
-        parts.extend(segment.target or "" for segment in loaded.text_segments)
+        if not loaded.preserve_source:
+            parts.extend(segment.target or "" for segment in loaded.text_segments)
     return "\n".join(parts)
+
+
+def _preserved_manifest_chapter(chapter: dict[str, Any]) -> bool:
+    processing = chapter.get("processing")
+    if isinstance(processing, dict):
+        return processing.get("action") == "preserve"
+    return getattr(processing, "action", None) == "preserve"
 
 
 def rewrite_targets(store, glossary: GlossaryStore, replace_map: dict[str, str]) -> int:
@@ -42,6 +50,8 @@ def rewrite_targets(store, glossary: GlossaryStore, replace_map: dict[str, str])
     changed = 0
     for chapter in manifest["chapters"]:
         loaded = store.load_chapter(chapter["index"])
+        if loaded.preserve_source:
+            continue
         dirty = False
         entries: list[dict[str, Any]] = []
         for index, segment in enumerate(loaded.segments):
@@ -87,6 +97,8 @@ def rewrite_targets(store, glossary: GlossaryStore, replace_map: dict[str, str])
             replace_map=replace_map,
         )
     for chapter in manifest["chapters"]:
+        if _preserved_manifest_chapter(chapter):
+            continue
         old_title = chapter.get("title_translated")
         new_title = apply(old_title, []) if isinstance(old_title, str) else old_title
         if new_title != old_title:
@@ -115,6 +127,8 @@ def fix_latin_residue(store, glossary: GlossaryStore) -> list[dict[str, Any]]:
     manifest = store.load_manifest()
     for chapter in manifest["chapters"]:
         loaded = store.load_chapter(chapter["index"])
+        if loaded.preserve_source:
+            continue
         dirty = False
         entries: list[dict[str, Any]] = []
         for index, segment in enumerate(loaded.segments):

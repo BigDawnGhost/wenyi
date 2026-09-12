@@ -1,7 +1,7 @@
 """节点输入指纹的纯函数公式：planner 对账与节点记录共用同一套。
 
 指纹只覆盖影响节点的稳定输入，排除翻译期持续增长的术语上下文及批次预算。
-换模型续跑必须失效对应节点及其后代；附属章旁路指纹仅覆盖源文、语言与标点。
+换模型续跑必须失效对应节点及其后代；原文保留章只消费语义决策与源结构。
 """
 
 from __future__ import annotations
@@ -43,12 +43,7 @@ def polish_model_profile(config) -> str:
 
 
 def fast_model_profile(config) -> str:
-    """预扫与附属章模型候选。"""
-    return _role_profile(config, "fast")
-
-
-def fast_translation_model_profile(config) -> str:
-    """附属章翻译模型候选。"""
+    """预扫模型候选。"""
     return _role_profile(config, "fast")
 
 
@@ -134,6 +129,11 @@ def name_terms_input_fingerprint(
     return input_fingerprint(mine_fingerprint, style_brief, concurrency, model)
 
 
+def preserve_source_input_fingerprint(source_text: str, processing) -> str:
+    """原文保留章：语义决策 + 源文与 EPUB 槽位结构。"""
+    return input_fingerprint(TRANSLATION_POLICY_VERSION, source_text, processing)
+
+
 def translate_input_fingerprint(
     source_text: str,
     src_lang: str,
@@ -145,6 +145,7 @@ def translate_input_fingerprint(
     glossary_scope: str,
     single_segment_translation: bool,
     model: str = "",
+    processing=None,
 ) -> str:
     return input_fingerprint(
         TRANSLATION_POLICY_VERSION,
@@ -157,24 +158,7 @@ def translate_input_fingerprint(
         glossary_scope,
         single_segment_translation,
         model,
-    )
-
-
-def back_matter_translate_input_fingerprint(
-    source_text: str,
-    src_lang: str,
-    tgt_lang: str,
-    *,
-    punctuation_normalize: bool,
-    model: str = "",
-) -> str:
-    """附属章旁路翻译（skip/light）：只消费源文/语言/标点配置/模型。"""
-    return input_fingerprint(
-        source_text,
-        normalize_lang_code(src_lang),
-        normalize_lang_code(tgt_lang),
-        punctuation_normalize,
-        model,
+        processing,
     )
 
 

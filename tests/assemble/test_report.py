@@ -113,6 +113,55 @@ class TestReport(unittest.TestCase):
             self.assertEqual(s["empty_targets"], 0)  # 全部段都有译文
             self.assertGreaterEqual(s["terms"], 1)
 
+    def test_classified_report_uses_chapter_processing_schema(self):
+        from trans_novel.ingest.models import ChapterProcessing
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "novel.txt")
+            write_sample_txt(source)
+            store, _ = _run(source, os.path.join(directory, "state"))
+            state = store.load_state()
+            state.chapters[0].processing = ChapterProcessing(
+                action="preserve",
+                review_required=False,
+                reason="reference list",
+                source_sha256="source",
+                strategy_version="chapter_semantics_v1",
+            )
+            state.chapters[1].processing = ChapterProcessing(
+                action="translate",
+                review_required=True,
+                reason="mixed content",
+                source_sha256="source",
+                strategy_version="chapter_semantics_v1",
+            )
+            store.save_state(state)
+            glossary = GlossaryStore(store.glossary_path)
+            report = build_report(store, glossary)
+            glossary.close()
+
+            self.assertEqual(
+                report["chapter_processing"],
+                {
+                    "preserved": [
+                        {
+                            "chapter": state.chapters[0].index,
+                            "title": state.chapters[0].title,
+                            "reason": "reference list",
+                        }
+                    ],
+                    "review_required": [
+                        {
+                            "chapter": state.chapters[1].index,
+                            "title": state.chapters[1].title,
+                            "reason": "mixed content",
+                        }
+                    ],
+                },
+            )
+            self.assertNotIn("back_matter_chapters", report)
+            self.assertNotIn("back_matter_chapters", report["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

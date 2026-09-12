@@ -7,12 +7,14 @@ import zipfile
 
 from lxml import etree
 
+from tests.fixtures.books import write_phase9_epub
 from trans_novel.assemble.epub.rendering import assemble_source_epub
 from trans_novel.epub.slots import (
     normalize_slot_transport,
     validate_slot_transport,
 )
 from trans_novel.ingest.epub.reader import read_epub
+from trans_novel.ingest.models import Chapter, ChapterProcessing
 from trans_novel.pipeline.state import RunIdentity, RunState, RunStore
 from trans_novel.postprocess.punct import normalize_zh, normalize_zh_parts
 
@@ -25,7 +27,12 @@ class _Store:
         self.document = document
 
     def load_manifest(self):
-        return {"meta": self.document.meta, "target_lang": "zh", "chapters": [{"index": 0}]}
+        return {
+            "meta": self.document.meta,
+            "source_lang": self.document.source_lang,
+            "target_lang": self.document.target_lang,
+            "chapters": [{"index": chapter.index} for chapter in self.document.chapters],
+        }
 
     def load_chapter(self, index):
         return self.document.chapters[index]
@@ -391,6 +398,282 @@ class TestEpubStage1(unittest.TestCase):
         restored.meta["epub_schema"] = 2
         with self.assertRaisesRegex(ValueError, "fresh translation"):
             assemble_source_epub(_Store(restored), path, path + ".schema2.epub", target_lang="zh")
+
+
+class TestPreservedChapterRanges(unittest.TestCase):
+    _book = TestEpubStage1._book
+
+    def test_shared_resource_preserves_only_declared_chapter_ranges(self):
+        source = (
+            b'<html xmlns="http://www.w3.org/1999/xhtml" lang="fr"><head/>'
+            b'<body><p lang="en">Story Beta.</p>'
+            b'<p>Reference <span lang="de">Alpha</span>.</p></body></html>'
+        )
+        path = self._book(source)
+        document = read_epub(path, "en", "zh")
+        story, reference = document.chapters[0].segments
+        for segment, value in ((story, "故事译文"), (reference, "错误改写")):
+            segment.assign_translation(
+                [
+                    {"id": slot.id, "value": value if slot.source_value.strip() else ""}
+                    for slot in segment.epub_state.slots
+                ]
+            )
+        preserve = ChapterProcessing(
+            action="preserve",
+            review_required=False,
+            reason="reference list",
+            source_sha256="source",
+            strategy_version="chapter_semantics_v1",
+        )
+        translate = ChapterProcessing(
+            action="translate",
+            review_required=False,
+            reason="narrative",
+            source_sha256="source",
+            strategy_version="chapter_semantics_v1",
+        )
+        document.chapters = [
+            Chapter(index=0, title="Story", segments=[story], processing=translate),
+            Chapter(index=1, title="Reference", segments=[reference], processing=preserve),
+        ]
+        output = path + ".preserved.epub"
+        self.addCleanup(os.unlink, output)
+        store = _Store(document)
+        assemble_source_epub(store, path, output, target_lang="zh")
+        with zipfile.ZipFile(output) as archive:
+            root = etree.fromstring(archive.read("O/c.xhtml"))
+        paragraphs = root.findall(".//{http://www.w3.org/1999/xhtml}p")
+        self.assertEqual("".join(paragraphs[0].itertext()), "故事译文")
+        self.assertEqual("".join(paragraphs[1].itertext()), "Reference Alpha.")
+        self.assertEqual(paragraphs[1].get("{http://www.w3.org/XML/1998/namespace}lang"), "fr")
+        self.assertEqual(paragraphs[1][0].get("lang"), "de")
+        self.assertEqual(root.get("lang"), "zh")
+
+        from trans_novel.assemble.epub.verification import verify_epub
+
+        for order in ("target_first", "source_first"):
+            bilingual_output = path + f".{order}.epub"
+            self.addCleanup(os.unlink, bilingual_output)
+            assemble_source_epub(
+                store,
+                path,
+                bilingual_output,
+                target_lang="zh",
+                bilingual=True,
+                order=order,
+            )
+            with zipfile.ZipFile(bilingual_output) as archive:
+                bilingual_root = etree.fromstring(archive.read("O/c.xhtml"))
+            self.assertEqual("".join(bilingual_root.itertext()).count("Reference Alpha."), 1)
+            self.assertEqual(
+                len(
+                    bilingual_root.xpath(
+                        '//*[contains(concat(" ", normalize-space(@class), " "), " tn-source ")]'
+                    )
+                ),
+                1,
+            )
+            self.assertTrue(
+                verify_epub(
+                    bilingual_output,
+                    source_path=path,
+                    store=store,
+                    mode="bilingual",
+                    bilingual=True,
+                    target_lang="zh",
+                    bilingual_order=order,
+                )["passed"]
+            )
+
+        paragraphs[1].text = "tampered"
+        with zipfile.ZipFile(output) as archive:
+            entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+        tampered = output + ".tmp"
+        with zipfile.ZipFile(tampered, "w") as archive:
+            for info, data in entries:
+                archive.writestr(
+                    info,
+                    etree.tostring(root, encoding="utf-8")
+                    if info.filename == "O/c.xhtml"
+                    else data,
+                )
+        os.replace(tampered, output)
+        report = verify_epub(
+            output,
+            source_path=path,
+            store=store,
+            mode="monolingual",
+            bilingual=False,
+            target_lang="zh",
+        )
+        self.assertIn("slot_value_mismatch", {item["code"] for item in report["failures"]})
+
+
+class TestPreservedLanguageRanges(unittest.TestCase):
+    _book = TestEpubStage1._book
+
+    def test_language_fallback_and_explicit_empty_survive_mixed_resource(self):
+        source = (
+            b'<html xmlns="http://www.w3.org/1999/xhtml"><head/><body>'
+            b'<p>Story.</p><p>Fallback language.</p><p lang="">Unknown language.</p>'
+            b"</body></html>"
+        )
+        path = self._book(source)
+        document = read_epub(path, "en", "zh")
+        story, fallback, unknown = document.chapters[0].segments
+        for segment, value in (
+            (story, "故事。"),
+            (fallback, "错误"),
+            (unknown, "错误"),
+        ):
+            segment.assign_translation(
+                [
+                    {"id": slot.id, "value": value if slot.source_value.strip() else ""}
+                    for slot in segment.epub_state.slots
+                ]
+            )
+        document.chapters = [
+            Chapter(
+                index=0,
+                segments=[story],
+                processing=ChapterProcessing(
+                    action="translate",
+                    review_required=False,
+                    reason="narrative",
+                    source_sha256="source",
+                    strategy_version="chapter_semantics_v1",
+                ),
+            ),
+            Chapter(
+                index=1,
+                segments=[fallback, unknown],
+                processing=ChapterProcessing(
+                    action="preserve",
+                    review_required=False,
+                    reason="reference list",
+                    source_sha256="source",
+                    strategy_version="chapter_semantics_v1",
+                ),
+            ),
+        ]
+        output = path + ".languages.epub"
+        self.addCleanup(os.unlink, output)
+        store = _Store(document)
+        assemble_source_epub(store, path, output, target_lang="zh")
+
+        with zipfile.ZipFile(output) as archive:
+            root = etree.fromstring(archive.read("O/c.xhtml"))
+        paragraphs = root.findall(".//{http://www.w3.org/1999/xhtml}p")
+        self.assertEqual(paragraphs[1].get("{http://www.w3.org/XML/1998/namespace}lang"), "en")
+        self.assertEqual(paragraphs[2].get("lang"), "")
+        self.assertIsNone(paragraphs[2].get("{http://www.w3.org/XML/1998/namespace}lang"))
+
+        from trans_novel.assemble.epub.verification import verify_epub
+
+        self.assertTrue(
+            verify_epub(
+                output,
+                source_path=path,
+                store=store,
+                mode="monolingual",
+                bilingual=False,
+                target_lang="zh",
+            )["passed"]
+        )
+
+
+class TestPreservedNavigation(unittest.TestCase):
+    def test_nav_and_ncx_preserve_nested_labels_for_preserved_chapter(self):
+        with tempfile.NamedTemporaryFile(suffix=".epub", delete=False) as handle:
+            path = handle.name
+        self.addCleanup(os.unlink, path)
+        write_phase9_epub(path, long_chapter_chars=50)
+        with zipfile.ZipFile(path) as archive:
+            entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+        with zipfile.ZipFile(path, "w") as archive:
+            for info, data in entries:
+                if info.filename == "OEBPS/nav.xhtml":
+                    data = data.replace(
+                        b"</a></li>",
+                        b'</a><ol><li><a href="text/chapter-1.xhtml#intro">'
+                        b"Reference Detail</a></li></ol></li>",
+                        1,
+                    )
+                elif info.filename == "OEBPS/toc.ncx":
+                    data = data.replace(
+                        b"</navPoint>",
+                        b'<navPoint id="detail"><navLabel><text>Reference Detail</text>'
+                        b'</navLabel><content src="text/chapter-1.xhtml#intro"/>'
+                        b"</navPoint></navPoint>",
+                        1,
+                    )
+                archive.writestr(info, data)
+
+        document = read_epub(path, "en", "zh")
+        for chapter in document.chapters:
+            chapter.processing = ChapterProcessing(
+                action="preserve" if chapter.index == 0 else "translate",
+                review_required=False,
+                reason="reference list" if chapter.index == 0 else "narrative",
+                source_sha256="source",
+                strategy_version="chapter_semantics_v1",
+            )
+            for segment in chapter.segments:
+                segment.assign_translation(
+                    [
+                        {
+                            "id": slot.id,
+                            "value": ("错误改写" if chapter.index == 0 else "译文")
+                            if slot.source_value.strip()
+                            else "",
+                        }
+                        for slot in segment.epub_state.slots
+                    ]
+                )
+        for entry in document.meta["toc_entries"]:
+            entry["title_translated"] = (
+                "损坏明细"
+                if entry["title"] == "Reference Detail"
+                else "损坏标题"
+                if entry["title"] == "Chapter One"
+                else "第二章"
+            )
+        store = _Store(document)
+
+        from trans_novel.assemble.epub.verification import verify_epub
+
+        for bilingual, order in ((False, "target_first"), (True, "source_first")):
+            output = path + f".nav-{bilingual}.epub"
+            self.addCleanup(os.unlink, output)
+            assemble_source_epub(
+                store,
+                path,
+                output,
+                target_lang="zh",
+                bilingual=bilingual,
+                order=order,
+            )
+            with zipfile.ZipFile(output) as archive:
+                nav = archive.read("OEBPS/nav.xhtml").decode()
+                ncx = archive.read("OEBPS/toc.ncx").decode()
+            for markup in (nav, ncx):
+                self.assertIn("Chapter One", markup)
+                self.assertIn("Reference Detail", markup)
+                self.assertIn("第二章", markup)
+                self.assertNotIn("损坏", markup)
+                self.assertIn("text/chapter-1.xhtml#intro", markup)
+            self.assertTrue(
+                verify_epub(
+                    output,
+                    source_path=path,
+                    store=store,
+                    mode="bilingual" if bilingual else "monolingual",
+                    bilingual=bilingual,
+                    target_lang="zh",
+                    bilingual_order=order,
+                )["passed"]
+            )
 
 
 if __name__ == "__main__":

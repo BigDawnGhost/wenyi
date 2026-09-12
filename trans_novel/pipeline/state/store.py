@@ -28,7 +28,6 @@ from trans_novel.pipeline.state.invalidation import (
     clear_translated_titles,
     clear_translation_targets,
     reconcile_fingerprints,
-    reopen_back_matter_chapter,
 )
 from trans_novel.pipeline.state.lifecycle import (
     fail_node,
@@ -282,6 +281,7 @@ class RunStore:
                     title=c.title,
                     href=c.href,
                     toc_entry_id=c.meta.get("toc_entry_id"),
+                    processing=c.processing,
                 )
                 for c in doc.chapters
             ],
@@ -364,15 +364,6 @@ class RunStore:
             os.remove(self.analysis_path)
         self.save_state(state)
         return invalidated
-
-    def reopen_back_matter_chapter(self, ci: int, *, prev_mode: str, mode: str, title: str) -> None:
-        chapter = self.load_chapter(ci)
-        state = self.load_state()
-        reopen_back_matter_chapter(chapter, state, ci)
-        self.save_state(state)
-        self.log_event(
-            "back_matter_reopened", chapter=ci, previous_mode=prev_mode, mode=mode, title=title
-        )
 
     def verify_identity(
         self,

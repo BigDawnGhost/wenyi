@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from trans_novel.agents.analyzer import Analyzer
+from trans_novel.agents.chapter_classifier import ChapterClassifier
 from trans_novel.agents.glossary_extractor import GlossaryExtractor
 from trans_novel.agents.namer import CastNamer
 from trans_novel.agents.polisher import Polisher
@@ -21,6 +22,7 @@ class AgentBundle:
         self.src = src
         self.tgt = tgt
         self.analyzer = Analyzer(client, config, src=src, tgt=tgt)
+        self.classifier = ChapterClassifier(client, config, src=src, tgt=tgt)
         self.translator = Translator(client, config, src=src, tgt=tgt)
         self.polisher = Polisher(client, config, src=src, tgt=tgt)
         self.extractor = GlossaryExtractor(client, config, src=src, tgt=tgt)

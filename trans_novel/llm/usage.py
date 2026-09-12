@@ -3,7 +3,7 @@
 归因维度（同一物理/逻辑事件在多个维度各计一次，totals 只计一次）：
 - totals：每个带 usage 的 provider 响应直接累加一次；各归因维度分别统计，
   不再反向汇总到 totals，以免重复计数。
-- by_agent：按功能 Agent（translator/editor/analyst/preparer/light-translator），token 字段 + logical_calls/attempts/failed_attempts/
+- by_agent：按功能 Agent（translator/editor/analyst/preparer），token 字段 + logical_calls/attempts/failed_attempts/
   elapsed_ms/reasoning_tokens/accepted/rejected/fallbacks。
 - by_operation：按内部 operation（业务标签），字段集合与 by_agent 完全相同。
 - by_provider / by_model：token 字段 + attempts/failed_attempts（无逻辑/结果计数）。

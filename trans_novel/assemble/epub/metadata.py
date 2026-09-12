@@ -14,12 +14,18 @@ def epub_language(lang: str | None) -> str:
 
 
 def translated_toc_title(entry: dict[str, object]) -> str:
-    """返回目录条目的有效译名（标题编号统一为汉字），缺失时回退原标题。"""
-    value = entry.get("title_translated") or entry.get("title")
+    """Return the effective TOC title, preserving declared source labels."""
+    value = (
+        entry.get("title")
+        if entry.get("preserve_source") is True
+        else entry.get("title_translated") or entry.get("title")
+    )
     if not isinstance(value, str):
         return ""
     stripped = value.strip()
-    return normalize_heading_numbering(stripped) if stripped else ""
+    return (
+        stripped if entry.get("preserve_source") is True else normalize_heading_numbering(stripped)
+    )
 
 
 __all__ = ["epub_language", "translated_toc_title"]

@@ -39,13 +39,14 @@ from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 class TestPresets(unittest.TestCase):
     def test_exact_quality_contract(self):
         expected = {
-            "economy": (False, "light"),
-            "balanced": (False, "full"),
-            "quality": (True, "full"),
+            "economy": False,
+            "balanced": False,
+            "quality": True,
         }
-        for name, (polish, back_matter) in expected.items():
+        for name, polish in expected.items():
             policy = PipelineConfig.for_quality(name)
-            self.assertEqual((policy.polish, policy.back_matter), (polish, back_matter))
+            self.assertEqual(policy.polish, polish)
+            self.assertFalse(hasattr(policy, "back_matter"))
 
 
 class TestWorkflowDefinition(unittest.TestCase):
@@ -103,7 +104,7 @@ class TestPlanner(unittest.TestCase):
             plan = Planner(build_workflow_definition()).build_plan(
                 goal=GOAL_RUN_ALL,
                 store=store,
-                policy=WorkflowPolicy(polish=False, back_matter="full"),
+                policy=WorkflowPolicy(polish=False),
                 prescan=PrescanInputs(),
             )
             body = [e for stage in plan.stages for e in stage.entries if e.ci == 0]
@@ -118,7 +119,7 @@ class TestPlanner(unittest.TestCase):
             plan = Planner(build_workflow_definition()).build_plan(
                 goal=GOAL_RUN_ALL,
                 store=store,
-                policy=WorkflowPolicy(polish=True, back_matter="full"),
+                policy=WorkflowPolicy(polish=True),
                 prescan=PrescanInputs(),
             )
             body = [e.node_id for stage in plan.stages for e in stage.entries if e.ci == 0]

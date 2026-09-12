@@ -14,7 +14,7 @@ from trans_novel.assemble import assemble, bilingual_out_path
 from trans_novel.assemble.report import build_report
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, terms_matching_text
-from trans_novel.ingest import KIND_HEADING
+from trans_novel.ingest import KIND_HEADING, preserved_toc_entry_ids
 from trans_novel.ingest.models import sanitize_generated_text
 from trans_novel.pipeline.contracts import NodeOutcome, NodeRequest
 from trans_novel.pipeline.planning import (
@@ -33,6 +33,23 @@ from trans_novel.pipeline.state import (
     NODE_TITLES,
     SCOPE_BOOK,
 )
+
+
+def _toc_state(store, manifest):
+    chapters = manifest.get("chapters", [])
+    raw_meta = manifest.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    raw_entries = meta.get("toc_entries", [])
+    toc_entries = raw_entries if isinstance(raw_entries, list) else []
+    stored = [store.load_chapter(chapter["index"]) for chapter in chapters]
+    preserved_chapters = {chapter.index for chapter in stored if chapter.preserve_source}
+    preserved_entries = preserved_toc_entry_ids(stored, toc_entries)
+    entries_by_id = {
+        entry["entry_id"]: entry
+        for entry in toc_entries
+        if isinstance(entry, dict) and isinstance(entry.get("entry_id"), str)
+    }
+    return chapters, toc_entries, entries_by_id, preserved_chapters, preserved_entries
 
 
 class TitlesNode:
@@ -60,28 +77,29 @@ class TitlesNode:
         store = request.store
         if store.pending_chapters():
             return NodeOutcome()  # 还有未完成章 → 不译标题（与旧 run() 条件一致）
-        src = self.src
-        tgt = self.tgt
         m = store.load_manifest()
-        chapters = m.get("chapters", [])
+        (
+            chapters,
+            toc_entry_list,
+            entries_by_id,
+            preserved_chapters,
+            preserved_entries,
+        ) = _toc_state(store, m)
+        for chapter in chapters:
+            if chapter.get("index") in preserved_chapters:
+                chapter.pop("title_translated", None)
 
         def _flat(s: object) -> str:
             return " ".join(str(s or "").split())
 
-        raw_meta = m.get("meta")
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
-        raw_toc_entries = meta.get("toc_entries", [])
-        toc_entry_list = raw_toc_entries if isinstance(raw_toc_entries, list) else []
-        entries_by_id = {
-            e["entry_id"]: e
-            for e in toc_entry_list
-            if isinstance(e, dict) and isinstance(e.get("entry_id"), str)
-        }
+        for entry_id in preserved_entries:
+            entries_by_id[entry_id].pop("title_translated", None)
         toc_entries_pending = [
             e
             for e in toc_entry_list
             if isinstance(e, dict)
             and not e.get("external")
+            and e.get("entry_id") not in preserved_entries
             and _flat(e.get("title", ""))
             and not e.get("title_translated")
         ]
@@ -89,6 +107,8 @@ class TitlesNode:
         toc_covered_chapters = []
         other_chapters = []
         for c in chapters:
+            if c.get("index") in preserved_chapters:
+                continue
             entry_id = c.get("toc_entry_id")
             if entry_id and entry_id in entries_by_id:
                 toc_covered_chapters.append(c)
@@ -133,7 +153,7 @@ class TitlesNode:
         translated_titles: dict[str, str] = {}
         for title in unique_titles:
             translated_titles[title] = retry_protocol(
-                lambda title=title: self._translate_title(title, src, tgt, store),
+                lambda title=title: self._translate_title(title, self.src, self.tgt, store),
                 retries=self.config.pipeline.protocol_retry_limit,
             )
 
@@ -194,15 +214,22 @@ class TitlesNode:
         return translated
 
     def _fingerprint(self, store) -> str:
-        m = store.load_manifest()
-        titles = [str(c.get("title", "")) for c in m.get("chapters", []) if c.get("title")]
-        meta = m.get("meta")
-        raw_toc = meta.get("toc_entries") if isinstance(meta, dict) else None
-        if isinstance(raw_toc, list):
-            titles.extend(
-                str(e.get("title", "")) for e in raw_toc if isinstance(e, dict) and e.get("title")
-            )
-        identity = m.get("identity") if isinstance(m.get("identity"), dict) else {}
+        manifest = store.load_manifest()
+        chapters, toc_entries, _, preserved_chapters, preserved_entries = _toc_state(
+            store, manifest
+        )
+        translated = [
+            chapter for chapter in chapters if chapter.get("index") not in preserved_chapters
+        ]
+        titles = [str(chapter.get("title", "")) for chapter in translated if chapter.get("title")]
+        titles.extend(
+            str(entry.get("title", ""))
+            for entry in toc_entries
+            if isinstance(entry, dict)
+            and entry.get("title")
+            and entry.get("entry_id") not in preserved_entries
+        )
+        identity = manifest.get("identity") if isinstance(manifest.get("identity"), dict) else {}
         src = identity.get("source_lang") or self.config.source_lang
         tgt = identity.get("target_lang") or self.config.target_lang
         return titles_input_fingerprint(titles, src, tgt, analyst_model_profile(self.config))
@@ -222,6 +249,8 @@ class DeterministicQANode:
         target_texts: list[str] = []
         state = store.load_state()
         for chapter_meta in state.chapters:
+            if chapter_meta.processing is not None and chapter_meta.processing.action == "preserve":
+                continue
             if store.load_progress(chapter_meta.index).status != "done":
                 continue
             chapter = store.load_chapter(chapter_meta.index)

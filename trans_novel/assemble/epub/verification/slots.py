@@ -10,14 +10,14 @@ from typing import Any
 
 from lxml import etree
 
-from trans_novel.assemble.epub.metadata import translated_toc_title
 from trans_novel.assemble.epub.rendering import dedupe_segment_mappings, segment_needs_source
-from trans_novel.assemble.epub.verification import archive_model, dom
+from trans_novel.assemble.epub.verification import archive_model, dom, preservation
 from trans_novel.assemble.epub.verification import bilingual as bilingual_module
 from trans_novel.assemble.epub.verification import navigation as nav_module
 from trans_novel.epub.markup import resource_parser
 from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA, read_package
 from trans_novel.epub.slots import normalized_source_text, slot_contract_digest
+from trans_novel.ingest.models import preserved_toc_entry_ids
 
 MAX_MEMBER_BYTES = archive_model.MAX_MEMBER_BYTES
 
@@ -30,18 +30,22 @@ def compare_dom(
     *,
     toc_label_paths: set[tuple[int, ...]] | None = None,
     allow_root_language: bool = True,
+    language_paths: set[tuple[int, ...]] | None = None,
 ) -> bool:
     if source.tag != output.tag:
         return False
+    allow_language = (allow_root_language and path == ()) or (
+        language_paths is not None and path in language_paths
+    )
     source_attrs = {
         key: value
         for key, value in source.attrib.items()
-        if not (allow_root_language and bilingual_module.lang_attr(key) and path == ())
+        if not (allow_language and bilingual_module.lang_attr(key))
     }
     output_attrs = {
         key: value
         for key, value in output.attrib.items()
-        if not (allow_root_language and bilingual_module.lang_attr(key) and path == ())
+        if not (allow_language and bilingual_module.lang_attr(key))
     }
     if source_attrs != output_attrs:
         return False
@@ -74,6 +78,7 @@ def compare_dom(
             child_path,
             toc_label_paths=toc_label_paths,
             allow_root_language=allow_root_language,
+            language_paths=language_paths,
         ):
             return False
         if (child_path, "tail") not in slots and source_child.tail != output_child.tail:
@@ -144,25 +149,6 @@ def _parse_resource(resource, source_data, output_data, expected, failures, warn
     return source_tree, output_tree, source_mode, output_mode
 
 
-def _check_language(root_source, root_output, resource, target_lang, is_ncx, failures, differences):
-    if not target_lang or is_ncx:
-        return
-    source_attrs = {
-        key: value for key, value in root_source.attrib.items() if bilingual_module.lang_attr(key)
-    }
-    output_attrs = {
-        key: value for key, value in root_output.attrib.items() if bilingual_module.lang_attr(key)
-    }
-    if set(source_attrs) != set(output_attrs) or any(
-        value != target_lang for value in output_attrs.values()
-    ):
-        failures.append(archive_model.item("dom", "language_mismatch", resource, "target"))
-        return
-    for key, value in source_attrs.items():
-        if output_attrs[key] != value:
-            differences["language_fields"] += 1
-
-
 def _check_segments(root_source, resource, segments, bilingual, slot_map, direct_cleared, failures):
     for segment in segments:
         state = segment.epub_state
@@ -204,7 +190,7 @@ def _check_segments(root_source, resource, segments, bilingual, slot_map, direct
             if location in seen:
                 failures.append(archive_model.item("state", "slot_overlap", resource, "state"))
             seen.add(location)
-            slot_map[location] = slot
+            slot_map[location] = (slot, segment.preserve_source)
             owner = dom.resolve_path_lxml(root_source, location[0])
             if owner is None:
                 failures.append(
@@ -214,54 +200,6 @@ def _check_segments(root_source, resource, segments, bilingual, slot_map, direct
                 failures.append(
                     archive_model.item("dom", "source_slot_mismatch", resource, "state")
                 )
-
-
-def _allow_cleared_descendants(parent, parent_path, slot_map):
-    element_index = 0
-    for child in parent:
-        if not isinstance(child.tag, str):
-            continue
-        child_path = (*parent_path, element_index)
-        element_index += 1
-        for field, value in (("text", child.text), ("tail", child.tail)):
-            slot_map[(child_path, field)] = {
-                "kind": "toc",
-                "expected": None,
-                "source": value,
-                "count": False,
-            }
-        _allow_cleared_descendants(child, child_path, slot_map)
-
-
-def _navigation_slots(root_source, resource, toc_entries, slot_map, toc_label_paths, failures):
-    is_ncx = any(
-        archive_model.local_name(node.tag).lower() == "navmap" for node in root_source.iter()
-    )
-    locations = nav_module.nav_label_locations(root_source, is_ncx=is_ncx)
-    entries = sorted(
-        (
-            entry
-            for entry in toc_entries
-            if entry.get("toc_path") == resource and isinstance(entry.get("node_index"), int)
-        ),
-        key=lambda entry: int(entry["node_index"]),
-    )
-    if entries and len(locations) != len(entries):
-        failures.append(archive_model.item("nav", "label_count_mismatch", resource, "toc"))
-    for entry in entries:
-        index = int(entry["node_index"])
-        if index < 0 or index >= len(locations):
-            failures.append(archive_model.item("nav", "label_locator_missing", resource, "toc"))
-            continue
-        label, path = locations[index]
-        toc_label_paths.add(path)
-        slot_map[(path, "text")] = {
-            "kind": "toc",
-            "expected": translated_toc_title(entry),
-            "source": label.text,
-            "count": True,
-        }
-        _allow_cleared_descendants(label, path, slot_map)
 
 
 def _check_output_slots(root_output, resource, slot_map, direct_cleared, failures, differences):
@@ -279,8 +217,14 @@ def _check_output_slots(root_output, resource, slot_map, direct_cleared, failure
             if allowed.get("count") and actual_value != allowed.get("source"):
                 differences["toc_labels"] += 1
             continue
-        slot = allowed
-        expected_value = slot.target_value if slot.target_value is not None else slot.source_value
+        slot, preserve_source = allowed
+        expected_value = (
+            slot.source_value
+            if preserve_source
+            else slot.target_value
+            if slot.target_value is not None
+            else slot.source_value
+        )
         actual_value = getattr(owner, field)
         cleared = actual_value is None and (location, field) in direct_cleared
         empty_serialized = actual_value is None and expected_value == ""
@@ -318,8 +262,15 @@ def _validate_resource(
         isinstance(node.tag, str) and archive_model.local_name(node.tag).lower() == "navmap"
         for node in root_source.iter()
     )
-    _check_language(
-        root_source, root_output, resource, target_lang, is_ncx_resource, failures, differences
+    preservation.check_root_language(
+        root_source,
+        root_output,
+        resource,
+        target_lang,
+        is_ncx_resource,
+        segments,
+        failures,
+        differences,
     )
     slot_map: dict[tuple[tuple[int, ...], str], Any] = {}
     toc_label_paths: set[tuple[int, ...]] = set()
@@ -338,19 +289,33 @@ def _validate_resource(
             resource=resource,
             failures=failures,
         )
+    language_paths = preservation.preserved_language_paths(
+        root_source, root_output, resource, segments, source_lang, failures
+    )
     is_navigation = any(
         isinstance(node.tag, str)
         and archive_model.local_name(node.tag).lower() in {"nav", "navmap"}
         for node in root_source.iter()
     )
     if is_navigation:
-        _navigation_slots(root_source, resource, toc_entries, slot_map, toc_label_paths, failures)
+        nav_module.navigation_slots(
+            root_source,
+            root_output,
+            resource,
+            toc_entries,
+            slot_map,
+            toc_label_paths,
+            language_paths,
+            source_lang,
+            failures,
+        )
     if not compare_dom(
         root_source,
         root_output,
         slot_map,
         toc_label_paths=toc_label_paths,
         allow_root_language=not is_ncx_resource,
+        language_paths=language_paths,
     ):
         failures.append(archive_model.item("dom", "unauthorized_dom_change", resource, "immutable"))
     _check_output_slots(root_output, resource, slot_map, direct_cleared, failures, differences)
@@ -452,9 +417,18 @@ def slot_proof(
     except AttributeError:
         source_lang = ""
     raw_meta = manifest.get("meta") if isinstance(manifest, dict) else {}
-    raw_toc = raw_meta.get("toc_entries") if isinstance(raw_meta, dict) else []
-    toc_entries = (
-        [entry for entry in raw_toc if isinstance(entry, dict)] if isinstance(raw_toc, list) else []
+    toc_entries = raw_meta.get("toc_entries") if isinstance(raw_meta, dict) else []
+    raw_toc = toc_entries if isinstance(toc_entries, list) else []
+    preserved_toc_ids = preserved_toc_entry_ids(chapters, raw_toc)
+    toc_entries = [
+        {**entry, "preserve_source": True} if entry.get("entry_id") in preserved_toc_ids else entry
+        for entry in raw_toc
+        if isinstance(entry, dict)
+    ]
+    root_lang = (
+        source_lang
+        if chapters and all(chapter.preserve_source for chapter in chapters) and source_lang
+        else target_lang
     )
     _validate_resources(
         source_zip,
@@ -464,7 +438,7 @@ def slot_proof(
         toc_entries,
         bilingual,
         source_lang,
-        target_lang,
+        root_lang,
         bilingual_order,
         failures,
         warnings,

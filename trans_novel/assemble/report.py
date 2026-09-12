@@ -21,6 +21,25 @@ def _audit_detail(detail: object) -> str:
     return text
 
 
+def _chapter_processing(state) -> dict[str, list[dict[str, Any]]]:
+    preserved: list[dict[str, Any]] = []
+    review_required: list[dict[str, Any]] = []
+    for chapter in state.chapters:
+        processing = chapter.processing
+        if processing is None:
+            continue
+        item = {
+            "chapter": chapter.index,
+            "title": chapter.title,
+            "reason": processing.reason,
+        }
+        if processing.action == "preserve":
+            preserved.append(item)
+        if processing.review_required:
+            review_required.append(item)
+    return {"preserved": preserved, "review_required": review_required}
+
+
 def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
     manifest = store.load_manifest()
     chapters_total = len(manifest["chapters"])
@@ -97,6 +116,7 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
         for key, node in sorted(state.nodes.items())
         if node.status in (NODE_FAILED_RETRYABLE, NODE_FAILED_PERMANENT)
     ]
+    gstats = glossary.stats()
     conflicts = glossary.open_conflicts()
     low_conf = [
         {
@@ -108,19 +128,18 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
         }
         for term in glossary.low_confidence_terms()
     ]
-    gstats = glossary.stats()
-    return {
-        "summary": {
-            "chapters_total": chapters_total,
-            "chapters_done": chapters_done,
-            "terms": gstats["terms"],
-            "open_conflicts": len(conflicts),
-            "lint_issues": len(lint_issues),
-            "deterministic_issues": len(deterministic_issues),
-            "empty_targets": len(empty_targets),
-            "back_matter_chapters": len(back_matter),
-            "failed_nodes": len(failed_nodes),
-        },
+    summary = {
+        "chapters_total": chapters_total,
+        "chapters_done": chapters_done,
+        "terms": gstats["terms"],
+        "open_conflicts": len(conflicts),
+        "lint_issues": len(lint_issues),
+        "deterministic_issues": len(deterministic_issues),
+        "empty_targets": len(empty_targets),
+        "failed_nodes": len(failed_nodes),
+    }
+    report = {
+        "summary": summary,
         "open_conflicts": conflicts,
         "low_confidence_terms": low_conf,
         "lint_issues": lint_issues,
@@ -128,6 +147,14 @@ def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
         "repair": repair,
         "requires_user_action": False,
         "empty_targets": empty_targets,
-        "back_matter_chapters": back_matter,
         "failed_nodes": failed_nodes,
     }
+    classified = any(chapter.processing is not None for chapter in state.chapters) or (
+        state.initialized and state.identity.translation_policy_version >= 2
+    )
+    if classified:
+        report["chapter_processing"] = _chapter_processing(state)
+    else:
+        summary["back_matter_chapters"] = len(back_matter)
+        report["back_matter_chapters"] = back_matter
+    return report

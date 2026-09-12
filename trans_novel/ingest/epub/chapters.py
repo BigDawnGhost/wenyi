@@ -8,6 +8,17 @@ from trans_novel.ingest.models import KIND_HEADING, Chapter, Segment
 _STRATEGY_SPINE_FALLBACK = "spine-fallback"
 
 
+def _semantic_hints(segments: list[Segment]) -> list[str]:
+    return sorted(
+        {
+            hint
+            for segment in segments
+            for hint in segment.meta.get("semantic_hints", [])
+            if isinstance(hint, str)
+        }
+    )
+
+
 def _collect_segments(
     resources: list[dict[str, object]],
 ) -> tuple[
@@ -146,7 +157,10 @@ def _spine_fallback(resources: list[dict[str, object]]) -> list[Chapter]:
                 title=str(resource.get("title") or ""),
                 segments=segments,
                 href=str(resource.get("href") or "") or None,
-                meta={"epub_split_strategy": _STRATEGY_SPINE_FALLBACK},
+                meta={
+                    "epub_split_strategy": _STRATEGY_SPINE_FALLBACK,
+                    "semantic_hints": _semantic_hints(segments),
+                },
             )
         )
     return chapters
@@ -192,6 +206,7 @@ def _build_chapters(
         meta: dict[str, object] = {"epub_split_strategy": strategy}
         if isinstance(toc_entry_id, str):
             meta["toc_entry_id"] = toc_entry_id
+        meta["semantic_hints"] = _semantic_hints(segments)
         chapters.append(
             Chapter(
                 index=len(chapters),

@@ -17,7 +17,13 @@ from trans_novel.pipeline.contracts import NodeRequest
 from trans_novel.pipeline.nodes import PolishNode, TranslateNode
 from trans_novel.pipeline.nodes.common import seed_chapter_context, source_context_before
 from trans_novel.pipeline.nodes.translation_batch import translate_batch
-from trans_novel.pipeline.state import STATUS_DONE, RollingContext, RunIdentity, RunStore
+from trans_novel.pipeline.state import (
+    STATUS_DONE,
+    PolishBatch,
+    RollingContext,
+    RunIdentity,
+    RunStore,
+)
 
 
 def _segments(*sources):
@@ -214,9 +220,12 @@ class TestPolishRecoveryContext(unittest.TestCase):
             config = translator.config
             config.pipeline.polish = True
             config.pipeline.inflight_glossary = False
+            config.segment.max_chars_per_batch = 20
             glossary = GlossaryStore(f"{directory}/glossary.db")
             self.addCleanup(glossary.close)
-            client = FakeClient(handler=lambda *args: json.dumps({"polished": ["译文内容"]}))
+            client = FakeClient(
+                handler=lambda *args: json.dumps({"polished": [{"id": 0, "text": "译文内容"}]})
+            )
             polisher = Polisher(client, config)
             segments = _segments("SOURCE_ALPHA", "SOURCE_BETA", "SOURCE_GAMMA", "SOURCE_DELTA")
             chapter = Chapter(index=0, title="ORIGINAL_CHAPTER", segments=segments)
@@ -249,7 +258,7 @@ class TestPolishRecoveryContext(unittest.TestCase):
                 style_brief="STYLE_MARKER",
                 rolling_context=RollingContext(),
             ).execute(request)
-            for future in shared.polish_futures.values():
+            for future, _request_terms in shared.polish_futures.values():
                 future.result()
             submitted = [call["messages"] for call in client.calls]
             self.assertEqual(len(submitted), 4)
@@ -272,3 +281,64 @@ class TestPolishRecoveryContext(unittest.TestCase):
             self.assertIn("SOURCE_GAMMA", last)
             self.assertIn("ORIGINAL_CHAPTER", last)
             self.assertEqual(store.load_progress(0).pending_polish, [])
+
+    def test_legacy_pending_batch_recovers_without_cached_future(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            config = _translator(lambda *args: "unused").config
+            config.pipeline.polish = True
+            config.pipeline.inflight_glossary = False
+            glossary = GlossaryStore(f"{directory}/glossary.db")
+            self.addCleanup(glossary.close)
+            segments = _segments("SOURCE_ALPHA", "SOURCE_BETA")
+            for segment, target in zip(segments, ("译文甲。", "译文乙。"), strict=True):
+                segment.assign_translation(target)
+            chapter = Chapter(index=0, title="Chapter", segments=segments)
+            store = RunStore(directory)
+            state = store.stage_document(
+                Document(
+                    title="Book", fmt="text", source_lang="en", target_lang="zh", chapters=[chapter]
+                ),
+                RunIdentity(source_bytes_sha256="x", source_lang="en", target_lang="zh"),
+            )
+            store.save_manifest(state)
+            progress = store.load_progress(0)
+            progress.pending_polish = [PolishBatch(start=0, count=2)]
+            store.save_progress(0, progress)
+            client = FakeClient(
+                handler=lambda *args: json.dumps(
+                    {
+                        "polished": [
+                            {"id": 0, "text": "译文甲。"},
+                            {"id": 1, "text": "译文乙。"},
+                        ]
+                    }
+                )
+            )
+            shared = SimpleNamespace(polish_futures={})
+            request = NodeRequest(
+                store=store,
+                node_id="polish",
+                key="polish:0",
+                ci=0,
+                scope="chapter",
+                input_path="",
+                executor=executor,
+                shared=shared,
+                total_chapters=1,
+            )
+
+            PolishNode(
+                polisher=Polisher(client, config),
+                extractor=None,
+                glossary=glossary,
+                config=config,
+                style_brief="",
+            ).execute(request)
+
+            self.assertEqual([call["operation"] for call in client.calls], ["polish.batch"])
+            self.assertEqual(store.load_progress(0).pending_polish, [])
+            with open(store.event_log_path, encoding="utf-8") as stream:
+                self.assertIn('"polish_strategy": "checkpoint_batch_v1"', stream.read())

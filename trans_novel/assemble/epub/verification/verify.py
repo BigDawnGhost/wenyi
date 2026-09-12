@@ -12,7 +12,7 @@ from typing import Any
 from lxml import etree
 
 from trans_novel.assemble.epub.metadata import epub_language
-from trans_novel.assemble.epub.verification import archive_model, validation
+from trans_novel.assemble.epub.verification import archive_model, preservation, validation
 from trans_novel.assemble.epub.verification import slots as slot
 from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA, read_package
 
@@ -357,10 +357,20 @@ def verify_epub(
             target_lang = epub_language(store.load_manifest().get("target_lang"))
         except Exception:
             target_lang = None
+    structural_bilingual = bilingual
+    if mode == "generated" and bilingual and store is not None:
+        try:
+            manifest_chapters = store.load_manifest().get("chapters", [])
+            if manifest_chapters and all(
+                store.load_chapter(meta["index"]).preserve_source for meta in manifest_chapters
+            ):
+                structural_bilingual = False
+        except Exception:
+            pass
     structural = validation.validate_one(
         output,
         source_path=source if mode in {"monolingual", "bilingual"} else None,
-        bilingual=bilingual,
+        bilingual=structural_bilingual,
     )
     source_failures = (
         validation.validate_one(source, source_path=None, bilingual=None).get("failures", [])
@@ -399,6 +409,8 @@ def verify_epub(
         )
         for key, value in slot_differences.items():
             differences[key] += value
+    if mode == "generated" and store is not None:
+        preservation.generated_chapter_proof(output, store, failures, checked)
     failures = archive_model.sort_items([report_item(item) for item in failures])
     warnings = archive_model.sort_items([report_item(item) for item in warnings])
     assurance = "verified"

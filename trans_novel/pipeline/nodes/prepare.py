@@ -15,6 +15,7 @@ from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import Document
 from trans_novel.llm.base import LLMClient
 from trans_novel.pipeline.contracts import NodeOutcome, NodeRequest
+from trans_novel.pipeline.nodes.classification import ensure_chapter_classification
 from trans_novel.pipeline.planning import (
     analyst_model_profile,
     analyze_input_fingerprint,
@@ -143,12 +144,14 @@ class AnalyzeNode:
         self,
         *,
         analyzer,
+        classifier,
         config: Config,
         doc: Document | None,
         glossary: GlossaryStore,
         frozen_book=None,
     ):
         self.analyzer = analyzer
+        self.classifier = classifier
         self.config = config
         self.doc = doc
         self.glossary = glossary
@@ -156,6 +159,43 @@ class AnalyzeNode:
 
     def execute(self, request: NodeRequest) -> NodeOutcome:
         store = request.store
+        doc = self.doc
+        assert doc is not None, "初始化阶段的 analyze 必须携带解析后的文档"
+        staged_manifest = (request.artifacts.get("prepare") or {}).get("manifest")
+        ensure_chapter_classification(
+            doc,
+            store,
+            self.classifier,
+            staged_manifest=staged_manifest,
+            progress=request.progress,
+        )
+        if doc.chapters and all(chapter.preserve_source for chapter in doc.chapters):
+            analysis = {
+                "genre": "",
+                "tone": "",
+                "style_guide": "",
+                "narration": "",
+                "pacing": "",
+                "register": "",
+                "dialogue_style": "",
+                "rhetoric": "",
+                "conventions": "",
+                "characters": [],
+                "terms": [],
+            }
+            store.save_analysis(analysis)
+            store.save_context(
+                RollingContext(
+                    max_recent_keep=max(40, self.config.pipeline.rolling_context_segments)
+                ).to_dict()
+            )
+            manifest = staged_manifest if staged_manifest is not None else store.load_manifest()
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+            store.log_event("analysis_saved", has_analysis=True)
+            return NodeOutcome(
+                fingerprint=analyze_input_fingerprint("", analyst_model_profile(self.config))
+            )
         if self.frozen_book is not None:
             analysis = dict(self.frozen_book.analysis)
             store.save_analysis(analysis)
@@ -189,7 +229,6 @@ class AnalyzeNode:
         if request.progress:
             request.progress(0, 0, "分析全书风格…")
         doc = self.doc
-        assert doc is not None, "初始化阶段的 analyze 必须携带解析后的文档"
         sample = sample_text(doc)
         analysis = self.analyzer.analyze(sample) if sample else {}
         if analysis:
@@ -216,10 +255,7 @@ class AnalyzeNode:
             source_lang=doc.source_lang,
             target_lang=doc.target_lang,
             chapters=len(doc.chapters),
-            config={
-                "polish": self.config.pipeline.polish,
-                "back_matter": self.config.pipeline.back_matter,
-            },
+            config={"polish": self.config.pipeline.polish},
         )
         fp = analyze_input_fingerprint(sample, analyst_model_profile(self.config))
         return NodeOutcome(fingerprint=fp)

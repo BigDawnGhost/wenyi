@@ -89,7 +89,9 @@ def assemble_readiness_problems(store: RunStore) -> list[str]:
         node = state.nodes.get(key)
         if node is None or node.status != NODE_SUCCEEDED:
             problems.append(f"节点 {key} 未完成")
-        if pg.back_matter_mode is None:
+        preserved = idx.processing is not None and idx.processing.action == "preserve"
+        legacy_bypass = idx.processing is None and pg.back_matter_mode is not None
+        if not preserved and not legacy_bypass:
             polish = state.nodes.get(chapter_node_key(NODE_POLISH, idx.index))
             if polish is None or polish.status not in (NODE_SUCCEEDED, NODE_SKIPPED):
                 problems.append(f"节点 {chapter_node_key(NODE_POLISH, idx.index)} 未完成")

@@ -38,6 +38,15 @@ def _numbered_values(text: str) -> list[str]:
 def routing_handler(messages, agent, operation, json_mode):
     system = messages[0]["content"]
     user = messages[-1]["content"]
+    if operation == "chapter.classify":
+        request = json.loads(user)
+        return json.dumps(
+            {
+                "chapter_id": request["chapter_id"],
+                "kind": "translatable",
+                "reason": "contains substantive source text",
+            }
+        )
 
     if "语言识别器" in system:
         return json.dumps({"language": "ja"}, ensure_ascii=False)
@@ -78,10 +87,16 @@ def routing_handler(messages, agent, operation, json_mode):
         ]
         return json.dumps({"translations": translations}, ensure_ascii=False)
 
-    if "中文润色编辑" in system:
-        target_block = user.split("【待润色中文译文】", 1)[-1]
-        targets = _numbered_values(target_block)
-        polished = [f"润{i}" + "文" * max(0, len(target) - 2) for i, target in enumerate(targets)]
+    if operation == "polish.batch":
+        suffix = user.split("【待润色段落（JSON）】", 1)[-1].lstrip()
+        items, _ = json.JSONDecoder().raw_decode(suffix)
+        polished = [
+            {
+                "id": item["id"],
+                "text": f"润{i}" + "文" * max(0, len(item["target"]) - 2),
+            }
+            for i, item in enumerate(items)
+        ]
         return json.dumps({"polished": polished}, ensure_ascii=False)
 
     if "术语候选挖掘" in system:

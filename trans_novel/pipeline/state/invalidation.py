@@ -33,21 +33,8 @@ def clear_translated_titles(state) -> None:
                 entry.pop("title_translated", None)
 
 
-def reopen_back_matter_chapter(chapter, state, ci: int) -> None:
-    """Reset a back-matter chapter after its mode is upgraded."""
-    for segment in chapter.segments:
-        segment.reset_translation()
-    progress = state.progress.setdefault(ci, ChapterProgress())
-    progress.back_matter_mode = None
-    progress.pending_polish = []
-    progress.lint_issues = []
-    progress.status = STATUS_PENDING
-    state.progress[ci] = progress
-
-
 __all__ = [
     "clear_translated_titles",
     "clear_translation_targets",
     "reconcile_fingerprints",
-    "reopen_back_matter_chapter",
 ]

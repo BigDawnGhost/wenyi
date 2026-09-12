@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+from dataclasses import asdict
+
 from trans_novel.agents import langprofile
+from trans_novel.agents.polisher import PolishResult
 from trans_novel.config import Config
 from trans_novel.epub.slots import normalize_slot_transport
 from trans_novel.glossary.store import GlossaryStore
@@ -14,7 +18,6 @@ from trans_novel.pipeline.nodes.glossary import extract_and_store
 from trans_novel.pipeline.nodes.translation_batch import align_epub_translations
 from trans_novel.pipeline.planning import (
     frozen_input_fingerprint,
-    is_back_matter,
     polish_input_fingerprint,
     polish_model_profile,
 )
@@ -28,6 +31,67 @@ from trans_novel.pipeline.state import (
     clear,
     stable_digest,
 )
+
+_POLISH_AUDIT_STRATEGY = "checkpoint_batch_v1"
+
+
+def _lint_evidence(issues) -> list[dict[str, str]]:
+    return [{"type": issue.type, "detail": issue.detail} for issue in issues]
+
+
+def _rejection_event(
+    *,
+    ci: int,
+    segment,
+    batch_start: int,
+    batch_offset: int,
+    raw: str,
+    proposal: str | None,
+    gate,
+    reasons: list[str],
+    locked_terms,
+    configured_editor_models: list[str],
+) -> dict:
+    term_evidence = [asdict(term) for term in locked_terms]
+    checked_proposal = gate.checked_proposal if proposal is not None else None
+    proposal_issues = _lint_evidence(gate.proposal_issues) if proposal is not None else []
+    identity = {
+        "chapter": ci,
+        "index": segment.index,
+        "source": segment.source,
+        "pre_polish_target": raw,
+        "proposal": proposal,
+        "reasons": reasons,
+        "locked_terms": term_evidence,
+        "strategy": _POLISH_AUDIT_STRATEGY,
+    }
+    return {
+        "audit_id": stable_digest(identity),
+        "chapter": ci,
+        "index": segment.index,
+        "batch_start": batch_start,
+        "batch_offset": batch_offset,
+        "resource_href": segment.resource_href,
+        "anchor": segment.anchor,
+        "source": segment.source,
+        "pre_polish_target": raw,
+        "proposal": proposal,
+        "checked_raw": gate.checked_raw,
+        "checked_proposal": checked_proposal,
+        "raw_issues": _lint_evidence(gate.raw_issues),
+        "proposal_issues": proposal_issues,
+        "locked_terms": term_evidence,
+        "reasons": reasons,
+        "strategy": _POLISH_AUDIT_STRATEGY,
+        "configured_editor_models": configured_editor_models,
+        "source_sha256": stable_digest(segment.source),
+        "pre_polish_target_sha256": stable_digest(raw),
+        "proposal_sha256": stable_digest(proposal) if proposal is not None else None,
+        "checked_raw_sha256": stable_digest(gate.checked_raw),
+        "checked_proposal_sha256": (
+            stable_digest(checked_proposal) if checked_proposal is not None else None
+        ),
+    }
 
 
 class PolishNode:
@@ -60,6 +124,10 @@ class PolishNode:
         store = request.store
         chapter = store.load_chapter(ci)
         chapter_progress = store.load_progress(ci)
+        if chapter.preserve_source:
+            if chapter_progress.pending_polish:
+                raise ValueError("preserved chapter has pending polish work")
+            return NodeOutcome()
         text_segs = chapter.text_segments
         term_snapshot = chapter_term_snapshot(self.glossary, text_segs, self.config)
         pending = list(chapter_progress.pending_polish)
@@ -85,9 +153,7 @@ class PolishNode:
             store,
             ci,
         )
-        if self.config.pipeline.inflight_glossary and not is_back_matter(
-            chapter.title, index=ci, total=request.total_chapters
-        ):
+        if self.config.pipeline.inflight_glossary:
             src_text = "\n".join(s.source for s in text_segs)
             tgt_text = "\n".join(s.target or "" for s in text_segs)
             extract_and_store(self.extractor, self.glossary, src_text, tgt_text, ci)
@@ -122,19 +188,38 @@ class PolishNode:
                 count = entry.count
                 batch = text_segs[start : start + count]
                 raw_plain = [segment.target or "" for segment in batch]
-                futures_by_key[key] = executor.submit(
+                request_terms = tuple(copy.deepcopy(term_snapshot))
+                future = executor.submit(
                     self.polisher.polish,
                     raw_plain,
                     [segment.source for segment in batch],
-                    glossary_terms=list(term_snapshot),
+                    glossary_terms=request_terms,
                     style=style,
-                    source_contexts=tuple(
-                        source_context_before(text_segs, index)
-                        for index in range(start, start + count)
-                    ),
+                    source_context=source_context_before(text_segs, start),
                     chapter_title=chapter.title,
                     strict=True,
                 )
+                futures_by_key[key] = (future, request_terms)
+
+    def _resolve_result(
+        self, future, eligible, raw_plain, request_terms, store, ci, start, count
+    ) -> PolishResult:
+        try:
+            return future.result()
+        except LLM_FALLBACK_ERRORS as exc:
+            reason = type(exc).__name__
+            store.log_event(
+                "polish_batch_fallback",
+                chapter=ci,
+                start_index=start,
+                count=count,
+                reason=reason,
+            )
+            return PolishResult(
+                texts=raw_plain,
+                fallback_reasons=dict.fromkeys(eligible, reason),
+                locked_terms=request_terms,
+            )
 
     def _drain_chapter_polish(
         self,
@@ -148,8 +233,7 @@ class PolishNode:
         store,
         ci: int,
     ) -> None:
-        """写回按批序进行；每批清完立即落盘，保证续跑不丢润色（不变量 b）。
-        异常时结果回退 raw，不阻断整章。"""
+        """按批写回并即时落盘，确保续跑不丢润色。"""
         pending = list(chapter_progress.pending_polish)
         if not pending:
             return
@@ -158,57 +242,69 @@ class PolishNode:
         )
         for entry in sorted(pending, key=lambda e: e.start):
             start, count = entry.start, entry.count
-            fut = futures_by_key.pop((ci, start), None)
+            submitted = futures_by_key.pop((ci, start), None)
             batch = text_segs[start : start + count]
             srcs = [segment.source for segment in batch]
             raw_plain = [segment.target or "" for segment in batch]
-            try:
-                final_plain = fut.result() if fut is not None else raw_plain
-            except LLM_FALLBACK_ERRORS as exc:
-                final_plain = raw_plain
-                store.log_event(
-                    "polish_batch_fallback",
-                    chapter=ci,
-                    start_index=start,
-                    count=count,
-                    reason=type(exc).__name__,
-                )
-            locked = [t for t in term_snapshot if getattr(t, "locked", 0)]
-            results = [
-                polish_gate(
+            eligible = {i for i, source in enumerate(srcs) if langprofile.needs_translation(source)}
+            if submitted is None:
+                raise ValueError("polish request missing after submission")
+            future, request_terms = submitted
+            polish_result = self._resolve_result(
+                future, eligible, raw_plain, request_terms, store, ci, start, count
+            )
+            locked = [term for term in polish_result.locked_terms if term.locked]
+            results = []
+            selected_plain = []
+            for i in range(count):
+                if i not in eligible:
+                    results.append(None)
+                    selected_plain.append(srcs[i])
+                    continue
+                result = polish_gate(
                     srcs[i],
                     raw_plain[i],
-                    final_plain[i],
+                    polish_result.texts[i],
                     locked_terms=locked,
                     src_lang=self.polisher.src,
                     normalize_punctuation=self.config.punctuation_normalize,
                 )
-                for i in range(count)
-            ]
-            selected_plain = [
-                srcs[i] if not langprofile.needs_translation(srcs[i]) else result.selected
-                for i, result in enumerate(results)
-            ]
+                results.append(result)
+                selected_plain.append(result.selected)
             selected_transport = align_epub_translations(batch, selected_plain)
             for i, result in enumerate(results):
                 if batch[i].epub_state is not None and self.config.punctuation_normalize:
                     selected_transport[i] = normalize_slot_transport(
                         batch[i].epub_state, selected_transport[i]
                     )
-                if result.accepted:
-                    self.polisher.client.usage.record_outcome(
-                        "editor", "polish.segment", accepted=True
-                    )
+                if result is None:
                     continue
+                fallback_reason = polish_result.fallback_reasons.get(i)
+                accepted = result.accepted and fallback_reason is None
+                if not accepted:
+                    reasons = (
+                        [fallback_reason]
+                        if fallback_reason is not None
+                        else list(result.rejection_reasons)
+                    )
+                    proposal = polish_result.proposals.get(i)
+                    store.log_event_required(
+                        "polish_rejected",
+                        **_rejection_event(
+                            ci=ci,
+                            segment=batch[i],
+                            batch_start=start,
+                            batch_offset=i,
+                            raw=raw_plain[i],
+                            proposal=proposal,
+                            gate=result,
+                            reasons=reasons,
+                            locked_terms=locked,
+                            configured_editor_models=list(self.config.llm.models.editor),
+                        ),
+                    )
                 self.polisher.client.usage.record_outcome(
-                    "editor", "polish.segment", accepted=False
-                )
-                store.log_event(
-                    "polish_rejected",
-                    chapter=ci,
-                    index=start + i,
-                    reason=list(result.rejection_reasons),
-                    proposal_sha256=stable_digest(result.proposal),
+                    "editor", "polish.batch", accepted=accepted
                 )
             final = []
             for segment, value in zip(batch, selected_transport, strict=True):
@@ -237,6 +333,7 @@ class PolishNode:
                 count=count,
                 changed_count=len(changes),
                 changes=changes,
+                polish_strategy=_POLISH_AUDIT_STRATEGY,
                 target_sha256=stable_digest(
                     [
                         {"index": text_segs[start + i].index, "target": final[i]}

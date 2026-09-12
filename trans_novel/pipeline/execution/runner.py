@@ -434,15 +434,18 @@ class WorkflowRunner:
         if progress.status == STATUS_DONE:
             return
         chapter = store.load_chapter(ci)
-        store.log_event(
-            "chapter_done",
-            chapter=ci,
-            title=chapter.title,
-            segment_count=len(chapter.text_segments),
-            lint_issue_count=len(progress.lint_issues),
-            back_matter=bool(progress.back_matter_mode),
-            mode=progress.back_matter_mode,
-        )
+        event = {
+            "chapter": ci,
+            "title": chapter.title,
+            "segment_count": len(chapter.text_segments),
+            "lint_issue_count": len(progress.lint_issues),
+        }
+        if chapter.processing is not None:
+            event["processing"] = chapter.processing.model_dump(mode="json")
+        elif progress.back_matter_mode is not None:
+            event["back_matter"] = True
+            event["mode"] = progress.back_matter_mode
+        store.log_event("chapter_done", **event)
         store.set_chapter_status(ci, STATUS_DONE)
 
 

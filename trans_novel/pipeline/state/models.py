@@ -9,9 +9,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trans_novel.ingest.models import ChapterProcessing
+
 RUN_STATE_SCHEMA_VERSION = 4
 RUN_INPUT_SCHEMA_VERSION = 2
-TRANSLATION_POLICY_VERSION = 1
+TRANSLATION_POLICY_VERSION = 2
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
 ChapterStatus = Literal["pending", "done"]
@@ -194,6 +196,7 @@ class ChapterIndex(BaseModel):
     href: str | None = None
     toc_entry_id: str | None = None
     title_translated: str | None = None
+    processing: ChapterProcessing | None = None
 
 
 class AnalysisFlags(BaseModel):
