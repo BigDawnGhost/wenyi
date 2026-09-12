@@ -4,9 +4,10 @@
 
 Status: proposed; medium priority, recommended first implementation slice. Baseline: `7471256`.
 
-Implementation: the progress bridge and columns now live in `commands/progress.py`, with
-their existing clock/count tests in `tests/test_cli_progress.py`. Presentation and later
-command/context slices remain pending. No CLI behavior or persistent timing scope changed.
+Implementation: progress lives in `commands/progress.py`, with clock/count tests in
+`tests/test_cli_progress.py`. Usage, timing and completion summaries now live in
+`commands/presentation.py`, receiving a console and data without accessing stores.
+Command/context slices remain pending. No CLI behavior or persistent timing scope changed.
 
 ## Evidence
 

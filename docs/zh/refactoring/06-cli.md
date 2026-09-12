@@ -4,9 +4,9 @@
 
 状态：待实施；中优先级，建议作为第一批实施内容。基线：`7471256`。
 
-实施进展：进度桥和列已提取到 `commands/progress.py`，原有时钟及计数测试移到
-`tests/test_cli_progress.py`。摘要展示、后续命令与上下文切片仍待实施；CLI 行为和
-持久化计时范围不变。
+实施进展：进度桥和列已提取到 `commands/progress.py`，时钟及计数测试移到
+`tests/test_cli_progress.py`。用量、耗时和完成摘要已提取到 `commands/presentation.py`，
+只接收 Console 与数据，不访问 store。命令及上下文切片仍待实施；CLI 行为和持久化计时范围不变。
 
 ## 证据
 

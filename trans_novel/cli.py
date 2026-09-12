@@ -19,6 +19,7 @@ from rich.progress import Progress
 from rich.table import Table
 from typer.core import TyperGroup
 
+from .commands import presentation
 from .commands import progress as progress_view
 from .config import Config
 from .i18n.languages import validate_run_languages
@@ -26,7 +27,7 @@ from .ingest.errors import IngestError
 from .ingest.segmenter import load_document
 from .model_commands import register_model_commands
 from .pipeline.runstore import STATUS_DONE, RunStore, translation_run_dir
-from .timing import format_duration, load_timing
+from .timing import load_timing
 
 
 def _configure_windows_console(
@@ -305,12 +306,14 @@ def _translate_srt_or_raise(
             progress=cb,
         )
 
-    console.print(
-        f"[bold green]Subtitle translation complete[/]: {result['translated']}/{result['cue_count']} cues, "
-        f"State directory: {result['run_dir']}"
+    presentation.print_subtitle_summary(
+        console,
+        translated=result["translated"],
+        cue_count=result["cue_count"],
+        run_dir=result["run_dir"],
     )
-    _print_usage({"usage": result.get("usage") or {}})
-    _print_timing(result["run_dir"])
+    presentation.print_usage(console, result.get("usage") or {})
+    presentation.print_timing(console, load_timing(result["run_dir"]))
     for path in result.get("outputs") or []:
         console.print(f"Translation: [bold]{path}[/]")
 
@@ -396,8 +399,8 @@ def _translate_impl_or_raise(
             console.print(
                 f"[green]Translated chapter {chapter}[/], State directory: {store.run_dir}"
             )
-            _print_usage({"usage": store.load_usage() or {}})
-            _print_timing(store.run_dir)
+            presentation.print_usage(console, store.load_usage() or {})
+            presentation.print_timing(console, load_timing(store.run_dir))
             return
 
         result = orch.run_all(
@@ -408,23 +411,15 @@ def _translate_impl_or_raise(
             pdf_engine=pdf_engine,
         )
 
-    s = result["report"]["summary"]
-    console.print(
-        f"[bold green]Complete[/]: {s['chapters_done']}/{s['chapters_total']} chapters, terms: {s['terms']}."
-    )
-    _print_usage({"usage": result["store"].load_usage() or {}})
-    _print_timing(result["store"].run_dir)
+    presentation.print_translation_summary(console, result["report"]["summary"])
+    presentation.print_usage(console, result["store"].load_usage() or {})
+    presentation.print_timing(console, load_timing(result["store"].run_dir))
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"Translation: [bold]{path}[/]")
     if result.get("review_dir"):
-        review_result = result.get("review_result") or {}
-        review_summary = review_result.get("summary") or {}
-        console.print(
-            f"Review result: {review_result.get('termination', 'unknown')}, "
-            f"issues: {review_summary.get('issue_count', 0)}, "
-            f"suggested changes: {review_summary.get('change_count', 0)}."
+        presentation.print_review_details(
+            console, result.get("review_result"), result["review_dir"]
         )
-        console.print(f"Review directory: {result['review_dir']}")
 
 
 def _prepare_impl(input_path: str) -> None:
@@ -457,62 +452,15 @@ def _prepare_impl(input_path: str) -> None:
     digests = sum(
         bool(store.load_chapter(item["index"]).meta.get("source_digest")) for item in chapters
     )
-    console.print(
-        f"[bold green]Preparation complete[/]: Parsed {len(chapters)} chapters, "
-        f"prescanned {digests}/{len(chapters)} chapters, "
-        f"Whole-book synopsis{' generated' if analysis.get('book_synopsis') else ' unavailable'}."
+    presentation.print_preparation_summary(
+        console,
+        chapter_count=len(chapters),
+        digest_count=digests,
+        has_synopsis=bool(analysis.get("book_synopsis")),
+        run_dir=store.run_dir,
     )
-    console.print(f"State directory: [bold]{store.run_dir}[/]")
-    console.print("Run translate with the same source file to continue the full translation.")
-    _print_usage({"usage": store.load_usage() or {}})
-    _print_timing(store.run_dir)
-
-
-def _print_timing(run_dir: str) -> None:
-    """Show the last invocation and accumulated execution time, including failed runs."""
-    timing = load_timing(run_dir)
-    if timing is None:
-        return
-    last = timing["runs"][-1]
-    count = len(timing["runs"])
-    console.print(
-        f"Time: last run {format_duration(last['elapsed_seconds'])} ({last['status']}), "
-        f"cumulative {format_duration(timing['total_seconds'])} across {count} "
-        f"{'run' if count == 1 else 'runs'}.",
-        highlight=False,
-    )
-
-
-def _print_usage(report: dict) -> None:
-    """Print cumulative book token usage and tier cache hit rates when available."""
-    usage = report.get("usage") or {}
-    totals = usage.get("totals") or {}
-    if not totals.get("total_tokens"):
-        return
-    console.print(
-        f"Usage (book total): {totals['total_tokens']:,} tok"
-        f" (prompt {totals['prompt_tokens']:,} / completion {totals['completion_tokens']:,}), "
-        f"cache hit rate {totals.get('cache_hit_rate', 0.0):.1%}"
-        f" (hits {totals['cache_hit_tokens']:,} / misses {totals['cache_miss_tokens']:,} tok)"
-    )
-    for tier, v in sorted(usage.get("by_tier", {}).items()):
-        console.print(
-            f"  · {tier}: {v['total_tokens']:,} tok, {v['calls']} calls, "
-            f"cache hit rate {v['cache_hit_rate']:.1%}"
-        )
-    for stage, v in sorted(
-        (usage.get("by_stage") or {}).items(),
-        key=lambda item: -item[1]["total_tokens"],
-    ):
-        console.print(
-            f"  · Stage {stage}: {v['total_tokens']:,} tok"
-            f" (prompt {v['prompt_tokens']:,} / completion {v['completion_tokens']:,}), "
-            f"{v['calls']} calls, cache hit rate {v['cache_hit_rate']:.1%}"
-        )
-
-    for identity, value in sorted((usage.get("by_model") or {}).items()):
-        label = (usage.get("labels") or {}).get(identity, identity)
-        console.print(f"  · Model {label}: {value['total_tokens']:,} tok, {value['calls']} calls")
+    presentation.print_usage(console, store.load_usage() or {})
+    presentation.print_timing(console, load_timing(store.run_dir))
 
 
 # ── Complete workflow / Preparation ────────────────────────────────────────────────
@@ -624,25 +572,8 @@ def review(
         console.print(f"[red]Error: {error}[/]")
         raise typer.Exit(1) from None
 
-    review_result = result["review_result"]
-    summary = review_result["summary"]
-    console.print(
-        f"[bold green]Whole-book agent review complete[/]: {review_result['termination']}, "
-        f"Remaining issues: {summary['issue_count']}, "
-        f"suggested changes: {summary['change_count']}."
-    )
-    autofix_result = review_result.get("autofix") or {}
-    if autofix_result.get("enabled"):
-        console.print(
-            f"Autofix: published {autofix_result.get('applied_segment_count', 0)} paragraphs, "
-            f"failed issues: {autofix_result.get('failed_issue_count', 0)}."
-        )
-    else:
-        console.print(
-            "Review produced recommendations only; formal chapter translations are unchanged."
-        )
-    console.print(f"Review directory: {result['review_dir']}")
-    _print_timing(result["store"].run_dir)
+    presentation.print_review_summary(console, result["review_result"], result["review_dir"])
+    presentation.print_timing(console, load_timing(result["store"].run_dir))
 
 
 # ── Inspection / Individual stages ──────────────────────────────────────────────────────
@@ -688,7 +619,7 @@ def status(
     g = GlossaryStore(store.glossary_path)
     console.print("Glossary: ", g.stats())
     g.close()
-    _print_timing(store.run_dir)
+    presentation.print_timing(console, load_timing(store.run_dir))
 
 
 @glossary_app.command("list")
@@ -825,7 +756,7 @@ def assemble(
         console.print(f"[red]Error: {error}[/]")
         raise typer.Exit(1) from None
     paths = result["outputs"]
-    _print_timing(result["store"].run_dir)
+    presentation.print_timing(console, load_timing(result["store"].run_dir))
     for path in paths:
         console.print(f"Translation written: [bold]{path}[/]")
 
