@@ -4,6 +4,11 @@
 
 Status: proposed; medium priority. Title extraction is a suitable first slice; batch recovery has higher risk. Baseline: `7471256`.
 
+Implementation: heading reuse, pending-title selection and request batching now live in
+`pipeline/title_translation.py`. `TitlePlan` owns a manifest copy so uncommitted changes
+do not escape. Characterization tests cover budgets, reuse, rejected responses and resume.
+The title agent/service extraction and body-batch changes remain pending.
+
 ## Evidence
 
 [`translation.py`](../../trans_novel/pipeline/translation.py) has 791 lines. `translate_titles()` at line 488 spans 258 lines—roughly a third of the file—and combines continuation merging, heading/TOC reuse, pending-title batching, prompts, model output validation and manifest checkpoints. `translate_chapter()` at line 197 spans 219 lines and coordinates body batches, context, glossary recovery, annotations, styles and chapter completion.

@@ -4,6 +4,10 @@
 
 状态：待实施；中优先级。标题拆分适合作为第一批小改动；批次恢复部分风险更高。基线：`7471256`。
 
+实施进展：正文标题复用、待翻选择与请求分批已提取到 `pipeline/title_translation.py`；
+`TitlePlan` 独占 manifest 副本，未提交修改不影响调用方。行为测试覆盖预算、复用、异常响应和续跑。
+标题 agent/service 提取与正文批次变更仍待实施。
+
 ## 证据
 
 [`translation.py`](../../../trans_novel/pipeline/translation.py) 共 791 行。488 行的 `translate_titles()` 为 258 行，约占三分之一，包含续段回并、标题和 TOC 复用、待翻标题分批、提示词、模型结果校验、manifest 检查点。197 行的 `translate_chapter()` 为 219 行，协调正文批次、上下文、术语恢复、注释、样式和章节完成。
