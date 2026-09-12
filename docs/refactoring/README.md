@@ -2,7 +2,9 @@
 
 [简体中文](../zh/refactoring/README.md)
 
-Status: design draft only; no implementation changes. Reviewed on 2026-09-11–12 against local `dev`, commit `7471256` (workflow timing merged).
+Status: implementation in progress; each proposal records its completed slices. The inventory
+below was reviewed on 2026-09-11–12 against local `dev`, commit `7471256` (workflow timing merged).
+Implementation starts from `eef85d4`, retaining the subsequent recoverable Review error fix.
 
 ## Recommendation
 

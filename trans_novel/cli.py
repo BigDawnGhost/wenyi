@@ -14,22 +14,12 @@ from typing import Any
 
 import typer
 import yaml
-from rich.cells import cell_len, set_cell_size
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    ProgressColumn,
-    SpinnerColumn,
-    Task,
-    TextColumn,
-    TimeElapsedColumn,
-)
-from rich.table import Column, Table
-from rich.text import Text
+from rich.progress import Progress
+from rich.table import Table
 from typer.core import TyperGroup
 
+from .commands import progress as progress_view
 from .config import Config
 from .i18n.languages import validate_run_languages
 from .ingest.errors import IngestError
@@ -113,82 +103,6 @@ glossary_app = typer.Typer(
     help="Inspect glossary entries, check conflicts and resolve translations.",
 )
 console = Console()
-
-_PROGRESS_DESCRIPTION_WIDTH = 28
-
-
-def _short_progress_description(label: str) -> str:
-    """Truncate long titles by terminal cell width and keep an ellipsis when clipped."""
-    if cell_len(label) <= _PROGRESS_DESCRIPTION_WIDTH:
-        return label
-    prefix = set_cell_size(label, _PROGRESS_DESCRIPTION_WIDTH - 1).rstrip()
-    return f"{prefix}…"
-
-
-class _WorkflowElapsedColumn(TimeElapsedColumn):
-    """Keep elapsed time advancing across stages, including completed-stage waits."""
-
-    def render(self, task: Task) -> Text:
-        started = task.fields.get("workflow_started", task.start_time)
-        elapsed = 0.0 if started is None else task.get_time() - started
-        return Text(format_duration(elapsed), style="progress.elapsed")
-
-
-def _progress_columns() -> tuple[ProgressColumn, ...]:
-    """Build Rich columns that keep long stage names from hiding the bar."""
-    description_column = Column(
-        max_width=_PROGRESS_DESCRIPTION_WIDTH,
-        no_wrap=True,
-        overflow="ellipsis",
-    )
-    return (
-        SpinnerColumn(),
-        TextColumn(
-            "[progress.description]{task.description}",
-            table_column=description_column,
-        ),
-        BarColumn(),
-        MofNCompleteColumn(),
-        _WorkflowElapsedColumn(),
-    )
-
-
-class _RichProgressBridge:
-    """Map pipeline stage progress onto one Rich task."""
-
-    def __init__(self, progress: Progress, initial_description: str) -> None:
-        self.progress = progress
-        self._started = progress.get_time()
-        self.task = progress.add_task(
-            _short_progress_description(initial_description),
-            total=None,
-            workflow_started=self._started,
-        )
-        self._stage: tuple[str, int | None] = (initial_description, None)
-
-    def __call__(self, done: int, total: int, label: str) -> None:
-        """Refresh the current stage and counts without accumulating progress bars."""
-        stage = (label, total if total > 0 else None)
-        short = _short_progress_description(label)
-        if total > 0:
-            if stage != self._stage:
-                # A completed Rich task retains its finished time until reset.
-                self.progress.reset(self.task, total=total, completed=done, description=short)
-            self._stage = stage
-            self.progress.update(
-                self.task,
-                completed=done,
-                total=total,
-                description=short,
-            )
-            return
-        if stage == self._stage:
-            return
-        # Rich update(total=None) leaves the total unchanged. Recreate the task
-        # to restore indeterminate progress and clear the previous stage’s counts.
-        self.progress.remove_task(self.task)
-        self.task = self.progress.add_task(short, total=None, workflow_started=self._started)
-        self._stage = stage
 
 
 def _version_callback(value: bool) -> None:
@@ -378,10 +292,10 @@ def _translate_srt_or_raise(
         config.output.bilingual = bilingual
 
     with Progress(
-        *_progress_columns(),
+        *progress_view.progress_columns(),
         console=console,
     ) as prog:
-        cb = _RichProgressBridge(prog, "Translating subtitles…")
+        cb = progress_view.RichProgressBridge(prog, "Translating subtitles…")
         result = translate_srt(
             input_path,
             config,
@@ -467,11 +381,11 @@ def _translate_impl_or_raise(
     with (
         orch.client.interrupt_scope(),
         Progress(
-            *_progress_columns(),
+            *progress_view.progress_columns(),
             console=console,
         ) as prog,
     ):
-        cb = _RichProgressBridge(prog, "Preparing…")
+        cb = progress_view.RichProgressBridge(prog, "Preparing…")
 
         if chapter is not None:
             try:
@@ -525,11 +439,11 @@ def _prepare_impl(input_path: str) -> None:
         with (
             orch.client.interrupt_scope(),
             Progress(
-                *_progress_columns(),
+                *progress_view.progress_columns(),
                 console=console,
             ) as prog,
         ):
-            cb = _RichProgressBridge(prog, "Preparing…")
+            cb = progress_view.RichProgressBridge(prog, "Preparing…")
             store = orch.prepare_for_translation(input_path, progress=cb)
     except typer.Exit:
         raise
@@ -698,11 +612,11 @@ def review(
         with (
             orch.client.interrupt_scope(),
             Progress(
-                *_progress_columns(),
+                *progress_view.progress_columns(),
                 console=console,
             ) as prog,
         ):
-            cb = _RichProgressBridge(prog, "Preparing whole-book review…")
+            cb = progress_view.RichProgressBridge(prog, "Preparing whole-book review…")
             result = orch.run_review(input, progress=cb)
     except typer.Exit:
         raise

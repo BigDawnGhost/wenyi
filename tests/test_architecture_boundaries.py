@@ -65,6 +65,25 @@ def _agent_sources() -> list[tuple[str, str]]:
 
 
 class TestArchitectureBoundaries(unittest.TestCase):
+    def test_command_modules_do_not_import_cli_entry_point(self):
+        """Command helpers receive dependencies instead of importing application globals."""
+        for path in (TRANS_NOVEL_DIR / "commands").rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    self.assertFalse(
+                        (node.level == 2 and module == "cli")
+                        or module == "trans_novel.cli"
+                        or (
+                            node.level == 2
+                            and not module
+                            and any(alias.name == "cli" for alias in node.names)
+                        ),
+                        str(path),
+                    )
+                elif isinstance(node, ast.Import):
+                    self.assertFalse(any(alias.name == "trans_novel.cli" for alias in node.names))
+
     def test_orchestrator_has_no_domain_imports(self):
         """Allow the orchestrator to depend only on config and sibling pipeline services."""
         source = _module_source("orchestrator")

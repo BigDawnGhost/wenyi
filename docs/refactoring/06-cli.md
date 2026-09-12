@@ -4,6 +4,10 @@
 
 Status: proposed; medium priority, recommended first implementation slice. Baseline: `7471256`.
 
+Implementation: the progress bridge and columns now live in `commands/progress.py`, with
+their existing clock/count tests in `tests/test_cli_progress.py`. Presentation and later
+command/context slices remain pending. No CLI behavior or persistent timing scope changed.
+
 ## Evidence
 
 [`cli.py`](../../trans_novel/cli.py) has 953 lines. It combines early configuration creation, the mutable `_CONFIG` selection, Rich progress, usage/timing formatting, input/output checks, subtitle dispatch, workflow commands, status and glossary commands. Its largest function is only 110 lines: the main problem is multiple independently changing concerns rather than one complex algorithm.
