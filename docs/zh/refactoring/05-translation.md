@@ -2,11 +2,12 @@
 
 [总览](README.md) · [English](../../refactoring/05-translation.md)
 
-状态：待实施；中优先级。标题拆分适合作为第一批小改动；批次恢复部分风险更高。基线：`7471256`。
+状态：部分实施；中优先级。标题拆分已完成；正文批次恢复部分风险更高。基线：`7471256`。
 
 实施进展：正文标题复用、待翻选择与请求分批已提取到 `pipeline/title_translation.py`；
 `TitlePlan` 独占 manifest 副本，未提交修改不影响调用方。行为测试覆盖预算、复用、异常响应和续跑。
-标题 agent/service 提取与正文批次变更仍待实施。
+`agents/title_translator.py` 已管理提示词和响应对齐；`TitleTranslationService` 接收 Runtime
+维护语言的标题 agent，负责 manifest 提交与标题事件。正文服务直接委派，不保留旧方法；正文批次变更仍待实施。
 
 ## 证据
 

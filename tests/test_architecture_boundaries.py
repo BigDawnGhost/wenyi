@@ -26,7 +26,7 @@ SERVICE_MODULES = (
 )
 
 # Lower pipeline modules must not import orchestrator.
-LOWER_MODULES = SERVICE_MODULES + ("runstore", "context")
+LOWER_MODULES = SERVICE_MODULES + ("runstore", "context", "title_translation")
 
 FORBIDDEN_TOP_LEVEL = (
     "agents",

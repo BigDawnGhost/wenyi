@@ -1,13 +1,17 @@
-"""Plan heading and TOC title reuse without reading or writing book state."""
+"""Plan heading/TOC reuse and commit validated title batches through one service."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from ..agents import prompts
+from ..agents.title_translator import TitleOutputError, TitleTranslator
+from ..glossary.store import GlossaryStore
 from ..ingest.models import Chapter
+from .runstore import RunStore
 
 
 def _flat(value: object) -> str:
@@ -164,3 +168,70 @@ def title_batches(pending: list[TitleRequest]) -> list[list[TitleRequest]]:
     if current:
         batches.append(current)
     return batches
+
+
+class TitleTranslationService:
+    """Own title planning, manifest commits and title events under the caller's book lock."""
+
+    def __init__(self, translator: TitleTranslator) -> None:
+        self._translator = translator
+
+    def run(
+        self,
+        store: RunStore,
+        glossary: GlossaryStore,
+        progress: Callable[[int, int, str], None] | None = None,
+    ) -> None:
+        """Reuse complete headings, then translate and commit only pending title batches."""
+        manifest = store.load_manifest()
+        chapters = {
+            row["index"]: store.load_chapter(row["index"])
+            for row in manifest.get("chapters", [])
+            if isinstance(row.get("index"), int)
+        }
+        plan = plan_titles(manifest, chapters)
+        if plan.changed:
+            store.save_manifest(plan.manifest)
+        if not plan.pending:
+            store.log_event("titles_skipped", reason="already_translated_or_reused")
+            return
+        if progress:
+            progress(0, len(plan.pending), "Translating chapter titles…")
+
+        batches = title_batches(plan.pending)
+        completed = 0
+        glossary_text = prompts.render_glossary(glossary.all_terms())
+        for batch_index, batch in enumerate(batches):
+            titles = [item.source for item in batch]
+            try:
+                translated = self._translator.translate(titles, glossary_text)
+            except TitleOutputError as error:
+                store.log_event(
+                    "titles_translation_rejected",
+                    batch=batch_index,
+                    reason="count_mismatch",
+                    expected=error.expected,
+                    actual=error.actual,
+                )
+                raise
+            except Exception as error:
+                store.log_event(
+                    "titles_translation_failed",
+                    batch=batch_index,
+                    count=len(titles),
+                    error=repr(error),
+                )
+                raise
+            plan.apply(batch, translated)
+            store.save_manifest(plan.manifest)
+            store.log_event(
+                "titles_translated",
+                batch=batch_index,
+                titles=[
+                    {"source": source, "target": target}
+                    for source, target in zip(titles, translated)
+                ],
+            )
+            completed += len(batch)
+            if progress:
+                progress(completed, len(plan.pending), "Translating chapter titles")

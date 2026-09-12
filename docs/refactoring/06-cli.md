@@ -2,7 +2,7 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/06-cli.md)
 
-Status: proposed; medium priority, recommended first implementation slice. Baseline: `7471256`.
+Status: partially implemented; medium priority. Presentation extraction is complete. Baseline: `7471256`.
 
 Implementation: progress lives in `commands/progress.py`, with clock/count tests in
 `tests/test_cli_progress.py`. Usage, timing and completion summaries now live in

@@ -2,12 +2,14 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/05-translation.md)
 
-Status: proposed; medium priority. Title extraction is a suitable first slice; batch recovery has higher risk. Baseline: `7471256`.
+Status: partially implemented; medium priority. Title extraction is complete; batch recovery has higher risk. Baseline: `7471256`.
 
 Implementation: heading reuse, pending-title selection and request batching now live in
 `pipeline/title_translation.py`. `TitlePlan` owns a manifest copy so uncommitted changes
 do not escape. Characterization tests cover budgets, reuse, rejected responses and resume.
-The title agent/service extraction and body-batch changes remain pending.
+`agents/title_translator.py` now owns prompts and aligned responses. `TitleTranslationService`
+owns manifest commits and title events, receiving the language-aware agent from runtime.
+The body service delegates titles without retaining the old method. Body-batch changes remain pending.
 
 ## Evidence
 

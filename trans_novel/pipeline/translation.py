@@ -16,14 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
-from ..i18n.prompts import render
 from ..ingest.epub_reader import strip_ruby_markers
 from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
 from .context import RollingContext
 from .docx_styles import DocxStyleService
 from .runstore import STATUS_DONE, RunStore
-from .title_translation import plan_titles, title_batches
+from .title_translation import TitleTranslationService
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
@@ -61,6 +60,7 @@ class TranslationService:
         self._runtime = runtime
         self._annotations = annotations
         self._docx_styles = DocxStyleService(runtime)
+        self._titles = TitleTranslationService(runtime.title_translator)
 
     def run(
         self,
@@ -118,7 +118,7 @@ class TranslationService:
                 self._runtime.flush_usage(store, scope="chapter")
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
-                self.translate_titles(store, glossary, progress=progress)
+                self._titles.run(store, glossary, progress=progress)
         finally:
             glossary.close()
             self._runtime.flush_usage(store, scope="translate")
@@ -485,98 +485,6 @@ class TranslationService:
         retained = min(len(targets), len(context.recent_targets))
         if retained:
             context.recent_targets[-retained:] = targets[-retained:]
-
-    def translate_titles(
-        self,
-        store: RunStore,
-        glossary: GlossaryStore,
-        progress: ProgressFn | None = None,
-    ) -> None:
-        """Translate logical chapter titles and NCX/NAV entries and update the manifest.
-        For TOC entries linked to heading segments, reuse the complete translated heading.
-        Batch remaining titles, persist each batch and resume only unfinished entries.
-        Preserve the original book title.
-        """
-        from ..agents import prompts
-
-        manifest = store.load_manifest()
-        chapters = {
-            row["index"]: store.load_chapter(row["index"])
-            for row in manifest.get("chapters", [])
-            if isinstance(row.get("index"), int)
-        }
-        plan = plan_titles(manifest, chapters)
-        if plan.changed:
-            store.save_manifest(plan.manifest)
-        if not plan.pending:
-            store.log_event("titles_skipped", reason="already_translated_or_reused")
-            return
-        if progress:
-            progress(0, len(plan.pending), "Translating chapter titles…")
-        batches = title_batches(plan.pending)
-
-        completed = 0
-        glossary_text = prompts.render_glossary(glossary.all_terms())
-        for batch_index, batch in enumerate(batches):
-            titles = [item.source for item in batch]
-            system = render(
-                "title_translator_system",
-                src=self._runtime.config.source_lang,
-                tgt=self._runtime.config.target_lang,
-                n=len(titles),
-            )
-            user = render(
-                "title_translator_user",
-                src=self._runtime.config.source_lang,
-                tgt=self._runtime.config.target_lang,
-                glossary=glossary_text,
-                n=len(titles),
-                numbered_titles=prompts.numbered(titles),
-            )
-            try:
-                data = self._runtime.client.complete_json(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    operation="translation.title",
-                )
-            except Exception as error:
-                store.log_event(
-                    "titles_translation_failed",
-                    batch=batch_index,
-                    count=len(titles),
-                    error=repr(error),
-                )
-                raise
-            out = data.get("titles") if isinstance(data, dict) else data
-            if not isinstance(out, list) or len(out) != len(titles):
-                store.log_event(
-                    "titles_translation_rejected",
-                    batch=batch_index,
-                    reason="count_mismatch",
-                    expected=len(titles),
-                    actual=len(out) if isinstance(out, list) else None,
-                )
-                raise RuntimeError(
-                    "Chapter/TOC title translation returned an invalid number of items: "
-                    f"expected {len(titles)}, got "
-                    f"{len(out) if isinstance(out, list) else 'non-list'}"
-                )
-            translated = [str(title).strip() for title in out]
-            plan.apply(batch, translated)
-            store.save_manifest(plan.manifest)
-            store.log_event(
-                "titles_translated",
-                batch=batch_index,
-                titles=[
-                    {"source": source, "target": target}
-                    for source, target in zip(titles, translated)
-                ],
-            )
-            completed += len(batch)
-            if progress:
-                progress(completed, len(plan.pending), "Translating chapter titles")
 
     def process_batch(
         self,

@@ -6,8 +6,10 @@ from contextlib import closing
 
 import pytest
 
+from trans_novel.agents.prompts import numbered
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
+from trans_novel.i18n.prompts import render
 from trans_novel.ingest.models import Chapter, Document, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
@@ -46,7 +48,7 @@ def title_project(tmp_path):
 
 
 def _run_titles(config, store, glossary, client):
-    Orchestrator(config, client)._translation.translate_titles(store, glossary)
+    Orchestrator(config, client)._translation._titles.run(store, glossary)
 
 
 def test_title_plan_keeps_uncommitted_changes_out_of_its_input_manifest():
@@ -55,6 +57,34 @@ def test_title_plan_keeps_uncommitted_changes_out_of_its_input_manifest():
     plan.apply(plan.pending, ["已翻译"])
     assert plan.manifest["chapters"][0]["title_translated"] == "已翻译"
     assert manifest == {"title": "Original", "chapters": [{"index": 0, "title": "Pending"}]}
+
+
+def test_title_agent_uses_restored_languages_and_the_existing_request_protocol():
+    config = Config.from_dict(
+        {"llm": {"preset": "fake"}, "language": {"source": "auto", "target": "zh"}}
+    )
+    client = FakeClient(handler=lambda *args: '{"titles": [" 开篇 "]}')
+    runtime = Orchestrator(config, client)._runtime
+    runtime.apply_manifest_languages({"source_lang": "fr", "target_lang": "zh"})
+    assert runtime.title_translator.translate(["Le début"], "A term") == ["开篇"]
+    assert client.calls[0]["operation"] == "translation.title"
+    assert client.calls[0]["messages"] == [
+        {
+            "role": "system",
+            "content": render("title_translator_system", src="fr", tgt="zh", n=1),
+        },
+        {
+            "role": "user",
+            "content": render(
+                "title_translator_user",
+                src="fr",
+                tgt="zh",
+                n=1,
+                glossary="A term",
+                numbered_titles=numbered(["Le début"]),
+            ),
+        },
+    ]
 
 
 def test_resume_only_reissues_uncommitted_title_batch(title_project):

@@ -46,6 +46,11 @@ This review inspected production Python files, their import relationships, signi
 
 ## Suggested implementation order
 
+Slice A is complete: progress and summary rendering have separate modules, and title
+planning, model calls and manifest commits have explicit owners. The implementation
+uses separate commits for progress, summaries, title planning and the title agent/service.
+B–F and the later CLI-context/body-batch slices remain pending.
+
 | Slice | Scope | Dependency and acceptance gate |
 | --- | --- | --- |
 | A | 06: presentation extraction; 05: title planning/translation | Independent small changes; CLI behavior and title checkpoints unchanged. |

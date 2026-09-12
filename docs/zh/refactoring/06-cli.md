@@ -2,7 +2,7 @@
 
 [总览](README.md) · [English](../../refactoring/06-cli.md)
 
-状态：待实施；中优先级，建议作为第一批实施内容。基线：`7471256`。
+状态：部分实施；中优先级，展示层提取已完成。基线：`7471256`。
 
 实施进展：进度桥和列已提取到 `commands/progress.py`，时钟及计数测试移到
 `tests/test_cli_progress.py`。用量、耗时和完成摘要已提取到 `commands/presentation.py`，
