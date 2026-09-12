@@ -1457,6 +1457,66 @@ class TestReviewReporting(unittest.TestCase):
             self.assertGreater(second_count, first_count)  # Run review again.
             self.assertNotEqual(first["review_dir"], second["review_dir"])
 
+    def test_review_balance_error_stays_resumable(self):
+        """Provider balance/quota stops must keep Review interrupted and resumable."""
+
+        class BalanceError(Exception):
+            def __init__(self) -> None:
+                super().__init__("Error code: 402 - Insufficient Balance")
+                self.status_code = 402
+
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.review_autofix = False
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            orch.run(txt)
+
+            with patch.object(orch._review, "review_chapter", side_effect=BalanceError()):
+                with self.assertRaises(BalanceError):
+                    orch.run_review(txt)
+
+            book_root = Path(cfg.state_dir)
+            review_dirs = sorted(book_root.glob("*/targets/*/reviews/review-*"))
+            self.assertEqual(len(review_dirs), 1)
+            result_path = review_dirs[0] / "result.json"
+            with open(result_path, encoding="utf-8") as handle:
+                state = json.load(handle)
+            self.assertEqual(state["status"], "interrupted")
+            self.assertEqual(state["termination"], "interrupted")
+            self.assertEqual(state["last_error"]["type"], "BalanceError")
+
+            resumed = orch.run_review(txt)
+            self.assertEqual(Path(resumed["review_dir"]).resolve(), review_dirs[0].resolve())
+            with open(result_path, encoding="utf-8") as handle:
+                finished = json.load(handle)
+            self.assertEqual(finished["status"], "completed")
+
+    def test_review_permanent_error_still_finishes_failed(self):
+        """Local permanent failures remain failed and do not resume the same directory."""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.review_autofix = False
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            orch.run(txt)
+
+            with patch.object(orch._review, "review_chapter", side_effect=ValueError("bad block")):
+                with self.assertRaises(ValueError):
+                    orch.run_review(txt)
+
+            book_root = Path(cfg.state_dir)
+            first_dirs = sorted(book_root.glob("*/targets/*/reviews/review-*"))
+            self.assertEqual(len(first_dirs), 1)
+            with open(first_dirs[0] / "result.json", encoding="utf-8") as handle:
+                state = json.load(handle)
+            self.assertEqual(state["status"], "failed")
+
+            second = orch.run_review(txt)
+            self.assertNotEqual(Path(second["review_dir"]).resolve(), first_dirs[0].resolve())
+
     def test_review_running_resume_rejects_config_change(self):
         """Changed configuration must start a new review directory instead of resuming stale
         running state.

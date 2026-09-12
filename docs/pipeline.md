@@ -66,9 +66,13 @@ uv run trans-novel review book.epub --autofix
 
 The explicit command runs even when `pipeline.review` is disabled. Matching completed
 results are reused; an interrupted Review resumes its saved rounds, chunks, and agent
-traces when content, configuration, and glossary fingerprints match. Otherwise, a new
-whole-book Review starts. Cached chunks and completed initial screening skip chapter
-glossary matching; pending reviewer requests share one chapter-wide glossary snapshot.
+traces when content, configuration, and glossary fingerprints match. Recoverable stops
+such as Ctrl+C, timeouts, transport failures, HTTP 429/5xx, and provider balance/quota
+errors (for example HTTP 402) leave the run as `interrupted` so the next `review`
+command can continue instead of starting a new directory. Permanent local failures still
+finish as `failed`. Otherwise, a new whole-book Review starts. Cached chunks and
+completed initial screening skip chapter glossary matching; pending reviewer requests
+share one chapter-wide glossary snapshot.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
 Elapsed time measures the entire current workflow and never resets at stage or round
 boundaries. It continues advancing while model requests are pending, even after a stage
