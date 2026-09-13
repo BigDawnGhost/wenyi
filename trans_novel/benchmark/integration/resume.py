@@ -153,6 +153,8 @@ def telemetry_evidence(path: Path, *, candidate: Candidate, candidate_spec: Cand
     return {'reasoning_tokens': reasoning, 'model_mismatch_count': mismatch, 'unknown_required_usage_count': unknown, 'logical_call_count': len({r.logical_call_id for r in records}), 'attempt_count': len(records), 'operation_count': len({r.operation for r in records}), 'agent_count': len({r.agent for r in records}), 'retry_count': sum(r.attempt_index > 1 or r.retry_class is not None for r in records), 'translate_call_count': translator_call_count(records), 'valid': True}
 
 def failure_code(error: BaseException) -> str:
+    if 'publication proof' in str(error).casefold():
+        return 'publication_proof'
     for fragment, code in (('resume event boundary', 'resume_event_boundary'), ('resume telemetry boundary', 'resume_telemetry_boundary'), ('resume reuse proof', 'resume_reuse_proof'), ('resume translation call attribution', 'resume_telemetry_attribution'), ('usage and application telemetry', 'usage_telemetry_mismatch'), ('crashed resume evidence', 'crashed_resume_evidence'), ('event slice mismatch', 'resume_event_slice'), ('telemetry prefix', 'telemetry_prefix'), ('event prefix', 'event_prefix'), ('canary', 'canary_evidence'), ('phase timing', 'phase_timing'), ('bilingual output', 'bilingual_output'), ('readiness', 'readiness'), ('first telemetry', 'first_telemetry_evidence')):
         if fragment in str(error).casefold():
             return code
@@ -226,7 +228,7 @@ def _interrupt(ctx: dict[str, Any], sink: JsonlCallTelemetrySink, hook: Any, sto
 def _pending(ctx: dict[str, Any]) -> None:
     sink, options = (JsonlCallTelemetrySink(ctx['telemetry_path']), GenerationOptions(**GENERATION_FIELDS))
     config = quality_config(ctx['candidate_spec'], ctx['candidate'], ctx['state_dir'])
-    config.output.bilingual_order = ctx['spec'].bilingual_order
+    config.output.bilingual.order = ctx['spec'].bilingual_order
     mono = ctx['output_dir'] / f"{ctx['spec'].book_id}.epub"
     if mono.resolve() == ctx['source'].resolve():
         raise IntegrationError('mono output aliases source EPUB')
@@ -309,7 +311,7 @@ def _resume(ctx: dict[str, Any]) -> dict[str, Any]:
     write_integration_json(ctx['state_path'], ctx['state'])
     mono = ctx['output_dir'] / f'{spec.book_id}.epub'
     config = quality_config(ctx['candidate_spec'], ctx['candidate'], ctx['state_dir'])
-    config.output.bilingual_order = spec.bilingual_order
+    config.output.bilingual.order = spec.bilingual_order
     result_value = Application(config, client=client).run_all(str(ctx['source']), out_format='epub', out_path=str(mono))
     raw = ctx['telemetry_path'].read_bytes()
     first_size = int(entry.get('first_telemetry_prefix_size', entry['telemetry_prefix_size']))
@@ -335,7 +337,13 @@ def _resume(ctx: dict[str, Any]) -> dict[str, Any]:
 
 def _finish(ctx: dict[str, Any]) -> None:
     result, spec, store = (ctx['result'], ctx['spec'], ctx['store'])
-    structural = validate_epub_triplet(ctx['source'], ctx['output_dir'] / f'{spec.book_id}.epub', ctx['output_dir'] / f'{spec.book_id}-bi.epub')
+    structural = validate_epub_triplet(
+        ctx['source'],
+        ctx['output_dir'] / f'{spec.book_id}.epub',
+        ctx['output_dir'] / f'{spec.book_id}-bi.epub',
+        publication_report=store.load_epub_verification(),
+        output_digest=ctx['result_value'].get('output_digest'),
+    )
     telemetry = telemetry_evidence(ctx['telemetry_path'], candidate=ctx['candidate'], candidate_spec=ctx['candidate_spec'])
     usage = usage_evidence(Path(store.usage_path))
     app_attempts = max(0, telemetry['attempt_count'] - ctx['canary_count'])

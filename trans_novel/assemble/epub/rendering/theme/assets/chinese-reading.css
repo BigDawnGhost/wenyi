@@ -1,0 +1,97 @@
+[data-tn-content="target"][data-tn-role="body"] {
+  font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", SimSun, serif;
+  font-size: 1.15em;
+  line-height: 1.5;
+  text-align: justify;
+  text-indent: 2em;
+  margin: 1em 0 0;
+}
+
+[data-tn-content="target"][data-tn-role="heading"] {
+  color: #de2432;
+  line-height: 1.5;
+  text-indent: 0;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="1"] {
+  font-size: 1.6em;
+  font-weight: normal;
+  text-align: center;
+  margin: 2em 0 1em;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="2"] {
+  font-size: 1.4em;
+  font-weight: 800;
+  text-align: center;
+  margin: 2em 0 1.3em;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="3"] {
+  font-size: 1.3em;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="4"] {
+  font-size: 1.2em;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="5"] {
+  font-size: 1.1em;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="6"] {
+  font-size: 1em;
+}
+
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="3"],
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="4"],
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="5"],
+[data-tn-content="target"][data-tn-role="heading"][data-tn-level="6"] {
+  font-weight: normal;
+  text-align: start;
+  text-indent: 0;
+  margin: 2em 0 1em;
+}
+
+[data-tn-content="target"][data-tn-role="chapter-number"] {
+  font-size: 1em;
+  font-weight: normal;
+  color: #de2432;
+  text-align: center;
+  text-indent: 0;
+  margin: 2em 0 0.5em;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+[data-tn-content="target"][data-tn-role="subtitle"],
+[data-tn-content="target"][data-tn-role="caption"] {
+  font-size: 1em;
+  text-indent: 0;
+}
+
+[data-tn-content="target"][data-tn-role="quote"] {
+  margin: 1em 1em 0;
+}
+
+[data-tn-content="target"][data-tn-role="quote-text"] {
+  font-family: "Kaiti SC", KaiTi, STKaiti, serif;
+  font-size: 1.15em;
+  line-height: 1.4;
+  margin-top: 0.5em;
+}
+
+[data-tn-content="target"][data-tn-role="table-text"],
+[data-tn-content="target"][data-tn-role="list-text"] {
+  font-size: 1em;
+  text-align: start;
+  text-indent: 0;
+  margin: 0.5em 0;
+}
+
+[data-tn-content="target"][data-tn-role] span:not([data-tn-role]):not(small span, big span, sup span, sub span, ruby span) {
+  font-family: inherit;
+  font-size: inherit;
+}

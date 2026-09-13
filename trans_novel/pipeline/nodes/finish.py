@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from trans_novel.agents import prompts
 from trans_novel.agents.base import WorkflowProtocolError, retry_protocol
-from trans_novel.assemble import assemble, bilingual_out_path
+from trans_novel.assemble import assemble_outputs, bilingual_out_path
 from trans_novel.assemble.report import build_report
-from trans_novel.config import Config
+from trans_novel.config import Config, OutputConfig
 from trans_novel.glossary.store import GlossaryStore, terms_matching_text
 from trans_novel.ingest import KIND_HEADING, preserved_toc_entry_ids
 from trans_novel.ingest.models import sanitize_generated_text
@@ -316,10 +316,20 @@ class AssembleNode:
     node_id = NODE_ASSEMBLE
     scope = SCOPE_BOOK
 
-    def __init__(self, *, config: Config, out_format: str = "epub", out_path: str | None = None):
-        self.config = config
+    def __init__(
+        self,
+        *,
+        output: OutputConfig,
+        out_format: str = "epub",
+        out_path: str | None = None,
+        theme=None,
+        output_digest: str | None = None,
+    ):
+        self.output = output
         self.out_format = out_format
         self.out_path = out_path
+        self.theme = theme
+        self.output_digest = output_digest
 
     def execute(self, request: NodeRequest) -> NodeOutcome:
         store = request.store
@@ -344,42 +354,35 @@ class AssembleNode:
 
         if request.progress:
             request.progress(0, 0, "生成译文文件…")
-        out_cfg = self.config.output
-        do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
-        if not do_mono and not do_bilingual:
-            do_mono = True  # 兜底：mono/bilingual 都关时至少产一个单语产物
-        outputs: list[str] = []
+        do_mono = self.output.mono
+        do_bilingual = self.output.bilingual.enabled
+        requests: list[tuple[str | None, bool]] = []
         if do_mono:
-            outputs.append(
-                assemble(
-                    store,
-                    request.input_path,
-                    out_path=self.out_path,
-                    out_format=self.out_format,
-                    bilingual=False,
-                )
-            )
+            requests.append((self.out_path, False))
         if do_bilingual:
-            bi_out_path = bilingual_out_path(self.out_path) if self.out_path else None
-            outputs.append(
-                assemble(
-                    store,
-                    request.input_path,
-                    out_path=bi_out_path,
-                    out_format=self.out_format,
-                    bilingual=True,
-                    order=out_cfg.bilingual_order,
-                )
-            )
+            requests.append((bilingual_out_path(self.out_path) if self.out_path else None, True))
+        outputs = assemble_outputs(
+            store,
+            request.input_path,
+            requests,
+            self.out_format,
+            order=self.output.bilingual.order,
+            theme=self.theme,
+            output_digest=self.output_digest,
+        )
         store.log_event("assembled", outputs=outputs, out_format=self.out_format)
         fp = assemble_input_fingerprint(
             self._targets_text(store),
             mono=do_mono,
             bilingual=do_bilingual,
             out_format=self.out_format,
-            bilingual_order=self.config.output.bilingual_order,
+            bilingual_order=self.output.bilingual.order,
+            output_digest=self.output_digest,
         )
-        return NodeOutcome(artifacts={"outputs": outputs}, fingerprint=fp)
+        return NodeOutcome(
+            artifacts={"outputs": outputs, "output_digest": self.output_digest},
+            fingerprint=fp,
+        )
 
     @staticmethod
     def _targets_text(store) -> str:

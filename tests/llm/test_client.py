@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
 from pydantic import ValidationError
 
 from tests.fixtures.fake_llm import fake_llm_dict
-from trans_novel.config import Config, LLMConfig, ModelRef, PipelineConfig
+from trans_novel.config import (
+    Config,
+    LLMConfig,
+    ModelRef,
+    OutputConfig,
+    PipelineConfig,
+    resolve_output,
+)
 from trans_novel.llm import (
     FakeClient,
     GenerationOptions,
@@ -171,6 +180,95 @@ class TestConfigValidation(unittest.TestCase):
             Config.from_dict({"unknown": True})
         with self.assertRaisesRegex(ValueError, "已废弃"):
             Config.from_dict({"llm": {"provider": "fake", "models": {"translator": ["fake/a"]}}})
+
+    def test_output_paths_are_relative_to_selected_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                "output:\n"
+                "  override_theme:\n"
+                "    rules: themes/classify.js\n"
+                "    styles: themes/general.css\n"
+                "  bilingual_styles: themes/bilingual.css\n",
+                encoding="utf-8",
+            )
+            config = Config.load(str(config_path))
+            theme = config.output.override_theme
+            self.assertEqual(theme.rules, str(root / "themes/classify.js"))
+            self.assertEqual(theme.styles, str(root / "themes/general.css"))
+            self.assertEqual(config.output.bilingual_styles, str(root / "themes/bilingual.css"))
+            self.assertEqual(
+                config.output_origins,
+                dict.fromkeys(
+                    ("override_theme.rules", "override_theme.styles", "bilingual_styles"),
+                    str(config_path),
+                ),
+            )
+            config_path.write_text("", encoding="utf-8")
+            self.assertTrue(Config.load(str(config_path)).output.mono)
+            config_path.write_text("false\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "YAML 映射"):
+                Config.load(str(config_path))
+
+    def test_relative_output_path_requires_base_directory(self):
+        with self.assertRaisesRegex(ValueError, "base_dir"):
+            Config.from_dict({"output": {"bilingual_styles": "themes/bilingual.css"}})
+        config = Config.from_dict(
+            {"output": {"bilingual_styles": "themes/bilingual.css"}},
+            base_dir="config-root",
+        )
+        self.assertTrue(Path(config.output.bilingual_styles).is_absolute())
+        self.assertEqual(config.output_origins, {"bilingual_styles": "config-root"})
+
+    def test_output_resolution_uses_leaf_presence_and_normalizes_once(self):
+        saved = OutputConfig.model_validate(
+            {
+                "mono": False,
+                "bilingual": {"enabled": True, "order": "source_first"},
+                "override_theme": {
+                    "rules": "builtin:general",
+                    "styles": "builtin:chinese-reading",
+                },
+                "bilingual_styles": "/saved/bilingual.css",
+            }
+        )
+        current = Config.from_dict({"output": {"mono": True, "override_theme": None}}).output
+        current.bilingual.enabled = False
+        effective, normalized = resolve_output(current, saved)
+        self.assertFalse(normalized)
+        self.assertTrue(effective.mono)
+        self.assertFalse(effective.bilingual.enabled)
+        self.assertEqual(effective.bilingual.order, "source_first")
+        self.assertIsNone(effective.override_theme)
+        self.assertEqual(effective.bilingual_styles, "/saved/bilingual.css")
+        omitted, _ = resolve_output(OutputConfig(), saved)
+        self.assertIsNotNone(omitted.override_theme)
+        disabled = OutputConfig.model_validate({"mono": False, "bilingual": {"enabled": False}})
+        normalized_output, normalized = resolve_output(disabled)
+        self.assertTrue(normalized)
+        self.assertTrue(normalized_output.mono)
+
+    def test_output_boundary_rejects_legacy_shapes_and_invalid_values(self):
+        with self.assertRaisesRegex(ValueError, "output.bilingual.enabled"):
+            Config.from_dict({"output": {"bilingual": False}})
+        with self.assertRaisesRegex(ValueError, "已废弃"):
+            Config.from_dict({"pipeline": {}, "output": {}})
+        invalid = (
+            {"output": {"mono": 1}},
+            {"output": {"bilingual_styles": "builtin:general"}},
+            {
+                "output": {
+                    "override_theme": {
+                        "rules": "",
+                        "styles": "builtin:chinese-reading",
+                    }
+                }
+            },
+        )
+        for raw in invalid:
+            with self.subTest(raw=raw), self.assertRaises(ValidationError):
+                Config.from_dict(raw)
 
     def test_quality_profiles(self):
         self.assertFalse(PipelineConfig.for_quality("economy").single_segment_translation)

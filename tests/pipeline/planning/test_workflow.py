@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from trans_novel.config import Config, PipelineConfig
@@ -146,6 +147,34 @@ class TestPlanner(unittest.TestCase):
                 "assemble",
             }
             self.assertTrue(all(key.split(":", 1)[0] in allowed for key in keys))
+
+    def test_prescan_assembly_fingerprint_uses_effective_output_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = self._store(directory)
+            for chapter in store.load_state().chapters:
+                saved = store.load_chapter(chapter.index)
+                saved.text_segments[0].target = f"T{chapter.index}"
+                store.save_chapter(saved)
+                progress = store.load_progress(chapter.index)
+                progress.status = "done"
+                store.save_progress(chapter.index, progress)
+            config = Config()
+            context = SimpleNamespace(output=config.output, output_digest="theme-digest")
+            goal = assemble_goal(out_format="epub")
+
+            actual = build_prescan_inputs(
+                config, store, WorkflowPolicy(), context, goal
+            ).assemble_fingerprint()
+            expected = fingerprints.assemble_input_fingerprint(
+                "T0\nT1",
+                mono=True,
+                bilingual=True,
+                out_format="epub",
+                bilingual_order="target_first",
+                output_digest="theme-digest",
+            )
+
+            self.assertEqual(actual, expected)
 
 
 class TestTranslationPolicy(unittest.TestCase):

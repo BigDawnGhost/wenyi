@@ -118,6 +118,7 @@ def build_prescan_inputs(
     config: Config, store, policy: WorkflowPolicy, context, goal
 ) -> PrescanInputs:
     cfg = config
+    output = context.output if context is not None else cfg.output
     state = store.load_state() if store.exists() else RunState()
     legacy = _check_policy(store, state, goal)
     src = state.identity.source_lang or normalize_lang_code(cfg.source_lang)
@@ -217,10 +218,11 @@ def build_prescan_inputs(
         report_fingerprint=report_fp,
         assemble_fingerprint=lambda: assemble_input_fingerprint(
             done_targets(include_preserved=True),
-            mono=cfg.output.mono,
-            bilingual=cfg.output.bilingual,
+            mono=output.mono,
+            bilingual=output.bilingual.enabled,
             out_format=goal.out_format,
-            bilingual_order=cfg.output.bilingual_order,
+            bilingual_order=output.bilingual.order,
+            output_digest=context.output_digest if context is not None else None,
         ),
     )
     return _historical_inputs(inputs, state) if legacy else inputs

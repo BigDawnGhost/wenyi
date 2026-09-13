@@ -14,6 +14,7 @@ from trans_novel.llm.retrying import classify_retry
 from trans_novel.pipeline.contracts import NodeRequest
 from trans_novel.pipeline.nodes.finish import AssembleNode
 from trans_novel.pipeline.nodes.repair import RepairNode
+from trans_novel.pipeline.planning import assemble_input_fingerprint
 from trans_novel.pipeline.quality import LintIssue
 from trans_novel.pipeline.state import (
     NODE_DETERMINISTIC_QA,
@@ -280,14 +281,29 @@ class TestRepairContracts(unittest.TestCase):
         store = self._store("He has 24 apples.", "他有苹果。")
         config = Config.from_dict({"llm": fake_llm_dict()})
         config.output.mono = True
-        config.output.bilingual = True
-        node = AssembleNode(config=config, out_format="txt")
+        config.output.bilingual.enabled = True
+        node = AssembleNode(output=config.output, out_format="txt", output_digest="theme-digest")
         with patch(
-            "trans_novel.pipeline.nodes.finish.assemble",
-            side_effect=["mono.txt", "bilingual.txt"],
-        ):
+            "trans_novel.pipeline.nodes.finish.assemble_outputs",
+            return_value=["mono.txt", "bilingual.txt"],
+        ) as assemble_outputs:
             outcome = node.execute(self._request(store))
         self.assertEqual(outcome.artifacts["outputs"], ["mono.txt", "bilingual.txt"])
+        self.assertEqual(
+            assemble_outputs.call_args.args[2],
+            [(None, False), (None, True)],
+        )
+        self.assertEqual(
+            outcome.fingerprint,
+            assemble_input_fingerprint(
+                "他有苹果。",
+                mono=True,
+                bilingual=True,
+                out_format="txt",
+                bilingual_order="target_first",
+                output_digest="theme-digest",
+            ),
+        )
 
 
 if __name__ == "__main__":

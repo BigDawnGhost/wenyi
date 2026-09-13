@@ -12,7 +12,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from trans_novel.model_profiles import (
     ReasoningEffort,
@@ -32,7 +41,7 @@ QualityPreset = Literal["economy", "balanced", "quality"]
 _DEFAULT_TRANSLATOR_MODEL = "openrouter/tencent/hy-mt2-30b-a3b:off"
 _DEFAULT_GENERAL_MODEL = "opencode-go/muse-spark-1.3-contributor:low"
 _DEPRECATED_ROOT_KEYS = frozenset(
-    {"language", "segment", "pipeline", "honorific", "punctuation", "paths", "output"}
+    {"language", "segment", "pipeline", "honorific", "punctuation", "paths"}
 )
 _DEPRECATED_LLM_KEYS = frozenset({"provider", "providers", "agents", "tiers"})
 
@@ -126,6 +135,54 @@ class LLMConfig(BaseModel):
         return self
 
 
+def _validate_asset_reference(value: str, builtin: str) -> str:
+    if not value.strip() or "\0" in value:
+        raise ValueError("主题资源路径不能为空或包含 NUL")
+    if value.startswith("builtin:") and value != builtin:
+        raise ValueError(f"仅支持 {builtin}")
+    return value
+
+
+class BilingualOutputConfig(BaseModel):
+    """双语输出开关与原文顺序。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: StrictBool = True
+    order: Literal["target_first", "source_first"] = "target_first"
+
+
+class OverrideThemeConfig(BaseModel):
+    """通用 EPUB 主题的分类规则与样式。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rules: StrictStr
+    styles: StrictStr
+
+    @field_validator("rules", "styles")
+    @classmethod
+    def _validate_reference(cls, value: str, info: ValidationInfo) -> str:
+        builtin = "builtin:general" if info.field_name == "rules" else "builtin:chinese-reading"
+        return _validate_asset_reference(value, builtin)
+
+
+class OutputConfig(BaseModel):
+    """单次运行的输出与 EPUB 展示选择。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mono: StrictBool = True
+    bilingual: BilingualOutputConfig = Field(default_factory=BilingualOutputConfig)
+    override_theme: OverrideThemeConfig | None = None
+    bilingual_styles: StrictStr = "builtin:bilingual"
+
+    @field_validator("bilingual_styles")
+    @classmethod
+    def _validate_bilingual_styles(cls, value: str) -> str:
+        return _validate_asset_reference(value, "builtin:bilingual")
+
+
 class _FileConfig(BaseModel):
     """严格的公开 YAML schema。"""
 
@@ -133,6 +190,7 @@ class _FileConfig(BaseModel):
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     quality: QualityPreset = "balanced"
+    output: OutputConfig = Field(default_factory=OutputConfig)
 
 
 class SegmentConfig(BaseModel):
@@ -179,12 +237,74 @@ class PipelineConfig(BaseModel):
         return cls.model_validate({**common, **profiles[quality]})
 
 
-class OutputConfig(BaseModel):
-    """单次运行的输出选择，由 CLI 覆盖。"""
+def _resolve_asset_path(value: str, base_dir: str | Path | None) -> str:
+    if value.startswith("builtin:"):
+        return value
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        if base_dir is None:
+            raise ValueError("相对主题资源路径必须提供 base_dir")
+        path = Path(base_dir).expanduser() / path
+    return str(Path(path).absolute())
 
-    mono: bool = True
-    bilingual: bool = True
-    bilingual_order: Literal["target_first", "source_first"] = "target_first"
+
+def _resolve_output_paths(
+    output: OutputConfig, base_dir: str | Path | None
+) -> tuple[OutputConfig, dict[str, str]]:
+    resolved = output.model_copy(deep=True)
+    origins: dict[str, str] = {}
+    label = str(base_dir) if base_dir is not None else ""
+    if resolved.override_theme is not None:
+        for field_name in ("rules", "styles"):
+            value = getattr(resolved.override_theme, field_name)
+            if not value.startswith("builtin:"):
+                setattr(resolved.override_theme, field_name, _resolve_asset_path(value, base_dir))
+                origins[f"override_theme.{field_name}"] = label
+    if not resolved.bilingual_styles.startswith("builtin:"):
+        resolved.bilingual_styles = _resolve_asset_path(resolved.bilingual_styles, base_dir)
+        origins["bilingual_styles"] = label
+    return resolved, origins
+
+
+def resolve_output(
+    current: OutputConfig, saved: OutputConfig | None = None
+) -> tuple[OutputConfig, bool]:
+    """按各具体字段是否显式设置，依次采用当前、已保存或默认的输出选项。"""
+
+    default = OutputConfig()
+
+    def pick(model: BaseModel, field_name: str, saved_model: BaseModel | None, fallback: Any):
+        if field_name in model.model_fields_set:
+            return getattr(model, field_name)
+        if saved_model is not None and field_name in saved_model.model_fields_set:
+            return getattr(saved_model, field_name)
+        return fallback
+
+    saved_bilingual = saved.bilingual if saved is not None else None
+    selected_theme = pick(current, "override_theme", saved, default.override_theme)
+    effective = OutputConfig(
+        mono=pick(current, "mono", saved, default.mono),
+        bilingual=BilingualOutputConfig(
+            enabled=pick(
+                current.bilingual,
+                "enabled",
+                saved_bilingual,
+                default.bilingual.enabled,
+            ),
+            order=pick(
+                current.bilingual,
+                "order",
+                saved_bilingual,
+                default.bilingual.order,
+            ),
+        ),
+        override_theme=selected_theme.model_copy(deep=True) if selected_theme is not None else None,
+        bilingual_styles=pick(current, "bilingual_styles", saved, default.bilingual_styles),
+    )
+    normalized = not effective.mono and not effective.bilingual.enabled
+    if normalized:
+        effective.mono = True
+    return effective, normalized
 
 
 @dataclass
@@ -198,6 +318,7 @@ class Config:
     segment: SegmentConfig = field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = field(default_factory=lambda: PipelineConfig.for_quality("balanced"))
     output: OutputConfig = field(default_factory=OutputConfig)
+    output_origins: dict[str, str] = field(default_factory=dict)
     honorific_strategy: Literal["keep_style", "normalize", "drop"] = "keep_style"
     punctuation_normalize: bool = True
     state_dir: str = "state"
@@ -240,11 +361,13 @@ class Config:
         if not target.is_file():
             return cls.defaults()
         with target.open(encoding="utf-8") as stream:
-            raw = yaml.safe_load(stream) or {}
-        return cls.from_dict(raw)
+            loaded = yaml.safe_load(stream)
+        config = cls.from_dict({} if loaded is None else loaded, base_dir=target.parent)
+        config.output_origins = {key: str(target) for key in config.output_origins}
+        return config
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Config:
+    def from_dict(cls, raw: dict[str, Any], *, base_dir: str | Path | None = None) -> Config:
         if not isinstance(raw, dict):
             raise ValueError("配置文件顶层必须是 YAML 映射")
         deprecated = sorted(_DEPRECATED_ROOT_KEYS.intersection(raw))
@@ -259,9 +382,17 @@ class Config:
                 + ", ".join(deprecated)
                 + "）。请删除 config.yaml 后直接运行，或执行 `wenyi init --force`。"
             )
+        output_raw = raw.get("output")
+        if isinstance(output_raw, dict) and type(output_raw.get("bilingual")) is bool:
+            raise ValueError(
+                "output.bilingual 已改为映射；请使用 output.bilingual.enabled: true/false"
+            )
         parsed = _FileConfig.model_validate(raw)
+        output, output_origins = _resolve_output_paths(parsed.output, base_dir)
         return cls(
             llm=parsed.llm,
             quality=parsed.quality,
             pipeline=PipelineConfig.for_quality(parsed.quality),
+            output=output,
+            output_origins=output_origins,
         )

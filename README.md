@@ -1,6 +1,6 @@
 # 文译
 
-专注于将多语言 EPUB、FB2 或 TXT 小说翻译成中文，并尽量保留 EPUB 原排版、图片、目录和跳转。
+专注于将多语言 EPUB、FB2、TXT 或 Markdown 小说翻译成中文，并尽量保留 EPUB 原排版、图片、目录和跳转。
 
 项目的日常入口只有一个命令：`translate`。它会完成预扫、分析、翻译、可选润色、确定性 QA、报告和 EPUB 导出；中断后可以继续跑。
 
@@ -27,7 +27,7 @@ OpenCode Go 的 DeepSeek V4 Flash + `balanced` 默认值，不会自动写文件
 从源码安装仍可使用 `uv tool install .`，命令名为 `trans-novel`。运行
 `trans-novel --help` 或 `wenyi --help` 可查看全部命令。
 
-翻译完成后，默认会在源文件目录下生成译文 EPUB。运行状态、章节 JSON、术语库和报告会放在 `state/` 目录下。
+翻译完成后，默认会在源文件目录下生成单语和双语 EPUB，双语版译文在前。运行状态、章节 JSON、术语库和报告会放在 `state/` 目录下。
 
 中断后继续：
 
@@ -49,12 +49,12 @@ trans-novel tools assemble book.epub
 
 ## 输入和输出
 
-- 输入：EPUB、FB2、TXT。
-- 默认输出：中文 EPUB。
+- 输入：EPUB、FB2、TXT、Markdown（`.md` / `.markdown`）。
+- 默认输出：中文单语 EPUB 和译文在前的双语 EPUB。
 - EPUB 输入会按原 XHTML 模板回填译文，尽量保留原书样式、图片、目录和锚点。
 - EPUB 正文按 manifest 声明的媒体类型识别，阅读顺序以 spine 为准。只有媒体类型缺失时才按 HTML 文件后缀兼容识别；声明冲突或无法处理的 spine 资源会明确报错，不会静默跳过章节。
 - 脚注引用只按 `epub:type="noteref"` 或 `role="doc-noteref"` 识别；无声明的上下标链接按普通文本处理，不根据编号、样式或文件名跳过。
-- TXT 输入会生成新的 EPUB。
+- FB2、TXT 和 Markdown 输入会生成新的 EPUB。
 - 需要纯文本时使用 `--format txt`。
 
 示例：
@@ -162,8 +162,8 @@ prompt 或响应正文都会保存。
 
 ## 配置
 
-配置文件只回答“使用什么模型”和“选择哪个质量档位”。没有配置文件也可以直接运行；
-`trans-novel init` 会生成以下精简配置：
+Configuration selects models, quality, and output presentation. A config file is optional;
+`trans-novel init` writes the example configuration, including these defaults:
 
 ```yaml
 llm:
@@ -178,6 +178,14 @@ llm:
       - opencode-go/muse-spark-1.3-contributor:low
 
 quality: balanced
+
+output:
+  mono: true
+  bilingual:
+    enabled: true
+    order: target_first
+  override_theme: null
+  bilingual_styles: builtin:bilingual
 ```
 
 - `translator`：正文翻译，默认使用 OpenRouter 上的 Tencent Hy-MT2 30B。
@@ -243,6 +251,54 @@ quality: balanced
 配置中只写密钥环境变量名，不能写明文密钥。旧的 `llm.provider`、`llm.providers`、
 `llm.agents`、标量模型值以及 `pipeline`、`segment` 等格式已废弃，加载时会直接报错；
 删除旧文件后直接运行，或执行 `wenyi init --force` 生成新配置。
+
+### EPUB themes
+
+To enable the packaged general classifier and Chinese reading style, replace the `output`
+mapping in your config with:
+
+```yaml
+output:
+  mono: true
+  bilingual:
+    enabled: true
+    order: target_first
+  override_theme:
+    rules: builtin:general
+    styles: builtin:chinese-reading
+  bilingual_styles: builtin:bilingual
+```
+
+Use the global `--config` option before the command. For an existing completed run, reassemble
+from the same working directory and saved state without calling translation models:
+
+```bash
+trans-novel --config config.yaml tools assemble book.epub --format epub
+```
+
+- Existing CLI output flags override explicit config fields, then saved output choices, then
+  defaults. Omitted fields preserve saved choices; `override_theme: null` explicitly clears the
+  saved general theme. Disabling both variants normalizes to mono-only.
+- `bilingual.order` accepts `target_first` or `source_first`. `bilingual` must be a mapping,
+  and a non-null `override_theme` requires both `rules` and `styles`; unknown fields,
+  unsupported built-ins, empty paths and wrong types are rejected.
+- Custom `rules`, `styles`, and `bilingual_styles` paths resolve relative to the config file,
+  with `~` expansion. Resolved paths and their origins are saved with the source-bound selection.
+  A custom bilingual stylesheet replaces the packaged one.
+- Theme bytes and effective output choices determine the EPUB output digest. Editing JS/CSS
+  rebuilds the output, not translations; moving identical assets does not change that digest.
+  Source-backed and generated EPUBs use the same theme for mono and bilingual output.
+- TXT output keeps bilingual ordering and saved EPUB selections, but reads no theme assets
+  and runs no JavaScript. It records that EPUB presentation is inapplicable.
+- Only explicitly selected, trusted local scripts run. No Node.js installation or bundled fonts
+  are needed. JavaScript classifies immutable snapshots; it cannot mutate the DOM or access
+  host files or networking. CSS supports a restricted reading-style subset, not arbitrary
+  browser CSS. See the [theme contract](docs/epub-theme-design.md) for limits and protected content.
+- Preflight checks run before paid work, but actual translated text can still expose a
+  classifier error at export. Fix the theme and rerun `tools assemble`; translations are retained.
+  Every requested EPUB is independently verified before any final file is replaced.
+  Replacements are sequential, not atomic as a group; a later I/O failure retains durable
+  receipts for already published files.
 
 ## 工作流程
 

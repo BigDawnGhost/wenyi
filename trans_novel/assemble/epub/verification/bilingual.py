@@ -12,7 +12,6 @@ from trans_novel.assemble.epub.rendering import (
     is_bilingual_container_tag,
     japanese_ruby_source_copy,
     sanitized_source_copy,
-    style_shape_is_valid,
 )
 from trans_novel.assemble.epub.verification import archive_model, direct, dom, source
 
@@ -180,7 +179,6 @@ def _validate_generic_sources(
     node_mixed_context: dict[
         int, tuple[str | None, list[tuple[etree._Element, str | None, str | None]]]
     ],
-    style_nodes: list[etree._Element],
     direct_source_object_ids: set[int],
     order: str,
 ) -> None:
@@ -257,9 +255,7 @@ def _validate_generic_sources(
             between = original_children[
                 min(node_index, target_index) + 1 : max(node_index, target_index)
             ]
-            between = [
-                child for child in between if child not in source_nodes and child not in style_nodes
-            ]
+            between = [child for child in between if child not in source_nodes]
             if any(archive_model.local_name(child.tag).lower() != "br" for child in between):
                 failures.append(
                     archive_model.item(
@@ -297,15 +293,8 @@ def bilingual_proof(
         node_siblings,
         node_text_context,
         node_mixed_context,
-        style_nodes,
         direct_target_total,
     ) = source.node_snapshot(root_output, source_nodes)
-    if (expected_total and len(style_nodes) != 1) or (not expected_total and style_nodes):
-        failures.append(
-            archive_model.item(
-                "bilingual_source", "bilingual_style_count", resource, "count_mismatch"
-            )
-        )
     _direct_target_used, direct_source_object_ids = _validate_direct_runs(
         root_source,
         root_output,
@@ -317,14 +306,6 @@ def bilingual_proof(
         failures,
         direct_target_total,
     )
-    for style in style_nodes:
-        if not style_shape_is_valid(style):
-            failures.append(
-                archive_model.item(
-                    "bilingual_source", "bilingual_style_mismatch", resource, "invalid"
-                )
-            )
-        source.remove_preserving_tail(style)
     for node in list(source_nodes):
         source.remove_preserving_tail(node)
     for node in list(root_output.iter()):
@@ -347,7 +328,6 @@ def bilingual_proof(
         node_siblings,
         node_text_context,
         node_mixed_context,
-        style_nodes,
         direct_source_object_ids,
         order,
     )

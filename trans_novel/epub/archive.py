@@ -21,6 +21,34 @@ class ZipSafetyError(ValueError):
         super().__init__(code)
 
 
+class MetadataZipFile(zipfile.ZipFile):
+    """保留每个源成员完整标志位的 ZIP 写入器。"""
+
+    def _open_to_write(self, zinfo: zipfile.ZipInfo, force_zip64: bool = False):
+        if force_zip64 and not self._allowZip64:
+            raise zipfile.LargeZipFile("force_zip64 is True, but ZIP64 is disabled")
+        if self._writing:
+            raise ValueError("Can't write to ZIP file while another member is open")
+        source_flags = zinfo.flag_bits
+        zinfo.compress_size = 0
+        zinfo.CRC = 0
+        zinfo.flag_bits = source_flags
+        if zinfo.compress_type == zipfile.ZIP_LZMA:
+            zinfo.flag_bits |= zipfile._MASK_COMPRESS_OPTION_1
+        if not self._seekable:
+            zinfo.flag_bits |= zipfile._MASK_USE_DATA_DESCRIPTOR
+        zip64 = force_zip64 or zinfo.file_size * 1.05 > zipfile.ZIP64_LIMIT
+        if not self._allowZip64 and zip64:
+            raise zipfile.LargeZipFile("Filesize would require ZIP64 extensions")
+        if self._seekable:
+            self.fp.seek(self.start_dir)
+        zinfo.header_offset = self.fp.tell()
+        self._writecheck(zinfo)
+        self.fp.write(zinfo.FileHeader(zip64))
+        self._writing = True
+        return zipfile._ZipWriteFile(self, zinfo, zip64)
+
+
 def canonical_name(name: str) -> str | None:
     """Return the member identity while retaining a legal directory slash."""
     if not safe_name(name):
@@ -131,6 +159,7 @@ __all__ = [
     "MAX_ARCHIVE_BYTES",
     "MAX_ARCHIVE_MEMBERS",
     "MAX_MEMBER_BYTES",
+    "MetadataZipFile",
     "ZipSafetyError",
     "canonical_name",
     "preflight_zip",

@@ -83,6 +83,29 @@ def slugify(name: str) -> str:
     return s or "book"
 
 
+def _merge_epub_verification(store, data: dict) -> dict:
+    report = dict(data)
+    report.pop("published_outputs", None)
+    published_outputs: dict[str, dict] = {}
+    if os.path.isfile(store.epub_verification_path):
+        previous = store.read_json(store.epub_verification_path)
+        if not isinstance(previous, dict):
+            raise ValueError("invalid EPUB verification report")
+        persisted = previous.get("published_outputs", {})
+        if not isinstance(persisted, dict) or any(
+            not isinstance(label, str) or not isinstance(value, dict)
+            for label, value in persisted.items()
+        ):
+            raise ValueError("invalid EPUB verification report")
+        published_outputs.update(persisted)
+    if report.get("published") is True:
+        label = report.get("output_label")
+        if not isinstance(label, str):
+            raise ValueError("invalid EPUB verification report")
+        published_outputs[label] = report
+    return {**report, "published_outputs": published_outputs}
+
+
 class RunStore:
     def __init__(self, run_dir: str, *, create: bool = True):
         self.run_dir = run_dir
@@ -430,7 +453,9 @@ class RunStore:
         self.write_json(self.report_path, data)
 
     def save_epub_verification(self, data: dict) -> None:
-        self.write_json(self.epub_verification_path, data)
+        merged = _merge_epub_verification(self, data)
+        data["published_outputs"] = merged["published_outputs"]
+        self.write_json(self.epub_verification_path, merged)
 
     def load_epub_verification(self) -> dict | None:
         if not os.path.isfile(self.epub_verification_path):

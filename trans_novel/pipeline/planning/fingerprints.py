@@ -209,5 +209,8 @@ def assemble_input_fingerprint(
     bilingual: bool,
     out_format: str,
     bilingual_order: str,
+    output_digest: str | None = None,
 ) -> str:
-    return input_fingerprint(targets_text, mono, bilingual, out_format, bilingual_order)
+    return input_fingerprint(
+        targets_text, mono, bilingual, out_format, bilingual_order, output_digest
+    )

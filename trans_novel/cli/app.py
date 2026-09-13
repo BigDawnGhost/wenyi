@@ -137,7 +137,7 @@ def _translate_impl(
     if mono is not None:
         config.output.mono = mono
     if bilingual is not None:
-        config.output.bilingual = bilingual
+        config.output.bilingual.enabled = bilingual
     if prepare and chapter is not None:
         console.print("[red]--prepare 不能与 --chapter 同时使用。[/]")
         raise typer.Exit(2)
@@ -201,6 +201,8 @@ def _translate_impl(
     )
     cli_common.print_usage({"usage": result["store"].load_usage() or {}})
     cli_common.print_chapter_processing(result["report"])
+    if fmt == "epub":
+        cli_common.print_theme_warnings(result["store"].load_epub_verification())
     for path in result.get("outputs") or [result["output"]]:
         console.print(f"译文：[bold]{path}[/]")
     console.print(

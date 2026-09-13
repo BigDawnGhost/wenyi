@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from trans_novel.assemble.epub.rendering.theme.contracts import ThemeError, ThemePlan
 from trans_novel.assemble.epub.verification.archive_model import (
     MAX_ARCHIVE_BYTES,
     MAX_ARCHIVE_MEMBERS,
@@ -24,9 +25,20 @@ def validate_epub(
 
 
 def validate_epub_triplet(
-    source_path: Path, mono_path: Path, bilingual_path: Path
+    source_path: Path,
+    mono_path: Path,
+    bilingual_path: Path,
+    *,
+    mono_theme_plan: ThemePlan | None = None,
+    bilingual_theme_plan: ThemePlan | None = None,
 ) -> dict[str, Any]:
-    return _validate_epub_triplet(source_path, mono_path, bilingual_path)
+    return _validate_epub_triplet(
+        source_path,
+        mono_path,
+        bilingual_path,
+        mono_theme_plan=mono_theme_plan,
+        bilingual_theme_plan=bilingual_theme_plan,
+    )
 
 
 def validate_epub_with_limits(
@@ -51,6 +63,8 @@ def validate_epub_triplet_with_limits(
     mono_path: Path,
     bilingual_path: Path,
     *,
+    mono_theme_plan: ThemePlan | None = None,
+    bilingual_theme_plan: ThemePlan | None = None,
     max_member_bytes: int = MAX_MEMBER_BYTES,
     max_archive_bytes: int = MAX_ARCHIVE_BYTES,
 ) -> dict[str, Any]:
@@ -58,6 +72,8 @@ def validate_epub_triplet_with_limits(
         source_path,
         mono_path,
         bilingual_path,
+        mono_theme_plan=mono_theme_plan,
+        bilingual_theme_plan=bilingual_theme_plan,
         max_member_bytes=max_member_bytes,
         max_archive_bytes=max_archive_bytes,
     )
@@ -96,6 +112,8 @@ __all__ = [
     "MAX_MEMBER_BYTES",
     "EpubPublishError",
     "EpubVerificationError",
+    "ThemeError",
+    "ThemePlan",
     "validate_epub",
     "validate_epub_triplet",
     "validate_epub_triplet_with_limits",

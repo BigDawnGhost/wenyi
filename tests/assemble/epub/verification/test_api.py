@@ -15,6 +15,7 @@ from tests.fixtures.books import write_phase9_epub
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.assemble.epub import verification as epub_verifier
 from trans_novel.assemble.epub.rendering import BILINGUAL_SOURCE_CLASS
+from trans_novel.assemble.epub.rendering.theme.contracts import ThemePlan
 from trans_novel.assemble.epub.verification import verify_epub
 from trans_novel.assemble.epub.verification.bilingual import _resolve_output_path, bilingual_proof
 from trans_novel.assemble.epub.verification.navigation import nav_label_locations
@@ -180,6 +181,8 @@ class TestEpubStage2(unittest.TestCase):
                 "source_path": Path,
                 "mono_path": Path,
                 "bilingual_path": Path,
+                "mono_theme_plan": ThemePlan | None,
+                "bilingual_theme_plan": ThemePlan | None,
                 "return": dict[str, Any],
             },
         )
@@ -189,7 +192,13 @@ class TestEpubStage2(unittest.TestCase):
         )
         self.assertEqual(
             list(signature(epub_verifier.validate_epub_triplet).parameters),
-            ["source_path", "mono_path", "bilingual_path"],
+            [
+                "source_path",
+                "mono_path",
+                "bilingual_path",
+                "mono_theme_plan",
+                "bilingual_theme_plan",
+            ],
         )
 
     def test_real_schema4_mono_report_counts_actual_authorized_changes(self) -> None:

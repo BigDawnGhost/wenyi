@@ -1,11 +1,9 @@
 """Canonical EPUB rendering API."""
 
 from trans_novel.assemble.epub.rendering.bilingual import (
-    BILINGUAL_CSS,
     BILINGUAL_DIRECT_TARGET_ATTRS,
     BILINGUAL_DIRECT_TARGET_CLASS,
     BILINGUAL_SOURCE_CLASS,
-    BILINGUAL_STYLE_ID,
     dedupe_segment_mappings,
     direct_run_add_whitespace,
     direct_run_boundary,
@@ -18,7 +16,6 @@ from trans_novel.assemble.epub.rendering.bilingual import (
     sanitized_source_copy,
     segment_needs_source,
     source_node_is_valid,
-    style_shape_is_valid,
 )
 from trans_novel.assemble.epub.rendering.generated import build_epub_from_chapters
 from trans_novel.assemble.epub.rendering.source_archive import assemble_epub, assemble_source_epub
@@ -29,11 +26,9 @@ from trans_novel.assemble.epub.rendering.source_markup import (
 )
 
 __all__ = [
-    "BILINGUAL_CSS",
     "BILINGUAL_DIRECT_TARGET_ATTRS",
     "BILINGUAL_DIRECT_TARGET_CLASS",
     "BILINGUAL_SOURCE_CLASS",
-    "BILINGUAL_STYLE_ID",
     "add_bilingual_sources",
     "assemble_epub",
     "assemble_source_epub",
@@ -52,5 +47,4 @@ __all__ = [
     "sanitized_source_copy",
     "segment_needs_source",
     "source_node_is_valid",
-    "style_shape_is_valid",
 ]

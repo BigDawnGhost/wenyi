@@ -119,6 +119,8 @@ def assemble(
     except (IdentityMismatchError, ReadinessError) as error:
         console.print(f"[red]{error}[/]")
         raise typer.Exit(2) from error
+    if fmt == "epub":
+        cli_common.print_theme_warnings(store.load_epub_verification())
     for path in paths:
         console.print(f"已生成译文：[bold]{path}[/]")
 

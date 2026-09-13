@@ -101,6 +101,13 @@ def print_chapter_processing(report: dict) -> None:
             console.print(f"  第{chapter['chapter']}章 {chapter['title']} —— {chapter['mode']}")
 
 
+def print_theme_warnings(report: dict | None) -> None:
+    """显示整本书未匹配到任何排版角色的主题警告。"""
+    theme = report.get("theme") if isinstance(report, dict) else None
+    if isinstance(theme, dict) and theme.get("warning_counts", {}).get("zero_role_coverage"):
+        console.print("[yellow]EPUB 主题未匹配任何排版角色；请检查分类规则。[/]")
+
+
 def print_usage(report: dict) -> None:
     """打印本书累计 token 用量与分 Agent 缓存命中率（无数据时静默跳过）。"""
     usage = report.get("usage") or {}
@@ -135,6 +142,7 @@ __all__ = [
     "console",
     "load_config",
     "print_chapter_processing",
+    "print_theme_warnings",
     "print_usage",
     "require_input_file",
     "runstore_for",

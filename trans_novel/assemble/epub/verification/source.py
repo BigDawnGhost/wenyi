@@ -10,7 +10,6 @@ from lxml import etree
 from trans_novel.assemble.epub.rendering import (
     BILINGUAL_DIRECT_TARGET_ATTRS,
     BILINGUAL_SOURCE_CLASS,
-    BILINGUAL_STYLE_ID,
     is_bilingual_container_tag,
     japanese_ruby_source_copy,
     ruby_base_count,
@@ -169,13 +168,6 @@ def node_snapshot(root_output: etree._Element, source_nodes: list[etree._Element
             parent.text,
             [(child, child.text, child.tail) for child in dom.element_children_lxml(parent)],
         )
-    style_nodes = [
-        node
-        for node in root_output.iter()
-        if isinstance(node.tag, str)
-        and archive_model.local_name(node.tag).lower() == "style"
-        and node.get("id") == BILINGUAL_STYLE_ID
-    ]
     direct_target_total = sum(
         1
         for node in root_output.iter()
@@ -186,7 +178,6 @@ def node_snapshot(root_output: etree._Element, source_nodes: list[etree._Element
         node_siblings,
         node_text_context,
         node_mixed_context,
-        style_nodes,
         direct_target_total,
     )
 

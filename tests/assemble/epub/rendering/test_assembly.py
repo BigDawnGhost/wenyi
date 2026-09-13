@@ -20,7 +20,7 @@ from tests.fixtures.books import (
 )
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.assemble import assemble
-from trans_novel.benchmark.epub_check import validate_epub_triplet
+from trans_novel.assemble.epub.verification import validate_epub_triplet
 from trans_novel.config import Config
 from trans_novel.epub.slots import distribute_slot_translation
 from trans_novel.ingest.models import Chapter

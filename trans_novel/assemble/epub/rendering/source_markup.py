@@ -31,6 +31,11 @@ from trans_novel.assemble.epub.rendering.source_dom import (
     serialize_source_tree,
     set_visible_label,
 )
+from trans_novel.assemble.epub.rendering.theme import (
+    ResourceThemeScope,
+    SourcePair,
+    ThemeError,
+)
 from trans_novel.epub.slots import (
     normalized_source_text,
     normalized_target_text,
@@ -39,6 +44,7 @@ from trans_novel.epub.slots import (
 from trans_novel.ingest import Segment
 
 _HTML_EXTS = (".xhtml", ".html", ".htm")
+_SourceRef = tuple[etree._Element, tuple[etree._Element, ...], bool]
 
 
 def rewrite_toc_lxml(
@@ -120,6 +126,7 @@ def _add_container_source(
     *,
     order: str,
     source_lang: str,
+    source_refs: list[_SourceRef] | None = None,
 ) -> int:
     namespace = block.nsmap.get(None)
     source_name = f"{{{namespace}}}div" if namespace else "div"
@@ -138,6 +145,8 @@ def _add_container_source(
         block.insert(0, source)
     else:
         block.append(source)
+    if source_refs is not None:
+        source_refs.append((source, (block,), original is not None))
     return 1
 
 
@@ -167,10 +176,13 @@ def _direct_pending_sources(
     *,
     source_lang: str,
     span_name: str,
+    source_refs: list[_SourceRef] | None = None,
 ) -> list[tuple[object, etree._Element, etree._Element, etree._Element, etree._Element]]:
     pending: list[
         tuple[object, etree._Element, etree._Element, etree._Element, etree._Element]
     ] = []
+    ruby_sources: dict[int, etree._Element] = {}
+    paired_targets: dict[int, tuple[etree._Element, list[etree._Element]]] = {}
     for segment in segments:
         state = segment.epub_state
         assert state is not None
@@ -221,6 +233,7 @@ def _direct_pending_sources(
                     leading_whitespace = ""
                 if ruby_id is not None:
                     seen_rubies.add(ruby_id)
+                    ruby_sources[ruby_id] = source
                 last_source = source
             target = etree.Element(span_name, **BILINGUAL_DIRECT_TARGET_ATTRS)
             target.text = slot.target_value if slot.target_value is not None else slot.source_value
@@ -233,8 +246,18 @@ def _direct_pending_sources(
                 if parent is None:
                     raise ValueError("EPUB direct-br tail slot has no parent")
                 parent.insert(parent.index(owner) + 1, target)
+            paired_source = source if source is not None else ruby_sources.get(ruby_id)
+            if source_refs is not None:
+                if paired_source is None:
+                    raise ThemeError("theme_css", "invalid_scope")
+                pair = paired_targets.setdefault(id(paired_source), (paired_source, []))
+                pair[1].append(target)
             if source is not None:
                 pending.append((slot, owner, boundary, source, target))
+    if source_refs is not None:
+        source_refs.extend(
+            (source, tuple(targets), False) for source, targets in paired_targets.values()
+        )
     return pending
 
 
@@ -295,12 +318,19 @@ def _add_direct_sources(
     *,
     order: str,
     source_lang: str,
+    source_refs: list[_SourceRef] | None = None,
 ) -> int:
     namespace = block.nsmap.get(None)
     span_name = f"{{{namespace}}}span" if namespace else "span"
     owner_map = _direct_owner_map(block, segments)
     pending = _direct_pending_sources(
-        block, original, segments, owner_map, source_lang=source_lang, span_name=span_name
+        block,
+        original,
+        segments,
+        owner_map,
+        source_lang=source_lang,
+        span_name=span_name,
+        source_refs=source_refs,
     )
     _insert_direct_sources(block, pending, order=order)
     return len(pending)
@@ -313,6 +343,7 @@ def _add_plain_sources(
     *,
     order: str,
     source_lang: str,
+    source_refs: list[_SourceRef] | None = None,
 ) -> int:
     sources: list[etree._Element] = []
     block_name = block.tag.rsplit("}", 1)[-1].lower()
@@ -342,6 +373,10 @@ def _add_plain_sources(
                 source.tail = old_tail
             anchor.addnext(source)
             anchor = source
+    if source_refs is not None:
+        source_refs.extend(
+            (source, (block,), original is not None and len(segments) == 1) for source in sources
+        )
     return len(sources)
 
 
@@ -353,6 +388,7 @@ def add_bilingual_sources(
     source_lang: str = "",
     source_blocks: dict[tuple[int, ...], etree._Element] | None = None,
     block_refs: dict[tuple[int, ...], etree._Element] | None = None,
+    source_refs: list[_SourceRef] | None = None,
 ) -> int:
     grouped = _group_bilingual_segments(segments)
     added = 0
@@ -364,7 +400,12 @@ def add_bilingual_sources(
         tag = block.tag if isinstance(block.tag, str) else "p"
         if is_bilingual_container_tag(tag):
             added += _add_container_source(
-                block, original, block_segments, order=order, source_lang=source_lang
+                block,
+                original,
+                block_segments,
+                order=order,
+                source_lang=source_lang,
+                source_refs=source_refs,
             )
             continue
         direct_br = any(
@@ -373,11 +414,22 @@ def add_bilingual_sources(
         )
         if direct_br:
             added += _add_direct_sources(
-                root, block, original, block_segments, order=order, source_lang=source_lang
+                root,
+                block,
+                original,
+                block_segments,
+                order=order,
+                source_lang=source_lang,
+                source_refs=source_refs,
             )
         else:
             added += _add_plain_sources(
-                block, original, block_segments, order=order, source_lang=source_lang
+                block,
+                original,
+                block_segments,
+                order=order,
+                source_lang=source_lang,
+                source_refs=source_refs,
             )
     return added
 
@@ -411,6 +463,52 @@ def _apply_declared_languages(
             block.set("{http://www.w3.org/XML/1998/namespace}lang", expected)
 
 
+def _theme_scope(
+    root: etree._Element,
+    href: str,
+    segments: list[Segment],
+    block_refs: dict[tuple[int, ...], etree._Element],
+    source_refs: list[_SourceRef],
+) -> ResourceThemeScope:
+    paths: dict[etree._Element, tuple[int, ...]] = {}
+    stack = [(root, ())]
+    while stack:
+        node, path = stack.pop()
+        paths[node] = path
+        children = [child for child in node if isinstance(child.tag, str)]
+        stack.extend(
+            (child, (*path, index)) for index, child in reversed(tuple(enumerate(children)))
+        )
+    preserve_resource = bool(segments) and all(segment.preserve_source for segment in segments)
+    excluded = (
+        ()
+        if preserve_resource
+        else tuple(
+            block_refs[path]
+            for path in dict.fromkeys(
+                segment.epub_state.block_path
+                for segment in segments
+                if segment.preserve_source and segment.epub_state is not None
+            )
+        )
+    )
+    try:
+        return ResourceThemeScope(
+            excluded_paths=tuple(paths[node] for node in excluded),
+            source_pairs=tuple(
+                SourcePair(
+                    source_path=paths[source],
+                    target_paths=tuple(paths[target] for target in targets),
+                    map_descendants=map_descendants,
+                )
+                for source, targets, map_descendants in source_refs
+            ),
+            preserve_resource=preserve_resource,
+        )
+    except KeyError:
+        raise ThemeError("theme_css", "invalid_scope", resource=href) from None
+
+
 def render_source_resource(
     data: bytes,
     href: str,
@@ -422,6 +520,7 @@ def render_source_resource(
     bilingual: bool = False,
     order: str = "target_first",
     source_lang: str = "",
+    scope_sink: dict[str, ResourceThemeScope] | None = None,
 ) -> bytes:
     if order not in {"target_first", "source_first"}:
         raise ValueError(f"invalid bilingual order: {order!r}")
@@ -436,6 +535,7 @@ def render_source_resource(
     source_blocks: dict[tuple[int, ...], etree._Element] = {}
     block_refs: dict[tuple[int, ...], etree._Element] = {}
     source_languages: dict[tuple[int, ...], str | None] = {}
+    source_refs: list[_SourceRef] = []
     for segment in segments:
         state = segment.epub_state
         if state is None:
@@ -492,16 +592,15 @@ def render_source_resource(
         source_languages=source_languages,
     )
     if bilingual:
-        added = add_bilingual_sources(
+        add_bilingual_sources(
             root,
             segments,
             order=order,
             source_lang=source_lang,
             source_blocks=source_blocks,
             block_refs=block_refs,
+            source_refs=source_refs if scope_sink is not None else None,
         )
-        if added:
-            from trans_novel.assemble.epub.rendering.bilingual import append_bilingual_style
-
-            append_bilingual_style(root)
+    if scope_sink is not None:
+        scope_sink[href] = _theme_scope(root, href, segments, block_refs, source_refs)
     return serialize_source_tree(tree, data, mode)

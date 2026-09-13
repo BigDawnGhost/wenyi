@@ -49,6 +49,11 @@ from trans_novel.pipeline.state.models import (
     now_iso,
     source_bytes_hash,
 )
+from trans_novel.pipeline.state.output_selection import (
+    SavedOutputSelection,
+    load_output_selection,
+    save_output_selection,
+)
 from trans_novel.pipeline.state.store import RunStore, slugify, stable_digest
 
 __all__ = [
@@ -90,15 +95,18 @@ __all__ = [
     "RunIdentity",
     "RunState",
     "RunStore",
+    "SavedOutputSelection",
     "begin_polish",
     "begin_translate",
     "chapter_node_key",
     "clear",
     "clone_closed_runstore",
     "input_fingerprint",
+    "load_output_selection",
     "normalize_lang_code",
     "now_iso",
     "runstore_for",
+    "save_output_selection",
     "slugify",
     "source_bytes_hash",
     "stable_digest",

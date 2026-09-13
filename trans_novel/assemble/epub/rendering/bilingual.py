@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from lxml import etree
 
-BILINGUAL_STYLE_ID = "tn-bilingual-style"
 BILINGUAL_SOURCE_CLASS = "tn-source ibooks-dark-theme-use-custom-text-color"
 BILINGUAL_SOURCE_CLASSES = frozenset(BILINGUAL_SOURCE_CLASS.split())
 # Direct-br target wrappers are generated DOM, not source additions.  The
@@ -49,25 +48,6 @@ SAFE_SOURCE_INLINE_QNAMES = frozenset(
 RUBY_QNAMES = frozenset({"ruby", "rb", "rt", "rp", "rtc"})
 RUBY_ALLOWED_ATTRS = frozenset({"class", "dir", "lang", "title"})
 XHTML_NS = "http://www.w3.org/1999/xhtml"
-
-BILINGUAL_CSS = """
-.tn-source {
-  font-size: 0.88em;
-  line-height: 1.55;
-  color: #6b6b6b;
-  background-color: #f4f3f0;
-  padding: 0.5em 0.8em;
-  border-radius: 5px;
-  margin: 0.2em 0 1em;
-}
-@media (prefers-color-scheme: dark) {
-  .tn-source {
-    color: #a8a8a8;
-    background-color: #2a2a2a;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
-  }
-}
-""".lstrip("\n")
 
 
 def local_name(tag: object) -> str:
@@ -504,64 +484,18 @@ def has_reserved_source_collision(root: etree._Element) -> bool:
         classes = str(node.get("class", "")).split()
         if "tn-source" in classes or BILINGUAL_DIRECT_TARGET_CLASS in classes:
             return True
-        if local_name(node.tag) == "style" and node.get("id") == BILINGUAL_STYLE_ID:
-            return True
     return False
-
-
-def append_bilingual_style(root: etree._Element) -> None:
-    """Append exactly one reserved style to ``head``; fail on collisions."""
-    styles = [
-        node
-        for node in root.iter()
-        if isinstance(node.tag, str)
-        and local_name(node.tag) == "style"
-        and node.get("id") == BILINGUAL_STYLE_ID
-    ]
-    if styles:
-        raise ValueError("EPUB bilingual style id collision")
-    head = next(
-        (
-            node
-            for node in root.iter()
-            if isinstance(node.tag, str) and local_name(node.tag) == "head"
-        ),
-        None,
-    )
-    if head is None:
-        raise ValueError("EPUB bilingual resource has no head")
-    style_tag = (
-        "{" + XHTML_NS + "}style"
-        if isinstance(head.tag, str) and head.tag.startswith("{" + XHTML_NS + "}")
-        else "style"
-    )
-    style = etree.Element(style_tag, id=BILINGUAL_STYLE_ID)
-    style.text = BILINGUAL_CSS
-    head.append(style)
-
-
-def style_shape_is_valid(node: etree._Element) -> bool:
-    parent = node.getparent()
-    return (
-        dict(node.attrib) == {"id": BILINGUAL_STYLE_ID}
-        and node.text == BILINGUAL_CSS
-        and parent is not None
-        and local_name(parent.tag) == "head"
-    )
 
 
 __all__ = [
     "BILINGUAL_CONTAINER_TAGS",
-    "BILINGUAL_CSS",
     "BILINGUAL_DIRECT_TARGET_ATTRS",
     "BILINGUAL_DIRECT_TARGET_CLASS",
     "BILINGUAL_SOURCE_CLASS",
     "BILINGUAL_SOURCE_CLASSES",
-    "BILINGUAL_STYLE_ID",
     "DIRECT_UNSAFE_ANCESTOR_QNAMES",
     "RUBY_ALLOWED_ATTRS",
     "SAFE_SOURCE_INLINE_QNAMES",
-    "append_bilingual_style",
     "dedupe_segment_mappings",
     "direct_run_add_whitespace",
     "direct_run_boundary",
@@ -572,5 +506,4 @@ __all__ = [
     "ruby_base_count",
     "ruby_shape_is_valid",
     "sanitized_source_copy",
-    "style_shape_is_valid",
 ]

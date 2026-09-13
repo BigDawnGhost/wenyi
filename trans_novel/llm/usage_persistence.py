@@ -234,6 +234,9 @@ def _sha256(data: bytes) -> str:
 
 
 def _fsync_directory(directory: str) -> None:
+    # Windows CRT 不支持目录文件描述符；文件 fsync 仍在写入流程中执行。
+    if os.name == "nt":
+        return
     fd = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(fd)

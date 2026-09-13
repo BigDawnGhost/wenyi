@@ -9,7 +9,6 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 
 from tests.fixtures.books import write_phase9_epub
-from trans_novel.assemble.epub.rendering import BILINGUAL_CSS as _BILINGUAL_CSS
 from trans_novel.assemble.epub.verification import validate_epub, validate_epub_triplet
 
 
@@ -63,18 +62,9 @@ class Phase9EpubFixtureTests(unittest.TestCase):
             source_node = chapter_two_soup.new_tag("p", attrs={"class": "tn-source"})
             source_node.string = "Second chapter."
             body.insert_after(source_node)
-            style = chapter_two_soup.new_tag("style", id="tn-bilingual-style")
-            style.string = _BILINGUAL_CSS
-            chapter_two_soup.head.append(style)
-            with zipfile.ZipFile(source) as zin:
-                chapter_one_soup = BeautifulSoup(zin.read("OEBPS/text/chapter-1.xhtml"), "xml")
-                chapter_one_style = chapter_one_soup.new_tag("style", id="tn-bilingual-style")
-                chapter_one_style.string = _BILINGUAL_CSS
-                chapter_one_soup.head.append(chapter_one_style)
-                replacements = {
-                    "OEBPS/text/chapter-1.xhtml": str(chapter_one_soup).encode("utf-8"),
-                    "OEBPS/text/chapter-2.xhtml": str(chapter_two_soup).encode("utf-8"),
-                }
+            replacements = {
+                "OEBPS/text/chapter-2.xhtml": str(chapter_two_soup).encode("utf-8"),
+            }
             _copy_epub(source, bilingual, replacements)
             result = validate_epub_triplet(source, mono, bilingual)
             self.assertTrue(result["structural_pass"], result)
@@ -510,25 +500,6 @@ class TestEpubNavigationValidation(unittest.TestCase):
             _copy_epub(source, broken, {"OEBPS/content.opf": opf})
             codes = {i["code"] for i in validate_epub(broken)["failures"]}
             self.assertTrue({"manifest_id_duplicate", "manifest_id_missing"} <= codes)
-
-    def test_generated_style_is_reported_without_path_leak(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "source.epub"
-            output = Path(directory) / "output.epub"
-            write_phase9_epub(str(source))
-            with zipfile.ZipFile(source) as zin:
-                chapter = zin.read("OEBPS/text/chapter-1.xhtml").replace(
-                    b"</head>",
-                    b'<style id="tn-bilingual-style">'
-                    + _BILINGUAL_CSS.encode("utf-8")
-                    + b"</style></head>",
-                )
-            _copy_epub(source, output, {"OEBPS/text/chapter-1.xhtml": chapter})
-            result = validate_epub(output)
-            self.assertTrue(
-                any("tn-bilingual-style" in value for value in result["generated_resources"])
-            )
-            self.assertNotIn(directory, repr(result))
 
     def test_legal_image_only_body_is_not_empty(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

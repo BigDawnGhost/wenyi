@@ -198,7 +198,7 @@ class TestTitleTranslation(unittest.TestCase):
 
         store = FakeStore()
         config = Config.from_dict({"llm": fake_llm_dict()})
-        node = AssembleNode(config=config, out_format="epub")
+        node = AssembleNode(output=config.output, out_format="epub")
         request = NodeRequest(
             store=store,
             node_id="assemble",
@@ -208,15 +208,15 @@ class TestTitleTranslation(unittest.TestCase):
             input_path="input.epub",
         )
 
-        def fake_assemble(received_store, _input_path, **_kwargs):
+        def fake_assemble(received_store, _input_path, _outputs, _out_format, **_kwargs):
             self.assertIs(received_store, store)
             self.assertEqual(received_store.manifest["chapters"][0]["title_translated"], "前后")
             self.assertEqual(
                 received_store.manifest["meta"]["toc_entries"][0]["title_translated"], "目录"
             )
-            return "output.epub"
+            return ["output.epub"]
 
-        with patch("trans_novel.pipeline.nodes.finish.assemble", side_effect=fake_assemble):
+        with patch("trans_novel.pipeline.nodes.finish.assemble_outputs", side_effect=fake_assemble):
             node.execute(request)
 
         self.assertEqual(len(store.saved), 1)

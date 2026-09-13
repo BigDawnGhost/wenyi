@@ -52,9 +52,7 @@ def compare_source_models(
     source_item_keys = {(entry["id"], entry["href"], entry["media"]) for entry in sm["items"]}
     for output_item in om["items"]:
         key = (output_item["id"], output_item["href"], output_item["media"])
-        if key not in source_item_keys and not (
-            output_item["id"] == "tn-bilingual-style" and output_item["media"] == "text/css"
-        ):
+        if key not in source_item_keys:
             failures.append(
                 archive_model.item(
                     "resources",
@@ -64,11 +62,7 @@ def compare_source_models(
                 )
             )
     for path in sorted(set(output_by_path) - set(source_by_path)):
-        output_item = output_by_path[path]
-        if not (output_item["id"] == "tn-bilingual-style" and output_item["media"] == "text/css"):
-            failures.append(
-                archive_model.item("resources", "extra_manifest_resource", path, "output")
-            )
+        failures.append(archive_model.item("resources", "extra_manifest_resource", path, "output"))
     if sm["spine_paths"] != om["spine_paths"]:
         failures.append(archive_model.item("spine", "sequence_mismatch", "<spine>", "source"))
     source_nav = sorted(entry["path"] for entry in sm["nav_items"])

@@ -29,6 +29,9 @@ class FakeStore:
     def load_usage(self):
         return None
 
+    def load_epub_verification(self):
+        return None
+
 
 class TestCliBootstrap(unittest.TestCase):
     def test_version_is_available_without_a_subcommand(self):

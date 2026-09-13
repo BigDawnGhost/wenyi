@@ -1,6 +1,6 @@
 # EPUB Theme and JavaScript Classification Design
 
-Status: implementation specification; not an implemented feature.
+Status: implemented; 827 offline tests and five-target frozen application assembly passed. Calibre Content-server checks are complete with documented reader-specific limitations. Desktop Calibre and WeRead are not claimed as verified; WeRead upload was explicitly declined.
 Date: 2026-09-13.
 
 ## 1. Decisions and scope
@@ -24,28 +24,27 @@ Generality means configurable heuristics across different book structures. It do
 
 ## 2. Existing integration points
 
-| Existing source | Observed contract | Required change |
-| --- | --- | --- |
-| `trans_novel/config.py`, `_FileConfig`, `OutputConfig`, `Config.load/from_dict` | YAML currently exposes only `llm` and `quality`; output choices are runtime fields | Add strict public output configuration and path provenance |
-| `trans_novel/cli/app.py`, `_translate_impl`, `translate`, `resume` | CLI overrides mono/bilingual output; resume has a narrower signature | Route all entry points through the same output resolution |
-| `trans_novel/cli/tools.py`, `assemble` | Rebuilds output from persisted translation state | Resolve the same theme without model requests |
-| `trans_novel/pipeline/application.py`, `Application`, output preflight | Production composition root; preflights before paid translation | Construct and inject a resolved theme service; include theme preflight |
-| `trans_novel/pipeline/nodes/finish.py`, `AssembleNode.execute` | Builds mono/bilingual outputs and records assembly fingerprint | Reuse one immutable theme bundle for both outputs |
-| `trans_novel/pipeline/planning/fingerprints.py`, `assemble_input_fingerprint` | Fingerprint contains targets and output choices | Include the resolved output/theme digest |
-| `trans_novel/pipeline/planning/prescan.py`, `build_prescan_inputs` | Independently computes assembly fingerprint | Consume exactly the same resolved digest |
-| `trans_novel/assemble/writer.py`, `preflight_epub`, `assemble` | Dispatches source-backed/generated EPUB or TXT; publishes through a temporary file | Thread the theme service and verification expectations through both EPUB paths |
-| `trans_novel/assemble/epub/rendering/source_archive.py` and `source_markup.py` | Preserve archive members and replace verified text slots | Apply theme only after ordinary rendering, without changing persisted source paths |
-| `trans_novel/assemble/epub/rendering/generated.py` | Produces EPUB from other input formats | Use the same theme application path |
-| `trans_novel/assemble/epub/rendering/bilingual.py` | Owns source insertion, reserved classes, direct-run handling and hardcoded `BILINGUAL_CSS` | Keep structural operations; move presentation to packaged CSS |
-| `trans_novel/assemble/epub/verification/{package,validation,source,bilingual,slots,structure}.py` | Checks fixed bilingual CSS, resources, DOM and slots | Verify exact authorized theme differences instead of a fixed CSS string |
-| `trans_novel/assemble/epub/publication.py`, `prepare_publication` | Renders, verifies, then publishes | Preserve transaction semantics and fail closed on theme errors |
-| `pyproject.toml`, `.github/workflows/build.yml` | Python >=3.10; five single-file executable targets | Package JS/CSS data and native JS runtime; execute real runtime smoke checks |
+| Existing source | Current contract |
+| --- | --- |
+| `trans_novel/config.py`, `_FileConfig`, `OutputConfig`, `Config.load/from_dict` | Strict output configuration, field-presence tracking and config-relative path provenance |
+| `trans_novel/cli/app.py` and `cli/tools.py` | Existing output flags override configuration; the global `--config` selects configuration for translate, resume and tools assemble |
+| `trans_novel/pipeline/composition/output.py` | Resolves source-bound saved selections against explicit fields and defaults |
+| `trans_novel/pipeline/application.py`, `_setup_output` | Resolves one immutable bundle, constructs `ThemeService`, preflights EPUB outputs before paid work and saves effective selection under the existing lock |
+| `trans_novel/pipeline/nodes/finish.py`, `AssembleNode.execute` | Reuses the injected service and output digest for both requested variants |
+| `trans_novel/pipeline/planning/fingerprints.py` and `prescan.py` | Consume the same output digest in assembly fingerprints |
+| `trans_novel/assemble/writer.py`, `preflight_epub`, `assemble_outputs` | Dispatches source-backed/generated EPUB or TXT; stages all requested EPUB variants together |
+| `trans_novel/assemble/epub/rendering/source_archive.py` and `generated.py` | Complete ordinary rendering, apply the injected theme and return a transient `ThemePlan` |
+| `trans_novel/assemble/epub/rendering/bilingual.py` | Owns source insertion and pairing; packaged CSS owns presentation |
+| `trans_novel/assemble/epub/verification/theme.py` and `validation.py` | Independently check and reverse exact admitted theme changes, then reuse preservation checks without executing JS |
+| `trans_novel/assemble/epub/publication.py`, `publish_epubs` | Verifies all requested EPUBs before sequential durable replacements; persists physical publication receipts and actual triplet evidence |
+| `trans_novel/benchmark/epub_check.py` | Binds persisted triplet evidence to current source/output hashes, both publication receipts and the output digest |
+| `pyproject.toml`, `.github/workflows/build.yml` | Package JS/CSS and the embedded runtime; standalone probes and actual frozen source-backed/generated mono/bilingual assembly passed on all five targets |
 
 The current temporary attributes `data-tn-id`, `data-tn-inline-id`, and `data-tn-line` remain forbidden in published output. New permanent presentation markers must be explicitly distinguished; do not exempt every `data-tn-*` attribute.
 
 ## 3. Public configuration
 
-The complete new output section is:
+The supported output section is:
 
 ```yaml
 output:
@@ -73,11 +72,11 @@ output:
 
 The object form requires both `rules` and `styles`. `builtin:` identifiers are a closed registry of packaged resources, not URL schemes. Unknown fields, unknown identifiers, empty paths, and wrong types fail validation. There are no book-specific matching fields.
 
-`output.mono`, `output.bilingual.enabled`, and `output.bilingual.order` replace the existing internal flattened output fields in a clean cutover. Preserve existing defaults: mono and bilingual enabled, `target_first`. Existing CLI `--mono/--no-mono` and `--bilingual/--no-bilingual` remain explicit overrides. Do not rename those user-facing flags.
+`output.mono`, `output.bilingual.enabled`, and `output.bilingual.order` are the current output fields. Defaults remain mono and bilingual enabled, with `target_first`. Existing CLI `--mono/--no-mono` and `--bilingual/--no-bilingual` flags are explicit overrides.
 
-The current `_DEPRECATED_ROOT_KEYS` explicitly rejects `output`. Remove only that root-key rejection as the new strict output schema is introduced. Do not re-enable legacy output fields or accept the old boolean shape for `output.bilingual`; invalid legacy shapes must explain the new mapping. Cover this early rejection path in config tests, not just construction of `OutputConfig` in isolation.
+The strict root schema accepts `llm`, `quality`, and `output`; legacy flattened output fields and the old boolean shape for `output.bilingual` are rejected. The latter error directs users to `output.bilingual.enabled`.
 
-Preserve the existing effective-output behavior when both mono and bilingual are disabled: normalize to mono-only and report that normalization. Perform it once during output resolution, before planning and execution, so both fingerprint sites and `AssembleNode` receive the same effective flags.
+When both variants are disabled, output resolution normalizes to mono-only and records `output_selection_normalized` before planning and execution.
 
 No new theme-specific CLI grammar is necessary: `--config` selects the full configuration for `translate`, `resume`, and `tools assemble`. Do not add independent CLI fields for script and CSS paths that could form a partially overridden theme.
 
@@ -90,7 +89,7 @@ Configuration precedence per field:
 
 Retain field-presence information before applying defaults. An omitted theme is not the same as an explicit `null`. A changed config file must not silently revert unrelated saved output choices.
 
-Custom paths resolve relative to the selected config file, after expanding `~`. `Config.from_dict` gains an optional keyword-only `base_dir`; relative custom theme paths without a base directory fail rather than depend implicitly on the current directory. Persist resolved paths with their origin; paths are operational provenance, not semantic fingerprint inputs.
+Custom paths resolve relative to the selected config file, after expanding `~`. `Config.from_dict(raw, *, base_dir=None)` accepts an explicit base directory; relative custom theme paths without it fail rather than depend implicitly on the current directory. Resolved paths and their origins are persisted; paths are operational provenance, not semantic fingerprint inputs.
 
 TXT output continues to support bilingual ordering but does not run the JS engine or load presentation files. Log that configured EPUB presentation is inapplicable; do not fail TXT because an unused CSS file is absent.
 
@@ -220,7 +219,7 @@ Scope general typography rules to `content=target`; the separate bilingual style
 
 ## 5. Bilingual presentation
 
-Keep `add_bilingual_sources`, source sanitization, direct-run boundary logic, omission rules for headings, language handling, and exact source/target pairing. Move only appearance out of Python.
+`add_bilingual_sources` retains source sanitization, direct-run boundary logic, omission rules for headings, language handling, and exact source/target pairing. Presentation comes from packaged or explicitly selected CSS, not a Python CSS constant.
 
 Expose these permanent theme markers on eligible existing elements or already-generated safe wrappers:
 
@@ -295,7 +294,7 @@ Generated paths are relative to the OPF directory; links are relative to each XH
 
 ## 7. Embedded runtime and trust model
 
-Selected implementation candidate: `quickjs-ng`, distribution name distinct from its `quickjs` import. Current upstream metadata reports Python >=3.10 and resource limit APIs. Use `Context` directly on its owning assembly thread, not the `Function` helper and its implicit executor. No new asynchronous application call graph is introduced.
+The embedded runtime is `quickjs-ng==0.16.2.1`; the distribution name differs from its `quickjs` import. The host uses `Context` directly on its owning assembly thread, not the `Function` helper and its implicit executor. No asynchronous application call graph or external Node.js process is introduced.
 
 The resource context has no Python callbacks, module loader, filesystem, networking, process creation, timers, browser DOM, or credential access. Explicit user configuration is permission to execute that trusted file. Never discover executable themes inside an EPUB or persist-and-reload scripts from book content.
 
@@ -316,6 +315,10 @@ Initial internal limits, not YAML performance knobs:
 | Classification batch CPU budget | 2 seconds |
 
 Exceeding a limit is an explicit error, never partial classification. Reconcile these limits with measured ordinary-book fixtures before release; changing a limit changes the engine policy version used by the output fingerprint.
+
+Explicit native allocation/stack diagnostics retain `theme_limit`; an exception represented only
+as `null` cannot be distinguished reliably from a script's `throw null`, so it is reported as a
+sanitized script failure rather than falsely claiming precise out-of-memory attribution.
 
 QuickJS CPU interruption and allocation limits are not a hard wall-clock or whole-process RSS sandbox. A native engine defect can affect the host process. Do not advertise protection from malicious native exploits. The user chose trusted scripts, not untrusted third-party execution. Upgrading that trust model requires a separate design decision.
 
@@ -344,8 +347,7 @@ workflow checks out engine 0.16.2 and stamps distribution version `0.16.2.1`. Th
 builder reproduces that procedure from the pinned commits, copies the engine license to
 `LICENSE.quickjs`, and does not modify wrapper or engine runtime code.
 
-The builder only writes a wheel; it does not install it. Build it for the upcoming production
-integration with:
+The builder only writes a wheel; it does not install it. Build it with:
 
 ```bash
 uv run --no-project --python 3.12 --with pip python scripts/build_theme_runtime.py
@@ -366,44 +368,50 @@ uv tool install . --find-links build/theme-runtime-wheels
 ```
 
 Only the engine wheel is local and index-disabled; normal package indexes remain available for
-the application's other dependencies. On macOS ARM64, a disposable project explicitly requiring
-the engine proved that locked sync retains the preinstalled native-extension bytes and that
-isolated `uv tool install --find-links` selects the same locally built wheel. Both installations
-executed the real classification, limit, and CSS probe successfully. This verifies the bootstrap
-mechanism, not yet the Intel build or the future production application's dependency integration.
-
-Evidence status: the workflow is configured to build this wheel once with Python 3.12 on Intel,
-reuse it for the Python 3.10 source probe, and run the Python 3.12 frozen probe with an empty
-`PATH`. No successful Intel build, frozen-probe result, or five-target CI pass is claimed yet.
-This phase changes no production dependency, default, or theme availability.
+the application's other dependencies. The release runtime gate passed on all five targets in
+[workflow run 34712113015](https://github.com/turygo/wenyi/actions/runs/34712113015) at commit
+`35b7df6`: Python 3.10 and 3.12 source probes exercised classification, limits, and CSS loading,
+and each Python 3.12 frozen probe ran with an empty `PATH`. The macOS Intel job built the pinned
+ABI3 wheel before installing the project, then reused it for both interpreter probes. This closes
+the runtime prerequisite; it does not prove production DOM integration or reader appearance.
 
 ## 8. Ownership and public contracts
 
-Keep new theme implementation under `trans_novel/assemble/epub/rendering/theme/`. Start with contracts/loading, classification, and CSS/application modules; split by actual responsibility and governance limits, not one class per concept.
+Theme implementation lives under `trans_novel/assemble/epub/rendering/theme/`, split into contracts/loading, snapshots/classification, CSS compilation and archive service responsibilities.
 
-Suggested public boundaries, with all new names scoped to that capability:
+Current callable boundaries (signatures shown for reference):
 
 ```python
-resolve_theme(settings, *, config_base_dir) -> ThemeBundle
-classify_resource(snapshot, bundle) -> tuple[RoleAssignment, ...]
-plan_theme(resource_snapshots, bundle) -> ThemePlan
-apply_theme(archive, plan) -> None
+resolve_theme(rules, styles, bilingual_styles, *, config_base_dir=None, origins=None)
+semantic_output_digest(bundle, *, out_format, mono, bilingual, bilingual_order)
+ThemeService(bundle)
+ThemeService.plan_archive(self, path, scopes, *, bilingual)
+ThemeService.apply_archive(self, path, plan)
+ThemeService.render(self, path, scopes, *, bilingual)
 ```
+
+`resolve_theme` returns `ThemeBundle`; `semantic_output_digest` returns a string.
+`plan_archive` and `render` return `ThemePlan | None`; `apply_archive` returns `None`.
+`scopes` maps resource paths to `ResourceThemeScope`, carrying excluded element paths,
+source/target pairings and whole-resource preservation. `render` plans and applies to the
+temporary archive; source-backed and generated writer callbacks return that plan to publication.
 
 - `ThemeBundle`: immutable script bytes, general CSS bytes or absent, bilingual CSS bytes, semantic digest, API/engine/policy versions, and path provenance. Read selected files once per invocation before preflight; never reread between mono and bilingual output.
 - `RoleAssignment`: resource-local node ID, role, optional heading level. No text or arbitrary attributes from JS.
 - `ThemePlan`: typed per-resource expected marker additions, exact inline before/after declarations, CSS bytes/hash, manifest/link additions and pre-theme resource hash. It contains only operations admitted by the host policy.
 - `ThemeService`: an injected concrete service owning the resolved bundle and resource execution. No plugin registry, abstract factory, or provider interface is needed.
 
-Exact parameter types should be the existing archive/resource structures where suitable; do not create duplicate DOM/archive models. New exported symbols require LSP reference checks before integration.
+The frozen contracts reuse existing resource paths and element paths, not a second live DOM/archive model. Plans are transient verifier expectations, not persisted executable state.
 
-`Application` resolves and constructs the concrete service and passes it to `AssembleNode`/writer. Configuration models carry selections, not live JS contexts. Planning receives the resolved semantic digest as plain data; it must not import assembly/theme implementation. State stores structured selections and output digest, not engine objects. Verification may depend on rendering contracts under the existing capability direction; rendering must not import verification.
+`Application` constructs the service and injects it into `AssembleNode`/writer. Configuration carries selections, not live JS contexts. Planning receives the semantic digest as plain data; state stores selections, digests and receipts, not engine objects. Publication imports `ThemePlan` and `ThemeError` through verification's public facade, preserving `publication -> verification -> rendering`; rendering does not import verification.
 
 ## 9. Publication and independent verification
 
-The writer callback must finish ordinary rendering and theme application before `verify_epub` runs. Keep `prepare_publication`'s temporary-file and durable publication behavior. No after-publication ZIP patching is allowed.
+The writer callback finishes ordinary rendering and theme application before `prepare_publication` calls `verify_epub(..., theme_plan=...)`. There is no after-publication ZIP patching.
 
-Render and verify every requested EPUB output before replacing any final path. After all requested EPUBs pass, publish each file through the existing durable replacement path. If a later replacement has an I/O failure, files already replaced retain their existing `published=True` result; there is no rollback or multi-file atomicity promise.
+`publish_epubs` renders and verifies every requested EPUB before replacing any final path. It then replaces files sequentially and persists each physical result. A later I/O failure does not roll back an earlier successful replacement: exact durable `published_outputs` receipts remain available in `store.load_epub_verification()`. There is no multi-file atomicity promise; failure to persist a receipt is itself a publication error.
+
+Windows CRT does not support directory file descriptors. Usage persistence skips that unsupported directory sync while retaining file `fsync` and atomic replacement; EPUB publication records `directory_fsync_unsupported` in its receipts. This does not promise POSIX-equivalent directory durability across power loss. POSIX directory permission errors and all file-sync errors remain failures.
 
 Validate a theme plan against the pre-theme tree before any mutation: all addressed nodes exist, belong to the correct resource, are unprotected, and only admitted attributes/declaration priorities/resources are changed. The verifier receives these host-validated expectations independently of the output archive; do not read an output-embedded self-report as authority.
 
@@ -411,11 +419,13 @@ After reopening the EPUB, verify exact generated stylesheet bytes, manifest entr
 
 Do not rerun JS during verification: verification checks the admitted plan and preserved content, not a second potentially stateful script result. This does not claim to prove the aesthetic correctness of a trusted classifier; visual tests cover that separate concern.
 
-Replace fixed `BILINGUAL_CSS` hash comparisons and `style_shape_is_valid` assumptions throughout renderer exports and verifiers. Retain pairing/source-copy checks. Cleanly remove the old Python CSS constant after all callers and tests migrate. Packaged default CSS is the sole source of default appearance.
+Fixed `BILINGUAL_CSS` comparisons have been removed; packaged default CSS is the sole source of default appearance. Pairing/source-copy checks remain independent of custom presentation.
+
+For source-backed mono+bilingual publication, the report also records the actual source/mono/bilingual triplet, including file hashes and structural diagnostics. Per-file verification and valid theme projection are production publication gates; a generic structural failure inherited from the source is not a new gate. Benchmark admission uses `benchmark.epub_check.validate_epub_triplet(..., publication_report=..., output_digest=...)` to require matching current file hashes, digest and both durable receipts. It returns the recorded triplet rather than inferring alignment from two individual `passed` flags. A known-valid CI fixture must pass triplet structure as fixture acceptance, not as a new policy for arbitrary user books.
 
 ## 10. Persistence, preflight and fingerprints
 
-Persist each validated effective output selection under the runner lock after run identity resolution and the first durable manifest write, before paid execution. Keep successful output digest and artifact records separate from selection state, and update them only after durable publication. Save a compact role/protection/warning summary with a successfully published EPUB; do not persist full book text or script snapshots in logs.
+Persist each validated effective output selection in source-hash-bound `output_selection.json` under the runner lock, after theme preflight and before paid execution. A run with an existing manifest first passes the existing identity check; a run without one binds the selection to `source_bytes_hash(input_path)` and may save it before the first manifest. This ordering is required because `PrepareNode` performs paid language detection before `RunIdentity`, while `AnalyzeNode` writes the first durable manifest. Keep successful output digest and artifact records separate from selection state, and update them only after durable publication. Save a compact role/protection/warning summary with a successfully published EPUB; do not persist full book text or script snapshots in logs.
 
 For EPUB, the semantic output digest includes exact selected JS/CSS bytes, built-in asset bytes, script API version, theme compiler/policy version, engine package version, effective output choices, and bilingual order. Paths and file mtimes are excluded. Moving identical files does not invalidate output; editing bytes at the same path does.
 
@@ -425,7 +435,7 @@ Compute the applicable format-aware digest once and reuse it in both `assemble_i
 
 Older state without output selection follows current config/default resolution. Older assembly records without a theme digest rebuild once; there is no alias for a legacy hardcoded theme implementation. A missing saved custom file fails clearly rather than silently choosing built-in styles.
 
-Preflight loads and validates configuration, script entry point, CSS syntax/policy, source cascade constraints, collisions and archive safety before paid work. Existing source-backed preflight uses synthetic target text, so classification against actual translated text can still fail at final assembly; state this explicitly. Final failures preserve completed translations and any previously published file. Correcting the rule and running `tools assemble` retries without LLM calls.
+Preflight validates script entry point, CSS syntax/policy, source cascade constraints, collisions and archive safety before paid work. Source-backed preflight uses synthetic target text, so classification against actual translated text can still fail at final assembly. Rendering or verification failure occurs before replacement and preserves completed translations and prior final files; later publication I/O failures follow the partial-success policy above. Correct the rule and run `trans-novel --config config.yaml tools assemble book.epub --format epub` to retry without LLM calls.
 
 ## 11. Error behavior and observability
 
@@ -433,12 +443,17 @@ Use stable error codes with config path, resource label and node ID where releva
 
 | Code family | Examples | Outcome |
 | --- | --- | --- |
-| `theme_config` | unknown field, invalid path, missing saved asset | Fail before paid work when detectable |
+| `theme_config` | invalid asset reference, unreadable saved asset, missing engine | Fail before paid work when detectable |
 | `theme_script` | syntax, missing classify, exception, invalid return | No publication; retain translation state |
 | `theme_limit` | CPU, memory, snapshot/result size | No partial output or silent fallback |
 | `theme_css` | forbidden rule, unsupported source cascade, invalid selector | Fail themed operation; do not alter unthemed behavior |
 | `theme_collision` | reserved attribute/ID/resource | No source overwrite |
 | `theme_verify` | output differs from admitted plan | Existing verification failure transaction |
+
+Unknown YAML fields, wrong types and relative paths without a base directory are rejected by configuration validation before theme loading; they are not all wrapped as `ThemeError`.
+
+Source CSS using HTML `base` or XML `xml:base` declarations is rejected with
+`source_base_unsupported`; the compiler does not guess reader-specific URL rebasing.
 
 Zero matches for a valid role/style rule, fixed-layout exclusion, and unavailable safe direct-run styling scope are named warnings. Report whole-book zero role coverage prominently. Individual roles legitimately absent from a book do not fail it.
 
@@ -446,16 +461,16 @@ Use existing events/report facilities for resource counts, role counts, normaliz
 
 ## 12. Implementation sequence and ownership
 
-Each phase must satisfy its acceptance before the next begins. Do not change production defaults midway through migration.
+Phases 1–6 are implemented and checked; reader-specific limitations are recorded in section 14:
 
-1. **Runtime/package proof.** Run the source probe with Python 3.10 and 3.12 on every release target, then freeze and run it with Python 3.12 on all five targets, including a macOS Intel source build. Phase 1 uses a separate frozen `theme-runtime-probe` compatibility executable and keeps it out of release archives. Prove limits and no host callbacks. If a target fails, resolve the runtime dependency choice before integrating; do not ship a disabled theme on that target.
-2. **Config and immutable assets.** Add strict output schemas, presence-aware precedence, saved selection, built-in assets and path handling. Produce one bundle/digest per invocation. Keep source and packaged config examples aligned.
-3. **Classification and CSS mechanism.** Implement snapshots, projection, protected scopes, script validation, compiled CSS addressing and normalized-inline ledger. Reuse existing parsers and safe ZIP path handling.
-4. **Source-backed and generated assembly.** Inject the same service into both paths; implement mono/bilingual scope mapping without new unsafe wrappers. Theme selection must work for EPUB output from EPUB, FB2, TXT and Markdown.
-5. **Verification and state cutover.** Integrate expected-plan verification and both fingerprint sites; remove fixed bilingual CSS assumptions. Ensure failures leave source, state and prior published output safe.
-6. **Acceptance and packaging.** Run offline behavioral tests, actual before/after rendering and all release smoke checks. Make every release target exercise real theme assembly through its built `wenyi` executable; the separate compatibility probe is not sufficient phase 6 packaging evidence. Update user configuration documentation, both example config files, architecture capability rules only if actually needed, and `[Unreleased]` changelog. Remove throwaway probes.
+1. **Runtime/package proof.** Python 3.10/3.12 source probes and separate Python 3.12 frozen compatibility probes passed on all five targets, including the pinned macOS Intel source build. These probes are not application assembly proof.
+2. **Config and immutable assets.** Strict output schemas, presence-aware precedence, source-bound saved selection, packaged assets and path origins are implemented. Both example configurations remain aligned.
+3. **Classification and CSS mechanism.** Bounded snapshots, target projection, protected scopes, script validation, exact-address CSS and inline-normalization ledgers are implemented.
+4. **Source-backed and generated assembly.** Both renderers use the injected service for mono/bilingual EPUB output from EPUB, FB2, TXT and Markdown. TXT output bypasses presentation loading and execution.
+5. **Verification and state cutover.** Independent expected-plan verification, both assembly fingerprint sites, durable partial receipts and actual triplet evidence are wired. Fixed Python bilingual CSS is removed.
+6. **Acceptance and packaging.** All 827 offline tests and actual single-file application smoke passed on Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64. The smoke assembles source-backed and generated EPUBs with an empty child `PATH`, verifies both physical receipts and role/CSS evidence, and confirms unchanged source/targets/usage. The Calibre Content-server comparison covers 24 fixed-width views; its inherited table-contrast and live-resize behavior are reported separately. A separate runtime probe is not substituted for application assembly.
 
-The main agent owns configuration/API/security decisions and shared integration. Future executors receive exact file ownership and shared contracts; concurrent writers skip build/lint/format/tests until integration. No executor may invent an error policy or add a per-book compatibility branch.
+Main owns final integration evidence and acceptance. Concurrent documentation/release workers skip build, lint, format and tests until integration; no worker may invent a new publication policy or a per-book compatibility branch.
 
 ## 13. Acceptance matrix
 
@@ -474,13 +489,13 @@ Every case is an observable contract, not a source-text assertion.
 | Output paths | Source-backed and generated EPUB; TXT never reads presentation assets, excludes their bytes and engine version from its digest, and retains saved EPUB selections |
 | Verification | Tampered CSS, unexpected marker, altered inline value and duplicated generated resource fail; unthemed books retain existing validation |
 | Resume | CSS/JS edits rebuild EPUB output with zero LLM calls and unchanged translated targets; identical bytes at a new path preserve the EPUB semantic digest |
-| Persistence | Effective selections are written under the runner lock after identity and the first durable manifest but before paid execution; output digest/artifact records remain unchanged until successful publication |
+| Persistence | Effective selections are written under the runner lock after theme preflight and before paid execution; existing manifests pass identity verification first, while new runs bind pre-manifest selections to the source hash. Output digest/artifact records remain unchanged until successful publication |
 | Transactions | All requested EPUBs render and verify before replacement; later per-file I/O failure leaves prior final files intact and already replaced files `published=True`, without a multi-file atomicity promise |
 | Packaging | Phase 1's source probe works with Python 3.10/3.12 on every target and its separate Python 3.12 frozen probe works on all five targets without requiring Node or bundled fonts; the probe is absent from release archives, and phase 6 exercises real theme assembly through each packaged `wenyi` executable |
 
 Visual comparison uses the same translated text, DOM and source resources on both sides: left uses the English source book's CSS; right applies the general theme on top. Do not use the Chinese reference book's CSS as the before-state, and do not substitute unrelated demonstration prose. The local Black Swan pair is a manual reference, not a copyrighted repository fixture or a hardcoded rule source. Additional offline generated fixtures establish generality.
 
-Check chapter openings, ordinary paragraphs, quotes, tables, inline emphasis and bilingual blocks in light/dark appearances at narrow and wide widths. Browser screenshots prove browser rendering only; verify the resulting EPUB in WeRead and at least one independent EPUB reader. Report reader-specific behavior separately from archive/DOM correctness.
+Check chapter openings, ordinary paragraphs, quotes, tables, inline emphasis and bilingual blocks in light/dark appearances at narrow and wide widths. Browser screenshots prove browser rendering only; verify the resulting EPUB in at least one independent EPUB reader. WeRead was part of the original acceptance scope, but the user explicitly declined book upload: do not send files to it, and report it as unverified. Report reader-specific behavior separately from archive/DOM correctness.
 
 Canonical integration gates after implementation:
 
@@ -494,14 +509,22 @@ uv build
 
 Focused tests belong in the existing capability-mirrored `tests/assemble/`, `tests/pipeline/`, and CLI/config modules. Keep regression cases for plausible failures above; do not write tests that merely pin CSS text, private wiring or field forwarding. Release workflow smoke checks must actually classify and assemble an offline sample, not stop at `--help`.
 
-## 14. Remaining evidence gates, not undecided product behavior
+## 14. Acceptance evidence and reader limitations
 
-- The chosen embedded runtime must prove macOS Intel source build and PyInstaller compatibility. Current upstream wheel availability is not that proof.
-- CSS specificity guards and conditional source styling require actual-reader acceptance. Unsupported source CSS must fail explicitly instead of undermining the override claim.
-- Default classification quality and internal resource limits need the heterogeneous fixture matrix. Do not fit them solely to the Black Swan example.
-- This document does not add production code, dependencies, runtime assets or migration state. Implementation is a separate task.
+- Calibre 9.14.0's actual Content-server EPUB reader opened byte-matched local copies of the before, themed mono and bilingual publications. The 24 captured views cover chapter openings, ordinary text, inline quotation/emphasis and the original table at 430×900 and 1000×900, using native White/Black schemes with `Override all book colors: Never`. No generated book DOM or stylesheet was edited for screenshots.
+- The inspected themed reference EPUB contains no `blockquote` elements, so its inline quotations and italics are not claimed as quote-role coverage. Unsupported CSS still fails through the independent admission/verification path; screenshots do not replace that gate.
 
-Local documentation probe completed on the current macOS ARM64 host using an isolated `uv run --no-project` environment and `quickjs-ng==0.16.2.1`: YAML examples parsed; CSS example tokenization succeeded; the displayed JS classified a chapter heading and ordinary prose differently; CPU interruption and allocation-limit failure triggered; tinycss2 preserved a font shorthand value while demoting its important flag. This is API/example evidence only, not proof of the full compiler, reader behavior, cross-platform packaging, or production integration.
+Observed local evidence: the actual CLI assembled an unthemed mono before-state and themed mono/bilingual after-states for Black Swan in a deny-network sandbox using copied completed state. Source, translated-target and `usage.json` hashes were unchanged; physical publication receipts passed. The themed mono had 134 resources and 3,209 body roles; bilingual had 134 resources and 6,364 body roles. These are archive/CLI observations, not visual acceptance.
+
+The before-state chapter heading was right-aligned at 20.6667px and ordinary text was 16px without an indent. The themed heading was centered at 25.6px in the configured red; ordinary text was 18.4px with a 36.8px first-line indent. Original italics remained italic. Bilingual source text followed the translation, at 14.08px with the intended light/dark foreground and background colors. The table retained all 18 DOM rows and paginated in the actual reader.
+
+Two reader-specific limitations remain visible rather than being hidden by source-CSS changes. In Black mode, both before and after table cells use white text on the original `rgb(228, 228, 228)` ancestor background; this is an inherited low-contrast combination, not a passing dark-table appearance. White mode remains legible. Live viewport resizing also retained Calibre's old horizontal page offset, so final cases were reopened at their fixed viewport before capture. The desktop QtWebEngine connection did not provide completed visual acceptance; only the Content-server reader is covered. WeRead is intentionally unverified because upload was declined.
+
+All five actual frozen application jobs passed in [Actions run 34748606847](https://github.com/turygo/wenyi/actions/runs/34748606847), against `0cb4f5a69166c8128a2dea36f5c60b5460bc8b26`. Each binary produced source-backed and generated mono/bilingual outputs with an empty `PATH`; the source-backed triplet passed and source/targets/usage remained unchanged. Windows acceptance exposed and fixed unsupported directory handles, a POSIX basename used for a native temporary path, and a read-only file-sync handle. File-sync failures remain fatal. The Release job was skipped; no merge, tag or Release was performed.
+
+Local evidence remains outside the repository in the `wenyi-theme-acceptance-0kw1r6pn` temporary directory: `evidence.json`, `reader-evidence.json`, 24 original screenshots and four contact sheets under `reader-shots/`. These private book files and screenshots are not repository fixtures. Publication hashes and unchanged source/targets/usage were checked again after reader inspection.
+
+The latest full offline run passed all 827 tests. Ruff, the architecture gate, and wheel/sdist builds passed. The initial frozen smoke exposed missing navigation in the older minimal fixture; the smoke now reuses the existing valid EPUB3 navigation fixture and passes without changing or weakening production verification.
 
 ## 15. External references
 

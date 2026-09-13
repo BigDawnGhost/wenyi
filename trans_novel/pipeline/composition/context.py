@@ -27,12 +27,24 @@ class RunContext:
         doc,
         agent_builder,
         frozen_preparation=None,
+        output=None,
+        output_digest: str | None = None,
+        theme=None,
+        output_format: str = "epub",
+        output_relevant: bool = False,
+        identity_languages: tuple[str, str] = ("", ""),
     ):
         self.store = store
         self.config = config
         self.doc = doc
         self._agent_builder = agent_builder
         self.frozen_preparation = frozen_preparation
+        self.output = output if output is not None else config.output
+        self.output_digest = output_digest
+        self.theme = theme
+        self.output_format = output_format
+        self.output_relevant = output_relevant
+        self.identity_languages = identity_languages
         self.resolved_source_lang: str | None = None  # prepare 解析后写入
         self._agents: AgentBundle | None = None
         self._context: RollingContext | None = None

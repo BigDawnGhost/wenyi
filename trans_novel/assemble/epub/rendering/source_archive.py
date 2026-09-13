@@ -18,42 +18,20 @@ from trans_novel.assemble.epub.rendering.source_markup import (
     rewrite_toc_lxml,
     serialize_source_tree,
 )
-from trans_novel.epub.archive import ZipSafetyError, preflight_zip, read_member
+from trans_novel.assemble.epub.rendering.theme import ResourceThemeScope, ThemePlan
+from trans_novel.assemble.epub.rendering.theme.service import ThemeService
+from trans_novel.epub.archive import MetadataZipFile, ZipSafetyError, preflight_zip, read_member
 from trans_novel.epub.slots import slot_contract_digest
 from trans_novel.ingest import Segment, preserved_toc_entry_ids
 from trans_novel.ingest.epub.reader import ensure_slot_compatibility, read_epub
 
 
-class _MetadataZipFile(zipfile.ZipFile):
-    """Zip writer that retains each source member's complete flag word."""
-
-    def _open_to_write(self, zinfo: zipfile.ZipInfo, force_zip64: bool = False):
-        if force_zip64 and not self._allowZip64:
-            raise zipfile.LargeZipFile("force_zip64 is True, but ZIP64 is disabled")
-        if self._writing:
-            raise ValueError("Can't write to ZIP file while another member is open")
-        source_flags = zinfo.flag_bits
-        zinfo.compress_size = 0
-        zinfo.CRC = 0
-        zinfo.flag_bits = source_flags
-        if zinfo.compress_type == zipfile.ZIP_LZMA:
-            zinfo.flag_bits |= zipfile._MASK_COMPRESS_OPTION_1
-        if not self._seekable:
-            zinfo.flag_bits |= zipfile._MASK_USE_DATA_DESCRIPTOR
-        zip64 = force_zip64 or zinfo.file_size * 1.05 > zipfile.ZIP64_LIMIT
-        if not self._allowZip64 and zip64:
-            raise zipfile.LargeZipFile("Filesize would require ZIP64 extensions")
-        if self._seekable:
-            self.fp.seek(self.start_dir)
-        zinfo.header_offset = self.fp.tell()
-        self._writecheck(zinfo)
-        self.fp.write(zinfo.FileHeader(zip64))
-        self._writing = True
-        return zipfile._ZipWriteFile(self, zinfo, zip64)
-
-
 def _write_source_member(
-    zout: _MetadataZipFile, info: zipfile.ZipInfo, data: bytes, *, compress_type: int | None = None
+    zout: MetadataZipFile,
+    info: zipfile.ZipInfo,
+    data: bytes,
+    *,
+    compress_type: int | None = None,
 ) -> None:
     preserved = copy(info)
     if compress_type is not None:
@@ -137,7 +115,8 @@ def _render_source_archive(
     target_lang: str,
     bilingual: bool,
     order: str,
-) -> None:
+    theme: ThemeService | None = None,
+) -> ThemePlan | None:
     archive_lang = (
         source_lang
         if grouped
@@ -145,12 +124,13 @@ def _render_source_archive(
         and source_lang
         else target_lang
     )
+    scopes: dict[str, ResourceThemeScope] | None = {} if theme is not None else None
     with zipfile.ZipFile(source_path, "r") as zin:
         try:
             preflight_zip(zin)
         except ZipSafetyError as exc:
             raise ValueError(f"EPUB archive rejected: {exc.code}") from exc
-        with _MetadataZipFile(out_path, "w") as zout:
+        with MetadataZipFile(out_path, "w") as zout:
             zout.comment = zin.comment
             opf_path = str(meta.get("opf_path") or "")
             mimetype_info = next(
@@ -189,6 +169,7 @@ def _render_source_archive(
                         bilingual=bilingual,
                         order=order,
                         source_lang=source_lang,
+                        scope_sink=scopes,
                     )
                     toc_kind = toc_kind_at(toc_entries, name)
                     if toc_kind in {"nav", "ncx"}:
@@ -225,6 +206,11 @@ def _render_source_archive(
                     _write_source_member(zout, info, serialize_source_tree(tree, data, mode))
                 else:
                     _write_source_member(zout, info, data)
+    return (
+        theme.render(out_path, scopes, bilingual=bilingual)
+        if theme is not None and scopes is not None
+        else None
+    )
 
 
 def assemble_source_epub(
@@ -235,7 +221,8 @@ def assemble_source_epub(
     target_lang: str,
     bilingual: bool = False,
     order: str = "target_first",
-) -> str:
+    theme: ThemeService | None = None,
+) -> ThemePlan | None:
     if order not in {"target_first", "source_first"}:
         raise ValueError(f"invalid bilingual order: {order!r}")
     meta, source_lang, resources_meta, deduped_segments, toc_entries = _source_state(
@@ -245,7 +232,7 @@ def assemble_source_epub(
     for segment in deduped_segments:
         assert segment.epub_state is not None
         grouped.setdefault(segment.resource_href, []).append(segment)
-    _render_source_archive(
+    return _render_source_archive(
         source_path,
         out_path,
         meta=meta,
@@ -256,8 +243,8 @@ def assemble_source_epub(
         target_lang=target_lang,
         bilingual=bilingual,
         order=order,
+        theme=theme,
     )
-    return out_path
 
 
 def assemble_epub(
@@ -267,7 +254,8 @@ def assemble_epub(
     *,
     bilingual: bool = False,
     order: str = "target_first",
-) -> str:
+    theme: ThemeService | None = None,
+) -> ThemePlan | None:
     manifest = store.load_manifest()
     meta = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
     schema = meta.get("epub_schema")
@@ -282,4 +270,5 @@ def assemble_epub(
         target_lang=epub_language(manifest.get("target_lang", "zh")),
         bilingual=bilingual,
         order=order,
+        theme=theme,
     )

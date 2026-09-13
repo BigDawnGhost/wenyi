@@ -12,8 +12,10 @@ from typing import Any
 from lxml import etree
 
 from trans_novel.assemble.epub.metadata import epub_language
+from trans_novel.assemble.epub.rendering.theme.contracts import ThemeError, ThemePlan
 from trans_novel.assemble.epub.verification import archive_model, preservation, validation
 from trans_novel.assemble.epub.verification import slots as slot
+from trans_novel.assemble.epub.verification.theme import theme_projection, theme_summary
 from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA, read_package
 
 _REPORT_DETAILS = {
@@ -56,9 +58,7 @@ _REPORT_DETAILS = {
     "src",
     "state",
     "strict_required",
-    "style_or_script",
     "target",
-    "tn-bilingual-style",
     "toc",
     "unattached",
     "unexpected",
@@ -316,7 +316,7 @@ def _new_structural_failures(
     return result
 
 
-def verify_epub(
+def _verify_epub(
     output_path: str | os.PathLike[str],
     *,
     source_path: str | os.PathLike[str] | None = None,
@@ -430,3 +430,69 @@ def verify_epub(
         "checked": {category: int(checked.get(category, 0)) for category in CATEGORIES},
         "authorized_differences": differences,
     }
+
+
+def _theme_failure_report(
+    output: Path,
+    source: Path | None,
+    mode: str,
+    error: ThemeError,
+) -> dict[str, Any]:
+    failure = report_item(
+        archive_model.item("resources", "theme_verify", error.resource or "<archive>", "invalid")
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": mode,
+        "assurance": "verified",
+        "passed": False,
+        "published": False,
+        "source_sha256": archive_model.sha256(source) if source is not None else None,
+        "output_sha256": archive_model.sha256(output),
+        "output_label": output_label(output),
+        "failures": [failure],
+        "warnings": [],
+        "checked": dict.fromkeys(CATEGORIES, 0),
+        "authorized_differences": {
+            "text_slots": 0,
+            "toc_labels": 0,
+            "language_fields": 0,
+            "bilingual_nodes": 0,
+        },
+        "theme": None,
+    }
+
+
+def verify_epub(
+    output_path: str | os.PathLike[str],
+    *,
+    source_path: str | os.PathLike[str] | None = None,
+    store: Any | None = None,
+    mode: str = "generated",
+    bilingual: bool = False,
+    target_lang: str | None = None,
+    bilingual_order: str = "target_first",
+    theme_plan: ThemePlan | None = None,
+) -> dict[str, Any]:
+    """通过私有可逆计划投影核验实际输出。"""
+    output = Path(output_path)
+    source = Path(source_path) if source_path is not None else None
+    try:
+        if theme_plan is not None and theme_plan.bilingual is not bilingual:
+            raise ThemeError("theme_verify", "invalid_plan")
+        with theme_projection(output, theme_plan) as projected:
+            report = _verify_epub(
+                projected,
+                source_path=source,
+                store=store,
+                mode=mode,
+                bilingual=bilingual,
+                target_lang=target_lang,
+                bilingual_order=bilingual_order,
+            )
+    except ThemeError as error:
+        return _theme_failure_report(output, source, mode, error)
+    report["output_sha256"] = archive_model.sha256(output)
+    report["output_label"] = output_label(output)
+    report["theme"] = theme_summary(theme_plan) if theme_plan is not None else None
+    return report

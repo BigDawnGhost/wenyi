@@ -104,7 +104,7 @@ The package-installed source command is `trans-novel`; `python -m trans_novel` i
 ## Code Conventions & Common Patterns
 
 - Support Python `>=3.10`; keep public boundaries typed and use absolute imports. Ruff targets Python 3.10, a 100-column line length, import sorting, and the configured `E/W/F/I/B/C4/PIE/RUF/SIM/TID/UP` rules.
-- Keep configuration narrow and strict. YAML exposes model lists for the `translator`, `analyst`, `editor`, and `fast` roles plus `quality`; unknown keys fail validation. CLI values override the loaded quality preset, and missing config uses code defaults.
+- Keep configuration narrow and strict. YAML exposes model lists for the `translator`, `analyst`, `editor`, and `fast` roles plus `quality` and `output`; unknown keys fail validation. CLI flags override configured values. Omitted output fields recover saved selections before code defaults.
 - Preserve constructor injection. `Application` is the only production construction site; agents and nodes receive precise dependencies rather than creating hidden clients, stores, or configuration.
 - Route agents to ordered model-role candidates through `llm/router.py` and construct transports through `llm/registry.py`. Keep retry/fallback classification centralized in `llm/retrying.py`; do not add a second provider-routing or retry path.
 - Keep state writes behind `RunStore` and runner coordination. Preserve identity hashes, fingerprints, node/chapter statuses, advisory locking, ordered checkpoint commits, and idempotent recovery instead of special-casing resume in individual nodes.

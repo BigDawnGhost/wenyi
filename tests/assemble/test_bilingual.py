@@ -21,12 +21,12 @@ from trans_novel.pipeline import Application
 
 
 def _config(state_dir: str, output: dict | None = None):
-    config = Config.from_dict({"llm": fake_llm_dict()})
+    raw = {"llm": fake_llm_dict()}
+    if output is not None:
+        raw["output"] = output
+    config = Config.from_dict(raw)
     config.source_lang = "ja"
     config.state_dir = state_dir
-    if output is not None:
-        for key, value in output.items():
-            setattr(config.output, key, value)
     return config
 
 
@@ -50,7 +50,7 @@ def _stamp_formal_prereqs(store):
 
 
 class TestBuildEpubFromChaptersBilingual(unittest.TestCase):
-    def test_bilingual_epub_has_source_paragraphs_and_style(self):
+    def test_bilingual_epub_preserves_source_and_target(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -66,13 +66,6 @@ class TestBuildEpubFromChaptersBilingual(unittest.TestCase):
             all_html = "\n".join(bodies.values())
             self.assertIn("tn-source", all_html)
             self.assertIn(store.load_chapter(0).segments[0].target, all_html)
-            some_head_has_style = any(
-                "tn-bilingual-style" in html
-                and "@media (prefers-color-scheme: dark)" in html
-                and ".tn-source" in html
-                for html in bodies.values()
-            )
-            self.assertTrue(some_head_has_style)
 
 
 class TestAssembleTextBilingual(unittest.TestCase):
@@ -125,14 +118,6 @@ class TestDefaultOutBilingual(unittest.TestCase):
         self.assertEqual(os.path.basename(out), "novel.zh.epub")
 
 
-class TestOutputRuntimeDefaults(unittest.TestCase):
-    def test_defaults(self):
-        cfg = Config.from_dict({"llm": fake_llm_dict()})
-        self.assertTrue(cfg.output.mono)
-        self.assertTrue(cfg.output.bilingual)
-        self.assertEqual(cfg.output.bilingual_order, "target_first")
-
-
 class TestMultiOutput(unittest.TestCase):
     def test_default_config_produces_mono_and_bilingual(self):
         with tempfile.TemporaryDirectory() as d:
@@ -153,7 +138,10 @@ class TestMultiOutput(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
-            cfg = _config(os.path.join(d, "state"), output={"bilingual": False})
+            cfg = _config(
+                os.path.join(d, "state"),
+                output={"bilingual": {"enabled": False}},
+            )
             orch = Application(cfg, client=FakeClient(handler=routing_handler))
             result = orch.run_all(txt, out_format="epub")
             outputs = result["outputs"]
@@ -172,8 +160,7 @@ class TestAssembleEpubSchema4Bilingual(unittest.TestCase):
             with zipfile.ZipFile(out) as z:
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
             self.assertNotIn("data-tn-id", html)  # 占位标记已清除
-            self.assertIn("tn-source", html)  # 原文淡化块已插入
-            self.assertIn("tn-bilingual-style", html)  # 双语样式已注入
+            self.assertIn("tn-source", html)  # 原文块已插入
             self.assertIn("綾小路は教室の窓際に座っていた", html)  # 原文仍保留
 
 
@@ -190,10 +177,13 @@ class TestCliBilingualFlags(unittest.TestCase):
             def load_usage(self):
                 return None
 
+            def load_epub_verification(self):
+                return None
+
         class FakeOrchestrator:
             def __init__(self, config):
                 captured["mono"] = config.output.mono
-                captured["bilingual"] = config.output.bilingual
+                captured["bilingual"] = config.output.bilingual.enabled
 
             def run_all(self, input_path, **kwargs):
                 return {

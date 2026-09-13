@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import errno
 import json
 import os
 import tempfile
@@ -101,6 +102,32 @@ class TestUsagePersistence(unittest.TestCase):
             self.assertEqual(persisted["totals"]["total_tokens"], 6)
             self.assertEqual(persisted["by_agent"]["translator"]["reasoning_tokens"], 3)
             self.assertEqual(persisted["by_operation"]["translate.batch"]["reasoning_tokens"], 3)
+
+    def test_windows_directory_handles_do_not_block_usage_commit(self):
+        from trans_novel.llm import usage_persistence
+
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = UsageTracker()
+            self._bind(directory, tracker)
+            windows_os = SimpleNamespace(**vars(os))
+            windows_os.name = "nt"
+            with (
+                patch.object(usage_persistence, "os", windows_os),
+                patch.object(
+                    windows_os,
+                    "open",
+                    side_effect=PermissionError(errno.EACCES, "directory handle unavailable"),
+                ),
+            ):
+                tracker.begin_attempt()
+                tracker.record_attempt_result(
+                    agent="translator", operation="translate.batch", usage=_usage(4, 2)
+                )
+            with open(os.path.join(directory, "usage.json"), encoding="utf-8") as stream:
+                persisted = json.load(stream)
+            self.assertEqual(persisted["totals"]["total_tokens"], 6)
+            self.assertEqual(persisted["totals"]["calls"], 1)
+            self.assertFalse(os.path.exists(os.path.join(directory, "usage.wal.json")))
 
     def test_crash_before_usage_replace_recovers_after_once(self):
         with tempfile.TemporaryDirectory() as directory:

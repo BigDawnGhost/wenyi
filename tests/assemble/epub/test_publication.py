@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import shutil
 import struct
 import tempfile
 import unittest
 import zipfile
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,9 +15,11 @@ from unittest.mock import patch
 from tests.fixtures.books import write_phase9_epub, write_sample_epub
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.assemble.epub.publication import (
+    EpubOutput,
     EpubPublishError,
     EpubVerificationError,
     publish_epub,
+    publish_epubs,
 )
 from trans_novel.assemble.epub.verification import verify_epub
 from trans_novel.config import Config
@@ -25,12 +29,12 @@ from trans_novel.pipeline.state import RunStore
 
 
 def _config(state_dir: str, output: dict | None = None):
-    config = Config.from_dict({"llm": fake_llm_dict()})
+    raw = {"llm": fake_llm_dict()}
+    if output is not None:
+        raw["output"] = output
+    config = Config.from_dict(raw)
     config.source_lang = "ja"
     config.state_dir = state_dir
-    if output is not None:
-        for key, value in output.items():
-            setattr(config.output, key, value)
     return config
 
 
@@ -284,7 +288,7 @@ class TestEpubStage2(unittest.TestCase):
             source = Path(directory) / "novel.txt"
             write_sample_txt(str(source))
             store, config = _run(str(source), str(Path(directory) / "state"))
-            outcome = AssembleNode(config=config, out_format="epub").execute(
+            outcome = AssembleNode(output=config.output, out_format="epub").execute(
                 NodeRequest(
                     store=store,
                     node_id="assemble",
@@ -442,3 +446,159 @@ class TestEpubStage2(unittest.TestCase):
                 )
                 self.assertTrue(output_zip.read("OEBPS/text/chapter-1.xhtml"))
                 self.assertEqual(output_zip.read("META-INF/backup.opf"), backup)
+
+
+class TestEpubBatchPublication(unittest.TestCase):
+    def test_file_sync_uses_writable_handle_without_truncating_output(self) -> None:
+        from trans_novel.assemble.epub import publication
+
+        real_fsync = publication.os.fsync
+
+        def require_writable_handle(descriptor: int) -> None:
+            publication.os.write(descriptor, b"")
+            real_fsync(descriptor)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "output.epub"
+            path.write_bytes(b"published archive bytes")
+            with patch.object(publication.os, "fsync", side_effect=require_writable_handle):
+                publication.fsync_file(str(path))
+            self.assertEqual(path.read_bytes(), b"published archive bytes")
+
+    def _requests(self, root: Path):
+        from trans_novel.assemble.epub.rendering import assemble_epub
+        from trans_novel.assemble.epub.rendering.theme import resolve_theme
+        from trans_novel.assemble.epub.rendering.theme.service import ThemeService
+
+        source = root / "source.epub"
+        write_phase9_epub(str(source))
+        store, _ = _run(str(source), str(root / "state"))
+        theme = ThemeService(resolve_theme(None, None, "builtin:bilingual"))
+        requests = [
+            EpubOutput(
+                root / name,
+                "bilingual" if bilingual else "monolingual",
+                bilingual,
+                partial(assemble_epub, store, str(source), bilingual=bilingual, theme=theme),
+            )
+            for name, bilingual in (("mono.epub", False), ("bilingual.epub", True))
+        ]
+        return source, store, requests
+
+    def test_directory_access_failure_is_only_unsupported_on_windows(self) -> None:
+        from trans_novel.assemble.epub import publication
+
+        for platform in ("nt", "posix"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, store, requests = self._requests(root)
+                platform_os = SimpleNamespace(**vars(publication.os))
+                platform_os.name = platform
+                with (
+                    patch.object(publication, "os", platform_os),
+                    patch.object(
+                        platform_os,
+                        "open",
+                        side_effect=PermissionError(errno.EACCES, "directory handle unavailable"),
+                    ),
+                ):
+                    if platform == "nt":
+                        publish_epubs(store, source, requests)
+                    else:
+                        with self.assertRaises(EpubPublishError) as raised:
+                            publish_epubs(store, source, requests)
+                        self.assertTrue(raised.exception.published)
+                report = store.load_epub_verification()
+                if platform == "nt":
+                    for request in requests:
+                        output = Path(request.final_path)
+                        receipt = report["published_outputs"][output.name]
+                        self.assertTrue(receipt["passed"])
+                        self.assertTrue(receipt["published"])
+                        self.assertEqual(
+                            receipt["output_sha256"],
+                            hashlib.sha256(output.read_bytes()).hexdigest(),
+                        )
+                        self.assertIn(
+                            "directory_fsync_unsupported",
+                            {warning["code"] for warning in receipt["warnings"]},
+                        )
+                else:
+                    self.assertFalse(report["passed"])
+                    self.assertFalse(Path(requests[1].final_path).exists())
+
+    def test_second_verification_failure_preserves_both_previous_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, store, requests = self._requests(root)
+            for request in requests:
+                Path(request.final_path).write_bytes(b"previous")
+            second = requests[1]
+            requests[1] = EpubOutput(
+                second.final_path,
+                second.mode,
+                second.bilingual,
+                lambda path: Path(path).write_bytes(b"invalid EPUB"),
+            )
+            with self.assertRaises(EpubVerificationError):
+                publish_epubs(store, source, requests, output_digest="a" * 64)
+            for request in requests:
+                self.assertEqual(Path(request.final_path).read_bytes(), b"previous")
+            self.assertFalse(list(root.glob(".*.epub-verify-*.tmp")))
+            self.assertFalse(store.load_epub_verification()["published"])
+
+    def test_second_replace_failure_keeps_first_physical_publication_receipt(self) -> None:
+        from trans_novel.assemble.epub import publication
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, store, requests = self._requests(root)
+            mono, bilingual = (Path(request.final_path) for request in requests)
+            mono.write_bytes(b"previous mono")
+            bilingual.write_bytes(b"previous bilingual")
+            replace = publication.os.replace
+
+            def fail_second(source_path, target_path):
+                if Path(target_path) == bilingual:
+                    raise OSError("replacement unavailable")
+                return replace(source_path, target_path)
+
+            with (
+                patch("trans_novel.assemble.epub.publication.os.replace", side_effect=fail_second),
+                self.assertRaises(EpubPublishError) as raised,
+            ):
+                publish_epubs(store, source, requests, output_digest="b" * 64)
+            self.assertTrue(zipfile.is_zipfile(mono))
+            self.assertEqual(bilingual.read_bytes(), b"previous bilingual")
+            report = store.load_epub_verification()
+            self.assertEqual(raised.exception.report, report)
+            self.assertFalse(report["published"])
+            first = report["published_outputs"][mono.name]
+            self.assertTrue(first["published"])
+            self.assertTrue(first["passed"])
+            self.assertEqual(first["output_sha256"], hashlib.sha256(mono.read_bytes()).hexdigest())
+            self.assertFalse(list(root.glob(".*.epub-verify-*.tmp")))
+
+    def test_published_pair_proof_rejects_missing_evidence_and_changed_bytes(self) -> None:
+        from trans_novel.benchmark.epub_check import validate_epub_triplet
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, store, requests = self._requests(root)
+            mono, bilingual = publish_epubs(store, source, requests, output_digest="c" * 64)
+            report = store.load_epub_verification()
+            proof = validate_epub_triplet(
+                source, mono, bilingual, publication_report=report, output_digest="c" * 64
+            )
+            self.assertTrue(proof["structural_pass"], proof)
+            missing = {key: value for key, value in report.items() if key != "triplet"}
+            with self.assertRaisesRegex(ValueError, "publication proof"):
+                validate_epub_triplet(
+                    source, mono, bilingual, publication_report=missing, output_digest="c" * 64
+                )
+            with open(bilingual, "ab") as stream:
+                stream.write(b"changed after verification")
+            with self.assertRaisesRegex(ValueError, "publication proof"):
+                validate_epub_triplet(
+                    source, mono, bilingual, publication_report=report, output_digest="c" * 64
+                )

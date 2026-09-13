@@ -10,15 +10,21 @@ from lxml import etree
 
 from trans_novel.assemble.epub.metadata import epub_language
 from trans_novel.assemble.epub.rendering.bilingual import (
-    BILINGUAL_CSS,
     BILINGUAL_SOURCE_CLASS,
-    BILINGUAL_STYLE_ID,
 )
+from trans_novel.assemble.epub.rendering.source_dom import element_children_lxml
+from trans_novel.assemble.epub.rendering.theme import (
+    ResourceThemeScope,
+    SourcePair,
+    ThemeError,
+    ThemePlan,
+)
+from trans_novel.assemble.epub.rendering.theme.service import ThemeService
 from trans_novel.assemble.text import bilingual_source, merged_paragraphs
+from trans_novel.epub.package import HTML_MEDIA, read_package
 from trans_novel.ingest import KIND_HEADING
 from trans_novel.ingest.fb2 import read_fb2_binaries
 
-_HTML_EXTS = (".xhtml", ".html", ".htm")
 _IMAGE_EXTENSION_BY_TYPE = {
     "image/gif": ".gif",
     "image/jpeg": ".jpg",
@@ -28,101 +34,83 @@ _IMAGE_EXTENSION_BY_TYPE = {
 }
 
 
-def _inject_generated_bilingual_style(
-    out_path: str, chapter_filenames: dict[str, str], chapters, bilingual: bool
-) -> None:
-    if not bilingual or all(chapter.preserve_source for _, chapter in chapters):
-        return
-    """Add bilingual style to generated chapter documents."""
-    with zipfile.ZipFile(out_path, "r") as zin:
-        infos = zin.infolist()
-        entries = {info.filename: zin.read(info.filename) for info in infos}
-    tmp_path = out_path + ".tmp"
-    try:
-        with zipfile.ZipFile(tmp_path, "w") as zout:
-            for info in infos:
-                data = entries[info.filename]
-                if os.path.basename(
-                    info.filename
-                ) in chapter_filenames and info.filename.lower().endswith(_HTML_EXTS):
-                    try:
-                        tree = etree.fromstring(
-                            data,
-                            etree.XMLParser(
-                                no_network=True,
-                                recover=False,
-                                resolve_entities=False,
-                                remove_comments=False,
-                                remove_pis=False,
-                            ),
-                        ).getroottree()
-                        root = tree.getroot()
-                        namespace = root.nsmap.get(None)
-
-                        def qualified(name: str, namespace: str | None = namespace) -> str:
-                            return f"{{{namespace}}}{name}" if namespace else name
-
-                        head = next(
-                            (
-                                child
-                                for child in root
-                                if isinstance(child.tag, str)
-                                and child.tag.rsplit("}", 1)[-1].lower() == "head"
-                            ),
-                            None,
-                        )
-                        if head is None:
-                            head = etree.Element(qualified("head"))
-                            root.insert(0, head)
-                        if not any(
-                            isinstance(style.tag, str)
-                            and style.tag.rsplit("}", 1)[-1].lower() == "style"
-                            and style.get("id") == BILINGUAL_STYLE_ID
-                            for style in head
-                        ):
-                            style = etree.Element(qualified("style"), id=BILINGUAL_STYLE_ID)
-                            style.text = BILINGUAL_CSS
-                            head.append(style)
-                        data = etree.tostring(tree, encoding="UTF-8", xml_declaration=True)
-                    except (etree.XMLSyntaxError, ValueError):
-                        pass
-                zout.writestr(info, data)
-        os.replace(tmp_path, out_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+def _tag(node: etree._Element) -> tuple[str | None, str]:
+    qualified = etree.QName(node)
+    return qualified.namespace, qualified.localname.lower()
 
 
-def build_epub_from_chapters(
-    store,
-    source_path: str,
+def _topology(node: etree._Element) -> tuple[tuple[str | None, str], tuple[object, ...]]:
+    return _tag(node), tuple(_topology(child) for child in element_children_lxml(node))
+
+
+def _body(root: etree._Element) -> tuple[int, etree._Element] | None:
+    children = element_children_lxml(root)
+    matches = [(index, child) for index, child in enumerate(children) if _tag(child)[1] == "body"]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _generated_theme_scopes(
     out_path: str,
-    *,
-    bilingual: bool = False,
-    order: str = "target_first",
-) -> str:
-    """Generate EPUB 3 from translated chapters and restore FB2 images."""
+    chapters: dict[str, tuple[str, int, tuple[object, ...], tuple[SourcePair, ...], bool]],
+    protected_ids: set[str],
+) -> dict[str, ResourceThemeScope]:
+    failures: list[dict[str, str]] = []
+    with zipfile.ZipFile(out_path) as archive:
+        package = read_package(archive, failures)
+        model = package.get("model")
+        if failures or not package.get("valid") or not isinstance(model, dict):
+            raise ThemeError("theme_css", "invalid_scope")
+        resolved = model.get("resolved", [])
+        scopes: dict[str, ResourceThemeScope] = {}
+        for uid, (name, body_index, topology, pairs, preserved) in chapters.items():
+            matches = [
+                item
+                for item in resolved
+                if item.get("id") == uid
+                and item.get("href") == name
+                and item.get("media") in HTML_MEDIA
+                and isinstance(item.get("path"), str)
+            ]
+            resource = str(matches[0]["path"]) if len(matches) == 1 else None
+            if resource is None:
+                raise ThemeError("theme_css", "invalid_scope")
+            try:
+                root = etree.fromstring(
+                    archive.read(resource),
+                    etree.XMLParser(
+                        no_network=True,
+                        recover=False,
+                        resolve_entities=False,
+                        remove_comments=False,
+                        remove_pis=False,
+                    ),
+                )
+            except (KeyError, etree.LxmlError, ValueError):
+                raise ThemeError("theme_css", "invalid_scope", resource=resource) from None
+            final_body = _body(root)
+            if (
+                _tag(root) != ("http://www.w3.org/1999/xhtml", "html")
+                or final_body is None
+                or final_body[0] != body_index
+                or _topology(final_body[1]) != topology
+            ):
+                raise ThemeError("theme_css", "invalid_scope", resource=resource)
+            scopes[resource] = ResourceThemeScope(
+                source_pairs=pairs,
+                preserve_resource=preserved,
+            )
+        for item in resolved:
+            if item.get("media") in HTML_MEDIA and isinstance(item.get("path"), str):
+                scopes.setdefault(
+                    str(item["path"]),
+                    ResourceThemeScope(preserve_resource=item.get("id") in protected_ids),
+                )
+    return scopes
+
+
+def _add_fb2_images(book, manifest: dict, source_path: str) -> dict[str, str]:
     from ebooklib import epub
 
-    manifest = store.load_manifest()
-    title = manifest.get("title", "translated")
-    chapters, target_lang, source_lang = (
-        [
-            (chapter_meta, store.load_chapter(chapter_meta["index"]))
-            for chapter_meta in manifest["chapters"]
-        ],
-        epub_language(manifest.get("target_lang", "zh")),
-        str(manifest.get("source_lang") or ""),
-    )
-    all_preserved = chapters and all(chapter.preserve_source for _, chapter in chapters)
-    lang = source_lang if all_preserved else target_lang
-    book = epub.EpubBook()
-    book.set_identifier(f"trans-novel-{title}")
-    book.set_title(title)
-    book.set_language(lang)
-    spine: list = ["nav"]
-    toc: list = []
-    chapter_filenames: dict[str, str] = {}
     image_hrefs: dict[str, str] = {}
     raw_meta = manifest.get("meta")
     manifest_meta = raw_meta if isinstance(raw_meta, dict) else {}
@@ -152,12 +140,72 @@ def build_epub_from_chapters(
                         content=payload,
                     )
                 )
+    return image_hrefs
+
+
+def _theme_chapter(item, source_pairs: list[tuple[int, int]], preserved: bool):
+    constructed_root = etree.fromstring(item.content.encode())
+    constructed_body = _body(constructed_root)
+    if constructed_body is None:
+        raise ThemeError("theme_css", "invalid_scope")
+    body_index = constructed_body[0]
+    return (
+        item.get_name(),
+        body_index,
+        _topology(constructed_body[1]),
+        tuple(
+            SourcePair(
+                (body_index, source_position),
+                ((body_index, target_position),),
+            )
+            for source_position, target_position in source_pairs
+        ),
+        preserved,
+    )
+
+
+def build_epub_from_chapters(
+    store,
+    source_path: str,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+    theme: ThemeService | None = None,
+) -> ThemePlan | None:
+    """从译文章节生成 EPUB 3，并按需应用主题。"""
+    from ebooklib import epub
+
+    manifest = store.load_manifest()
+    title = manifest.get("title", "translated")
+    chapters, target_lang, source_lang = (
+        [
+            (chapter_meta, store.load_chapter(chapter_meta["index"]))
+            for chapter_meta in manifest["chapters"]
+        ],
+        epub_language(manifest.get("target_lang", "zh")),
+        str(manifest.get("source_lang") or ""),
+    )
+    all_preserved = chapters and all(chapter.preserve_source for _, chapter in chapters)
+    lang = source_lang if all_preserved else target_lang
+    book = epub.EpubBook()
+    book.set_identifier(f"trans-novel-{title}")
+    book.set_title(title)
+    book.set_language(lang)
+    spine: list = ["nav"]
+    toc: list = []
+    chapter_filenames: dict[str, str] = {}
+    theme_chapters: dict[
+        str, tuple[str, int, tuple[object, ...], tuple[SourcePair, ...], bool]
+    ] = {}
+    image_hrefs = _add_fb2_images(book, manifest, source_path)
     for chapter_meta, chapter in chapters:
         chapter_lang = source_lang if chapter.preserve_source and source_lang else target_lang
         chapter_title = (
             chapter.title if chapter.preserve_source else _ch_title(chapter_meta) or chapter.title
         )
         body_parts: list[str] = []
+        source_pairs: list[tuple[int, int]] = []
         images_by_position: dict[int, list[str]] = {}
         raw_images = chapter.meta.get("fb2_images")
         if isinstance(raw_images, list):
@@ -189,9 +237,12 @@ def build_epub_from_chapters(
                 body_parts.append(target_html)
             else:
                 src_html = f'<p class="{BILINGUAL_SOURCE_CLASS}">{escape(src)}</p>'
+                target_position = len(body_parts) + (1 if order == "source_first" else 0)
+                source_position = len(body_parts) + (0 if order == "source_first" else 1)
                 body_parts.extend(
                     (src_html, target_html) if order == "source_first" else (target_html, src_html)
                 )
+                source_pairs.append((source_position, target_position))
         body_parts.extend(
             f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
             for href in images_by_position.get(len(paragraphs), [])
@@ -201,6 +252,10 @@ def build_epub_from_chapters(
         item = epub.EpubHtml(title=chapter_title, file_name=filename, lang=chapter_lang)
         item.content = f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{chapter_lang}"><head><title>{escape(chapter_title)}</title></head><body>{"".join(body_parts)}</body></html>'
         book.add_item(item)
+        if theme is not None:
+            theme_chapters[item.get_id()] = _theme_chapter(
+                item, source_pairs, chapter.preserve_source
+            )
         spine.append(item)
         toc.append(item)
     book.toc = toc
@@ -208,11 +263,16 @@ def build_epub_from_chapters(
     book.add_item(epub.EpubNav())
     book.spine = spine
     epub.write_epub(out_path, book)
-    _inject_generated_bilingual_style(out_path, chapter_filenames, chapters, bilingual)
     from trans_novel.assemble.epub.rendering.generated_finalize import annotate_generated_navigation
 
     annotate_generated_navigation(out_path, chapter_filenames, lang)
-    return out_path
+    if theme is None:
+        return None
+    protected_ids = {
+        item.get_id() for item in book.get_items() if isinstance(item, epub.EpubCoverHtml)
+    }
+    scopes = _generated_theme_scopes(out_path, theme_chapters, protected_ids)
+    return theme.render(out_path, scopes, bilingual=bilingual)
 
 
 def _sanitize_filename(name: str, fallback: str = "translated") -> str:

@@ -15,6 +15,8 @@ from typing import Any
 
 from trans_novel.agents.glossary_auditor import GlossaryAuditor
 from trans_novel.assemble import preflight_epub
+from trans_novel.assemble.epub.rendering.theme import resolve_theme, semantic_output_digest
+from trans_novel.assemble.epub.rendering.theme.service import ThemeService
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import load_document
@@ -23,6 +25,7 @@ from trans_novel.llm.base import LLMClient
 from trans_novel.llm.factory import build_client
 from trans_novel.llm.usage_persistence import UsagePersistence
 from trans_novel.pipeline.composition import AgentBundle, RunContext, build_node_factory
+from trans_novel.pipeline.composition.output import load_effective_output, save_effective_output
 from trans_novel.pipeline.contracts import (
     GOAL_PREPARE,
     GOAL_RUN_ALL,
@@ -61,6 +64,7 @@ from trans_novel.pipeline.state import (
     SCOPE_BOOK,
     SCOPE_CHAPTER,
     RunStore,
+    normalize_lang_code,
     slugify,
 )
 
@@ -96,23 +100,88 @@ def build_workflow_definition() -> WorkflowDefinition:
     return WorkflowDefinition(_NODE_SPECS)
 
 
-def _preflight_epub_outputs(config, doc, source_path: str, progress) -> None:
+def _preflight_epub_outputs(
+    output,
+    doc,
+    source_path: str,
+    progress,
+    theme,
+    source_lang: str,
+    target_lang: str,
+    max_chars: int,
+) -> None:
+    doc = doc or load_document(source_path, source_lang, target_lang, split_segments=max_chars)
     if progress:
         progress(0, 0, "预检 EPUB 输出…")
-    modes = [False] if config.output.mono or not config.output.bilingual else []
-    if config.output.bilingual:
+    modes = [False] if output.mono else []
+    if output.bilingual.enabled:
         modes.append(True)
     for bilingual in modes:
         report = preflight_epub(
             doc,
             source_path,
             bilingual=bilingual,
-            order=config.output.bilingual_order,
+            order=output.bilingual.order,
+            theme=theme,
         )
         failures = report["failures"]
         if failures:
             examples = "；".join(f"{item['code']} ({item['path']})" for item in failures[:3])
             raise ValueError(f"EPUB 输出预检失败：{len(failures)} 项；{examples}")
+
+
+def _setup_output(config: Config, shared: RunContext, input_path: str, progress) -> None:
+    if not shared.output_relevant or shared.output_digest is not None:
+        return
+    output, origins, normalized, source_sha = load_effective_output(
+        shared.store,
+        shared.output,
+        config.output_origins,
+        input_path=input_path,
+        identity_languages=shared.identity_languages,
+        out_format=shared.output_format,
+    )
+    theme = None
+    bundle = None
+    if shared.output_format == "epub":
+        override = output.override_theme
+        bundle = resolve_theme(
+            override.rules if override is not None else None,
+            override.styles if override is not None else None,
+            output.bilingual_styles if output.bilingual.enabled else None,
+            origins=origins,
+        )
+        theme = ThemeService(bundle)
+        _preflight_epub_outputs(
+            output,
+            shared.doc,
+            input_path,
+            progress,
+            theme,
+            *shared.identity_languages,
+            config.segment.max_chars_per_segment,
+        )
+    digest = semantic_output_digest(
+        bundle,
+        out_format=shared.output_format,
+        mono=output.mono,
+        bilingual=output.bilingual.enabled,
+        bilingual_order=output.bilingual.order,
+    )
+    save_effective_output(
+        shared.store,
+        output,
+        origins,
+        source_sha=source_sha,
+        normalized=normalized,
+    )
+    if shared.output_format == "txt" and (
+        output.override_theme is not None or output.bilingual.enabled
+    ):
+        shared.store.log_event("epub_presentation_inapplicable", out_format="txt")
+    shared.output = output
+    shared.theme = theme
+    shared.output_digest = digest
 
 
 class Application:
@@ -175,12 +244,6 @@ class Application:
         *,
         progress: Callable[[int, int, str], None] | None = None,
     ) -> tuple[RunResult, RunStore]:
-        if (
-            doc.fmt == "epub"
-            and goal.out_format == "epub"
-            and ("assemble" in goal.phases or goal.name == "prepare")
-        ):
-            _preflight_epub_outputs(self.config, doc, identity_path, progress)
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
         if store.exists() and doc.fmt == "epub":
@@ -197,6 +260,13 @@ class Application:
                 client=self.client, config=self.config, src=src, tgt=tgt
             ),
             frozen_preparation=self.frozen_preparation,
+            output=self.config.output.model_copy(deep=True),
+            output_format=goal.out_format,
+            output_relevant="assemble" in goal.phases or goal.name == "prepare",
+            identity_languages=(
+                normalize_lang_code(self.config.source_lang),
+                normalize_lang_code(self.config.target_lang),
+            ),
         )
         policy = WorkflowPolicy.from_config(self.config)
         result: RunResult | None = None
@@ -284,6 +354,9 @@ class Application:
         """
 
         def build() -> WorkflowPlan:
+            _setup_output(self.config, shared, input_path, progress)
+            if plan_builder is not None:
+                return plan_builder()
             prescan = build_prescan_inputs(self.config, store, policy, shared, goal)
             return self.planner.build_plan(goal=goal, store=store, policy=policy, prescan=prescan)
 
@@ -296,7 +369,7 @@ class Application:
             usage_scope_finish=self.finish_usage,
         )
         return runner.run(
-            plan_builder or build,
+            build,
             store=store,
             input_path=input_path,
             progress=progress,
@@ -373,6 +446,7 @@ class Application:
             "store": store,
             "output": outputs[0] if outputs else None,
             "outputs": outputs,
+            "output_digest": result.artifact("assemble", "output_digest"),
             "report": report,
             "qa_issues": report.get("deterministic_issues", []),
         }
@@ -400,17 +474,16 @@ class Application:
         bilingual: bool | None = None,
     ) -> list[str]:
         """对已有状态回填（tools assemble；输出开关按 CLI flag 覆盖）。"""
-        old_mono, old_bi = self.config.output.mono, self.config.output.bilingual
+        output = self.config.output.model_copy(deep=True)
         if mono is not None:
-            self.config.output.mono = mono
+            output = output.model_copy(update={"mono": mono})
         if bilingual is not None:
-            self.config.output.bilingual = bilingual
-        try:
-            goal = assemble_goal(out_format=out_format, out_path=out_path)
-            result = self._service_goal(store, goal, input_path=input_path)
-            return result.artifact("assemble", "outputs", [])
-        finally:
-            self.config.output.mono, self.config.output.bilingual = old_mono, old_bi
+            output = output.model_copy(
+                update={"bilingual": output.bilingual.model_copy(update={"enabled": bilingual})}
+            )
+        goal = assemble_goal(out_format=out_format, out_path=out_path)
+        result = self._service_goal(store, goal, input_path=input_path, output=output)
+        return result.artifact("assemble", "outputs", [])
 
     def glossary_audit(self, store: RunStore) -> list[dict]:
         with store.lock():
@@ -428,7 +501,10 @@ class Application:
         goal: ExecutionGoal,
         *,
         input_path: str | None = None,
+        output=None,
     ) -> RunResult:
+        source_path = input_path or store.load_state().source_path or ""
+        identity = store.load_state().identity
         shared = RunContext(
             store=store,
             config=self.config,
@@ -436,6 +512,10 @@ class Application:
             agent_builder=lambda src, tgt: AgentBundle(
                 client=self.client, config=self.config, src=src, tgt=tgt
             ),
+            output=output if output is not None else self.config.output.model_copy(deep=True),
+            output_format=goal.out_format,
+            output_relevant="assemble" in goal.phases or goal.name == "prepare",
+            identity_languages=(identity.source_lang, identity.target_lang),
         )
         policy = WorkflowPolicy.from_config(self.config)
         try:
@@ -449,12 +529,12 @@ class Application:
             )
 
             def build() -> WorkflowPlan:
+                _setup_output(self.config, shared, source_path, None)
                 prescan = build_prescan_inputs(self.config, store, policy, shared, goal)
                 return self.planner.build_plan(
                     goal=goal, store=store, policy=policy, prescan=prescan
                 )
 
-            source_path = input_path or store.load_state().source_path or ""
             return runner.run(
                 build,
                 store=store,

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import zipfile
 from collections import Counter
 from typing import Any
 
 from bs4 import BeautifulSoup
 
-from trans_novel.assemble.epub.rendering import BILINGUAL_CSS
 from trans_novel.assemble.epub.verification import archive_compare as compare
 from trans_novel.assemble.epub.verification import archive_model, structure
 from trans_novel.epub.package import HTML_MEDIA, NCX_MEDIA
@@ -209,20 +207,6 @@ def compare_source_archive(
             for resource in sorted(set(source_inline) | set(output_inline)):
                 expected_inline = source_inline.get(resource, [])
                 actual_inline = output_inline.get(resource, [])
-                if bilingual is not None:
-                    actual_inline = [
-                        entry
-                        for entry in actual_inline
-                        if not (
-                            entry[0] == "style"
-                            and entry[1] == "tn-bilingual-style"
-                            and entry[2] == hashlib.sha256(BILINGUAL_CSS.encode()).hexdigest()
-                            and entry[3]
-                            == hashlib.sha256(
-                                repr([("id", "tn-bilingual-style")]).encode()
-                            ).hexdigest()
-                        )
-                    ]
                 if actual_inline != expected_inline:
                     failures.append(
                         archive_model.item(

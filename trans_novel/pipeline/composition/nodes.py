@@ -104,9 +104,11 @@ def build_node_factory(
         ),
         NODE_REPORT: lambda shared, ci: ReportNode(glossary=shared.glossary()),
         NODE_ASSEMBLE: lambda shared, ci: AssembleNode(
-            config=config,
+            output=shared.output,
             out_format=goal.out_format,
             out_path=goal.out_path,
+            theme=shared.theme,
+            output_digest=shared.output_digest,
         ),
     }
 

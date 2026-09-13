@@ -12,9 +12,6 @@ from lxml import etree
 from tests.fixtures.books import write_phase9_epub
 from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.assemble.epub.rendering import (
-    BILINGUAL_CSS as _BILINGUAL_CSS,
-)
-from trans_novel.assemble.epub.rendering import (
     BILINGUAL_SOURCE_CLASS,
 )
 from trans_novel.assemble.epub.rendering import (
@@ -109,8 +106,7 @@ class TestEpubStage2(unittest.TestCase):
             "</body></html>".encode()
         )
         output = etree.fromstring(
-            f"<html><head><style id='tn-bilingual-style'>{_BILINGUAL_CSS}</style></head>"
-            '<body><p>译文</p><p class="tn-source ibooks-dark-theme-use-custom-text-color">'
+            '<html><head></head><body><p>译文</p><p class="tn-source ibooks-dark-theme-use-custom-text-color">'
             "前<ruby class='keep'><rb>漢</rb><rt>かん</rt><rp>（</rp></ruby>後"
             "</p></body></html>".encode()
         )
@@ -142,7 +138,7 @@ class TestEpubStage2(unittest.TestCase):
         self.assertNotIn("source_node_subtree_mismatch", {item["code"] for item in failures})
         self.assertNotIn("source_node_ruby_mismatch", {item["code"] for item in failures})
 
-    def test_bilingual_source_active_media_and_reserved_style_are_checked(self) -> None:
+    def test_bilingual_source_active_media_and_attributes_are_checked(self) -> None:
         source = etree.fromstring(b"<html><body><p>Original</p></body></html>")
         output = etree.fromstring(
             b'<html><body><p>Translated</p><p class="tn-source">'
@@ -168,7 +164,6 @@ class TestEpubStage2(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertIn("source_node_attributes", {item["code"] for item in failures})
         self.assertIn("source_node_active_media", {item["code"] for item in failures})
-        self.assertIn("bilingual_style_count", {item["code"] for item in failures})
 
     def test_repeated_source_blocks_match_distinct_adjacent_targets(self) -> None:
         source = etree.fromstring(
@@ -199,9 +194,6 @@ class TestEpubStage2(unittest.TestCase):
             },
             block_refs=dict(zip(paths, output_blocks, strict=True)),
         )
-        style = etree.Element("style", id="tn-bilingual-style")
-        style.text = _BILINGUAL_CSS
-        output.find("head").append(style)
         failures: list[dict[str, str]] = []
         bilingual_proof(
             source,
@@ -244,9 +236,6 @@ class TestEpubStage2(unittest.TestCase):
             )[0]
             self.assertEqual("".join(source_node.itertext()), "BeforeAfter")
             self.assertFalse(source_node.xpath(".//*[local-name()='svg' or local-name()='text']"))
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             bilingual_proof(
                 source,
@@ -305,9 +294,6 @@ class TestEpubStage2(unittest.TestCase):
                 )
             ]
             self.assertEqual(source_texts, ["One", "Two", "Tail"])
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             bilingual_proof(
                 source,
@@ -344,9 +330,6 @@ class TestEpubStage2(unittest.TestCase):
         anchor = corrupt_block.index(corrupt_block.xpath("./a")[0])
         corrupt_block.insert(anchor + 1, second)
         corrupt_block.insert(anchor + 2, first)
-        style = etree.Element("style", id="tn-bilingual-style")
-        style.text = _BILINGUAL_CSS
-        corrupt.find("head").append(style)
         failures = []
         bilingual_proof(
             source,
@@ -373,12 +356,9 @@ class TestBilingualSourceFailures(unittest.TestCase):
             epub_state=SimpleNamespace(block_path=(1, 0)),
         )
         output = etree.fromstring(
-            (
-                f"<html><head><style id='tn-bilingual-style'>{_BILINGUAL_CSS}</style></head>"
-                '<body><p>Translated</p><p class="tn-source '
-                'ibooks-dark-theme-use-custom-text-color">BeforeVisible<em>Inner</em>After</p>'
-                "</body></html>"
-            ).encode()
+            b'<html><head></head><body><p>Translated</p><p class="tn-source '
+            b'ibooks-dark-theme-use-custom-text-color">BeforeVisible<em>Inner</em>After</p>'
+            b"</body></html>"
         )
         failures: list[dict[str, str]] = []
         bilingual_proof(
@@ -428,33 +408,6 @@ class TestBilingualSourceFailures(unittest.TestCase):
                 }
                 & {item["code"] for item in failures}
             )
-
-    def test_reserved_style_outside_head_is_rejected(self) -> None:
-        source = etree.fromstring(b"<html><head></head><body><p>Original</p></body></html>")
-        output = etree.fromstring(
-            (
-                '<html><head></head><body><p>Translated</p><p class="tn-source '
-                'ibooks-dark-theme-use-custom-text-color">Original</p>'
-                f"<style id='tn-bilingual-style'>{_BILINGUAL_CSS}</style></body></html>"
-            ).encode()
-        )
-        segment = SimpleNamespace(
-            kind="text",
-            source="Original",
-            target="Translated",
-            epub_state=SimpleNamespace(block_path=(1, 0)),
-        )
-        failures: list[dict[str, str]] = []
-        bilingual_proof(
-            source,
-            output,
-            [segment],
-            source_lang="en",
-            order="target_first",
-            resource="chapter.xhtml",
-            failures=failures,
-        )
-        self.assertIn("bilingual_style_mismatch", {item["code"] for item in failures})
 
     def test_generated_mono_rejects_stray_tn_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -535,8 +488,6 @@ class TestBilingualSourceFailures(unittest.TestCase):
                 block_refs={(1, 0): block},
             )
             source_nodes = output.xpath(".//*[contains(@class, 'tn-source')]")
-            style = etree.SubElement(output.xpath(".//head")[0], "style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
             self.assertEqual(len(source_nodes), 3)
             values = ["".join(node.itertext()) for node in source_nodes]
             combined = "".join(values)
@@ -622,16 +573,14 @@ class TestBilingualSourceFailures(unittest.TestCase):
             self.assertIn("reference_graph_mismatch", {item["code"] for item in result["failures"]})
             self.assertGreater(result["counts"]["internal_links"]["checked"], 0)
 
-    def test_mono_source_and_reserved_style_are_rejected(self) -> None:
+    def test_mono_source_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.epub"
             output = Path(directory) / "output.epub"
             write_phase9_epub(str(source))
             with zipfile.ZipFile(source) as zin:
-                chapter = (
-                    zin.read("OEBPS/text/chapter-1.xhtml")
-                    .replace(b"</head>", b'<style id="tn-bilingual-style">bad</style></head>')
-                    .replace(b'<p id="intro">', b'<p class="tn-source">source</p><p id="intro">')
+                chapter = zin.read("OEBPS/text/chapter-1.xhtml").replace(
+                    b'<p id="intro">', b'<p class="tn-source">source</p><p id="intro">'
                 )
             _copy_epub(source, output, {"OEBPS/text/chapter-1.xhtml": chapter})
             codes = {
@@ -639,7 +588,6 @@ class TestBilingualSourceFailures(unittest.TestCase):
                 for item in validate_epub(output, source_path=source, bilingual=False)["failures"]
             }
             self.assertIn("unexpected_source_nodes", codes)
-            self.assertIn("generated_resource_mismatch", codes)
 
     def test_graph_removal_and_duplicate_multiplicity_fail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -676,11 +624,6 @@ class TestBilingualSourceFailures(unittest.TestCase):
             write_phase9_epub(str(original))
             with zipfile.ZipFile(original) as zin:
                 source_soup = BeautifulSoup(zin.read("OEBPS/text/chapter-2.xhtml"), "xml")
-                chapter_one_soup = BeautifulSoup(zin.read("OEBPS/text/chapter-1.xhtml"), "xml")
-                chapter_one_style = chapter_one_soup.new_tag("style", id="tn-bilingual-style")
-                chapter_one_style.string = _BILINGUAL_CSS
-                chapter_one_soup.head.append(chapter_one_style)
-                chapter_one_data = str(chapter_one_soup).encode("utf-8")
             source_body = source_soup.find(id="body-two")
             assert source_body is not None
             source_body.clear()
@@ -717,16 +660,10 @@ class TestBilingualSourceFailures(unittest.TestCase):
                         bi_body.extend([target, source_span])
                     else:
                         bi_body.extend([source_span, target])
-                style = bi_soup.new_tag("style", id="tn-bilingual-style")
-                style.string = _BILINGUAL_CSS
-                bi_soup.head.append(style)
                 _copy_epub(
                     original,
                     bilingual,
-                    {
-                        "OEBPS/text/chapter-1.xhtml": chapter_one_data,
-                        "OEBPS/text/chapter-2.xhtml": str(bi_soup).encode("utf-8"),
-                    },
+                    {"OEBPS/text/chapter-2.xhtml": str(bi_soup).encode("utf-8")},
                 )
                 self.assertTrue(validate_epub_triplet(source, mono, bilingual)["structural_pass"])
 

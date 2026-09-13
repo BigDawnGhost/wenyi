@@ -6,9 +6,6 @@ from types import SimpleNamespace
 from lxml import etree
 
 from trans_novel.assemble.epub.rendering import (
-    BILINGUAL_CSS as _BILINGUAL_CSS,
-)
-from trans_novel.assemble.epub.rendering import (
     BILINGUAL_DIRECT_TARGET_CLASS,
     BILINGUAL_SOURCE_CLASS,
 )
@@ -75,8 +72,7 @@ class TestDirectRunPairing(unittest.TestCase):
             if order == "source_first":
                 first = target_first if invert_first_pair else source_first
             markup = (
-                f"<html><head><style id='tn-bilingual-style'>{_BILINGUAL_CSS}</style></head>"
-                f"<body><{block_tag}>{first}<br/>{second}</{block_tag}></body></html>"
+                f"<html><head></head><body><{block_tag}>{first}<br/>{second}</{block_tag}></body></html>"
             ).encode()
             failures: list[dict[str, str]] = []
             bilingual_proof(
@@ -158,9 +154,6 @@ class TestDirectRunPairing(unittest.TestCase):
             )
             self.assertEqual(len(output.xpath(".//p//br")), 1)
             self.assertEqual(len(output.xpath(".//p//span[contains(@class, 'tn-source')]")), 4)
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             count = bilingual_proof(
                 source,
@@ -187,9 +180,6 @@ class TestDirectRunPairing(unittest.TestCase):
         corrupt_block.remove(first_source)
         corrupt_block.insert(0, first_source)
         corrupt_block.insert(1, first_target)
-        corrupt_style = etree.Element("style", id="tn-bilingual-style")
-        corrupt_style.text = _BILINGUAL_CSS
-        corrupt.find("head").append(corrupt_style)
         corrupt_failures: list[dict[str, str]] = []
         bilingual_proof(
             source,
@@ -251,12 +241,7 @@ class TestDirectRunPairing(unittest.TestCase):
                 f"<li>{source_markup}<em>Translated</em> tail</li>",
             ),
         ):
-            output = etree.fromstring(
-                (
-                    f"<html><head><style id='tn-bilingual-style'>{_BILINGUAL_CSS}</style>"
-                    f"</head><body>{body}</body></html>"
-                ).encode()
-            )
+            output = etree.fromstring(f"<html><head></head><body>{body}</body></html>".encode())
             failures: list[dict[str, str]] = []
             bilingual_proof(
                 source,
@@ -270,10 +255,7 @@ class TestDirectRunPairing(unittest.TestCase):
             self.assertNotIn("source_node_order", {item["code"] for item in failures})
 
         inverted = etree.fromstring(
-            (
-                f"<html><head><style id='tn-bilingual-style'>{_BILINGUAL_CSS}</style>"
-                f"</head><body><li>{source_markup}<em>Translated</em> tail</li></body></html>"
-            ).encode()
+            f"<html><head></head><body><li>{source_markup}<em>Translated</em> tail</li></body></html>".encode()
         )
         failures = []
         bilingual_proof(
@@ -309,9 +291,6 @@ class TestDirectRunPairing(unittest.TestCase):
             source_nodes = output.xpath(".//*[contains(@class, 'tn-source')]")
             self.assertEqual(len(source_nodes), 1)
             self.assertEqual(source_nodes[0].tag.rsplit("}", 1)[-1], "div")
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             bilingual_proof(
                 source,
@@ -336,9 +315,6 @@ class TestDirectRunPairing(unittest.TestCase):
                 corrupt_source = corrupt_block[-1]
                 corrupt_block.remove(corrupt_source)
                 corrupt_block.insert(0, corrupt_source)
-                corrupt_style = etree.Element("style", id="tn-bilingual-style")
-                corrupt_style.text = _BILINGUAL_CSS
-                corrupt.find("head").append(corrupt_style)
                 corrupt_failures: list[dict[str, str]] = []
                 bilingual_proof(
                     source,
@@ -405,9 +381,6 @@ class TestDirectRunSlots(unittest.TestCase):
             )
             self.assertEqual(len(output.xpath(".//p//br")), 1)
             self.assertEqual(len(output.xpath(".//p//span[contains(@class, 'tn-source')]")), 4)
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             count = bilingual_proof(
                 source,
@@ -434,9 +407,6 @@ class TestDirectRunSlots(unittest.TestCase):
         corrupt_block.remove(first_source)
         corrupt_block.insert(0, first_source)
         corrupt_block.insert(1, first_target)
-        corrupt_style = etree.Element("style", id="tn-bilingual-style")
-        corrupt_style.text = _BILINGUAL_CSS
-        corrupt.find("head").append(corrupt_style)
         corrupt_failures: list[dict[str, str]] = []
         bilingual_proof(
             source,
@@ -559,9 +529,6 @@ class TestDirectRunSlots(unittest.TestCase):
                 len(output.xpath(f".//span[@class='{BILINGUAL_DIRECT_TARGET_CLASS}']")),
                 2,
             )
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             bilingual_proof(
                 source,
@@ -687,9 +654,6 @@ class TestDirectRunActiveButton(unittest.TestCase):
                     ruby_index + 2,
                     corrupt_target if order == "target_first" else corrupt_source,
                 )
-                corrupt_style = etree.Element("style", id="tn-bilingual-style")
-                corrupt_style.text = _BILINGUAL_CSS
-                corrupt.find("head").append(corrupt_style)
                 corrupt_failures: list[dict[str, str]] = []
                 bilingual_proof(
                     source,
@@ -701,9 +665,6 @@ class TestDirectRunActiveButton(unittest.TestCase):
                     failures=corrupt_failures,
                 )
                 self.assertIn("source_node_order", {item["code"] for item in corrupt_failures})
-            style = etree.Element("style", id="tn-bilingual-style")
-            style.text = _BILINGUAL_CSS
-            output.find("head").append(style)
             failures: list[dict[str, str]] = []
             bilingual_proof(
                 source,
@@ -733,9 +694,6 @@ class TestDirectRunActiveButton(unittest.TestCase):
         )[0]
         corrupt_block.remove(source_node)
         corrupt.xpath(".//button")[0].append(source_node)
-        style = etree.Element("style", id="tn-bilingual-style")
-        style.text = _BILINGUAL_CSS
-        corrupt.find("head").append(style)
         failures = []
         bilingual_proof(
             etree.fromstring(markup.encode()),
