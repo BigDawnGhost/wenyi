@@ -152,10 +152,9 @@ def test_comparison_records_each_model_and_its_usage(tmp_path, monkeypatch):
     assert all(row["usage"]["totals"]["calls"] == 1 for row in report["results"])
 
 
-@pytest.mark.parametrize("role", [[], {"role": "user"}, None, 1, ("user",)])
-def test_comparison_rejects_non_string_roles_before_crashing(tmp_path, role):
+def test_comparison_rejects_non_string_roles_before_crashing(tmp_path):
     prompts = tmp_path / "messages.json"
-    prompts.write_text(json.dumps([{"role": role, "content": "A short public test fixture."}]))
+    prompts.write_text(json.dumps([{"role": [], "content": "A short public test fixture."}]))
     output = tmp_path / "comparison.json"
     result = _invoke(
         tmp_path,

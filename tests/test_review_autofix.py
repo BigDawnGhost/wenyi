@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
 from trans_novel.config import Config
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import STATUS_DONE, RunStore
 from trans_novel.review.run_store import ReviewOutcome, ReviewRunStore
@@ -126,30 +126,6 @@ def _fix_json(user: str, replacement: str) -> str:
         },
         ensure_ascii=False,
     )
-
-
-class MeteredFakeClient(FakeClient):
-    """Record small usage per offline call to verify autofix accounting across interruptions."""
-
-    def complete(
-        self,
-        messages,
-        *,
-        operation,
-        json_mode=False,
-        max_tokens=None,
-    ):
-        self.usage.record(
-            self.routes[operation].tier or "direct",
-            UsageSample(prompt_tokens=5, completion_tokens=3, total_tokens=8),
-            operation,
-        )
-        return super().complete(
-            messages,
-            operation=operation,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
-        )
 
 
 class TestReviewAutofix(unittest.TestCase):
@@ -443,11 +419,9 @@ class TestReviewAutofix(unittest.TestCase):
             self.assertFalse(Path(outcome.run_dir, "autofix/index.json").exists())
             debug = ReviewRunStore.open_existing(outcome.run_dir)
             interrupted_usage = debug.load_usage()
-            self.assertIsNotNone(interrupted_usage)
             assert interrupted_usage is not None
             self.assertEqual(interrupted_usage["totals"]["calls"], 2)
             book_usage = store.load_usage()
-            self.assertIsNotNone(book_usage)
             assert book_usage is not None
             self.assertEqual(book_usage["totals"]["calls"], 2)
 
@@ -462,12 +436,10 @@ class TestReviewAutofix(unittest.TestCase):
             # The finished agent trace is reused; only the interrupted fixer is retried.
             self.assertEqual(fixer_calls, 2)
             resumed_usage = debug.load_usage()
-            self.assertIsNotNone(resumed_usage)
             assert resumed_usage is not None
             self.assertEqual(resumed_usage["totals"]["calls"], 3)
-            self.assertEqual(resumed_usage["totals"]["total_tokens"], 24)
+            self.assertEqual(resumed_usage["totals"]["total_tokens"], 3 * METERED_TOTAL_TOKENS)
             book_usage = store.load_usage()
-            self.assertIsNotNone(book_usage)
             assert book_usage is not None
             self.assertEqual(book_usage["totals"]["calls"], 3)
 
