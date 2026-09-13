@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from trans_novel.agents.review_loop import _ActionLoop
+from trans_novel.agents.review_actions import ReviewActionLoop
 from trans_novel.config import Config
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.review.evidence import BookEvidenceIndex
@@ -70,11 +70,11 @@ def _client() -> FakeClient:
     )
 
 
-def _run(client: FakeClient, trace: MemoryTrace, evidence: MemoryEvidence):
+def _run(client: FakeClient, trace: MemoryTrace, evidence: MemoryEvidence, *, max_rounds: int = 1):
     config = Config.from_dict(
-        {"llm": {"preset": "fake"}, "pipeline": {"review_agent_max_evidence_rounds": 1}}
+        {"llm": {"preset": "fake"}, "pipeline": {"review_agent_max_evidence_rounds": max_rounds}}
     )
-    return _ActionLoop(client, config, evidence, trace).run(
+    return ReviewActionLoop(client, config, evidence, trace).run(
         agent_id="replay-test",
         system="System instruction",
         user="Review 安",
@@ -161,3 +161,28 @@ def test_protocol_fallback_is_saved_and_reused_without_repeating_requests():
     assert trace.data == saved
     assert len(client.calls) == 1
     assert trace.snapshots[-1]["status"] == "fallback"
+
+
+@pytest.mark.parametrize(
+    ("evidence_request", "reason"),
+    [
+        (
+            {"request_id": "style-1", "tool": "book_context", "arguments": {"chapter": 1}},
+            "duplicate_evidence_request_id",
+        ),
+        (
+            {"request_id": "style-2", "tool": "style_guide", "arguments": {}},
+            "duplicate_evidence_request",
+        ),
+    ],
+)
+def test_replayed_requests_still_reserve_ids_and_signatures(evidence_request, reason):
+    trace, evidence = MemoryTrace(stop_after=5), MemoryEvidence()
+    with pytest.raises(StopAfterWrite):
+        _run(_client(), trace, evidence, max_rounds=2)
+    trace.stop_after = None
+    duplicate = {"action": "request_evidence", "requests": [evidence_request], "complete": False}
+    client = FakeClient(handler=lambda *args: json.dumps(duplicate))
+    assert _run(client, trace, evidence, max_rounds=2) == (None, reason)
+    assert evidence.calls == REQUEST["requests"]
+    assert len(client.calls) == 1

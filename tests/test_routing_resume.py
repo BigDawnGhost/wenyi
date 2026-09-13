@@ -112,7 +112,7 @@ def test_review_fingerprint_only_tracks_reachable_inference(tmp_path):
 
 def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
     from tests.test_review_agent import TestReviewAgentLoop
-    from trans_novel.agents.review_loop import _ActionLoop
+    from trans_novel.agents.review_actions import ReviewActionLoop
 
     config = _config(tmp_path)
     debug = ReviewRunStore(str(tmp_path / "run"))
@@ -126,11 +126,11 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
         "allowed_refs": set(),
         "validate_final": lambda value, refs: value,
     }
-    _ActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
+    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
         **arguments
     )
     assert len(first.calls) == 1
-    _ActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
+    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
         **arguments
     )
     assert len(first.calls) == 1
@@ -138,9 +138,9 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
         update={"model": "different-verifier"}
     )
     second = FakeClient(handler=lambda *args: response, config=config.llm)
-    _ActionLoop(second, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(
+        second, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)
+    ).run(**arguments)
     assert len(second.calls) == 1
     assert second.calls[0]["model"] == "different-verifier"
 
