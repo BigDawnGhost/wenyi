@@ -262,6 +262,15 @@ class TestArchitectureBoundaries(unittest.TestCase):
                     f"{name} imports {module}",
                 )
 
+    def test_review_chunk_and_arbiter_depend_only_on_the_shared_action_protocol(self):
+        """Neither caller may borrow the other's private validation or prompt logic."""
+        for name, other in (("review_loop", "review_arbiter"), ("review_arbiter", "review_loop")):
+            imported = _imported_modules(AGENTS_DIR / f"{name}.py")
+            self.assertIn("trans_novel.agents.review_actions", imported)
+            self.assertFalse(
+                any(module.startswith(f"trans_novel.agents.{other}") for module in imported)
+            )
+
     def test_review_package_exports_core_types(self):
         """The top-level review package exposes pure types without storage exports."""
         import importlib

@@ -2,15 +2,23 @@
 
 [总览](README.md) · [English](../../refactoring/02-review-agents.md)
 
-状态：部分实施；高优先级。基线：`7471256`。
+状态：B 批次已实施。基线：`7471256`；实施保留了后续可恢复 provider 中断修复。
 
-实施进展：结果、段落引用和稳定身份已提取到 `review/models.py`；归一化、冲突分组与决策应用已提取到 `review/conflicts.py`。包级导出仅包含纯类型。Agent 已使用 `ReviewTrace` 与证据查询协议；`pipeline/review_checkpoint.py` 将 trace 适配到现有轮次存储。内存测试覆盖全部 9 个保存边界，捕获的快照、事件和模型消息与原循环一致。`agents/review_actions.py` 已负责共享协议，`ConversationState` 独占回放消息、证据引用与去重状态。最终引用校验共享到协议模块，不再借用审校块 agent 的私有方法。仲裁器提取仍待实施。
+实施结果：
+
+- `review/models.py` 管理结果、稳定身份和段落引用；`review/conflicts.py` 管理归一化、冲突分组及决策应用。包级导出仅包含纯类型。
+- `ReviewTrace` 与证据查询协议隔离具体存储和证据实现；`pipeline/review_checkpoint.py` 保留原文件名、活动轮次、原子写入及事件规则。
+- `agents/review_actions.py` 管理共享协议，`ConversationState` 独占回放消息、可引用证据和请求去重状态。审校块与 `agents/review_arbiter.py` 各自管理提示词和最终校验。
+
+内存测试逐一中断、恢复全部 9 个保存边界，提取前后对照了捕获的快照、事件和模型消息。递归架构测试固定了新依赖方向。operation ID、提示词、磁盘格式、保存顺序和 fallback 策略不变；本次不调整翻译质量或 Review 终止策略。
+
+全书会话与检查点协调仍属于方案 01 的后续范围。
 
 ## 证据
 
-[`agents/review_loop.py`](../../../trans_novel/agents/review_loop.py) 共 1,006 行，其中 `_ActionLoop.run()` 为 300 行，`ReviewAgentLoop.review_chunk()` 为 200 行，`ReviewConflictArbiter.arbitrate()` 为 170 行；模块还包含问题身份、归一化、冲突分组和仲裁结果应用。
+[`agents/review_loop.py`](../../../trans_novel/agents/review_loop.py) 审查时共 1,006 行，其中 `_ActionLoop.run()` 为 300 行，`ReviewAgentLoop.review_chunk()` 为 200 行，`ReviewConflictArbiter.arbitrate()` 为 170 行；模块还包含问题身份、归一化、冲突分组和仲裁结果应用。
 
-第 17 行导入的具体 `ReviewRunStore` 是存储依赖，不只是纯 Review 模型；`_ActionLoop` 直接加载和写入 trace。现有架构测试会拦截 pipeline 导入，却不会拦截该具体 Review 存储依赖。应通过设计缩小依赖，不能把现有测试描述成已经保证了更严格的边界。
+审查基线中，第 17 行导入的具体 `ReviewRunStore` 是存储依赖，不只是纯 Review 模型；`_ActionLoop` 直接加载和写入 trace。当时的架构测试会拦截 pipeline 导入，却不会拦截该具体 Review 存储依赖。实施后的接口与递归架构测试已固定这一更窄的依赖边界。
 
 ## 建议职责
 

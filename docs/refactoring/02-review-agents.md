@@ -2,15 +2,23 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/02-review-agents.md)
 
-Status: partially implemented; high priority. Baseline: `7471256`.
+Status: implemented in slice B. Baseline: `7471256`; implementation preserves the subsequent fix for resumable provider interruptions.
 
-Implementation: outcomes, segment references and stable identities now live in `review/models.py`; normalization, conflict grouping and applying decisions live in `review/conflicts.py`. Package exports contain only pure types. Agents now use `ReviewTrace` and evidence-query protocols. `pipeline/review_checkpoint.py` adapts traces to existing round-scoped storage. In-memory tests cover all nine durable boundaries; captured snapshots, events and model messages match the original loop. `agents/review_actions.py` now owns the shared protocol and `ConversationState` owns replayed messages, evidence references and deduplication. Final evidence-ref validation is shared without importing the chunk agent. Arbiter extraction remains pending.
+Implementation:
+
+- `review/models.py` owns outcomes, stable identities and segment references; `review/conflicts.py` owns normalization, grouping and applying decisions. Package exports contain only pure types.
+- `ReviewTrace` and evidence-query protocols decouple agents from concrete storage and evidence implementations. `pipeline/review_checkpoint.py` retains the existing filename, active-round, atomic-write and event rules.
+- `agents/review_actions.py` owns the common action protocol; `ConversationState` owns replayed messages, citable references and request deduplication. Chunk review and `agents/review_arbiter.py` each own their prompts and final validation.
+
+In-memory tests interrupt and resume at all nine durable boundaries. The extraction was checked against captured original snapshots, events and model messages. Recursive architecture tests enforce the new dependencies. Operation IDs, prompts, disk formats, persistence ordering and fallback policy remain unchanged; this is not a change to translation quality or Review termination policy.
+
+Whole-book session/checkpoint coordination remains proposal 01's scope.
 
 ## Evidence
 
-[`agents/review_loop.py`](../../trans_novel/agents/review_loop.py) has 1,006 lines: `_ActionLoop.run()` is 300 lines, `ReviewAgentLoop.review_chunk()` 200, and `ReviewConflictArbiter.arbitrate()` 170. The module also contains issue identity, normalization, conflict grouping and arbitration application.
+[`agents/review_loop.py`](../../trans_novel/agents/review_loop.py) had 1,006 lines at the reviewed baseline: `_ActionLoop.run()` is 300 lines, `ReviewAgentLoop.review_chunk()` 200, and `ReviewConflictArbiter.arbitrate()` 170. The module also contained issue identity, normalization, conflict grouping and arbitration application.
 
-The concrete `ReviewRunStore` import at line 17 is a storage dependency, not merely a pure review model. `_ActionLoop` loads and saves traces directly. The current architecture test rejects pipeline imports but does not reject this concrete review storage import. The design should narrow that dependency, not describe the current tests as enforcing a stronger boundary than they do.
+At the reviewed baseline, the concrete `ReviewRunStore` import at line 17 was a storage dependency, not merely a pure review model. `_ActionLoop` loaded and saved traces directly. The architecture test then rejected pipeline imports but did not reject this concrete review storage import. The implemented ports and recursive architecture tests now enforce the narrower boundary.
 
 ## Proposed ownership
 

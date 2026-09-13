@@ -49,7 +49,10 @@ This review inspected production Python files, their import relationships, signi
 Slice A is complete: progress and summary rendering have separate modules, and title
 planning, model calls and manifest commits have explicit owners. The implementation
 uses separate commits for progress, summaries, title planning and the title agent/service.
-B–F and the later CLI-context/body-batch slices remain pending.
+Slice B is also complete: pure Review models/conflicts, trace/evidence ports, conversation
+replay and the arbiter each have explicit modules. Nine interrupted conversation boundaries
+are covered by in-memory replay tests; agents no longer import concrete Review stores.
+C–F and the later CLI-context/body-batch slices remain pending.
 
 | Slice | Scope | Dependency and acceptance gate |
 | --- | --- | --- |

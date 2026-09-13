@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
+from ..agents.review_arbiter import ReviewConflictArbiter
 from ..agents.review_fixer import (
     ProvisionalPatch,
     ReviewFixer,
@@ -25,7 +26,6 @@ from ..agents.review_fixer import (
 )
 from ..agents.review_loop import (
     ReviewAgentLoop,
-    ReviewConflictArbiter,
 )
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm

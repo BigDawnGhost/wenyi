@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from trans_novel.agents.review_arbiter import ReviewConflictArbiter
 from trans_novel.agents.review_fixer import (
     ProvisionalPatch,
     ReviewFixer,
@@ -18,7 +19,6 @@ from trans_novel.agents.review_fixer import (
 )
 from trans_novel.agents.review_loop import (
     ReviewAgentLoop,
-    ReviewConflictArbiter,
 )
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
