@@ -10,15 +10,16 @@ on:
       - pyproject.toml
       - scripts/prepare_release.py
       - scripts/probe_theme_runtime.py
-      - scripts/build_theme_runtime.py
       - scripts/theme_runtime_probe.css
       - scripts/smoke_theme_assembly.py
-      - tests/release/test_theme_runtime_source.py
       - trans_novel/config.example.yaml
       - trans_novel/__main__.py
       - trans_novel/cli/**
       - trans_novel/config.py
-      - trans_novel/assemble/epub/rendering/theme/**
+      - trans_novel/agents/layout_analyzer.py
+      - trans_novel/assemble/epub/**
+      - trans_novel/epub/layout.py
+      - trans_novel/pipeline/**
   push:
     tags:
       - "v*"
@@ -108,21 +109,6 @@ jobs:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
 
-
-      - name: Install theme runtime probe dependency
-        if: matrix.name != 'macOS Intel'
-        run: python -m pip install quickjs-ng==0.16.2.1
-
-      - name: Build theme runtime wheel from pinned source on macOS Intel
-        if: matrix.name == 'macOS Intel'
-        run: python scripts/build_theme_runtime.py
-
-      - name: Install locally built theme runtime wheel on macOS Intel
-        if: matrix.name == 'macOS Intel'
-        run: >
-          python -m pip install --no-index
-          --find-links build/theme-runtime-wheels quickjs-ng==0.16.2.1
-
       - name: Install build dependencies
         run: python -m pip install . pyinstaller
 
@@ -136,8 +122,7 @@ jobs:
         run: >
           python -m PyInstaller --onefile --name theme-runtime-probe
           --distpath build/theme-probe/dist --workpath build/theme-probe/work
-          --specpath build/theme-probe/spec --collect-all quickjs
-          --copy-metadata quickjs-ng --collect-all tinycss2
+          --specpath build/theme-probe/spec --collect-all tinycss2
           --add-data "${{ github.workspace }}/scripts/theme_runtime_probe.css:."
           scripts/probe_theme_runtime.py
 
@@ -162,16 +147,6 @@ jobs:
           python-version: "3.10"
           architecture: ${{ matrix.python_arch }}
 
-      - name: Install Python 3.10 theme runtime probe dependency
-        if: matrix.name != 'macOS Intel'
-        run: python -m pip install quickjs-ng==0.16.2.1
-
-      - name: Install locally built theme runtime wheel for Python 3.10 on macOS Intel
-        if: matrix.name == 'macOS Intel'
-        run: >
-          python -m pip install --no-index
-          --find-links build/theme-runtime-wheels quickjs-ng==0.16.2.1
-
       - name: Install Python 3.10 CSS probe dependency
         run: python -m pip install tinycss2==1.4.0
 
@@ -189,8 +164,8 @@ jobs:
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
           --paths . --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
-          --collect-all quickjs --copy-metadata quickjs-ng --collect-all tinycss2
-          --collect-data trans_novel --copy-metadata trans-novel
+          --collect-all tinycss2 --collect-data trans_novel
+          --copy-metadata trans-novel
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
           --distpath dist trans_novel/__main__.py
 

@@ -14,6 +14,7 @@ from trans_novel.assemble.epub.rendering.bilingual import (
 )
 from trans_novel.assemble.epub.rendering.source_dom import element_children_lxml
 from trans_novel.assemble.epub.rendering.theme import (
+    LayoutBinding,
     ResourceThemeScope,
     SourcePair,
     ThemeError,
@@ -21,6 +22,7 @@ from trans_novel.assemble.epub.rendering.theme import (
 )
 from trans_novel.assemble.epub.rendering.theme.service import ThemeService
 from trans_novel.assemble.text import bilingual_source, merged_paragraphs
+from trans_novel.epub.layout import source_node_digest
 from trans_novel.epub.package import HTML_MEDIA, read_package
 from trans_novel.ingest import KIND_HEADING
 from trans_novel.ingest.fb2 import read_fb2_binaries
@@ -51,7 +53,12 @@ def _body(root: etree._Element) -> tuple[int, etree._Element] | None:
 
 def _generated_theme_scopes(
     out_path: str,
-    chapters: dict[str, tuple[str, int, tuple[object, ...], tuple[SourcePair, ...], bool]],
+    chapters: dict[
+        str,
+        tuple[
+            str, int, tuple[object, ...], tuple[SourcePair, ...], tuple[LayoutBinding, ...], bool
+        ],
+    ],
     protected_ids: set[str],
 ) -> dict[str, ResourceThemeScope]:
     failures: list[dict[str, str]] = []
@@ -62,7 +69,7 @@ def _generated_theme_scopes(
             raise ThemeError("theme_css", "invalid_scope")
         resolved = model.get("resolved", [])
         scopes: dict[str, ResourceThemeScope] = {}
-        for uid, (name, body_index, topology, pairs, preserved) in chapters.items():
+        for uid, (name, body_index, topology, pairs, bindings, preserved) in chapters.items():
             matches = [
                 item
                 for item in resolved
@@ -96,8 +103,7 @@ def _generated_theme_scopes(
             ):
                 raise ThemeError("theme_css", "invalid_scope", resource=resource)
             scopes[resource] = ResourceThemeScope(
-                source_pairs=pairs,
-                preserve_resource=preserved,
+                source_pairs=pairs, layout_bindings=bindings, preserve_resource=preserved
             )
         for item in resolved:
             if item.get("media") in HTML_MEDIA and isinstance(item.get("path"), str):
@@ -143,7 +149,12 @@ def _add_fb2_images(book, manifest: dict, source_path: str) -> dict[str, str]:
     return image_hrefs
 
 
-def _theme_chapter(item, source_pairs: list[tuple[int, int]], preserved: bool):
+def _theme_chapter(
+    item,
+    source_pairs: list[tuple[int, int]],
+    layout_bindings: list[tuple[int, int, str]],
+    preserved: bool,
+):
     constructed_root = etree.fromstring(item.content.encode())
     constructed_body = _body(constructed_root)
     if constructed_body is None:
@@ -154,11 +165,16 @@ def _theme_chapter(item, source_pairs: list[tuple[int, int]], preserved: bool):
         body_index,
         _topology(constructed_body[1]),
         tuple(
-            SourcePair(
-                (body_index, source_position),
-                ((body_index, target_position),),
-            )
+            SourcePair((body_index, source_position), ((body_index, target_position),))
             for source_position, target_position in source_pairs
+        ),
+        tuple(
+            LayoutBinding(
+                source_path=(source_position,),
+                target_paths=((body_index, target_position),),
+                source_sha256=source_sha256,
+            )
+            for source_position, target_position, source_sha256 in layout_bindings
         ),
         preserved,
     )
@@ -196,7 +212,10 @@ def build_epub_from_chapters(
     toc: list = []
     chapter_filenames: dict[str, str] = {}
     theme_chapters: dict[
-        str, tuple[str, int, tuple[object, ...], tuple[SourcePair, ...], bool]
+        str,
+        tuple[
+            str, int, tuple[object, ...], tuple[SourcePair, ...], tuple[LayoutBinding, ...], bool
+        ],
     ] = {}
     image_hrefs = _add_fb2_images(book, manifest, source_path)
     for chapter_meta, chapter in chapters:
@@ -206,7 +225,7 @@ def build_epub_from_chapters(
         )
         body_parts: list[str] = []
         source_pairs: list[tuple[int, int]] = []
-        images_by_position: dict[int, list[str]] = {}
+        images_by_position, layout_bindings = {}, []
         raw_images = chapter.meta.get("fb2_images")
         if isinstance(raw_images, list):
             for image in raw_images:
@@ -228,12 +247,14 @@ def build_epub_from_chapters(
             )
             tag = "h1" if kind == KIND_HEADING else "p"
             target_html = f"<{tag}>{escape(target)}</{tag}>"
+            source_sha256 = source_node_digest(tag, {}, source)
             src = (
                 bilingual_source(source, target)
                 if bilingual and kind != KIND_HEADING and not chapter.preserve_source
                 else ""
             )
             if not src:
+                target_position = len(body_parts)
                 body_parts.append(target_html)
             else:
                 src_html = f'<p class="{BILINGUAL_SOURCE_CLASS}">{escape(src)}</p>'
@@ -243,6 +264,7 @@ def build_epub_from_chapters(
                     (src_html, target_html) if order == "source_first" else (target_html, src_html)
                 )
                 source_pairs.append((source_position, target_position))
+            layout_bindings.append((position, target_position, source_sha256))
         body_parts.extend(
             f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
             for href in images_by_position.get(len(paragraphs), [])
@@ -254,7 +276,7 @@ def build_epub_from_chapters(
         book.add_item(item)
         if theme is not None:
             theme_chapters[item.get_id()] = _theme_chapter(
-                item, source_pairs, chapter.preserve_source
+                item, source_pairs, layout_bindings, chapter.preserve_source
             )
         spine.append(item)
         toc.append(item)

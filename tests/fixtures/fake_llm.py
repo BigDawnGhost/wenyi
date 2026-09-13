@@ -47,6 +47,16 @@ def routing_handler(messages, agent, operation, json_mode):
                 "reason": "contains substantive source text",
             }
         )
+    if operation == "layout.classify":
+        request = json.loads(user)
+        return json.dumps(
+            {
+                "observations": [
+                    {"node_id": sample["node_id"], "role": "body", "level": None}
+                    for sample in request["samples"]
+                ]
+            }
+        )
 
     if "语言识别器" in system:
         return json.dumps({"language": "ja"}, ensure_ascii=False)

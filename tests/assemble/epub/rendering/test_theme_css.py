@@ -29,10 +29,13 @@ class TestThemeCss(unittest.TestCase):
         rule = parse_theme_css(b'p { font-family: "A; B"; color: rgb(1, 2, 3) !important }')[0]
         self.assertEqual(rule.declarations[0].value, '"A; B"')
         self.assertTrue(rule.declarations[1].important)
+        vertical = parse_theme_css(b"sup { vertical-align: super }")[0].declarations[0]
+        self.assertEqual((vertical.name, vertical.value), ("vertical-align", "super"))
 
     def test_urls_vars_and_custom_properties_are_rejected_recursively(self) -> None:
         for css in (
             rb"p { background-color: u\72l(image.png) }",
+            b"p { vertical-align: url(image.png) }",
             b"p { color: rgb(var(--tone), 0, 0) }",
             b"p[data-x='ok'] { --tone: red }",
             rb"p:n\6ft(u\72l(foo)) { color: red }",

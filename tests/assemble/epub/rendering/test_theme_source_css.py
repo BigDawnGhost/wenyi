@@ -8,7 +8,10 @@ from pathlib import Path
 from lxml import etree
 
 from trans_novel.assemble.epub.rendering.theme.contracts import ThemeError
-from trans_novel.assemble.epub.rendering.theme.source_css import collect_source_stylesheets
+from trans_novel.assemble.epub.rendering.theme.source_css import (
+    collect_source_stylesheets,
+    source_style_evidence,
+)
 
 _XHTML = "http://www.w3.org/1999/xhtml"
 
@@ -167,3 +170,53 @@ class TestSourceStylesheetCollection(unittest.TestCase):
     def test_rejects_invalid_resource_path_even_without_stylesheets(self) -> None:
         with self.assertRaisesRegex(ThemeError, "^source_import_failed$"):
             _collect({}, "", resource="../chapter.xhtml")
+
+
+class TestSourceStyleEvidence(unittest.TestCase):
+    def test_matches_node_and_ancestors_with_media_and_inline_context(self) -> None:
+        root = _root(
+            "",
+            '<section class="chapter" style="writing-mode: vertical-rl">'
+            '<p class="quote" style="color: navy">Text</p></section>',
+        )
+        paragraph = root.xpath("//*[local-name()='p']")[0]
+        evidence = source_style_evidence(
+            root,
+            (paragraph,),
+            {
+                "book": (
+                    b".chapter { margin: 1em }"
+                    b"@media print { .chapter > p { color: red } }"
+                    b".unrelated { display: none }"
+                )
+            },
+            resource="OPS/text/chapter.xhtml",
+        )[0]
+
+        self.assertEqual(len(evidence), 4)
+        self.assertTrue(any(item.startswith(".chapter{") for item in evidence))
+        self.assertTrue(any(item.startswith("@media print{") for item in evidence))
+        self.assertIn(
+            "@inline section{writing-mode: vertical-rl}",
+            evidence,
+        )
+        self.assertIn("@inline p{color: navy}", evidence)
+        self.assertFalse(any(".unrelated" in item for item in evidence))
+
+    def test_reuses_strict_source_selector_and_inline_validation(self) -> None:
+        root = _root("", '<p style="color: red; broken">Text</p>')
+        paragraph = root.xpath("//*[local-name()='p']")[0]
+        with self.assertRaisesRegex(ThemeError, "^unsupported_source_selector$"):
+            source_style_evidence(
+                root,
+                (paragraph,),
+                {"book": b"p||span { color: red }"},
+                resource="OPS/text/chapter.xhtml",
+            )
+        with self.assertRaisesRegex(ThemeError, "^invalid_inline_css$"):
+            source_style_evidence(
+                root,
+                (paragraph,),
+                {},
+                resource="OPS/text/chapter.xhtml",
+            )

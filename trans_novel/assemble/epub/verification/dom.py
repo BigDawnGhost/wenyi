@@ -130,6 +130,25 @@ def source_span_target_candidates(node: Tag) -> list[str]:
     return candidates
 
 
+def source_node_target_candidates(node: Tag) -> list[str]:
+    candidates = source_span_target_candidates(node)
+    if candidates:
+        return candidates
+    parent = node.parent
+    if isinstance(parent, Tag) and parent.name in {"li", "blockquote", "td", "th"}:
+        source_text = norm_text(node.get_text("", strip=False))
+        return [norm_text(parent.get_text("", strip=False).replace(source_text, "", 1))]
+    result: list[str] = []
+    for sibling in (node.previous_sibling, node.next_sibling):
+        if (
+            isinstance(sibling, Tag)
+            and (sibling.name in BLOCK_TAGS or sibling.name == "span")
+            and "tn-source" not in sibling.get("class", [])
+        ):
+            result.append(norm_text(sibling.get_text("", strip=False)))
+    return result
+
+
 def source_span_target_text(node: Tag) -> str | None:
     candidates = source_span_target_candidates(node)
     return candidates[0] if candidates else None
@@ -234,61 +253,26 @@ def exact_bilingual_proof(
         for node in actual_nodes:
             source_norm = norm_text(node.get_text("", strip=False))
             source_hash = hashlib.sha256(source_norm.encode("utf-8")).hexdigest()
-            candidate_texts = source_span_target_candidates(node)
+            candidate_texts = source_node_target_candidates(node)
             expected_target_hashes = {
                 target_hash
                 for expected_source_hash, target_hash in expected
                 if expected_source_hash == source_hash
             }
-            direct_target_hash = next(
+            candidate_hashes = [
+                hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+                for candidate in candidate_texts
+            ]
+            target_hash = next(
                 (
-                    hashlib.sha256(candidate.encode("utf-8")).hexdigest()
-                    for candidate in candidate_texts
-                    if hashlib.sha256(candidate.encode("utf-8")).hexdigest()
-                    in expected_target_hashes
+                    candidate
+                    for candidate in candidate_hashes
+                    if candidate in expected_target_hashes
                 ),
-                None,
+                candidate_hashes[0] if candidate_hashes else None,
             )
-            if direct_target_hash is not None:
-                observed.append((source_hash, direct_target_hash))
-                continue
-            if candidate_texts:
-                observed.append(
-                    (
-                        source_hash,
-                        hashlib.sha256(candidate_texts[0].encode("utf-8")).hexdigest(),
-                    )
-                )
-                continue
-            parent = node.parent
-            target_tag = (
-                parent
-                if isinstance(parent, Tag) and parent.name in {"li", "blockquote", "td", "th"}
-                else None
-            )
-            if (
-                target_tag is None
-                and isinstance(node.next_sibling, Tag)
-                and (node.next_sibling.name in BLOCK_TAGS or node.next_sibling.name == "span")
-                and "tn-source" not in node.next_sibling.get("class", [])
-            ):
-                target_tag = node.next_sibling
-            if (
-                target_tag is None
-                and isinstance(node.previous_sibling, Tag)
-                and (
-                    node.previous_sibling.name in BLOCK_TAGS or node.previous_sibling.name == "span"
-                )
-                and "tn-source" not in node.previous_sibling.get("class", [])
-            ):
-                target_tag = node.previous_sibling
-            if isinstance(target_tag, Tag):
-                target_norm = norm_text(target_tag.get_text("", strip=False))
-                if target_tag is parent:
-                    target_norm = norm_text(target_norm.replace(source_norm, "", 1))
-                observed.append(
-                    (source_hash, hashlib.sha256(target_norm.encode("utf-8")).hexdigest())
-                )
+            if target_hash is not None:
+                observed.append((source_hash, target_hash))
         checked["bilingual_source"] += max(len(expected), len(observed), 1)
         if observed != expected:
             failures.append(

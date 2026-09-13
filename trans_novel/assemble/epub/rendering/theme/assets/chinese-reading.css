@@ -82,6 +82,21 @@
   line-height: 1.4;
   margin-top: 0.5em;
 }
+[data-tn-content="target"][data-tn-role="quote-attribution"] {
+  font-size: 1em;
+  line-height: 1.4;
+  text-align: end;
+  text-indent: 0;
+  margin: 0.5em 1em 1em;
+}
+
+[data-tn-content="target"][data-tn-role="chapter-summary"] {
+  font-size: 1em;
+  line-height: 1.5;
+  text-indent: 0;
+  margin: 1em 0;
+}
+
 
 [data-tn-content="target"][data-tn-role="table-text"],
 [data-tn-content="target"][data-tn-role="list-text"] {
@@ -91,7 +106,14 @@
   margin: 0.5em 0;
 }
 
-[data-tn-content="target"][data-tn-role] span:not([data-tn-role]):not(small span, big span, sup span, sub span, ruby span) {
-  font-family: inherit;
-  font-size: inherit;
+[data-tn-content="target"][data-tn-role="footnote"],
+[data-tn-content="target"][data-tn-role="endnote"] {
+  font-size: 0.9em;
+  line-height: 1.4;
+  text-indent: 0;
+}
+
+[data-tn-content="target"][data-tn-role="noteref"] {
+  font-size: 0.75em;
+  vertical-align: super;
 }

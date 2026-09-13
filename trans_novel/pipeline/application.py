@@ -32,6 +32,7 @@ from trans_novel.pipeline.contracts import (
     GOAL_TRANSLATE,
     BatchCommitHook,
     ExecutionGoal,
+    ProgressFn,
     assemble_goal,
     qa_goal,
     report_goal,
@@ -39,7 +40,7 @@ from trans_novel.pipeline.contracts import (
     translate_chapter_goal,
 )
 from trans_novel.pipeline.execution import RunResult, WorkflowRunner
-from trans_novel.pipeline.nodes import count_segments
+from trans_novel.pipeline.nodes import count_segments, current_layout_state
 from trans_novel.pipeline.planning import (
     NodeSpec,
     Planner,
@@ -53,6 +54,7 @@ from trans_novel.pipeline.state import (
     NODE_ANALYZE,
     NODE_ASSEMBLE,
     NODE_DETERMINISTIC_QA,
+    NODE_LAYOUT,
     NODE_MINE_TERMS,
     NODE_NAME_TERMS,
     NODE_POLISH,
@@ -72,6 +74,7 @@ from trans_novel.pipeline.state import (
 _NODE_SPECS = (
     NodeSpec(NODE_PREPARE, SCOPE_BOOK, "required"),
     NodeSpec(NODE_ANALYZE, SCOPE_BOOK, "required", depends_on=(NODE_PREPARE,)),
+    NodeSpec(NODE_LAYOUT, SCOPE_BOOK, "required", depends_on=(NODE_PREPARE,)),
     NodeSpec(NODE_MINE_TERMS, SCOPE_BOOK, "best_effort", depends_on=(NODE_PREPARE,), optional=True),
     NodeSpec(
         NODE_NAME_TERMS,
@@ -92,7 +95,12 @@ _NODE_SPECS = (
     NodeSpec(NODE_DETERMINISTIC_QA, SCOPE_BOOK, "required", depends_on=(NODE_TITLES,)),
     NodeSpec(NODE_REPAIR, SCOPE_BOOK, "required", depends_on=(NODE_DETERMINISTIC_QA,)),
     NodeSpec(NODE_REPORT, SCOPE_BOOK, "required", depends_on=(NODE_REPAIR,)),
-    NodeSpec(NODE_ASSEMBLE, SCOPE_BOOK, "required", depends_on=(NODE_REPORT,)),
+    NodeSpec(
+        NODE_ASSEMBLE,
+        SCOPE_BOOK,
+        "required",
+        depends_on=(NODE_REPORT, NODE_LAYOUT),
+    ),
 )
 
 
@@ -130,8 +138,9 @@ def _preflight_epub_outputs(
             raise ValueError(f"EPUB 输出预检失败：{len(failures)} 项；{examples}")
 
 
-def _setup_output(config: Config, shared: RunContext, input_path: str, progress) -> None:
-    if not shared.output_relevant or shared.output_digest is not None:
+def _setup_output(config: Config, shared: RunContext, input_path: str, progress=None) -> None:
+    """冻结静态输出资源；EPUB profile 相关校验留到 layout 之后。"""
+    if not shared.output_relevant or shared.output_ready:
         return
     output, origins, normalized, source_sha = load_effective_output(
         shared.store,
@@ -141,33 +150,29 @@ def _setup_output(config: Config, shared: RunContext, input_path: str, progress)
         identity_languages=shared.identity_languages,
         out_format=shared.output_format,
     )
-    theme = None
     bundle = None
     if shared.output_format == "epub":
         override = output.override_theme
         bundle = resolve_theme(
-            override.rules if override is not None else None,
             override.styles if override is not None else None,
             output.bilingual_styles if output.bilingual.enabled else None,
             origins=origins,
         )
-        theme = ThemeService(bundle)
+        static_theme = ThemeService(bundle)
+        source_format = getattr(shared.doc, "fmt", None)
+        if source_format is None and shared.store.exists():
+            source_format = shared.store.load_state().fmt
+        if source_format == "epub":
+            static_theme.preflight_source(input_path)
         _preflight_epub_outputs(
             output,
             shared.doc,
             input_path,
             progress,
-            theme,
+            None,
             *shared.identity_languages,
             config.segment.max_chars_per_segment,
         )
-    digest = semantic_output_digest(
-        bundle,
-        out_format=shared.output_format,
-        mono=output.mono,
-        bilingual=output.bilingual.enabled,
-        bilingual_order=output.bilingual.order,
-    )
     save_effective_output(
         shared.store,
         output,
@@ -175,13 +180,172 @@ def _setup_output(config: Config, shared: RunContext, input_path: str, progress)
         source_sha=source_sha,
         normalized=normalized,
     )
-    if shared.output_format == "txt" and (
-        output.override_theme is not None or output.bilingual.enabled
-    ):
-        shared.store.log_event("epub_presentation_inapplicable", out_format="txt")
+    if shared.output_format == "txt":
+        if output.override_theme is not None or output.bilingual.enabled:
+            shared.store.log_event("epub_presentation_inapplicable", out_format="txt")
+        shared.output_digest = semantic_output_digest(
+            None,
+            out_format="txt",
+            mono=output.mono,
+            bilingual=output.bilingual.enabled,
+            bilingual_order=output.bilingual.order,
+        )
     shared.output = output
+    shared.theme_bundle = bundle
+    shared.output_ready = True
+
+
+def _setup_layout(
+    shared: RunContext,
+    input_path: str,
+    progress: ProgressFn | None = None,
+    *,
+    notify_reuse: bool = False,
+) -> None:
+    bundle = shared.theme_bundle
+    if (
+        shared.output_format != "epub"
+        or bundle is None
+        or bundle.general_css is None
+        or shared.layout_inventory is not None
+    ):
+        return
+    shared.layout_inventory, shared.layout_profile = current_layout_state(shared.store, input_path)
+    if shared.layout_profile is not None and notify_reuse:
+        shared.store.log_event(
+            "layout_profile_reused",
+            profile_digest=shared.layout_profile.digest,
+        )
+        if progress:
+            progress(0, 0, "复用已保存的 EPUB 排版分析，不调用模型")
+
+
+def _setup_rendering(config: Config, shared: RunContext, input_path: str, progress) -> None:
+    if shared.output_digest is not None:
+        return
+    bundle = shared.theme_bundle
+    if shared.output_format != "epub" or bundle is None:
+        return
+    theme = ThemeService(bundle, layout=shared.layout_profile)
+    _preflight_epub_outputs(
+        shared.output,
+        shared.doc,
+        input_path,
+        progress,
+        theme,
+        *shared.identity_languages,
+        config.segment.max_chars_per_segment,
+    )
     shared.theme = theme
-    shared.output_digest = digest
+    shared.output_digest = semantic_output_digest(
+        bundle,
+        out_format="epub",
+        mono=shared.output.mono,
+        bilingual=shared.output.bilingual.enabled,
+        bilingual_order=shared.output.bilingual.order,
+        layout_digest=(shared.layout_profile.digest if shared.layout_profile is not None else None),
+    )
+
+
+def _run_service_goal(
+    application,
+    store: RunStore,
+    goal: ExecutionGoal,
+    *,
+    input_path: str | None = None,
+    output=None,
+    progress: ProgressFn | None = None,
+) -> RunResult:
+    if "layout" in goal.phases and len(goal.phases) > 1:
+        layout_goal = ExecutionGoal(
+            name=goal.name,
+            phases=("layout",),
+            out_format=goal.out_format,
+            out_path=goal.out_path,
+            reanalyze_layout=goal.reanalyze_layout,
+        )
+        application._service_goal(
+            store,
+            layout_goal,
+            input_path=input_path,
+            output=output,
+            progress=progress,
+        )
+        remaining = ExecutionGoal(
+            name=goal.name,
+            phases=tuple(phase for phase in goal.phases if phase != "layout"),
+            out_format=goal.out_format,
+            out_path=goal.out_path,
+        )
+        return application._service_goal(
+            store,
+            remaining,
+            input_path=input_path,
+            output=output,
+            progress=progress,
+        )
+    source_path = input_path or store.load_state().source_path or ""
+    identity = store.load_state().identity
+    shared = RunContext(
+        store=store,
+        config=application.config,
+        doc=None,
+        agent_builder=lambda src, tgt: AgentBundle(
+            client=application.client, config=application.config, src=src, tgt=tgt
+        ),
+        output=output if output is not None else application.config.output.model_copy(deep=True),
+        output_format=goal.out_format,
+        output_relevant=(
+            "layout" in goal.phases or "assemble" in goal.phases or goal.name == "prepare"
+        ),
+        identity_languages=(identity.source_lang, identity.target_lang),
+    )
+    policy = WorkflowPolicy.from_config(application.config)
+    try:
+        runner = WorkflowRunner(
+            definition=application.definition,
+            node_factory=build_node_factory(
+                application.client,
+                application.config,
+                shared,
+                goal,
+                application.batch_commit_hook,
+            ),
+            usage_bind=lambda current_store, scope: application.bind_usage(
+                current_store, scope=scope
+            ),
+            usage_scope_finish=application.finish_usage,
+        )
+
+        def build() -> WorkflowPlan:
+            _setup_output(application.config, shared, source_path)
+            if "layout" in goal.phases or "assemble" in goal.phases:
+                _setup_layout(
+                    shared,
+                    source_path,
+                    progress,
+                    notify_reuse="layout" in goal.phases and not goal.reanalyze_layout,
+                )
+            if "assemble" in goal.phases:
+                _setup_rendering(application.config, shared, source_path, progress)
+            prescan = build_prescan_inputs(application.config, store, policy, shared, goal)
+            return application.planner.build_plan(
+                goal=goal,
+                store=store,
+                policy=policy,
+                prescan=prescan,
+            )
+
+        return runner.run(
+            build,
+            store=store,
+            input_path=source_path,
+            progress=progress,
+            shared=shared,
+            usage_scope=application._usage_scope(goal),
+        )
+    finally:
+        shared.close()
 
 
 class Application:
@@ -203,10 +367,10 @@ class Application:
         self.definition = build_workflow_definition()
         self.planner = Planner(self.definition)
 
-    # ── 目标执行 ──────────────────────────────────────────────────────────
-    # 阶段分段：prepare（不依赖暂存章节）→ 翻译闭包（prescan/translate/titles）→
-    # 收尾（qa/report/assemble）。章相关规划必须等 prepare 暂存文档后才能进行；
+    # 阶段分段：prepare → layout → 翻译闭包 → 收尾。layout 的执行顺序早于正文翻译，
+    # 但依赖图只通向 assemble，更换排版不会触发正文重新翻译。
     _PREPARE_PHASES = ("prepare",)
+    _LAYOUT_PHASES = ("layout",)
     _TRANSLATE_PHASES = ("prescan", "translate", "titles")
     _FINISH_PHASES = ("qa", "repair", "report", "assemble")
 
@@ -262,7 +426,9 @@ class Application:
             frozen_preparation=self.frozen_preparation,
             output=self.config.output.model_copy(deep=True),
             output_format=goal.out_format,
-            output_relevant="assemble" in goal.phases or goal.name == "prepare",
+            output_relevant=(
+                "layout" in goal.phases or "assemble" in goal.phases or goal.name == "prepare"
+            ),
             identity_languages=(
                 normalize_lang_code(self.config.source_lang),
                 normalize_lang_code(self.config.target_lang),
@@ -278,6 +444,19 @@ class Application:
                     store, shared, policy, prep_goal, identity_path, progress, "prepare"
                 )
 
+            layout_phases = [p for p in goal.phases if p in self._LAYOUT_PHASES]
+            if layout_phases:
+                layout_goal = ExecutionGoal(
+                    name=goal.name,
+                    phases=tuple(layout_phases),
+                    out_format=goal.out_format,
+                    out_path=goal.out_path,
+                    reanalyze_layout=goal.reanalyze_layout,
+                )
+                result = self._run_plan(
+                    store, shared, policy, layout_goal, identity_path, progress, "layout"
+                )
+
             translate_phases = [p for p in goal.phases if p in self._TRANSLATE_PHASES]
             if translate_phases:
                 translate_goal = ExecutionGoal(
@@ -286,6 +465,7 @@ class Application:
                     only_chapter=goal.only_chapter,
                     out_format=goal.out_format,
                     out_path=goal.out_path,
+                    reanalyze_layout=goal.reanalyze_layout,
                 )
 
                 def build_translate_plan():
@@ -327,6 +507,7 @@ class Application:
                     phases=tuple(finish_phases),
                     out_format=goal.out_format,
                     out_path=goal.out_path,
+                    reanalyze_layout=goal.reanalyze_layout,
                 )
                 result = self._run_plan(
                     store, shared, policy, finish_goal, identity_path, progress, "pipeline"
@@ -355,6 +536,15 @@ class Application:
 
         def build() -> WorkflowPlan:
             _setup_output(self.config, shared, input_path, progress)
+            if "layout" in goal.phases or "assemble" in goal.phases:
+                _setup_layout(
+                    shared,
+                    input_path,
+                    progress,
+                    notify_reuse="layout" in goal.phases and not goal.reanalyze_layout,
+                )
+            if "assemble" in goal.phases:
+                _setup_rendering(self.config, shared, input_path, progress)
             if plan_builder is not None:
                 return plan_builder()
             prescan = build_prescan_inputs(self.config, store, policy, shared, goal)
@@ -383,6 +573,8 @@ class Application:
             return "translate"
         if any(p in goal.phases for p in ("qa", "report", "assemble")):
             return "pipeline"
+        if "layout" in goal.phases:
+            return "layout"
         if "prepare" in goal.phases or "prescan" in goal.phases:
             return "prepare"
         return None
@@ -472,6 +664,8 @@ class Application:
         out_path: str | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        reanalyze_layout: bool = False,
+        progress: ProgressFn | None = None,
     ) -> list[str]:
         """对已有状态回填（tools assemble；输出开关按 CLI flag 覆盖）。"""
         output = self.config.output.model_copy(deep=True)
@@ -481,8 +675,18 @@ class Application:
             output = output.model_copy(
                 update={"bilingual": output.bilingual.model_copy(update={"enabled": bilingual})}
             )
-        goal = assemble_goal(out_format=out_format, out_path=out_path)
-        result = self._service_goal(store, goal, input_path=input_path, output=output)
+        goal = assemble_goal(
+            out_format=out_format,
+            out_path=out_path,
+            reanalyze_layout=reanalyze_layout,
+        )
+        result = self._service_goal(
+            store,
+            goal,
+            input_path=input_path,
+            output=output,
+            progress=progress,
+        )
         return result.artifact("assemble", "outputs", [])
 
     def glossary_audit(self, store: RunStore) -> list[dict]:
@@ -502,49 +706,16 @@ class Application:
         *,
         input_path: str | None = None,
         output=None,
+        progress: ProgressFn | None = None,
     ) -> RunResult:
-        source_path = input_path or store.load_state().source_path or ""
-        identity = store.load_state().identity
-        shared = RunContext(
-            store=store,
-            config=self.config,
-            doc=None,
-            agent_builder=lambda src, tgt: AgentBundle(
-                client=self.client, config=self.config, src=src, tgt=tgt
-            ),
-            output=output if output is not None else self.config.output.model_copy(deep=True),
-            output_format=goal.out_format,
-            output_relevant="assemble" in goal.phases or goal.name == "prepare",
-            identity_languages=(identity.source_lang, identity.target_lang),
+        return _run_service_goal(
+            self,
+            store,
+            goal,
+            input_path=input_path,
+            output=output,
+            progress=progress,
         )
-        policy = WorkflowPolicy.from_config(self.config)
-        try:
-            runner = WorkflowRunner(
-                definition=self.definition,
-                node_factory=build_node_factory(
-                    self.client, self.config, shared, goal, self.batch_commit_hook
-                ),
-                usage_bind=lambda s, scope: self.bind_usage(s, scope=scope),
-                usage_scope_finish=self.finish_usage,
-            )
-
-            def build() -> WorkflowPlan:
-                _setup_output(self.config, shared, source_path, None)
-                prescan = build_prescan_inputs(self.config, store, policy, shared, goal)
-                return self.planner.build_plan(
-                    goal=goal, store=store, policy=policy, prescan=prescan
-                )
-
-            return runner.run(
-                build,
-                store=store,
-                input_path=source_path,
-                progress=None,
-                shared=shared,
-                usage_scope=self._usage_scope(goal),
-            )
-        finally:
-            shared.close()
 
     # ── 用量持久化绑定与阶段事件 ──────────────────────────────────────────
     def bind_usage(self, store: RunStore, *, scope: str | None) -> None:

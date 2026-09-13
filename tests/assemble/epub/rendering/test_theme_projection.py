@@ -64,7 +64,7 @@ class TestThemeProjection(unittest.TestCase):
         )
 
         self.assertNotIn("nav", names)
-        self.assertNotIn("aside", names)
+        self.assertIn("aside", names)
         self.assertNotIn("code", names)
         self.assertEqual(paragraph["language"], "zh-Hans")
         self.assertEqual(paragraph["ariaRole"], "heading")
@@ -77,15 +77,31 @@ class TestThemeProjection(unittest.TestCase):
         self.assertIn(source, projection.source_nodes)
         self.assertNotIn(source, projection.protected)
 
-    def test_aria_endnotes_collection_is_protected_without_epub_type(self) -> None:
+    def test_explicit_notes_are_eligible_without_relaxing_other_protection(self) -> None:
         root = _xml(
-            '<body><p>Main text</p><section role="doc-endnotes"><p>Note</p></section></body>'
+            '<body xmlns:epub="http://www.idpf.org/2007/ops"><p>Main text</p>'
+            '<section role="doc-endnotes"><p>Note</p></section>'
+            '<figcaption>Figure</figcaption><div epub:type="subtitle">Subtitle</div>'
+            '<span role="doc-subtitle">ARIA subtitle</span></body>'
         )
         projection = build_projection(root)
-        self.assertEqual(
-            [node["text"] for node in projection.snapshot["nodes"]], ["Main text", "Main text"]
+        note_section = root[1]
+        note_paragraph = note_section[0]
+
+        self.assertNotIn(note_section, projection.protected)
+        self.assertNotIn(note_paragraph, projection.protected)
+        record = next(
+            item
+            for item, node in zip(projection.snapshot["nodes"], projection.nodes, strict=True)
+            if node is note_paragraph
         )
-        self.assertTrue(set(root[1].iter()).issubset(projection.protected))
+        self.assertTrue(record["isTextBlock"])
+        eligible = {
+            node.tag.rsplit("}", 1)[-1]
+            for item, node in zip(projection.snapshot["nodes"], projection.nodes, strict=True)
+            if item["isTextBlock"]
+        }
+        self.assertTrue({"p", "figcaption", "div", "span"}.issubset(eligible))
 
     def test_explicit_exclusion_and_resource_skip_protect_descendants(self) -> None:
         root = _xml(f'<body xmlns="{_XHTML}"><section><p>x</p></section><p>y</p></body>')

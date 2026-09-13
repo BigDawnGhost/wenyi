@@ -13,7 +13,6 @@ from trans_novel.pipeline.state import (
 )
 
 _THEME_SLOTS = (
-    "override_theme.rules",
     "override_theme.styles",
     "bilingual_styles",
 )

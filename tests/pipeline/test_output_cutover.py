@@ -27,7 +27,6 @@ from trans_novel.pipeline.state import (
 )
 
 _SOURCE_SHA = "a" * 64
-_JS = "function classify(node) { return node.tag === 'p' ? {role: 'body'} : null; }"
 
 
 def _source(directory: str) -> str:
@@ -55,17 +54,36 @@ def _saved(selection: dict, origins: dict[str, str] | None = None) -> SavedOutpu
     )
 
 
+def _write_v1_selection(store) -> None:
+    store.write_json(
+        str(Path(store.run_dir, "output_selection.json")),
+        {
+            "schema_version": 1,
+            "source_bytes_sha256": store.load_state().identity.source_bytes_sha256,
+            "selection": {
+                "mono": True,
+                "bilingual": {"enabled": False, "order": "target_first"},
+                "override_theme": {
+                    "rules": "builtin:legacy-javascript",
+                    "styles": "builtin:chinese-reading",
+                },
+                "bilingual_styles": "builtin:bilingual",
+            },
+            "origins": {"override_theme.rules": "legacy.yaml"},
+        },
+    )
+
+
 class TestEffectiveOutputResolution(unittest.TestCase):
     def test_explicit_values_override_saved_and_explicit_null_clears_theme(self):
         saved = _saved(
             {
                 "mono": False,
                 "bilingual": {"enabled": True, "order": "source_first"},
-                "override_theme": {"rules": "/saved/rules.js", "styles": "/saved/theme.css"},
+                "override_theme": {"styles": "/saved/theme.css"},
                 "bilingual_styles": "/saved/bilingual.css",
             },
             {
-                "override_theme.rules": "saved.yaml",
                 "override_theme.styles": "saved.yaml",
                 "bilingual_styles": "saved.yaml",
             },
@@ -89,14 +107,14 @@ class TestEffectiveOutputResolution(unittest.TestCase):
             {
                 "mono": True,
                 "bilingual": {"enabled": False, "order": "source_first"},
-                "override_theme": {"rules": "/saved/rules.js", "styles": "/saved/theme.css"},
+                "override_theme": {"styles": "/saved/theme.css"},
                 "bilingual_styles": "/saved/bilingual.css",
             },
-            {"override_theme.rules": "saved.yaml"},
+            {"override_theme.styles": "saved.yaml"},
         )
         current = OutputConfig.model_validate(
             {
-                "override_theme": {"rules": "/current/rules.js", "styles": "/current/theme.css"},
+                "override_theme": {"styles": "/current/theme.css"},
                 "bilingual_styles": "/current/bilingual.css",
             }
         )
@@ -104,7 +122,6 @@ class TestEffectiveOutputResolution(unittest.TestCase):
         output, origins, _ = resolve_effective_output(
             current,
             {
-                "override_theme.rules": "current.yaml",
                 "override_theme.styles": "current.yaml",
                 "bilingual_styles": "current.yaml",
             },
@@ -113,9 +130,9 @@ class TestEffectiveOutputResolution(unittest.TestCase):
         )
 
         assert output.override_theme is not None
-        self.assertEqual(output.override_theme.rules, "/saved/rules.js")
+        self.assertEqual(output.override_theme.styles, "/saved/theme.css")
         self.assertEqual(output.bilingual_styles, "/saved/bilingual.css")
-        self.assertEqual(origins, {"override_theme.rules": "saved.yaml"})
+        self.assertEqual(origins, {"override_theme.styles": "saved.yaml"})
         malformed = _saved({"mono": 1})
         with self.assertRaises(ValidationError):
             resolve_effective_output(OutputConfig(), {}, malformed, out_format="epub")
@@ -124,16 +141,12 @@ class TestEffectiveOutputResolution(unittest.TestCase):
 class TestPipelineOutputSetup(unittest.TestCase):
     def test_missing_theme_fails_before_model_call(self):
         with tempfile.TemporaryDirectory() as directory:
-            css = Path(directory, "theme.css")
-            css.write_text('[data-tn-role="body"] { color: black; }', encoding="utf-8")
+            css = Path(directory, "missing.css")
             config = _config(
                 directory,
                 output={
                     "bilingual": {"enabled": False},
-                    "override_theme": {
-                        "rules": str(Path(directory, "missing.js")),
-                        "styles": str(css),
-                    },
+                    "override_theme": {"styles": str(css)},
                 },
             )
             client = FakeClient(handler=lambda *_args: self.fail("主题失败前不得调用模型"))
@@ -157,13 +170,12 @@ class TestPipelineOutputSetup(unittest.TestCase):
 
     def test_txt_never_reads_missing_theme_and_preserves_it(self):
         with tempfile.TemporaryDirectory() as directory:
-            missing_rules = str(Path(directory, "missing.js"))
             missing_css = str(Path(directory, "missing.css"))
             config = _config(
                 directory,
                 output={
                     "bilingual": {"enabled": False},
-                    "override_theme": {"rules": missing_rules, "styles": missing_css},
+                    "override_theme": {"styles": missing_css},
                 },
             )
             source = _source(directory)
@@ -176,7 +188,7 @@ class TestPipelineOutputSetup(unittest.TestCase):
                 source_bytes_sha256=result["store"].load_state().identity.source_bytes_sha256,
             )
             assert saved is not None
-            self.assertEqual(saved.selection["override_theme"]["rules"], missing_rules)
+            self.assertEqual(saved.selection["override_theme"]["styles"], missing_css)
             config_before = config.output.model_dump()
             fields_before = (
                 set(config.output.model_fields_set),
@@ -205,15 +217,13 @@ class TestPipelineOutputSetup(unittest.TestCase):
 
     def test_theme_byte_edits_rebuild_without_model_calls_and_path_is_not_semantic(self):
         with tempfile.TemporaryDirectory() as directory:
-            rules = Path(directory, "rules.js")
             css = Path(directory, "theme.css")
-            rules.write_text(_JS, encoding="utf-8")
             css.write_text('[data-tn-role="body"] { color: black; }', encoding="utf-8")
             config = _config(
                 directory,
                 output={
                     "bilingual": {"enabled": False},
-                    "override_theme": {"rules": str(rules), "styles": str(css)},
+                    "override_theme": {"styles": str(css)},
                 },
             )
             source = _source(directory)
@@ -226,12 +236,10 @@ class TestPipelineOutputSetup(unittest.TestCase):
                 segment.target for segment in translated["store"].load_chapter(0).text_segments
             ]
 
-            copy_rules = Path(directory, "copy.js")
             copy_css = Path(directory, "copy.css")
-            copy_rules.write_bytes(rules.read_bytes())
             copy_css.write_bytes(css.read_bytes())
-            first_bundle = resolve_theme(str(rules), str(css), None)
-            copied_bundle = resolve_theme(str(copy_rules), str(copy_css), None)
+            first_bundle = resolve_theme(str(css), None)
+            copied_bundle = resolve_theme(str(copy_css), None)
             digest_args = {
                 "out_format": "epub",
                 "mono": True,
@@ -241,11 +249,6 @@ class TestPipelineOutputSetup(unittest.TestCase):
             self.assertEqual(
                 semantic_output_digest(first_bundle, **digest_args),
                 semantic_output_digest(copied_bundle, **digest_args),
-            )
-            rules.write_text(
-                "function classify(node) { return ['p', 'h1'].includes(node.tag)"
-                " ? {role: 'body'} : null; }",
-                encoding="utf-8",
             )
 
             css.write_text('[data-tn-role="body"] { color: navy; }', encoding="utf-8")
@@ -260,6 +263,72 @@ class TestPipelineOutputSetup(unittest.TestCase):
                 [segment.target for segment in translated["store"].load_chapter(0).text_segments],
                 targets,
             )
+
+    def test_v1_rules_snapshot_is_discarded_and_current_css_analyzes_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(directory)
+            translated = Application(
+                _config(directory),
+                client=FakeClient(handler=routing_handler),
+            ).run_all(source, out_format="txt")
+            store = translated["store"]
+            _write_v1_selection(store)
+            current = _config(
+                directory,
+                output={
+                    "bilingual": {"enabled": False},
+                    "override_theme": {"styles": "builtin:chinese-reading"},
+                },
+            )
+            client = FakeClient(handler=routing_handler)
+
+            outputs = Application(current, client=client).assemble(
+                store,
+                source,
+                out_path=str(Path(directory, "current.epub")),
+            )
+
+            self.assertEqual(len(outputs), 1)
+            self.assertIn("layout.classify", {call["operation"] for call in client.calls})
+            saved = load_output_selection(
+                store,
+                source_bytes_sha256=store.load_state().identity.source_bytes_sha256,
+            )
+            self.assertEqual(saved.schema_version, 2)
+            self.assertNotIn("rules", saved.selection["override_theme"])
+
+    def test_v1_rules_snapshot_with_explicit_null_never_calls_layout_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(directory)
+            translated = Application(
+                _config(directory),
+                client=FakeClient(handler=routing_handler),
+            ).run_all(source, out_format="txt")
+            store = translated["store"]
+            _write_v1_selection(store)
+            current = _config(
+                directory,
+                output={
+                    "bilingual": {"enabled": False},
+                    "override_theme": None,
+                },
+            )
+            offline = FakeClient(handler=lambda *_args: self.fail("显式 null 不得调用布局模型"))
+
+            outputs = Application(current, client=offline).assemble(
+                store,
+                source,
+                out_path=str(Path(directory, "plain.epub")),
+            )
+
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(offline.calls, [])
+            saved = load_output_selection(
+                store,
+                source_bytes_sha256=store.load_state().identity.source_bytes_sha256,
+            )
+            self.assertEqual(saved.schema_version, 2)
+            self.assertIsNone(saved.selection["override_theme"])
 
     def test_identity_mismatch_and_failed_assembly_preserve_saved_state(self):
         with tempfile.TemporaryDirectory() as directory:

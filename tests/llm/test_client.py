@@ -188,20 +188,18 @@ class TestConfigValidation(unittest.TestCase):
             config_path.write_text(
                 "output:\n"
                 "  override_theme:\n"
-                "    rules: themes/classify.js\n"
                 "    styles: themes/general.css\n"
                 "  bilingual_styles: themes/bilingual.css\n",
                 encoding="utf-8",
             )
             config = Config.load(str(config_path))
             theme = config.output.override_theme
-            self.assertEqual(theme.rules, str(root / "themes/classify.js"))
             self.assertEqual(theme.styles, str(root / "themes/general.css"))
             self.assertEqual(config.output.bilingual_styles, str(root / "themes/bilingual.css"))
             self.assertEqual(
                 config.output_origins,
                 dict.fromkeys(
-                    ("override_theme.rules", "override_theme.styles", "bilingual_styles"),
+                    ("override_theme.styles", "bilingual_styles"),
                     str(config_path),
                 ),
             )
@@ -226,10 +224,7 @@ class TestConfigValidation(unittest.TestCase):
             {
                 "mono": False,
                 "bilingual": {"enabled": True, "order": "source_first"},
-                "override_theme": {
-                    "rules": "builtin:general",
-                    "styles": "builtin:chinese-reading",
-                },
+                "override_theme": {"styles": "builtin:chinese-reading"},
                 "bilingual_styles": "/saved/bilingual.css",
             }
         )
@@ -260,11 +255,12 @@ class TestConfigValidation(unittest.TestCase):
             {
                 "output": {
                     "override_theme": {
-                        "rules": "",
+                        "rules": "builtin:general",
                         "styles": "builtin:chinese-reading",
                     }
                 }
             },
+            {"output": {"override_theme": {"styles": ""}}},
         )
         for raw in invalid:
             with self.subTest(raw=raw), self.assertRaises(ValidationError):

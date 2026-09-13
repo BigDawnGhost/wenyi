@@ -11,7 +11,10 @@ from lxml import etree
 from trans_novel.assemble.epub.rendering.generated import build_epub_from_chapters
 from trans_novel.assemble.epub.rendering.theme import ThemeBundle
 from trans_novel.assemble.epub.rendering.theme.service import ThemeService
+from trans_novel.assemble.text import merged_paragraphs
+from trans_novel.epub.layout import LayoutAssignment, LayoutProfile, source_node_digest
 from trans_novel.epub.package import read_package
+from trans_novel.ingest import KIND_HEADING
 from trans_novel.ingest.models import Chapter, ChapterProcessing, Segment
 
 _FB2 = """\
@@ -31,18 +34,34 @@ _FB2 = """\
 """
 
 
-def _theme() -> ThemeService:
+def _theme(chapters: list[Chapter]) -> ThemeService:
+    assignments = tuple(
+        LayoutAssignment(
+            node_id=f"{chapter.index}-{position}",
+            resource_href=f"ch{chapter.index}.xhtml",
+            path=(position,),
+            source_sha256=source_node_digest("h1" if kind == KIND_HEADING else "p", {}, source),
+            role=None if kind == KIND_HEADING else "body",
+        )
+        for chapter in chapters
+        for position, (kind, _target, source) in enumerate(merged_paragraphs(chapter))
+    )
+    profile = LayoutProfile(
+        source_sha256="a" * 64,
+        inventory_digest="b" * 64,
+        policy_version="1",
+        assignments=assignments,
+        provenance={},
+    )
     return ThemeService(
         ThemeBundle(
-            script=b"function classify(node) { return node.tag === 'p' ? {role: 'body'} : null; }",
-            general_css=b'body { color:black; } [data-tn-role="body"] { color: black; }',
+            general_css=b'[data-tn-role="body"] { color: black; }',
             bilingual_css=b'[data-tn-content="source"] { font-size: .9em; }',
             digest="generated-test",
-            engine_version="test",
-            api_version=1,
             policy_version="test",
             provenance=(),
-        )
+        ),
+        layout=profile,
     )
 
 
@@ -113,7 +132,7 @@ class TestGeneratedThemeRenderer(unittest.TestCase):
                             str(output),
                             bilingual=bilingual,
                             order=order,
-                            theme=_theme(),
+                            theme=_theme([chapter]),
                         )
                         self.assertIsNotNone(plan)
                         assert plan is not None
@@ -162,7 +181,7 @@ class TestGeneratedThemeRenderer(unittest.TestCase):
                 source,
                 output,
                 bilingual=True,
-                theme=_theme(),
+                theme=_theme([translated, preserved]),
             )
             self.assertIsNotNone(plan)
             with (
@@ -201,7 +220,7 @@ class TestGeneratedThemeRenderer(unittest.TestCase):
                         str(output),
                         bilingual=bilingual,
                         order="source_first",
-                        theme=_theme(),
+                        theme=_theme([chapter]),
                     )
                     self.assertIsNotNone(plan)
                     with zipfile.ZipFile(output) as archive:

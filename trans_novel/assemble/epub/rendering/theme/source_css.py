@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import zipfile
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
+import soupsieve
 import tinycss2
+from bs4 import BeautifulSoup
+from bs4.element import Tag
 from lxml import etree
 
+from trans_novel.assemble.epub.rendering.theme.cascade import (
+    normalize_inline,
+    source_specificity_bound,
+)
 from trans_novel.assemble.epub.rendering.theme.contracts import ThemeError
 from trans_novel.epub.archive import ZipSafetyError, read_member, safe_name
 from trans_novel.epub.navigation import resolve_epub_href
@@ -201,3 +209,108 @@ def collect_source_stylesheets(
     ):
         raise _fail(resource_href) from None
     return collected
+
+
+def _evidence_rules(
+    rules: list[object],
+    *,
+    media: tuple[str, ...] = (),
+) -> Iterator[tuple[str, str, tuple[str, ...]]]:
+    for rule in rules:
+        if getattr(rule, "type", None) == "qualified-rule":
+            yield (
+                tinycss2.serialize(rule.prelude).strip(),
+                tinycss2.serialize(rule.content).strip(),
+                media,
+            )
+            continue
+        if (
+            getattr(rule, "type", None) == "at-rule"
+            and getattr(rule, "lower_at_keyword", None) in {"media", "supports"}
+            and getattr(rule, "content", None) is not None
+        ):
+            keyword = str(rule.lower_at_keyword)
+            condition = tinycss2.serialize(rule.prelude).strip()
+            nested = tinycss2.parse_rule_list(
+                rule.content,
+                skip_whitespace=True,
+                skip_comments=True,
+            )
+            yield from _evidence_rules(
+                nested,
+                media=(*media, f"@{keyword} {condition}"),
+            )
+
+
+def _wrap_evidence(selector: str, declarations: str, media: tuple[str, ...]) -> str:
+    value = f"{selector}{{{declarations}}}"
+    for condition in reversed(media):
+        value = f"{condition}{{{value}}}"
+    return value
+
+
+def source_style_evidence(
+    root: etree._Element,
+    nodes: Sequence[etree._Element],
+    stylesheets: Mapping[str, bytes],
+    *,
+    resource: str,
+) -> tuple[tuple[str, ...], ...]:
+    """返回每个节点及其祖先匹配的原始 CSS 证据，并保留条件规则上下文。"""
+    source_specificity_bound(stylesheets, resource=resource)
+    xml_nodes = [node for node in root.iter() if isinstance(node.tag, str)]
+    try:
+        soup = BeautifulSoup(etree.tostring(root), "xml")
+    except (TypeError, ValueError, etree.LxmlError):
+        raise _fail(resource, "invalid_markup") from None
+    soup_nodes = [node for node in soup.find_all(True) if isinstance(node, Tag)]
+    if len(xml_nodes) != len(soup_nodes) or any(
+        xml.tag.rsplit("}", 1)[-1].lower() != str(parsed.name).split(":")[-1].lower()
+        for xml, parsed in zip(xml_nodes, soup_nodes, strict=True)
+    ):
+        raise _fail(resource, "invalid_markup")
+    reverse = {id(parsed): xml for xml, parsed in zip(xml_nodes, soup_nodes, strict=True)}
+
+    matched: list[tuple[frozenset[etree._Element], str]] = []
+    for data in stylesheets.values():
+        try:
+            rules, _encoding = tinycss2.parse_stylesheet_bytes(
+                data,
+                skip_whitespace=True,
+                skip_comments=True,
+            )
+            for selector, declarations, media in _evidence_rules(rules):
+                selected = frozenset(
+                    reverse[id(tag)] for tag in soup.select(selector) if id(tag) in reverse
+                )
+                if selected:
+                    matched.append((selected, _wrap_evidence(selector, declarations, media)))
+        except (
+            RecursionError,
+            soupsieve.SelectorSyntaxError,
+            NotImplementedError,
+            TypeError,
+            ValueError,
+        ):
+            raise _fail(resource, "unsupported_source_selector") from None
+
+    node_set = set(xml_nodes)
+    output: list[tuple[str, ...]] = []
+    for node in nodes:
+        if node not in node_set:
+            raise _fail(resource, "invalid_markup")
+        ancestry = (node, *node.iterancestors())
+        evidence = [
+            value
+            for selected, value in matched
+            if any(ancestor in selected for ancestor in ancestry)
+        ]
+        for ancestor in reversed(ancestry):
+            inline = ancestor.get("style")
+            if inline is None:
+                continue
+            normalize_inline(inline, (), resource=resource)
+            name = ancestor.tag.rsplit("}", 1)[-1].lower()
+            evidence.append(f"@inline {name}{{{inline}}}")
+        output.append(tuple(evidence))
+    return tuple(output)

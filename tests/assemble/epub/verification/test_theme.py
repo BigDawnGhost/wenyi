@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -15,30 +16,72 @@ from lxml import etree
 from tests.fixtures.books import write_phase9_epub
 from trans_novel.assemble.epub.rendering.source_dom import resolve_element_path
 from trans_novel.assemble.epub.rendering.theme import (
+    LayoutBinding,
     ResourceThemeScope,
     SourcePair,
     ThemeBundle,
 )
+from trans_novel.assemble.epub.rendering.theme.projection import build_projection
 from trans_novel.assemble.epub.rendering.theme.service import ThemeService
 from trans_novel.assemble.epub.verification import validate_epub_triplet, verify_epub
+from trans_novel.epub.layout import LayoutAssignment, LayoutProfile, source_node_digest
 
 
-def _service() -> ThemeService:
-    return ThemeService(
+def _service(
+    path: Path, scopes: dict[str, ResourceThemeScope]
+) -> tuple[ThemeService, dict[str, ResourceThemeScope]]:
+    assignments: list[LayoutAssignment] = []
+    bindings: dict[str, list[LayoutBinding]] = {}
+    with zipfile.ZipFile(path) as archive:
+        for resource in archive.namelist():
+            if not resource.endswith((".xhtml", ".html", ".htm")):
+                continue
+            root = etree.fromstring(archive.read(resource))
+            projection = build_projection(root)
+            for index, (node, node_path) in enumerate(
+                zip(projection.nodes, projection.paths, strict=True)
+            ):
+                if not projection.snapshot["nodes"][index]["isTextBlock"]:
+                    continue
+                digest = source_node_digest(
+                    node.tag.rsplit("}", 1)[-1].lower(),
+                    dict(node.attrib),
+                    "".join(node.itertext()),
+                )
+                assignments.append(
+                    LayoutAssignment(
+                        node_id=f"{resource}-{index}",
+                        resource_href=resource,
+                        path=node_path,
+                        source_sha256=digest,
+                        role="body",
+                    )
+                )
+                bindings.setdefault(resource, []).append(
+                    LayoutBinding(node_path, (node_path,), digest)
+                )
+    bound_scopes = {
+        resource: replace(scope, layout_bindings=tuple(bindings.get(resource, ())))
+        for resource, scope in scopes.items()
+    }
+    profile = LayoutProfile(
+        source_sha256="a" * 64,
+        inventory_digest="b" * 64,
+        policy_version="1",
+        assignments=tuple(assignments),
+        provenance={},
+    )
+    service = ThemeService(
         ThemeBundle(
-            script=(
-                b"function classify(node) { return ['p', 'h1', 'h2'].includes(node.tag) "
-                b"? {role: 'body'} : null; }"
-            ),
             general_css=b'[data-tn-role="body"] { color: black; font-family: serif; }',
             bilingual_css=b'[data-tn-content="source"] { font-size: .9em; }',
             digest="test",
-            engine_version="test",
-            api_version=1,
             policy_version="test",
             provenance=(),
-        )
+        ),
+        layout=profile,
     )
+    return service, bound_scopes
 
 
 def _rewrite(
@@ -95,7 +138,8 @@ def _themed(root: Path, *, bilingual: bool = False, inline: bool = False):
                 source_pairs=(SourcePair((1, 2), ((1, 1),)),)
             )
         }
-    plan = _service().render(str(path), scopes, bilingual=bilingual)
+    service, scopes = _service(path, scopes)
+    plan = service.render(str(path), scopes, bilingual=bilingual)
     assert plan is not None and plan.resources
     return path, plan
 
@@ -146,15 +190,17 @@ class TestThemeVerification(unittest.TestCase):
                 return str(soup).encode()
 
             _rewrite(bilingual, add_source)
-            service = _service()
-            mono_plan = service.render(str(mono), {}, bilingual=False)
-            bilingual_plan = service.render(
+            mono_service, mono_scopes = _service(mono, {})
+            mono_plan = mono_service.render(str(mono), mono_scopes, bilingual=False)
+            bilingual_scopes = {
+                "OEBPS/text/chapter-2.xhtml": ResourceThemeScope(
+                    source_pairs=(SourcePair((1, 2), ((1, 1),)),)
+                )
+            }
+            bilingual_service, bilingual_scopes = _service(bilingual, bilingual_scopes)
+            bilingual_plan = bilingual_service.render(
                 str(bilingual),
-                {
-                    "OEBPS/text/chapter-2.xhtml": ResourceThemeScope(
-                        source_pairs=(SourcePair((1, 2), ((1, 1),)),)
-                    )
-                },
+                bilingual_scopes,
                 bilingual=True,
             )
             assert mono_plan is not None and bilingual_plan is not None

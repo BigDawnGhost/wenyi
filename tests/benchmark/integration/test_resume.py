@@ -96,7 +96,8 @@ class TestBenchmarkIntegrationResume(unittest.TestCase):
 
     def _runner_fixture(self, root: Path, *, interrupt: int=1):
         source = root / 'hidden.epub'
-        write_sample_epub(str(source))
+        if not source.exists():
+            write_sample_epub(str(source))
         candidate_spec = CandidateSpec.model_validate({'schema_version': 3, 'benchmark_id': 'phase9', 'temperature': 0.1, 'seed': None, 'replicates': 1, 'candidates': [{'candidate_id': 'candidate-a-polished', 'translator_model': 'bailian/qwen3.8-max:off', 'analyst_model': 'bailian/qwen3.7-flash:off', 'editor_model': 'bailian/deepseek-v4-pro:off', 'fast_model': 'bailian/qwen3.7-flash:off', 'pipeline_variant': 'polish'}, {'candidate_id': 'candidate-b-polished', 'translator_model': 'bailian/deepseek-v4-flash:off', 'analyst_model': 'bailian/qwen3.7-flash:off', 'editor_model': 'bailian/qwen3.7-plus:off', 'fast_model': 'bailian/qwen3.7-flash:off', 'pipeline_variant': 'polish'}]})
         selected = list(candidate_spec.candidates)
         integration_spec = IntegrationSpec.model_validate(_spec(candidate_ids=['candidate-a-polished', 'candidate-b-polished'], interrupt_after_committed_batches=interrupt))
@@ -310,7 +311,9 @@ class TestBenchmarkIntegrationResumeContinuation(unittest.TestCase):
             with mock.patch('trans_novel.benchmark.integration.resume.write_integration_json', side_effect=stop_after_interrupted), self.assertRaises(SystemExit):
                 runner.run(root, root / 'b.yaml', root / 'c.yaml', root / 'i.yaml', root / 'out')
             self.assertEqual(len(clients), 2)
+            source_bytes = _source.read_bytes()
             runner2, _source2, clients2 = self._runner_fixture(root)
+            self.assertEqual(_source2.read_bytes(), source_bytes)
             with mock.patch('trans_novel.benchmark.integration.resume.validate_epub_triplet', return_value={'structural_pass': True, 'mono': {'structural_pass': True}, 'bilingual': {'structural_pass': True}}):
                 result = runner2.run(root, root / 'b.yaml', root / 'c.yaml', root / 'i.yaml', root / 'out')
             self.assertFalse(result['failed_candidates'])

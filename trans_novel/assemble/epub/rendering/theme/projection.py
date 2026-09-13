@@ -54,11 +54,6 @@ _PROTECTED_EPUB_TYPES = frozenset(
         "toc",
         "landmarks",
         "page-list",
-        "footnote",
-        "footnotes",
-        "endnote",
-        "endnotes",
-        "noteref",
         "cover",
         "cover-image",
         "titlepage",
@@ -70,10 +65,6 @@ _PROTECTED_ARIA_ROLES = frozenset(
         "doc-toc",
         "doc-landmarks",
         "doc-pagelist",
-        "doc-footnote",
-        "doc-endnote",
-        "doc-endnotes",
-        "doc-noteref",
         "doc-cover",
         "doc-titlepage",
     }
@@ -86,6 +77,21 @@ _TABLE_EPUB_TYPES = frozenset({"table"})
 _NAVIGATION_EPUB_TYPES = frozenset({"toc", "landmarks", "page-list"})
 _QUOTE_EPUB_TYPES = frozenset({"epigraph", "pullquote", "qna"})
 _LIST_EPUB_TYPES = frozenset({"list", "list-item", "bibliography"})
+_EXPLICIT_EPUB_TYPES = frozenset(
+    {
+        "caption",
+        "subtitle",
+        "footnote",
+        "footnotes",
+        "endnote",
+        "endnotes",
+        "noteref",
+    }
+)
+_EXPLICIT_ARIA_ROLES = frozenset(
+    {"doc-footnote", "doc-endnote", "doc-endnotes", "doc-noteref", "doc-subtitle"}
+)
+_EXPLICIT_SEMANTIC_TAGS = frozenset({"caption", "figcaption"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +192,14 @@ def _is_protected_root(node: etree._Element) -> bool:
         or name in _PROTECTED_TAGS
         or bool(set(_epub_types(node)) & _PROTECTED_EPUB_TYPES)
         or bool(set(_aria_roles(node)) & _PROTECTED_ARIA_ROLES)
+    )
+
+
+def _is_explicit_semantic(node: etree._Element) -> bool:
+    return (
+        local_name(node.tag) in _EXPLICIT_SEMANTIC_TAGS
+        or bool(set(_epub_types(node)) & _EXPLICIT_EPUB_TYPES)
+        or bool(set(_aria_roles(node)) & _EXPLICIT_ARIA_ROLES)
     )
 
 
@@ -302,11 +316,15 @@ def _summaries(
             if isinstance(child.tag, str) and child not in protected and child not in sources
         )
         name = local_name(node.tag)
+        has_direct_text = bool((node.text or "").strip()) or any(
+            bool((child.tail or "").strip()) for child in element_children_lxml(node)
+        )
         own_block = (
             not unavailable
             and not _is_transparent(node)
             and (
                 name in _TEXT_BLOCKS
+                or (_is_explicit_semantic(node) and has_direct_text)
                 or (name == "div" and summary.length > 0 and not descendant_block)
             )
         )
@@ -371,6 +389,7 @@ def build_projection(
                     "textLength": summary.length,
                     "textTruncated": summary.length > _MAX_TEXT,
                     "isTextBlock": name in _TEXT_BLOCKS
+                    or (_is_explicit_semantic(node) and bool(summary.length))
                     or (
                         name == "div"
                         and summary.length > 0

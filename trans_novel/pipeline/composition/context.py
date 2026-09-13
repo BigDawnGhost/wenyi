@@ -30,6 +30,9 @@ class RunContext:
         output=None,
         output_digest: str | None = None,
         theme=None,
+        theme_bundle=None,
+        layout_inventory=None,
+        layout_profile=None,
         output_format: str = "epub",
         output_relevant: bool = False,
         identity_languages: tuple[str, str] = ("", ""),
@@ -40,8 +43,12 @@ class RunContext:
         self._agent_builder = agent_builder
         self.frozen_preparation = frozen_preparation
         self.output = output if output is not None else config.output
+        self.output_ready = False
         self.output_digest = output_digest
         self.theme = theme
+        self.theme_bundle = theme_bundle
+        self.layout_inventory = layout_inventory
+        self.layout_profile = layout_profile
         self.output_format = output_format
         self.output_relevant = output_relevant
         self.identity_languages = identity_languages

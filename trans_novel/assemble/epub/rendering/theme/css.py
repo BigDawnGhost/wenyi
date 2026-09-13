@@ -95,6 +95,7 @@ def _property_footprints() -> dict[str, frozenset[str]]:
         "box-shadow",
         "word-break",
         "overflow-wrap",
+        "vertical-align",
     ):
         result[name] = frozenset((name,))
     background = (

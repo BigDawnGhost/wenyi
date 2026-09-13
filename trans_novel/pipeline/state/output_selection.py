@@ -50,7 +50,7 @@ class SavedOutputSelection(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     source_bytes_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     selection: dict[str, Any]
     origins: dict[str, str]
@@ -95,14 +95,21 @@ def load_output_selection(
         raise _invalid() from None
     if not isinstance(payload, dict):
         raise _invalid()
-    if type(payload.get("schema_version")) is not int or payload["schema_version"] != 1:
+    version = payload.get("schema_version")
+    if type(version) is not int:
+        raise _invalid()
+    if version not in (1, 2):
         raise ValueError(_UNKNOWN_SCHEMA)
+    candidate = {**payload, "schema_version": 2} if version == 1 else payload
     try:
-        saved = SavedOutputSelection.model_validate(payload)
+        saved = SavedOutputSelection.model_validate(candidate)
     except (RecursionError, TypeError, ValueError):
         raise _invalid() from None
     if saved.source_bytes_sha256 != source_bytes_sha256:
         raise ValueError(_SOURCE_MISMATCH)
+    if version == 1:
+        store.log_event("output_selection_obsolete", schema_version=1)
+        return None
     return saved
 
 

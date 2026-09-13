@@ -722,6 +722,44 @@ class TestEpubNavigationValidation(unittest.TestCase):
             self.assertNotIn("malformed_content", {item["code"] for item in result["failures"]})
             self.assertTrue(any(item["code"] == "external_skipped" for item in result["warnings"]))
 
+    def test_source_between_two_targets_pairs_with_matching_adjacent_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            seed = Path(directory) / "seed.epub"
+            source = Path(directory) / "source.epub"
+            mono = Path(directory) / "mono.epub"
+            bilingual = Path(directory) / "bilingual.epub"
+            write_phase9_epub(str(seed))
+            with zipfile.ZipFile(seed) as archive:
+                source_soup = BeautifulSoup(archive.read("OEBPS/text/chapter-2.xhtml"), "xml")
+            body = source_soup.body
+            assert body is not None
+            following = source_soup.new_tag("p", id="following")
+            following.string = "Unchanged following paragraph."
+            body.append(following)
+            source_data = str(source_soup).encode()
+            mono_soup = BeautifulSoup(source_data, "xml")
+            target = mono_soup.find(id="body-two")
+            assert target is not None
+            target.string = "Translated"
+            mono_data = str(mono_soup).encode()
+            bi_soup = BeautifulSoup(mono_data, "xml")
+            bi_target = bi_soup.find(id="body-two")
+            assert bi_target is not None
+            source_node = bi_soup.new_tag("p", attrs={"class": "tn-source"})
+            source_node.string = "Second chapter."
+            bi_target.insert_after(source_node)
+
+            _copy_epub(seed, source, {"OEBPS/text/chapter-2.xhtml": source_data})
+            _copy_epub(seed, mono, {"OEBPS/text/chapter-2.xhtml": mono_data})
+            _copy_epub(
+                seed,
+                bilingual,
+                {"OEBPS/text/chapter-2.xhtml": str(bi_soup).encode()},
+            )
+
+            failures = validate_epub_triplet(source, mono, bilingual)["bilingual"]["failures"]
+            self.assertNotIn("source_target_pair_mismatch", {item["code"] for item in failures})
+
     def test_wrong_target_pair_with_equal_source_count_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.epub"

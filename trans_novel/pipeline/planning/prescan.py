@@ -114,6 +114,50 @@ def _historical_inputs(inputs: PrescanInputs, state: RunState) -> PrescanInputs:
     return inputs
 
 
+def _preserve_paid_inputs(inputs: PrescanInputs, state: RunState) -> PrescanInputs:
+    """输出目标不得因当前模型配置变化失效已付费的翻译链。"""
+
+    def saved(key: str) -> str:
+        node = state.nodes.get(key)
+        return node.input_fingerprint if node else ""
+
+    inputs.prepare_fingerprint = lambda: saved("prepare")
+    inputs.analyze_fingerprint = lambda: saved("analyze")
+    inputs.mine_fingerprint = lambda: saved("mine_terms")
+    inputs.name_terms_fingerprint = lambda: saved("name_terms")
+    inputs.translate_fingerprint = lambda ci: saved(f"translate:{ci}")
+    inputs.polish_fingerprint = lambda ci: saved(f"polish:{ci}")
+    inputs.titles_fingerprint = lambda: saved("titles")
+    return inputs
+
+
+def _output_fingerprint_inputs(context, output, goal, done_targets) -> dict:
+    inventory = context.layout_inventory if context is not None else None
+
+    def layout_fingerprint():
+        profile = context.layout_profile
+        return profile.digest if profile is not None else inventory.digest
+
+    return {
+        "layout_fingerprint": layout_fingerprint if inventory is not None else None,
+        "layout_enabled": bool(
+            context is not None
+            and context.output_format == "epub"
+            and context.theme_bundle is not None
+            and context.theme_bundle.general_css is not None
+        ),
+        "layout_profile_valid": bool(context is not None and context.layout_profile is not None),
+        "assemble_fingerprint": lambda: assemble_input_fingerprint(
+            done_targets(include_preserved=True),
+            mono=output.mono,
+            bilingual=output.bilingual.enabled,
+            out_format=goal.out_format,
+            bilingual_order=output.bilingual.order,
+            output_digest=context.output_digest if context is not None else None,
+        ),
+    }
+
+
 def build_prescan_inputs(
     config: Config, store, policy: WorkflowPolicy, context, goal
 ) -> PrescanInputs:
@@ -216,16 +260,13 @@ def build_prescan_inputs(
         titles_fingerprint=titles_fp,
         deterministic_qa_fingerprint=qa_fp,
         report_fingerprint=report_fp,
-        assemble_fingerprint=lambda: assemble_input_fingerprint(
-            done_targets(include_preserved=True),
-            mono=output.mono,
-            bilingual=output.bilingual.enabled,
-            out_format=goal.out_format,
-            bilingual_order=output.bilingual.order,
-            output_digest=context.output_digest if context is not None else None,
-        ),
+        **_output_fingerprint_inputs(context, output, goal, done_targets),
     )
-    return _historical_inputs(inputs, state) if legacy else inputs
+    if legacy:
+        return _historical_inputs(inputs, state)
+    if set(goal.phases).issubset({"layout", "assemble"}):
+        return _preserve_paid_inputs(inputs, state)
+    return inputs
 
 
 __all__ = ["build_prescan_inputs"]

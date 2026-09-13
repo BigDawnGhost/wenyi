@@ -3,6 +3,7 @@
 from trans_novel.assemble.epub.rendering.theme.contracts import (
     ElementPath,
     InlineChange,
+    LayoutBinding,
     MarkerChange,
     ResourceThemePlan,
     ResourceThemeScope,
@@ -19,6 +20,7 @@ from trans_novel.assemble.epub.rendering.theme.loading import (
 __all__ = [
     "ElementPath",
     "InlineChange",
+    "LayoutBinding",
     "MarkerChange",
     "ResourceThemePlan",
     "ResourceThemeScope",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 import zipfile
@@ -9,8 +10,11 @@ from lxml import etree
 
 from trans_novel.assemble.epub.rendering.source_archive import assemble_source_epub
 from trans_novel.assemble.epub.rendering.source_dom import resolve_element_path
+from trans_novel.assemble.epub.rendering.source_markup import render_source_resource
 from trans_novel.assemble.epub.rendering.theme import ThemeBundle
+from trans_novel.assemble.epub.rendering.theme.projection import build_projection
 from trans_novel.assemble.epub.rendering.theme.service import ThemeService
+from trans_novel.epub.layout import LayoutAssignment, LayoutProfile, source_node_digest
 from trans_novel.ingest.epub.reader import read_epub
 
 _CONTAINER = b"""<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="O/content.opf"/></rootfiles></container>"""
@@ -36,17 +40,38 @@ class _Store:
 
 
 def _theme() -> ThemeService:
+    root = etree.fromstring(_XHTML)
+    projection = build_projection(root)
+    assignments = tuple(
+        LayoutAssignment(
+            node_id=f"node-{index}",
+            resource_href="O/c.xhtml",
+            path=path,
+            source_sha256=source_node_digest(
+                node.tag.rsplit("}", 1)[-1].lower(),
+                dict(node.attrib),
+                "".join(node.itertext()),
+            ),
+            role="body",
+        )
+        for index, (node, path) in enumerate(zip(projection.nodes, projection.paths, strict=True))
+        if projection.snapshot["nodes"][index]["isTextBlock"]
+    )
     return ThemeService(
         ThemeBundle(
-            script=b"function classify(node) { return ['p', 'li', 'em', 'strong', 'ruby', 'rb'].includes(node.tag) ? {role: 'body'} : null; }",
             general_css=b'[data-tn-role="body"] { font-family: serif; }',
             bilingual_css=b'[data-tn-content="source"] { font-size: .9em; }',
             digest="test",
-            engine_version="test",
-            api_version=1,
             policy_version="test",
             provenance=(),
-        )
+        ),
+        layout=LayoutProfile(
+            source_sha256="a" * 64,
+            inventory_digest="b" * 64,
+            policy_version="1",
+            assignments=assignments,
+            provenance={},
+        ),
     )
 
 
@@ -82,6 +107,46 @@ class TestSourceThemeRenderer(unittest.TestCase):
             segment.assign_translation(values)
         return _Store(document), translated
 
+    def _assert_zip_metadata(
+        self,
+        archive: zipfile.ZipFile,
+        expected_info: zipfile.ZipInfo,
+    ) -> bytes:
+        rendered = archive.read("O/c.xhtml")
+        blob_info = archive.getinfo("O/blob.bin")
+        self.assertEqual(archive.comment, b"publisher archive")
+        self.assertEqual(archive.read(blob_info), _BLOB)
+        self.assertEqual(blob_info.date_time, expected_info.date_time)
+        self.assertEqual(blob_info.compress_type, expected_info.compress_type)
+        self.assertEqual(blob_info.external_attr, expected_info.external_attr)
+        self.assertEqual(blob_info.extra, expected_info.extra)
+        self.assertEqual(blob_info.comment, expected_info.comment)
+        return rendered
+
+    def _assert_layout_bindings(self, root: etree._Element, resource) -> None:
+        self.assertTrue(resource.scope.layout_bindings)
+        self.assertEqual(
+            len(resource.scope.layout_bindings),
+            len({binding.source_path for binding in resource.scope.layout_bindings}),
+        )
+        self.assertTrue(
+            all(
+                len(binding.source_sha256) == 64
+                and binding.target_paths
+                and all(
+                    resolve_element_path(root, path) is not None for path in binding.target_paths
+                )
+                for binding in resource.scope.layout_bindings
+            )
+        )
+        plain_binding = next(
+            binding for binding in resource.scope.layout_bindings if binding.source_path == (1, 0)
+        )
+        self.assertEqual(
+            plain_binding.source_sha256,
+            source_node_digest("p", {"id": "plain"}, "Plain source."),
+        )
+
     def test_source_pairs_preserved_ranges_and_zip_metadata_survive_both_orders(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.epub"
@@ -110,16 +175,9 @@ class TestSourceThemeRenderer(unittest.TestCase):
                     self.assertEqual(len(resource.scope.excluded_paths), 1)
 
                     with zipfile.ZipFile(output) as archive:
-                        rendered = archive.read("O/c.xhtml")
-                        root = etree.fromstring(rendered)
-                        blob_info = archive.getinfo("O/blob.bin")
-                        self.assertEqual(archive.comment, b"publisher archive")
-                        self.assertEqual(archive.read(blob_info), _BLOB)
-                        self.assertEqual(blob_info.date_time, expected_info.date_time)
-                        self.assertEqual(blob_info.compress_type, expected_info.compress_type)
-                        self.assertEqual(blob_info.external_attr, expected_info.external_attr)
-                        self.assertEqual(blob_info.extra, expected_info.extra)
-                        self.assertEqual(blob_info.comment, expected_info.comment)
+                        rendered = self._assert_zip_metadata(archive, expected_info)
+                    root = etree.fromstring(rendered)
+                    self._assert_layout_bindings(root, resource)
 
                     self.assertEqual(source.read_bytes(), source_bytes)
                     self.assertTrue(root.xpath("//*[local-name()='style' and @id='publisher']"))
@@ -199,6 +257,25 @@ class TestSourceThemeRenderer(unittest.TestCase):
                                 order_index[source_node],
                                 max(order_index[target] for target in targets),
                             )
+
+    def test_no_theme_render_skips_projection_limits(self) -> None:
+        data = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+            + "<span/>" * 50_001
+            + "</body></html>"
+        ).encode()
+
+        rendered = render_source_resource(
+            data,
+            "O/large.xhtml",
+            [],
+            expected_digest=hashlib.sha256(data).hexdigest(),
+            expected_mode="xml",
+            target_lang="zh",
+        )
+
+        root = etree.fromstring(rendered)
+        self.assertEqual(len(root.xpath("//*[local-name()='span']")), 50_001)
 
     def test_fully_preserved_resource_is_not_themed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

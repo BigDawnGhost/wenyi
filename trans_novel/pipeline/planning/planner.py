@@ -12,6 +12,7 @@ from trans_novel.pipeline.state import (
     NODE_ANALYZE,
     NODE_ASSEMBLE,
     NODE_DETERMINISTIC_QA,
+    NODE_LAYOUT,
     NODE_MINE_TERMS,
     NODE_NAME_TERMS,
     NODE_POLISH,
@@ -62,6 +63,9 @@ class PrescanInputs:
     name_terms_fingerprint: Callable[[], str] | None = None
     prepare_fingerprint: Callable[[], str] | None = None
     analyze_fingerprint: Callable[[], str] | None = None
+    layout_fingerprint: Callable[[], str] | None = None
+    layout_enabled: bool = False
+    layout_profile_valid: bool = False
     translate_fingerprint: Callable[[int], str] | None = None
     polish_fingerprint: Callable[[int], str] | None = None
     titles_fingerprint: Callable[[], str] | None = None
@@ -162,6 +166,8 @@ class Planner:
         if "prepare" in goal.phases:
             need(NODE_PREPARE)
             need(NODE_ANALYZE)
+        if "layout" in goal.phases:
+            need(NODE_LAYOUT, force=goal.reanalyze_layout)
         if "prescan" in goal.phases:
             need(NODE_MINE_TERMS)
             need(NODE_NAME_TERMS)
@@ -200,6 +206,9 @@ class Planner:
         key = chapter_node_key(node, ci) if ci is not None else node
         if key in needed:
             return
+        if node == NODE_LAYOUT and not prescan.layout_enabled:
+            add(node, None, "skip")
+            return
         chapter = next((c for c in chapters if c.index == ci), None) if ci is not None else None
         if (
             chapter is not None
@@ -218,9 +227,24 @@ class Planner:
             and current.status == NODE_SUCCEEDED
             and (fn is None or not current.input_fingerprint or current.input_fingerprint == fn)
         )
+        if node == NODE_LAYOUT and not prescan.layout_profile_valid:
+            satisfied = False
         if force or not satisfied:
             add(node, ci)
         if node == NODE_TRANSLATE:
+            return
+        if node == NODE_LAYOUT:
+            self._need(
+                NODE_PREPARE,
+                None,
+                False,
+                chapters,
+                policy,
+                prescan,
+                state,
+                needed,
+                add,
+            )
             return
         if node == NODE_POLISH:
             self._need(NODE_TRANSLATE, ci, False, chapters, policy, prescan, state, needed, add)
@@ -274,6 +298,17 @@ class Planner:
             )
         elif node == NODE_ASSEMBLE:
             self._need(NODE_REPORT, None, False, chapters, policy, prescan, state, needed, add)
+            self._need(
+                NODE_LAYOUT,
+                None,
+                False,
+                chapters,
+                policy,
+                prescan,
+                state,
+                needed,
+                add,
+            )
 
     @staticmethod
     def _fingerprint(node: str, ci: int | None, prescan: PrescanInputs) -> str | None:
@@ -281,6 +316,7 @@ class Planner:
         callbacks = {
             NODE_PREPARE: prescan.prepare_fingerprint,
             NODE_ANALYZE: prescan.analyze_fingerprint,
+            NODE_LAYOUT: prescan.layout_fingerprint,
             NODE_MINE_TERMS: prescan.mine_fingerprint,
             NODE_NAME_TERMS: prescan.name_terms_fingerprint,
             NODE_TRANSLATE: prescan.translate_fingerprint,
@@ -322,6 +358,9 @@ class Planner:
         prep = [take(NODE_PREPARE), take(NODE_ANALYZE)]
         if any(prep):
             plan.stages.append(PlannedStage([x for x in prep if x]))
+        layout = take(NODE_LAYOUT)
+        if layout is not None:
+            plan.stages.append(PlannedStage([layout]))
         mine = take(NODE_MINE_TERMS)
         name = take(NODE_NAME_TERMS)
         if mine is not None:

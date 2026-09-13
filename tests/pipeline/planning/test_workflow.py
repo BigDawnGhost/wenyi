@@ -22,6 +22,7 @@ from trans_novel.pipeline.planning import (
 from trans_novel.pipeline.state import (
     NODE_ASSEMBLE,
     NODE_DETERMINISTIC_QA,
+    NODE_LAYOUT,
     NODE_MINE_TERMS,
     NODE_NAME_TERMS,
     NODE_POLISH,
@@ -57,6 +58,7 @@ class TestWorkflowDefinition(unittest.TestCase):
             {
                 NODE_PREPARE,
                 "analyze",
+                NODE_LAYOUT,
                 NODE_MINE_TERMS,
                 NODE_NAME_TERMS,
                 NODE_TRANSLATE,
@@ -72,6 +74,11 @@ class TestWorkflowDefinition(unittest.TestCase):
     def test_body_chain_is_translate_then_optional_polish(self):
         definition = build_workflow_definition()
         self.assertEqual(definition.depends_on(NODE_POLISH), (NODE_TRANSLATE,))
+        self.assertEqual(definition.depends_on(NODE_LAYOUT), (NODE_PREPARE,))
+        self.assertEqual(
+            definition.depends_on(NODE_ASSEMBLE),
+            (NODE_REPORT, NODE_LAYOUT),
+        )
         self.assertEqual(definition.depends_on(NODE_TITLES), (NODE_TRANSLATE, NODE_POLISH))
 
 
@@ -137,6 +144,7 @@ class TestPlanner(unittest.TestCase):
                 "prepare",
                 "analyze",
                 "mine_terms",
+                "layout",
                 "name_terms",
                 "translate",
                 "polish",
@@ -159,7 +167,14 @@ class TestPlanner(unittest.TestCase):
                 progress.status = "done"
                 store.save_progress(chapter.index, progress)
             config = Config()
-            context = SimpleNamespace(output=config.output, output_digest="theme-digest")
+            context = SimpleNamespace(
+                output=config.output,
+                output_digest="theme-digest",
+                layout_inventory=None,
+                layout_profile=None,
+                output_format="epub",
+                theme_bundle=None,
+            )
             goal = assemble_goal(out_format="epub")
 
             actual = build_prescan_inputs(
@@ -238,7 +253,7 @@ class TestTranslationPolicy(unittest.TestCase):
                     )
                     self.assertEqual(
                         plan.entry_keys(),
-                        {"deterministic_qa"} if goal.name == "qa" else {"assemble"},
+                        {"deterministic_qa"} if goal.name == "qa" else {"layout", "assemble"},
                     )
                     self.assertEqual(Path(store.manifest_path).read_bytes(), before)
                     self.assertEqual(

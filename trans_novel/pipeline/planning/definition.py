@@ -121,6 +121,7 @@ class WorkflowDefinition:
     def validate_goal(self, goal_phases: Iterable[str]) -> None:
         known = {
             "prepare",
+            "layout",
             "prescan",
             "translate",
             "titles",

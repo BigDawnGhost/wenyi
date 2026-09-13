@@ -18,7 +18,6 @@ from pydantic import (
     Field,
     StrictBool,
     StrictStr,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -153,18 +152,16 @@ class BilingualOutputConfig(BaseModel):
 
 
 class OverrideThemeConfig(BaseModel):
-    """通用 EPUB 主题的分类规则与样式。"""
+    """通用 EPUB 主题样式。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    rules: StrictStr
     styles: StrictStr
 
-    @field_validator("rules", "styles")
+    @field_validator("styles")
     @classmethod
-    def _validate_reference(cls, value: str, info: ValidationInfo) -> str:
-        builtin = "builtin:general" if info.field_name == "rules" else "builtin:chinese-reading"
-        return _validate_asset_reference(value, builtin)
+    def _validate_reference(cls, value: str) -> str:
+        return _validate_asset_reference(value, "builtin:chinese-reading")
 
 
 class OutputConfig(BaseModel):
@@ -255,11 +252,10 @@ def _resolve_output_paths(
     origins: dict[str, str] = {}
     label = str(base_dir) if base_dir is not None else ""
     if resolved.override_theme is not None:
-        for field_name in ("rules", "styles"):
-            value = getattr(resolved.override_theme, field_name)
-            if not value.startswith("builtin:"):
-                setattr(resolved.override_theme, field_name, _resolve_asset_path(value, base_dir))
-                origins[f"override_theme.{field_name}"] = label
+        value = resolved.override_theme.styles
+        if not value.startswith("builtin:"):
+            resolved.override_theme.styles = _resolve_asset_path(value, base_dir)
+            origins["override_theme.styles"] = label
     if not resolved.bilingual_styles.startswith("builtin:"):
         resolved.bilingual_styles = _resolve_asset_path(resolved.bilingual_styles, base_dir)
         origins["bilingual_styles"] = label

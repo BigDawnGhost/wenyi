@@ -27,10 +27,10 @@ from trans_novel.assemble.epub.rendering.theme.cascade import (
     normalize_inline,
     source_specificity_bound,
 )
-from trans_novel.assemble.epub.rendering.theme.classification import classify_resource
 from trans_novel.assemble.epub.rendering.theme.contracts import (
     ElementPath,
     InlineChange,
+    LayoutBinding,
     MarkerChange,
     ResourceThemePlan,
     ResourceThemeScope,
@@ -45,6 +45,7 @@ from trans_novel.assemble.epub.rendering.theme.projection import (
     build_projection,
 )
 from trans_novel.assemble.epub.rendering.theme.source_css import collect_source_stylesheets
+from trans_novel.epub.layout import LayoutAssignment
 
 _RESERVED_ATTRIBUTES = (
     "data-tn-role",
@@ -151,6 +152,65 @@ def _resolve_scope(
     return excluded, pairs
 
 
+def _bound_assignments(
+    root: etree._Element,
+    projection: ResourceProjection,
+    scope: ResourceThemeScope,
+    assignments: tuple[LayoutAssignment, ...],
+    *,
+    resource: str,
+    excluded: Sequence[etree._Element],
+    package_protected: bool,
+) -> tuple[tuple[RoleAssignment, ...], frozenset[int]]:
+    bindings: dict[ElementPath, LayoutBinding] = {}
+    target_paths: set[ElementPath] = set()
+    for binding in scope.layout_bindings:
+        if (
+            not isinstance(binding, LayoutBinding)
+            or not _valid_path(binding.source_path)
+            or not binding.target_paths
+            or any(not _valid_path(path) for path in binding.target_paths)
+            or len(set(binding.target_paths)) != len(binding.target_paths)
+            or binding.source_path in bindings
+            or not target_paths.isdisjoint(binding.target_paths)
+        ):
+            raise _fail_scope(resource)
+        bindings[binding.source_path] = binding
+        target_paths.update(binding.target_paths)
+
+    by_node = {node: index for index, node in enumerate(projection.nodes)}
+    resolved: dict[int, RoleAssignment] = {}
+    boundaries: set[int] = set()
+    for assignment in assignments:
+        binding = bindings.get(assignment.path)
+        if binding is None or binding.source_sha256 != assignment.source_sha256:
+            raise ThemeError("theme_layout", "invalid_binding", resource=resource)
+        try:
+            targets = tuple(resolve_element_path(root, path) for path in binding.target_paths)
+        except (ValueError, IndexError):
+            raise ThemeError("theme_layout", "invalid_binding", resource=resource) from None
+        for target in targets:
+            index = by_node.get(target)
+            if index is None:
+                preserved = (
+                    package_protected
+                    or scope.preserve_resource
+                    or any(_inside(target, node) for node in excluded)
+                )
+                if preserved:
+                    continue
+                raise ThemeError("theme_layout", "invalid_binding", resource=resource)
+            boundaries.add(index)
+            if assignment.role is None:
+                continue
+            candidate = RoleAssignment(index, assignment.role, assignment.level)
+            previous = resolved.get(index)
+            if previous is not None and previous != candidate:
+                raise ThemeError("theme_layout", "invalid_binding", resource=resource)
+            resolved[index] = candidate
+    return tuple(resolved[index] for index in sorted(resolved)), frozenset(boundaries)
+
+
 def _path_map(root: etree._Element) -> dict[etree._Element, ElementPath]:
     result: dict[etree._Element, ElementPath] = {}
     stack = [(root, ())]
@@ -169,13 +229,14 @@ def _is_direct(node: etree._Element) -> bool:
 
 
 def _role_for(
-    node: etree._Element, assigned: dict[etree._Element, tuple[str, int | None]]
+    node: etree._Element,
+    assigned: dict[etree._Element, tuple[str, int | None]],
+    owners: set[etree._Element],
 ) -> tuple[str, int | None] | None:
     current: etree._Element | None = node
     while current is not None:
-        role = assigned.get(current)
-        if role is not None:
-            return role
+        if current in owners:
+            return assigned.get(current)
         if current is node and not _is_direct(current):
             return None
         current = current.getparent()
@@ -207,10 +268,12 @@ def _topology(
 def _semantic_markers(
     projection: ResourceProjection,
     assignments: tuple[RoleAssignment, ...],
+    boundaries: frozenset[int],
     pairs: list[tuple[etree._Element, tuple[etree._Element, ...], bool]],
 ) -> dict[etree._Element, dict[str, str]]:
     markers: dict[etree._Element, dict[str, str]] = {}
     assigned: dict[etree._Element, tuple[str, int | None]] = {}
+    owners = {projection.nodes[index] for index in boundaries}
     for assignment in assignments:
         node = projection.nodes[assignment.node_id]
         assigned[node] = (assignment.role, assignment.level)
@@ -222,7 +285,7 @@ def _semantic_markers(
     for source, targets, map_descendants in pairs:
         if source in projection.protected:
             continue
-        roles = [_role_for(target, assigned) for target in targets]
+        roles = [_role_for(target, assigned, owners) for target in targets]
         common = (
             roles[0]
             if roles and roles[0] is not None and all(role == roles[0] for role in roles)
@@ -236,7 +299,13 @@ def _semantic_markers(
         markers[source] = attrs
         for target in targets:
             if _is_direct(target) and target not in projection.protected:
-                markers.setdefault(target, {})["data-tn-content"] = "target"
+                direct = markers.setdefault(target, {})
+                direct["data-tn-content"] = "target"
+                role = _role_for(target, assigned, owners)
+                if role is not None:
+                    direct["data-tn-role"] = role[0]
+                    if role[1] is not None:
+                        direct["data-tn-level"] = str(role[1])
         if not map_descendants or len(targets) != 1:
             continue
         source_shape, source_nodes = _topology(source, flatten_direct=False)
@@ -299,6 +368,8 @@ def _match_rules(
     for rule in rules:
         selected: list[etree._Element] = []
         for tag in soup.select(rule.selector):
+            if not source_only and "data-tn-role" not in tag.attrs:
+                continue
             node = reverse.get(id(tag))
             if node is None or node in projection.protected or not _safe_reset_match(node, rule):
                 continue
@@ -336,21 +407,6 @@ def _compile_css(
     return "\n".join(output).encode("utf-8")
 
 
-def _admitted_assignments(
-    projection: ResourceProjection, markers: tuple[MarkerChange, ...]
-) -> tuple[RoleAssignment, ...]:
-    by_path = {change.path: dict(change.attributes) for change in markers}
-    return tuple(
-        RoleAssignment(
-            index,
-            attrs["data-tn-role"],
-            int(attrs["data-tn-level"]) if "data-tn-level" in attrs else None,
-        )
-        for index, path in enumerate(projection.paths)
-        if (attrs := by_path.get(path)) and "data-tn-role" in attrs
-    )
-
-
 def plan_resource(
     archive: zipfile.ZipFile,
     data: bytes,
@@ -363,7 +419,7 @@ def plan_resource(
     ordinal: int,
     css_path: str,
     package_protected: bool = False,
-    admitted_markers: tuple[MarkerChange, ...] | None = None,
+    layout_assignments: tuple[LayoutAssignment, ...] = (),
 ) -> tuple[ResourceThemePlan | None, tuple[tuple[str, str], ...], Counter[str], int]:
     try:
         tree, mode = parse_source_markup(data)
@@ -384,15 +440,18 @@ def plan_resource(
     )
     body = _body(root, resource_href)
     protected_count = sum(1 for node in body.iter() if node in projection.protected)
+    assignments, boundaries = _bound_assignments(
+        root,
+        projection,
+        scope,
+        layout_assignments,
+        resource=resource_href,
+        excluded=excluded,
+        package_protected=package_protected,
+    )
     if package_protected or scope.preserve_resource:
         return None, (), Counter(), protected_count
-
-    assignments = (
-        classify_resource(projection.snapshot, bundle)
-        if admitted_markers is None
-        else _admitted_assignments(projection, admitted_markers)
-    )
-    markers = _semantic_markers(projection, assignments, pairs)
+    markers = _semantic_markers(projection, assignments, boundaries, pairs)
     soup, reverse = _marked_soup(root, markers, resource_href)
     general_matches, warnings = _match_rules(
         soup, reverse, general_rules, projection, source_only=False, resource=resource_href

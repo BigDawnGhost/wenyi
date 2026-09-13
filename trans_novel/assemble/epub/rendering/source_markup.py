@@ -32,10 +32,13 @@ from trans_novel.assemble.epub.rendering.source_dom import (
     set_visible_label,
 )
 from trans_novel.assemble.epub.rendering.theme import (
+    LayoutBinding,
     ResourceThemeScope,
     SourcePair,
     ThemeError,
 )
+from trans_novel.assemble.epub.rendering.theme.projection import build_projection
+from trans_novel.epub.layout import source_node_digest
 from trans_novel.epub.slots import (
     normalized_source_text,
     normalized_target_text,
@@ -469,6 +472,7 @@ def _theme_scope(
     segments: list[Segment],
     block_refs: dict[tuple[int, ...], etree._Element],
     source_refs: list[_SourceRef],
+    layout_nodes: tuple[tuple[tuple[int, ...], etree._Element, str], ...],
 ) -> ResourceThemeScope:
     paths: dict[etree._Element, tuple[int, ...]] = {}
     stack = [(root, ())]
@@ -503,6 +507,14 @@ def _theme_scope(
                 )
                 for source, targets, map_descendants in source_refs
             ),
+            layout_bindings=tuple(
+                LayoutBinding(
+                    source_path=source_path,
+                    target_paths=(paths[target],),
+                    source_sha256=source_sha256,
+                )
+                for source_path, target, source_sha256 in layout_nodes
+            ),
             preserve_resource=preserve_resource,
         )
     except KeyError:
@@ -529,6 +541,24 @@ def render_source_resource(
         raise ValueError(f"EPUB resource digest mismatch: {href}")
     tree, mode = parse_source_markup(data, expected_mode)
     root = tree.getroot()
+    layout_nodes: tuple[tuple[tuple[int, ...], etree._Element, str], ...] = ()
+    if scope_sink is not None:
+        source_projection = build_projection(root)
+        layout_nodes = tuple(
+            (
+                path,
+                node,
+                source_node_digest(
+                    node.tag.rsplit("}", 1)[-1].lower(),
+                    dict(node.attrib),
+                    "".join(node.itertext()),
+                ),
+            )
+            for index, (node, path) in enumerate(
+                zip(source_projection.nodes, source_projection.paths, strict=True)
+            )
+            if source_projection.snapshot["nodes"][index]["isTextBlock"]
+        )
     if bilingual and has_reserved_source_collision(root):
         raise ValueError(f"EPUB reserved bilingual marker collision: {href}")
     writes: list[tuple[etree._Element, str, str]] = []
@@ -602,5 +632,5 @@ def render_source_resource(
             source_refs=source_refs if scope_sink is not None else None,
         )
     if scope_sink is not None:
-        scope_sink[href] = _theme_scope(root, href, segments, block_refs, source_refs)
+        scope_sink[href] = _theme_scope(root, href, segments, block_refs, source_refs, layout_nodes)
     return serialize_source_tree(tree, data, mode)

@@ -65,10 +65,15 @@ class TestOutputSelection(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, _INVALID):
                 load_output_selection(store, source_bytes_sha256="A" * 64)
 
-            for payload in ([], {"selection": {}, "origins": {}}, {"schema_version": 2}):
+            cases = (
+                ([], _INVALID),
+                ({"selection": {}, "origins": {}}, _INVALID),
+                ({"schema_version": 2}, _INVALID),
+                ({"schema_version": 3}, _UNKNOWN),
+            )
+            for payload, expected in cases:
                 with self.subTest(payload=payload):
                     store.write_json(str(path), payload)
-                    expected = _INVALID if isinstance(payload, list) else _UNKNOWN
                     with self.assertRaisesRegex(ValueError, expected):
                         load_output_selection(store, source_bytes_sha256=_SOURCE_A)
 
@@ -88,6 +93,30 @@ class TestOutputSelection(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, _INVALID) as raised:
                 load_output_selection(store, source_bytes_sha256=_SOURCE_A)
             self.assertNotIn("private book text", str(raised.exception))
+
+    def test_valid_v1_snapshot_is_discarded_only_after_source_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(os.path.join(directory, "book"))
+            payload = {
+                "schema_version": 1,
+                "source_bytes_sha256": _SOURCE_A,
+                "selection": {
+                    "override_theme": {
+                        "rules": "builtin:legacy-javascript",
+                        "styles": "builtin:chinese-reading",
+                    }
+                },
+                "origins": {"override_theme.rules": "legacy.yaml"},
+            }
+            store.write_json(str(_selection_path(store)), payload)
+
+            with self.assertRaisesRegex(ValueError, _MISMATCH):
+                load_output_selection(store, source_bytes_sha256=_SOURCE_B)
+            self.assertIsNone(load_output_selection(store, source_bytes_sha256=_SOURCE_A))
+            self.assertIn(
+                '"event": "output_selection_obsolete"',
+                Path(store.event_log_path).read_text(encoding="utf-8"),
+            )
 
     def test_save_rejects_non_json_values_before_creating_a_record(self):
         with tempfile.TemporaryDirectory() as directory:

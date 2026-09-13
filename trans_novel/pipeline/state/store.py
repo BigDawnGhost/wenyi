@@ -6,6 +6,8 @@
   context.json          滚动上下文；
   analysis.json         全局分析产物；
   glossary.db            术语库；
+  layout_work.json       EPUB 布局分析检查点；
+  layout_profile.json    已接受的 EPUB 布局分析结果；
   report.json            QA 报告；
   usage.json             本书跨续跑累计的 LLM token 用量；
   events.jsonl           追加式行为日志。
@@ -115,6 +117,8 @@ class RunStore:
         self.context_path = os.path.join(run_dir, "context.json")
         self.analysis_path = os.path.join(run_dir, "analysis.json")
         self.glossary_path = os.path.join(run_dir, "glossary.db")
+        self.layout_work_path = os.path.join(run_dir, "layout_work.json")
+        self.layout_profile_path = os.path.join(run_dir, "layout_profile.json")
         self.report_path = os.path.join(run_dir, "report.json")
         self.epub_verification_path = os.path.join(run_dir, "epub_verification.json")
         self.usage_path = os.path.join(run_dir, "usage.json")
@@ -448,6 +452,18 @@ class RunStore:
     def load_analysis(self) -> dict | None:
         self._ensure_migrated()
         return self.read_json(self.analysis_path) if os.path.isfile(self.analysis_path) else None
+
+    def load_layout_work(self) -> dict | None:
+        return (
+            self.read_json(self.layout_work_path) if os.path.isfile(self.layout_work_path) else None
+        )
+
+    def load_layout_profile(self) -> dict | None:
+        return (
+            self.read_json(self.layout_profile_path)
+            if os.path.isfile(self.layout_profile_path)
+            else None
+        )
 
     def save_report(self, data: dict) -> None:
         self.write_json(self.report_path, data)

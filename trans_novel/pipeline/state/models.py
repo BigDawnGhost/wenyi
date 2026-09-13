@@ -28,6 +28,7 @@ NodeStatus = Literal[
 ]
 NODE_PREPARE = "prepare"
 NODE_ANALYZE = "analyze"
+NODE_LAYOUT = "layout"
 NODE_MINE_TERMS = "mine_terms"
 NODE_NAME_TERMS = "name_terms"
 NODE_TRANSLATE = "translate"
@@ -42,6 +43,7 @@ SCOPE_CHAPTER = "chapter"
 BEST_EFFORT_NODES = frozenset({NODE_MINE_TERMS, NODE_NAME_TERMS})
 
 _NODE_DESCENDANTS: dict[str, tuple[tuple[str, bool | str], ...]] = {
+    NODE_LAYOUT: ((NODE_ASSEMBLE, False),),
     NODE_MINE_TERMS: ((NODE_NAME_TERMS, False),),
     NODE_NAME_TERMS: ((NODE_TRANSLATE, "all"),),
     NODE_TRANSLATE: ((NODE_POLISH, True),),

@@ -13,6 +13,7 @@ from trans_novel.pipeline.nodes import (
     AnalyzeNode,
     AssembleNode,
     DeterministicQANode,
+    LayoutNode,
     MineTermsNode,
     NameTermsNode,
     PolishNode,
@@ -26,6 +27,7 @@ from trans_novel.pipeline.state import (
     NODE_ANALYZE,
     NODE_ASSEMBLE,
     NODE_DETERMINISTIC_QA,
+    NODE_LAYOUT,
     NODE_MINE_TERMS,
     NODE_NAME_TERMS,
     NODE_POLISH,
@@ -56,6 +58,13 @@ def build_node_factory(
             doc=shared.doc,
             glossary=shared.glossary(),
             frozen_book=shared.frozen_book(),
+        ),
+        NODE_LAYOUT: lambda shared, ci: LayoutNode(
+            analyzer=shared.agents.layout_analyzer,
+            config=config,
+            inventory=shared.layout_inventory,
+            profile=shared.layout_profile,
+            refresh=goal.reanalyze_layout,
         ),
         NODE_MINE_TERMS: lambda shared, ci: MineTermsNode(
             miner=shared.agents.miner, config=config, frozen_book=shared.frozen_book()

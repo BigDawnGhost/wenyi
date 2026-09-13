@@ -18,8 +18,9 @@ from trans_novel.assemble.epub.rendering.source_dom import (
     resolve_element_path,
     serialize_source_tree,
 )
-from trans_novel.assemble.epub.rendering.theme.classification import validate_script
+from trans_novel.assemble.epub.rendering.theme.cascade import source_specificity_bound
 from trans_novel.assemble.epub.rendering.theme.contracts import (
+    LayoutBinding,
     ResourceThemePlan,
     ResourceThemeScope,
     ThemeBundle,
@@ -32,11 +33,19 @@ from trans_novel.assemble.epub.rendering.theme.planning import (
     tree_sha256,
     validate_resource_plan,
 )
+from trans_novel.assemble.epub.rendering.theme.projection import build_projection
+from trans_novel.assemble.epub.rendering.theme.source_css import collect_source_stylesheets
 from trans_novel.epub.archive import (
     MetadataZipFile,
     ZipSafetyError,
     preflight_zip,
     read_member,
+)
+from trans_novel.epub.layout import (
+    LAYOUT_POLICY_VERSION,
+    LayoutAssignment,
+    LayoutProfile,
+    source_node_digest,
 )
 from trans_novel.epub.navigation import resolve_epub_href
 from trans_novel.epub.package import HTML_MEDIA, read_package
@@ -83,11 +92,12 @@ def _tokens(value: object) -> set[str]:
     return {token.lower() for token in str(value or "").split()}
 
 
-def _opf_semantics(
-    tree: etree._ElementTree,
+def package_protected_resources(
+    opf: etree._ElementTree,
     model: dict[str, object],
 ) -> tuple[set[str], set[str]]:
-    root = tree.getroot()
+    """返回包级语义要求保护及 fixed-layout 的 HTML 资源。"""
+    root = opf.getroot()
     elements = [node for node in root.iter() if isinstance(node.tag, str)]
     metadata_layouts = [
         str(node.text or "").strip().lower()
@@ -337,20 +347,72 @@ def _write_css(archive: MetadataZipFile, plan: ResourceThemePlan) -> None:
     archive.writestr(info, plan.css)
 
 
+def _assignments_for(
+    layout: LayoutProfile | None, resource: str, manifest_href: object
+) -> tuple[LayoutAssignment, ...]:
+    if layout is None:
+        return ()
+    exact = tuple(item for item in layout.assignments if item.resource_href == resource)
+    logical = (
+        tuple(item for item in layout.assignments if item.resource_href == manifest_href)
+        if isinstance(manifest_href, str) and manifest_href != resource
+        else ()
+    )
+    if exact and logical:
+        raise ThemeError("theme_layout", "ambiguous_resource", resource=resource)
+    return exact or logical
+
+
+def _identity_scope(
+    data: bytes,
+    assignments: tuple[LayoutAssignment, ...],
+    *,
+    resource: str,
+) -> ResourceThemeScope:
+    if not assignments:
+        return ResourceThemeScope()
+    try:
+        tree, _ = parse_source_markup(data)
+        projection = build_projection(tree.getroot())
+    except (ValueError, etree.LxmlError, ThemeError):
+        raise ThemeError("theme_layout", "invalid_binding", resource=resource) from None
+    eligible = {
+        path: node
+        for index, (node, path) in enumerate(zip(projection.nodes, projection.paths, strict=True))
+        if projection.snapshot["nodes"][index]["isTextBlock"]
+    }
+    bindings: list[LayoutBinding] = []
+    for assignment in assignments:
+        node = eligible.get(assignment.path)
+        if node is None:
+            raise ThemeError("theme_layout", "invalid_binding", resource=resource)
+        bindings.append(
+            LayoutBinding(
+                source_path=assignment.path,
+                target_paths=(assignment.path,),
+                source_sha256=source_node_digest(
+                    node.tag.rsplit("}", 1)[-1].lower(),
+                    dict(node.attrib),
+                    "".join(node.itertext()),
+                ),
+            )
+        )
+    return ResourceThemeScope(layout_bindings=tuple(bindings))
+
+
 class ThemeService:
-    """使用不可变主题资源生成针对具体元素的排版计划，验证后再应用到 EPUB。"""
+    """使用不可变主题资源和布局档案生成计划，验证后再应用到 EPUB。"""
 
-    __slots__ = ("_bilingual_rules", "_general_rules", "bundle")
+    __slots__ = ("_bilingual_rules", "_general_rules", "bundle", "layout")
 
-    def __init__(self, bundle: ThemeBundle) -> None:
-        if (bundle.script is None) != (bundle.general_css is None):
-            raise ThemeError("theme_config", "theme_pair_required")
-        try:
-            validate_script(bundle)
-        except ThemeError as error:
-            error.resource = "override_theme.rules"
-            raise
+    def __init__(self, bundle: ThemeBundle, *, layout: LayoutProfile | None = None) -> None:
         self.bundle = bundle
+        try:
+            self.layout = LayoutProfile.from_dict(layout.to_dict()) if layout is not None else None
+        except (AttributeError, TypeError, ValueError):
+            raise ThemeError("theme_layout", "invalid_profile") from None
+        if self.layout is not None and self.layout.policy_version != LAYOUT_POLICY_VERSION:
+            raise ThemeError("theme_layout", "invalid_profile")
         self._general_rules = (
             parse_theme_css(bundle.general_css, resource="override_theme.styles")
             if bundle.general_css is not None
@@ -365,6 +427,40 @@ class ThemeService:
     def _active_rules(self, bilingual: bool) -> tuple[tuple[CssRule, ...], tuple[CssRule, ...]]:
         return self._general_rules, self._bilingual_rules if bilingual else ()
 
+    def preflight_source(self, path: str) -> None:
+        try:
+            archive = zipfile.ZipFile(path, "r")
+        except (OSError, ValueError, zipfile.BadZipFile):
+            raise _invalid_archive() from None
+        with archive:
+            try:
+                infos = preflight_zip(archive, read_members=False)
+            except (OSError, ValueError, ZipSafetyError, zipfile.BadZipFile):
+                raise _invalid_archive() from None
+            if not _valid_mimetype(archive, infos):
+                raise _invalid_archive()
+            package = _read_package_or_fail(archive)
+            opf_path = str(package.get("opf_path", ""))
+            model = package["model"]
+            assert isinstance(model, dict)
+            opf_tree = _parse_xml(
+                read_member(archive, archive.getinfo(opf_path)), resource=opf_path
+            )
+            protected, fixed = package_protected_resources(opf_tree, model)
+            _check_collisions(archive, infos, model, posixpath.dirname(opf_path))
+            for item in _html_resources(model):
+                resource = str(item["path"])
+                if resource in protected | fixed:
+                    continue
+                data = read_member(archive, archive.getinfo(resource))
+                try:
+                    tree, _ = parse_source_markup(data)
+                    build_projection(tree.getroot())
+                    stylesheets = collect_source_stylesheets(archive, tree.getroot(), resource)
+                    source_specificity_bound(stylesheets, resource=resource)
+                except (ValueError, etree.LxmlError):
+                    raise ThemeError("theme_css", "invalid_markup", resource=resource) from None
+
     def plan_archive(
         self,
         path: str,
@@ -373,8 +469,10 @@ class ThemeService:
         bilingual: bool,
     ) -> ThemePlan | None:
         general_rules, bilingual_rules = self._active_rules(bilingual)
-        if self.bundle.script is None and not bilingual_rules:
+        if not general_rules and not bilingual_rules:
             return None
+        if general_rules and self.layout is None:
+            raise ThemeError("theme_layout", "layout_required")
         try:
             archive = zipfile.ZipFile(path, "r")
         except (OSError, ValueError, zipfile.BadZipFile):
@@ -400,16 +498,25 @@ class ThemeService:
             _check_collisions(archive, infos, model, opf_dir)
             opf_data = read_member(archive, archive.getinfo(opf_path))
             opf_tree = _parse_xml(opf_data, resource=opf_path)
-            package_protected, fixed = _opf_semantics(opf_tree, model)
+            package_protected, fixed = package_protected_resources(opf_tree, model)
 
             resources: list[ResourceThemePlan] = []
             warnings: list[tuple[str, str]] = []
             roles: Counter[str] = Counter()
             protected_count = 0
+            matched_assignments = 0
             for item in _html_resources(model):
                 resource = str(item["path"])
                 data = read_member(archive, archive.getinfo(resource))
-                scope = scopes.get(resource, ResourceThemeScope())
+                assignments = (
+                    _assignments_for(self.layout, resource, item.get("href"))
+                    if general_rules
+                    else ()
+                )
+                matched_assignments += len(assignments)
+                scope = scopes.get(resource)
+                if scope is None:
+                    scope = _identity_scope(data, assignments, resource=resource)
                 ordinal = len(resources)
                 css_path = (
                     f"{opf_dir}/tn-theme/style-{ordinal}.css"
@@ -428,6 +535,7 @@ class ThemeService:
                         ordinal=ordinal,
                         css_path=css_path,
                         package_protected=resource in package_protected or resource in fixed,
+                        layout_assignments=assignments,
                     )
                 except ThemeError as error:
                     error.resource = error.resource or resource
@@ -439,6 +547,12 @@ class ThemeService:
                 warnings.extend(resource_warnings)
                 roles.update(resource_roles)
                 protected_count += count
+            if (
+                general_rules
+                and self.layout is not None
+                and matched_assignments != len(self.layout.assignments)
+            ):
+                raise ThemeError("theme_layout", "unmapped_resource")
             if general_rules and not roles:
                 warnings.append(("zero_role_coverage", "<archive>"))
             plan = ThemePlan(
@@ -462,8 +576,8 @@ class ThemeService:
         ordinal: int,
         bilingual: bool,
         protected: bool,
+        manifest_href: object,
     ) -> None:
-        # 复用编译策略校验地址和内联优先级，不重新执行用户脚本。
         try:
             expected, _, _, _ = plan_resource(
                 archive,
@@ -475,12 +589,67 @@ class ThemeService:
                 ordinal=ordinal,
                 css_path=resource.css_path,
                 package_protected=protected,
-                admitted_markers=resource.markers,
+                layout_assignments=(
+                    _assignments_for(self.layout, resource.resource_href, manifest_href)
+                    if self._general_rules
+                    else ()
+                ),
             )
         except ThemeError:
             raise _invalid_plan(resource.resource_href) from None
         if expected != resource:
             raise _invalid_plan(resource.resource_href)
+
+    def _resource_replacement(
+        self,
+        archive: zipfile.ZipFile,
+        resource: ResourceThemePlan,
+        *,
+        ordinal: int,
+        bilingual: bool,
+        protected: set[str],
+        fixed: set[str],
+        model: dict[str, object],
+    ) -> bytes:
+        try:
+            data = read_member(archive, archive.getinfo(resource.resource_href))
+        except (KeyError, OSError, ValueError, ZipSafetyError, zipfile.BadZipFile):
+            raise _invalid_archive() from None
+        try:
+            tree, mode = parse_source_markup(data)
+        except (ValueError, etree.LxmlError):
+            raise ThemeError(
+                "theme_css",
+                "invalid_markup",
+                resource=resource.resource_href,
+            ) from None
+        if (
+            hashlib.sha256(data).hexdigest() != resource.before_sha256
+            or mode != resource.parse_mode
+            or tree_sha256(tree, resource=resource.resource_href) != resource.before_tree_sha256
+        ):
+            raise _invalid_plan(resource.resource_href)
+        is_protected = resource.resource_href in protected | fixed
+        validate_resource_plan(tree, resource, package_protected=is_protected)
+        manifest_href = next(
+            (
+                item.get("href")
+                for item in _html_resources(model)
+                if item.get("path") == resource.resource_href
+            ),
+            None,
+        )
+        self._admit_resource(
+            archive,
+            data,
+            resource,
+            ordinal,
+            bilingual,
+            is_protected,
+            manifest_href,
+        )
+        _apply_resource(tree, resource)
+        return serialize_source_tree(tree, data, resource.parse_mode)
 
     def apply_archive(self, path: str, plan: ThemePlan) -> None:
         self._apply_archive(path, plan)
@@ -514,7 +683,7 @@ class ThemeService:
                     raise _invalid_archive() from None
                 opf_tree = _parse_xml(opf_data, resource=plan.opf_path)
                 opf_digest = tree_sha256(opf_tree, resource=plan.opf_path)
-                protected, fixed = _opf_semantics(opf_tree, model)
+                protected, fixed = package_protected_resources(opf_tree, model)
                 if opf_digest != plan.opf_before_tree_sha256:
                     raise _invalid_plan(plan.opf_path)
                 opf_dir = posixpath.dirname(plan.opf_path)
@@ -524,45 +693,18 @@ class ThemeService:
                 except ThemeError:
                     raise _invalid_plan() from None
 
-                replacements: dict[str, bytes] = {}
-                for ordinal, resource in enumerate(plan.resources):
-                    try:
-                        info = source.getinfo(resource.resource_href)
-                        data = read_member(source, info)
-                    except (KeyError, OSError, ValueError, ZipSafetyError, zipfile.BadZipFile):
-                        raise _invalid_archive() from None
-                    try:
-                        tree, mode = parse_source_markup(data)
-                    except (ValueError, etree.LxmlError):
-                        raise ThemeError(
-                            "theme_css",
-                            "invalid_markup",
-                            resource=resource.resource_href,
-                        ) from None
-                    if (
-                        hashlib.sha256(data).hexdigest() != resource.before_sha256
-                        or mode != resource.parse_mode
-                        or tree_sha256(tree, resource=resource.resource_href)
-                        != resource.before_tree_sha256
-                    ):
-                        raise _invalid_plan(resource.resource_href)
-                    validate_resource_plan(
-                        tree,
-                        resource,
-                        package_protected=resource.resource_href in protected | fixed,
-                    )
-                    self._admit_resource(
+                replacements = {
+                    resource.resource_href: self._resource_replacement(
                         source,
-                        data,
                         resource,
-                        ordinal,
-                        plan.bilingual,
-                        resource.resource_href in protected | fixed,
+                        ordinal=ordinal,
+                        bilingual=plan.bilingual,
+                        protected=protected,
+                        fixed=fixed,
+                        model=model,
                     )
-                    _apply_resource(tree, resource)
-                    replacements[resource.resource_href] = serialize_source_tree(
-                        tree, data, resource.parse_mode
-                    )
+                    for ordinal, resource in enumerate(plan.resources)
+                }
                 _apply_manifest(opf_tree, plan.resources, opf_dir)
                 replacements[plan.opf_path] = serialize_source_tree(opf_tree, opf_data, "xml")
                 if not plan.resources:

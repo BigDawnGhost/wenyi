@@ -254,7 +254,7 @@ quality: balanced
 
 ### EPUB themes
 
-To enable the packaged general classifier and Chinese reading style, replace the `output`
+To enable source-layout analysis and the packaged Chinese reading style, replace the `output`
 mapping in your config with:
 
 ```yaml
@@ -264,7 +264,6 @@ output:
     enabled: true
     order: target_first
   override_theme:
-    rules: builtin:general
     styles: builtin:chinese-reading
   bilingual_styles: builtin:bilingual
 ```
@@ -276,29 +275,56 @@ from the same working directory and saved state without calling translation mode
 trans-novel --config config.yaml tools assemble book.epub --format epub
 ```
 
+**Reassembly can still incur analyst-model cost.** With general styling enabled, missing or
+stale source-layout data is analyzed automatically using the `analyst` role. Valid saved results
+are reused. Changing CSS alone does not repeat layout analysis. To request a fresh analysis:
+
+```bash
+trans-novel --config config.yaml tools assemble book.epub --format epub --reanalyze-layout
+```
+
+- The model sees original source markup, context and relevant original CSS, not translated text
+  or your output CSS. It returns only semantic roles for host-issued IDs, never executable code.
+  Class names are book-local grouping evidence, not universal meanings.
+- Groups are sampled and checked against held-out nodes. Conflicting or unknown samples trigger
+  per-node analysis of the remaining group, which can approach full-book cost. Rare unsampled
+  exceptions can still be missed. Unknown nodes do not default to body. General theme CSS applies
+  only to accepted non-null role elements: custom `p` or `*` selectors cannot bypass this boundary.
+  Bilingual source styling is independent. Unknown nodes can still inherit CSS from themed
+  ancestors; this is not visual isolation.
 - Existing CLI output flags override explicit config fields, then saved output choices, then
   defaults. Omitted fields preserve saved choices; `override_theme: null` explicitly clears the
-  saved general theme. Disabling both variants normalizes to mono-only.
+  saved general theme and disables layout analysis. Bilingual-only styling needs no model.
+  Disabling both variants normalizes to mono-only.
 - `bilingual.order` accepts `target_first` or `source_first`. `bilingual` must be a mapping,
-  and a non-null `override_theme` requires both `rules` and `styles`; unknown fields,
-  unsupported built-ins, empty paths and wrong types are rejected.
-- Custom `rules`, `styles`, and `bilingual_styles` paths resolve relative to the config file,
-  with `~` expansion. Resolved paths and their origins are saved with the source-bound selection.
+  and a non-null `override_theme` requires `styles`. Remove the old `rules` key: it is rejected,
+  not ignored. Unknown fields, unsupported built-ins, empty paths and wrong types are rejected.
+- Custom `styles` and `bilingual_styles` paths resolve relative to the config file, with `~`
+  expansion. Resolved paths and origins are saved with the source-bound selection.
   A custom bilingual stylesheet replaces the packaged one.
-- Theme bytes and effective output choices determine the EPUB output digest. Editing JS/CSS
-  rebuilds the output, not translations; moving identical assets does not change that digest.
-  Source-backed and generated EPUBs use the same theme for mono and bilingual output.
+- On first use after the cutover, a valid source-matching version-1 saved presentation selection
+  is discarded with `output_selection_obsolete`, not migrated. Supply the new CSS-only config
+  above to select general styling; otherwise current defaults apply. Old presentation cache
+  does not block automatic missing-profile analysis, and paid translations are untouched.
+  Malformed snapshots, unknown versions and source mismatches still fail.
+- CSS bytes, effective output choices and the semantic layout profile determine the EPUB output
+  digest. CSS/profile changes rebuild output, not paid translations; moving identical CSS does
+  not change that digest. Accepted profiles remain reusable after analyst configuration changes.
+  Refresh failure stops assembly while retaining the previous accepted profile.
+- Source-backed and generated EPUBs use the same role data for mono and bilingual output.
+  Bilingual source copies are not reclassified. The original source identity must still match;
+  a missing original EPUB cannot be reconstructed from translations to bypass this check.
+- Notes and note references can be styled without changing content, IDs, links, backlinks or
+  structure. Navigation, code, covers and preserved source scopes remain protected. Package-declared
+  cover/title-page and fixed-layout resources are excluded before layout analysis, avoiding model
+  cost and unused-source-CSS failures for those resources.
+  CSS supports a restricted reading-style subset; see the [layout and theme contract](docs/epub-theme-design.md).
 - TXT output keeps bilingual ordering and saved EPUB selections, but reads no theme assets
-  and runs no JavaScript. It records that EPUB presentation is inapplicable.
-- Only explicitly selected, trusted local scripts run. No Node.js installation or bundled fonts
-  are needed. JavaScript classifies immutable snapshots; it cannot mutate the DOM or access
-  host files or networking. CSS supports a restricted reading-style subset, not arbitrary
-  browser CSS. See the [theme contract](docs/epub-theme-design.md) for limits and protected content.
-- Preflight checks run before paid work, but actual translated text can still expose a
-  classifier error at export. Fix the theme and rerun `tools assemble`; translations are retained.
-  Every requested EPUB is independently verified before any final file is replaced.
-  Replacements are sequential, not atomic as a group; a later I/O failure retains durable
-  receipts for already published files.
+  and runs no layout analysis. No bundled fonts or executable theme runtime are required.
+- Static source/CSS safety checks are model-free; role-dependent preflight follows analysis
+  before body translation. Every requested EPUB is independently verified before any final file
+  is replaced. Replacements are sequential, not atomic as a group; a later I/O failure retains
+  durable receipts for already published files.
 
 ## 工作流程
 
@@ -310,6 +336,7 @@ trans-novel --config config.yaml tools assemble book.epub --format epub
 → 模型识别源语言（或使用配置指定语言）
 → 全章源文语义分类：纯引用章保留原文，其余进入后续翻译流程
 → 分析样章，建立风格指南与初始术语表
+→ 启用 EPUB 通用样式时：分析原文排版角色（或复用已保存结果）
 → 源文侧术语候选挖掘 → 一次性全书定名
 → 按章翻译（balanced/quality 每次只提交一个待译段，严格校验单值 JSON）
 → 批后确定性 lint，命中可安全修复的问题即定向重译

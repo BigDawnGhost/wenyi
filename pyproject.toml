@@ -13,7 +13,6 @@ dependencies = [
     "ebooklib>=0.18",      # EPUB 读写
     "typer>=0.12",         # CLI
     "rich>=13.7",          # 表格 / 进度条
-    "quickjs-ng==0.16.2.1", # 嵌入式 EPUB 主题规则运行时
     "tinycss2==1.4.0",      # EPUB 主题 CSS 解析
 ]
 

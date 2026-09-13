@@ -10,6 +10,7 @@ from trans_novel.pipeline.nodes.finish import (
     TitlesNode,
 )
 from trans_novel.pipeline.nodes.glossary import extract_and_store, store_extracted_terms
+from trans_novel.pipeline.nodes.layout import LayoutNode, current_layout_state
 from trans_novel.pipeline.nodes.polish import PolishNode
 from trans_novel.pipeline.nodes.prepare import AnalyzeNode, PrepareNode
 from trans_novel.pipeline.nodes.prescan import MineTermsNode, NameTermsNode
@@ -26,6 +27,7 @@ __all__ = [
     "AnalyzeNode",
     "AssembleNode",
     "DeterministicQANode",
+    "LayoutNode",
     "MineTermsNode",
     "NameTermsNode",
     "PolishNode",
@@ -37,6 +39,7 @@ __all__ = [
     "align_epub_translations",
     "chapter_term_snapshot",
     "count_segments",
+    "current_layout_state",
     "extract_and_store",
     "extract_batch_glossary",
     "resume_batches",

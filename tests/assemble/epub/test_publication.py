@@ -473,7 +473,7 @@ class TestEpubBatchPublication(unittest.TestCase):
         source = root / "source.epub"
         write_phase9_epub(str(source))
         store, _ = _run(str(source), str(root / "state"))
-        theme = ThemeService(resolve_theme(None, None, "builtin:bilingual"))
+        theme = ThemeService(resolve_theme(None, "builtin:bilingual"))
         requests = [
             EpubOutput(
                 root / name,

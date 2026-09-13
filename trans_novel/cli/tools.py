@@ -6,7 +6,7 @@ import typer
 
 from trans_novel.benchmark.cli import benchmark_app
 from trans_novel.cli import common as cli_common
-from trans_novel.pipeline.execution import ReadinessError
+from trans_novel.pipeline.execution import ReadinessError, RequiredNodeFailed
 from trans_novel.pipeline.quality import lock, open_glossary, resolve
 from trans_novel.pipeline.state import IdentityMismatchError
 
@@ -96,6 +96,11 @@ def assemble(
         "--bilingual/--no-bilingual",
         help="覆盖配置文件中的双语版产出开关",
     ),
+    reanalyze_layout: bool = typer.Option(
+        False,
+        "--reanalyze-layout",
+        help="忽略已接受的 EPUB 布局分析并重新分析",
+    ),
 ):
     """回填生成译文文件（默认 EPUB）。"""
     from trans_novel.pipeline import Application
@@ -115,8 +120,10 @@ def assemble(
             out_path=out,
             mono=mono,
             bilingual=bilingual,
+            reanalyze_layout=reanalyze_layout,
+            progress=lambda _done, _total, message: console.print(message),
         )
-    except (IdentityMismatchError, ReadinessError) as error:
+    except (IdentityMismatchError, ReadinessError, RequiredNodeFailed) as error:
         console.print(f"[red]{error}[/]")
         raise typer.Exit(2) from error
     if fmt == "epub":

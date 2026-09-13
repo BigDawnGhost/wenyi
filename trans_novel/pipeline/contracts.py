@@ -140,6 +140,7 @@ class ExecutionGoal:
     only_chapter: int | None = None
     out_format: str = "epub"
     out_path: str | None = None
+    reanalyze_layout: bool = False
 
 
 GOAL_PREPARE = ExecutionGoal(name="prepare", phases=("prepare", "prescan"))
@@ -148,7 +149,17 @@ GOAL_TRANSLATE = ExecutionGoal(
 )
 GOAL_RUN_ALL = ExecutionGoal(
     name="run_all",
-    phases=("prepare", "prescan", "translate", "titles", "qa", "repair", "report", "assemble"),
+    phases=(
+        "prepare",
+        "layout",
+        "prescan",
+        "translate",
+        "titles",
+        "qa",
+        "repair",
+        "report",
+        "assemble",
+    ),
 )
 
 
@@ -170,12 +181,18 @@ def report_goal() -> ExecutionGoal:
     return ExecutionGoal(name="report", phases=("report",))
 
 
-def assemble_goal(*, out_format: str = "epub", out_path: str | None = None) -> ExecutionGoal:
+def assemble_goal(
+    *,
+    out_format: str = "epub",
+    out_path: str | None = None,
+    reanalyze_layout: bool = False,
+) -> ExecutionGoal:
     return ExecutionGoal(
         name="assemble",
-        phases=("assemble",),
+        phases=("layout", "assemble"),
         out_format=out_format,
         out_path=out_path,
+        reanalyze_layout=reanalyze_layout,
     )
 
 

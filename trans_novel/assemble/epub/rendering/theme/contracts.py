@@ -23,22 +23,19 @@ class ThemeError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class ThemeBundle:
+    general_css: bytes | None
+    bilingual_css: bytes | None
+    digest: str
+    policy_version: str
+    provenance: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RoleAssignment:
     node_id: int
     role: str
     level: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ThemeBundle:
-    script: bytes | None
-    general_css: bytes | None
-    bilingual_css: bytes | None
-    digest: str
-    engine_version: str
-    api_version: int
-    policy_version: str
-    provenance: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,9 +46,17 @@ class SourcePair:
 
 
 @dataclass(frozen=True, slots=True)
+class LayoutBinding:
+    source_path: ElementPath
+    target_paths: tuple[ElementPath, ...]
+    source_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceThemeScope:
     excluded_paths: tuple[ElementPath, ...] = ()
     source_pairs: tuple[SourcePair, ...] = ()
+    layout_bindings: tuple[LayoutBinding, ...] = ()
     preserve_resource: bool = False
 
 

@@ -456,6 +456,39 @@ class TestCliConfig(unittest.TestCase):
         self.assertIn("章节编号 9 不存在", result.output)
         self.assertNotIn("Traceback", result.output)
 
+    def test_tools_assemble_forwards_layout_refresh(self):
+        config = Config.from_dict({"llm": fake_llm_dict()})
+        captured = {}
+
+        class Store(FakeStore):
+            @staticmethod
+            def exists():
+                return True
+
+        class FakeOrchestrator:
+            def __init__(self, _config):
+                pass
+
+            def assemble(self, store, input_path, **kwargs):
+                captured.update(store=store, input_path=input_path, kwargs=kwargs)
+                kwargs["progress"](0, 0, "layout status")
+                return ["out.epub"]
+
+        store = Store()
+        with (
+            patch("trans_novel.cli.common.load_config", return_value=config),
+            patch("trans_novel.cli.common.runstore_for", return_value=store),
+            patch("trans_novel.pipeline.Application", FakeOrchestrator),
+        ):
+            result = CliRunner().invoke(
+                app,
+                ["tools", "assemble", "input.epub", "--reanalyze-layout"],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(captured["kwargs"]["reanalyze_layout"])
+        self.assertIn("layout status", plain(result.output))
+
     def test_status_does_not_create_state_directory(self):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "novel.txt")
