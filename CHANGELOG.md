@@ -4,6 +4,7 @@ All notable changes to this project are documented here following [Keep a Change
 
 ## [Unreleased]
 
+- Release CI now gates the pinned embedded-theme runtime on Python 3.10 and 3.12 and freezes a separate no-`PATH` compatibility executable on all five targets; macOS Intel builds one ABI3 wheel from hash-pinned complete upstream wrapper and engine sources for both interpreters, without adding the probe to release archives or claiming a cross-platform pass before CI completes.
 - Polishing now sends one ID-addressed multi-paragraph request per existing chapter checkpoint, sharing one preceding source window and preserving per-segment quality checks and EPUB alignment.
 - Exhausted polish protocol retries retain valid items from the final response and keep affected raw translations; ambiguous IDs reject the whole batch without per-segment rescue calls. Fallbacks are counted as rejected rather than accepted.
 - New polishing calls use `polish.batch`, and completed batches record `checkpoint_batch_v1`; compatible runs keep completed results and resume pending checkpoints without a fingerprint or state-schema migration.

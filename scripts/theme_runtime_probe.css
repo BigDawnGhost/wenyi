@@ -1,0 +1,9 @@
+[data-tn-role="body"] {
+  font-size: 1.15em;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-tn-role="body"] {
+    color: #ddd;
+  }
+}
