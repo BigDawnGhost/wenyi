@@ -12,6 +12,7 @@ from unittest.mock import Mock
 from trans_novel.config import Config
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import STATUS_DONE, RunStore
 from trans_novel.review.run_store import ReviewOutcome, ReviewRunStore
@@ -125,6 +126,30 @@ def _fix_json(user: str, replacement: str) -> str:
         },
         ensure_ascii=False,
     )
+
+
+class MeteredFakeClient(FakeClient):
+    """Record small usage per offline call to verify autofix accounting across interruptions."""
+
+    def complete(
+        self,
+        messages,
+        *,
+        operation,
+        json_mode=False,
+        max_tokens=None,
+    ):
+        self.usage.record(
+            self.routes[operation].tier or "direct",
+            UsageSample(prompt_tokens=5, completion_tokens=3, total_tokens=8),
+            operation,
+        )
+        return super().complete(
+            messages,
+            operation=operation,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+        )
 
 
 class TestReviewAutofix(unittest.TestCase):
@@ -365,6 +390,86 @@ class TestReviewAutofix(unittest.TestCase):
             saved_index = debug.load_json("autofix/index.json")
             assert isinstance(saved_index, dict)
             self.assertEqual(saved_index["status"], "completed")
+
+    def test_interrupt_flushes_usage_and_resume_does_not_recount(self):
+        """A KeyboardInterrupt inside the autofix fixer must still flush the usage delta,
+        leave a resumable fixer trace, and let a re-run finish publication without
+        counting any call twice.
+        """
+        fixer_calls = 0
+
+        def handler(messages, tier, json_mode):
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "evidence-based review agent" in system:
+                return _agent_final(user)
+            if "cautious revision editor" in system:
+                nonlocal fixer_calls
+                fixer_calls += 1
+                if fixer_calls == 1:
+                    raise KeyboardInterrupt
+                return _fix_json(user, "Agent 终局译文。")
+            return "{}"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            issue = {
+                "issue_id": "review-00001",
+                "issue_key": "issue-1",
+                "chapter": 0,
+                "index": 0,
+                "type": "mistranslation",
+                "detail": "信息不完整",
+                "suggestion": "补全信息",
+                "evidence_refs": [],
+            }
+            outcome = _outcome(store, issues=[issue])
+            service = Orchestrator(
+                _config(str(Path(directory, "state"))),
+                client=MeteredFakeClient(handler=handler),
+            )._review_autofix
+
+            with self.assertRaises(KeyboardInterrupt):
+                service.run(store, outcome, [])
+
+            # The finally block must have persisted both model calls, including the
+            # interrupted one, into the review and book ledgers.
+            self.assertEqual(fixer_calls, 1)
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "正式译文。")
+            trace = json.loads(
+                Path(outcome.run_dir, "autofix/fixers/ch0-text0.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(trace["status"], "running")
+            self.assertFalse(Path(outcome.run_dir, "autofix/index.json").exists())
+            debug = ReviewRunStore.open_existing(outcome.run_dir)
+            interrupted_usage = debug.load_usage()
+            self.assertIsNotNone(interrupted_usage)
+            assert interrupted_usage is not None
+            self.assertEqual(interrupted_usage["totals"]["calls"], 2)
+            book_usage = store.load_usage()
+            self.assertIsNotNone(book_usage)
+            assert book_usage is not None
+            self.assertEqual(book_usage["totals"]["calls"], 2)
+
+            fixed = service.run(store, outcome, [])
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "Agent 终局译文。")
+            self.assertEqual(fixed.result["autofix"]["status"], "completed")
+            index = json.loads(
+                Path(outcome.run_dir, "autofix/index.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(index["status"], "completed")
+            # The finished agent trace is reused; only the interrupted fixer is retried.
+            self.assertEqual(fixer_calls, 2)
+            resumed_usage = debug.load_usage()
+            self.assertIsNotNone(resumed_usage)
+            assert resumed_usage is not None
+            self.assertEqual(resumed_usage["totals"]["calls"], 3)
+            self.assertEqual(resumed_usage["totals"]["total_tokens"], 24)
+            book_usage = store.load_usage()
+            self.assertIsNotNone(book_usage)
+            assert book_usage is not None
+            self.assertEqual(book_usage["totals"]["calls"], 3)
 
     def test_newer_review_prevents_publishing_an_older_pending_index(self):
         with tempfile.TemporaryDirectory() as directory:
