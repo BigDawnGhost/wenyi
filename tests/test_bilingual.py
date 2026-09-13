@@ -487,9 +487,9 @@ class TestCliBilingualFlags(unittest.TestCase):
                 }
 
         with (
-            patch("trans_novel.cli._load_config", return_value=cfg),
+            patch("trans_novel.commands.context.CommandContext.load_config", return_value=cfg),
             patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
-            patch("trans_novel.cli.os.path.isfile", return_value=True),
+            patch("trans_novel.commands.validation.os.path.isfile", return_value=True),
         ):
             result = CliRunner().invoke(app, ["translate", "input.txt", "--no-mono", "--bilingual"])
 
@@ -506,7 +506,7 @@ class TestCliBilingualFlags(unittest.TestCase):
             write_sample_txt(txt)
             state_dir = os.path.join(d, "state")
             _, cfg = _run(txt, state_dir)
-            with patch("trans_novel.cli._load_config", return_value=cfg):
+            with patch("trans_novel.commands.context.CommandContext.load_config", return_value=cfg):
                 result = CliRunner().invoke(app, ["assemble", txt, "--mono", "--bilingual"])
             self.assertEqual(result.exit_code, 0, result.output)
             flat = result.output.replace("\n", "")

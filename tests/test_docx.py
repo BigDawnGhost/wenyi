@@ -13,7 +13,8 @@ from typer.testing import CliRunner
 
 from trans_novel.assemble.docx_writer import _assemble_docx
 from trans_novel.assemble.writer import assemble
-from trans_novel.cli import _resolve_output_format, app
+from trans_novel.cli import app
+from trans_novel.commands.validation import resolve_output_format
 from trans_novel.config import Config
 from trans_novel.document_styles.docx import merge_align_results, proportional_range_placements
 from trans_novel.ingest.docx_reader import read_docx
@@ -391,11 +392,11 @@ class TestDocxAssemble(unittest.TestCase):
 
 
 class TestDocxCliDefaults(unittest.TestCase):
-    def test_resolve_output_format_defaults(self):
-        self.assertEqual(_resolve_output_format("a.docx", None), "docx")
-        self.assertEqual(_resolve_output_format("a.epub", None), "epub")
-        self.assertEqual(_resolve_output_format("a.docx", "epub"), "epub")
-        self.assertEqual(_resolve_output_format("a.txt", "docx"), "docx")
+    def testresolve_output_format_defaults(self):
+        self.assertEqual(resolve_output_format("a.docx", None), "docx")
+        self.assertEqual(resolve_output_format("a.epub", None), "epub")
+        self.assertEqual(resolve_output_format("a.docx", "epub"), "epub")
+        self.assertEqual(resolve_output_format("a.txt", "docx"), "docx")
 
     def test_translate_docx_defaults_out_format(self):
         captured: dict = {}
@@ -432,7 +433,7 @@ class TestDocxCliDefaults(unittest.TestCase):
             _write_sample_docx(path)
             with (
                 patch(
-                    "trans_novel.cli._load_config",
+                    "trans_novel.commands.context.CommandContext.load_config",
                     return_value=Config.from_dict({"llm": {"preset": "fake"}}),
                 ),
                 patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
@@ -475,7 +476,7 @@ class TestDocxCliDefaults(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("Hello.\n")
             with (
-                patch("trans_novel.cli._load_config", return_value=cfg),
+                patch("trans_novel.commands.context.CommandContext.load_config", return_value=cfg),
                 patch("trans_novel.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
             ):
                 result = CliRunner().invoke(app, ["translate", path, "--format", "docx"])

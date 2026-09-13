@@ -2,12 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/06-cli.md)
 
-Status: partially implemented; medium priority. Presentation extraction is complete. Baseline: `7471256`.
+Status: implemented; baseline: `7471256`.
 
-Implementation: progress lives in `commands/progress.py`, with clock/count tests in
-`tests/test_cli_progress.py`. Usage, timing and completion summaries now live in
-`commands/presentation.py`, receiving a console and data without accessing stores.
-Command/context slices remain pending. No CLI behavior or persistent timing scope changed.
+Implemented: application construction, early bootstrap, invocation context, validation and explicit workflow/inspection/glossary registrars are separate. The CLI entry point is 43 lines and retains the existing model registrar. Tests cover independent configurations and overrides, eager help, early errors and the installed console entry point; no module-global configuration selection remains.
 
 ## Evidence
 
