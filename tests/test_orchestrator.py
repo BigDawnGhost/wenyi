@@ -913,9 +913,14 @@ class TestSegmentLevelResume(unittest.TestCase):
 
 class TestBookUnderstanding(unittest.TestCase):
     def _translate_user(self, calls) -> str:
-        """Return user text from the last translation call."""
+        """Return user text from the last translation.body call (not a polish continuation)."""
         for c in reversed(calls):
-            if "literary translator" in c["messages"][0]["content"]:
+            if c.get("operation") == "translation.body":
+                return c["messages"][-1]["content"]
+            if "literary translator" in c["messages"][0]["content"] and (
+                "Polish the translations from your previous JSON response"
+                not in c["messages"][-1]["content"]
+            ):
                 return c["messages"][-1]["content"]
         return ""
 

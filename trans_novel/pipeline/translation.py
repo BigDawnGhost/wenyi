@@ -778,7 +778,8 @@ class TranslationService:
         whole-book translation, not inside each batch.
         """
         sources = [s.source for s in batch]
-        targets = self._runtime.translator.translate_batch(
+        translator = self._runtime.translator
+        targets = translator.translate_batch(
             sources,
             glossary_terms=terms,
             style=style,
@@ -795,9 +796,24 @@ class TranslationService:
         if self._runtime.config.pipeline.polish:
             for segment, target in zip(batch, targets):
                 segment.target_before_polish = target
-            polished = self._runtime.polisher.polish(
-                targets, glossary_terms=terms, style=style, next_source=next_source
-            )
+            turn = translator.last_batch_turn
+            indices = translator.last_batch_indices
+            polished: list[str] | None = None
+            if turn is not None and indices is not None:
+                # Continue the translation conversation so shared prefixes stay cacheable.
+                continued = self._runtime.polisher.polish_continue(
+                    turn,
+                    n=len(indices),
+                    next_source=next_source,
+                )
+                if continued is not None and len(continued) == len(indices):
+                    polished = list(targets)
+                    for index, text in zip(indices, continued):
+                        polished[index] = strip_ruby_markers(text)
+            if polished is None:
+                polished = self._runtime.polisher.polish(
+                    targets, glossary_terms=terms, style=style, next_source=next_source
+                )
             if len(polished) == len(targets):
                 targets = polished
         else:

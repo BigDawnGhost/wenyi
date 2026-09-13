@@ -39,10 +39,27 @@ def routing_handler(messages, tier, json_mode):
         return json.dumps({"titles": [f"标题{i}" for i in range(n)]}, ensure_ascii=False)
 
     if "literary translator" in system:
+        # Polish may append a user turn to the same translation conversation.
+        if "Polish the translations from your previous JSON response" in user:
+            n = None
+            for message in reversed(messages[:-1]):
+                if message.get("role") == "assistant":
+                    try:
+                        payload = json.loads(message["content"])
+                    except json.JSONDecodeError:
+                        payload = {}
+                    translations = payload.get("translations")
+                    if isinstance(translations, list):
+                        n = len(translations)
+                    break
+            if n is None:
+                match = re.search(r"exactly (\d+) items", user)
+                n = int(match.group(1)) if match else 0
+            return json.dumps({"polished": [f"润{i}" for i in range(n)]}, ensure_ascii=False)
         n = _count_numbered(user)
         return json.dumps({"translations": [f"译{i}" for i in range(n)]}, ensure_ascii=False)
 
-    if "Simplified Chinese prose editor" in system:
+    if "prose editor" in system:
         n = _count_numbered(user)
         return json.dumps({"polished": [f"润{i}" for i in range(n)]}, ensure_ascii=False)
 

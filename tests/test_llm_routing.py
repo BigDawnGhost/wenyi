@@ -202,7 +202,14 @@ def test_all_model_call_sites_use_operations():
             for node in ast.walk(ast.parse(path.read_text())):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                     continue
-                if node.func.attr not in {"complete", "complete_json", "_ask_text", "_ask_json"}:
+                if node.func.attr not in {
+                    "complete",
+                    "complete_json",
+                    "_ask_text",
+                    "_ask_json",
+                    "_ask_json_messages",
+                    "_complete_json_turn",
+                }:
                     continue
                 keywords = {item.arg: item.value for item in node.keywords}
                 assert "operation" in keywords, path
