@@ -199,3 +199,39 @@ def test_resume_rebuilds_reference_after_batch_budget_change_without_saving_it_e
     completed = FakeClient(handler=routing_handler)
     Orchestrator(config, client=completed).run(str(source))
     assert not [call for call in completed.calls if call["operation"] == "translation.body"]
+
+
+@pytest.mark.parametrize("polish", [False, True])
+def test_resume_after_target_save_completes_glossary_without_retranslation(
+    tmp_path, config, monkeypatch, polish
+):
+    config.pipeline.polish = polish
+    source = tmp_path / "book.txt"
+    source.write_text("An unfinished sentence continues here.", encoding="utf-8")
+    first_client = FakeClient(handler=routing_handler)
+    first = Orchestrator(config, client=first_client)
+    store = first.prepare(str(source))
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target_before_polish = "stale pre-polish value"
+    store.save_chapter(chapter)
+
+    with monkeypatch.context() as patcher:
+
+        def interrupt(*args, **kwargs):
+            raise KeyboardInterrupt("before glossary checkpoint")
+
+        patcher.setattr(first._translation, "extract_batch_glossary", interrupt)
+        with pytest.raises(KeyboardInterrupt, match="before glossary checkpoint"):
+            first.run(str(source))
+    saved = store.load_chapter(0).text_segments[0]
+    assert saved.target == ("润0" if polish else "译0")
+    assert saved.target_before_polish == ("译0" if polish else None)
+    assert not store.completed_batch_glossary_keys(0)
+
+    client = FakeClient(handler=routing_handler)
+    resumed = Orchestrator(config, client=client)
+    resumed.run(str(source))
+    store = resumed.run(str(source))
+    assert store.load_chapter(0).text_segments[0] == saved
+    assert store.completed_batch_glossary_keys(0)
+    assert not [c for c in client.calls if c["operation"] in {"translation.body", "polish.body"}]

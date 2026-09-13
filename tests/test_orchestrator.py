@@ -323,13 +323,17 @@ class TestOrchestrator(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             captured: list[list[list[dict[str, str]]]] = []
 
-            def process(batch, *args, annotation_contexts=None, **kwargs):
-                captured.append(annotation_contexts or [])
-                return [f"译{segment.source}" for segment in batch]
+            def process(plan, **kwargs):
+                from trans_novel.pipeline.translation_batch import BatchResult
+
+                captured.append(plan.annotation_contexts)
+                return BatchResult(
+                    tuple(f"译{source}" for source in plan.sources), (None,) * len(plan.sources)
+                )
 
             try:
                 with (
-                    patch.object(orch._translation, "process_batch", side_effect=process),
+                    patch.object(orch._translation._batches, "execute", side_effect=process),
                     patch.object(
                         orch._translation,
                         "extract_batch_glossary",

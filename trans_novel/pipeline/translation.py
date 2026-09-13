@@ -14,44 +14,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from trans_novel.markup.ruby import strip_ruby_markers
-
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
 from ..ingest.models import Segment
-from ..ingest.segmenter import batch_segments
 from .context import RollingContext
 from .docx_styles import DocxStyleService
 from .runstore import STATUS_DONE, RunStore
 from .title_translation import TitleTranslationService
+from .translation_batch import BatchPlan, TranslationBatchExecutor, resume_batches
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
     from .runtime import PipelineRuntime
 
 ProgressFn = Callable[[int, int, str], None]
-
-
-def _resume_batches(segments, max_chars: int) -> list[list]:
-    """Split character-budget batches again at completed/pending boundaries.
-    A changed budget may mix saved translations and empty targets in one batch. Group by
-    completion state to translate only missing paragraphs and avoid overwriting confirmed
-    content.
-    """
-    batches: list[list] = []
-    for raw_batch in batch_segments(segments, max_chars):
-        current: list = []
-        current_done: bool | None = None
-        for segment in raw_batch:
-            done = bool(segment.target and segment.target.strip())
-            if current and done != current_done:
-                batches.append(current)
-                current = []
-            current.append(segment)
-            current_done = done
-        if current:
-            batches.append(current)
-    return batches
 
 
 class TranslationService:
@@ -62,6 +38,7 @@ class TranslationService:
         self._annotations = annotations
         self._docx_styles = DocxStyleService(runtime)
         self._titles = TitleTranslationService(runtime.title_translator)
+        self._batches = TranslationBatchExecutor(runtime.translator, runtime.polisher)
 
     def run(
         self,
@@ -189,9 +166,7 @@ class TranslationService:
         for ci in chapter_indices:
             segments = store.load_chapter(ci).text_segments
             total += len(segments)
-            for batch in _resume_batches(
-                segments, self._runtime.config.segment.max_chars_per_batch
-            ):
+            for batch in resume_batches(segments, self._runtime.config.segment.max_chars_per_batch):
                 if all(segment.target and segment.target.strip() for segment in batch):
                     done += len(batch)
         return total, done
@@ -227,7 +202,7 @@ class TranslationService:
             annotation_context_registry,
         )
 
-        batches = _resume_batches(text_segs, self._runtime.config.segment.max_chars_per_batch)
+        batches = resume_batches(text_segs, self._runtime.config.segment.max_chars_per_batch)
         label = self.chapter_progress_label(chapter.title, ci)
         # Preparation often ends with a parsing label, but resume may first restore glossary terms.
         # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
@@ -317,18 +292,22 @@ class TranslationService:
             next_index = batch_start + len(b)
             # Read the immediate source neighbor without changing batches or saved context.
             next_source = text_segs[next_index].source if next_index < len(text_segs) else ""
-            targets = self.process_batch(
+            plan = BatchPlan.capture(
+                ci,
+                batch_start,
                 b,
                 term_snapshot,
                 ctx_text,
                 style,
                 book_synopsis,
                 chapter_digest,
-                annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
-                next_source=next_source,
+                annotation_contexts[batch_start : batch_start + len(b)],
+                next_source,
             )
-            for s, t in zip(b, targets):
-                s.target = t
+            result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
+            for segment, target, before_polish in zip(b, result.targets, result.before_polish):
+                segment.target = target
+                segment.target_before_polish = before_polish
             # Persist translations incrementally so interruption resumes after this batch.
             store.save_chapter(chapter)
             # Handle only annotated logical paragraphs touched by this batch, in source order.
@@ -486,49 +465,3 @@ class TranslationService:
         retained = min(len(targets), len(context.recent_targets))
         if retained:
             context.recent_targets[-retained:] = targets[-retained:]
-
-    def process_batch(
-        self,
-        batch,
-        terms,
-        ctx_text: str,
-        style: str,
-        book_synopsis: str = "",
-        chapter_digest: str = "",
-        annotation_contexts: list[list[dict[str, str]]] | None = None,
-        next_source: str = "",
-    ) -> list[str]:
-        """Translate then polish one batch.
-        Translate every paragraph in its own context without reusing text across positions.
-        Inject the book synopsis and chapter digest as stable prefixes. Normalize
-        punctuation on disposable export copies only. Model review runs separately after
-        whole-book translation, not inside each batch.
-        """
-        sources = [s.source for s in batch]
-        targets = self._runtime.translator.translate_batch(
-            sources,
-            glossary_terms=terms,
-            style=style,
-            context=ctx_text,
-            book_synopsis=book_synopsis,
-            chapter_digest=chapter_digest,
-            annotation_contexts=annotation_contexts,
-            next_source=next_source,
-        )
-        # Strip pronunciation markers accidentally copied from source into the model's translation.
-        targets = [strip_ruby_markers(target) for target in targets]
-
-        if self._runtime.config.pipeline.polish:
-            for segment, target in zip(batch, targets):
-                segment.target_before_polish = target
-            polished = self._runtime.polisher.polish(
-                targets, glossary_terms=terms, style=style, next_source=next_source
-            )
-            if len(polished) == len(targets):
-                targets = polished
-        else:
-            # Retranslation after configuration changes must not retain an older pre-polish snapshot.
-            for segment in batch:
-                segment.target_before_polish = None
-
-        return targets
