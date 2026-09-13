@@ -229,7 +229,7 @@ class TestReviewer(unittest.TestCase):
             )
 
         cfg = _cfg()
-        cfg.segment.max_chars_per_batch = 100_000
+        cfg.segment.max_tokens_per_batch = 100_000
         cfg.pipeline.review_concurrency = 1
         client = FakeClient(handler=handler)
         orch = Orchestrator(cfg, client=client)
@@ -311,8 +311,8 @@ class TestReviewer(unittest.TestCase):
             )
 
         cfg = _cfg()
-        cfg.segment.max_chars_per_batch = (
-            1  # A budget of three gives each three-character paragraph its own review block.
+        cfg.segment.max_tokens_per_batch = (
+            1  # Review packs at batch*3 tokens; each 4-token paragraph exceeds that alone.
         )
         cfg.pipeline.review_concurrency = 2
         orch = Orchestrator(cfg, client=FakeClient(handler=handler))
@@ -332,7 +332,7 @@ class TestReviewer(unittest.TestCase):
             for cache_first in (False, True):
                 with self.subTest(scope=scope, cache_first=cache_first):
                     cfg = _cfg()
-                    cfg.segment.max_chars_per_batch = 1
+                    cfg.segment.max_tokens_per_batch = 1
                     cfg.pipeline.review_concurrency = 2
                     cfg.pipeline.glossary_scope = scope
                     expected_calls = 1 if cache_first else 2
@@ -343,9 +343,10 @@ class TestReviewer(unittest.TestCase):
                         return _review_response([], 1)
 
                     orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+                    # Each source is >3 tokens so review's batch*3 budget keeps them in separate blocks.
                     segments = [
-                        Segment(index=0, source="Ann", target="Anne"),
-                        Segment(index=1, source="Bob", target="Robert"),
+                        Segment(index=0, source="Ann meets the council today", target="Anne"),
+                        Segment(index=1, source="Bob leaves before sunrise", target="Robert"),
                     ]
                     terms = [GlossaryTerm(source=s, target=s) for s in ("Ann", "Bob", "Unused")]
                     completed = []

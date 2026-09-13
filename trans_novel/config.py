@@ -27,10 +27,10 @@ llm:
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:
-  # Target batch size in characters, used as a rough token estimate.
-  max_chars_per_batch: 1800
-  # Split longer paragraphs at sentence boundaries; merge continuations back during export.
-  max_chars_per_segment: 1200
+  # Target batch size in tokens (tiktoken cl100k_base).
+  max_tokens_per_batch: 1800
+  # Split longer paragraphs at sentence boundaries by the same token budget; merge on export.
+  max_tokens_per_segment: 1200
 
 # ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
@@ -79,8 +79,12 @@ output:
 
 
 class SegmentConfig(BaseModel):
-    max_chars_per_batch: int = 1800
-    max_chars_per_segment: int = 1200
+    """Source packing budgets measured with tiktoken ``cl100k_base``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_tokens_per_batch: int = 1800
+    max_tokens_per_segment: int = 1200
 
 
 class PipelineConfig(BaseModel):
