@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.fake_llm import routing_handler
+from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.sample_data import write_sample_epub, write_sample_txt
 from trans_novel.agents.reviewer import ReviewOutputError
 from trans_novel.config import Config
@@ -96,35 +96,6 @@ def _config(state_dir: str):
             "paths": {"state_dir": state_dir},
         }
     )
-
-
-class MeteredFakeClient(FakeClient):
-    """Record small usage per offline call to verify review accounting isolation."""
-
-    def complete(
-        self,
-        messages,
-        *,
-        operation,
-        json_mode=False,
-        max_tokens=None,
-    ):
-        self.usage.record(
-            self.routes[operation].tier or "direct",
-            UsageSample(
-                prompt_tokens=5,
-                completion_tokens=3,
-                total_tokens=8,
-                cache_miss_tokens=5,
-            ),
-            operation,
-        )
-        return super().complete(
-            messages,
-            operation=operation,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
-        )
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -1752,6 +1723,76 @@ class TestReviewReporting(unittest.TestCase):
             self.assertNotEqual(Path(store.event_log_path).read_bytes(), events_before)
             self.assertEqual((store.load_usage() or {})["by_stage"]["review.scan"]["calls"], 1)
             self.assertEqual(client.usage_summary()["by_stage"]["review.scan"]["calls"], 1)
+
+    def test_review_interrupt_saves_usage_and_resumes_without_recounting(self):
+        """A KeyboardInterrupt after one completed reviewer response must flush the review
+        usage ledger and review_interrupted event, and a fresh orchestrator must resume
+        the same run dir without counting any call twice.
+        """
+
+        def interrupting_handler(messages, tier, json_mode):
+            if "translation reviewer" in messages[0]["content"]:
+                if reviewer_calls:
+                    raise KeyboardInterrupt
+                reviewer_calls.append("answered")
+                return _review_json(
+                    messages[-1]["content"],
+                    [
+                        {
+                            "index": 0,
+                            "type": "missing",
+                            "detail": "漏了一句",
+                            "suggestion": "补上",
+                        }
+                    ],
+                )
+            return routing_handler(messages, tier, json_mode)
+
+        reviewer_calls: list[str] = []
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client1 = MeteredFakeClient(handler=interrupting_handler)
+            orch1 = Orchestrator(cfg, client=client1)
+            store = orch1.run(txt)
+            translated_calls = len(client1.calls)
+
+            with self.assertRaises(KeyboardInterrupt):
+                orch1.run_review(txt)
+
+            review_dir = os.path.join(store.reviews_dir, sorted(os.listdir(store.reviews_dir))[-1])
+            run1_review_calls = len(client1.calls) - translated_calls
+            # The interrupted call still reached the transport and must be billed once.
+            self.assertEqual(run1_review_calls, 3)
+            with open(os.path.join(review_dir, "usage.json"), encoding="utf-8") as file:
+                interrupted_usage = json.load(file)
+            self.assertEqual(interrupted_usage["totals"]["calls"], run1_review_calls)
+            with open(os.path.join(review_dir, "events.jsonl"), encoding="utf-8") as file:
+                events = [json.loads(line)["event"] for line in file if line.strip()]
+            self.assertIn("review_interrupted", events)
+
+            client2 = MeteredFakeClient(handler=self._handler())
+            result = Orchestrator(cfg, client=client2).run_review(txt)
+
+            self.assertEqual(result["review_dir"], review_dir)
+            self.assertEqual(result["review_result"]["status"], "completed")
+            with open(os.path.join(review_dir, "events.jsonl"), encoding="utf-8") as file:
+                events = [json.loads(line)["event"] for line in file if line.strip()]
+            self.assertIn("review_resumed_from_checkpoint", events)
+            run2_review_calls = sum(call["stage"].startswith("review.") for call in client2.calls)
+            with open(os.path.join(review_dir, "usage.json"), encoding="utf-8") as file:
+                resumed_usage = json.load(file)
+            self.assertEqual(
+                resumed_usage["totals"]["calls"],
+                run1_review_calls + run2_review_calls,
+            )
+            book_usage = store.load_usage()
+            assert book_usage is not None
+            self.assertEqual(
+                book_usage["totals"]["calls"],
+                len(client1.calls) + len(client2.calls),
+            )
 
     def test_run_steps_records_review_usage_on_success_and_failure(self):
         """Combined workflows persist pre-review and review usage at their respective stage

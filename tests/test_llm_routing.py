@@ -266,14 +266,22 @@ def test_router_freezes_original_config_and_direct_selection(monkeypatch):
         client.complete([], operation="translation.typo")
 
 
-def test_dynamic_output_hint_respects_explicit_profile_cap():
+def test_dynamic_output_hint_respects_explicit_profile_cap(monkeypatch):
     client = RoutedLLMClient(_graph())
     observed = []
     client.set_event_sink(
         lambda event, **data: observed.append(data) if event == "llm_request_started" else None
     )
+    requested = []
+
+    def request(self, messages, model, *, json_mode, context):
+        requested.append(context.max_tokens)
+        return "ok"
+
+    monkeypatch.setattr(FakeProvider, "_request", request)
     client.complete([], operation="annotation.align", max_tokens=999)
     assert client.routes["annotation.align"].max_output_tokens == 256
+    assert requested == [256]
     config = Config.from_dict({"llm": {"preset": "deepseek"}})
     assert resolve_routes(config.llm)["synopsis.chapter"].max_output_tokens == 4096
     with pytest.raises(ValueError, match="Thinking mode"):
@@ -341,6 +349,28 @@ def test_only_explicit_stateless_failover_is_used(monkeypatch):
     calls.clear()
     with pytest.raises(TimeoutError):
         client.complete([], operation="polish.body")
+    assert calls == ["first"]
+
+
+class _ProviderDeniedError(Exception):
+    status_code = 401
+
+
+@pytest.mark.parametrize(
+    "error", [_ProviderDeniedError, ValueError], ids=["http-401", "local-value-error"]
+)
+def test_non_retryable_errors_neither_retry_nor_fail_over(monkeypatch, error):
+    config = _graph(routes={"translation.body": {"model": "one", "fallbacks": ["two"]}})
+    client = RoutedLLMClient(config)
+    calls = []
+
+    def request(self, messages, model, **kw):
+        calls.append(model.model)
+        raise error("denied")
+
+    monkeypatch.setattr(FakeProvider, "_request", request)
+    with pytest.raises(error):
+        client.complete([], operation="translation.body")
     assert calls == ["first"]
 
 

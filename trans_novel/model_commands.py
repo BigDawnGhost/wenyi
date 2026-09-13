@@ -173,6 +173,7 @@ def register_model_commands(
                 or any(
                     not isinstance(row, dict)
                     or set(row) != {"role", "content"}
+                    or not isinstance(row["role"], str)
                     or row["role"] not in {"system", "user", "assistant"}
                     or not isinstance(row["content"], str)
                     for row in payload

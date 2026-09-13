@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 import re
 
+from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.llm.usage import UsageSample
+
+METERED_TOTAL_TOKENS = 8  # prompt 5 + completion 3, recorded by MeteredFakeClient per call.
+
 
 def _count_numbered(text: str) -> int:
     return len(re.findall(r"^\[(\d+)\]", text, re.MULTILINE))
@@ -65,3 +70,32 @@ def routing_handler(messages, tier, json_mode):
         return "全书概览：主线与人物关系，整体基调。"
 
     return "{}" if json_mode else ""
+
+
+class MeteredFakeClient(FakeClient):
+    """Record fixed small usage per offline call so tests can assert stage-level accounting."""
+
+    def complete(
+        self,
+        messages,
+        *,
+        operation,
+        json_mode=False,
+        max_tokens=None,
+    ):
+        self.usage.record(
+            self.routes[operation].tier or "direct",
+            UsageSample(
+                prompt_tokens=5,
+                completion_tokens=3,
+                total_tokens=8,
+                cache_miss_tokens=5,
+            ),
+            operation,
+        )
+        return super().complete(
+            messages,
+            operation=operation,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+        )
