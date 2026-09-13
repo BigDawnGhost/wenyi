@@ -1,10 +1,10 @@
-# Maintainability refactoring proposals
+# Maintainability refactoring
 
 [简体中文](../zh/refactoring/README.md)
 
-Status: implementation in progress; each proposal records its completed slices. The inventory
-below was reviewed on 2026-09-11–12 against local `dev`, commit `7471256` (workflow timing merged).
-Implementation starts from `eef85d4`, retaining the subsequent recoverable Review error fix.
+Status: completed on 2026-09-14. All seven plans, slices A–F and the later body-batch/CLI-context work are implemented and committed separately on `refactor/maintainability`.
+
+The inventory below is historical: it was reviewed on 2026-09-11–12 against local `dev`, commit `7471256`. Implementation started from `eef85d4`, retaining the subsequent recoverable Review error fix.
 
 ## Recommendation
 
@@ -12,9 +12,9 @@ Refactor the Review workflows and the shared EPUB markup boundary first in archi
 
 This review inspected production Python files, their import relationships, significant methods, and relevant tests. Line counts include comments and blank lines. Function lengths include nested functions; the figures are navigation aids, not complexity scores or performance measurements. No private books, state, output, or external services were used.
 
-## Inventory and decisions
+## Baseline inventory and decisions
 
-| Current file | Lines | Largest function | Decision |
+| Baseline file | Lines | Largest function | Decision |
 | --- | ---: | --- | --- |
 | `pipeline/review_workflow.py` | 1,891 | `run_session`, 717 | High priority: session state, recovery, execution and reporting intersect. [01](01-review-workflow.md) |
 | `ingest/epub_reader.py` | 1,561 | `_logical_chapters`, 206 | High priority: archive reading and reusable markup processing share one module. [04](04-epub-markup.md) |
@@ -44,15 +44,11 @@ This review inspected production Python files, their import relationships, signi
 - Preserve dedicated locks, manifest-last initialization, export snapshots, append/merge usage semantics, and one outer workflow timer. Moving code must not add timers around individual extracted services.
 - Keep BabelDOC as an HTTP service. Introduce neither AGPL Python dependencies nor new network requirements.
 
-## Suggested implementation order
+## Completed implementation sequence
 
-Slice A is complete: progress and summary rendering have separate modules, and title
-planning, model calls and manifest commits have explicit owners. The implementation
-uses separate commits for progress, summaries, title planning and the title agent/service.
-Slice B is also complete: pure Review models/conflicts, trace/evidence ports, conversation
-replay and the arbiter each have explicit modules. Nine interrupted conversation boundaries
-are covered by in-memory replay tests; agents no longer import concrete Review stores.
-C–F and the later CLI-context/body-batch slices remain pending.
+All slices are complete. Review agents now use pure contracts and replay state; whole-book Review separates checkpoints, scan/fix decisions, execution and result writing. Autofix keeps candidate generation separate from recoverable publication. EPUB/HTML share deterministic markup ownership; DOCX shares pure style policy. Title and body executors return explicit results, and command groups receive an invocation context.
+
+The interruption tests also exposed and fixed three Review recovery defects: completed fixer calls could repeat, restored active patches could diverge from history records, and earlier scan counts could disappear from resumed summaries. The dedicated fix commit precedes the coordinator extraction.
 
 | Slice | Scope | Dependency and acceptance gate |
 | --- | --- | --- |
@@ -69,11 +65,27 @@ Suggested review signals: a coordinator should expose a readable sequence of sta
 
 ## Verification and completion
 
-Baseline: `uv run --no-sync pytest -q` passed **714 tests and 49 subtests**. That establishes the current offline baseline, not proof that future refactors are equivalent or that translation quality is measured.
+The original baseline passed **714 tests and 49 subtests**. Final validation passes **771 tests and 49 subtests**, Ruff lint/format checks and `git diff --check`. Focused Pyright checks for the new Review, Autofix, markup, document-style, batch and CLI boundaries report no errors or warnings.
+
+Six synthetic EPUB input models and 18 template exports match the pre-extraction implementation in all internal resources, including XHTML/OPF/navigation and binary assets. Six DOCX combinations match in Word XML and resources. Tests cover Review/conversation/publication interruptions, usage recovery, glossary checkpoints, target/source identity, shared-resource backfill, snapshots and CLI entry-point behavior. These are offline equivalence checks, not a translation-quality benchmark or a measured speedup.
+
+| Entry module | Baseline lines | Final lines |
+| --- | ---: | ---: |
+| `pipeline/review_workflow.py` | 1,891 | 419 |
+| `agents/review_loop.py` | 1,006 | 265 |
+| `pipeline/review_autofix.py` | 922 | 182 |
+| `ingest/epub_reader.py` | 1,561 | 120 |
+| `assemble/epub_writer.py` | 858 | 345 |
+| `assemble/html_renderer.py` | 747 | 226 |
+| `assemble/docx_writer.py` | 737 | 66 |
+| `pipeline/translation.py` | 791 | 467 |
+| `cli.py` | 953 | 43 |
+
+Line reductions describe responsibility moves; the extracted implementation still exists in focused modules. No prompt, model route, state schema, output policy or workflow timing scope was changed. No private book/state/output files were included.
 
 Before each implementation slice, retain or add behavior tests at its public boundary. Compare FakeClient operation/message sequences, structured outputs, stable IDs, persisted checkpoint content, usage totals and semantic event ordering; exclude timestamps, temporary paths and invocation IDs. Preserve request order where order is defined; concurrent calls need job-keyed comparison and deterministic merged output. Prefer structural EPUB/DOCX comparisons to ZIP byte equality.
 
-Run affected tests, `test_architecture_boundaries.py`, `test_orchestrator_contract.py`, Ruff checks and `git diff --check`. Cross-module state changes require the full suite. Extend architecture checks to recursively inspect new packages and disallow the newly removed dependencies; current tests have explicit file/module lists.
+Run affected tests, `test_architecture_boundaries.py`, `test_orchestrator_contract.py`, Ruff checks and `git diff --check`. Cross-module state changes require the full suite. Architecture checks now recursively inspect pipeline, agent, command, shared markup and document-style packages; pure Review contracts also cover Autofix records.
 
 Do not use real LLMs or private samples for extraction tests. If prompts, context, termination policy or other translation behavior actually change, apply the public-domain evaluation requirement in `CONTRIBUTING.md` separately.
 
