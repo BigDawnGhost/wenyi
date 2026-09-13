@@ -19,17 +19,20 @@ from trans_novel.agents.review_fixer import (
 from trans_novel.agents.review_loop import (
     ReviewAgentLoop,
     ReviewConflictArbiter,
-    apply_review_arbitrations,
-    build_conflict_groups,
-    normalize_review_issues,
 )
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.routing import inference_snapshot
+from trans_novel.review.conflicts import (
+    apply_review_arbitrations,
+    build_conflict_groups,
+    normalize_review_issues,
+)
 from trans_novel.review.evidence import BookEvidenceIndex
-from trans_novel.review.run_store import ReviewRunStore, review_candidate_id
+from trans_novel.review.models import review_candidate_id
+from trans_novel.review.run_store import ReviewRunStore
 
 
 def _config() -> Config:

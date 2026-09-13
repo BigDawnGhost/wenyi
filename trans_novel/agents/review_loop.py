@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-import unicodedata
-from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..config import Config
@@ -14,11 +11,17 @@ from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from ..review.evidence import BookEvidenceIndex
-from ..review.run_store import ReviewRunStore, review_candidate_id
+from ..review.models import (
+    CONSISTENCY_KINDS,
+    ReviewLoopOutcome,
+    clean_text,
+    normalize_value,
+    review_candidate_id,
+)
+from ..review.run_store import ReviewRunStore
 from . import prompts
 
 _ISSUE_TYPES = {"missing", "added", "mistranslation", "terminology", "pronoun"}
-_CONSISTENCY_KINDS = {"term", "pronoun", "fixed"}
 _MAX_ARBITRATION_PROPOSALS = 32
 _MAX_ARBITRATION_PAYLOAD_BYTES = 96_000
 _ARBITRATION_SAMPLE_TEXT_LIMIT = 1500
@@ -26,54 +29,6 @@ _ARBITRATION_SAMPLE_TEXT_LIMIT = 1500
 
 class ReviewLoopProtocolError(ValueError):
     """The agent loop returned content that violates the action protocol."""
-
-
-@dataclass(frozen=True)
-class ReviewLoopOutcome:
-    """The verified result of one review leaf block."""
-
-    issues: list[dict[str, Any]]
-    dismissed: list[dict[str, Any]]
-    fallback_reason: str = ""
-
-
-def _text(value: Any) -> str:
-    """Accept strings only and strip surrounding whitespace."""
-    return value.strip() if isinstance(value, str) else ""
-
-
-def _normalized(value: str) -> str:
-    """Normalize compatibility characters, width and case when comparing proposed values."""
-    return unicodedata.normalize("NFKC", value).casefold().strip()
-
-
-def _identity_text(value: Any) -> str:
-    """Normalize issue identity whitespace and compatibility forms to reduce variation across
-    rounds.
-    """
-    return re.sub(r"\s+", " ", _normalized(_text(value)))
-
-
-def _review_issue_key(issue: dict[str, Any]) -> str:
-    """Generate a stable issue key across review rounds, independent of temporary issue_id
-    values.
-    """
-    consistency = issue.get("consistency")
-    consistency_key = (
-        _identity_text(consistency.get("key")) if isinstance(consistency, dict) else ""
-    )
-    subject = consistency_key or _identity_text(issue.get("detail"))
-    payload = json.dumps(
-        [
-            issue.get("chapter"),
-            issue.get("index"),
-            _identity_text(issue.get("type")),
-            subject,
-        ],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return f"review-issue-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:20]}"
 
 
 def _safe_id(value: str) -> str:
@@ -200,10 +155,10 @@ class _ActionLoop:
                     for request in cached_parsed.get("requests", []):
                         if not isinstance(request, dict):
                             continue
-                        request_id = _text(request.get("request_id"))
+                        request_id = clean_text(request.get("request_id"))
                         if request_id:
                             seen_request_ids.add(request_id)
-                        tool = _text(request.get("tool"))
+                        tool = clean_text(request.get("tool"))
                         arguments = request.get("arguments")
                         if tool and isinstance(arguments, dict):
                             seen_requests.add(
@@ -312,14 +267,14 @@ class _ActionLoop:
                 for request in requests:
                     if not isinstance(request, dict):
                         raise ReviewLoopProtocolError("evidence_request_not_object")
-                    request_id = _text(request.get("request_id"))
+                    request_id = clean_text(request.get("request_id"))
                     if (
                         not request_id
                         or request_id in seen_request_ids
                         or request_id in current_ids
                     ):
                         raise ReviewLoopProtocolError("duplicate_evidence_request_id")
-                    tool = _text(request.get("tool"))
+                    tool = clean_text(request.get("tool"))
                     arguments = request.get("arguments")
                     if not tool or not isinstance(arguments, dict):
                         raise ReviewLoopProtocolError("invalid_evidence_request")
@@ -425,12 +380,12 @@ class ReviewAgentLoop:
             return {}
         if not isinstance(value, dict):
             raise ReviewLoopProtocolError("invalid_consistency")
-        kind = _text(value.get("kind"))
-        subject = _text(value.get("subject_source"))
-        proposed = _text(value.get("proposed_value"))
+        kind = clean_text(value.get("kind"))
+        subject = clean_text(value.get("subject_source"))
+        proposed = clean_text(value.get("proposed_value"))
         if not kind and not subject and not proposed:
             return {}
-        if kind not in _CONSISTENCY_KINDS or not subject or not proposed:
+        if kind not in CONSISTENCY_KINDS or not subject or not proposed:
             raise ReviewLoopProtocolError("invalid_consistency")
         return {
             "kind": kind,
@@ -533,7 +488,7 @@ class ReviewAgentLoop:
             for decision in decisions:
                 if not isinstance(decision, dict):
                     raise ReviewLoopProtocolError("decision_not_object")
-                candidate_id = _text(decision.get("candidate_id"))
+                candidate_id = clean_text(decision.get("candidate_id"))
                 if not candidate_id or candidate_id in by_id or candidate_id not in expected:
                     raise ReviewLoopProtocolError("invalid_candidate_decision")
                 by_id[candidate_id] = decision
@@ -548,7 +503,7 @@ class ReviewAgentLoop:
                 candidate = candidates_by_id[candidate_id]
                 verdict = decision.get("verdict")
                 if verdict == "dismissed":
-                    reason = _text(decision.get("reason"))
+                    reason = clean_text(decision.get("reason"))
                     if not reason:
                         raise ReviewLoopProtocolError("dismissal_without_reason")
                     dismissed.append(
@@ -569,8 +524,10 @@ class ReviewAgentLoop:
                     continue
                 if verdict != "confirmed":
                     raise ReviewLoopProtocolError("invalid_candidate_verdict")
-                detail = _text(decision.get("detail")) or _text(candidate.get("detail"))
-                suggestion = _text(decision.get("suggestion")) or _text(candidate.get("suggestion"))
+                detail = clean_text(decision.get("detail")) or clean_text(candidate.get("detail"))
+                suggestion = clean_text(decision.get("suggestion")) or clean_text(
+                    candidate.get("suggestion")
+                )
                 if not detail or not suggestion:
                     raise ReviewLoopProtocolError("confirmed_issue_missing_text")
                 kept.append(
@@ -604,8 +561,8 @@ class ReviewAgentLoop:
                 ):
                     raise ReviewLoopProtocolError("new_issue_outside_chunk")
                 issue_type = issue.get("type")
-                detail = _text(issue.get("detail"))
-                suggestion = _text(issue.get("suggestion"))
+                detail = clean_text(issue.get("detail"))
+                suggestion = clean_text(issue.get("suggestion"))
                 if issue_type not in _ISSUE_TYPES or not detail or not suggestion:
                     raise ReviewLoopProtocolError("invalid_new_issue")
                 kept.append(
@@ -650,171 +607,6 @@ class ReviewAgentLoop:
             ]
             return ReviewLoopOutcome(fallback, [], fallback_reason=reason)
         return ReviewLoopOutcome(result["issues"], result["dismissed"])
-
-
-def normalize_review_issues(
-    issues: list[dict[str, Any]],
-    evidence: BookEvidenceIndex,
-) -> list[dict[str, Any]]:
-    """Normalize deterministically and assign round-local IDs and stable cross-round issue
-    keys.
-    """
-    prepared: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    for issue in sorted(
-        issues,
-        key=lambda item: (
-            item.get("chapter", -1),
-            item.get("index", -1),
-            item.get("_chunk_id", ""),
-            item.get("type", ""),
-        ),
-    ):
-        item = dict(issue)
-        consistency = item.get("consistency")
-        if isinstance(consistency, dict):
-            kind = _text(consistency.get("kind"))
-            subject = _text(consistency.get("subject_source"))
-            proposed = _text(consistency.get("proposed_value"))
-            if kind in _CONSISTENCY_KINDS and subject and proposed:
-                term, ambiguous = evidence.canonical_term(subject)
-                if ambiguous:
-                    item["consistency"] = {
-                        "kind": kind,
-                        "subject_source": subject,
-                        "canonical_source": "",
-                        "proposed_value": proposed,
-                        "ambiguous_sources": ambiguous,
-                        "auto_arbitration": False,
-                    }
-                else:
-                    canonical = term.source if term is not None else subject
-                    canonical_key = (
-                        f"glossary:{canonical}" if term is not None else _normalized(canonical)
-                    )
-                    item["consistency"] = {
-                        "kind": kind,
-                        "subject_source": subject,
-                        "canonical_source": canonical,
-                        "key": f"{kind}:{canonical_key}",
-                        "proposed_value": proposed,
-                    }
-            else:
-                item["consistency"] = {}
-        issue_key = _review_issue_key(item)
-        if issue_key in seen_keys:
-            continue
-        seen_keys.add(issue_key)
-        item["issue_key"] = issue_key
-        item["issue_id"] = f"review-{len(prepared) + 1:05d}"
-        prepared.append(item)
-    return prepared
-
-
-def build_conflict_groups(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Find mutually exclusive values proposed for one consistency subject across review
-    blocks.
-    """
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for issue in issues:
-        consistency = issue.get("consistency")
-        if not isinstance(consistency, dict):
-            continue
-        key = _text(consistency.get("key"))
-        proposed = _text(consistency.get("proposed_value"))
-        if key and proposed:
-            grouped.setdefault(key, []).append(issue)
-
-    conflicts: list[dict[str, Any]] = []
-    for key, group in grouped.items():
-        chunks = {issue.get("_chunk_id") for issue in group}
-        values = {
-            _normalized(_text(issue.get("consistency", {}).get("proposed_value")))
-            for issue in group
-        }
-        values.discard("")
-        if len(chunks) < 2 or len(values) < 2:
-            continue
-        conflicts.append(
-            {
-                "consistency_key": key,
-                "issues": group,
-                "first_position": min(
-                    (issue.get("chapter", -1), issue.get("index", -1)) for issue in group
-                ),
-            }
-        )
-    conflicts.sort(key=lambda item: (item["first_position"], item["consistency_key"]))
-    for ordinal, conflict in enumerate(conflicts, 1):
-        conflict["conflict_id"] = f"review-conflict-{ordinal:04d}"
-    return conflicts
-
-
-def apply_review_arbitrations(
-    issues: list[dict[str, Any]],
-    arbitrations: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Apply final arbitration to the recommendation view without modifying text or glossary.
-    For suggested conflicts, retain every confirmed issue: locations whose original
-    proposals lost still need correction. Rewrite their suggestions to the chosen value and
-    retain pre-arbitration versions for round auditing. For unresolved conflicts, keep all
-    issues and mark them unresolved.
-    """
-    by_id = {
-        str(issue["issue_id"]): dict(issue)
-        for issue in issues
-        if isinstance(issue.get("issue_id"), str)
-    }
-    superseded_rows: list[dict[str, Any]] = []
-    for arbitration in arbitrations:
-        conflict_id = _text(arbitration.get("conflict_id"))
-        status = arbitration.get("status")
-        annotation = {
-            "conflict_id": conflict_id,
-            "status": status,
-            "recommended_value": _text(arbitration.get("recommended_value")),
-            "reason": _text(arbitration.get("reason")),
-        }
-        if status == "suggested":
-            for issue_id in arbitration.get("rejected_issue_ids", []):
-                issue = by_id.get(str(issue_id))
-                if issue is not None:
-                    recommended = annotation["recommended_value"]
-                    consistency = issue.get("consistency")
-                    issue_annotation = {**annotation, "action": "rewritten"}
-                    superseded_rows.append({**issue, "arbitration": issue_annotation})
-                    previous_detail = _text(issue.get("detail"))
-                    previous_suggestion = _text(issue.get("suggestion"))
-                    issue["pre_arbitration_detail"] = previous_detail
-                    issue["pre_arbitration_suggestion"] = previous_suggestion
-                    issue["detail"] = (
-                        f"Final arbitration requires the expression here to use “{recommended}” consistently."
-                    )
-                    issue["suggestion"] = (
-                        f"Use “{recommended}” consistently for this expression as determined by final arbitration."
-                    )
-                    if isinstance(consistency, dict):
-                        issue["consistency"] = {
-                            **consistency,
-                            "proposed_value": recommended,
-                        }
-                    issue["arbitration"] = issue_annotation
-            for issue_id in arbitration.get("supported_issue_ids", []):
-                if str(issue_id) in by_id:
-                    by_id[str(issue_id)]["arbitration"] = annotation
-        elif status == "unresolved":
-            for issue_id in arbitration.get("issue_ids", []):
-                if str(issue_id) in by_id:
-                    by_id[str(issue_id)]["arbitration"] = annotation
-
-    order = {
-        str(issue["issue_id"]): position
-        for position, issue in enumerate(issues)
-        if isinstance(issue.get("issue_id"), str)
-    }
-    final = sorted(by_id.values(), key=lambda issue: order.get(str(issue["issue_id"]), -1))
-    superseded_rows.sort(key=lambda issue: order.get(str(issue["issue_id"]), -1))
-    return final, superseded_rows
 
 
 class ReviewConflictArbiter:
@@ -863,8 +655,8 @@ class ReviewConflictArbiter:
 
         proposal_groups: dict[str, list[dict[str, Any]]] = {}
         for issue in conflict["issues"]:
-            proposed = _text(issue["consistency"]["proposed_value"])
-            proposal_groups.setdefault(_normalized(proposed), []).append(issue)
+            proposed = clean_text(issue["consistency"]["proposed_value"])
+            proposal_groups.setdefault(normalize_value(proposed), []).append(issue)
         if len(proposal_groups) > _MAX_ARBITRATION_PROPOSALS:
             return unresolved(
                 f"Too many conflicting values ({len(proposal_groups)}) for selective arbitration."
@@ -897,8 +689,10 @@ class ReviewConflictArbiter:
                         "chapter": issue["chapter"],
                         "index": issue["index"],
                         "type": issue["type"],
-                        "detail": _text(issue["detail"])[:_ARBITRATION_SAMPLE_TEXT_LIMIT],
-                        "suggestion": _text(issue["suggestion"])[:_ARBITRATION_SAMPLE_TEXT_LIMIT],
+                        "detail": clean_text(issue["detail"])[:_ARBITRATION_SAMPLE_TEXT_LIMIT],
+                        "suggestion": clean_text(issue["suggestion"])[
+                            :_ARBITRATION_SAMPLE_TEXT_LIMIT
+                        ],
                         "segment_ref": segment.ref if segment is not None else "",
                         "source": (
                             segment.source[:_ARBITRATION_SAMPLE_TEXT_LIMIT]
@@ -956,23 +750,23 @@ class ReviewConflictArbiter:
             status = data.get("status")
             if status not in {"suggested", "unresolved"}:
                 raise ReviewLoopProtocolError("invalid_arbitration_status")
-            recommended = _text(data.get("recommended_value"))
-            reason = _text(data.get("reason"))
+            recommended = clean_text(data.get("recommended_value"))
+            reason = clean_text(data.get("reason"))
             if status == "suggested" and not recommended:
                 raise ReviewLoopProtocolError("suggestion_without_value")
             if not reason:
                 raise ReviewLoopProtocolError("arbitration_without_reason")
             if status == "suggested":
-                normalized_recommendation = _normalized(recommended)
+                normalized_recommendation = normalize_value(recommended)
                 if normalized_recommendation not in proposal_groups:
                     raise ReviewLoopProtocolError("recommended_value_not_proposed")
-                recommended = _text(
+                recommended = clean_text(
                     proposal_groups[normalized_recommendation][0]["consistency"]["proposed_value"]
                 )
                 supported = [
                     str(issue["issue_id"])
                     for issue in conflict["issues"]
-                    if _normalized(_text(issue["consistency"]["proposed_value"]))
+                    if normalize_value(clean_text(issue["consistency"]["proposed_value"]))
                     == normalized_recommendation
                 ]
                 supported_set = set(supported)

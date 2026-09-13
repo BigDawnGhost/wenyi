@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
 from hashlib import sha256
 from threading import Lock
 from typing import Any
 
 from ..glossary.store import GlossaryTerm, source_matches_text, term_match_sources
 from ..ingest.models import Chapter
+from .models import SegmentRef
 
 
 def _normalized(value: str) -> str:
@@ -28,50 +28,6 @@ def _glossary_ref(source: str) -> str:
     """Generate stable glossary references without leaking arbitrary characters into IDs."""
     digest = sha256(source.encode("utf-8")).hexdigest()[:16]
     return f"glossary:{digest}"
-
-
-@dataclass(frozen=True)
-class SegmentRef:
-    """A reviewable paragraph with its stable book position."""
-
-    global_ordinal: int
-    chapter: int
-    text_index: int
-    segment_index: int
-    source: str
-    target: str
-    baseline_target: str
-    target_origin: str
-    chapter_title: str
-
-    @property
-    def ref(self) -> str:
-        """Return a stable ID for diagnostics and agent evidence references."""
-        return f"ch{self.chapter}:text{self.text_index}:seg{self.segment_index}"
-
-    def compact(self) -> dict[str, Any]:
-        """Serialize as an evidence payload."""
-        limit = 4000
-        payload = {
-            "ref": self.ref,
-            "chapter": self.chapter,
-            "text_index": self.text_index,
-            "segment_index": self.segment_index,
-            "chapter_title": self.chapter_title,
-            "source": self.source[:limit],
-            "target": self.target[:limit],
-            "target_origin": self.target_origin,
-            "source_truncated": len(self.source) > limit,
-            "target_truncated": len(self.target) > limit,
-        }
-        if self.target_origin == "shadow_override":
-            payload.update(
-                {
-                    "baseline_target": self.baseline_target[:limit],
-                    "baseline_target_truncated": len(self.baseline_target) > limit,
-                }
-            )
-        return payload
 
 
 class BookEvidenceIndex:

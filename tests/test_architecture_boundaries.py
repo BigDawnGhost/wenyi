@@ -219,18 +219,30 @@ class TestArchitectureBoundaries(unittest.TestCase):
                         )
 
     def test_review_package_exports_core_types(self):
-        """The top-level review package provides evidence and run-storage models."""
+        """The top-level review package exposes pure types without storage exports."""
         import importlib
 
         review = importlib.import_module("trans_novel.review")
-        for name in (
-            "BookEvidenceIndex",
+        names = {
             "SegmentRef",
-            "ReviewRunStore",
             "ReviewOutcome",
+            "ReviewLoopOutcome",
             "review_candidate_id",
-        ):
+        }
+        self.assertEqual(set(review.__all__), names)
+        for name in names:
             self.assertTrue(hasattr(review, name), f"trans_novel.review.{name} 缺失")
+        self.assertFalse(hasattr(review, "ReviewRunStore"))
+
+    def test_review_models_have_no_application_dependencies(self):
+        """Shared value types must not load agents, providers or persistent stores."""
+        path = TRANS_NOVEL_DIR / "review" / "models.py"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0)
+                self.assertNotEqual((node.module or "").split(".")[0], "trans_novel")
+            elif isinstance(node, ast.Import):
+                self.assertFalse(any(alias.name.startswith("trans_novel") for alias in node.names))
 
 
 if __name__ == "__main__":

@@ -14,7 +14,8 @@ from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import STATUS_DONE, RunStore
-from trans_novel.review.run_store import ReviewOutcome, ReviewRunStore
+from trans_novel.review.models import ReviewOutcome
+from trans_novel.review.run_store import ReviewRunStore
 
 
 def _config(state_dir: str) -> Config:

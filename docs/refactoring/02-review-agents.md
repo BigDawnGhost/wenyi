@@ -2,7 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/02-review-agents.md)
 
-Status: proposed; high priority. Baseline: `7471256`.
+Status: partially implemented; high priority. Baseline: `7471256`.
+
+Implementation: outcomes, segment references and stable identities now live in `review/models.py`; normalization, conflict grouping and applying decisions live in `review/conflicts.py`. Package exports contain only pure types. Trace contracts, replay and arbiter extraction remain pending.
 
 ## Evidence
 

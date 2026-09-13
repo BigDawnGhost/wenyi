@@ -20,7 +20,8 @@ from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.routing import inference_snapshot
 from ..llm.usage import validate_usage
 from ..review.evidence import BookEvidenceIndex
-from ..review.run_store import ReviewOutcome, ReviewRunStore, review_candidate_id
+from ..review.models import ReviewOutcome, review_candidate_id
+from ..review.run_store import ReviewRunStore
 from .docx_styles import DocxStyleService
 
 if TYPE_CHECKING:

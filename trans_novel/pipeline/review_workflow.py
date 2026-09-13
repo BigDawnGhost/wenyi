@@ -26,16 +26,19 @@ from ..agents.review_fixer import (
 from ..agents.review_loop import (
     ReviewAgentLoop,
     ReviewConflictArbiter,
-    apply_review_arbitrations,
-    build_conflict_groups,
-    normalize_review_issues,
 )
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.resources import prompt_fingerprint
 from ..llm.retrying import is_resumable_provider_interrupt
+from ..review.conflicts import (
+    apply_review_arbitrations,
+    build_conflict_groups,
+    normalize_review_issues,
+)
 from ..review.evidence import BookEvidenceIndex
-from ..review.run_store import ReviewOutcome, ReviewRunStore
+from ..review.models import ReviewOutcome
+from ..review.run_store import ReviewRunStore
 from .runstore import STATUS_DONE
 
 if TYPE_CHECKING:

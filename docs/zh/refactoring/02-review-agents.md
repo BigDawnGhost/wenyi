@@ -2,7 +2,9 @@
 
 [总览](README.md) · [English](../../refactoring/02-review-agents.md)
 
-状态：待实施；高优先级。基线：`7471256`。
+状态：部分实施；高优先级。基线：`7471256`。
+
+实施进展：结果、段落引用和稳定身份已提取到 `review/models.py`；归一化、冲突分组与决策应用已提取到 `review/conflicts.py`。包级导出仅包含纯类型。trace 契约、对话回放与仲裁器提取仍待实施。
 
 ## 证据
 
