@@ -19,9 +19,9 @@ from trans_novel.assemble.writer import assemble
 from trans_novel.assemble.writer_common import _default_out
 from trans_novel.cli import app
 from trans_novel.config import Config
-from trans_novel.ingest.epub_reader import annotate_epub_resource
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.markup.segments import annotate_epub_resource
 from trans_novel.pipeline.orchestrator import Orchestrator
 
 

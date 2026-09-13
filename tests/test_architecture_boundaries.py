@@ -300,3 +300,28 @@ class TestArchitectureBoundaries(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_shared_markup_has_no_workflow_or_archive_dependencies():
+    """The shared DOM layer depends only on markup and pure document models."""
+    for path in (TRANS_NOVEL_DIR / "markup").rglob("*.py"):
+        for module in _imported_modules(path):
+            if not module.startswith("trans_novel."):
+                continue
+            assert module.startswith(("trans_novel.markup", "trans_novel.ingest.models")), (
+                path,
+                module,
+            )
+
+
+def test_writers_do_not_import_reader_private_helpers():
+    for path in (TRANS_NOVEL_DIR / "assemble").rglob("*.py"):
+        for module in _imported_modules(path):
+            assert ".epub_reader" not in module, (path, module)
+
+
+def test_autofix_publisher_has_no_candidate_or_model_dependencies():
+    for module in _imported_modules(PIPELINE_DIR / "autofix_publish.py"):
+        assert not module.startswith(("trans_novel.agents", "trans_novel.llm")), module
+        assert "autofix_candidates" not in module
+        assert "autofix_verification" not in module

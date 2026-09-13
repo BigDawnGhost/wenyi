@@ -2,7 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/04-epub-markup.md)
 
-Status: proposed; high priority, high output-fidelity risk. Baseline: `7471256`.
+Status: implemented; baseline: `7471256`.
+
+Implemented: shared markup contracts, ruby, anchors, annotations and segmentation now serve both input and output. EPUB package/layout, navigation/resources/presentation and HTML inline/bilingual rendering have separate owners. Reader coordination is 120 lines, EPUB writer 345 and HTML renderer 226; anchor identities, template validation and export paths are unchanged.
 
 ## Evidence
 

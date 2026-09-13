@@ -14,9 +14,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from trans_novel.markup.ruby import strip_ruby_markers
+
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
-from ..ingest.epub_reader import strip_ruby_markers
 from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
 from .context import RollingContext

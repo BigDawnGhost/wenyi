@@ -21,15 +21,9 @@ from tests.sample_data import (
 )
 from trans_novel.assemble.html_renderer import _render_chapter_html
 from trans_novel.glossary.store import source_matches_text
-from trans_novel.ingest.epub_reader import (
-    _decode_markup,
-    _find_opf_path,
-    _parse_opf,
-    annotate_epub_resource,
-    peek_epub_title,
-    strip_ruby_markers,
-)
-from trans_novel.ingest.epub_toc import parse_toc_entries, resolve_epub_href
+from trans_novel.ingest.epub_package import _decode_markup, _find_opf_path, _parse_opf
+from trans_novel.ingest.epub_reader import peek_epub_title
+from trans_novel.ingest.epub_toc import parse_toc_entries
 from trans_novel.ingest.fb2_reader import read_fb2_binaries
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from trans_novel.ingest.segmenter import (
@@ -38,6 +32,9 @@ from trans_novel.ingest.segmenter import (
     load_document,
     split_long_segments,
 )
+from trans_novel.markup.anchors import resolve_epub_href
+from trans_novel.markup.ruby import strip_ruby_markers
+from trans_novel.markup.segments import annotate_epub_resource
 
 
 class TestTextIngest(unittest.TestCase):
