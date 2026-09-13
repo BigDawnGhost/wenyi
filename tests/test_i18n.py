@@ -329,7 +329,7 @@ def test_partial_non_chinese_run_resumes_without_retranslating_saved_batch():
             {
                 "language": {"source": "zh", "target": "en"},
                 "paths": {"state_dir": str(root / "state")},
-                "segment": {"max_chars_per_batch": 10},
+                "segment": {"max_tokens_per_batch": 10},
                 "pipeline": {"polish": False, "book_understanding": False},
             }
         )

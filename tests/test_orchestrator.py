@@ -87,7 +87,7 @@ def _config(state_dir: str):
                     "default_cheap": {"provider": "default", "model": "f"},
                 },
             },
-            "segment": {"max_chars_per_batch": 1800},
+            "segment": {"max_tokens_per_batch": 1800},
             "pipeline": {
                 "review": True,
                 "review_autofix": False,
@@ -234,7 +234,7 @@ class TestOrchestrator(unittest.TestCase):
             cfg = _config(os.path.join(directory, "state"))
             cfg.pipeline.polish = False
             cfg.pipeline.annotation_alignment = False
-            cfg.segment.max_chars_per_batch = 6
+            cfg.segment.max_tokens_per_batch = 6
             chapter = Chapter(
                 index=0,
                 segments=[
@@ -766,7 +766,7 @@ class TestSegmentLevelResume(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.segment.max_chars_per_batch = (
+            cfg.segment.max_tokens_per_batch = (
                 8  # Use roughly one paragraph per batch for precise resume assertions.
             )
             cfg.pipeline.polish = False  # Preserve translation tags for assertions; this setting is unrelated to resume behavior.
@@ -808,7 +808,7 @@ class TestSegmentLevelResume(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
             cfg.pipeline.polish = False
 
             first_client = FakeClient(handler=self._tr_handler("R1"))
@@ -819,7 +819,7 @@ class TestSegmentLevelResume(unittest.TestCase):
             store.set_chapter_status(0, STATUS_PENDING)
 
             # Changing the budget can still group completed and unset targets together.
-            cfg.segment.max_chars_per_batch = 50_000
+            cfg.segment.max_tokens_per_batch = 50_000
             second_client = FakeClient(handler=self._tr_handler("R2"))
             Orchestrator(cfg, client=second_client).run(txt, only_chapter=0)
 
@@ -841,7 +841,7 @@ class TestSegmentLevelResume(unittest.TestCase):
             cfg.pipeline.polish = False
             cfg.pipeline.review = False
             cfg.pipeline.book_understanding = False
-            cfg.segment.max_chars_per_batch = 8
+            cfg.segment.max_tokens_per_batch = 8
 
             store = Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R1"))).run(
                 txt, only_chapter=0
@@ -913,9 +913,14 @@ class TestSegmentLevelResume(unittest.TestCase):
 
 class TestBookUnderstanding(unittest.TestCase):
     def _translate_user(self, calls) -> str:
-        """Return user text from the last translation call."""
+        """Return user text from the last translation.body call (not a polish continuation)."""
         for c in reversed(calls):
-            if "literary translator" in c["messages"][0]["content"]:
+            if c.get("operation") == "translation.body":
+                return c["messages"][-1]["content"]
+            if "literary translator" in c["messages"][0]["content"] and (
+                "Polish the translations from your previous JSON response"
+                not in c["messages"][-1]["content"]
+            ):
                 return c["messages"][-1]["content"]
         return ""
 
@@ -1253,7 +1258,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.segment.max_chars_per_batch = (
+            cfg.segment.max_tokens_per_batch = (
                 8  # A review budget of 24 gives each paragraph its own block.
             )
             cfg.pipeline.review_agent_loop = False
@@ -1277,7 +1282,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.segment.max_chars_per_batch = (
+            cfg.segment.max_tokens_per_batch = (
                 8  # Split each chapter into multiple top-level review blocks.
             )
             cfg.pipeline.review_agent_loop = False
@@ -1369,7 +1374,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             cfg.pipeline.review_agent_loop = False
             cfg.pipeline.review_output_retries = 0
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
 
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
             orch.run(txt)
@@ -1682,7 +1687,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
             client = MeteredFakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
             store = orch.run(txt)
@@ -2355,7 +2360,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(directory, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(directory, "state"))
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
             cfg.pipeline.review_agent_loop = False
             cfg.pipeline.review_conflict_arbitration = False
             cfg.pipeline.review_fix_loop = True
@@ -2420,7 +2425,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(directory, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(directory, "state"))
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
             cfg.pipeline.review_agent_loop = False
             cfg.pipeline.review_conflict_arbitration = False
             cfg.pipeline.review_fix_loop = True
@@ -2486,7 +2491,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(directory, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(directory, "state"))
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
             cfg.pipeline.review_agent_loop = False
             cfg.pipeline.review_conflict_arbitration = False
             cfg.pipeline.review_fix_loop = True
@@ -2578,7 +2583,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(directory, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(directory, "state"))
-            cfg.segment.max_chars_per_batch = 100_000
+            cfg.segment.max_tokens_per_batch = 100_000
             cfg.pipeline.review_agent_loop = False
             cfg.pipeline.review_conflict_arbitration = False
             cfg.pipeline.review_fix_loop = True
@@ -2884,7 +2889,7 @@ class TestGlossaryScope(unittest.TestCase):
             cfg.pipeline.polish = False
             cfg.pipeline.review = False
             cfg.pipeline.book_understanding = False
-            cfg.segment.max_chars_per_batch = 10
+            cfg.segment.max_tokens_per_batch = 10
 
             client = FakeClient(handler=handler)
             Orchestrator(cfg, client=client).run(txt)
@@ -2908,7 +2913,7 @@ class TestGlossaryScope(unittest.TestCase):
             cfg.pipeline.polish = False
             cfg.pipeline.review = False
             cfg.pipeline.book_understanding = False
-            cfg.segment.max_chars_per_batch = 8
+            cfg.segment.max_tokens_per_batch = 8
 
             store = Orchestrator(cfg, client=FakeClient(handler=routing_handler)).run(
                 txt, only_chapter=0
@@ -2998,7 +3003,7 @@ class TestGlossaryScope(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             cfg.pipeline.polish = False
             cfg.pipeline.book_understanding = False
-            cfg.segment.max_chars_per_batch = 200
+            cfg.segment.max_tokens_per_batch = 200
 
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
             orch.run(txt)

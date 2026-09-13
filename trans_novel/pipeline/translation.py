@@ -40,14 +40,14 @@ def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
     return not bool(meta.get("babeldoc")) and meta.get("pdf_export") != "babeldoc"
 
 
-def _resume_batches(segments, max_chars: int) -> list[list]:
-    """Split character-budget batches again at completed/pending boundaries.
+def _resume_batches(segments, max_tokens: int) -> list[list]:
+    """Split token-budget batches again at completed/pending boundaries.
     A changed budget may mix saved translations and unset targets in one batch. Group by
     completion state to translate only missing paragraphs and avoid overwriting confirmed
     content. ``target is not None`` (including blank ``""``) counts as translated.
     """
     batches: list[list] = []
-    for raw_batch in batch_segments(segments, max_chars):
+    for raw_batch in batch_segments(segments, max_tokens):
         current: list = []
         current_done: bool | None = None
         for segment in raw_batch:
@@ -200,7 +200,7 @@ class TranslationService:
             segments = store.load_chapter(ci).text_segments
             total += len(segments)
             for batch in _resume_batches(
-                segments, self._runtime.config.segment.max_chars_per_batch
+                segments, self._runtime.config.segment.max_tokens_per_batch
             ):
                 if all(segment.target is not None for segment in batch):
                     done += len(batch)
@@ -238,7 +238,7 @@ class TranslationService:
             annotation_context_registry,
         )
 
-        batches = _resume_batches(text_segs, self._runtime.config.segment.max_chars_per_batch)
+        batches = _resume_batches(text_segs, self._runtime.config.segment.max_tokens_per_batch)
         label = self.chapter_progress_label(chapter.title, ci)
         # Preparation often ends with a parsing label, but resume may first restore glossary terms.
         # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
@@ -778,7 +778,8 @@ class TranslationService:
         whole-book translation, not inside each batch.
         """
         sources = [s.source for s in batch]
-        targets = self._runtime.translator.translate_batch(
+        translator = self._runtime.translator
+        targets = translator.translate_batch(
             sources,
             glossary_terms=terms,
             style=style,
@@ -795,9 +796,24 @@ class TranslationService:
         if self._runtime.config.pipeline.polish:
             for segment, target in zip(batch, targets):
                 segment.target_before_polish = target
-            polished = self._runtime.polisher.polish(
-                targets, glossary_terms=terms, style=style, next_source=next_source
-            )
+            turn = translator.last_batch_turn
+            indices = translator.last_batch_indices
+            polished: list[str] | None = None
+            if turn is not None and indices is not None:
+                # Continue the translation conversation so shared prefixes stay cacheable.
+                continued = self._runtime.polisher.polish_continue(
+                    turn,
+                    n=len(indices),
+                    next_source=next_source,
+                )
+                if continued is not None and len(continued) == len(indices):
+                    polished = list(targets)
+                    for index, text in zip(indices, continued):
+                        polished[index] = strip_ruby_markers(text)
+            if polished is None:
+                polished = self._runtime.polisher.polish(
+                    targets, glossary_terms=terms, style=style, next_source=next_source
+                )
             if len(polished) == len(targets):
                 targets = polished
         else:

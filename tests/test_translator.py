@@ -174,7 +174,7 @@ class TestMinerUEmptyTargetResume(unittest.TestCase):
             Segment(index=1, kind="p", source="junk", target=""),
             Segment(index=2, kind="p", source="b", target=None),
         ]
-        batches = _resume_batches(segments, max_chars=10_000)
+        batches = _resume_batches(segments, max_tokens=10_000)
         self.assertEqual([[s.index for s in batch] for batch in batches], [[0, 1], [2]])
 
 

@@ -61,6 +61,15 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
             self.assertTrue(cfg.pipeline.review_autofix)
             self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
+            self.assertEqual(cfg.segment.max_tokens_per_batch, 1800)
+            self.assertEqual(cfg.segment.max_tokens_per_segment, 1200)
+            self.assertIn("max_tokens_per_batch: 1800", generated)
+            self.assertIn("max_tokens_per_segment: 1200", generated)
+            self.assertNotIn("max_chars_per_batch", generated)
+
+    def test_removed_segment_char_keys_are_rejected(self):
+        with self.assertRaises(Exception):
+            Config.from_dict({"segment": {"max_chars_per_batch": 99}})
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:

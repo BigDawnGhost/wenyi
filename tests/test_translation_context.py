@@ -9,6 +9,7 @@ from tests.fake_llm import routing_handler
 from trans_novel.agents.polisher import Polisher
 from trans_novel.agents.translator import Translator
 from trans_novel.config import Config
+from trans_novel.ingest.tokens import count_tokens
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 
@@ -20,7 +21,7 @@ def config(tmp_path):
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
             "paths": {"state_dir": str(tmp_path / "state")},
-            "segment": {"max_chars_per_batch": 1, "max_chars_per_segment": 0},
+            "segment": {"max_tokens_per_batch": 1, "max_tokens_per_segment": 0},
             "pipeline": {
                 "review": False,
                 "polish": False,
@@ -110,13 +111,43 @@ def test_polisher_receives_reference_without_extra_output(config):
     assert _numbered_sources(user) == ["unfinished translation"]
 
 
+def test_polish_continue_reuses_translation_transcript(config):
+    def handler(messages, tier, json_mode):
+        user = messages[-1]["content"]
+        if "Polish the translations from your previous JSON response" in user:
+            return json.dumps({"polished": ["润色后"]})
+        return json.dumps({"translations": ["初译"]})
+
+    client = FakeClient(handler=handler)
+    translator = Translator(client, config)
+    targets = translator.translate_batch(["source"], next_source="continuation source")
+    assert targets == ["初译"]
+    assert translator.last_batch_turn is not None
+    polished = Polisher(client, config).polish_continue(
+        translator.last_batch_turn,
+        n=1,
+        next_source="continuation source",
+    )
+    assert polished == ["润色后"]
+    assert len(client.calls) == 2
+    assert [row["role"] for row in client.calls[1]["messages"]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert client.calls[1]["messages"][0]["content"] == client.calls[0]["messages"][0]["content"]
+    assert _next_source(client.calls[1]["messages"][-1]["content"]) == "continuation source"
+
+
 @pytest.mark.parametrize("recent_count", [0, 2])
 def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
     tmp_path, config, recent_count
 ):
     config.pipeline.polish = True
     config.pipeline.rolling_context_segments = recent_count
-    config.segment.max_chars_per_segment = 24
+    # 14 tokens under cl100k_base; a 10-token segment budget forces a continuation split.
+    config.segment.max_tokens_per_segment = 10
     source = tmp_path / "book.md"
     source.write_text(
         "# First\n\nShe knew that the answer would arrive after the long winter had ended."
@@ -136,10 +167,20 @@ def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
 
     orch.run(str(source))
 
-    for operation in ("translation.body", "polish.body"):
-        calls = [call for call in client.calls if call["operation"] == operation]
-        assert [_next_source(call["messages"][-1]["content"]) for call in calls] == expected
-        assert all(len(_numbered_sources(call["messages"][-1]["content"])) == 1 for call in calls)
+    translation_calls = [call for call in client.calls if call["operation"] == "translation.body"]
+    polish_calls = [call for call in client.calls if call["operation"] == "polish.body"]
+    assert [_next_source(call["messages"][-1]["content"]) for call in translation_calls] == expected
+    assert all(
+        len(_numbered_sources(call["messages"][-1]["content"])) == 1 for call in translation_calls
+    )
+    assert [_next_source(call["messages"][-1]["content"]) for call in polish_calls] == expected
+    for call in polish_calls:
+        roles = [row["role"] for row in call["messages"]]
+        assert roles == ["system", "user", "assistant", "user"]
+        assert (
+            "Polish the translations from your previous JSON response"
+            in call["messages"][-1]["content"]
+        )
     for chapter in before:
         after = store.load_chapter(chapter.index)
         assert [(s.index, s.source, s.cont) for s in after.segments] == [
@@ -183,7 +224,7 @@ def test_resume_rebuilds_reference_after_batch_budget_change_without_saving_it_e
     first_call = next(call for call in client.calls if call["operation"] == "translation.body")
     assert _next_source(first_call["messages"][-1]["content"]) == sources[1]
 
-    config.segment.max_chars_per_batch = len(sources[0]) + len(sources[1])
+    config.segment.max_tokens_per_batch = count_tokens(sources[0]) + count_tokens(sources[1])
     resumed = FakeClient(handler=routing_handler)
     Orchestrator(config, client=resumed).run(str(source))
     calls = [call for call in resumed.calls if call["operation"] == "translation.body"]
