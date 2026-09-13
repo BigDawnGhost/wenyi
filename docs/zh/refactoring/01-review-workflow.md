@@ -2,9 +2,9 @@
 
 [总览](README.md) · [English](../../refactoring/01-review-workflow.md)
 
-状态：部分实施；基线：`7471256`。
+状态：已实施；基线：`7471256`。
 
-实施进展：状态、检查点转换、审校块和轮次执行、扫描与修订纯决策已分离。状态所有者管理干净确认、阻塞问题、上限、覆盖校验和循环检测；协调器保留先保存候选再接受影子修改的顺序。最终结果写入和协调器收尾仍待实施。
+已实施：`ReviewSessionState` 管理影子状态和扫描／修订决策；`ReviewCheckpoint` 管理恢复及编解码；`ReviewChunkService` 与 `ReviewRoundService` 执行固定快照；`review_results.py` 写入完成或部分结果。`ReviewService` 负责会话准备、扫描、决策、候选写入、检查点与用量边界。6 条故障注入路径验证请求、结果、摘要及用量等价，可恢复 provider 错误与正式状态只读规则继续受测试保护。
 
 ## 证据与范围
 

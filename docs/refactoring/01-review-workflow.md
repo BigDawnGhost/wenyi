@@ -2,9 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/01-review-workflow.md)
 
-Status: partially implemented; baseline: `7471256`.
+Status: implemented; baseline: `7471256`.
 
-Implementation: state, checkpoint conversion, chunk/round execution and pure scan/fix decisions are isolated. The state owner handles clean confirmation, blocked issues, limits, overlay validation and cycles; the coordinator retains artifact-before-acceptance ordering. Final result writing and coordinator cleanup remain pending.
+Implemented: `ReviewSessionState` owns shadow state and scan/fix decisions; `ReviewCheckpoint` owns recovery and serialization; `ReviewChunkService` and `ReviewRoundService` execute fixed snapshots; `review_results.py` writes complete/partial projections. `ReviewService` now opens the session and coordinates scan, decision, artifact writes, checkpoint and usage boundaries. Six injected interruption paths verify request, outcome, summary and usage equivalence. Recoverable provider errors and formal-state isolation remain covered.
 
 ## Evidence and scope
 

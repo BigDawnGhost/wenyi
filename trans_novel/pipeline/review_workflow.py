@@ -23,7 +23,7 @@ from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
 from ..review.session import ReviewPolicy, content_digest, review_overlay_digest
 from . import review_results
-from .review_checkpoint import ReviewCheckpoint
+from .review_checkpoint import ReviewCheckpoint, ReviewInputs
 from .review_chunks import ReviewChunkService
 from .review_rounds import ReviewRoundService
 from .runstore import STATUS_DONE
@@ -132,19 +132,10 @@ class ReviewService:
         except (OSError, json.JSONDecodeError):
             return {}
 
-    def run_session(
-        self,
-        store: RunStore,
-        all_terms: list[GlossaryTerm],
-        *,
-        progress: ProgressFn | None = None,
-    ) -> ReviewOutcome:
-        """Repeat review, temporary revision and blind recheck on shadow text only.
-        Formal chapters, manifest and glossary stay unchanged. Fixes update only the
-        in-memory overlay and current review directory. Subsequent whole-book review
-        receives revised shadow text without previous issue descriptions. Persist summaries,
-        usage and formal events at session end.
-        """
+    def _open_session(
+        self, store: RunStore, all_terms: list[GlossaryTerm], progress: ProgressFn | None
+    ) -> ReviewInputs | ReviewOutcome:
+        """Validate formal state and restore or initialize the appropriate Review directory."""
         manifest = store.load_manifest()
         self._runtime.flush_usage(store, scope="before_review")
         pending = [
@@ -223,6 +214,26 @@ class ReviewService:
             review_dir=debug.run_dir,
             reviewed_content_digest=reviewed_content_digest,
         )
+
+        return ReviewInputs(loaded, analysis, debug)
+
+    def run_session(
+        self,
+        store: RunStore,
+        all_terms: list[GlossaryTerm],
+        *,
+        progress: ProgressFn | None = None,
+    ) -> ReviewOutcome:
+        """Repeat review, temporary revision and blind recheck on shadow text only.
+        Formal chapters, manifest and glossary stay unchanged. Fixes update only the
+        in-memory overlay and current review directory. Subsequent whole-book review
+        receives revised shadow text without previous issue descriptions. Persist summaries,
+        usage and formal events at session end.
+        """
+        opened = self._open_session(store, all_terms, progress)
+        if isinstance(opened, ReviewOutcome):
+            return opened
+        loaded, analysis, debug = opened.chapters, opened.analysis, opened.debug
 
         def save_review_usage() -> dict[str, Any]:
             """Persist this review's usage delta and merge it into cumulative book usage."""
@@ -355,97 +366,7 @@ class ReviewService:
                 state.termination = "max_rounds"
                 checkpoint.save(state, max_review_rounds)
 
-            if state.latest is None:  # pragma: no cover - max_review_rounds is at least one.
-                raise RuntimeError("Review loop finished without a review round")
-
-            unresolved = state.effective_issues(state.latest)
-            final_conflicts = review_results.unresolved_conflict_records(unresolved)
-            final_residual_conflicts = [
-                record
-                for record in final_conflicts
-                if record.get("arbitration", {}).get("status") == "unresolved"
-            ]
-            final_fallback_agent_count = review_results.unresolved_fallback_count(unresolved)
-            initial_issues, dismissed = debug.result_snapshots()
-            debug.write_json("rounds/final/initial_issues.json", initial_issues)
-            debug.write_json("rounds/final/dismissed_issues.json", dismissed)
-            debug.write_json(
-                "rounds/final/pre_arbitration_issues.json",
-                state.latest.pre_arbitration_issues,
-            )
-            debug.write_json(
-                "rounds/final/arbitration_superseded_issues.json",
-                state.latest.arbitration_superseded,
-            )
-            debug.write_json(
-                "rounds/final/residual_conflicts.json",
-                [
-                    {
-                        "conflict_id": record["conflict_id"],
-                        "consistency_key": record["consistency_key"],
-                        "issue_ids": record["issue_ids"],
-                    }
-                    for record in final_residual_conflicts
-                ],
-            )
-            debug.write_json("rounds/final/conflicts.json", final_conflicts)
-            debug.write_json("rounds/final/patch-history.json", state.patch_records)
-            debug.write_json(
-                "rounds/final/not_rereported_patches.json",
-                [patch for patch in state.patch_records if patch["status"] == "not_rereported"],
-            )
-            debug.write_json(
-                "rounds/final/unresolved_issues.json",
-                unresolved,
-            )
-            debug.write_json("rounds/final/fix_failures.json", state.fix_failures)
-            debug.write_json("rounds/final/rounds.json", state.round_summaries)
-            debug.write_json(
-                "rounds/final/shadow_targets.json",
-                [
-                    {
-                        "chapter": chapter,
-                        "index": index,
-                        "target": target,
-                    }
-                    for (chapter, index), target in sorted(state.target_overrides.items())
-                ],
-            )
-            public_issues = review_results.public_issues(unresolved)
-            changes = review_results.net_changes(
-                loaded,
-                state.target_overrides,
-                state.patch_records,
-                state.active_patches,
-            )
-            summary = {
-                "initial_issue_count": len(initial_issues),
-                "dismissed_issue_count": len(dismissed),
-                "pre_arbitration_issue_count": len(state.latest.pre_arbitration_issues),
-                "arbitration_superseded_count": len(state.latest.arbitration_superseded),
-                "issue_count": len(public_issues),
-                "conflict_count": len(final_conflicts),
-                "unresolved_conflict_count": len(final_residual_conflicts),
-                "fallback_agent_count": final_fallback_agent_count,
-                "review_round_count": len(state.round_summaries),
-                "fix_round_count": state.fix_rounds,
-                "patch_count": len(state.patch_records),
-                "change_count": len(changes),
-                "not_rereported_patch_count": sum(
-                    patch["status"] == "not_rereported" for patch in state.patch_records
-                ),
-                "shadow_override_count": len(state.target_overrides),
-                "blocked_issue_count": len(state.blocked_issues),
-                "clean_streak": state.clean_streak,
-            }
-            debug.write_json("rounds/final/summary.json", summary)
-            result = debug.finish(
-                status="completed",
-                termination=state.termination,
-                summary=summary,
-                issues=public_issues,
-                changes=changes,
-            )
+            result = review_results.write_completed(debug, state, loaded)
             usage = save_review_usage()
             store.log_event(
                 "review_finished",
@@ -453,8 +374,8 @@ class ReviewService:
                 review_dir=debug.run_dir,
                 status="completed",
                 termination=state.termination,
-                issue_count=len(public_issues),
-                change_count=len(changes),
+                issue_count=len(result["issues"]),
+                change_count=len(result["changes"]),
             )
             return ReviewOutcome(
                 run_dir=debug.run_dir,
@@ -476,72 +397,20 @@ class ReviewService:
                     error_type=type(error).__name__,
                 )
                 raise
-            initial_issues, dismissed = debug.result_snapshots()
-            partial_issues = (
-                state.effective_issues(state.latest) if state.latest is not None else []
-            )
-            public_issues = review_results.public_issues(partial_issues)
-            partial_changes = review_results.net_changes(
+            public_issues, partial_changes = review_results.write_partial(
+                debug,
+                state,
                 loaded,
-                state.target_overrides,
-                state.patch_records,
-                state.active_patches,
-            )
-            summary = {
-                "issue_count": len(public_issues),
-                "change_count": len(partial_changes),
-                "conflict_count": (
-                    len(state.latest.conflict_groups) if state.latest is not None else 0
-                ),
-                "fallback_agent_count": (
-                    state.latest.fallback_agent_count if state.latest is not None else 0
-                ),
-            }
-            error_payload = {"type": type(error).__name__, "message": str(error)}
-            debug.write_json("rounds/final/initial_issues.json", initial_issues)
-            debug.write_json("rounds/final/dismissed_issues.json", dismissed)
-            debug.write_json(
-                "rounds/final/partial_issues.json",
-                partial_issues,
-            )
-            debug.write_json("rounds/final/partial_patches.json", state.patch_records)
-            debug.write_json("rounds/final/fix_failures.json", state.fix_failures)
-            if resumable_interrupt:
-                # Keep chunk/checkpoint caches eligible for find_resumable after balance,
-                # timeout or transport stops. Formal chapters remain unchanged until Autofix.
-                debug.mark_interrupted(
-                    error=error_payload,
-                    summary=summary,
-                    issues=public_issues,
-                    changes=partial_changes,
-                )
-                save_review_usage()
-                store.log_event(
-                    "review_interrupted",
-                    review_id=debug.review_id,
-                    review_dir=debug.run_dir,
-                    status="interrupted",
-                    issue_count=len(public_issues),
-                    change_count=len(partial_changes),
-                    error_type=type(error).__name__,
-                    error=str(error),
-                )
-                raise
-            debug.finish(
-                status="failed",
-                termination="error",
-                summary=summary,
-                issues=public_issues,
-                changes=partial_changes,
-                error=error_payload,
+                error,
+                resumable_interrupt,
             )
             save_review_usage()
             store.log_event(
-                "review_finished",
+                "review_interrupted" if resumable_interrupt else "review_finished",
                 review_id=debug.review_id,
                 review_dir=debug.run_dir,
-                status="failed",
-                termination="error",
+                status="interrupted" if resumable_interrupt else "failed",
+                **({} if resumable_interrupt else {"termination": "error"}),
                 issue_count=len(public_issues),
                 change_count=len(partial_changes),
                 error_type=type(error).__name__,

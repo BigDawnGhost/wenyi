@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..ingest.models import Chapter
 from ..review.run_store import ReviewRunStore
 from ..review.session import ReviewRoundResult, ReviewSessionState
 
@@ -157,3 +158,12 @@ class ReviewCheckpoint:
             payload["latest_residual_conflicts"] = latest.residual_conflicts
             payload["latest_fallback_agent_count"] = latest.fallback_agent_count
         self._store.save_checkpoint(payload)
+
+
+@dataclass(frozen=True)
+class ReviewInputs:
+    """Loaded formal snapshots and the run directory selected for one Review session."""
+
+    chapters: list[Chapter]
+    analysis: dict[str, Any]
+    debug: ReviewRunStore
