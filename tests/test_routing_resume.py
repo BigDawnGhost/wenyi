@@ -11,6 +11,7 @@ from trans_novel.llm.configuration import LLMConfig
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.orchestrator import Orchestrator
+from trans_novel.pipeline.review_checkpoint import ReviewTraceStore
 from trans_novel.pipeline.review_workflow import ReviewService
 from trans_novel.pipeline.runstore import RunStore
 from trans_novel.pipeline.runtime import PipelineRuntime
@@ -125,15 +126,21 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
         "allowed_refs": set(),
         "validate_final": lambda value, refs: value,
     }
-    _ActionLoop(first, config, TestReviewAgentLoop()._evidence(), debug).run(**arguments)
+    _ActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
+        **arguments
+    )
     assert len(first.calls) == 1
-    _ActionLoop(first, config, TestReviewAgentLoop()._evidence(), debug).run(**arguments)
+    _ActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
+        **arguments
+    )
     assert len(first.calls) == 1
     config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
         update={"model": "different-verifier"}
     )
     second = FakeClient(handler=lambda *args: response, config=config.llm)
-    _ActionLoop(second, config, TestReviewAgentLoop()._evidence(), debug).run(**arguments)
+    _ActionLoop(second, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
+        **arguments
+    )
     assert len(second.calls) == 1
     assert second.calls[0]["model"] == "different-verifier"
 

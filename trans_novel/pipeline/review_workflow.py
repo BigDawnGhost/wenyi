@@ -39,6 +39,7 @@ from ..review.conflicts import (
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
+from .review_checkpoint import ReviewTraceStore
 from .runstore import STATUS_DONE
 
 if TYPE_CHECKING:
@@ -428,7 +429,7 @@ class ReviewService:
                     self._runtime.client,
                     self._runtime.config,
                     evidence,
-                    debug,
+                    ReviewTraceStore(debug),
                 ).arbitrate(group)
 
             if workers == 1:
@@ -1689,7 +1690,7 @@ class ReviewService:
                     self._runtime.client,
                     self._runtime.config,
                     evidence,
-                    debug,
+                    ReviewTraceStore(debug),
                 ).review_chunk(
                     chapter=chapter_index,
                     chunk_base=chunk_base,

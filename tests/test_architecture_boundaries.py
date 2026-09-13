@@ -8,6 +8,7 @@ top-level review models.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import pathlib
 import unittest
 
@@ -26,7 +27,7 @@ SERVICE_MODULES = (
 )
 
 # Lower pipeline modules must not import orchestrator.
-LOWER_MODULES = SERVICE_MODULES + ("runstore", "context", "title_translation")
+LOWER_MODULES = SERVICE_MODULES + ("runstore", "context", "title_translation", "review_checkpoint")
 
 FORBIDDEN_TOP_LEVEL = (
     "agents",
@@ -58,10 +59,23 @@ def _module_source(name: str) -> str:
 
 def _agent_sources() -> list[tuple[str, str]]:
     return [
-        (path.name, path.read_text(encoding="utf-8"))
-        for path in sorted(AGENTS_DIR.glob("*.py"))
-        if path.name != "__init__.py"
+        (str(path.relative_to(AGENTS_DIR)), path.read_text(encoding="utf-8"))
+        for path in sorted(AGENTS_DIR.rglob("*.py"))
     ]
+
+
+def _imported_modules(path: pathlib.Path) -> set[str]:
+    """Resolve absolute and relative imports, including imports in nested packages."""
+    package = ".".join(("trans_novel", *path.relative_to(TRANS_NOVEL_DIR).parts[:-1]))
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+            imported.add(module)
+            imported.update(f"{module}.{alias.name}" for alias in node.names)
+    return imported
 
 
 class TestArchitectureBoundaries(unittest.TestCase):
@@ -217,6 +231,36 @@ class TestArchitectureBoundaries(unittest.TestCase):
                             FORBIDDEN_PIPELINE_MODULES_FOR_AGENTS,
                             f"{filename} 不得反向依赖 {module}",
                         )
+
+    def test_review_agents_use_contracts_instead_of_concrete_storage_or_evidence(self):
+        """Agents cannot acquire book state or bypass the evidence-query boundary."""
+        forbidden = (
+            "trans_novel.pipeline",
+            "trans_novel.review.run_store",
+            "trans_novel.review.evidence",
+        )
+        for path in AGENTS_DIR.rglob("*.py"):
+            for module in _imported_modules(path):
+                self.assertFalse(
+                    any(module == name or module.startswith(name + ".") for name in forbidden),
+                    f"{path.relative_to(TRANS_NOVEL_DIR)} imports {module}",
+                )
+
+    def test_review_conflicts_and_contracts_have_no_execution_dependencies(self):
+        """Decision rules and ports do not import model calls or concrete Review I/O."""
+        forbidden = (
+            "trans_novel.agents",
+            "trans_novel.llm",
+            "trans_novel.pipeline",
+            "trans_novel.review.run_store",
+            "trans_novel.review.evidence",
+        )
+        for name in ("conflicts", "contracts"):
+            for module in _imported_modules(TRANS_NOVEL_DIR / "review" / f"{name}.py"):
+                self.assertFalse(
+                    any(module == item or module.startswith(item + ".") for item in forbidden),
+                    f"{name} imports {module}",
+                )
 
     def test_review_package_exports_core_types(self):
         """The top-level review package exposes pure types without storage exports."""

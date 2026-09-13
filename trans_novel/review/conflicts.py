@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from .contracts import EvidenceQueries
 from .models import CONSISTENCY_KINDS, clean_text, normalize_value, review_issue_key
-
-if TYPE_CHECKING:
-    from .evidence import BookEvidenceIndex
 
 
 def normalize_review_issues(
     issues: list[dict[str, Any]],
-    evidence: BookEvidenceIndex,
+    evidence: EvidenceQueries,
 ) -> list[dict[str, Any]]:
     """Normalize deterministically and assign round-local IDs and stable cross-round issue
     keys.

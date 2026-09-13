@@ -25,6 +25,7 @@ from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.llm.routing import inference_snapshot
+from trans_novel.pipeline.review_checkpoint import ReviewTraceStore
 from trans_novel.review.conflicts import (
     apply_review_arbitrations,
     build_conflict_groups,
@@ -795,7 +796,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                     FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
                     _config(),
                     self._evidence(),
-                    debug,
+                    ReviewTraceStore(debug),
                 )
                 outcome = loop.review_chunk(
                     chapter=0,
@@ -828,7 +829,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                     FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
                     _config(),
                     self._evidence(),
-                    debug,
+                    ReviewTraceStore(debug),
                 )
                 outcome = loop.review_chunk(
                     chapter=0,
@@ -937,7 +938,10 @@ class TestReviewAgentLoop(unittest.TestCase):
                     )
 
                 loop = ReviewAgentLoop(
-                    FakeClient(handler=handler), _config(), self._evidence(), debug
+                    FakeClient(handler=handler),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
                 )
                 outcome = loop.review_chunk(
                     chapter=0,
@@ -1038,7 +1042,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                     FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
                     _config(),
                     self._evidence(),
-                    debug,
+                    ReviewTraceStore(debug),
                 )
                 outcome = loop.review_chunk(
                     chapter=0,
@@ -1125,7 +1129,10 @@ class TestReviewAgentLoop(unittest.TestCase):
                     )
 
                 loop = ReviewAgentLoop(
-                    FakeClient(handler=handler), _config(), self._evidence(), debug
+                    FakeClient(handler=handler),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
                 )
                 outcome = loop.review_chunk(
                     chapter=0,
@@ -1230,7 +1237,9 @@ class TestReviewAgentLoop(unittest.TestCase):
                 config.pipeline.review_agent_max_evidence_rounds = (
                     1  # Set a limit below the two cached rounds.
                 )
-                loop = ReviewAgentLoop(FakeClient(handler=handler), config, self._evidence(), debug)
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler), config, self._evidence(), ReviewTraceStore(debug)
+                )
                 outcome = loop.review_chunk(
                     chapter=0,
                     chunk_base=0,
@@ -1302,7 +1311,10 @@ class TestReviewAgentLoop(unittest.TestCase):
                     )
 
                 loop = ReviewAgentLoop(
-                    FakeClient(handler=handler), _config(), self._evidence(), debug
+                    FakeClient(handler=handler),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
                 )
                 outcome = loop.review_chunk(
                     chapter=0,
@@ -1396,7 +1408,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                debug,
+                ReviewTraceStore(debug),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1472,7 +1484,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                debug,
+                ReviewTraceStore(debug),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1524,7 +1536,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1584,7 +1596,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1634,7 +1646,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1676,7 +1688,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1721,7 +1733,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -1801,7 +1813,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflicts[0])
 
         self.assertEqual(result["status"], "suggested")
@@ -1856,7 +1868,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(
@@ -1910,7 +1922,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["recommended_value"], "NASA")
@@ -1967,7 +1979,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "unresolved")
@@ -2022,7 +2034,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "suggested")
@@ -2059,7 +2071,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 client,
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(client.calls, [])
@@ -2186,7 +2198,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "unresolved")

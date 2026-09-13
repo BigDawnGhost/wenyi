@@ -4,7 +4,7 @@
 
 Status: partially implemented; high priority. Baseline: `7471256`.
 
-Implementation: outcomes, segment references and stable identities now live in `review/models.py`; normalization, conflict grouping and applying decisions live in `review/conflicts.py`. Package exports contain only pure types. Trace contracts, replay and arbiter extraction remain pending.
+Implementation: outcomes, segment references and stable identities now live in `review/models.py`; normalization, conflict grouping and applying decisions live in `review/conflicts.py`. Package exports contain only pure types. Agents now use `ReviewTrace` and evidence-query protocols. `pipeline/review_checkpoint.py` adapts traces to existing round-scoped storage. In-memory tests cover all nine durable boundaries; captured snapshots, events and model messages match the original loop. Replay-state and arbiter extraction remain pending.
 
 ## Evidence
 

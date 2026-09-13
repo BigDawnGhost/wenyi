@@ -4,7 +4,7 @@
 
 状态：部分实施；高优先级。基线：`7471256`。
 
-实施进展：结果、段落引用和稳定身份已提取到 `review/models.py`；归一化、冲突分组与决策应用已提取到 `review/conflicts.py`。包级导出仅包含纯类型。trace 契约、对话回放与仲裁器提取仍待实施。
+实施进展：结果、段落引用和稳定身份已提取到 `review/models.py`；归一化、冲突分组与决策应用已提取到 `review/conflicts.py`。包级导出仅包含纯类型。Agent 已使用 `ReviewTrace` 与证据查询协议；`pipeline/review_checkpoint.py` 将 trace 适配到现有轮次存储。内存测试覆盖全部 9 个保存边界，捕获的快照、事件和模型消息与原循环一致。回放状态与仲裁器提取仍待实施。
 
 ## 证据
 

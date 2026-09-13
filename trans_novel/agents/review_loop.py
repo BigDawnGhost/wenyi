@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Callable
 
 from ..config import Config
 from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
-from ..review.evidence import BookEvidenceIndex
+from ..review.contracts import EvidenceQueries, EvidenceTools, ReviewTrace
 from ..review.models import (
     CONSISTENCY_KINDS,
     ReviewLoopOutcome,
@@ -18,7 +17,6 @@ from ..review.models import (
     normalize_value,
     review_candidate_id,
 )
-from ..review.run_store import ReviewRunStore
 from . import prompts
 
 _ISSUE_TYPES = {"missing", "added", "mistranslation", "terminology", "pronoun"}
@@ -31,11 +29,6 @@ class ReviewLoopProtocolError(ValueError):
     """The agent loop returned content that violates the action protocol."""
 
 
-def _safe_id(value: str) -> str:
-    """Convert agent or conflict IDs to safe filenames."""
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "agent"
-
-
 class _ActionLoop:
     """Implement a request-evidence/final loop using the ordinary messages interface."""
 
@@ -43,13 +36,13 @@ class _ActionLoop:
         self,
         client: LLMClient,
         config: Config,
-        evidence: BookEvidenceIndex,
-        debug: ReviewRunStore,
+        evidence: EvidenceTools,
+        trace: ReviewTrace,
     ):
         self.client = client
         self.config = config
         self.evidence = evidence
-        self.debug = debug
+        self.trace = trace
 
     def run(
         self,
@@ -82,11 +75,10 @@ class _ActionLoop:
         from ..llm.routing import inference_snapshot
 
         trace["inference"] = inference_snapshot(self.config.llm, (stage,))
-        relative = f"agents/{_safe_id(agent_id)}.json"
         # Resume: load an existing trace before writing, or the trace would overwrite itself.
-        existing = self.debug.load_json(relative)
+        existing = self.trace.load(agent_id)
         if existing is not None and existing.get("inference") != trace["inference"]:
-            self.debug.log_event(
+            self.trace.log_event(
                 "review_agent_cache_invalidated",
                 agent_id=agent_id,
                 operation=stage,
@@ -97,7 +89,7 @@ class _ActionLoop:
         if existing is not None:
             existing_status = existing.get("status")
             if existing_status == "finished" and isinstance(existing.get("result"), dict):
-                self.debug.log_event(
+                self.trace.log_event(
                     "review_agent_finished",
                     agent_id=agent_id,
                     stage=stage,
@@ -106,7 +98,7 @@ class _ActionLoop:
                 )
                 return existing["result"], ""
             if existing_status == "fallback":
-                self.debug.log_event(
+                self.trace.log_event(
                     "review_agent_fallback",
                     agent_id=agent_id,
                     stage=stage,
@@ -130,7 +122,7 @@ class _ActionLoop:
             first_messages = resume_turns[0].get("messages")
             if isinstance(first_messages, list):
                 messages = [dict(message) for message in first_messages]
-            self.debug.log_event(
+            self.trace.log_event(
                 "review_agent_resumed",
                 agent_id=agent_id,
                 stage=stage,
@@ -169,7 +161,7 @@ class _ActionLoop:
             start_turn = len(resume_turns)
             if "evidence_results" in resume_turns[-1]:
                 start_turn += 1
-        self.debug.write_json(relative, trace)
+        self.trace.save(agent_id, trace)
         cached_by_turn = {
             turn["turn"]: turn for turn in resume_turns if isinstance(turn.get("turn"), int)
         }
@@ -188,7 +180,7 @@ class _ActionLoop:
                         "status": "requesting",
                     }
                     trace["turns"].append(turn)
-                self.debug.write_json(relative, trace)
+                self.trace.save(agent_id, trace)
                 if cached_turn is not None and isinstance(cached_turn.get("raw_response"), str):
                     raw = cached_turn["raw_response"]
                     turn["status"] = "responded"
@@ -206,11 +198,11 @@ class _ActionLoop:
                             "type": type(error).__name__,
                             "message": str(error),
                         }
-                        self.debug.write_json(relative, trace)
+                        self.trace.save(agent_id, trace)
                         raise
                     turn["status"] = "responded"
                     turn["raw_response"] = raw
-                self.debug.write_json(relative, trace)
+                self.trace.save(agent_id, trace)
 
                 # Reuse parsed only when raw and parsed come from the same cached response.
                 # Orphaned parsed data from a damaged or edited trace must not hide a fresh response.
@@ -230,7 +222,7 @@ class _ActionLoop:
                     data = parsed.value
                     turn["parsed"] = data
                     turn["json_repaired"] = parsed.repaired
-                self.debug.write_json(relative, trace)
+                self.trace.save(agent_id, trace)
                 if not isinstance(data, dict):
                     raise ReviewLoopProtocolError("response_not_object")
                 if not data or list(data)[-1] != "complete":
@@ -243,8 +235,8 @@ class _ActionLoop:
                     result = validate_final(data, allowed_refs)
                     trace["status"] = "finished"
                     trace["result"] = result
-                    self.debug.write_json(relative, trace)
-                    self.debug.log_event(
+                    self.trace.save(agent_id, trace)
+                    self.trace.log_event(
                         "review_agent_finished",
                         agent_id=agent_id,
                         stage=stage,
@@ -308,8 +300,8 @@ class _ActionLoop:
                 evidence_rounds += 1
                 allowed_refs.update(self.evidence.evidence_refs(results))
                 turn["evidence_results"] = results
-                self.debug.write_json(relative, trace)
-                self.debug.log_event(
+                self.trace.save(agent_id, trace)
+                self.trace.log_event(
                     "review_evidence_supplied",
                     agent_id=agent_id,
                     stage=stage,
@@ -339,8 +331,8 @@ class _ActionLoop:
             )
             trace["status"] = "fallback"
             trace["fallback_reason"] = reason
-            self.debug.write_json(relative, trace)
-            self.debug.log_event(
+            self.trace.save(agent_id, trace)
+            self.trace.log_event(
                 "review_agent_fallback",
                 agent_id=agent_id,
                 stage=stage,
@@ -349,7 +341,7 @@ class _ActionLoop:
             return None, reason
         trace["status"] = "fallback"
         trace["fallback_reason"] = "loop_ended_without_final"
-        self.debug.write_json(relative, trace)
+        self.trace.save(agent_id, trace)
         return None, "loop_ended_without_final"
 
 
@@ -360,16 +352,16 @@ class ReviewAgentLoop:
         self,
         client: LLMClient,
         config: Config,
-        evidence: BookEvidenceIndex,
-        debug: ReviewRunStore,
+        evidence: EvidenceQueries,
+        trace: ReviewTrace,
         *,
         operation: str = "review.verify",
     ):
         self.operation = operation
         self.config = config
         self.evidence = evidence
-        self.debug = debug
-        self._loop = _ActionLoop(client, config, evidence, debug)
+        self.trace = trace
+        self._loop = _ActionLoop(client, config, evidence, trace)
 
     @staticmethod
     def _consistency(value: Any) -> dict[str, str]:
@@ -429,7 +421,7 @@ class ReviewAgentLoop:
 
         round_prefix = f"r{review_round}-" if review_round is not None else ""
         agent_id = f"{round_prefix}chunk-ch{chapter}-base{chunk_base}-n{len(sources)}"
-        self.debug.log_event(
+        self.trace.log_event(
             "review_agent_started",
             agent_id=agent_id,
             chapter=chapter,
@@ -618,13 +610,13 @@ class ReviewConflictArbiter:
         self,
         client: LLMClient,
         config: Config,
-        evidence: BookEvidenceIndex,
-        debug: ReviewRunStore,
+        evidence: EvidenceQueries,
+        trace: ReviewTrace,
     ):
         self.config = config
         self.evidence = evidence
-        self.debug = debug
-        self._loop = _ActionLoop(client, config, evidence, debug)
+        self.trace = trace
+        self._loop = _ActionLoop(client, config, evidence, trace)
 
     def arbitrate(self, conflict: dict[str, Any]) -> dict[str, Any]:
         """Arbitrate one conflict; retain all issues and mark unresolved on failure."""
@@ -635,7 +627,7 @@ class ReviewConflictArbiter:
             """Build a conservative result that preserves issues and records why arbitration
             was incomplete.
             """
-            self.debug.log_event(
+            self.trace.log_event(
                 "review_arbitration_unresolved",
                 conflict_id=conflict_id,
                 issue_count=len(issue_ids),

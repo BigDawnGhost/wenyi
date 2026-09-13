@@ -23,6 +23,7 @@ from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome, review_candidate_id
 from ..review.run_store import ReviewRunStore
 from .docx_styles import DocxStyleService
+from .review_checkpoint import ReviewTraceStore
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
@@ -339,7 +340,7 @@ class ReviewAutofixService:
             self._runtime.client,
             self._runtime.config,
             evidence,
-            debug,
+            ReviewTraceStore(debug),
             operation="autofix.verify",
         )
         fixer = ReviewFixer(self._runtime.client, self._runtime.config, operation="autofix.fix")
