@@ -60,7 +60,7 @@ class PreparationService:
                 input_path,
                 self._runtime.config.source_lang,
                 self._runtime.config.target_lang,
-                split_segments=self._runtime.config.segment.max_chars_per_segment,
+                split_segments=self._runtime.config.segment.max_tokens_per_segment,
             )
             title = doc.title
 
@@ -115,7 +115,7 @@ class PreparationService:
                     input_path,
                     self._runtime.config.source_lang,
                     self._runtime.config.target_lang,
-                    split_segments=self._runtime.config.segment.max_chars_per_segment,
+                    split_segments=self._runtime.config.segment.max_tokens_per_segment,
                     cache_dir=store.source_dir,
                     source_hash=source_hash,
                     pdf_backend=pipeline.pdf_backend,
@@ -143,7 +143,7 @@ class PreparationService:
             input_path,
             self._runtime.config.source_lang,
             self._runtime.config.target_lang,
-            split_segments=self._runtime.config.segment.max_chars_per_segment,
+            split_segments=self._runtime.config.segment.max_tokens_per_segment,
         )
         if source_sha256(input_path) != source_hash:
             raise ValueError("Source changed during parsing; ensure the file is stable and retry.")

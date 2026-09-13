@@ -19,6 +19,7 @@ dependencies = [
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
     "python-docx>=1.2.0",
+    "tiktoken>=0.14.0",
 ]
 
 [project.optional-dependencies]

@@ -270,8 +270,8 @@ Only the monolingual edition is enabled by default. `--bilingual` enables both e
 
 ```yaml
 segment:
-  max_chars_per_batch: 1800
-  max_chars_per_segment: 1200
+  max_tokens_per_batch: 1800
+  max_tokens_per_segment: 1200
 
 honorific:
   strategy: keep_style
@@ -280,8 +280,8 @@ paths:
   state_dir: state
 ```
 
-- `max_chars_per_batch`: approximate source-character budget for one model translation request.
-- `max_chars_per_segment`: threshold for splitting an exceptionally long source paragraph.
+- `max_tokens_per_batch`: source-token budget for one model translation request, counted with tiktoken `cl100k_base` (a universal estimator, not the live provider tokenizer).
+- `max_tokens_per_segment`: token threshold for splitting an exceptionally long source paragraph at sentence boundaries.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
 - `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/targets/<target-language>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.
 

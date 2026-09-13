@@ -267,8 +267,8 @@ output:
 
 ```yaml
 segment:
-  max_chars_per_batch: 1800
-  max_chars_per_segment: 1200
+  max_tokens_per_batch: 1800
+  max_tokens_per_segment: 1200
 
 honorific:
   strategy: keep_style
@@ -277,8 +277,8 @@ paths:
   state_dir: state
 ```
 
-- `max_chars_per_batch`：单个模型翻译批次的目标字符数。
-- `max_chars_per_segment`：超长段落的拆分阈值。
+- `max_tokens_per_batch`：单个模型翻译批次的源文 token 预算，使用 tiktoken `cl100k_base` 计数（通用估算，不等于线上提供商私有分词器）。
+- `max_tokens_per_segment`：超长段落按句拆分的 token 阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
 - `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/targets/<目标语言>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。
 

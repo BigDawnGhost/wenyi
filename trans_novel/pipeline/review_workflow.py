@@ -33,6 +33,7 @@ from ..agents.review_loop import (
 from ..agents.reviewer import ReviewOutputError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.resources import prompt_fingerprint
+from ..ingest.tokens import count_tokens
 from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.evidence import BookEvidenceIndex
 from ..review.run_store import ReviewOutcome, ReviewRunStore
@@ -1475,7 +1476,7 @@ class ReviewService:
         single paragraphs a bounded number of times. Merge results in original block order
         for determinism.
         """
-        budget = self._runtime.config.segment.max_chars_per_batch * 3
+        budget = self._runtime.config.segment.max_tokens_per_batch * 3
         chunks = self.pack_contiguous(text_segs, budget)
         if not chunks:
             return []
@@ -1906,18 +1907,19 @@ class ReviewService:
 
     @staticmethod
     def pack_contiguous(segs, budget: int) -> list[list]:
-        """Pack paragraphs into contiguous blocks by source-character budget without changing
+        """Pack paragraphs into contiguous blocks by source-token budget without changing
         order.
         """
         chunks: list[list] = []
         cur: list = []
         size = 0
         for s in segs:
-            if cur and size + len(s.source) > budget:
+            tokens = count_tokens(s.source)
+            if cur and size + tokens > budget:
                 chunks.append(cur)
                 cur, size = [], 0
             cur.append(s)
-            size += len(s.source)
+            size += tokens
         if cur:
             chunks.append(cur)
         return chunks
