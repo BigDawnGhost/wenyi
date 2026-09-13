@@ -406,6 +406,29 @@ class TestPolisher(unittest.TestCase):
             out, ["甲", "乙"]
         )  # Preserve the original translation on paragraph-count mismatch.
 
+    def test_polish_continue_appends_user_turn_to_translation_transcript(self):
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps(
+                {"polished": ["润色甲", "润色乙"]}, ensure_ascii=False
+            )
+        )
+        turn = [
+            {"role": "system", "content": "You are an experienced literary translator"},
+            {"role": "user", "content": "translate these"},
+            {
+                "role": "assistant",
+                "content": json.dumps({"translations": ["甲", "乙"]}, ensure_ascii=False),
+            },
+        ]
+        out = Polisher(client, _cfg()).polish_continue(turn, n=2, next_source="next")
+        self.assertEqual(out, ["润色甲", "润色乙"])
+        messages = client.calls[-1]["messages"]
+        self.assertEqual([row["role"] for row in messages], ["system", "user", "assistant", "user"])
+        self.assertIn(
+            "Polish the translations from your previous JSON response", messages[-1]["content"]
+        )
+        self.assertEqual(client.calls[-1]["operation"], "polish.body")
+
 
 if __name__ == "__main__":
     unittest.main()

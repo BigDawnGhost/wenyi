@@ -10,8 +10,11 @@ from typing import Any
 
 from ..config import Config
 from ..llm.base import LLMClient
+from ..llm.json_parser import parse_json_loose
 
 _RAISE = object()  # Sentinel: propagate exceptions when the caller supplies no default.
+
+Messages = list[dict[str, str]]
 
 
 class Agent:
@@ -23,6 +26,22 @@ class Agent:
         self.config = config
         self.src = config.source_lang
         self.tgt = config.target_lang
+
+    def _complete_json_turn(
+        self,
+        messages: Messages,
+        *,
+        operation: str,
+        max_tokens: int | None = None,
+    ) -> tuple[Any, str]:
+        """Run ``complete`` on ``messages`` and return ``(parsed_json, raw_assistant_text)``."""
+        text = self.client.complete(
+            messages,
+            operation=operation,
+            json_mode=True,
+            max_tokens=max_tokens,
+        )
+        return parse_json_loose(text), text
 
     def _ask_json(
         self,
@@ -40,11 +59,38 @@ class Agent:
         nonempty list directly, or the fallback otherwise.
         """
         try:
-            data = self.client.complete_json(
+            data, _raw = self._complete_json_turn(
                 [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
+                operation=operation,
+                max_tokens=max_tokens,
+            )
+        except Exception:
+            if default is _RAISE:
+                raise
+            return default
+        if key is None:
+            return data
+        fb = None if default is _RAISE else default
+        if isinstance(data, dict):
+            return data.get(key, fb)
+        return data if data else fb
+
+    def _ask_json_messages(
+        self,
+        messages: Messages,
+        *,
+        operation: str,
+        key: str | None = None,
+        default: Any = _RAISE,
+        max_tokens: int | None = None,
+    ) -> Any:
+        """Like ``_ask_json`` but for an already-built message list (multi-turn continues)."""
+        try:
+            data, _raw = self._complete_json_turn(
+                messages,
                 operation=operation,
                 max_tokens=max_tokens,
             )
