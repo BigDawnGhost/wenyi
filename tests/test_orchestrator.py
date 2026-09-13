@@ -21,7 +21,7 @@ from trans_novel.llm.usage import UsageSample
 from trans_novel.pipeline.annotations import AnnotationService
 from trans_novel.pipeline.context import RollingContext
 from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.review_workflow import ReviewService
+from trans_novel.pipeline.review_chunks import ReviewChunkService
 from trans_novel.pipeline.runstore import (
     STATUS_DONE,
     STATUS_PENDING,
@@ -1473,7 +1473,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             orch.run(txt)
 
-            with patch.object(orch._review, "review_chapter", side_effect=BalanceError()):
+            with patch.object(orch._review._chunks, "review_chapter", side_effect=BalanceError()):
                 with self.assertRaises(BalanceError):
                     orch.run_review(txt)
 
@@ -1503,7 +1503,9 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             orch.run(txt)
 
-            with patch.object(orch._review, "review_chapter", side_effect=ValueError("bad block")):
+            with patch.object(
+                orch._review._chunks, "review_chapter", side_effect=ValueError("bad block")
+            ):
                 with self.assertRaises(ValueError):
                     orch.run_review(txt)
 
@@ -1569,7 +1571,7 @@ class TestReviewReporting(unittest.TestCase):
             )
             pieces = [object(), object(), object(), object()]
             with debug.round_scope(1):
-                missed = ReviewService._try_cached_subchunks(0, pieces, debug, "r1-", 0)
+                missed = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
             self.assertIsNone(missed)
             initial, dismissed = debug.result_snapshots(1)
             self.assertEqual(initial, [])
@@ -1584,7 +1586,7 @@ class TestReviewReporting(unittest.TestCase):
                 },
             )
             with debug.round_scope(1):
-                hit = ReviewService._try_cached_subchunks(0, pieces, debug, "r1-", 0)
+                hit = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
             self.assertIsNotNone(hit)
             assert hit is not None
             self.assertEqual(len(hit), 2)
@@ -1871,9 +1873,9 @@ class TestReviewReporting(unittest.TestCase):
                 }
 
             with (
-                patch.object(orch._review, "review_chapter", side_effect=fake_review),
+                patch.object(orch._review._chunks, "review_chapter", side_effect=fake_review),
                 patch(
-                    "trans_novel.pipeline.review_workflow.ReviewConflictArbiter.arbitrate",
+                    "trans_novel.pipeline.review_rounds.ReviewConflictArbiter.arbitrate",
                     new=fake_arbitrate,
                 ),
             ):
@@ -2634,7 +2636,7 @@ class TestReviewReporting(unittest.TestCase):
                     }
                 ]
 
-            with patch.object(orch._review, "review_chapter", side_effect=fake_review):
+            with patch.object(orch._review._chunks, "review_chapter", side_effect=fake_review):
                 result = orch.run_review(txt)
 
             review_dir = Path(result["review_dir"])

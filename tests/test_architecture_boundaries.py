@@ -26,9 +26,6 @@ SERVICE_MODULES = (
     "finalization",
 )
 
-# Lower pipeline modules must not import orchestrator.
-LOWER_MODULES = SERVICE_MODULES + ("runstore", "context", "title_translation", "review_checkpoint")
-
 FORBIDDEN_TOP_LEVEL = (
     "agents",
     "ingest",
@@ -151,8 +148,11 @@ class TestArchitectureBoundaries(unittest.TestCase):
 
     def test_no_lower_module_imports_orchestrator(self):
         """Forbid reverse imports of orchestrator from lower layers."""
-        for name in LOWER_MODULES:
-            tree = ast.parse(_module_source(name))
+        for path in PIPELINE_DIR.rglob("*.py"):
+            if path.name == "orchestrator.py":
+                continue
+            name = str(path.relative_to(PIPELINE_DIR))
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:

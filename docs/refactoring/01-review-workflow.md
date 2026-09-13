@@ -4,7 +4,7 @@
 
 Status: partially implemented; baseline: `7471256`.
 
-Implementation: `ReviewSessionState` owns mutable shadow data; `ReviewCheckpoint` restores and encodes the existing schema and phase rules. Pure result projections live in `review_results.py`. Checkpoint and usage interruption tests compare complete and resumed runs. Decisions, chunk/round execution and final coordination remain pending.
+Implementation: session state, checkpoint conversion and result projections are isolated. `ReviewChunkService` owns cache-first scanning, lazy chapter terminology and adaptive recovery; `ReviewRoundService` owns scan/arbitration and shadow proposals with explicit dependencies. Pure decisions and the final coordinator reduction remain pending.
 
 ## Evidence and scope
 
