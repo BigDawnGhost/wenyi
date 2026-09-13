@@ -2,7 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/03-review-autofix.md)
 
-Status: proposed; high priority, high state-recovery risk. Baseline: `7471256`.
+Status: implemented; baseline: `7471256`.
+
+Implemented: pure publication records, deterministic candidate planning, isolated verification workers and indexed publication now have separate modules. The façade retains newest-run selection and usage-flush order. Five added regression cases cover interrupted index/chapter/alignment/result writes, repeated recovery, multiple changes at one location and conflicting external edits.
 
 ## Evidence
 
