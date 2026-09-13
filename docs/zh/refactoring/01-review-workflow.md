@@ -2,7 +2,9 @@
 
 [总览](README.md) · [English](../../refactoring/01-review-workflow.md)
 
-状态：待实施；高优先级，回归风险高。基线：`7471256`。
+状态：部分实施；基线：`7471256`。
+
+实施进展：`ReviewSessionState` 独占可变影子数据，`ReviewCheckpoint` 恢复并编码现有检查点结构与阶段规则；结果投影已提取到 `review_results.py`。检查点及用量中断测试对比了完整执行和续跑。决策、审校块与单轮执行、最终协调仍待实施。
 
 ## 证据与范围
 

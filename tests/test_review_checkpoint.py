@@ -3,9 +3,10 @@
 import json
 from pathlib import Path
 
-from trans_novel.pipeline.review_checkpoint import ReviewTraceStore
+from trans_novel.pipeline.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
 from trans_novel.review.contracts import ReviewTrace
 from trans_novel.review.run_store import ReviewRunStore
+from trans_novel.review.session import ReviewRoundResult, ReviewSessionState
 
 
 def test_trace_port_uses_existing_round_paths_and_event_scope(tmp_path):
@@ -29,3 +30,43 @@ def test_trace_port_uses_existing_round_paths_and_event_scope(tmp_path):
     assert events[0]["review_round"] == 2
     assert events[0]["event"] == "review_agent_finished"
     assert Path(store.run_dir, "rounds/002/agents/arbiter-term.json").is_file()
+
+
+def test_checkpoint_phase_fields_and_history_identity(tmp_path):
+    store = ReviewRunStore(str(tmp_path))
+    checkpoint = ReviewCheckpoint(store)
+    patch = {"patch_id": "p1", "chapter": 0, "index": 0, "status": "provisional"}
+    latest = ReviewRoundResult([], [], [], [], [], 0)
+    state = ReviewSessionState(
+        target_overrides={(0, 0): "译文"},
+        seen_overlays={"before", "after"},
+        patch_records=[patch],
+        active_patches={(0, 0): patch},
+        latest=latest,
+    )
+    checkpoint.save(state, 2, phase="scan_done", latest=latest)
+    scan = store.load_checkpoint()
+    assert scan is not None
+    assert scan["next_round"] == 2
+    assert scan["latest_issues"] == []
+    restored = checkpoint.restore("baseline", 3)
+    assert restored.latest == latest
+    assert restored.state.active_patches[(0, 0)] is restored.state.patch_records[0]
+    assert checkpoint.restore("baseline", 1).latest is None
+    checkpoint.save(state, 2)
+    completed = store.load_checkpoint()
+    assert completed is not None
+    assert completed["next_round"] == 3
+    assert set(completed) == {
+        "phase",
+        "next_round",
+        "target_overrides",
+        "seen_overlays",
+        "patch_records",
+        "active_patches",
+        "fix_failures",
+        "blocked_issues",
+        "round_summaries",
+        "clean_streak",
+        "fix_rounds",
+    }

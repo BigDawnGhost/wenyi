@@ -14,7 +14,6 @@ import json
 import os
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +38,9 @@ from ..review.conflicts import (
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
-from .review_checkpoint import ReviewTraceStore
+from ..review.session import ReviewRoundResult, content_digest, review_overlay_digest
+from . import review_results
+from .review_checkpoint import ReviewCheckpoint, ReviewTraceStore
 from .runstore import STATUS_DONE
 
 if TYPE_CHECKING:
@@ -47,217 +48,6 @@ if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
 ProgressFn = Callable[[int, int, str], None]
-
-
-@dataclass(frozen=True)
-class _ReviewRoundResult:
-    """Deterministic result of one whole-book shadow review and conflict arbitration."""
-
-    issues: list[dict[str, Any]]
-    pre_arbitration_issues: list[dict[str, Any]]
-    arbitration_superseded: list[dict[str, Any]]
-    conflict_groups: list[dict[str, Any]]
-    residual_conflicts: list[dict[str, Any]]
-    fallback_agent_count: int
-
-
-def _review_overlay_digest(
-    chapters,
-    overrides: Mapping[tuple[int, int], str],
-) -> str:
-    """Fingerprint effective shadow text to detect no progress and A/B oscillation."""
-    payload = [
-        (
-            chapter.index,
-            text_index,
-            overrides.get((chapter.index, text_index), segment.target or ""),
-        )
-        for chapter in chapters
-        for text_index, segment in enumerate(chapter.text_segments)
-    ]
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _review_content_digest(chapters) -> str:
-    """Hash the formal body text actually read by this review."""
-    payload = [
-        (
-            chapter.index,
-            text_index,
-            segment.index,
-            segment.anchor or "",
-            segment.kind,
-            segment.source,
-            segment.target or "",
-        )
-        for chapter in chapters
-        for text_index, segment in enumerate(chapter.text_segments)
-    ]
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _review_net_changes(
-    chapters,
-    overrides: Mapping[tuple[int, int], str],
-    patch_records: list[dict[str, Any]],
-    active_patches: Mapping[tuple[int, int], dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Collapse multiple rounds of shadow patches into one final suggestion per paragraph."""
-    baseline = {
-        (chapter.index, text_index): segment.target or ""
-        for chapter in chapters
-        for text_index, segment in enumerate(chapter.text_segments)
-    }
-    issue_keys_by_location: dict[tuple[int, int], set[str]] = {}
-    for patch in patch_records:
-        chapter = patch.get("chapter")
-        index = patch.get("index")
-        if (
-            not isinstance(chapter, int)
-            or isinstance(chapter, bool)
-            or not isinstance(index, int)
-            or isinstance(index, bool)
-            or patch.get("status") == "rejected_cycle"
-        ):
-            continue
-        keys = issue_keys_by_location.setdefault((chapter, index), set())
-        keys.update(str(key) for key in patch.get("issue_keys", []) if isinstance(key, str) and key)
-
-    changes: list[dict[str, Any]] = []
-    for location, suggested_target in sorted(overrides.items()):
-        if baseline.get(location) == suggested_target:
-            continue
-        active = active_patches.get(location) or {}
-        changes.append(
-            {
-                "chapter": location[0],
-                "index": location[1],
-                "suggested_target": suggested_target,
-                "issue_keys": sorted(issue_keys_by_location.get(location, set())),
-                "review_result": str(active.get("status") or "provisional"),
-            }
-        )
-    return changes
-
-
-def _review_public_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove internal review fields to produce stable user-facing issues."""
-    public: dict[str, dict[str, Any]] = {}
-    for issue in issues:
-        issue_key = issue.get("issue_key")
-        chapter = issue.get("chapter")
-        index = issue.get("index")
-        if (
-            not isinstance(issue_key, str)
-            or not issue_key
-            or not isinstance(chapter, int)
-            or isinstance(chapter, bool)
-            or not isinstance(index, int)
-            or isinstance(index, bool)
-        ):
-            continue
-        public[issue_key] = {
-            "issue_key": issue_key,
-            "chapter": chapter,
-            "index": index,
-            "type": str(issue.get("type") or ""),
-            "detail": str(issue.get("detail") or ""),
-            "suggestion": str(issue.get("suggestion") or ""),
-        }
-    return sorted(
-        public.values(),
-        key=lambda issue: (issue["chapter"], issue["index"], issue["issue_key"]),
-    )
-
-
-def _review_conflict_records(
-    groups: list[dict[str, Any]],
-    arbitrations: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Serialize conflicts and arbitration decisions into stable per-round records."""
-    return [
-        {
-            "conflict_id": group["conflict_id"],
-            "consistency_key": group["consistency_key"],
-            "issue_ids": [issue["issue_id"] for issue in group["issues"]],
-            "proposals": [
-                {
-                    "issue_id": issue["issue_id"],
-                    "chapter": issue["chapter"],
-                    "index": issue["index"],
-                    "proposed_value": issue["consistency"]["proposed_value"],
-                }
-                for issue in group["issues"]
-            ],
-            "arbitration": arbitration,
-        }
-        for group, arbitration in zip(groups, arbitrations)
-    ]
-
-
-def _review_unresolved_conflict_records(
-    issues: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Rebuild conflicts from final unresolved issues so an empty last round cannot hide them."""
-    groups = build_conflict_groups(issues)
-    arbitrations: list[dict[str, Any]] = []
-    for group in groups:
-        issue_ids = [str(issue["issue_id"]) for issue in group["issues"]]
-        annotations = [
-            issue.get("arbitration")
-            for issue in group["issues"]
-            if isinstance(issue.get("arbitration"), dict)
-        ]
-        reasons = [
-            str(annotation.get("reason", "")).strip()
-            for annotation in annotations
-            if str(annotation.get("reason", "")).strip()
-        ]
-        evidence_refs = sorted(
-            {
-                str(ref)
-                for issue in group["issues"]
-                for ref in issue.get("evidence_refs", [])
-                if isinstance(ref, str) and ref
-            }
-        )
-        arbitrations.append(
-            {
-                "conflict_id": group["conflict_id"],
-                "consistency_key": group["consistency_key"],
-                "issue_ids": issue_ids,
-                "status": "unresolved",
-                "recommended_value": "",
-                "reason": reasons[-1]
-                if reasons
-                else "Final unresolved issues still contain conflicting proposals.",
-                "supported_issue_ids": issue_ids,
-                "rejected_issue_ids": [],
-                "evidence_refs": evidence_refs,
-            }
-        )
-    return _review_conflict_records(groups, arbitrations)
-
-
-def _review_unresolved_fallback_count(issues: list[dict[str, Any]]) -> int:
-    """Count distinct degraded review blocks still represented in unresolved issues."""
-    return len(
-        {
-            str(issue.get("_chunk_id") or issue.get("issue_key") or issue.get("issue_id"))
-            for issue in issues
-            if issue.get("agent_fallback")
-        }
-    )
 
 
 class ReviewService:
@@ -363,7 +153,7 @@ class ReviewService:
         review_round: int,
         target_overrides: Mapping[tuple[int, int], str],
         progress: ProgressFn | None = None,
-    ) -> _ReviewRoundResult:
+    ) -> ReviewRoundResult:
         """Review and arbitrate one immutable whole-book shadow snapshot."""
         total = sum(len(chapter.text_segments) for chapter in loaded)
         done = 0
@@ -498,7 +288,7 @@ class ReviewService:
         )
         debug.write_json(
             "conflicts.json",
-            _review_conflict_records(conflict_groups, arbitrations),
+            review_results.conflict_records(conflict_groups, arbitrations),
         )
         debug.log_event(
             "review_round_finished",
@@ -507,7 +297,7 @@ class ReviewService:
             unresolved_conflict_count=len(residual_conflicts),
             fallback_agent_count=fallback_agent_count,
         )
-        return _ReviewRoundResult(
+        return ReviewRoundResult(
             issues=final_issues,
             pre_arbitration_issues=pre_arbitration_issues,
             arbitration_superseded=arbitration_superseded,
@@ -518,7 +308,7 @@ class ReviewService:
 
     def propose_review_patches(
         self,
-        round_result: _ReviewRoundResult,
+        round_result: ReviewRoundResult,
         evidence: BookEvidenceIndex,
         all_terms: list[GlossaryTerm],
         analysis: dict[str, Any],
@@ -772,7 +562,7 @@ class ReviewService:
         if progress:
             progress(0, 0, "Restoring review checkpoint…")
         analysis = store.load_analysis() or {}
-        reviewed_content_digest = _review_content_digest(loaded)
+        reviewed_content_digest = content_digest(loaded)
 
         # Reuse completed review results when content, configuration and glossary fingerprints match.
         latest_completed = store.load_latest_review_result()
@@ -832,17 +622,6 @@ class ReviewService:
             self._runtime.flush_usage(store, scope="review", review=debug)
             return debug.load_usage() or empty_usage()
 
-        target_overrides: dict[tuple[int, int], str] = {}
-        seen_overlays = {_review_overlay_digest(loaded, target_overrides)}
-        patch_records: list[dict[str, Any]] = []
-        active_patches: dict[tuple[int, int], dict[str, Any]] = {}
-        fix_failures: list[dict[str, Any]] = []
-        blocked_issues: dict[str, dict[str, Any]] = {}
-        round_summaries: list[dict[str, Any]] = []
-        latest: _ReviewRoundResult | None = None
-        clean_streak = 0
-        fix_rounds = 0
-        termination = "not_started"
         fix_loop = self._runtime.config.pipeline.review_fix_loop
         required_clean = self._runtime.config.pipeline.review_clean_confirmations if fix_loop else 1
         max_review_rounds = (
@@ -851,183 +630,29 @@ class ReviewService:
             else 1
         )
 
-        # Resume from the round checkpoint.
-        _checkpoint = debug.load_checkpoint()
-        _resume_scan_done = False
-        _resume_latest: _ReviewRoundResult | None = None
-        if _checkpoint is not None:
-            start_round = _checkpoint.get("next_round", 1)
-            # Tighter settings, such as fewer clean confirmations, may lower the round limit.
-            # Clamp an out-of-range checkpoint to the final round instead of producing an empty loop.
-            start_round = min(start_round, max_review_rounds)
-            target_overrides = {
-                (o["chapter"], o["index"]): o["target"]
-                for o in _checkpoint.get("target_overrides", [])
-            }
-            seen_overlays = set(_checkpoint.get("seen_overlays", []))
-            patch_records = _checkpoint.get("patch_records", [])
-            history_by_id = {patch.get("patch_id"): patch for patch in patch_records}
-            active_patches = {
-                (p["chapter"], p["index"]): history_by_id.get(p.get("patch_id"), p)
-                for p in _checkpoint.get("active_patches", [])
-            }
-            fix_failures = _checkpoint.get("fix_failures", [])
-            blocked_issues = _checkpoint.get("blocked_issues", {})
-            round_summaries = _checkpoint.get("round_summaries", [])
-            clean_streak = _checkpoint.get("clean_streak", 0)
-            fix_rounds = _checkpoint.get("fix_rounds", 0)
-            # Restore the within-round phase; scan_done allows skipping the completed scan.
-            if _checkpoint.get("phase") == "scan_done":
-                _resume_scan_done = True
-                start_round = _checkpoint.get("next_round", 1)
-                # Do not reuse an old scan when a reduced limit is below the checkpoint's round number.
-                if start_round > max_review_rounds:
-                    _resume_scan_done = False
-                    _resume_latest = None
-                    start_round = max_review_rounds
-                else:
-                    _resume_latest = _ReviewRoundResult(
-                        issues=_checkpoint.get("latest_issues", []),
-                        pre_arbitration_issues=_checkpoint.get("latest_pre_arbitration_issues", []),
-                        arbitration_superseded=_checkpoint.get("latest_arbitration_superseded", []),
-                        conflict_groups=_checkpoint.get("latest_conflict_groups", []),
-                        residual_conflicts=_checkpoint.get("latest_residual_conflicts", []),
-                        fallback_agent_count=_checkpoint.get("latest_fallback_agent_count", 0),
-                    )
-                debug.log_event(
-                    "review_checkpoint_restored",
-                    next_round=start_round,
-                    phase="scan_done",
-                    override_count=len(target_overrides),
-                    fix_rounds=fix_rounds,
-                    clean_streak=clean_streak,
-                )
-            else:
-                debug.log_event(
-                    "review_checkpoint_restored",
-                    next_round=start_round,
-                    phase="round_done",
-                    override_count=len(target_overrides),
-                    fix_rounds=fix_rounds,
-                    clean_streak=clean_streak,
-                )
-        else:
-            start_round = 1
-
-        # Completed rounds no longer execute their chunk aggregation when resuming.
-        for completed_round in range(1, start_round):
-            with debug.round_scope(completed_round):
-                debug.rebuild_snapshots_from_chunks(completed_round)
-
-        def _save_checkpoint(
-            current_round: int,
-            phase: str = "round_done",
-            latest: _ReviewRoundResult | None = None,
-        ) -> None:
-            """Save the round checkpoint with phase round_done or scan_done."""
-            state: dict[str, Any] = {
-                "phase": phase,
-                "next_round": current_round + 1 if phase == "round_done" else current_round,
-                "target_overrides": [
-                    {"chapter": c, "index": i, "target": t}
-                    for (c, i), t in sorted(target_overrides.items())
-                ],
-                "seen_overlays": sorted(seen_overlays),
-                "patch_records": patch_records,
-                "active_patches": [
-                    {**p, "chapter": c, "index": i} for (c, i), p in sorted(active_patches.items())
-                ],
-                "fix_failures": fix_failures,
-                "blocked_issues": blocked_issues,
-                "round_summaries": round_summaries,
-                "clean_streak": clean_streak,
-                "fix_rounds": fix_rounds,
-            }
-            if latest is not None:
-                state["latest_issues"] = latest.issues
-                state["latest_pre_arbitration_issues"] = latest.pre_arbitration_issues
-                state["latest_arbitration_superseded"] = latest.arbitration_superseded
-                state["latest_conflict_groups"] = latest.conflict_groups
-                state["latest_residual_conflicts"] = latest.residual_conflicts
-                state["latest_fallback_agent_count"] = latest.fallback_agent_count
-            debug.save_checkpoint(state)
-
-        def register_blocked(
-            issues: list[dict[str, Any]],
-            failures: list[dict[str, Any]],
-        ) -> None:
-            """Retain fixer failures by stable issue key so later reviewer omissions cannot
-            create false clean results.
-            """
-            by_id = {
-                str(issue["issue_id"]): issue
-                for issue in issues
-                if isinstance(issue.get("issue_id"), str)
-            }
-            for failure in failures:
-                failure_ids = failure.get("issue_ids")
-                if not isinstance(failure_ids, list):
-                    failure_id = failure.get("issue_id")
-                    failure_ids = [failure_id] if isinstance(failure_id, str) else []
-                for issue_id in failure_ids:
-                    issue = by_id.get(str(issue_id))
-                    if issue is None:
-                        continue
-                    issue_key = issue.get("issue_key")
-                    if not isinstance(issue_key, str) or not issue_key:
-                        continue
-                    blocked_issues[issue_key] = {
-                        **dict(issue),
-                        "fix_failure": {
-                            "status": failure.get("status"),
-                            "reason": failure.get("reason"),
-                            "review_round": failure.get("review_round"),
-                        },
-                    }
-
-        def effective_issues(current: _ReviewRoundResult) -> list[dict[str, Any]]:
-            """Merge current issues and historical unfixed issues into public unresolved issues
-            in book order.
-            """
-            combined = {
-                str(issue["issue_key"]): dict(issue)
-                for issue in current.issues
-                if isinstance(issue.get("issue_key"), str)
-            }
-            for issue_key, blocked in blocked_issues.items():
-                current_issue = combined.get(issue_key)
-                if current_issue is None:
-                    combined[issue_key] = dict(blocked)
-                    continue
-                fix_failure = blocked.get("fix_failure")
-                if isinstance(fix_failure, dict):
-                    current_issue["fix_failure"] = dict(fix_failure)
-            return sorted(
-                combined.values(),
-                key=lambda issue: (
-                    issue.get("chapter", -1),
-                    issue.get("index", -1),
-                    issue.get("review_round", -1),
-                    issue.get("issue_id", ""),
-                ),
-            )
+        checkpoint = ReviewCheckpoint(debug)
+        recovery = checkpoint.restore(review_overlay_digest(loaded, {}), max_review_rounds)
+        state = recovery.state
+        start_round = recovery.start_round
+        _resume_latest = recovery.latest
+        _resume_scan_done = _resume_latest is not None
 
         try:
             for review_round in range(start_round, max_review_rounds + 1):
                 if progress:
                     progress(0, 0, f"Preparing review R{review_round}…")
-                overlay_digest = _review_overlay_digest(loaded, target_overrides)
+                overlay_digest = review_overlay_digest(loaded, state.target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,
                     all_terms,
                     analysis,
-                    target_overrides=target_overrides,
+                    target_overrides=state.target_overrides,
                 )
                 with debug.round_scope(review_round):
                     debug.log_event(
                         "review_round_started",
                         overlay_digest=overlay_digest,
-                        override_count=len(target_overrides),
+                        override_count=len(state.target_overrides),
                     )
                     debug.write_json(
                         "overlay.json",
@@ -1037,7 +662,7 @@ class ReviewService:
                                 "index": index,
                                 "target": target,
                             }
-                            for (chapter, index), target in sorted(target_overrides.items())
+                            for (chapter, index), target in sorted(state.target_overrides.items())
                         ],
                     )
                     # When resuming scan_done, skip scanning and use cached results.
@@ -1046,33 +671,33 @@ class ReviewService:
                         and review_round == start_round
                         and _resume_latest is not None
                     ):
-                        latest = _resume_latest
+                        state.latest = _resume_latest
                         _resume_scan_done = False
                         _resume_latest = None
                         # Rebuild initial/dismissed snapshots after skipping a scan so the final report remains complete.
                         debug.rebuild_snapshots_from_chunks(review_round)
                         debug.log_event("review_scan_skipped", review_round=review_round)
                     else:
-                        latest = self.review_round(
+                        state.latest = self.review_round(
                             loaded,
                             all_terms,
                             evidence,
                             debug,
                             review_round=review_round,
-                            target_overrides=target_overrides,
+                            target_overrides=state.target_overrides,
                             progress=progress,
                         )
                         # Persist a mid-round checkpoint after scanning finishes.
-                        _save_checkpoint(review_round, phase="scan_done", latest=latest)
+                        checkpoint.save(state, review_round, phase="scan_done", latest=state.latest)
                         # Persist scan usage before fixing so a fixer-stage crash cannot lose accounting.
                         save_review_usage()
 
                     current_issue_keys = {
                         str(issue["issue_key"])
-                        for issue in latest.issues
+                        for issue in state.latest.issues
                         if isinstance(issue.get("issue_key"), str)
                     }
-                    for patch_record in active_patches.values():
+                    for patch_record in state.active_patches.values():
                         if patch_record.get("round", review_round) >= review_round:
                             continue
                         covered_issue_keys = {
@@ -1083,7 +708,7 @@ class ReviewService:
                         rereported = sorted(covered_issue_keys & current_issue_keys)
                         not_rereported = sorted(covered_issue_keys - current_issue_keys)
                         for issue_key in not_rereported:
-                            blocked_issues.pop(issue_key, None)
+                            state.blocked_issues.pop(issue_key, None)
                         patch_record["rereported_issue_keys"] = rereported
                         patch_record["not_rereported_issue_keys"] = not_rereported
                         if rereported:
@@ -1097,75 +722,75 @@ class ReviewService:
                     round_summary: dict[str, Any] = {
                         "review_round": review_round,
                         "overlay_digest": overlay_digest,
-                        "override_count": len(target_overrides),
-                        "issue_count": len(latest.issues),
-                        "conflict_count": len(latest.conflict_groups),
-                        "unresolved_conflict_count": len(latest.residual_conflicts),
-                        "fallback_agent_count": latest.fallback_agent_count,
-                        "clean_streak_before": clean_streak,
-                        "blocked_issue_count": len(blocked_issues),
+                        "override_count": len(state.target_overrides),
+                        "issue_count": len(state.latest.issues),
+                        "conflict_count": len(state.latest.conflict_groups),
+                        "unresolved_conflict_count": len(state.latest.residual_conflicts),
+                        "fallback_agent_count": state.latest.fallback_agent_count,
+                        "clean_streak_before": state.clean_streak,
+                        "blocked_issue_count": len(state.blocked_issues),
                     }
-                    if not latest.issues:
-                        if blocked_issues:
-                            clean_streak = 0
+                    if not state.latest.issues:
+                        if state.blocked_issues:
+                            state.clean_streak = 0
                             if progress:
                                 progress(0, required_clean, "Clean confirmation")
-                            termination = "unresolved_fixes"
+                            state.termination = "unresolved_fixes"
                             round_summary["clean_streak_after"] = 0
                             round_summary["patch_count"] = 0
-                            round_summary["termination"] = termination
+                            round_summary["termination"] = state.termination
                             debug.write_json("summary.json", round_summary)
-                            round_summaries.append(round_summary)
-                            _save_checkpoint(review_round)
+                            state.round_summaries.append(round_summary)
+                            checkpoint.save(state, review_round)
                             break
-                        clean_streak += 1
+                        state.clean_streak += 1
                         if progress:
-                            progress(clean_streak, required_clean, "Clean confirmation")
-                        round_summary["clean_streak_after"] = clean_streak
+                            progress(state.clean_streak, required_clean, "Clean confirmation")
+                        round_summary["clean_streak_after"] = state.clean_streak
                         round_summary["patch_count"] = 0
-                        if clean_streak >= required_clean:
-                            termination = "clean_confirmed"
-                            round_summary["termination"] = termination
+                        if state.clean_streak >= required_clean:
+                            state.termination = "clean_confirmed"
+                            round_summary["termination"] = state.termination
                         debug.write_json("summary.json", round_summary)
-                        round_summaries.append(round_summary)
-                        if termination == "clean_confirmed":
-                            _save_checkpoint(review_round)
+                        state.round_summaries.append(round_summary)
+                        if state.termination == "clean_confirmed":
+                            checkpoint.save(state, review_round)
                             break
-                        _save_checkpoint(review_round)
+                        checkpoint.save(state, review_round)
                         continue
 
-                    if clean_streak and progress:
+                    if state.clean_streak and progress:
                         progress(0, required_clean, "Clean confirmation")
-                    clean_streak = 0
+                    state.clean_streak = 0
                     round_summary["clean_streak_after"] = 0
                     if not fix_loop:
-                        termination = "issues_reported"
+                        state.termination = "issues_reported"
                         round_summary["patch_count"] = 0
-                        round_summary["termination"] = termination
+                        round_summary["termination"] = state.termination
                         debug.write_json("summary.json", round_summary)
-                        round_summaries.append(round_summary)
-                        _save_checkpoint(review_round)
+                        state.round_summaries.append(round_summary)
+                        checkpoint.save(state, review_round)
                         break
-                    if fix_rounds >= self._runtime.config.pipeline.review_fix_max_rounds:
-                        termination = "max_rounds"
+                    if state.fix_rounds >= self._runtime.config.pipeline.review_fix_max_rounds:
+                        state.termination = "max_rounds"
                         round_summary["patch_count"] = 0
-                        round_summary["termination"] = termination
+                        round_summary["termination"] = state.termination
                         debug.write_json("summary.json", round_summary)
-                        round_summaries.append(round_summary)
-                        _save_checkpoint(review_round)
+                        state.round_summaries.append(round_summary)
+                        checkpoint.save(state, review_round)
                         break
 
                     patches, failures = self.propose_review_patches(
-                        latest,
+                        state.latest,
                         evidence,
                         all_terms,
                         analysis,
                         debug,
                         review_round=review_round,
-                        fix_round=fix_rounds + 1,
+                        fix_round=state.fix_rounds + 1,
                         progress=progress,
                     )
-                    fix_failures.extend(
+                    state.fix_failures.extend(
                         [
                             {
                                 **failure,
@@ -1174,8 +799,8 @@ class ReviewService:
                             for failure in failures
                         ]
                     )
-                    register_blocked(
-                        latest.issues,
+                    state.register_blocked(
+                        state.latest.issues,
                         [
                             {
                                 **failure,
@@ -1186,24 +811,24 @@ class ReviewService:
                     )
                     round_summary["patch_count"] = len(patches)
                     if not patches:
-                        termination = "no_progress"
+                        state.termination = "no_progress"
                         round_summary["fix_failure_count"] = len(failures)
-                        round_summary["blocked_issue_count"] = len(blocked_issues)
-                        round_summary["termination"] = termination
+                        round_summary["blocked_issue_count"] = len(state.blocked_issues)
+                        round_summary["termination"] = state.termination
                         debug.write_json("patches.json", [])
                         debug.write_json("fix_failures.json", failures)
                         debug.write_json("summary.json", round_summary)
-                        round_summaries.append(round_summary)
-                        _save_checkpoint(review_round)
+                        state.round_summaries.append(round_summary)
+                        checkpoint.save(state, review_round)
                         break
 
                     issue_keys_by_id = {
                         str(issue["issue_id"]): str(issue["issue_key"])
-                        for issue in latest.issues
+                        for issue in state.latest.issues
                         if isinstance(issue.get("issue_id"), str)
                         and isinstance(issue.get("issue_key"), str)
                     }
-                    candidate_overrides = dict(target_overrides)
+                    candidate_overrides = dict(state.target_overrides)
                     applicable: list[ProvisionalPatch] = []
                     hash_failures: list[dict[str, Any]] = []
                     for patch in patches:
@@ -1222,20 +847,20 @@ class ReviewService:
                                 "reason": "before_hash_changed",
                                 "review_round": review_round,
                             }
-                            fix_failures.append(failure)
+                            state.fix_failures.append(failure)
                             failures.append(failure)
                             hash_failures.append(failure)
                             continue
                         candidate_overrides[location] = patch.after
                         applicable.append(patch)
 
-                    register_blocked(
-                        latest.issues,
+                    state.register_blocked(
+                        state.latest.issues,
                         hash_failures,
                     )
                     round_summary["fix_failure_count"] = len(failures)
-                    round_summary["blocked_issue_count"] = len(blocked_issues)
-                    candidate_digest = _review_overlay_digest(
+                    round_summary["blocked_issue_count"] = len(state.blocked_issues)
+                    candidate_digest = review_overlay_digest(
                         loaded,
                         candidate_overrides,
                     )
@@ -1247,14 +872,14 @@ class ReviewService:
                     round_summary["candidate_overlay_digest"] = candidate_digest
                     round_summary["applicable_patch_count"] = len(applicable)
                     if not applicable or candidate_digest == overlay_digest:
-                        termination = "no_progress"
-                        round_summary["termination"] = termination
+                        state.termination = "no_progress"
+                        round_summary["termination"] = state.termination
                         debug.write_json("summary.json", round_summary)
-                        round_summaries.append(round_summary)
-                        _save_checkpoint(review_round)
+                        state.round_summaries.append(round_summary)
+                        checkpoint.save(state, review_round)
                         break
-                    if candidate_digest in seen_overlays:
-                        termination = "cycle_detected"
+                    if candidate_digest in state.seen_overlays:
+                        state.termination = "cycle_detected"
                         for patch in applicable:
                             record = {
                                 **patch.as_dict(),
@@ -1267,17 +892,17 @@ class ReviewService:
                                 ),
                                 "status": "rejected_cycle",
                             }
-                            patch_records.append(record)
-                        round_summary["termination"] = termination
+                            state.patch_records.append(record)
+                        round_summary["termination"] = state.termination
                         debug.write_json("summary.json", round_summary)
-                        round_summaries.append(round_summary)
-                        _save_checkpoint(review_round)
+                        state.round_summaries.append(round_summary)
+                        checkpoint.save(state, review_round)
                         break
 
-                    fix_rounds += 1
+                    state.fix_rounds += 1
                     for patch in applicable:
                         location = (patch.chapter, patch.index)
-                        previous = active_patches.get(location)
+                        previous = state.active_patches.get(location)
                         record = patch.as_dict()
                         record["issue_keys"] = sorted(
                             {
@@ -1289,39 +914,39 @@ class ReviewService:
                         if previous is not None:
                             previous["status"] = "superseded"
                             previous["superseded_by"] = patch.patch_id
-                        patch_records.append(record)
-                        active_patches[location] = record
-                    target_overrides = candidate_overrides
-                    seen_overlays.add(candidate_digest)
-                    round_summary["fix_round"] = fix_rounds
+                        state.patch_records.append(record)
+                        state.active_patches[location] = record
+                    state.target_overrides = candidate_overrides
+                    state.seen_overlays.add(candidate_digest)
+                    round_summary["fix_round"] = state.fix_rounds
                     debug.write_json("summary.json", round_summary)
-                    round_summaries.append(round_summary)
-                    _save_checkpoint(review_round)
+                    state.round_summaries.append(round_summary)
+                    checkpoint.save(state, review_round)
             else:
-                termination = "max_rounds"
-                _save_checkpoint(max_review_rounds)
+                state.termination = "max_rounds"
+                checkpoint.save(state, max_review_rounds)
 
-            if latest is None:  # pragma: no cover - max_review_rounds is at least one.
+            if state.latest is None:  # pragma: no cover - max_review_rounds is at least one.
                 raise RuntimeError("Review loop finished without a review round")
 
-            unresolved = effective_issues(latest)
-            final_conflicts = _review_unresolved_conflict_records(unresolved)
+            unresolved = state.effective_issues(state.latest)
+            final_conflicts = review_results.unresolved_conflict_records(unresolved)
             final_residual_conflicts = [
                 record
                 for record in final_conflicts
                 if record.get("arbitration", {}).get("status") == "unresolved"
             ]
-            final_fallback_agent_count = _review_unresolved_fallback_count(unresolved)
+            final_fallback_agent_count = review_results.unresolved_fallback_count(unresolved)
             initial_issues, dismissed = debug.result_snapshots()
             debug.write_json("rounds/final/initial_issues.json", initial_issues)
             debug.write_json("rounds/final/dismissed_issues.json", dismissed)
             debug.write_json(
                 "rounds/final/pre_arbitration_issues.json",
-                latest.pre_arbitration_issues,
+                state.latest.pre_arbitration_issues,
             )
             debug.write_json(
                 "rounds/final/arbitration_superseded_issues.json",
-                latest.arbitration_superseded,
+                state.latest.arbitration_superseded,
             )
             debug.write_json(
                 "rounds/final/residual_conflicts.json",
@@ -1335,17 +960,17 @@ class ReviewService:
                 ],
             )
             debug.write_json("rounds/final/conflicts.json", final_conflicts)
-            debug.write_json("rounds/final/patch-history.json", patch_records)
+            debug.write_json("rounds/final/patch-history.json", state.patch_records)
             debug.write_json(
                 "rounds/final/not_rereported_patches.json",
-                [patch for patch in patch_records if patch["status"] == "not_rereported"],
+                [patch for patch in state.patch_records if patch["status"] == "not_rereported"],
             )
             debug.write_json(
                 "rounds/final/unresolved_issues.json",
                 unresolved,
             )
-            debug.write_json("rounds/final/fix_failures.json", fix_failures)
-            debug.write_json("rounds/final/rounds.json", round_summaries)
+            debug.write_json("rounds/final/fix_failures.json", state.fix_failures)
+            debug.write_json("rounds/final/rounds.json", state.round_summaries)
             debug.write_json(
                 "rounds/final/shadow_targets.json",
                 [
@@ -1354,40 +979,40 @@ class ReviewService:
                         "index": index,
                         "target": target,
                     }
-                    for (chapter, index), target in sorted(target_overrides.items())
+                    for (chapter, index), target in sorted(state.target_overrides.items())
                 ],
             )
-            public_issues = _review_public_issues(unresolved)
-            changes = _review_net_changes(
+            public_issues = review_results.public_issues(unresolved)
+            changes = review_results.net_changes(
                 loaded,
-                target_overrides,
-                patch_records,
-                active_patches,
+                state.target_overrides,
+                state.patch_records,
+                state.active_patches,
             )
             summary = {
                 "initial_issue_count": len(initial_issues),
                 "dismissed_issue_count": len(dismissed),
-                "pre_arbitration_issue_count": len(latest.pre_arbitration_issues),
-                "arbitration_superseded_count": len(latest.arbitration_superseded),
+                "pre_arbitration_issue_count": len(state.latest.pre_arbitration_issues),
+                "arbitration_superseded_count": len(state.latest.arbitration_superseded),
                 "issue_count": len(public_issues),
                 "conflict_count": len(final_conflicts),
                 "unresolved_conflict_count": len(final_residual_conflicts),
                 "fallback_agent_count": final_fallback_agent_count,
-                "review_round_count": len(round_summaries),
-                "fix_round_count": fix_rounds,
-                "patch_count": len(patch_records),
+                "review_round_count": len(state.round_summaries),
+                "fix_round_count": state.fix_rounds,
+                "patch_count": len(state.patch_records),
                 "change_count": len(changes),
                 "not_rereported_patch_count": sum(
-                    patch["status"] == "not_rereported" for patch in patch_records
+                    patch["status"] == "not_rereported" for patch in state.patch_records
                 ),
-                "shadow_override_count": len(target_overrides),
-                "blocked_issue_count": len(blocked_issues),
-                "clean_streak": clean_streak,
+                "shadow_override_count": len(state.target_overrides),
+                "blocked_issue_count": len(state.blocked_issues),
+                "clean_streak": state.clean_streak,
             }
             debug.write_json("rounds/final/summary.json", summary)
             result = debug.finish(
                 status="completed",
-                termination=termination,
+                termination=state.termination,
                 summary=summary,
                 issues=public_issues,
                 changes=changes,
@@ -1398,7 +1023,7 @@ class ReviewService:
                 review_id=debug.review_id,
                 review_dir=debug.run_dir,
                 status="completed",
-                termination=termination,
+                termination=state.termination,
                 issue_count=len(public_issues),
                 change_count=len(changes),
             )
@@ -1423,19 +1048,25 @@ class ReviewService:
                 )
                 raise
             initial_issues, dismissed = debug.result_snapshots()
-            partial_issues = effective_issues(latest) if latest is not None else []
-            public_issues = _review_public_issues(partial_issues)
-            partial_changes = _review_net_changes(
+            partial_issues = (
+                state.effective_issues(state.latest) if state.latest is not None else []
+            )
+            public_issues = review_results.public_issues(partial_issues)
+            partial_changes = review_results.net_changes(
                 loaded,
-                target_overrides,
-                patch_records,
-                active_patches,
+                state.target_overrides,
+                state.patch_records,
+                state.active_patches,
             )
             summary = {
                 "issue_count": len(public_issues),
                 "change_count": len(partial_changes),
-                "conflict_count": (len(latest.conflict_groups) if latest is not None else 0),
-                "fallback_agent_count": (latest.fallback_agent_count if latest is not None else 0),
+                "conflict_count": (
+                    len(state.latest.conflict_groups) if state.latest is not None else 0
+                ),
+                "fallback_agent_count": (
+                    state.latest.fallback_agent_count if state.latest is not None else 0
+                ),
             }
             error_payload = {"type": type(error).__name__, "message": str(error)}
             debug.write_json("rounds/final/initial_issues.json", initial_issues)
@@ -1444,8 +1075,8 @@ class ReviewService:
                 "rounds/final/partial_issues.json",
                 partial_issues,
             )
-            debug.write_json("rounds/final/partial_patches.json", patch_records)
-            debug.write_json("rounds/final/fix_failures.json", fix_failures)
+            debug.write_json("rounds/final/partial_patches.json", state.patch_records)
+            debug.write_json("rounds/final/fix_failures.json", state.fix_failures)
             if resumable_interrupt:
                 # Keep chunk/checkpoint caches eligible for find_resumable after balance,
                 # timeout or transport stops. Formal chapters remain unchanged until Autofix.

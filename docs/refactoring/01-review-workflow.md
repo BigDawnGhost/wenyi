@@ -2,7 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/01-review-workflow.md)
 
-Status: proposed; high priority, high regression risk. Baseline: `7471256`.
+Status: partially implemented; baseline: `7471256`.
+
+Implementation: `ReviewSessionState` owns mutable shadow data; `ReviewCheckpoint` restores and encodes the existing schema and phase rules. Pure result projections live in `review_results.py`. Checkpoint and usage interruption tests compare complete and resumed runs. Decisions, chunk/round execution and final coordination remain pending.
 
 ## Evidence and scope
 
