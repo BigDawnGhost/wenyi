@@ -15,17 +15,13 @@ import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from ..agents.review_fixer import (
-    ProvisionalPatch,
-    ReviewFixer,
-)
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.resources import prompt_fingerprint
 from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
-from ..review.session import content_digest, review_overlay_digest
+from ..review.session import ReviewPolicy, content_digest, review_overlay_digest
 from . import review_results
 from .review_checkpoint import ReviewCheckpoint
 from .review_chunks import ReviewChunkService
@@ -235,13 +231,12 @@ class ReviewService:
             self._runtime.flush_usage(store, scope="review", review=debug)
             return debug.load_usage() or empty_usage()
 
-        fix_loop = self._runtime.config.pipeline.review_fix_loop
-        required_clean = self._runtime.config.pipeline.review_clean_confirmations if fix_loop else 1
-        max_review_rounds = (
-            (self._runtime.config.pipeline.review_fix_max_rounds + 1) * required_clean
-            if fix_loop
-            else 1
+        policy = ReviewPolicy(
+            self._runtime.config.pipeline.review_fix_loop,
+            self._runtime.config.pipeline.review_fix_max_rounds,
+            self._runtime.config.pipeline.review_clean_confirmations,
         )
+        max_review_rounds = policy.max_review_rounds
 
         checkpoint = ReviewCheckpoint(debug)
         recovery = checkpoint.restore(review_overlay_digest(loaded, {}), max_review_rounds)
@@ -305,93 +300,19 @@ class ReviewService:
                         # Persist scan usage before fixing so a fixer-stage crash cannot lose accounting.
                         save_review_usage()
 
-                    current_issue_keys = {
-                        str(issue["issue_key"])
-                        for issue in state.latest.issues
-                        if isinstance(issue.get("issue_key"), str)
-                    }
-                    for patch_record in state.active_patches.values():
-                        if patch_record.get("round", review_round) >= review_round:
-                            continue
-                        covered_issue_keys = {
-                            str(issue_key)
-                            for issue_key in patch_record.get("issue_keys", [])
-                            if isinstance(issue_key, str)
-                        }
-                        rereported = sorted(covered_issue_keys & current_issue_keys)
-                        not_rereported = sorted(covered_issue_keys - current_issue_keys)
-                        for issue_key in not_rereported:
-                            state.blocked_issues.pop(issue_key, None)
-                        patch_record["rereported_issue_keys"] = rereported
-                        patch_record["not_rereported_issue_keys"] = not_rereported
-                        if rereported:
-                            patch_record["status"] = "needs_revision"
-                            patch_record["failed_review_round"] = review_round
-                        else:
-                            if patch_record.get("status") != "not_rereported":
-                                patch_record["not_rereported_in_round"] = review_round
-                            patch_record["status"] = "not_rereported"
-
-                    round_summary: dict[str, Any] = {
-                        "review_round": review_round,
-                        "overlay_digest": overlay_digest,
-                        "override_count": len(state.target_overrides),
-                        "issue_count": len(state.latest.issues),
-                        "conflict_count": len(state.latest.conflict_groups),
-                        "unresolved_conflict_count": len(state.latest.residual_conflicts),
-                        "fallback_agent_count": state.latest.fallback_agent_count,
-                        "clean_streak_before": state.clean_streak,
-                        "blocked_issue_count": len(state.blocked_issues),
-                    }
-                    if not state.latest.issues:
-                        if state.blocked_issues:
-                            state.clean_streak = 0
-                            if progress:
-                                progress(0, required_clean, "Clean confirmation")
-                            state.termination = "unresolved_fixes"
-                            round_summary["clean_streak_after"] = 0
-                            round_summary["patch_count"] = 0
-                            round_summary["termination"] = state.termination
-                            debug.write_json("summary.json", round_summary)
-                            state.round_summaries.append(round_summary)
-                            checkpoint.save(state, review_round)
-                            break
-                        state.clean_streak += 1
-                        if progress:
-                            progress(state.clean_streak, required_clean, "Clean confirmation")
-                        round_summary["clean_streak_after"] = state.clean_streak
-                        round_summary["patch_count"] = 0
-                        if state.clean_streak >= required_clean:
-                            state.termination = "clean_confirmed"
-                            round_summary["termination"] = state.termination
+                    decision = state.after_scan(state.latest, review_round, overlay_digest, policy)
+                    round_summary = decision.summary
+                    if progress and decision.clean_progress is not None:
+                        progress(
+                            decision.clean_progress, policy.required_clean, "Clean confirmation"
+                        )
+                    if decision.action != "fix":
                         debug.write_json("summary.json", round_summary)
                         state.round_summaries.append(round_summary)
-                        if state.termination == "clean_confirmed":
-                            checkpoint.save(state, review_round)
-                            break
                         checkpoint.save(state, review_round)
+                        if decision.action == "stop":
+                            break
                         continue
-
-                    if state.clean_streak and progress:
-                        progress(0, required_clean, "Clean confirmation")
-                    state.clean_streak = 0
-                    round_summary["clean_streak_after"] = 0
-                    if not fix_loop:
-                        state.termination = "issues_reported"
-                        round_summary["patch_count"] = 0
-                        round_summary["termination"] = state.termination
-                        debug.write_json("summary.json", round_summary)
-                        state.round_summaries.append(round_summary)
-                        checkpoint.save(state, review_round)
-                        break
-                    if state.fix_rounds >= self._runtime.config.pipeline.review_fix_max_rounds:
-                        state.termination = "max_rounds"
-                        round_summary["patch_count"] = 0
-                        round_summary["termination"] = state.termination
-                        debug.write_json("summary.json", round_summary)
-                        state.round_summaries.append(round_summary)
-                        checkpoint.save(state, review_round)
-                        break
 
                     patches, failures = self._rounds.propose_review_patches(
                         state.latest,
@@ -403,138 +324,33 @@ class ReviewService:
                         fix_round=state.fix_rounds + 1,
                         progress=progress,
                     )
-                    state.fix_failures.extend(
-                        [
-                            {
-                                **failure,
-                                "review_round": review_round,
-                            }
-                            for failure in failures
-                        ]
-                    )
-                    state.register_blocked(
-                        state.latest.issues,
-                        [
-                            {
-                                **failure,
-                                "review_round": review_round,
-                            }
-                            for failure in failures
-                        ],
-                    )
-                    round_summary["patch_count"] = len(patches)
-                    if not patches:
-                        state.termination = "no_progress"
-                        round_summary["fix_failure_count"] = len(failures)
-                        round_summary["blocked_issue_count"] = len(state.blocked_issues)
-                        round_summary["termination"] = state.termination
-                        debug.write_json("patches.json", [])
-                        debug.write_json("fix_failures.json", failures)
-                        debug.write_json("summary.json", round_summary)
-                        state.round_summaries.append(round_summary)
-                        checkpoint.save(state, review_round)
-                        break
-
-                    issue_keys_by_id = {
-                        str(issue["issue_id"]): str(issue["issue_key"])
-                        for issue in state.latest.issues
-                        if isinstance(issue.get("issue_id"), str)
-                        and isinstance(issue.get("issue_key"), str)
+                    current_targets = {
+                        (patch.chapter, patch.index): segment.target
+                        for patch in patches
+                        if (segment := evidence.segment_ref(patch.chapter, patch.index)) is not None
                     }
-                    candidate_overrides = dict(state.target_overrides)
-                    applicable: list[ProvisionalPatch] = []
-                    hash_failures: list[dict[str, Any]] = []
-                    for patch in patches:
-                        location = (patch.chapter, patch.index)
-                        current = evidence.segment_ref(*location)
-                        if (
-                            current is None
-                            or ReviewFixer.target_hash(current.target) != patch.before_hash
-                        ):
-                            failure = {
-                                "patch_id": patch.patch_id,
-                                "issue_ids": list(patch.issue_ids),
-                                "chapter": patch.chapter,
-                                "index": patch.index,
-                                "status": "failed",
-                                "reason": "before_hash_changed",
-                                "review_round": review_round,
-                            }
-                            state.fix_failures.append(failure)
-                            failures.append(failure)
-                            hash_failures.append(failure)
-                            continue
-                        candidate_overrides[location] = patch.after
-                        applicable.append(patch)
-
-                    state.register_blocked(
-                        state.latest.issues,
-                        hash_failures,
-                    )
-                    round_summary["fix_failure_count"] = len(failures)
-                    round_summary["blocked_issue_count"] = len(state.blocked_issues)
-                    candidate_digest = review_overlay_digest(
+                    plan = state.prepare_fix(
                         loaded,
-                        candidate_overrides,
-                    )
-                    debug.write_json(
-                        "patches.json",
+                        state.latest,
                         [patch.as_dict() for patch in patches],
+                        failures,
+                        current_targets,
+                        review_round,
+                        round_summary,
                     )
+                    debug.write_json("patches.json", [patch.as_dict() for patch in patches])
                     debug.write_json("fix_failures.json", failures)
-                    round_summary["candidate_overlay_digest"] = candidate_digest
-                    round_summary["applicable_patch_count"] = len(applicable)
-                    if not applicable or candidate_digest == overlay_digest:
-                        state.termination = "no_progress"
-                        round_summary["termination"] = state.termination
-                        debug.write_json("summary.json", round_summary)
-                        state.round_summaries.append(round_summary)
-                        checkpoint.save(state, review_round)
-                        break
-                    if candidate_digest in state.seen_overlays:
-                        state.termination = "cycle_detected"
-                        for patch in applicable:
-                            record = {
-                                **patch.as_dict(),
-                                "issue_keys": sorted(
-                                    {
-                                        issue_keys_by_id[issue_id]
-                                        for issue_id in patch.issue_ids
-                                        if issue_id in issue_keys_by_id
-                                    }
-                                ),
-                                "status": "rejected_cycle",
-                            }
-                            state.patch_records.append(record)
-                        round_summary["termination"] = state.termination
-                        debug.write_json("summary.json", round_summary)
-                        state.round_summaries.append(round_summary)
-                        checkpoint.save(state, review_round)
-                        break
-
-                    state.fix_rounds += 1
-                    for patch in applicable:
-                        location = (patch.chapter, patch.index)
-                        previous = state.active_patches.get(location)
-                        record = patch.as_dict()
-                        record["issue_keys"] = sorted(
-                            {
-                                issue_keys_by_id[issue_id]
-                                for issue_id in patch.issue_ids
-                                if issue_id in issue_keys_by_id
-                            }
-                        )
-                        if previous is not None:
-                            previous["status"] = "superseded"
-                            previous["superseded_by"] = patch.patch_id
-                        state.patch_records.append(record)
-                        state.active_patches[location] = record
-                    state.target_overrides = candidate_overrides
-                    state.seen_overlays.add(candidate_digest)
-                    round_summary["fix_round"] = state.fix_rounds
+                    advanced = False
+                    if plan is not None:
+                        round_summary["candidate_overlay_digest"] = plan.candidate_digest
+                        round_summary["applicable_patch_count"] = len(plan.applicable)
+                        advanced = state.after_fix(plan, overlay_digest, round_summary)
                     debug.write_json("summary.json", round_summary)
                     state.round_summaries.append(round_summary)
                     checkpoint.save(state, review_round)
+                    if not advanced:
+                        break
+
             else:
                 state.termination = "max_rounds"
                 checkpoint.save(state, max_review_rounds)

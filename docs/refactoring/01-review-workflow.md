@@ -4,7 +4,7 @@
 
 Status: partially implemented; baseline: `7471256`.
 
-Implementation: session state, checkpoint conversion and result projections are isolated. `ReviewChunkService` owns cache-first scanning, lazy chapter terminology and adaptive recovery; `ReviewRoundService` owns scan/arbitration and shadow proposals with explicit dependencies. Pure decisions and the final coordinator reduction remain pending.
+Implementation: state, checkpoint conversion, chunk/round execution and pure scan/fix decisions are isolated. The state owner handles clean confirmation, blocked issues, limits, overlay validation and cycles; the coordinator retains artifact-before-acceptance ordering. Final result writing and coordinator cleanup remain pending.
 
 ## Evidence and scope
 

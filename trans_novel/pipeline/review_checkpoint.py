@@ -69,7 +69,9 @@ class ReviewCheckpoint:
             state.patch_records = _checkpoint.get("patch_records", [])
             history_by_id = {patch.get("patch_id"): patch for patch in state.patch_records}
             state.active_patches = {
-                (p["chapter"], p["index"]): history_by_id.get(p.get("patch_id"), p)
+                (p["chapter"], p["index"]): history_by_id[p.get("patch_id")]
+                if p.get("patch_id") in history_by_id
+                else p
                 for p in _checkpoint.get("active_patches", [])
             }
             state.fix_failures = _checkpoint.get("fix_failures", [])

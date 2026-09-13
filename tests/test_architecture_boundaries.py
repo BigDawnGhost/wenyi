@@ -255,7 +255,7 @@ class TestArchitectureBoundaries(unittest.TestCase):
             "trans_novel.review.run_store",
             "trans_novel.review.evidence",
         )
-        for name in ("conflicts", "contracts"):
+        for name in ("conflicts", "contracts", "session"):
             for module in _imported_modules(TRANS_NOVEL_DIR / "review" / f"{name}.py"):
                 self.assertFalse(
                     any(module == item or module.startswith(item + ".") for item in forbidden),
