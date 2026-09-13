@@ -15,14 +15,11 @@ from trans_novel.assemble.docx_writer import _assemble_docx
 from trans_novel.assemble.writer import assemble
 from trans_novel.cli import _resolve_output_format, app
 from trans_novel.config import Config
+from trans_novel.document_styles.docx import merge_align_results, proportional_range_placements
 from trans_novel.ingest.docx_reader import read_docx
 from trans_novel.ingest.models import KIND_HEADING, KIND_TEXT
 from trans_novel.ingest.segmenter import load_document
 from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.docx_styles import (
-    merge_align_results,
-    proportional_range_placements,
-)
 from trans_novel.pipeline.runstore import STATUS_DONE, RunStore
 
 

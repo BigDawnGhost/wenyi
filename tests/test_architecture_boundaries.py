@@ -318,6 +318,8 @@ def test_writers_do_not_import_reader_private_helpers():
     for path in (TRANS_NOVEL_DIR / "assemble").rglob("*.py"):
         for module in _imported_modules(path):
             assert ".epub_reader" not in module, (path, module)
+            assert ".docx_reader._" not in module, (path, module)
+            assert "pipeline.docx_styles" not in module, (path, module)
 
 
 def test_autofix_publisher_has_no_candidate_or_model_dependencies():
@@ -325,3 +327,12 @@ def test_autofix_publisher_has_no_candidate_or_model_dependencies():
         assert not module.startswith(("trans_novel.agents", "trans_novel.llm")), module
         assert "autofix_candidates" not in module
         assert "autofix_verification" not in module
+
+
+def test_document_style_policy_is_independent_of_workflows():
+    for path in (TRANS_NOVEL_DIR / "document_styles").rglob("*.py"):
+        for module in _imported_modules(path):
+            assert not module.startswith(("trans_novel.pipeline", "trans_novel.agents", "docx")), (
+                path,
+                module,
+            )

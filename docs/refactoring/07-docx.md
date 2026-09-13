@@ -2,7 +2,9 @@
 
 [Index](README.md) · [简体中文](../zh/refactoring/07-docx.md)
 
-Status: proposed; medium priority. Baseline: `7471256`.
+Status: implemented; baseline: `7471256`.
+
+Implemented: shared prefix/range policies are independent of readers and pipeline services. DOCX style, numbering and block emitters now own Word operations; the export coordinator is 66 lines. Six pre/post export comparisons (Chinese/English targets, monolingual and both bilingual orders) produced identical Word XML and resources, including colored headings, mixed spans, list numbering and tables.
 
 ## Evidence
 
