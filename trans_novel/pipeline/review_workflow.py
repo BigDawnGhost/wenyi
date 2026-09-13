@@ -623,6 +623,30 @@ class ReviewService:
                 context_source or segment.source,
             )
             trace_path = f"fixers/ch{chapter}-text{index}.json"
+            existing = debug.load_json(trace_path)
+            if existing is not None and existing.get("status") == "finished":
+                cached = existing.get("patch")
+                if isinstance(cached, dict) and isinstance(cached.get("issue_ids"), list):
+                    try:
+                        saved_patch = ProvisionalPatch(
+                            **{**cached, "issue_ids": tuple(cached["issue_ids"])}
+                        )
+                    except TypeError:
+                        saved_patch = None
+                    if (
+                        saved_patch is not None
+                        and saved_patch.round == review_round
+                        and saved_patch.segment_ref == segment.ref
+                        and (saved_patch.chapter, saved_patch.index) == (chapter, index)
+                        and saved_patch.before == segment.target
+                        and saved_patch.before_hash == ReviewFixer.target_hash(segment.target)
+                        and all(isinstance(issue_id, str) for issue_id in saved_patch.issue_ids)
+                        and set(saved_patch.issue_ids) == {issue["issue_id"] for issue in issues}
+                        and isinstance(saved_patch.after, str)
+                        and saved_patch.after.strip()
+                        and saved_patch.status == "provisional"
+                    ):
+                        return saved_patch, None
             trace: dict[str, Any] = {
                 "chapter": chapter,
                 "index": index,
@@ -842,8 +866,10 @@ class ReviewService:
             }
             seen_overlays = set(_checkpoint.get("seen_overlays", []))
             patch_records = _checkpoint.get("patch_records", [])
+            history_by_id = {patch.get("patch_id"): patch for patch in patch_records}
             active_patches = {
-                (p["chapter"], p["index"]): p for p in _checkpoint.get("active_patches", [])
+                (p["chapter"], p["index"]): history_by_id.get(p.get("patch_id"), p)
+                for p in _checkpoint.get("active_patches", [])
             }
             fix_failures = _checkpoint.get("fix_failures", [])
             blocked_issues = _checkpoint.get("blocked_issues", {})
@@ -887,6 +913,11 @@ class ReviewService:
                 )
         else:
             start_round = 1
+
+        # Completed rounds no longer execute their chunk aggregation when resuming.
+        for completed_round in range(1, start_round):
+            with debug.round_scope(completed_round):
+                debug.rebuild_snapshots_from_chunks(completed_round)
 
         def _save_checkpoint(
             current_round: int,
