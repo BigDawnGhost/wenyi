@@ -18,6 +18,10 @@ EventSink = Callable[..., None]
 _LOGGER = logging.getLogger(__name__)
 
 
+class ResponseTruncatedError(RuntimeError):
+    """The provider exhausted its token limit before completing the response."""
+
+
 class LLMClient(ABC):
     """Interface implemented by every provider."""
 

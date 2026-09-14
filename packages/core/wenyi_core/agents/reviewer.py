@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..i18n.prompts import render
+from ..llm.base import ResponseTruncatedError
 from ..llm.json_parser import parse_json_result
 from . import prompts
 from .base import Agent
@@ -79,6 +80,8 @@ class Reviewer(Agent):
                         "error": str(error),
                     },
                 )
+            if isinstance(error, ResponseTruncatedError):
+                raise ReviewOutputError("token_limit") from error
             raise
         if trace:
             trace("response", {"raw_response": text})

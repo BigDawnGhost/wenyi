@@ -312,9 +312,16 @@ uv run wenyi status book.epub
 ```
 
 Changing polishing settings does not automatically rerun translation batches that
-are already complete. Review is different: every `review` invocation rechecks the
-complete translated book and creates a new timestamped Review run. Runs are
-read-only by default; `--autofix` may publish their final revisions.
+are already complete. Review can reuse a completed result or resume an interrupted
+run marked `running`, `interrupted`, or `failed` when translation content, review
+configuration, and glossary fingerprints match. Runs are read-only by default;
+`--autofix` may publish their final revisions.
+
+If the initial Reviewer response reaches the token limit, review recursively splits
+the affected block and retries smaller blocks. Single-paragraph failures use the
+bounded `pipeline.review_output_retries` allowance; exhaustion stops the workflow
+with an error, never a clean-review result. Truncated responses are not accepted as
+complete output. Recovery may require extra model calls and smaller review contexts.
 Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 

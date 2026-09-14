@@ -12,8 +12,10 @@ from typing import Any
 from unittest.mock import patch
 
 from wenyi_core.agents.base import Agent
+from wenyi_core.agents.reviewer import ReviewOutputError
 from wenyi_core.config import Config, LLMConfig
 from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.llm.base import ResponseTruncatedError
 from wenyi_core.llm.factory import build_client
 from wenyi_core.llm.providers._openai_compatible import (
     EmptyResponseError,
@@ -138,13 +140,13 @@ class _MeteredFakeClient(FakeClient):
         return result
 
 
-def _minimal_deepseek_cfg() -> LLMConfig:
+def _minimal_deepseek_cfg(*, max_retries: int = 0) -> LLMConfig:
     return model_config(
         kind="deepseek",
         base_url="https://example.invalid/v1",
         api_key_env="X",
         timeout=1,
-        max_retries=0,
+        max_retries=max_retries,
         profiles={
             "strong": dict(model="m1"),
             "cheap": dict(model="m2"),
@@ -164,6 +166,62 @@ def _minimal_openai_compatible_cfg(
         max_retries=max_retries,
         profiles={"strong": dict(model="m", options=options)},
     )
+
+
+class TestTruncatedReview(unittest.TestCase):
+    def test_deepseek_truncation_splits_review_chunk(self):
+        config = Config.from_dict({"language": {"source": "fr", "target": "zh"}})
+        config.segment.max_tokens_per_batch = 100_000
+        config.pipeline.review_concurrency = 1
+        client = RoutedLLMClient(_minimal_deepseek_cfg())
+        response = '{"issues":[],"reviewed_segments":1,"complete":true}'
+        stub = _ClientStub(
+            [
+                _make_response("", _make_usage(completion_tokens=10), finish_reason="length"),
+                _make_response(response, None),
+                _make_response(response, None),
+            ]
+        )
+        segments = [Segment(index=index, source="Source", target="译文") for index in range(2)]
+        with patch.object(client.adapter("default"), "_ensure_client", return_value=stub):
+            issues = Orchestrator(config, client=client)._review._chunks.review_chapter(
+                segments, []
+            )
+        self.assertEqual(issues, [])
+        self.assertEqual(stub.chat.completions._idx, 3)
+        self.assertEqual(client.usage_summary()["totals"]["completion_tokens"], 10)
+
+    def test_truncated_singleton_exhaustion_is_not_a_clean_review(self):
+        config = Config.from_dict({"language": {"source": "fr", "target": "zh"}})
+        config.pipeline.review_output_retries = 1
+        client = RoutedLLMClient(_minimal_deepseek_cfg())
+        stub = _ClientStub(
+            [
+                _make_response("", None, finish_reason="length"),
+                _make_response("", None, finish_reason="length"),
+            ]
+        )
+        with patch.object(client.adapter("default"), "_ensure_client", return_value=stub):
+            with self.assertRaisesRegex(ReviewOutputError, "token_limit"):
+                Orchestrator(config, client=client)._review._chunks.review_chapter(
+                    [Segment(index=0, source="Source", target="译文")], []
+                )
+        self.assertEqual(stub.chat.completions._idx, 2)
+
+    def test_deepseek_rejects_nonempty_truncated_response_without_retry(self):
+        client = RoutedLLMClient(_minimal_deepseek_cfg(max_retries=4))
+        stub = _ClientStub([_make_response('{"issues":[]}', None, finish_reason="length")])
+        with patch.object(client.adapter("default"), "_ensure_client", return_value=stub):
+            with self.assertRaisesRegex(
+                ResponseTruncatedError,
+                r"deepseek.*token limit.*model=m2, tier=cheap, stage=review.scan",
+            ):
+                client.complete(
+                    [{"role": "user", "content": "Review"}],
+                    operation="review.scan",
+                    json_mode=True,
+                )
+        self.assertEqual(stub.chat.completions._idx, 1)
 
 
 class TestOpenAICompatibleReasoningContent(unittest.TestCase):
