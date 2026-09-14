@@ -13,6 +13,8 @@ Class names are book-local grouping evidence, never universal semantics. A class
 
 The host continues to own text, source/translation pairing, DOM integrity, archive I/O, validation, and publication. CSS owns appearance. Neither model output nor configuration can disable preservation checks. There is no executable theme plugin or embedded classification runtime. Fonts are not bundled; CSS declares local families and fallbacks.
 
+EPUB note protection is a neutral, model-free source pass. Explicit EPUB/ARIA noteref, backlink, footnote and endnote semantics are authoritative when their targets resolve. Untyped inference is deliberately narrower: the visible anchor must be a short supported symbol or ASCII number, the return marker must begin its own note block, both links must resolve safely and reciprocally, and numeric pairs additionally require source note semantics from XHTML or exact OPF/NAV metadata. Duplicate, missing, external, unsafe or directionally ambiguous targets are omitted rather than guessed. Classes, IDs, filenames and arbitrary words never establish note meaning. Explicit malformed markers remain protected from translation, but do not create invented relation records.
+
 ## 2. Configuration and reassembly
 
 Replace the existing `output` mapping to enable the packaged reading style:
@@ -48,19 +50,39 @@ output:
 - A custom bilingual stylesheet replaces the packaged file; an intentionally empty stylesheet is valid.
 - TXT output retains bilingual order and saved EPUB choices, but neither reads presentation assets nor runs layout analysis. Missing unused CSS must not break TXT export.
 
-Use the global configuration option before the command. From the same working directory and saved run state:
+The primary workflow remains `translate`; use `resume` after interruption. From the same
+working directory and saved run state:
+
+```bash
+trans-novel --config config.yaml translate book.epub
+trans-novel --config config.yaml resume book.epub
+```
+
+Completed legacy-policy runs use these ordinary entry points too. The application does not
+migrate the saved policy or rerun the paid content chain; it runs layout, report and assembly
+only. A legacy run with incomplete required content, a mismatched source identity or incompatible
+EPUB source slots is still rejected before any model call. Future policy versions are never
+admitted as legacy runs.
+
+For an explicit export-only operation, `tools assemble` remains available:
 
 ```bash
 trans-novel --config config.yaml tools assemble book.epub --format epub
 ```
 
-**This does not call translation models, but may call the analyst model and incur cost.** With general styling enabled, missing or stale layout data is analyzed automatically, including for completed runs created before layout profiles existed. A valid saved profile is reused. To explicitly refresh it:
+**These output-maintenance paths do not call translation models, but general styling may call
+the analyst model and incur cost.** Missing or stale layout data is analyzed automatically,
+including completed legacy runs without a layout profile; a valid profile is reused. TXT output
+does not read theme assets or run layout analysis. To explicitly refresh EPUB layout data:
 
 ```bash
 trans-novel --config config.yaml tools assemble book.epub --format epub --reanalyze-layout
 ```
 
-Refresh is an assembly operation, not a translation reset. It requires the same source identity as the saved run. A failed refresh stops the requested operation and leaves the previous accepted profile intact; it does not silently publish using that profile. For source-backed EPUB, missing or changed original source cannot be replaced with reconstructed translated content.
+Refresh is output maintenance, not a translation reset. It requires the same source identity as
+the saved run. A failed refresh stops the requested operation and leaves the prior accepted
+profile intact; it does not silently publish with that profile. For source-backed EPUB, missing
+or changed original source cannot be replaced with reconstructed translated content.
 
 ## 3. Source inventory and classification
 
@@ -110,6 +132,10 @@ The book-level `layout` node depends on `prepare`; assembly depends on `report` 
 
 The output digest includes CSS bytes, effective output choices, compiler policy and the semantic layout digest. Moving identical CSS to another path does not change it. CSS/profile changes invalidate assembly and output verification only, never already-paid translated chapters. Usage and output records can change during reassembly even when translation state does not. Progress distinguishes analysis from saved-result reuse.
 
+For a source-matching schema-4 EPUB state created before deterministic marker protection, eligible `translate`, `resume` and output-only assembly paths run note-slot compatibility before publication work. Migration accepts only differences independently attributable to newly protected marker subtrees and slot reindexing, preserves existing translated payloads without translation calls, and rebases already-succeeded current-policy fingerprints only from their exact saved pre-migration values. The complete result is validated before the first chapter write. A dedicated source-bound `note_migration.json` journal permits idempotent forward recovery, while `note_migration_backup/` retains the verified pre-migration data; the note metadata is committed last, independently of translation and polish journals. Configured languages are normalized before identity checks: `auto` reuses the saved language, while an explicit mismatch fails before mutation. Identity, policy, unrelated slot, payload-attribution or fingerprint conflicts also fail before mutation.
+
+Two extraction boundaries intentionally fail closed. An old marker-only segment cannot be deleted without a structural locator, so that legacy state is rejected instead of receiving a fake empty slot contract. A newly recognized `aside` is extracted as a leaf only when existing nested block extraction would not cover it; if nested blocks coexist with non-marker direct prose that would be dropped, ingestion rejects the mixed-content container rather than silently losing text. Ordinary `aside` elements are not globally promoted into translation blocks.
+
 ## 5. Source-to-output binding and bilingual content
 
 The source renderer records eligible original elements, paths and fingerprints before mutation and resolves surviving target element references afterward. Direct-text runs reuse explicit source-pair mappings. Generated EPUBs bind original merged-paragraph indices to actual target elements in `ch{chapter.index}.xhtml`. Neither renderer guesses correspondence from final DOM order or translated text.
@@ -118,10 +144,13 @@ The source renderer records eligible original elements, paths and fingerprints b
 
 Bilingual source copies are not analyzed again. They receive corresponding target role/level only where pairing is unambiguous. A combined source wrapper with different target roles receives only its source-content marker unless individual descendants can be safely mapped. Original/translation order remains actual DOM order, controlled by output configuration.
 
+Deterministic note mappings follow the same original-to-target binding. In bilingual output, only the translated target marker is eligible for the packaged marker treatment; the source copy retains its original label, attributes and link graph and is never remapped as a target. No-theme and custom general styles also retain original marker labels.
+
 Permanent presentation markers are:
 
 - `data-tn-role` and, for headings, `data-tn-level`;
 - `data-tn-content="target"` or `data-tn-content="source"`;
+- `data-tn-note-kind="noteref"` or `"backlink"` on admitted packaged-theme target markers;
 - `data-tn-theme-node`, a deterministic resource-local presentation address.
 
 Existing bilingual pairing and source sanitization remain independent of CSS. Temporary translation markers such as `data-tn-id`, `data-tn-inline-id` and `data-tn-line` remain forbidden in published output; there is no blanket exemption for `data-tn-*`.
@@ -129,6 +158,10 @@ Existing bilingual pairing and source sanitization remain independent of CSS. Te
 ## 6. Protection and CSS safety
 
 Semantic footnotes, endnotes and note references can receive presentation roles. This does not authorize changes to note content, IDs, hrefs, backlinks, ordering or structure. Navigation, package-declared cover/title pages, SVG, MathML, scripts, styles, forms, code/preformatted content, ruby annotation text and preserved source ranges retain their existing protections.
+
+Only `builtin:chinese-reading` enables the fixed marker presentation policy, and only for a Chinese target. Forward references and backlinks keep their original anchor elements, IDs, names and hrefs, but their owned visible marker text becomes the real character `注`; the anchor tail and note prose are untouched. The host adds compatible EPUB/ARIA reference, backlink and note-body semantics without overwriting conflicting explicit roles or types. The packaged CSS renders both marker directions as a solid `#946126` circle with light `#fff8ef` text and normalizes nested superscript sizing. It uses no pseudo-content, hidden original text, scripts, images or bundled fonts. Reader support for popup notes and exact CSS rendering varies; ordinary href/backlink navigation remains the required fallback.
+
+If the source anchor has no existing EPUB namespace binding, the renderer adds only the collision-free declaration required for the Clark-notation `epub:type` attribute. Verification accounts for that exact namespace change and reverses it while preserving original prefixes and descendant shadow declarations; it does not perform archive-wide namespace cleanup or rebinding.
 
 Protection forbids direct marker attachment, resets or inline-priority demotion on protected nodes. Natural inheritance from a themed ancestor can still affect appearance. Fixed-layout resources remain unchanged with a warning. Mixed target/preserved scopes without an existing safe boundary fail instead of gaining arbitrary new wrappers.
 

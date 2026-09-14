@@ -53,7 +53,7 @@ trans-novel tools assemble book.epub
 - 默认输出：中文单语 EPUB 和译文在前的双语 EPUB。
 - EPUB 输入会按原 XHTML 模板回填译文，尽量保留原书样式、图片、目录和锚点。
 - EPUB 正文按 manifest 声明的媒体类型识别，阅读顺序以 spine 为准。只有媒体类型缺失时才按 HTML 文件后缀兼容识别；声明冲突或无法处理的 spine 资源会明确报错，不会静默跳过章节。
-- 脚注引用只按 `epub:type="noteref"` 或 `role="doc-noteref"` 识别；无声明的上下标链接按普通文本处理，不根据编号、样式或文件名跳过。
+- EPUB 注释采用确定性关系识别：除显式 `epub:type` / ARIA 脚注与返回链接语义外，只接受短符号或 ASCII 数字标记与注释开头返回标记之间可安全解析的双向关系，数字标记还必须有 XHTML 或精确 OPF/NAV 元数据提供的注释语义上下文；类名、文件名、任意文字和单向数字链接都不会被猜成注释。已确认的引用与返回标记不会进入翻译文本，标记链接后的正文仍会保留。
 - FB2、TXT 和 Markdown 输入会生成新的 EPUB。
 - 需要纯文本时使用 `--format txt`。
 
@@ -81,13 +81,19 @@ trans-novel translate book.epub --source-language ja
 候选必须通过完整段落复检才会写回；耗尽预算也会保留安全译文并继续生成单语和双语输出。
 已经翻译完成的批次会被断点续跑跳过，完成章节只会复检，不会重新调用正文翻译模型。
 
-新运行使用翻译策略版本 2。旧运行若缺少该版本或版本不一致，会拒绝模型驱动的续跑，不会自动
-迁移、清空或重译已有结果。满足既有完整性和导出条件的旧运行仍可用 `tools assemble` 导出，
-不重新分类；若需要先补译、润色或修复，则会拒绝。要使用新策略，请保留原 `state/`，
-在另一个工作目录中使用源书绝对路径启动新运行；默认状态写入该工作目录的 `state/`。
+新运行使用翻译策略版本 2。旧运行若缺少该版本或版本较旧，不会迁移策略、清空或重译已有结果；
+当正文及必需内容节点已经完整时，照常运行同一路径的 `translate` 或 `resume` 会自动进入输出维护，
+只补齐排版分析、报告和导出。启用通用 EPUB 主题且排版数据缺失或过期时可能调用 `analyst`；
+有效排版数据会直接复用，TXT 输出不会读取主题或调用排版模型。未完成的旧运行仍拒绝补译、润色或
+修复，未来策略版本同样拒绝运行。`tools assemble` 仍可用于仅导出。所有路径都保留原策略版本和
+已有译文；若要使用新策略，请保留原 `state/`，在另一个工作目录中用源书绝对路径启动新运行。
 
-EPUB 续跑和导出还会比较保存的原文槽位与当前解析结果。布局不一致时会拒绝复用，并保留
-原运行和译文；请新建运行，不要把旧译文强行套入新槽位。布局一致的已保存译文仍可使用。
+EPUB 续跑和导出会比较保存的原文槽位与当前解析结果。仅因新规则保护注释标记而产生的兼容差异，
+会在核验源文件、语言、策略和完整槽位归属后自动迁移：`auto` 会沿用状态中已保存的语言，显式语言
+不一致仍会在写入前拒绝。已有译文不会重新调用模型，事务日志可在中断后继续，并在
+运行状态目录内的 `note_migration_backup/` 保留与源文件绑定的迁移前备份。无法证明为注释标记的差异、
+新解析导致旧 marker-only 段消失的情况，以及会遗漏直系正文的 mixed-content `aside` 都会在写入前
+明确拒绝；其他布局不一致仍须新建运行。
 
 ## 章节语义与原文保留
 
@@ -314,8 +320,15 @@ trans-novel --config config.yaml tools assemble book.epub --format epub --reanal
 - Source-backed and generated EPUBs use the same role data for mono and bilingual output.
   Bilingual source copies are not reclassified. The original source identity must still match;
   a missing original EPUB cannot be reconstructed from translations to bypass this check.
-- Notes and note references can be styled without changing content, IDs, links, backlinks or
-  structure. Navigation, code, covers and preserved source scopes remain protected. Package-declared
+- Deterministically recognized note markers are excluded from translation while their surrounding
+  prose remains in the normal text slots. With `builtin:chinese-reading`, Chinese target forward
+  references and backlinks use real `注` link text with a solid brown circular treatment and
+  localized EPUB/ARIA semantics. The original IDs, hrefs, anchor structure and note prose remain
+  intact. No-theme and custom general styles keep the original marker labels; bilingual source
+  copies also keep their original text and attributes. Popup behavior is reader-dependent, so the
+  preserved links and backlinks remain the fallback rather than promising the same interaction in
+  every reader.
+- Navigation, code, covers and preserved source scopes remain protected. Package-declared
   cover/title-page and fixed-layout resources are excluded before layout analysis, avoiding model
   cost and unused-source-CSS failures for those resources.
   CSS supports a restricted reading-style subset; see the [layout and theme contract](docs/epub-theme-design.md).
