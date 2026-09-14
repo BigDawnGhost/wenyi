@@ -151,7 +151,7 @@ class TestReviewer(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             debug = ReviewRunStore(d)
-            issues = orch._review.review_chapter(
+            issues = orch._review._chunks.review_chapter(
                 [
                     Segment(index=0, source="源文0", target="译文0"),
                     Segment(index=1, source="源文1", target="译文1"),
@@ -237,7 +237,7 @@ class TestReviewer(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             debug = ReviewRunStore(d)
-            issues = orch._review.review_chapter(
+            issues = orch._review._chunks.review_chapter(
                 segments,
                 [],
                 chapter_index=7,
@@ -270,7 +270,7 @@ class TestReviewer(unittest.TestCase):
         cfg.pipeline.review_output_retries = 2
         client = FakeClient(handler=handler)
 
-        issues = Orchestrator(cfg, client=client)._review.review_chapter(
+        issues = Orchestrator(cfg, client=client)._review._chunks.review_chapter(
             [Segment(index=0, source="源文", target="译文")],
             [],
         )
@@ -284,7 +284,7 @@ class TestReviewer(unittest.TestCase):
         client = FakeClient(handler=lambda m, t, j: "")
 
         with self.assertRaisesRegex(ReviewOutputError, "malformed_json"):
-            Orchestrator(cfg, client=client)._review.review_chapter(
+            Orchestrator(cfg, client=client)._review._chunks.review_chapter(
                 [Segment(index=0, source="源文", target="译文")],
                 [],
             )
@@ -321,7 +321,7 @@ class TestReviewer(unittest.TestCase):
             Segment(index=1, source="源文乙", target="译文乙"),
         ]
 
-        issues = orch._review.review_chapter(segments, [])
+        issues = orch._review._chunks.review_chapter(segments, [])
 
         self.assertEqual([it["index"] for it in issues], [0, 1])
         self.assertEqual([it["detail"] for it in issues], ["甲", "乙"])
@@ -366,7 +366,7 @@ class TestReviewer(unittest.TestCase):
                                 reviewer, "review_result", wraps=reviewer.review_result
                             ) as reviewing,
                         ):
-                            issues = orch._review.review_chapter(
+                            issues = orch._review._chunks.review_chapter(
                                 segments,
                                 terms,
                                 chapter_index=0,

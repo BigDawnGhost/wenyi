@@ -66,7 +66,9 @@ def pdf_project(tmp_path, monkeypatch):
         "trans_novel.pipeline.preparation.load_document",
         lambda *a, **kw: document.model_copy(deep=True),
     )
-    monkeypatch.setattr("trans_novel.cli._load_config", lambda: config)
+    monkeypatch.setattr(
+        "trans_novel.commands.context.CommandContext.load_config", lambda self: config
+    )
     monkeypatch.setattr(
         "trans_novel.pipeline.runtime.build_client",
         lambda cfg: FakeClient(handler=routing_handler, config=cfg.llm),

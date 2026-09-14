@@ -163,7 +163,8 @@ class TestTranslatorAlignment(unittest.TestCase):
 class TestMinerUEmptyTargetResume(unittest.TestCase):
     def test_blank_target_counts_as_translated_for_resume_batches(self):
         from trans_novel.ingest.models import Segment
-        from trans_novel.pipeline.translation import _is_mineru_pdf, _resume_batches
+        from trans_novel.pipeline.translation import _is_mineru_pdf
+        from trans_novel.pipeline.translation_batch import resume_batches
 
         self.assertTrue(_is_mineru_pdf({"fmt": "pdf", "meta": {}}))
         self.assertFalse(_is_mineru_pdf({"fmt": "pdf", "meta": {"babeldoc": True}}))
@@ -174,7 +175,7 @@ class TestMinerUEmptyTargetResume(unittest.TestCase):
             Segment(index=1, kind="p", source="junk", target=""),
             Segment(index=2, kind="p", source="b", target=None),
         ]
-        batches = _resume_batches(segments, max_tokens=10_000)
+        batches = resume_batches(segments, max_tokens=10_000)
         self.assertEqual([[s.index for s in batch] for batch in batches], [[0, 1], [2]])
 
 

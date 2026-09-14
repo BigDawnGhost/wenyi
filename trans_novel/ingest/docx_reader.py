@@ -19,6 +19,8 @@ from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph as DocxParagraph
 
+from trans_novel.document_styles.docx import text_has_visible_list_prefix
+
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 _HEADING_NAME = re.compile(
@@ -30,17 +32,6 @@ _HEADING_NAME = re.compile(
 _ALIGN_STYLE_KEYS = ("bold", "italic", "underline", "color")
 
 # Skip automatic Word numbering when body text already includes a visible prefix such as 1. Title.
-_VISIBLE_LIST_PREFIX = re.compile(
-    r"^(?:"
-    r"\d+\."  # 1.
-    r"|[A-Za-z]\."  # A.
-    r"|[ivxlcdm]+\."  # i. / iv.
-    r"|[•·‣▪◦‣]\s*"  # bullets
-    r"|（?\d+）"  # （1）
-    r"|\(\d+\)"  # (1)
-    r")\s+",
-    re.IGNORECASE,
-)
 
 
 def _iter_body_blocks(doc: DocxDocument):
@@ -75,11 +66,6 @@ def _outline_level(paragraph: DocxParagraph) -> int | None:
                 if 1 <= level <= 9:
                     return level
     return None
-
-
-def _text_has_visible_list_prefix(text: str) -> bool:
-    """Detect visible numbering already present in body text, such as 1. Title in a TOC."""
-    return bool(_VISIBLE_LIST_PREFIX.match((text or "").lstrip()))
 
 
 def _list_meta(paragraph: DocxParagraph, numbering_root) -> dict[str, Any] | None:
@@ -284,7 +270,7 @@ def _paragraph_text_and_style_meta(
         if shade:
             meta = {**meta, "shade": shade}
         # Ignore automatic numbering when TOC/body text already contains a prefix such as 1.
-        if list_meta and not _text_has_visible_list_prefix(text):
+        if list_meta and not text_has_visible_list_prefix(text):
             meta = {**meta, **list_meta}
         return meta
 

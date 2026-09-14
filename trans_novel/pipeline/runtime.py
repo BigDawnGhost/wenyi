@@ -16,6 +16,7 @@ from ..agents.annotation_aligner import AnnotationAligner
 from ..agents.polisher import Polisher
 from ..agents.reviewer import Reviewer
 from ..agents.synopsis import Synopsizer
+from ..agents.title_translator import TitleTranslator
 from ..agents.translator import Translator
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor
@@ -42,6 +43,7 @@ class PipelineRuntime:
         self.analyzer = Analyzer(self.client, config)
         self.synopsizer = Synopsizer(self.client, config)
         self.translator = Translator(self.client, config)
+        self.title_translator = TitleTranslator(self.client, config)
         self.reviewer = Reviewer(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
@@ -146,6 +148,7 @@ class PipelineRuntime:
             self.analyzer,
             self.synopsizer,
             self.translator,
+            self.title_translator,
             self.reviewer,
             self.polisher,
             self.extractor,

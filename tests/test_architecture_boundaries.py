@@ -8,6 +8,7 @@ top-level review models.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import pathlib
 import unittest
 
@@ -24,9 +25,6 @@ SERVICE_MODULES = (
     "review_autofix",
     "finalization",
 )
-
-# Lower pipeline modules must not import orchestrator.
-LOWER_MODULES = SERVICE_MODULES + ("runstore", "context")
 
 FORBIDDEN_TOP_LEVEL = (
     "agents",
@@ -58,13 +56,45 @@ def _module_source(name: str) -> str:
 
 def _agent_sources() -> list[tuple[str, str]]:
     return [
-        (path.name, path.read_text(encoding="utf-8"))
-        for path in sorted(AGENTS_DIR.glob("*.py"))
-        if path.name != "__init__.py"
+        (str(path.relative_to(AGENTS_DIR)), path.read_text(encoding="utf-8"))
+        for path in sorted(AGENTS_DIR.rglob("*.py"))
     ]
 
 
+def _imported_modules(path: pathlib.Path) -> set[str]:
+    """Resolve absolute and relative imports, including imports in nested packages."""
+    package = ".".join(("trans_novel", *path.relative_to(TRANS_NOVEL_DIR).parts[:-1]))
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+            imported.add(module)
+            imported.update(f"{module}.{alias.name}" for alias in node.names)
+    return imported
+
+
 class TestArchitectureBoundaries(unittest.TestCase):
+    def test_command_modules_do_not_import_cli_entry_point(self):
+        """Command helpers receive dependencies instead of importing application globals."""
+        for path in (TRANS_NOVEL_DIR / "commands").rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    self.assertFalse(
+                        (node.level == 2 and module == "cli")
+                        or module == "trans_novel.cli"
+                        or (
+                            node.level == 2
+                            and not module
+                            and any(alias.name == "cli" for alias in node.names)
+                        ),
+                        str(path),
+                    )
+                elif isinstance(node, ast.Import):
+                    self.assertFalse(any(alias.name == "trans_novel.cli" for alias in node.names))
+
     def test_orchestrator_has_no_domain_imports(self):
         """Allow the orchestrator to depend only on config and sibling pipeline services."""
         source = _module_source("orchestrator")
@@ -118,8 +148,11 @@ class TestArchitectureBoundaries(unittest.TestCase):
 
     def test_no_lower_module_imports_orchestrator(self):
         """Forbid reverse imports of orchestrator from lower layers."""
-        for name in LOWER_MODULES:
-            tree = ast.parse(_module_source(name))
+        for path in PIPELINE_DIR.rglob("*.py"):
+            if path.name == "orchestrator.py":
+                continue
+            name = str(path.relative_to(PIPELINE_DIR))
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -199,20 +232,107 @@ class TestArchitectureBoundaries(unittest.TestCase):
                             f"{filename} 不得反向依赖 {module}",
                         )
 
+    def test_review_agents_use_contracts_instead_of_concrete_storage_or_evidence(self):
+        """Agents cannot acquire book state or bypass the evidence-query boundary."""
+        forbidden = (
+            "trans_novel.pipeline",
+            "trans_novel.review.run_store",
+            "trans_novel.review.evidence",
+        )
+        for path in AGENTS_DIR.rglob("*.py"):
+            for module in _imported_modules(path):
+                self.assertFalse(
+                    any(module == name or module.startswith(name + ".") for name in forbidden),
+                    f"{path.relative_to(TRANS_NOVEL_DIR)} imports {module}",
+                )
+
+    def test_review_conflicts_and_contracts_have_no_execution_dependencies(self):
+        """Decision rules and ports do not import model calls or concrete Review I/O."""
+        forbidden = (
+            "trans_novel.agents",
+            "trans_novel.llm",
+            "trans_novel.pipeline",
+            "trans_novel.review.run_store",
+            "trans_novel.review.evidence",
+        )
+        for name in ("conflicts", "contracts", "session", "autofix_models"):
+            for module in _imported_modules(TRANS_NOVEL_DIR / "review" / f"{name}.py"):
+                self.assertFalse(
+                    any(module == item or module.startswith(item + ".") for item in forbidden),
+                    f"{name} imports {module}",
+                )
+
+    def test_review_chunk_and_arbiter_depend_only_on_the_shared_action_protocol(self):
+        """Neither caller may borrow the other's private validation or prompt logic."""
+        for name, other in (("review_loop", "review_arbiter"), ("review_arbiter", "review_loop")):
+            imported = _imported_modules(AGENTS_DIR / f"{name}.py")
+            self.assertIn("trans_novel.agents.review_actions", imported)
+            self.assertFalse(
+                any(module.startswith(f"trans_novel.agents.{other}") for module in imported)
+            )
+
     def test_review_package_exports_core_types(self):
-        """The top-level review package provides evidence and run-storage models."""
+        """The top-level review package exposes pure types without storage exports."""
         import importlib
 
         review = importlib.import_module("trans_novel.review")
-        for name in (
-            "BookEvidenceIndex",
+        names = {
             "SegmentRef",
-            "ReviewRunStore",
             "ReviewOutcome",
+            "ReviewLoopOutcome",
             "review_candidate_id",
-        ):
+        }
+        self.assertEqual(set(review.__all__), names)
+        for name in names:
             self.assertTrue(hasattr(review, name), f"trans_novel.review.{name} 缺失")
+        self.assertFalse(hasattr(review, "ReviewRunStore"))
+
+    def test_review_models_have_no_application_dependencies(self):
+        """Shared value types must not load agents, providers or persistent stores."""
+        path = TRANS_NOVEL_DIR / "review" / "models.py"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0)
+                self.assertNotEqual((node.module or "").split(".")[0], "trans_novel")
+            elif isinstance(node, ast.Import):
+                self.assertFalse(any(alias.name.startswith("trans_novel") for alias in node.names))
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_shared_markup_has_no_workflow_or_archive_dependencies():
+    """The shared DOM layer depends only on markup and pure document models."""
+    for path in (TRANS_NOVEL_DIR / "markup").rglob("*.py"):
+        for module in _imported_modules(path):
+            if not module.startswith("trans_novel."):
+                continue
+            assert module.startswith(("trans_novel.markup", "trans_novel.ingest.models")), (
+                path,
+                module,
+            )
+
+
+def test_writers_do_not_import_reader_private_helpers():
+    for path in (TRANS_NOVEL_DIR / "assemble").rglob("*.py"):
+        for module in _imported_modules(path):
+            assert ".epub_reader" not in module, (path, module)
+            assert ".docx_reader._" not in module, (path, module)
+            assert "pipeline.docx_styles" not in module, (path, module)
+
+
+def test_autofix_publisher_has_no_candidate_or_model_dependencies():
+    for module in _imported_modules(PIPELINE_DIR / "autofix_publish.py"):
+        assert not module.startswith(("trans_novel.agents", "trans_novel.llm")), module
+        assert "autofix_candidates" not in module
+        assert "autofix_verification" not in module
+
+
+def test_document_style_policy_is_independent_of_workflows():
+    for path in (TRANS_NOVEL_DIR / "document_styles").rglob("*.py"):
+        for module in _imported_modules(path):
+            assert not module.startswith(("trans_novel.pipeline", "trans_novel.agents", "docx")), (
+                path,
+                module,
+            )
