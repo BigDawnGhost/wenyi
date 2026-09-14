@@ -1,40 +1,44 @@
 # Wenyi repository guide for coding agents
 
-本文件适用于整个仓库。开始修改前先阅读与任务直接相关的源码、测试和文档；若子目录以后出现更具体的 `AGENTS.md`，以更深层文件为准。
+本文件适用于整个仓库；更深层的 `AGENTS.md` 在其范围内优先。按任务查阅相关源码、测试和文档，无需预先通读仓库。
+
+## 工作范围与完成条件
+
+- 实现任务完成请求的行为、相关验证和必要文档；设计或审查任务交付相应文档或发现。常规实现选择自行判断，在授权范围内完成修改、验证和修复。
+- 本地离线测试使用临时数据，运行、修复本次改动导致的失败和重测无需逐步确认。缺少影响结果的必要信息时询问，继续不依赖答案的工作。
+- Skills 按具体工作流选用，仅加载相关材料。规则造成阻塞时指出文件、具体条款及缺少的信息或授权。
 
 ## 项目定位
 
-Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是面向长篇文本的多阶段翻译工具。主流程包含输入解析、全书预扫、术语管理、批次翻译、可选润色、全书 Review、可选 Autofix 发布、报告和多格式导出，并以磁盘状态实现断点续跑。
+Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是支持多语言互译、术语、润色、全书 Review 和多格式导出的长篇文本翻译工具，以磁盘状态实现断点续跑。
 
 - Python：3.10+；CI 覆盖 3.10 和 3.12。
 - 包管理与命令执行：优先使用 `uv`。
-- CLI 入口：`uv run trans-novel ...`，实现位于 `trans_novel/cli.py`。
+- CLI：`uv run trans-novel ...`；`cli.py` 装配应用，`commands/` 和 `model_commands.py` 注册命令。
 - 默认配置：仓库根目录 `config.yaml`；内置模板位于 `trans_novel/config.py` 的 `_DEFAULT_CONFIG_YAML`。
-- 主仓许可证为 MIT。BabelDOC 是独立 AGPL 服务，主仓只能通过 HTTP bridge 与其通信。
+- 主仓许可证为 MIT；BabelDOC 是独立 AGPL 服务。
 
-## 目录地图
+## 按任务查阅
 
-- `trans_novel/cli.py`：Typer CLI、参数校验、用户可见错误和阶段入口。
-- `trans_novel/config.py`：Pydantic 配置模型、默认配置文件生成与 YAML 映射。
-- `trans_novel/pipeline/`：书籍工作流。
-  - `orchestrator.py` 只负责装配服务、步骤路由和锁作用域。
-  - `runtime.py` 保存共享运行依赖、LLM 事件/用量/指标逻辑。
-  - `preparation.py`、`translation.py`、`annotations.py`、`review_workflow.py`、`review_autofix.py`、`finalization.py` 分别实现领域阶段。
-  - `runstore.py` 定义运行状态、原子写入、源文件身份和跨进程锁。
-- `trans_novel/agents/`：模型驱动的分析、翻译、润色、注释对齐、审校取证与影子修订。
-- `trans_novel/review/`：Review 的证据索引、运行目录与纯数据模型；不是正式译文存储。
-- `trans_novel/ingest/`：EPUB、FB2、TXT/Markdown、HTML、PDF、DOCX、SRT 输入解析及共享数据模型。
-- `trans_novel/assemble/`：EPUB、TXT、HTML、Markdown、PDF、DOCX、SRT 输出与报告。
-- `trans_novel/glossary/`：SQLite 术语表、抽取、冲突与人工裁定。
-- `trans_novel/llm/`：统一 LLM 抽象、档位、重试、用量及 provider 实现。
-- `trans_novel/srt/`：字幕专用轻量流程和状态；不经过书籍 Orchestrator。
-- `trans_novel/pdf_bridge/`：外部 BabelDOC 服务的纯 HTTP 客户端；不得 import `babeldoc` 或 `pdf2zh`。
-- `trans_novel/postprocess/`：确定性文本后处理。
-- `tests/`：离线单元、集成、断点续跑、架构边界和回归测试。
-- `docs/` 与 `docs/zh/`：英文和中文文档，应保持语义同步。
-- `.github/workflows/`：测试与 PyInstaller 多平台构建。
+源码路径相对于 `trans_novel/`，测试路径相对于 `tests/`；按改动选择用例。
 
-`state/`、`output/`、`review-*`、缓存、构建目录、样例书籍和本地 `packages/core/` 缓存不是当前受版本控制的产品源码。除非用户明确要求，不要读取整本私有书籍、改写、移动、删除或提交这些本地数据。
+| 任务 | 源码入口与职责 | 相关测试入口 |
+| --- | --- | --- |
+| CLI、配置 | `commands/`、`config.py` | `test_cli*.py`、`test_config.py` |
+| 装配、初始化、状态与账本 | `pipeline/` 的 `orchestrator.py`、`preparation.py`、`runtime.py`、`runstore.py` | `test_preparation.py`、`test_orchestrator*.py` |
+| 翻译与上下文 | `pipeline/translation.py`、`translation_batch.py`、`context.py`、`title_translation.py`；`agents/` 模型任务 | `test_translator.py`、`test_translation*.py`、`test_title_translation.py` |
+| Review、润色、Autofix | `pipeline/review_*.py`、`autofix_*.py`；`agents/review_*.py`；`review/` 模型、证据与运行记录 | `test_review*.py`、`test_routing_resume.py` |
+| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalization.py`、`postprocess/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
+| EPUB/HTML 注释与 DOCX 样式 | `markup/` 共享标记处理；`pipeline/annotations.py` 对齐；`document_styles/docx.py` 纯样式策略 | `test_annotation_aligner.py`、`test_docx.py` |
+| PDF | `ingest/`、`assemble/` 的 PDF 路径；`pdf_bridge/` | `test_pdf_support.py`、`test_babeldoc_bridge_client.py` |
+| 术语 | `glossary/` SQLite、抽取与冲突裁定 | `test_glossary*.py` |
+| 模型路由与 provider | `llm/`；操作注册 `operations.py`，provider 注册 `registry.py` | `test_llm*.py`、`test_usage.py`、`test_routing_resume.py` |
+| 多语言与提示词 | `i18n/`；语言规则和任务模板统一在 `i18n/data/` | `test_i18n.py`、`test_metadata_language.py` |
+| 字幕 | `srt/` 及 SRT reader/writer | `test_srt.py` |
+
+配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，模块职责查阅 [refactoring](docs/refactoring/README.md) 的相关条目；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
+
+`state/`、`output/`、`review-*`、缓存、构建目录、样例书籍和本地 `packages/core/` 属于本地数据。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 
 ## 架构边界
 
@@ -48,36 +52,35 @@ CLI → Orchestrator → Runtime / Preparation / Translation / Annotation /
 
 - `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble`、`postprocess` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
 - 下层服务不得反向导入 `orchestrator.py`。
+- `cli.py` 保持应用装配职责；命令通过显式注册和调用上下文接收依赖，不反向导入 CLI 全局对象。
 - `agents/` 不得依赖 pipeline 编排、状态机或 RunStore；可使用顶层 `review/` 的纯模型。
+- `markup/` 和 `document_styles/` 不依赖 pipeline、LLM 或具体 writer。拆分时分离决策、执行与状态写入，不通过共享整个 runtime 延续耦合。
 - 并发属于具体领域服务。结果必须按稳定的原始顺序合并，不得让线程完成顺序改变输出。
-- SRT 是平行轻量路径：无全书预扫、术语库、润色或 Review。字幕修改应留在 `trans_novel.srt`、SRT reader/writer 及对应测试中。
+- SRT 独立于书籍 Orchestrator，无全书预扫、术语库、润色或 Review。
 - BabelDOC 集成必须保持进程隔离。主仓只发送 HTTP 请求；不要给 MIT 包新增 AGPL Python 依赖。
 
-`tests/test_architecture_boundaries.py` 和 `tests/test_orchestrator_contract.py` 固定了上述契约。涉及 pipeline 装配或依赖关系时必须运行它们。
+涉及模块依赖关系时运行 `tests/test_architecture_boundaries.py`；涉及 pipeline 装配或依赖关系时同时运行 `tests/test_orchestrator_contract.py`。
 
 ## 状态与续跑不变量
 
-- `state/<slug>/manifest.json` 是初始化成功的最终标志。初始化顺序必须保持“派生状态先落盘，manifest 最后原子提交”。
-- JSON 状态通过同目录临时文件和 `os.replace` 原子写入；不要改回直接覆盖。
-- 书籍状态用 `source_sha256` 绑定输入内容。不得按相同文件名静默复用不同内容的状态。
+- 书籍状态按 `state/<slug>/targets/<target-language>/` 隔离；派生状态先落盘，`manifest.json` 最后原子提交，作为初始化成功标志。
+- JSON 状态通过同目录临时文件和 `os.replace` 原子写入。
+- `source_sha256` 绑定输入内容，不按相同文件名复用不同内容的状态。
 - 保持锁语义：长流程使用书级运行锁；一致状态读写使用短状态锁；事件追加与产物导出分别使用专用锁。
 - 已完成批次和章节必须可安全跳过。修改翻译、术语检查点、预扫或 Review 缓存时，必须覆盖中断后续跑场景。
-- 导出从一致快照读取，不能观察到 manifest 与章节文件的混合时刻。
+- `target is None` 表示待翻译；MinerU 路径允许有意保存空译文 `""`，不能用真假判断将其视为未完成。
+- 导出从 manifest 与章节文件的一致快照读取。
 - Review 引擎只能修改本次运行内存/目录中的影子译文。只有显式开启的独立 Review Autofix 发布服务可以在先写可恢复索引后更新正式章节 `target`；它不得新增章节历史字段、修改 manifest 或术语库。
-- 用量和事件是追加/累计账本。一次 Review 增量只能合并一次，重试与续跑不得重复计费。
-- 保留 `Segment`、章节索引、EPUB 注释/锚点、DOCX 样式和 `babeldoc_id` 等稳定身份；不要为方便处理而重新编号或扁平化。
+- 用量和事件是追加/累计账本，Review 增量只合并一次，重试与续跑不得重复计费。
+- 保留 `Segment`、章节索引、EPUB 注释/锚点、DOCX 样式和 `babeldoc_id` 等稳定身份。
 
 ## 配置、密钥与 provider
 
 - API Key 只从环境变量读取。禁止在源码、测试、文档示例或提交中写入真实密钥。
-- 新增或修改用户配置时，同步检查：
-  1. `trans_novel/config.py` 的模型与 `_DEFAULT_CONFIG_YAML`；
-  2. 根目录 `config.yaml` 示例；
-  3. `docs/configuration.md` 与 `docs/zh/configuration.md`；
-  4. `tests/test_config.py` 和相关 CLI 测试。
-- Provider 专属字段留在对应 provider；通用 LLM 抽象不要感知 DeepSeek/OpenAI/Gemini 等私有协议。
+- 配置变更同步模型、默认模板、根目录 `config.yaml`、中英文 configuration 文档及配置/CLI 测试；LLM 配置模型位于 `llm/configuration.py`。
+- 新模型操作和 provider 使用现有注册入口，保持操作 ID、路由预览、校验与实际执行一致。
+- Provider 专属字段留在对应 provider，通用 LLM 抽象不感知私有协议。
 - 重试由 `trans_novel/llm/retrying.py` 统一负责，provider SDK 的内置重试应关闭，避免嵌套重试。
-- 测试默认使用 `FakeClient` 或 mock，不能调用真实 LLM、MinerU、BabelDOC 或其它网络服务。
 - 用户可预期的输入、配置和外部服务错误应转换为明确异常；CLI 应简洁展示且不打印 traceback。
 
 ## 输入与输出约束
@@ -88,44 +91,26 @@ CLI → Orchestrator → Runtime / Preparation / Translation / Annotation /
 - 输出格式或命名变化要覆盖单语、双语、显式 `--out`、默认输出目录和并发导出快照。
 - 标点、术语命中等可确定行为优先实现为纯函数，并使用边界案例单测固定。
 
-## 开发与验证命令
+## 验证与完成
 
-首次安装：
+验证范围取决于行为风险：
 
-```bash
-uv sync --locked --group dev
-```
+- Python 变更运行受影响测试、Ruff check/format check 和 `git diff --check`；状态、锁、续跑及跨领域的高风险变更运行完整测试集。依赖检查按上面的触发条件执行。
+- 纯文档或注释变更检查差异、路径、命令和适用格式，无需全套测试。验证通过后，有新改动、失败或未解决疑点再扩大或重复检查。
+- 缺陷修复先添加最小失败回归用例；行为不变的重构复用现有测试，按覆盖缺口补充。测试使用 `FakeClient` 或 mock 与临时目录，不调用真实 LLM、MinerU、BabelDOC 或其它网络服务，不依赖本地书籍与状态。
+- prompt、术语、上下文、润色或 Review 语义变更说明质量取舍；重大变更按 [CONTRIBUTING.md](CONTRIBUTING.md) 使用公版文本做前后比较。离线测试不能代替模型质量评估，未执行时说明限制。
 
-常用验证：
+首次安装使用 `uv sync --locked --group dev`。常用命令：
 
 ```bash
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest -q tests/test_<area>.py
 uv run pytest -q
+git diff --check
 ```
 
-CI 在已同步环境中使用：
-
-```bash
-uv run --no-sync pytest -q
-```
-
-若沙箱不允许写用户级 uv 缓存，可为单次命令设置仓库外缓存，例如 `UV_CACHE_DIR=/tmp/wenyi-uv-cache`。不要通过修改 `HOME` 绕过权限。
-
-测试选择建议：
-
-- CLI/配置：`test_cli.py`、`test_config.py`
-- 输入/输出：`test_ingest.py`、`test_assemble.py`、`test_bilingual.py`、`test_docx.py`、`test_pdf_support.py`
-- Pipeline/续跑：`test_preparation.py`、`test_orchestrator.py`、`test_orchestrator_contract.py`
-- Review/润色：`test_review_polish.py`、`test_review_agent.py`
-- LLM/provider/重试：`test_llm*.py`、`test_usage.py`
-- 术语：`test_glossary.py`、`test_glossary_agents.py`
-- 字幕：`test_srt.py`
-- 注释链接：`test_annotation_aligner.py`
-- 依赖边界：`test_architecture_boundaries.py`
-
-修复缺陷时先添加能失败的最小回归测试。测试数据写入 `tempfile` 目录，保持离线、确定、快速；不要依赖仓库根目录中的真实书籍或已有 `state/`。
+已同步环境和 CI 可用 `uv run --no-sync ...`。若沙箱不允许写用户级 uv 缓存，为单次命令设置 `UV_CACHE_DIR=/tmp/wenyi-uv-cache`，不要修改 `HOME`。
 
 ## 代码与文档风格
 
@@ -133,12 +118,14 @@ uv run --no-sync pytest -q
 - Ruff 配置以 `pyproject.toml` 为准：目标 Python 3.10、行宽 100、E/W/F/I 检查。
 - 优先小而可审查的改动，避免顺手重排大文件或更改无关行为。
 - 用户行为变化必须更新英文与中文文档；README、usage、configuration、pipeline 只更新受影响部分并保持两种语言一致。
-- 更改 prompt、术语、上下文、润色或 Review 语义可能影响整本质量。除自动测试外，应说明质量取舍；重大变更按 `CONTRIBUTING.md` 使用至少 50,000 字公版文本做前后比较，但不要自动处理用户私有样例。
 
 ## Git 与交付
 
-- 工作区可能包含用户的修改和大量忽略/未跟踪数据。只暂存本任务明确修改的文件；不得清理、覆盖或提交本地书籍、状态、输出和 review 目录。
-- 不使用破坏性 Git 命令，不改写远端历史。只有用户明确要求时才提交或推送。
+- 保留用户已有修改及忽略/未跟踪数据，只暂存本任务明确修改的文件。
+- 不使用破坏性 Git 命令，不改写远端历史。提交或推送需要用户明确要求；同一任务内已授权的操作无需重复确认。
 - 提交信息使用 Conventional Commits 风格，例如 `fix(glossary): ...`、`feat(pdf): ...`、`docs: ...`。
-- 交付前至少运行受影响测试、Ruff check、Ruff format check 和 `git diff --check`；高风险跨模块修改运行完整测试集。
-- 最终说明应列出行为变化、验证结果、未解决风险，以及未纳入的用户本地文件。
+- 交付说明行为变化、实际验证结果、未解决风险和未执行的必要验证，以及未纳入的用户本地文件。
+
+## 维护本指南
+
+只保留项目事实、约束、任务入口与完成标准；删除过时或重复规则，专门流程按需链接。参考 [OpenAI 的 AGENTS.md 与 skills 建议](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)，不绑定模型或固定工具调用顺序。
