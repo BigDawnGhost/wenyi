@@ -14,7 +14,7 @@ from bs4.element import Comment
 
 from trans_novel.assemble.pdf_writer import _normalize_html_for_fpdf
 from trans_novel.assemble.writer import assemble
-from trans_novel.cli import _runstore_for
+from trans_novel.commands.validation import runstore_for
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore, GlossaryTerm
 from trans_novel.ingest.errors import MinerUError
@@ -344,10 +344,10 @@ class TestPdfIngest(unittest.TestCase):
             )
 
             with patch(
-                "trans_novel.cli.load_document",
+                "trans_novel.commands.validation.load_document",
                 side_effect=AssertionError("PDF source should not be parsed"),
             ):
-                store = _runstore_for(config, pdf_path)
+                store = runstore_for(config, pdf_path)
 
         self.assertEqual(store.run_dir, os.path.join(state_dir, "sample", "targets", "zh"))
 

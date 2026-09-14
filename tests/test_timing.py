@@ -106,7 +106,9 @@ def timed_book(tmp_path, monkeypatch):
         "trans_novel.pipeline.runtime.RunTimer",
         lambda operation: RunTimer(operation, clock=lambda: now[0]),
     )
-    monkeypatch.setattr("trans_novel.cli._load_config", lambda: config)
+    monkeypatch.setattr(
+        "trans_novel.commands.context.CommandContext.load_config", lambda self: config
+    )
 
     def progress(done, total, label):
         now[0] += 2.0

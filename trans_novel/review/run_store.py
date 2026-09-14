@@ -6,42 +6,12 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
 from typing import Any
 
 from ..llm.usage import merge_usage_summaries
-
-
-def review_candidate_id(
-    chapter: int,
-    chunk_base: int,
-    ordinal: int,
-    review_round: int | None = None,
-) -> str:
-    """Generate deterministic candidate IDs shared by initial snapshots and the agent protocol."""
-    prefix = f"r{review_round}-" if review_round is not None else ""
-    return f"{prefix}ch{chapter}-base{chunk_base}-candidate{ordinal}"
-
-
-@dataclass(frozen=True)
-class ReviewOutcome:
-    """A completed review's result and directory."""
-
-    run_dir: str
-    result: dict[str, Any]
-    usage: dict[str, Any]
-
-    @property
-    def issues(self) -> list[dict[str, Any]]:
-        """Return issues remaining after blind rechecks."""
-        return list(self.result.get("issues") or [])
-
-    @property
-    def changes(self) -> list[dict[str, Any]]:
-        """Return collapsed final shadow-change recommendations."""
-        return list(self.result.get("changes") or [])
+from .models import review_candidate_id
 
 
 class ReviewRunStore:

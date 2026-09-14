@@ -142,7 +142,7 @@ class TestSrtTranslate(unittest.TestCase):
                 "usage": {},
             }
             with (
-                patch("trans_novel.cli._load_config") as load_config,
+                patch("trans_novel.commands.context.CommandContext.load_config") as load_config,
                 patch(
                     "trans_novel.srt.translate.translate_srt",
                     return_value=fake_result,

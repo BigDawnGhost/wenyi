@@ -16,13 +16,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
-from ..i18n.prompts import render
-from ..ingest.epub_reader import strip_ruby_markers
 from ..ingest.models import Segment
-from ..ingest.segmenter import batch_segments
 from .context import RollingContext
 from .docx_styles import DocxStyleService
 from .runstore import STATUS_DONE, RunStore
+from .title_translation import TitleTranslationService
+from .translation_batch import BatchPlan, TranslationBatchExecutor, resume_batches
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
@@ -40,28 +39,6 @@ def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
     return not bool(meta.get("babeldoc")) and meta.get("pdf_export") != "babeldoc"
 
 
-def _resume_batches(segments, max_tokens: int) -> list[list]:
-    """Split token-budget batches again at completed/pending boundaries.
-    A changed budget may mix saved translations and unset targets in one batch. Group by
-    completion state to translate only missing paragraphs and avoid overwriting confirmed
-    content. ``target is not None`` (including blank ``""``) counts as translated.
-    """
-    batches: list[list] = []
-    for raw_batch in batch_segments(segments, max_tokens):
-        current: list = []
-        current_done: bool | None = None
-        for segment in raw_batch:
-            done = segment.target is not None
-            if current and done != current_done:
-                batches.append(current)
-                current = []
-            current.append(segment)
-            current_done = done
-        if current:
-            batches.append(current)
-    return batches
-
-
 class TranslationService:
     """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
@@ -69,6 +46,8 @@ class TranslationService:
         self._runtime = runtime
         self._annotations = annotations
         self._docx_styles = DocxStyleService(runtime)
+        self._titles = TitleTranslationService(runtime.title_translator)
+        self._batches = TranslationBatchExecutor(runtime.translator, runtime.polisher)
 
     def run(
         self,
@@ -129,7 +108,7 @@ class TranslationService:
                 self._runtime.flush_usage(store, scope="chapter")
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
-                self.translate_titles(store, glossary, progress=progress)
+                self._titles.run(store, glossary, progress=progress)
         finally:
             glossary.close()
             self._runtime.flush_usage(store, scope="translate")
@@ -199,7 +178,7 @@ class TranslationService:
         for ci in chapter_indices:
             segments = store.load_chapter(ci).text_segments
             total += len(segments)
-            for batch in _resume_batches(
+            for batch in resume_batches(
                 segments, self._runtime.config.segment.max_tokens_per_batch
             ):
                 if all(segment.target is not None for segment in batch):
@@ -238,7 +217,7 @@ class TranslationService:
             annotation_context_registry,
         )
 
-        batches = _resume_batches(text_segs, self._runtime.config.segment.max_tokens_per_batch)
+        batches = resume_batches(text_segs, self._runtime.config.segment.max_tokens_per_batch)
         label = self.chapter_progress_label(chapter.title, ci)
         # Preparation often ends with a parsing label, but resume may first restore glossary terms.
         # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
@@ -328,19 +307,23 @@ class TranslationService:
             next_index = batch_start + len(b)
             # Read the immediate source neighbor without changing batches or saved context.
             next_source = text_segs[next_index].source if next_index < len(text_segs) else ""
-            targets = self.process_batch(
+            plan = BatchPlan.capture(
+                ci,
+                batch_start,
                 b,
                 term_snapshot,
                 ctx_text,
                 style,
                 book_synopsis,
                 chapter_digest,
-                annotation_contexts=annotation_contexts[batch_start : batch_start + len(b)],
-                next_source=next_source,
+                annotation_contexts[batch_start : batch_start + len(b)],
+                next_source,
                 allow_empty_translations=allow_empty_translations,
             )
-            for s, t in zip(b, targets):
-                s.target = t
+            result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
+            for segment, target, before_polish in zip(b, result.targets, result.before_polish):
+                segment.target = target
+                segment.target_before_polish = before_polish
             # Persist translations incrementally so interruption resumes after this batch.
             store.save_chapter(chapter)
             # Handle only annotated logical paragraphs touched by this batch, in source order.
@@ -498,327 +481,3 @@ class TranslationService:
         retained = min(len(targets), len(context.recent_targets))
         if retained:
             context.recent_targets[-retained:] = targets[-retained:]
-
-    def translate_titles(
-        self,
-        store: RunStore,
-        glossary: GlossaryStore,
-        progress: ProgressFn | None = None,
-    ) -> None:
-        """Translate logical chapter titles and NCX/NAV entries and update the manifest.
-        For TOC entries linked to heading segments, reuse the complete translated heading.
-        Batch remaining titles, persist each batch and resume only unfinished entries.
-        Preserve the original book title.
-        """
-        from ..agents import prompts
-
-        m = store.load_manifest()
-        chapters = m.get("chapters", [])
-
-        # Collapse titles to one line so embedded newlines cannot break numbered alignment.
-        def _flat(s: object) -> str:
-            """Normalize a title to one line without repeated whitespace."""
-            return " ".join(str(s or "").split())
-
-        raw_meta = m.get("meta")
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
-        raw_toc_entries = meta.get("toc_entries", [])
-        toc_entry_items = raw_toc_entries if isinstance(raw_toc_entries, list) else []
-        toc_entries = [
-            entry
-            for entry in toc_entry_items
-            if isinstance(entry, dict) and _flat(entry.get("title", ""))
-        ]
-
-        # Long headings may have continuation slices. Merge their complete translation by anchor,
-        # and allow TOC reuse only for heading segments.
-        anchor_targets: dict[str, tuple[str, str, str]] = {}
-        loaded_chapters = {
-            chapter.get("index"): store.load_chapter(chapter["index"])
-            for chapter in chapters
-            if isinstance(chapter.get("index"), int)
-        }
-
-        def flush_anchor(
-            active_anchor: str | None,
-            active_kind: str,
-            complete: bool,
-            source_parts: list[str],
-            parts: list[str],
-        ) -> None:
-            """Merge translated continuations for one anchor into the index."""
-            if active_anchor and active_kind == "heading" and complete and parts:
-                anchor_targets[active_anchor] = (
-                    active_kind,
-                    "".join(source_parts),
-                    "".join(parts),
-                )
-
-        for chapter in loaded_chapters.values():
-            active_anchor: str | None = None
-            active_kind = ""
-            parts: list[str] = []
-            source_parts: list[str] = []
-            complete = True
-
-            for segment in chapter.text_segments:
-                if segment.anchor:
-                    flush_anchor(
-                        active_anchor,
-                        active_kind,
-                        complete,
-                        source_parts,
-                        parts,
-                    )
-                    active_anchor = segment.anchor
-                    active_kind = segment.kind
-                    parts = [segment.target] if segment.target else []
-                    source_parts = [segment.source]
-                    complete = bool(segment.target and segment.target.strip())
-                elif segment.cont and active_anchor:
-                    source_parts.append(segment.source)
-                    if segment.target and segment.target.strip():
-                        parts.append(segment.target)
-                    else:
-                        complete = False
-                else:
-                    flush_anchor(
-                        active_anchor,
-                        active_kind,
-                        complete,
-                        source_parts,
-                        parts,
-                    )
-                    active_anchor = None
-                    active_kind = ""
-                    parts = []
-                    source_parts = []
-                    complete = True
-            flush_anchor(
-                active_anchor,
-                active_kind,
-                complete,
-                source_parts,
-                parts,
-            )
-
-        changed = False
-        for entry in toc_entries:
-            if entry.get("title_translated"):
-                continue
-            anchor = entry.get("segment_anchor")
-            linked = anchor_targets.get(anchor) if isinstance(anchor, str) else None
-            can_reuse = bool(linked and _flat(linked[1]) == _flat(entry.get("title")))
-            target = linked[2] if linked and can_reuse else ""
-            if target.strip():
-                entry["title_translated"] = target.strip()
-                changed = True
-
-        entry_by_id = {
-            entry.get("entry_id"): entry
-            for entry in toc_entries
-            if isinstance(entry.get("entry_id"), str)
-        }
-
-        def sync_chapter_titles() -> None:
-            """Reuse the starting TOC node's translation for its logical chapter."""
-            nonlocal changed
-            for manifest_chapter in chapters:
-                if manifest_chapter.get("title_translated"):
-                    continue
-                entry = entry_by_id.get(manifest_chapter.get("toc_entry_id"))
-                translated = entry.get("title_translated") if isinstance(entry, dict) else None
-                if isinstance(translated, str) and translated.strip():
-                    manifest_chapter["title_translated"] = translated.strip()
-                    changed = True
-
-        sync_chapter_titles()
-
-        # Spine-fallback chapters lack toc_entry_id. If their title is the first heading, reuse that
-        # heading's body translation to avoid inconsistent independently translated titles.
-        for manifest_chapter in chapters:
-            if manifest_chapter.get("title_translated"):
-                continue
-            chapter = loaded_chapters.get(manifest_chapter.get("index"))
-            if chapter is None:
-                continue
-            first_heading = next(
-                (segment for segment in chapter.text_segments if segment.kind == "heading"),
-                None,
-            )
-            if (
-                first_heading is not None
-                and first_heading.anchor
-                and _flat(first_heading.source) == _flat(manifest_chapter.get("title"))
-            ):
-                target = anchor_targets.get(first_heading.anchor, ("", "", ""))[2]
-                if target.strip():
-                    manifest_chapter["title_translated"] = target.strip()
-                    changed = True
-
-        pending: list[dict[str, object]] = []
-        for entry in toc_entries:
-            if not entry.get("title_translated"):
-                pending.append({"record": entry, "source": _flat(entry.get("title"))})
-        for chapter in chapters:
-            if (
-                _flat(chapter.get("title"))
-                and not chapter.get("title_translated")
-                and not chapter.get("toc_entry_id")
-            ):
-                pending.append({"record": chapter, "source": _flat(chapter.get("title"))})
-
-        if changed:
-            store.save_manifest(m)
-        if not pending:
-            store.log_event("titles_skipped", reason="already_translated_or_reused")
-            return
-        if progress:
-            progress(0, len(pending), "Translating chapter titles…")
-
-        # Bound both title count and character count for large TOCs to avoid truncated JSON responses.
-        batches: list[list[dict[str, object]]] = []
-        current: list[dict[str, object]] = []
-        current_chars = 0
-        for item in pending:
-            source = str(item["source"])
-            if current and (len(current) >= 40 or current_chars + len(source) > 4000):
-                batches.append(current)
-                current = []
-                current_chars = 0
-            current.append(item)
-            current_chars += len(source)
-        if current:
-            batches.append(current)
-
-        completed = 0
-        glossary_text = prompts.render_glossary(glossary.all_terms())
-        for batch_index, batch in enumerate(batches):
-            titles = [str(item["source"]) for item in batch]
-            system = render(
-                "title_translator_system",
-                src=self._runtime.config.source_lang,
-                tgt=self._runtime.config.target_lang,
-                n=len(titles),
-            )
-            user = render(
-                "title_translator_user",
-                src=self._runtime.config.source_lang,
-                tgt=self._runtime.config.target_lang,
-                glossary=glossary_text,
-                n=len(titles),
-                numbered_titles=prompts.numbered(titles),
-            )
-            try:
-                data = self._runtime.client.complete_json(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    operation="translation.title",
-                )
-            except Exception as error:
-                store.log_event(
-                    "titles_translation_failed",
-                    batch=batch_index,
-                    count=len(titles),
-                    error=repr(error),
-                )
-                raise
-            out = data.get("titles") if isinstance(data, dict) else data
-            if not isinstance(out, list) or len(out) != len(titles):
-                store.log_event(
-                    "titles_translation_rejected",
-                    batch=batch_index,
-                    reason="count_mismatch",
-                    expected=len(titles),
-                    actual=len(out) if isinstance(out, list) else None,
-                )
-                raise RuntimeError(
-                    "Chapter/TOC title translation returned an invalid number of items: "
-                    f"expected {len(titles)}, got "
-                    f"{len(out) if isinstance(out, list) else 'non-list'}"
-                )
-            translated = [str(title).strip() for title in out]
-            for item, target in zip(batch, translated):
-                record = item["record"]
-                if isinstance(record, dict):
-                    record["title_translated"] = target or item["source"]
-            sync_chapter_titles()
-            store.save_manifest(m)
-            store.log_event(
-                "titles_translated",
-                batch=batch_index,
-                titles=[
-                    {"source": source, "target": target}
-                    for source, target in zip(titles, translated)
-                ],
-            )
-            completed += len(batch)
-            if progress:
-                progress(completed, len(pending), "Translating chapter titles")
-
-    def process_batch(
-        self,
-        batch,
-        terms,
-        ctx_text: str,
-        style: str,
-        book_synopsis: str = "",
-        chapter_digest: str = "",
-        annotation_contexts: list[list[dict[str, str]]] | None = None,
-        next_source: str = "",
-        *,
-        allow_empty_translations: bool = False,
-    ) -> list[str]:
-        """Translate then polish one batch.
-        Translate every paragraph in its own context without reusing text across positions.
-        Inject the book synopsis and chapter digest as stable prefixes. Normalize
-        punctuation on disposable export copies only. Model review runs separately after
-        whole-book translation, not inside each batch.
-        """
-        sources = [s.source for s in batch]
-        translator = self._runtime.translator
-        targets = translator.translate_batch(
-            sources,
-            glossary_terms=terms,
-            style=style,
-            context=ctx_text,
-            book_synopsis=book_synopsis,
-            chapter_digest=chapter_digest,
-            annotation_contexts=annotation_contexts,
-            next_source=next_source,
-            allow_empty_translations=allow_empty_translations,
-        )
-        # Strip pronunciation markers accidentally copied from source into the model's translation.
-        targets = [strip_ruby_markers(target) for target in targets]
-
-        if self._runtime.config.pipeline.polish:
-            for segment, target in zip(batch, targets):
-                segment.target_before_polish = target
-            turn = translator.last_batch_turn
-            indices = translator.last_batch_indices
-            polished: list[str] | None = None
-            if turn is not None and indices is not None:
-                # Continue the translation conversation so shared prefixes stay cacheable.
-                continued = self._runtime.polisher.polish_continue(
-                    turn,
-                    n=len(indices),
-                    next_source=next_source,
-                )
-                if continued is not None and len(continued) == len(indices):
-                    polished = list(targets)
-                    for index, text in zip(indices, continued):
-                        polished[index] = strip_ruby_markers(text)
-            if polished is None:
-                polished = self._runtime.polisher.polish(
-                    targets, glossary_terms=terms, style=style, next_source=next_source
-                )
-            if len(polished) == len(targets):
-                targets = polished
-        else:
-            # Retranslation after configuration changes must not retain an older pre-polish snapshot.
-            for segment in batch:
-                segment.target_before_polish = None
-
-        return targets

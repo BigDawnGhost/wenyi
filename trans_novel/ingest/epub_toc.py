@@ -7,62 +7,14 @@ dictionary that loses same-file subtitles.
 
 from __future__ import annotations
 
-import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-
-@dataclass(frozen=True)
-class ResolvedEpubHref:
-    """Structured TOC href.
-    raw_href preserves the original value. resource_href is the ZIP member resolved relative
-    to the TOC file. fragment is the percent-decoded anchor.
-    """
-
-    raw_href: str
-    resource_href: str
-    fragment: str
-    external: bool = False
-
-    @property
-    def target_key(self) -> str:
-        """Return a stable content-destination key, not a unique TOC node ID."""
-        if not self.resource_href:
-            return ""
-        return f"{self.resource_href}#{self.fragment}" if self.fragment else self.resource_href
-
-
-def resolve_epub_href(base_path: str, raw_href: str) -> ResolvedEpubHref:
-    """Resolve an internal EPUB link against base_path without rewriting raw_href.
-    Decode percent escapes with urllib.parse.unquote, preserving literal plus signs in
-    filenames. Mark URLs with schemes or hosts as external and exclude them from chapter
-    splitting and backfill lookup.
-    """
-    raw = raw_href or ""
-    parsed = urlsplit(raw)
-    external = bool(parsed.scheme or parsed.netloc)
-    fragment = unquote(parsed.fragment)
-    if external:
-        return ResolvedEpubHref(raw, "", fragment, True)
-
-    decoded_path = unquote(parsed.path)
-    if decoded_path.startswith("/"):
-        resource = posixpath.normpath(decoded_path.lstrip("/"))
-    elif decoded_path:
-        base_dir = posixpath.dirname(base_path)
-        resource = posixpath.normpath(posixpath.join(base_dir, decoded_path))
-    else:
-        # A fragment-only href targets the TOC file itself.
-        resource = posixpath.normpath(base_path)
-    if resource == ".":
-        resource = ""
-    return ResolvedEpubHref(raw, resource, fragment, False)
+from trans_novel.markup.anchors import resolve_epub_href
 
 
 def _local(tag: str) -> str:
