@@ -25,7 +25,7 @@ class _LayoutResponse(BaseModel):
 
 
 _SYSTEM_PROMPT = """You classify ORIGINAL book layout evidence, never translated output.
-Return exactly {"observations":[{"node_id":string,"role":string|null,"level":integer|null}]}.
+Return a JSON object exactly {"observations":[{"node_id":string,"role":string|null,"level":integer|null}]}.
 Return every requested node_id exactly once and no other IDs. Use only an allowed role.
 Use role null when evidence is unknown or conflicting. level is required from 1 through 6 only
 for heading; every other role and null must have level null. Class names are book-local grouping
