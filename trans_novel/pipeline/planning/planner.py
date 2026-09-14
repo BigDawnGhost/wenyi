@@ -291,7 +291,20 @@ class Planner:
         elif node == NODE_DETERMINISTIC_QA:
             self._need(NODE_TITLES, None, False, chapters, policy, prescan, state, needed, add)
         elif node == NODE_REPORT:
-            self._need(NODE_REPAIR, None, force, chapters, policy, prescan, state, needed, add)
+            repair_force = (
+                force and state.identity.translation_policy_version >= TRANSLATION_POLICY_VERSION
+            )
+            self._need(
+                NODE_REPAIR,
+                None,
+                repair_force,
+                chapters,
+                policy,
+                prescan,
+                state,
+                needed,
+                add,
+            )
         elif node == NODE_REPAIR:
             self._need(
                 NODE_DETERMINISTIC_QA, None, False, chapters, policy, prescan, state, needed, add

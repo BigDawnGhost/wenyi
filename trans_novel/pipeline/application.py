@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from trans_novel.agents.glossary_auditor import GlossaryAuditor
@@ -32,7 +33,7 @@ from trans_novel.pipeline.contracts import (
     titles_goal,
     translate_chapter_goal,
 )
-from trans_novel.pipeline.execution import RunResult, WorkflowRunner
+from trans_novel.pipeline.execution import RunResult, WorkflowRunner, assemble_readiness_problems
 from trans_novel.pipeline.nodes import count_segments, current_layout_state
 from trans_novel.pipeline.planning import (
     NodeSpec,
@@ -58,10 +59,12 @@ from trans_novel.pipeline.state import (
     NODE_TRANSLATE,
     SCOPE_BOOK,
     SCOPE_CHAPTER,
+    IdentityMismatchError,
     RunStore,
     normalize_lang_code,
     slugify,
 )
+from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 # 注册的全部内置节点。
 _NODE_SPECS = (
@@ -99,6 +102,38 @@ _NODE_SPECS = (
 
 def build_workflow_definition() -> WorkflowDefinition:
     return WorkflowDefinition(_NODE_SPECS)
+
+
+_COMPLETED_LEGACY_OUTPUT = "completed_legacy_output"
+_OUTPUT_MAINTENANCE_PHASES = ("layout", "report", "assemble")
+
+
+def _adapt_completed_legacy_goal(
+    store: RunStore, goal: ExecutionGoal, *, frozen_preparation
+) -> ExecutionGoal:
+    if (
+        not store.exists()
+        or goal.phases != GOAL_RUN_ALL.phases
+        or goal.only_chapter is not None
+        or frozen_preparation is not None
+    ):
+        return goal
+    state = store.load_state()
+    if state.identity.translation_policy_version >= TRANSLATION_POLICY_VERSION:
+        return goal
+    return replace(goal, name=_COMPLETED_LEGACY_OUTPUT, phases=_OUTPUT_MAINTENANCE_PHASES)
+
+
+def _ensure_completed_legacy_output_ready(store: RunStore) -> None:
+    state = store.load_state()
+    if state.identity.translation_policy_version >= TRANSLATION_POLICY_VERSION:
+        raise IdentityMismatchError("旧翻译策略输出续跑条件已变化；请重新运行命令。")
+    problems = assemble_readiness_problems(store, require_output_nodes=False)
+    if problems:
+        raise IdentityMismatchError(
+            "旧翻译策略的运行缺少所需结果，不能补译或修复；"
+            "请创建新的状态目录重新翻译，原有结果保持不变。"
+        )
 
 
 def _preflight_epub_outputs(
@@ -427,6 +462,9 @@ class Application:
         result: RunResult | None = None
         try:
             ensure_document_notes(self, store, doc, identity_path, original_goal, shared)
+            goal = _adapt_completed_legacy_goal(
+                store, original_goal, frozen_preparation=self.frozen_preparation
+            )
             prep_phases = [p for p in goal.phases if p in self._PREPARE_PHASES]
             if prep_phases:
                 prep_goal = ExecutionGoal(name="prepare", phases=tuple(prep_phases))
@@ -526,6 +564,8 @@ class Application:
 
         def build() -> WorkflowPlan:
             _setup_output(self.config, shared, input_path, progress)
+            if goal.name == _COMPLETED_LEGACY_OUTPUT:
+                _ensure_completed_legacy_output_ready(store)
             if "layout" in goal.phases or "assemble" in goal.phases:
                 _setup_layout(
                     shared,

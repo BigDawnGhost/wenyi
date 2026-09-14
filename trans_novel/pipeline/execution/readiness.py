@@ -10,9 +10,11 @@ from trans_novel.pipeline.contracts import ReadinessError
 from trans_novel.pipeline.state import (
     BEST_EFFORT_NODES,
     NODE_ANALYZE,
+    NODE_ASSEMBLE,
     NODE_DETERMINISTIC_QA,
     NODE_FAILED_PERMANENT,
     NODE_FAILED_RETRYABLE,
+    NODE_LAYOUT,
     NODE_POLISH,
     NODE_PREPARE,
     NODE_REPAIR,
@@ -32,11 +34,12 @@ def _chapter_node_base(key: str) -> str:
     return key.split(":", 1)[0]
 
 
-def assemble_readiness_problems(store: RunStore) -> list[str]:
+def assemble_readiness_problems(store: RunStore, *, require_output_nodes: bool = True) -> list[str]:
     """返回阻止正式回填的全部问题（空列表 = 可以回填）。
 
     覆盖未完成章节、空 target、待润色批次，以及适用的必需上游节点。
     尽力而为的术语节点失败/缺失不阻塞产出；禁用润色被视为已决策。
+    ``require_output_nodes=False`` 仅允许重新生成排版、报告与回填结果。
     """
     state = store.load_state()
     problems: list[str] = []
@@ -71,14 +74,16 @@ def assemble_readiness_problems(store: RunStore) -> list[str]:
         else:
             problems.append(f"节点 {node_id} 状态为 {node.status}（必需上游未完成）")
 
-    for node_id in (
+    required_book_nodes = [
         NODE_PREPARE,
         NODE_ANALYZE,
         NODE_TITLES,
         NODE_DETERMINISTIC_QA,
         NODE_REPAIR,
-        NODE_REPORT,
-    ):
+    ]
+    if require_output_nodes:
+        required_book_nodes.append(NODE_REPORT)
+    for node_id in required_book_nodes:
         check_book(node_id)
 
     for idx in state.chapters:
@@ -96,8 +101,11 @@ def assemble_readiness_problems(store: RunStore) -> list[str]:
             if polish is None or polish.status not in (NODE_SUCCEEDED, NODE_SKIPPED):
                 problems.append(f"节点 {chapter_node_key(NODE_POLISH, idx.index)} 未完成")
 
+    retryable_output_nodes = {NODE_LAYOUT, NODE_REPORT, NODE_ASSEMBLE}
     for key, node in sorted(state.nodes.items()):
         if node.status in (NODE_FAILED_RETRYABLE, NODE_FAILED_PERMANENT):
+            if not require_output_nodes and _chapter_node_base(key) in retryable_output_nodes:
+                continue
             if _chapter_node_base(key) in BEST_EFFORT_NODES:
                 continue
             problems.append(f"节点 {node.node_id} 处于失败状态")

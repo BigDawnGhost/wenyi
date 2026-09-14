@@ -325,6 +325,36 @@ class TestSemanticRouting(unittest.TestCase):
 
             self.assertEqual(assemble_readiness_problems(store), [])
 
+    def test_legacy_content_readiness_ignores_only_output_node_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(
+                directory,
+                [_classified_chapter(0, "Reference", "Reference A.", action="preserve")],
+            )
+            chapter = store.load_chapter(0)
+            chapter.segments[0].target = chapter.segments[0].source
+            store.save_chapter(chapter)
+            store.set_chapter_status(0, "done")
+            state = store.load_state()
+            for node_id in (
+                NODE_PREPARE,
+                NODE_ANALYZE,
+                NODE_TITLES,
+                NODE_DETERMINISTIC_QA,
+                NODE_REPAIR,
+                "translate:0",
+            ):
+                state.nodes[node_id] = NodeState(node_id=node_id, status="succeeded")
+            for node_id in ("layout", NODE_REPORT, "assemble"):
+                state.nodes[node_id] = NodeState(node_id=node_id, status="failed_retryable")
+            store.save_state(state)
+
+            self.assertTrue(assemble_readiness_problems(store))
+            self.assertEqual(assemble_readiness_problems(store, require_output_nodes=False), [])
+            state.nodes[NODE_PREPARE] = NodeState(node_id=NODE_PREPARE, status="failed_retryable")
+            store.save_state(state)
+            self.assertTrue(assemble_readiness_problems(store, require_output_nodes=False))
+
     def test_repair_ignores_preserved_chapter_even_if_input_contains_issue(self):
         class Translator:
             src = "en"

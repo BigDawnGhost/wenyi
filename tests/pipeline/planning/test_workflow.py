@@ -11,7 +11,13 @@ from unittest.mock import patch
 from trans_novel.config import Config, PipelineConfig
 from trans_novel.ingest.models import Chapter, Document, Segment
 from trans_novel.pipeline import build_workflow_definition
-from trans_novel.pipeline.contracts import GOAL_RUN_ALL, ExecutionGoal, assemble_goal, qa_goal
+from trans_novel.pipeline.contracts import (
+    GOAL_RUN_ALL,
+    ExecutionGoal,
+    assemble_goal,
+    qa_goal,
+    report_goal,
+)
 from trans_novel.pipeline.planning import (
     Planner,
     PrescanInputs,
@@ -259,6 +265,31 @@ class TestTranslationPolicy(unittest.TestCase):
                     self.assertEqual(
                         store.load_chapter(0).text_segments[0].target, "Saved translation 0"
                     )
+
+    def test_forced_report_reuses_completed_repair_only_for_older_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._legacy_store(tmp)
+            planner = Planner(build_workflow_definition())
+            goal = report_goal()
+
+            legacy_plan = planner.build_plan(
+                goal=goal,
+                store=store,
+                policy=WorkflowPolicy(),
+                prescan=PrescanInputs(),
+            )
+            self.assertEqual(legacy_plan.entry_keys(), {NODE_REPORT})
+
+            state = store.load_state()
+            state.identity.translation_policy_version = TRANSLATION_POLICY_VERSION
+            store.save_state(state)
+            current_plan = planner.build_plan(
+                goal=goal,
+                store=store,
+                policy=WorkflowPolicy(),
+                prescan=PrescanInputs(),
+            )
+            self.assertEqual(current_plan.entry_keys(), {NODE_REPAIR, NODE_REPORT})
 
     def test_old_incomplete_export_rejects_implicit_model_work_without_changes(self):
         with tempfile.TemporaryDirectory() as tmp:

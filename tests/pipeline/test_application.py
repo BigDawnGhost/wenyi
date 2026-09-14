@@ -35,6 +35,7 @@ from trans_novel.pipeline.state import (
     RunState,
     RunStore,
 )
+from trans_novel.pipeline.state.models import TRANSLATION_POLICY_VERSION
 
 
 def _config(state_dir: str, *, quality: str = "balanced") -> Config:
@@ -478,7 +479,9 @@ class TestTranslationContextRecovery(unittest.TestCase):
                     node["input_fingerprint"] = f"legacy-{key}"
             store.save_manifest(manifest)
             before = [s.target for s in store.load_chapter(0).text_segments]
-            client = FakeClient(handler=lambda *_args: self.fail("legacy export must be offline"))
+            client = FakeClient(
+                handler=lambda *_args: self.fail("legacy output run must be offline")
+            )
             app = Application(config, client=client)
             outputs = app.assemble(
                 store, source_path, out_format="txt", out_path=f"{directory}/legacy.txt"
@@ -487,15 +490,49 @@ class TestTranslationContextRecovery(unittest.TestCase):
                 exported = stream.read()
             for target in before:
                 self.assertIn(target, exported)
-            with self.assertRaises(IdentityMismatchError):
-                app.run_document_goal(_document(), source_path, goal)
+            result, store = app.run_document_goal(_document(), source_path, goal)
+            self.assertIsNotNone(result.artifact("report", "report"))
             self.assertEqual(client.calls, [])
             self.assertEqual([s.target for s in store.load_chapter(0).text_segments], before)
             state = store.load_state()
+            self.assertEqual(state.identity.translation_policy_version, 0)
             for key, node in manifest["nodes"].items():
                 if key.split(":")[0] in {"analyze", "translate", "polish"}:
                     self.assertEqual(state.nodes[key].input_fingerprint, node["input_fingerprint"])
                     self.assertEqual(state.nodes[key].status, node["status"])
+
+    def test_legacy_admission_rejects_incomplete_and_future_states(self):
+        for case in ("incomplete", "future"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                config = _config(f"{directory}/state")
+                source_path = _write_source(directory)
+                goal = ExecutionGoal(name="run_all", phases=GOAL_RUN_ALL.phases, out_format="txt")
+                _, store = Application(
+                    config, client=FakeClient(handler=routing_handler)
+                ).run_document_goal(_document(), source_path, goal)
+                before = [s.target for s in store.load_chapter(0).text_segments]
+                state = store.load_state()
+                if case == "incomplete":
+                    state.identity.translation_policy_version = TRANSLATION_POLICY_VERSION - 1
+                    state.progress[0].status = "pending"
+                else:
+                    state.identity.translation_policy_version = TRANSLATION_POLICY_VERSION + 1
+                store.save_state(state)
+                client = FakeClient(
+                    handler=lambda *_args: self.fail("rejected run must not call a model")
+                )
+
+                with self.assertRaises(IdentityMismatchError):
+                    Application(config, client=client).run_document_goal(
+                        _document(), source_path, goal
+                    )
+
+                self.assertEqual(client.calls, [])
+                self.assertEqual(
+                    store.load_state().identity.translation_policy_version,
+                    state.identity.translation_policy_version,
+                )
+                self.assertEqual([s.target for s in store.load_chapter(0).text_segments], before)
 
     def test_resume_rebuilds_committed_history_without_cached_future(self):
         sources = [f"Source paragraph {i} has a sentence." for i in range(9)]
