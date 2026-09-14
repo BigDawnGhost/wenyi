@@ -130,7 +130,7 @@ def _bilingual_source(source: str, target: str) -> str:
     Strip pronunciation hint markers from Segment.source in plain-text fallbacks. Preserve
     actual ruby from template DOM through _bilingual_source_markup.
     """
-    from ..ingest.epub_reader import strip_ruby_markers
+    from trans_novel.markup.ruby import strip_ruby_markers
 
     source = strip_ruby_markers(source)
     return source if (source.strip() and source != target) else ""

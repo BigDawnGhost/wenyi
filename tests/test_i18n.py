@@ -297,7 +297,7 @@ def test_language_list_needs_no_api_and_reads_packaged_templates():
     runner = CliRunner()
     with (
         tempfile.TemporaryDirectory() as directory,
-        patch("trans_novel.cli._validate_api_configuration") as validate,
+        patch("trans_novel.commands.context.CommandContext.validate_api_configuration") as validate,
     ):
         result = runner.invoke(app, ["--config", str(Path(directory) / "config.yaml"), "languages"])
         assert result.exit_code == 0, result.output

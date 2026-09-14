@@ -72,7 +72,7 @@ errors (for example HTTP 402) leave the run as `interrupted` so the next `review
 command can continue instead of starting a new directory. Permanent local failures still
 finish as `failed`. Otherwise, a new whole-book Review starts. Cached chunks and
 completed initial screening skip chapter glossary matching; pending reviewer requests
-share one chapter-wide glossary snapshot.
+share one chapter-wide glossary snapshot. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
 Elapsed time measures the entire current workflow and never resets at stage or round
 boundaries. It continues advancing while model requests are pending, even after a stage

@@ -12,14 +12,12 @@ from html import escape
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from trans_novel.assemble.epub_resources import _epub_resource_specs, _render_epub_resources
+from trans_novel.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_ID
+from trans_novel.assemble.html_renderer import _render_chapter_html
+
 from ..ingest.models import KIND_HEADING
 from ..pipeline.runstore import RunStore
-from .epub_writer import _epub_resource_specs, _render_epub_resources
-from .html_renderer import (
-    _BILINGUAL_CSS,
-    _BILINGUAL_STYLE_ID,
-    _render_chapter_html,
-)
 from .html_resources import _materialize_html_resources, _template_resource_source
 from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
 

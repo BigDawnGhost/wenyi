@@ -15,7 +15,8 @@ import os
 from bs4 import BeautifulSoup, Tag
 from bs4.element import Comment
 
-from .epub_reader import annotate_epub_resource
+from trans_novel.markup.segments import annotate_epub_resource
+
 from .models import Chapter, Document, Segment
 
 # Block and heading tags shared with the EPUB reader.

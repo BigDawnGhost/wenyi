@@ -20,16 +20,16 @@ from tests.sample_data import (
     write_sample_txt,
 )
 from trans_novel.assemble.about import append_about_page
-from trans_novel.assemble.epub_writer import _inject_bilingual_style, _rewrite_html_document
+from trans_novel.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
 from trans_novel.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from trans_novel.assemble.report import build_report
 from trans_novel.assemble.writer import assemble
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
-from trans_novel.ingest.epub_reader import annotate_epub_resource
 from trans_novel.ingest.models import Chapter, Segment
 from trans_novel.ingest.segmenter import load_document
 from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.markup.segments import annotate_epub_resource
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.pipeline.runstore import RunStore
 from trans_novel.review.run_store import ReviewRunStore
@@ -215,7 +215,7 @@ class TestAssembleText(unittest.TestCase):
 
             with (
                 patch(
-                    "trans_novel.assemble.epub_writer.os.replace",
+                    "trans_novel.assemble.epub_presentation.os.replace",
                     side_effect=OSError("replace failed"),
                 ),
                 self.assertRaisesRegex(OSError, "replace failed"),
@@ -1275,7 +1275,7 @@ class TestTitleTranslation(unittest.TestCase):
                     ),
                     self.assertRaisesRegex(RuntimeError, "invalid number"),
                 ):
-                    orchestrator._translation.translate_titles(store, glossary)
+                    orchestrator._translation._titles.run(store, glossary)
             finally:
                 glossary.close()
 
@@ -1425,7 +1425,7 @@ class TestTitleTranslation(unittest.TestCase):
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
 
     def test_rewrite_nav_and_ncx_labels(self):
-        from trans_novel.assemble.epub_writer import _rewrite_toc
+        from trans_novel.assemble.epub_navigation import _rewrite_toc
 
         toc_path = "toc.xhtml"
         entries = [
@@ -1474,7 +1474,7 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
     """
 
     def test_is_nav_rejects_chapter_body_with_content_toc_link(self):
-        from trans_novel.assemble.epub_writer import _is_nav
+        from trans_novel.assemble.epub_navigation import _is_nav
 
         chapter = (
             b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
@@ -1486,7 +1486,7 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertFalse(_is_nav(chapter))
 
     def test_is_nav_accepts_explicit_toc_nav(self):
-        from trans_novel.assemble.epub_writer import _is_nav
+        from trans_novel.assemble.epub_navigation import _is_nav
 
         nav = (
             b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
@@ -1500,7 +1500,7 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         )
 
     def test_rewrite_toc_skips_chapter_body_without_toc_nav(self):
-        from trans_novel.assemble.epub_writer import _rewrite_toc
+        from trans_novel.assemble.epub_navigation import _rewrite_toc
 
         chapter = (
             b'<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
