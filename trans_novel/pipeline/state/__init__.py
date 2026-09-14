@@ -46,16 +46,21 @@ from trans_novel.pipeline.state.models import (
     RunState,
     chapter_node_key,
     input_fingerprint,
-    normalize_lang_code,
     now_iso,
     source_bytes_hash,
+    stable_digest,
+)
+from trans_novel.pipeline.state.note_migration import (
+    commit_note_migration,
+    recover_note_migration,
 )
 from trans_novel.pipeline.state.output_selection import (
     SavedOutputSelection,
     load_output_selection,
     save_output_selection,
 )
-from trans_novel.pipeline.state.store import RunStore, slugify, stable_digest
+from trans_novel.pipeline.state.store import RunStore, slugify
+from trans_novel.postprocess.language import normalize_lang_code
 
 __all__ = [
     "BEST_EFFORT_NODES",
@@ -103,10 +108,12 @@ __all__ = [
     "chapter_node_key",
     "clear",
     "clone_closed_runstore",
+    "commit_note_migration",
     "input_fingerprint",
     "load_output_selection",
     "normalize_lang_code",
     "now_iso",
+    "recover_note_migration",
     "runstore_for",
     "save_output_selection",
     "slugify",

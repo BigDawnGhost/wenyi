@@ -25,9 +25,9 @@ from trans_novel.pipeline.state.models import (
     RunIdentity,
     RunState,
     chapter_node_key,
-    normalize_lang_code,
     source_bytes_hash,
 )
+from trans_novel.postprocess.language import normalize_lang_code
 
 _PIPELINE_META_KEYS = frozenset(
     {

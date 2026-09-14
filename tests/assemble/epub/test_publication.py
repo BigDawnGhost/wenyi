@@ -465,15 +465,43 @@ class TestEpubBatchPublication(unittest.TestCase):
                 publication.fsync_file(str(path))
             self.assertEqual(path.read_bytes(), b"published archive bytes")
 
-    def _requests(self, root: Path):
+    def _requests(self, root: Path, *, note_theme: bool = False):
+        from trans_novel.assemble.epub.layout import build_layout_inventory
         from trans_novel.assemble.epub.rendering import assemble_epub
         from trans_novel.assemble.epub.rendering.theme import resolve_theme
         from trans_novel.assemble.epub.rendering.theme.service import ThemeService
+        from trans_novel.epub.layout import LayoutAssignment, LayoutProfile
 
         source = root / "source.epub"
         write_phase9_epub(str(source))
         store, _ = _run(str(source), str(root / "state"))
-        theme = ThemeService(resolve_theme(None, "builtin:bilingual"))
+        if note_theme:
+            chapters = [
+                store.load_chapter(item["index"]) for item in store.load_manifest()["chapters"]
+            ]
+            inventory = build_layout_inventory(str(source), chapters)
+            profile = LayoutProfile(
+                source_sha256=inventory.source_sha256,
+                inventory_digest=inventory.digest,
+                policy_version=inventory.policy_version,
+                assignments=tuple(
+                    LayoutAssignment(
+                        node.node_id,
+                        node.resource_href,
+                        node.path,
+                        node.source_sha256,
+                        "body",
+                    )
+                    for node in inventory.nodes
+                ),
+                provenance={},
+            )
+            theme = ThemeService(
+                resolve_theme("builtin:chinese-reading", "builtin:bilingual"),
+                layout=profile,
+            )
+        else:
+            theme = ThemeService(resolve_theme(None, "builtin:bilingual"))
         requests = [
             EpubOutput(
                 root / name,
@@ -578,6 +606,20 @@ class TestEpubBatchPublication(unittest.TestCase):
             self.assertTrue(first["passed"])
             self.assertEqual(first["output_sha256"], hashlib.sha256(mono.read_bytes()).hexdigest())
             self.assertFalse(list(root.glob(".*.epub-verify-*.tmp")))
+
+    def test_note_themed_pair_runs_real_triplet_proof_before_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, store, requests = self._requests(root, note_theme=True)
+
+            mono, bilingual = publish_epubs(store, source, requests)
+
+            self.assertTrue(Path(mono).is_file())
+            self.assertTrue(Path(bilingual).is_file())
+            report = store.load_epub_verification()
+            self.assertTrue(report["triplet"]["structural_pass"], report["triplet"])
+            self.assertTrue(report["triplet"]["mono"]["theme"]["note_change_count"])
+            self.assertTrue(report["triplet"]["bilingual"]["theme"]["note_change_count"])
 
     def test_published_pair_proof_rejects_missing_evidence_and_changed_bytes(self) -> None:
         from trans_novel.benchmark.epub_check import validate_epub_triplet

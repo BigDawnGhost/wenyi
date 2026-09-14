@@ -29,6 +29,7 @@ from trans_novel.pipeline.planning.fingerprints import (
     translation_structure_fingerprint_part,
     translator_model_profile,
 )
+from trans_novel.pipeline.planning.note_fingerprints import note_fingerprint_updates
 from trans_novel.pipeline.planning.planner import (
     PlanEntry,
     PlannedStage,
@@ -60,6 +61,7 @@ __all__ = [
     "glossary_semantic_fingerprint_part",
     "mine_terms_input_fingerprint",
     "name_terms_input_fingerprint",
+    "note_fingerprint_updates",
     "polish_input_fingerprint",
     "polish_model_profile",
     "prepare_input_fingerprint",

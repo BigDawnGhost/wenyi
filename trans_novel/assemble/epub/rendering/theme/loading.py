@@ -10,6 +10,7 @@ from typing import Literal
 from trans_novel.assemble.epub.rendering.theme.contracts import ThemeBundle, ThemeError
 
 _POLICY_VERSION = "epub-theme-v2"
+_NOTE_PRESENTATION_POLICY_VERSION = "epub-note-marker-v1"
 _OUTPUT_POLICY_VERSION = 2
 _MAX_ASSET_BYTES = 256 * 1024
 _BUILTINS = {
@@ -123,6 +124,7 @@ def resolve_theme(
 
     general_css = by_slot.get("override_theme.styles")
     bilingual_css = by_slot.get("bilingual_styles")
+    note_markers = styles == "builtin:chinese-reading"
     digest = _canonical_digest(
         {
             "general_css": (
@@ -132,6 +134,11 @@ def resolve_theme(
                 hashlib.sha256(bilingual_css).hexdigest() if bilingual_css is not None else None
             ),
             "policy_version": _POLICY_VERSION,
+            **(
+                {"note_presentation_policy": _NOTE_PRESENTATION_POLICY_VERSION}
+                if note_markers
+                else {}
+            ),
         }
     )
     return ThemeBundle(
@@ -140,6 +147,7 @@ def resolve_theme(
         digest=digest,
         policy_version=_POLICY_VERSION,
         provenance=tuple(provenance),
+        note_markers=note_markers,
     )
 
 

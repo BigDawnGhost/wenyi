@@ -29,6 +29,7 @@ class ThemeBundle:
     digest: str
     policy_version: str
     provenance: tuple[tuple[str, str], ...]
+    note_markers: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,11 +54,18 @@ class LayoutBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class NotePathMapping:
+    source_path: ElementPath
+    target_path: ElementPath
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceThemeScope:
     excluded_paths: tuple[ElementPath, ...] = ()
     source_pairs: tuple[SourcePair, ...] = ()
     layout_bindings: tuple[LayoutBinding, ...] = ()
     preserve_resource: bool = False
+    note_paths: tuple[NotePathMapping, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +83,39 @@ class InlineChange:
 
 
 @dataclass(frozen=True, slots=True)
+class NoteTextChange:
+    path: ElementPath
+    field: str
+    before: str | None
+    after: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class NoteAttributeChange:
+    path: ElementPath
+    name: str
+    before: str | None
+    after: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class NoteNamespaceChange:
+    path: ElementPath
+    before: tuple[tuple[str | None, str], ...]
+    after: tuple[tuple[str | None, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NoteChange:
+    source_path: ElementPath
+    target_path: ElementPath
+    kind: str
+    text_changes: tuple[NoteTextChange, ...]
+    attribute_changes: tuple[NoteAttributeChange, ...]
+    namespace_changes: tuple[NoteNamespaceChange, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceThemePlan:
     resource_href: str
     before_sha256: str
@@ -88,6 +129,7 @@ class ResourceThemePlan:
     css: bytes
     head_path: ElementPath
     link_attributes: tuple[tuple[str, str], ...]
+    note_changes: tuple[NoteChange, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,3 +142,4 @@ class ThemePlan:
     role_counts: tuple[tuple[str, int], ...]
     protected_count: int
     bilingual: bool
+    source_sha256: str | None = None

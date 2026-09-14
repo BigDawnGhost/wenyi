@@ -183,6 +183,9 @@ class TestEpubStage2(unittest.TestCase):
                 "bilingual_path": Path,
                 "mono_theme_plan": ThemePlan | None,
                 "bilingual_theme_plan": ThemePlan | None,
+                "store": Any | None,
+                "target_lang": str | None,
+                "bilingual_order": str,
                 "return": dict[str, Any],
             },
         )
@@ -198,6 +201,9 @@ class TestEpubStage2(unittest.TestCase):
                 "bilingual_path",
                 "mono_theme_plan",
                 "bilingual_theme_plan",
+                "store",
+                "target_lang",
+                "bilingual_order",
             ],
         )
 

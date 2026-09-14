@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Collection
 from copy import deepcopy
 
 from lxml import etree
@@ -33,6 +34,7 @@ from trans_novel.assemble.epub.rendering.source_dom import (
 )
 from trans_novel.assemble.epub.rendering.theme import (
     LayoutBinding,
+    NotePathMapping,
     ResourceThemeScope,
     SourcePair,
     ThemeError,
@@ -473,6 +475,7 @@ def _theme_scope(
     block_refs: dict[tuple[int, ...], etree._Element],
     source_refs: list[_SourceRef],
     layout_nodes: tuple[tuple[tuple[int, ...], etree._Element, str], ...],
+    note_nodes: tuple[tuple[tuple[int, ...], etree._Element], ...],
 ) -> ResourceThemeScope:
     paths: dict[etree._Element, tuple[int, ...]] = {}
     stack = [(root, ())]
@@ -516,9 +519,44 @@ def _theme_scope(
                 for source_path, target, source_sha256 in layout_nodes
             ),
             preserve_resource=preserve_resource,
+            note_paths=tuple(
+                NotePathMapping(source_path=source_path, target_path=paths[target])
+                for source_path, target in note_nodes
+            ),
         )
     except KeyError:
         raise ThemeError("theme_css", "invalid_scope", resource=href) from None
+
+
+def _theme_nodes(
+    root: etree._Element,
+    note_source_paths: Collection[tuple[int, ...]],
+    *,
+    enabled: bool,
+) -> tuple[
+    tuple[tuple[tuple[int, ...], etree._Element], ...],
+    tuple[tuple[tuple[int, ...], etree._Element, str], ...],
+]:
+    note_nodes = tuple(
+        (path, resolve_element_path(root, path)) for path in dict.fromkeys(note_source_paths)
+    )
+    if not enabled:
+        return note_nodes, ()
+    projection = build_projection(root)
+    layout_nodes = tuple(
+        (
+            path,
+            node,
+            source_node_digest(
+                node.tag.rsplit("}", 1)[-1].lower(),
+                dict(node.attrib),
+                "".join(node.itertext()),
+            ),
+        )
+        for index, (node, path) in enumerate(zip(projection.nodes, projection.paths, strict=True))
+        if projection.snapshot["nodes"][index]["isTextBlock"]
+    )
+    return note_nodes, layout_nodes
 
 
 def render_source_resource(
@@ -533,6 +571,7 @@ def render_source_resource(
     order: str = "target_first",
     source_lang: str = "",
     scope_sink: dict[str, ResourceThemeScope] | None = None,
+    note_source_paths: Collection[tuple[int, ...]] = (),
 ) -> bytes:
     if order not in {"target_first", "source_first"}:
         raise ValueError(f"invalid bilingual order: {order!r}")
@@ -541,24 +580,11 @@ def render_source_resource(
         raise ValueError(f"EPUB resource digest mismatch: {href}")
     tree, mode = parse_source_markup(data, expected_mode)
     root = tree.getroot()
-    layout_nodes: tuple[tuple[tuple[int, ...], etree._Element, str], ...] = ()
-    if scope_sink is not None:
-        source_projection = build_projection(root)
-        layout_nodes = tuple(
-            (
-                path,
-                node,
-                source_node_digest(
-                    node.tag.rsplit("}", 1)[-1].lower(),
-                    dict(node.attrib),
-                    "".join(node.itertext()),
-                ),
-            )
-            for index, (node, path) in enumerate(
-                zip(source_projection.nodes, source_projection.paths, strict=True)
-            )
-            if source_projection.snapshot["nodes"][index]["isTextBlock"]
-        )
+    note_nodes, layout_nodes = _theme_nodes(
+        root,
+        note_source_paths,
+        enabled=scope_sink is not None,
+    )
     if bilingual and has_reserved_source_collision(root):
         raise ValueError(f"EPUB reserved bilingual marker collision: {href}")
     writes: list[tuple[etree._Element, str, str]] = []
@@ -632,5 +658,13 @@ def render_source_resource(
             source_refs=source_refs if scope_sink is not None else None,
         )
     if scope_sink is not None:
-        scope_sink[href] = _theme_scope(root, href, segments, block_refs, source_refs, layout_nodes)
+        scope_sink[href] = _theme_scope(
+            root,
+            href,
+            segments,
+            block_refs,
+            source_refs,
+            layout_nodes,
+            note_nodes,
+        )
     return serialize_source_tree(tree, data, mode)

@@ -31,6 +31,9 @@ def validate_epub_triplet(
     *,
     mono_theme_plan: ThemePlan | None = None,
     bilingual_theme_plan: ThemePlan | None = None,
+    store: Any | None = None,
+    target_lang: str | None = None,
+    bilingual_order: str = "target_first",
 ) -> dict[str, Any]:
     return _validate_epub_triplet(
         source_path,
@@ -38,6 +41,9 @@ def validate_epub_triplet(
         bilingual_path,
         mono_theme_plan=mono_theme_plan,
         bilingual_theme_plan=bilingual_theme_plan,
+        store=store,
+        target_lang=target_lang,
+        bilingual_order=bilingual_order,
     )
 
 
@@ -65,6 +71,9 @@ def validate_epub_triplet_with_limits(
     *,
     mono_theme_plan: ThemePlan | None = None,
     bilingual_theme_plan: ThemePlan | None = None,
+    store: Any | None = None,
+    target_lang: str | None = None,
+    bilingual_order: str = "target_first",
     max_member_bytes: int = MAX_MEMBER_BYTES,
     max_archive_bytes: int = MAX_ARCHIVE_BYTES,
 ) -> dict[str, Any]:
@@ -74,6 +83,9 @@ def validate_epub_triplet_with_limits(
         bilingual_path,
         mono_theme_plan=mono_theme_plan,
         bilingual_theme_plan=bilingual_theme_plan,
+        store=store,
+        target_lang=target_lang,
+        bilingual_order=bilingual_order,
         max_member_bytes=max_member_bytes,
         max_archive_bytes=max_archive_bytes,
     )

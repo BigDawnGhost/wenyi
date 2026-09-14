@@ -40,12 +40,17 @@ from trans_novel.assemble.epub.rendering.theme.contracts import (
     ThemeError,
 )
 from trans_novel.assemble.epub.rendering.theme.css import CssRule, declaration_properties
+from trans_novel.assemble.epub.rendering.theme.notes import (
+    plan_note_changes,
+    plan_note_markers,
+)
 from trans_novel.assemble.epub.rendering.theme.projection import (
     ResourceProjection,
     build_projection,
 )
 from trans_novel.assemble.epub.rendering.theme.source_css import collect_source_stylesheets
 from trans_novel.epub.layout import LayoutAssignment
+from trans_novel.epub.notes import NoteRelations
 
 _RESERVED_ATTRIBUTES = (
     "data-tn-role",
@@ -368,10 +373,27 @@ def _match_rules(
     for rule in rules:
         selected: list[etree._Element] = []
         for tag in soup.select(rule.selector):
-            if not source_only and "data-tn-role" not in tag.attrs:
-                continue
             node = reverse.get(id(tag))
-            if node is None or node in projection.protected or not _safe_reset_match(node, rule):
+            note_descendant = any(
+                "data-tn-note-kind" in ancestor.attrs
+                for ancestor in (tag, *tag.parents)
+                if isinstance(ancestor, Tag)
+            )
+            if (
+                not source_only
+                and "data-tn-role" not in tag.attrs
+                and "data-tn-note-kind" not in tag.attrs
+                and not note_descendant
+            ):
+                continue
+            if (
+                node is None
+                or node in projection.protected
+                or (
+                    not _safe_reset_match(node, rule)
+                    and not ("[data-tn-note-kind" in rule.selector and note_descendant)
+                )
+            ):
                 continue
             in_source = node in projection.source_nodes
             if in_source != source_only:
@@ -407,6 +429,55 @@ def _compile_css(
     return "\n".join(output).encode("utf-8")
 
 
+def _theme_link(
+    root: etree._Element,
+    paths: dict[etree._Element, ElementPath],
+    resource: str,
+    css_path: str,
+) -> tuple[ElementPath, tuple[tuple[str, str], ...]]:
+    head_nodes = [node for node in root.iter() if local_name(node.tag).lower() == "head"]
+    if len(head_nodes) != 1:
+        raise ThemeError("theme_css", "missing_head", resource=resource)
+    relative = quote(
+        posixpath.relpath(css_path, posixpath.dirname(resource) or "."),
+        safe="/",
+    )
+    return paths[head_nodes[0]], (
+        ("rel", "stylesheet"),
+        ("type", "text/css"),
+        ("href", relative),
+    )
+
+
+def _inline_changes(
+    order: list[etree._Element],
+    rules_by_node: dict[etree._Element, list[CssRule]],
+    paths: dict[etree._Element, ElementPath],
+    indices: dict[etree._Element, int],
+    *,
+    resource: str,
+) -> tuple[InlineChange, ...]:
+    changes: list[InlineChange] = []
+    for node in order:
+        rules = rules_by_node.get(node)
+        before = node.get("style")
+        if rules is None or before is None:
+            continue
+        after, declarations = normalize_inline(
+            before, rules, resource=resource, node_id=indices[node]
+        )
+        if after != before:
+            changes.append(InlineChange(paths[node], before, after, declarations))
+    return tuple(changes)
+
+
+def _parse_theme_resource(data: bytes, resource: str) -> tuple[etree._ElementTree, str]:
+    try:
+        return parse_source_markup(data)
+    except (ValueError, etree.LxmlError):
+        raise ThemeError("theme_css", "invalid_markup", resource=resource) from None
+
+
 def plan_resource(
     archive: zipfile.ZipFile,
     data: bytes,
@@ -420,11 +491,9 @@ def plan_resource(
     css_path: str,
     package_protected: bool = False,
     layout_assignments: tuple[LayoutAssignment, ...] = (),
+    note_relations: NoteRelations | None = None,
 ) -> tuple[ResourceThemePlan | None, tuple[tuple[str, str], ...], Counter[str], int]:
-    try:
-        tree, mode = parse_source_markup(data)
-    except (ValueError, etree.LxmlError):
-        raise ThemeError("theme_css", "invalid_markup", resource=resource_href) from None
+    tree, mode = _parse_theme_resource(data, resource_href)
     root = tree.getroot()
     excluded, pairs = _resolve_scope(root, scope, resource_href)
     initial = build_projection(
@@ -452,6 +521,13 @@ def plan_resource(
     if package_protected or scope.preserve_resource:
         return None, (), Counter(), protected_count
     markers = _semantic_markers(projection, assignments, boundaries, pairs)
+    note_changes = plan_note_markers(
+        root,
+        resource_href,
+        scope,
+        note_relations if bundle.note_markers else None,
+        markers,
+    )
     soup, reverse = _marked_soup(root, markers, resource_href)
     general_matches, warnings = _match_rules(
         soup, reverse, general_rules, projection, source_only=False, resource=resource_href
@@ -462,7 +538,7 @@ def plan_resource(
     warnings.extend(bilingual_warnings)
     matches = [*general_matches, *bilingual_matches]
     matched_nodes = {node for _, nodes in matches for node in nodes}
-    if not markers and not matched_nodes:
+    if not markers and not matched_nodes and not note_changes:
         return None, tuple(warnings), Counter(), protected_count
 
     order = [node for node in root.iter() if isinstance(node.tag, str)]
@@ -476,18 +552,13 @@ def plan_resource(
         for node in nodes:
             rules_by_node.setdefault(node, []).append(rule)
     paths = _path_map(root)
-    inline_changes: list[InlineChange] = []
-    for node in order:
-        rules = rules_by_node.get(node)
-        before = node.get("style")
-        if rules is None or before is None:
-            continue
-        after, declarations = normalize_inline(
-            before, rules, resource=resource_href, node_id=indices[node]
-        )
-        if after != before:
-            inline_changes.append(InlineChange(paths[node], before, after, declarations))
-
+    inline_changes = _inline_changes(
+        order,
+        rules_by_node,
+        paths,
+        indices,
+        resource=resource_href,
+    )
     stylesheets = collect_source_stylesheets(archive, root, resource_href)
     guards = source_specificity_bound(stylesheets, resource=resource_href)
     css = _compile_css(matches, addresses, guards)
@@ -500,14 +571,7 @@ def plan_resource(
         if (attrs := markers.get(node))
     )
     roles = Counter(attrs["data-tn-role"] for attrs in markers.values() if "data-tn-role" in attrs)
-    head_nodes = [node for node in root.iter() if local_name(node.tag).lower() == "head"]
-    if len(head_nodes) != 1:
-        raise ThemeError("theme_css", "missing_head", resource=resource_href)
-    relative = quote(
-        posixpath.relpath(css_path, posixpath.dirname(resource_href) or "."),
-        safe="/",
-    )
-    link_attributes = (("rel", "stylesheet"), ("type", "text/css"), ("href", relative))
+    head_path, link_attributes = _theme_link(root, paths, resource_href, css_path)
     plan = ResourceThemePlan(
         resource_href=resource_href,
         before_sha256=hashlib.sha256(data).hexdigest(),
@@ -515,14 +579,19 @@ def plan_resource(
         parse_mode=mode,
         scope=scope,
         markers=marker_changes,
-        inline_changes=tuple(inline_changes),
+        inline_changes=inline_changes,
         css_path=css_path,
         css_id=f"tn-theme-style-{ordinal}",
         css=css,
-        head_path=paths[head_nodes[0]],
+        head_path=head_path,
         link_attributes=link_attributes,
+        note_changes=note_changes,
     )
-    validate_resource_plan(tree, plan)
+    validate_resource_plan(
+        tree,
+        plan,
+        note_relations=note_relations if bundle.note_markers else None,
+    )
     return plan, tuple(warnings), roles, protected_count
 
 
@@ -553,18 +622,12 @@ def _inline_signature(value: str, resource: str) -> list[tuple[str, str, str, bo
     return signature
 
 
-def validate_resource_plan(
-    tree: etree._ElementTree,
+def _plan_projection(
+    root: etree._Element,
     plan: ResourceThemePlan,
     *,
-    package_protected: bool = False,
-) -> None:
-    """在应用前仅根据冻结计划重建保护边界并核验操作账本。"""
-
-    def invalid() -> ThemeError:
-        return ThemeError("theme_verify", "invalid_plan", resource=plan.resource_href)
-
-    root = tree.getroot()
+    package_protected: bool,
+) -> tuple[ResourceProjection, list[tuple[etree._Element, tuple[etree._Element, ...], bool]]]:
     try:
         excluded, pairs = _resolve_scope(root, plan.scope, plan.resource_href)
         initial = build_projection(
@@ -581,7 +644,35 @@ def validate_resource_plan(
             skip_resource=package_protected or plan.scope.preserve_resource,
         )
     except ThemeError:
-        raise invalid() from None
+        raise ThemeError("theme_verify", "invalid_plan", resource=plan.resource_href) from None
+    return projection, pairs
+
+
+def validate_resource_plan(
+    tree: etree._ElementTree,
+    plan: ResourceThemePlan,
+    *,
+    package_protected: bool = False,
+    note_relations: NoteRelations | None = None,
+) -> None:
+    """在应用前仅根据冻结计划重建保护边界并核验操作账本。"""
+
+    def invalid() -> ThemeError:
+        return ThemeError("theme_verify", "invalid_plan", resource=plan.resource_href)
+
+    root = tree.getroot()
+    projection, pairs = _plan_projection(
+        root,
+        plan,
+        package_protected=package_protected,
+    )
+    expected_notes = (
+        plan_note_changes(root, plan.resource_href, plan.scope, note_relations)
+        if note_relations is not None
+        else ()
+    )
+    if expected_notes != plan.note_changes:
+        raise invalid()
     marker_paths = [change.path for change in plan.markers]
     inline_paths = [change.path for change in plan.inline_changes]
     if len(set(marker_paths)) != len(marker_paths) or len(set(inline_paths)) != len(inline_paths):

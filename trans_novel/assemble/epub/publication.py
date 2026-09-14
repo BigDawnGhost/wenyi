@@ -295,6 +295,9 @@ def _record_triplet(
     store: Any,
     source_path: str | os.PathLike[str] | None,
     prepared: Sequence[_PreparedOutput],
+    *,
+    target_lang: str | None,
+    bilingual_order: str,
 ) -> None:
     if source_path is None or len(prepared) != 2:
         return
@@ -310,6 +313,9 @@ def _record_triplet(
         bilingual.temp,
         mono_theme_plan=mono.theme_plan,
         bilingual_theme_plan=bilingual.theme_plan,
+        store=store,
+        target_lang=target_lang,
+        bilingual_order=bilingual_order,
     )
     for output in prepared:
         part = triplet["bilingual" if output.bilingual else "mono"]
@@ -367,7 +373,13 @@ def publish_epubs(
                     output_digest,
                 )
             )
-        _record_triplet(store, source_path, prepared)
+        _record_triplet(
+            store,
+            source_path,
+            prepared,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
+        )
         for output, parent in zip(prepared, parents, strict=True):
             replacement_state = [False]
             try:

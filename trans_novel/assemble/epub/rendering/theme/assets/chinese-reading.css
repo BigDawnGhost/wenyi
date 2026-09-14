@@ -113,7 +113,28 @@
   text-indent: 0;
 }
 
-[data-tn-content="target"][data-tn-role="noteref"] {
-  font-size: 0.75em;
-  vertical-align: super;
+[data-tn-content="target"][data-tn-note-kind="noteref"],
+[data-tn-content="target"][data-tn-note-kind="backlink"] {
+  display: inline-block;
+  width: 1.8em;
+  min-width: 1.8em;
+  height: 1.8em;
+  padding: 0;
+  border-radius: 50%;
+  background-color: #946126;
+  color: #fff8ef;
+  font-size: 0.7em;
+  line-height: 1.8em;
+  text-align: center;
+  text-indent: 0;
+  margin-inline: 0.15em;
+  text-decoration: none;
+  vertical-align: 0.15em;
+}
+
+[data-tn-content="target"][data-tn-note-kind="noteref"] sup,
+[data-tn-content="target"][data-tn-note-kind="backlink"] sup {
+  font-size: 1em;
+  line-height: inherit;
+  vertical-align: baseline;
 }

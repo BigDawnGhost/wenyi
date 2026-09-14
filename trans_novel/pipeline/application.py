@@ -1,11 +1,4 @@
-"""组合根：唯一构造具体 Agent/节点/工作流定义/runner 的生产位置。
-
-- 依赖注入：每个具体节点构造时收到精确依赖（AgentBundle / config / 目标参数）；
-- 语言惰性解析：auto 检测后的源语言由 prepare 写入 RunContext；
-- 应用门面（Application）暴露 CLI 需要的全部目标与服务：
-  prepare / prepare_for_translation / run / run_all / run_goal_result /
-  translate_titles / qa / report / assemble / glossary_audit。
-"""
+"""组合根：构造具体 Agent、节点、工作流与 CLI 应用门面。"""
 
 from __future__ import annotations
 
@@ -20,10 +13,10 @@ from trans_novel.assemble.epub.rendering.theme.service import ThemeService
 from trans_novel.config import Config
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.ingest import load_document
-from trans_novel.ingest.epub.reader import ensure_slot_compatibility
 from trans_novel.llm.base import LLMClient
 from trans_novel.llm.factory import build_client
 from trans_novel.llm.usage_persistence import UsagePersistence
+from trans_novel.pipeline.application_notes import ensure_document_notes, ensure_service_notes
 from trans_novel.pipeline.composition import AgentBundle, RunContext, build_node_factory
 from trans_novel.pipeline.composition.output import load_effective_output, save_effective_output
 from trans_novel.pipeline.contracts import (
@@ -256,6 +249,7 @@ def _run_service_goal(
     output=None,
     progress: ProgressFn | None = None,
 ) -> RunResult:
+    ensure_service_notes(application, store, goal, input_path, output)
     if "layout" in goal.phases and len(goal.phases) > 1:
         layout_goal = ExecutionGoal(
             name=goal.name,
@@ -410,12 +404,7 @@ class Application:
     ) -> tuple[RunResult, RunStore]:
         run_dir = os.path.join(self.config.state_dir, slugify(doc.title))
         store = RunStore(run_dir)
-        if store.exists() and doc.fmt == "epub":
-            manifest = store.load_manifest()
-            if doc.meta.get("epub_sha256") == manifest.get("meta", {}).get("epub_sha256"):
-                ensure_slot_compatibility(
-                    doc, (store.load_chapter(chapter["index"]) for chapter in manifest["chapters"])
-                )
+        original_goal = goal
         shared = RunContext(
             store=store,
             config=self.config,
@@ -437,6 +426,7 @@ class Application:
         policy = WorkflowPolicy.from_config(self.config)
         result: RunResult | None = None
         try:
+            ensure_document_notes(self, store, doc, identity_path, original_goal, shared)
             prep_phases = [p for p in goal.phases if p in self._PREPARE_PHASES]
             if prep_phases:
                 prep_goal = ExecutionGoal(name="prepare", phases=tuple(prep_phases))

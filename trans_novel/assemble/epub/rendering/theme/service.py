@@ -20,7 +20,6 @@ from trans_novel.assemble.epub.rendering.source_dom import (
 )
 from trans_novel.assemble.epub.rendering.theme.cascade import source_specificity_bound
 from trans_novel.assemble.epub.rendering.theme.contracts import (
-    LayoutBinding,
     ResourceThemePlan,
     ResourceThemeScope,
     ThemeBundle,
@@ -28,12 +27,20 @@ from trans_novel.assemble.epub.rendering.theme.contracts import (
     ThemePlan,
 )
 from trans_novel.assemble.epub.rendering.theme.css import CssRule, parse_theme_css
+from trans_novel.assemble.epub.rendering.theme.notes import (
+    apply_note_changes,
+    with_identity_note_paths,
+)
+from trans_novel.assemble.epub.rendering.theme.notes import (
+    source_backed_note_relations as _active_notes,
+)
 from trans_novel.assemble.epub.rendering.theme.planning import (
     plan_resource,
     tree_sha256,
     validate_resource_plan,
 )
 from trans_novel.assemble.epub.rendering.theme.projection import build_projection
+from trans_novel.assemble.epub.rendering.theme.scope import identity_theme_scope
 from trans_novel.assemble.epub.rendering.theme.source_css import collect_source_stylesheets
 from trans_novel.epub.archive import (
     MetadataZipFile,
@@ -45,10 +52,11 @@ from trans_novel.epub.layout import (
     LAYOUT_POLICY_VERSION,
     LayoutAssignment,
     LayoutProfile,
-    source_node_digest,
 )
 from trans_novel.epub.navigation import resolve_epub_href
+from trans_novel.epub.notes import NoteRelations
 from trans_novel.epub.package import HTML_MEDIA, read_package
+from trans_novel.postprocess.language import normalize_lang_code
 
 _RESERVED_ATTRIBUTES = {
     "data-tn-role",
@@ -297,6 +305,7 @@ def _validate_plan_shape(plan: ThemePlan, opf_dir: str) -> None:
 
 def _apply_resource(tree: etree._ElementTree, plan: ResourceThemePlan) -> None:
     root = tree.getroot()
+    apply_note_changes(root, plan.note_changes, resource=plan.resource_href)
     for change in plan.markers:
         node = resolve_element_path(root, change.path)
         for name, value in change.attributes:
@@ -363,46 +372,7 @@ def _assignments_for(
     return exact or logical
 
 
-def _identity_scope(
-    data: bytes,
-    assignments: tuple[LayoutAssignment, ...],
-    *,
-    resource: str,
-) -> ResourceThemeScope:
-    if not assignments:
-        return ResourceThemeScope()
-    try:
-        tree, _ = parse_source_markup(data)
-        projection = build_projection(tree.getroot())
-    except (ValueError, etree.LxmlError, ThemeError):
-        raise ThemeError("theme_layout", "invalid_binding", resource=resource) from None
-    eligible = {
-        path: node
-        for index, (node, path) in enumerate(zip(projection.nodes, projection.paths, strict=True))
-        if projection.snapshot["nodes"][index]["isTextBlock"]
-    }
-    bindings: list[LayoutBinding] = []
-    for assignment in assignments:
-        node = eligible.get(assignment.path)
-        if node is None:
-            raise ThemeError("theme_layout", "invalid_binding", resource=resource)
-        bindings.append(
-            LayoutBinding(
-                source_path=assignment.path,
-                target_paths=(assignment.path,),
-                source_sha256=source_node_digest(
-                    node.tag.rsplit("}", 1)[-1].lower(),
-                    dict(node.attrib),
-                    "".join(node.itertext()),
-                ),
-            )
-        )
-    return ResourceThemeScope(layout_bindings=tuple(bindings))
-
-
 class ThemeService:
-    """使用不可变主题资源和布局档案生成计划，验证后再应用到 EPUB。"""
-
     __slots__ = ("_bilingual_rules", "_general_rules", "bundle", "layout")
 
     def __init__(self, bundle: ThemeBundle, *, layout: LayoutProfile | None = None) -> None:
@@ -414,7 +384,11 @@ class ThemeService:
         if self.layout is not None and self.layout.policy_version != LAYOUT_POLICY_VERSION:
             raise ThemeError("theme_layout", "invalid_profile")
         self._general_rules = (
-            parse_theme_css(bundle.general_css, resource="override_theme.styles")
+            parse_theme_css(
+                bundle.general_css,
+                resource="override_theme.styles",
+                note_presentation=bundle.note_markers,
+            )
             if bundle.general_css is not None
             else ()
         )
@@ -467,7 +441,15 @@ class ThemeService:
         scopes: Mapping[str, ResourceThemeScope],
         *,
         bilingual: bool,
+        note_relations: NoteRelations | None = None,
+        source_sha256: str | None = None,
+        target_lang: str | None = None,
     ) -> ThemePlan | None:
+        notes = _active_notes(
+            self.bundle.note_markers and normalize_lang_code(target_lang) == "zh",
+            note_relations,
+            source_sha256,
+        )
         general_rules, bilingual_rules = self._active_rules(bilingual)
         if not general_rules and not bilingual_rules:
             return None
@@ -499,7 +481,6 @@ class ThemeService:
             opf_data = read_member(archive, archive.getinfo(opf_path))
             opf_tree = _parse_xml(opf_data, resource=opf_path)
             package_protected, fixed = package_protected_resources(opf_tree, model)
-
             resources: list[ResourceThemePlan] = []
             warnings: list[tuple[str, str]] = []
             roles: Counter[str] = Counter()
@@ -514,10 +495,12 @@ class ThemeService:
                     else ()
                 )
                 matched_assignments += len(assignments)
+                ordinal = len(resources)
                 scope = scopes.get(resource)
                 if scope is None:
-                    scope = _identity_scope(data, assignments, resource=resource)
-                ordinal = len(resources)
+                    scope = identity_theme_scope(data, assignments, resource=resource)
+                    if notes is not None:
+                        scope = with_identity_note_paths(scope, notes, resource)
                 css_path = (
                     f"{opf_dir}/tn-theme/style-{ordinal}.css"
                     if opf_dir
@@ -536,6 +519,7 @@ class ThemeService:
                         css_path=css_path,
                         package_protected=resource in package_protected or resource in fixed,
                         layout_assignments=assignments,
+                        note_relations=notes,
                     )
                 except ThemeError as error:
                     error.resource = error.resource or resource
@@ -564,6 +548,7 @@ class ThemeService:
                 role_counts=tuple(sorted(roles.items())),
                 protected_count=protected_count,
                 bilingual=bilingual,
+                source_sha256=source_sha256 if notes is not None else None,
             )
             _validate_plan_shape(plan, opf_dir)
             return plan
@@ -577,6 +562,7 @@ class ThemeService:
         bilingual: bool,
         protected: bool,
         manifest_href: object,
+        note_relations: NoteRelations | None,
     ) -> None:
         try:
             expected, _, _, _ = plan_resource(
@@ -594,6 +580,7 @@ class ThemeService:
                     if self._general_rules
                     else ()
                 ),
+                note_relations=note_relations,
             )
         except ThemeError:
             raise _invalid_plan(resource.resource_href) from None
@@ -610,6 +597,7 @@ class ThemeService:
         protected: set[str],
         fixed: set[str],
         model: dict[str, object],
+        note_relations: NoteRelations | None,
     ) -> bytes:
         try:
             data = read_member(archive, archive.getinfo(resource.resource_href))
@@ -630,7 +618,12 @@ class ThemeService:
         ):
             raise _invalid_plan(resource.resource_href)
         is_protected = resource.resource_href in protected | fixed
-        validate_resource_plan(tree, resource, package_protected=is_protected)
+        validate_resource_plan(
+            tree,
+            resource,
+            package_protected=is_protected,
+            note_relations=note_relations,
+        )
         manifest_href = next(
             (
                 item.get("href")
@@ -647,14 +640,22 @@ class ThemeService:
             bilingual,
             is_protected,
             manifest_href,
+            note_relations,
         )
         _apply_resource(tree, resource)
         return serialize_source_tree(tree, data, resource.parse_mode)
 
     def apply_archive(self, path: str, plan: ThemePlan) -> None:
-        self._apply_archive(path, plan)
+        self._apply_archive(path, plan, note_relations=None, source_sha256=None)
 
-    def _apply_archive(self, path: str, plan: ThemePlan) -> None:
+    def _apply_archive(
+        self,
+        path: str,
+        plan: ThemePlan,
+        *,
+        note_relations: NoteRelations | None,
+        source_sha256: str | None,
+    ) -> None:
         temp_path: str | None = None
         try:
             source_archive = zipfile.ZipFile(path, "r")
@@ -671,6 +672,8 @@ class ThemeService:
                 if not _valid_mimetype(source, infos):
                     raise _invalid_archive()
                 if members != plan.members or package.get("opf_path") != plan.opf_path:
+                    raise _invalid_plan()
+                if plan.source_sha256 != source_sha256:
                     raise _invalid_plan()
                 model = package["model"]
                 assert isinstance(model, dict)
@@ -702,6 +705,7 @@ class ThemeService:
                         protected=protected,
                         fixed=fixed,
                         model=model,
+                        note_relations=note_relations,
                     )
                     for ordinal, resource in enumerate(plan.resources)
                 }
@@ -747,8 +751,23 @@ class ThemeService:
         scopes: Mapping[str, ResourceThemeScope],
         *,
         bilingual: bool,
+        note_relations: NoteRelations | None = None,
+        source_sha256: str | None = None,
+        target_lang: str | None = None,
     ) -> ThemePlan | None:
-        plan = self.plan_archive(path, scopes, bilingual=bilingual)
+        plan = self.plan_archive(
+            path,
+            scopes,
+            bilingual=bilingual,
+            note_relations=note_relations,
+            source_sha256=source_sha256,
+            target_lang=target_lang,
+        )
         if plan is not None:
-            self.apply_archive(path, plan)
+            self._apply_archive(
+                path,
+                plan,
+                note_relations=note_relations if plan.source_sha256 is not None else None,
+                source_sha256=plan.source_sha256,
+            )
         return plan

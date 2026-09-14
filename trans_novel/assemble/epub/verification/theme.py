@@ -8,10 +8,11 @@ import posixpath
 import tempfile
 import zipfile
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from copy import copy
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import quote
 
 from lxml import etree
@@ -27,6 +28,10 @@ from trans_novel.assemble.epub.rendering.theme.contracts import (
     ThemeError,
     ThemePlan,
 )
+from trans_novel.assemble.epub.rendering.theme.notes import (
+    apply_note_changes,
+    expected_note_changes,
+)
 from trans_novel.assemble.epub.rendering.theme.planning import tree_sha256
 from trans_novel.epub.archive import (
     MAX_ARCHIVE_BYTES,
@@ -36,6 +41,8 @@ from trans_novel.epub.archive import (
     preflight_zip,
     read_member,
 )
+from trans_novel.epub.notes import NoteRelations
+from trans_novel.ingest.epub.reader import read_epub
 
 _RESERVED_ATTRIBUTES = {
     "data-tn-role",
@@ -49,7 +56,7 @@ def _invalid(resource: str | None = None) -> ThemeError:
     return ThemeError("theme_verify", "invalid_plan", resource=resource)
 
 
-def _validate_plan_shape(plan: ThemePlan) -> None:
+def _validate_plan_shape(plan: ThemePlan, *, bilingual_note_context: bool) -> None:
     if not isinstance(plan.bilingual, bool):
         raise _invalid()
     opf_dir = posixpath.dirname(plan.opf_path)
@@ -75,6 +82,15 @@ def _validate_plan_shape(plan: ThemePlan) -> None:
             or resource.link_attributes != expected_link
         ):
             raise _invalid(resource.resource_href)
+        if resource.note_changes and plan.source_sha256 is None:
+            raise _invalid(resource.resource_href)
+        if resource.note_changes:
+            if plan.bilingual and not bilingual_note_context:
+                raise _invalid(resource.resource_href)
+            if not plan.bilingual and any(
+                mapping.source_path != mapping.target_path for mapping in resource.scope.note_paths
+            ):
+                raise _invalid(resource.resource_href)
 
 
 def theme_summary(plan: ThemePlan) -> dict[str, object]:
@@ -83,6 +99,7 @@ def theme_summary(plan: ThemePlan) -> dict[str, object]:
         "resources": len(plan.resources),
         "role_counts": dict(plan.role_counts),
         "protected_count": plan.protected_count,
+        "note_change_count": sum(len(resource.note_changes) for resource in plan.resources),
         "marker_count": sum(len(resource.markers) for resource in plan.resources),
         "normalized_declaration_count": sum(
             len(change.declarations)
@@ -133,10 +150,36 @@ def _element_paths(root: etree._Element) -> dict[etree._Element, tuple[int, ...]
     return paths
 
 
-def _reverse_resource(data: bytes, plan: ResourceThemePlan) -> bytes:
+def _reverse_resource(
+    data: bytes,
+    plan: ResourceThemePlan,
+    *,
+    source_root: etree._Element | None,
+    note_relations: NoteRelations | None,
+) -> bytes:
     try:
         tree, _mode = parse_source_markup(data)
         root = tree.getroot()
+        if note_relations is not None and source_root is not None:
+            apply_note_changes(
+                root,
+                plan.note_changes,
+                reverse=True,
+                resource=plan.resource_href,
+            )
+            if (
+                expected_note_changes(
+                    source_root,
+                    root,
+                    plan.resource_href,
+                    plan.scope,
+                    note_relations,
+                )
+                != plan.note_changes
+            ):
+                raise _invalid(plan.resource_href)
+        elif plan.note_changes:
+            raise _invalid(plan.resource_href)
         paths = _element_paths(root)
         expected_markers = {change.path: dict(change.attributes) for change in plan.markers}
         for change in plan.markers:
@@ -288,6 +331,9 @@ def _write_projection(
     infos: list[zipfile.ZipInfo],
     plan: ThemePlan,
     max_member_bytes: int,
+    *,
+    source_roots: Mapping[str, etree._Element],
+    note_relations: NoteRelations | None,
 ) -> None:
     resources = {resource.resource_href: resource for resource in plan.resources}
     ledger = dict(plan.members)
@@ -301,7 +347,13 @@ def _write_projection(
             if info.filename == plan.opf_path:
                 data = _reverse_opf(data, plan)
             elif info.filename in resources:
-                data = _reverse_resource(data, resources[info.filename])
+                resource = resources[info.filename]
+                data = _reverse_resource(
+                    data,
+                    resource,
+                    source_root=source_roots.get(info.filename),
+                    note_relations=note_relations,
+                )
             elif hashlib.sha256(data).hexdigest() != ledger[info.filename]:
                 raise _invalid(info.filename)
             output.writestr(copy(info), data)
@@ -314,11 +366,124 @@ def _remove_temporary(path: str | None) -> None:
         os.unlink(path)
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_note_context(
+    source_path: Path | None,
+    plan: ThemePlan,
+    *,
+    max_member_bytes: int,
+    max_archive_bytes: int,
+) -> tuple[dict[str, etree._Element], NoteRelations | None]:
+    if plan.source_sha256 is None:
+        return {}, None
+    if source_path is None:
+        raise _invalid()
+    digest = _file_sha256(source_path)
+    if digest != plan.source_sha256:
+        raise _invalid()
+    document = read_epub(str(source_path), "", "")
+    relations = document.meta.get("epub_notes")
+    if not isinstance(relations, dict):
+        raise _invalid()
+    note_resources = {
+        item["resource_href"]
+        for item in (*relations["markers"], *relations["targets"])
+        if isinstance(item, dict) and isinstance(item.get("resource_href"), str)
+    }
+    roots: dict[str, etree._Element] = {}
+    try:
+        with zipfile.ZipFile(source_path) as source:
+            preflight_zip(
+                source,
+                max_member_bytes=max_member_bytes,
+                max_archive_bytes=max_archive_bytes,
+                read_members=False,
+            )
+            for resource in plan.resources:
+                if resource.resource_href not in note_resources:
+                    continue
+                data = read_member(
+                    source,
+                    source.getinfo(resource.resource_href),
+                    max_member_bytes=max_member_bytes,
+                )
+                roots[resource.resource_href] = parse_source_markup(data)[0].getroot()
+    except (KeyError, OSError, ValueError, ZipSafetyError, zipfile.BadZipFile, etree.LxmlError):
+        raise _invalid() from None
+    return roots, cast(NoteRelations, relations)
+
+
+def _prove_bilingual_note_mappings(
+    projected_path: str,
+    source_path: Path | None,
+    store: Any | None,
+    plan: ThemePlan,
+    *,
+    target_lang: str | None,
+    bilingual_order: str,
+) -> None:
+    mappings = {
+        resource.resource_href: resource.scope.note_paths
+        for resource in plan.resources
+        if resource.note_changes
+    }
+    if not plan.bilingual or not mappings:
+        return
+    if source_path is None or store is None:
+        raise _invalid()
+    try:
+        from trans_novel.assemble.epub.verification import slots as slot_module
+
+        manifest = store.load_manifest()
+        meta = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
+        if meta.get("epub_schema") != 4:
+            raise _invalid()
+        raw_resources = meta.get("epub_resources", [])
+        resources = {
+            str(item["href"]): item
+            for item in raw_resources
+            if isinstance(item, dict) and isinstance(item.get("href"), str)
+        }
+        chapters = [store.load_chapter(int(item["index"])) for item in manifest["chapters"]]
+        failures: list[dict[str, str]] = []
+        slot_module.slot_proof(
+            source_path,
+            Path(projected_path),
+            store,
+            resources,
+            chapters,
+            bilingual=True,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
+            failures=failures,
+            warnings=[],
+            checked={},
+            note_mappings=mappings,
+        )
+    except ThemeError:
+        raise
+    except Exception:
+        raise _invalid() from None
+    if failures:
+        raise _invalid()
+
+
 @contextmanager
 def theme_projection(
     output_path: str | os.PathLike[str],
     plan: ThemePlan | None,
+    source_path: str | os.PathLike[str] | None = None,
     *,
+    store: Any | None = None,
+    target_lang: str | None = None,
+    bilingual_order: str = "target_first",
     max_member_bytes: int = MAX_MEMBER_BYTES,
     max_archive_bytes: int = MAX_ARCHIVE_BYTES,
 ) -> Iterator[Path]:
@@ -331,7 +496,13 @@ def theme_projection(
     try:
         if not isinstance(plan, ThemePlan):
             raise _invalid()
-        _validate_plan_shape(plan)
+        _validate_plan_shape(plan, bilingual_note_context=store is not None)
+        source_roots, note_relations = _source_note_context(
+            Path(source_path) if source_path is not None else None,
+            plan,
+            max_member_bytes=max_member_bytes,
+            max_archive_bytes=max_archive_bytes,
+        )
         archive = zipfile.ZipFile(output, "r")
         with archive:
             infos = _validate_archive(
@@ -346,7 +517,24 @@ def theme_projection(
                 dir=output.parent,
             )
             os.close(descriptor)
-            _write_projection(temporary, archive, infos, plan, max_member_bytes)
+            _write_projection(
+                temporary,
+                archive,
+                infos,
+                plan,
+                max_member_bytes,
+                source_roots=source_roots,
+                note_relations=note_relations,
+            )
+        assert temporary is not None
+        _prove_bilingual_note_mappings(
+            temporary,
+            Path(source_path) if source_path is not None else None,
+            store,
+            plan,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
+        )
     except ThemeError:
         _remove_temporary(temporary)
         raise

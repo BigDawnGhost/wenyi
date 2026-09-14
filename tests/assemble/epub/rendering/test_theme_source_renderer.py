@@ -19,7 +19,20 @@ from trans_novel.ingest.epub.reader import read_epub
 
 _CONTAINER = b"""<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="O/content.opf"/></rootfiles></container>"""
 _OPF = b"""<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title><dc:language>ja</dc:language></metadata><manifest><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/><item id="blob" href="blob.bin" media-type="application/octet-stream"/></manifest><spine><itemref idref="c"/></spine></package>"""
-_XHTML = """<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" lang="ja"><head><style id="publisher">p { color: red }</style></head><!--coordinate guard--><body><p id="plain">Plain <em>source</em>.</p><ul><li id="container">Container <strong>source</strong>.</li></ul><p id="direct">One<br/>Two</p><p id="ruby"><ruby><rb>東</rb><rb>京</rb><rt>とう</rt><rt>きょう</rt></ruby><br/>After</p><p id="preserved">Preserved range.</p></body></html>""".encode()
+_XHTML = (
+    """<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" lang="ja">"""
+    """<head><style id="publisher">p { color: red }</style></head>"""
+    """<!--coordinate guard--><body>"""
+    """<p id="plain">Plain <em>source</em><a id="ref" href="#note" """
+    """role="doc-noteref"><sup>†</sup></a>.</p>"""
+    """<ul><li id="container">Container <strong>source</strong>.</li></ul>"""
+    """<p id="direct">One<br/>Two</p>"""
+    """<p id="ruby"><ruby><rb>東</rb><rb>京</rb><rt>とう</rt><rt>きょう</rt>"""
+    """</ruby><br/>After</p><p id="preserved">Preserved range.</p>"""
+    """<aside id="note" role="doc-footnote"><p>Note """
+    """<a href="#ref" role="doc-backlink">*</a></p></aside>"""
+    """</body></html>"""
+).encode()
 _BLOB = b"\x00unrelated publisher bytes\xff"
 
 
@@ -64,6 +77,7 @@ def _theme() -> ThemeService:
             digest="test",
             policy_version="test",
             provenance=(),
+            note_markers=True,
         ),
         layout=LayoutProfile(
             source_sha256="a" * 64,
@@ -144,8 +158,81 @@ class TestSourceThemeRenderer(unittest.TestCase):
         )
         self.assertEqual(
             plain_binding.source_sha256,
-            source_node_digest("p", {"id": "plain"}, "Plain source."),
+            source_node_digest("p", {"id": "plain"}, "Plain source†."),
         )
+
+    def _assert_text_and_notes(self, root, resource, translated) -> None:
+        preserved = resolve_element_path(root, resource.scope.excluded_paths[0])
+        self.assertEqual(preserved.get("id"), "preserved")
+        self.assertEqual("".join(preserved.itertext()), "Preserved range.")
+        reference = root.xpath("//*[@id='ref']")[0]
+        backlink = root.xpath("//*[@data-tn-note-kind='backlink']")[0]
+        self.assertEqual("".join(reference.itertext()), "注")
+        self.assertEqual("".join(backlink.itertext()), "注")
+        self.assertTrue(
+            any(
+                "†" in "".join(source_node.itertext())
+                for source_node in root.xpath(
+                    "//*[contains(concat(' ', @class, ' '), ' tn-source ')]"
+                )
+            )
+        )
+        rendered_text = "".join(root.itertext())
+        for value in translated:
+            self.assertIn(value, rendered_text)
+        for value in ("Plain source", "Container source.", "One", "Two", "東京とうきょう", "After"):
+            self.assertIn(value, rendered_text)
+
+    def _assert_source_pairs(self, root, resource, order) -> None:
+        pairs = resource.scope.source_pairs
+        self.assertEqual(
+            {resolve_element_path(root, pair.source_path).get("data-tn-content") for pair in pairs},
+            {"source"},
+        )
+        plain = next(
+            pair
+            for pair in pairs
+            if resolve_element_path(root, pair.source_path).tag.rsplit("}", 1)[-1] == "p"
+            and resolve_element_path(root, pair.source_path).xpath(".//*[local-name()='em']")
+        )
+        container = next(
+            pair
+            for pair in pairs
+            if resolve_element_path(root, pair.source_path).tag.rsplit("}", 1)[-1] == "div"
+        )
+        ruby = next(
+            pair
+            for pair in pairs
+            if resolve_element_path(root, pair.source_path).xpath(".//*[local-name()='ruby']")
+        )
+        self.assertTrue(plain.map_descendants)
+        self.assertTrue(container.map_descendants)
+        self.assertFalse(ruby.map_descendants)
+        self.assertGreaterEqual(len(ruby.target_paths), 2)
+        order_index = {
+            node: index
+            for index, node in enumerate(node for node in root.iter() if isinstance(node.tag, str))
+        }
+        for pair in pairs:
+            source_node = resolve_element_path(root, pair.source_path)
+            targets = [resolve_element_path(root, path) for path in pair.target_paths]
+            self.assertTrue(targets)
+            if all(target.get("class") == "tn-bilingual-target" for target in targets):
+                self.assertTrue(
+                    all(target.get("data-tn-content") == "target" for target in targets)
+                )
+            if any(source_node in target.iterdescendants() for target in targets):
+                continue
+            if order == "source_first":
+                self.assertLess(
+                    order_index[source_node],
+                    min(order_index[target] for target in targets),
+                )
+            else:
+                self.assertGreater(
+                    order_index[source_node],
+                    max(order_index[target] for target in targets),
+                )
 
     def test_source_pairs_preserved_ranges_and_zip_metadata_survive_both_orders(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -181,82 +268,36 @@ class TestSourceThemeRenderer(unittest.TestCase):
 
                     self.assertEqual(source.read_bytes(), source_bytes)
                     self.assertTrue(root.xpath("//*[local-name()='style' and @id='publisher']"))
-                    preserved = resolve_element_path(root, resource.scope.excluded_paths[0])
-                    self.assertEqual(preserved.get("id"), "preserved")
-                    self.assertEqual("".join(preserved.itertext()), "Preserved range.")
-                    rendered_text = "".join(root.itertext())
-                    for value in translated:
-                        self.assertIn(value, rendered_text)
-                    for value in (
-                        "Plain source.",
-                        "Container source.",
-                        "One",
-                        "Two",
-                        "東京とうきょう",
-                        "After",
-                    ):
-                        self.assertIn(value, rendered_text)
+                    self._assert_text_and_notes(root, resource, translated)
 
-                    pairs = resource.scope.source_pairs
-                    self.assertEqual(
-                        {
-                            resolve_element_path(root, pair.source_path).get("data-tn-content")
-                            for pair in pairs
-                        },
-                        {"source"},
-                    )
-                    plain = next(
-                        pair
-                        for pair in pairs
-                        if resolve_element_path(root, pair.source_path).tag.rsplit("}", 1)[-1]
-                        == "p"
-                        and resolve_element_path(root, pair.source_path).xpath(
-                            ".//*[local-name()='em']"
-                        )
-                    )
-                    container = next(
-                        pair
-                        for pair in pairs
-                        if resolve_element_path(root, pair.source_path).tag.rsplit("}", 1)[-1]
-                        == "div"
-                    )
-                    ruby = next(
-                        pair
-                        for pair in pairs
-                        if resolve_element_path(root, pair.source_path).xpath(
-                            ".//*[local-name()='ruby']"
-                        )
-                    )
-                    self.assertTrue(plain.map_descendants)
-                    self.assertTrue(container.map_descendants)
-                    self.assertFalse(ruby.map_descendants)
-                    self.assertGreaterEqual(len(ruby.target_paths), 2)
-                    order_index = {
-                        node: index
-                        for index, node in enumerate(
-                            node for node in root.iter() if isinstance(node.tag, str)
-                        )
-                    }
-                    for pair in pairs:
-                        source_node = resolve_element_path(root, pair.source_path)
-                        targets = [resolve_element_path(root, path) for path in pair.target_paths]
-                        self.assertTrue(targets)
-                        if all(target.get("class") == "tn-bilingual-target" for target in targets):
-                            self.assertTrue(
-                                all(target.get("data-tn-content") == "target" for target in targets)
-                            )
-                        if any(source_node in target.iterdescendants() for target in targets):
-                            continue
-                        if order == "source_first":
-                            self.assertLess(
-                                order_index[source_node],
-                                min(order_index[target] for target in targets),
-                            )
-                        else:
-                            self.assertGreater(
-                                order_index[source_node],
-                                max(order_index[target] for target in targets),
-                            )
+                    self._assert_source_pairs(root, resource, order)
+
+    def test_non_chinese_target_preserves_note_labels_and_attributes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.epub"
+            self._book(source)
+            store, _translated = self._store(source)
+            output = Path(directory) / "english.epub"
+
+            plan = assemble_source_epub(
+                store,
+                str(source),
+                str(output),
+                target_lang="en",
+                bilingual=False,
+                theme=_theme(),
+            )
+
+            assert plan is not None
+            self.assertIsNone(plan.source_sha256)
+            with zipfile.ZipFile(output) as archive:
+                root = etree.fromstring(archive.read("O/c.xhtml"))
+            reference = root.xpath("//*[@id='ref']")[0]
+            backlink = root.xpath("//*[@role='doc-backlink']")[0]
+            self.assertEqual("".join(reference.itertext()), "†")
+            self.assertEqual("".join(backlink.itertext()), "*")
+            self.assertIsNone(reference.get("data-tn-note-kind"))
+            self.assertEqual(reference.get("role"), "doc-noteref")
 
     def test_no_theme_render_skips_projection_limits(self) -> None:
         data = (

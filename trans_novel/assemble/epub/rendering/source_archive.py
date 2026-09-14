@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import zipfile
 from copy import copy
+from typing import cast
 
 from lxml import etree
 
@@ -21,6 +22,7 @@ from trans_novel.assemble.epub.rendering.source_markup import (
 from trans_novel.assemble.epub.rendering.theme import ResourceThemeScope, ThemePlan
 from trans_novel.assemble.epub.rendering.theme.service import ThemeService
 from trans_novel.epub.archive import MetadataZipFile, ZipSafetyError, preflight_zip, read_member
+from trans_novel.epub.notes import NoteRelations
 from trans_novel.epub.slots import slot_contract_digest
 from trans_novel.ingest import Segment, preserved_toc_entry_ids
 from trans_novel.ingest.epub.reader import ensure_slot_compatibility, read_epub
@@ -58,7 +60,13 @@ def _archive_digest(source_path: str) -> str:
 def _source_state(
     store, source_path
 ) -> tuple[
-    dict[str, object], str, dict[str, dict[str, object]], list[Segment], list[dict[str, object]]
+    dict[str, object],
+    str,
+    dict[str, dict[str, object]],
+    list[Segment],
+    list[dict[str, object]],
+    NoteRelations,
+    str,
 ]:
     manifest = store.load_manifest()
     raw_meta = manifest.get("meta")
@@ -100,7 +108,23 @@ def _source_state(
         for entry in toc_source
         if isinstance(entry, dict)
     ]
-    return meta, source_lang, resources_meta, deduped_segments, toc_entries
+    return (
+        meta,
+        source_lang,
+        resources_meta,
+        deduped_segments,
+        toc_entries,
+        cast(NoteRelations, current.meta["epub_notes"]),
+        str(current.meta["epub_sha256"]),
+    )
+
+
+def _resource_note_paths(relations: NoteRelations, resource: str) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(item["path"])
+        for item in (*relations["markers"], *relations["targets"])
+        if item["resource_href"] == resource
+    )
 
 
 def _render_source_archive(
@@ -115,6 +139,8 @@ def _render_source_archive(
     target_lang: str,
     bilingual: bool,
     order: str,
+    note_relations: NoteRelations,
+    source_sha256: str,
     theme: ThemeService | None = None,
 ) -> ThemePlan | None:
     archive_lang = (
@@ -170,6 +196,7 @@ def _render_source_archive(
                         order=order,
                         source_lang=source_lang,
                         scope_sink=scopes,
+                        note_source_paths=_resource_note_paths(note_relations, name),
                     )
                     toc_kind = toc_kind_at(toc_entries, name)
                     if toc_kind in {"nav", "ncx"}:
@@ -207,7 +234,14 @@ def _render_source_archive(
                 else:
                     _write_source_member(zout, info, data)
     return (
-        theme.render(out_path, scopes, bilingual=bilingual)
+        theme.render(
+            out_path,
+            scopes,
+            bilingual=bilingual,
+            note_relations=note_relations,
+            source_sha256=source_sha256,
+            target_lang=target_lang,
+        )
         if theme is not None and scopes is not None
         else None
     )
@@ -225,9 +259,15 @@ def assemble_source_epub(
 ) -> ThemePlan | None:
     if order not in {"target_first", "source_first"}:
         raise ValueError(f"invalid bilingual order: {order!r}")
-    meta, source_lang, resources_meta, deduped_segments, toc_entries = _source_state(
-        store, source_path
-    )
+    (
+        meta,
+        source_lang,
+        resources_meta,
+        deduped_segments,
+        toc_entries,
+        note_relations,
+        source_sha256,
+    ) = _source_state(store, source_path)
     grouped: dict[str, list[Segment]] = {}
     for segment in deduped_segments:
         assert segment.epub_state is not None
@@ -244,6 +284,8 @@ def assemble_source_epub(
         bilingual=bilingual,
         order=order,
         theme=theme,
+        note_relations=note_relations,
+        source_sha256=source_sha256,
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -45,6 +46,57 @@ class CssRule:
     selector: str
     declarations: tuple[CssDeclaration, ...]
     media: Literal["light", "dark"] | None = None
+
+
+def _box_footprints(result: dict[str, frozenset[str]]) -> None:
+    sides = ("top", "right", "bottom", "left")
+    logical_sides = {
+        "block": sides,
+        "inline": sides,
+        "block-start": ("top", "right", "left"),
+        "block-end": ("right", "bottom", "left"),
+        "inline-start": sides,
+        "inline-end": sides,
+    }
+    for family_name in ("margin", "padding"):
+        all_sides = frozenset(f"{family_name}-{side}" for side in sides)
+        result[family_name] = all_sides
+        for side in sides:
+            result[f"{family_name}-{side}"] = frozenset((f"{family_name}-{side}",))
+        for suffix, possible_sides in logical_sides.items():
+            result[f"{family_name}-{suffix}"] = frozenset(
+                f"{family_name}-{side}" for side in possible_sides
+            )
+    border_atoms = tuple(
+        f"border-{side}-{part}" for side in sides for part in ("width", "style", "color")
+    )
+    result["border"] = frozenset(border_atoms)
+    for part in ("width", "style", "color"):
+        atoms = frozenset(f"border-{side}-{part}" for side in sides)
+        result[f"border-{part}"] = atoms
+        for side in sides:
+            result[f"border-{side}-{part}"] = frozenset((f"border-{side}-{part}",))
+    for side in sides:
+        result[f"border-{side}"] = frozenset(
+            f"border-{side}-{part}" for part in ("width", "style", "color")
+        )
+    for logical, possible_sides in logical_sides.items():
+        result[f"border-{logical}"] = frozenset(
+            f"border-{side}-{part}"
+            for side in possible_sides
+            for part in ("width", "style", "color")
+        )
+        for part in ("width", "style", "color"):
+            result[f"border-{logical}-{part}"] = frozenset(
+                f"border-{side}-{part}" for side in possible_sides
+            )
+    corners = ("top-left", "top-right", "bottom-right", "bottom-left")
+    radii = frozenset(f"border-{corner}-radius" for corner in corners)
+    result["border-radius"] = radii
+    for corner in corners:
+        result[f"border-{corner}-radius"] = frozenset((f"border-{corner}-radius",))
+    for corner in ("start-start", "start-end", "end-start", "end-end"):
+        result[f"border-{corner}-radius"] = radii
 
 
 def _property_footprints() -> dict[str, frozenset[str]]:
@@ -93,6 +145,10 @@ def _property_footprints() -> dict[str, frozenset[str]]:
         "color",
         "background-color",
         "box-shadow",
+        "display",
+        "height",
+        "min-width",
+        "width",
         "word-break",
         "overflow-wrap",
         "vertical-align",
@@ -116,56 +172,7 @@ def _property_footprints() -> dict[str, frozenset[str]]:
         footprint = frozenset((f"break-{position}",))
         result[f"break-{position}"] = result[f"page-break-{position}"] = footprint
 
-    sides = ("top", "right", "bottom", "left")
-    logical_sides = {
-        "block": sides,
-        "inline": sides,
-        "block-start": ("top", "right", "left"),
-        "block-end": ("right", "bottom", "left"),
-        "inline-start": sides,
-        "inline-end": sides,
-    }
-    for family_name in ("margin", "padding"):
-        all_sides = frozenset(f"{family_name}-{side}" for side in sides)
-        result[family_name] = all_sides
-        for side in sides:
-            result[f"{family_name}-{side}"] = frozenset((f"{family_name}-{side}",))
-        for suffix, possible_sides in logical_sides.items():
-            result[f"{family_name}-{suffix}"] = frozenset(
-                f"{family_name}-{side}" for side in possible_sides
-            )
-
-    border_atoms = tuple(
-        f"border-{side}-{part}" for side in sides for part in ("width", "style", "color")
-    )
-    result["border"] = frozenset(border_atoms)
-    for part in ("width", "style", "color"):
-        atoms = frozenset(f"border-{side}-{part}" for side in sides)
-        result[f"border-{part}"] = atoms
-        for side in sides:
-            result[f"border-{side}-{part}"] = frozenset((f"border-{side}-{part}",))
-    for side in sides:
-        result[f"border-{side}"] = frozenset(
-            f"border-{side}-{part}" for part in ("width", "style", "color")
-        )
-    for logical, possible_sides in logical_sides.items():
-        result[f"border-{logical}"] = frozenset(
-            f"border-{side}-{part}"
-            for side in possible_sides
-            for part in ("width", "style", "color")
-        )
-        for part in ("width", "style", "color"):
-            result[f"border-{logical}-{part}"] = frozenset(
-                f"border-{side}-{part}" for side in possible_sides
-            )
-
-    corners = ("top-left", "top-right", "bottom-right", "bottom-left")
-    radii = frozenset(f"border-{corner}-radius" for corner in corners)
-    result["border-radius"] = radii
-    for corner in corners:
-        result[f"border-{corner}-radius"] = frozenset((f"border-{corner}-radius",))
-    for corner in ("start-start", "start-end", "end-start", "end-end"):
-        result[f"border-{corner}-radius"] = radii
+    _box_footprints(result)
     return result
 
 
@@ -188,7 +195,10 @@ _SOURCE_ONLY_PROPERTIES = frozenset(
         "font-variant-position",
     }
 )
-_THEME_PROPERTIES = _PROPERTY_FOOTPRINTS.keys() - _SOURCE_ONLY_PROPERTIES
+_NOTE_PRESENTATION_PROPERTIES = frozenset({"display", "height", "min-width", "width"})
+_THEME_PROPERTIES = (
+    _PROPERTY_FOOTPRINTS.keys() - _SOURCE_ONLY_PROPERTIES - _NOTE_PRESENTATION_PROPERTIES
+)
 
 
 def declaration_properties(name: str) -> frozenset[str]:
@@ -273,7 +283,11 @@ def _validate_selector(tokens: list[object], resource: str) -> str:
     return selector
 
 
-def _parse_declarations(tokens: list[object], resource: str) -> tuple[CssDeclaration, ...]:
+def _parse_declarations(
+    tokens: list[object],
+    resource: str,
+    properties: Collection[str],
+) -> tuple[CssDeclaration, ...]:
     parsed = tinycss2.parse_declaration_list(tokens, skip_whitespace=True, skip_comments=True)
     declarations: list[CssDeclaration] = []
     for item in parsed:
@@ -281,7 +295,7 @@ def _parse_declarations(tokens: list[object], resource: str) -> tuple[CssDeclara
             raise _fail("invalid_css", resource)
         if item.type != "declaration":
             raise _fail("forbidden_rule", resource)
-        if item.name.startswith("--") or item.lower_name not in _THEME_PROPERTIES:
+        if item.name.startswith("--") or item.lower_name not in properties:
             raise _fail("forbidden_property", resource)
         _check_safe_tokens(item.value, resource)
         declarations.append(
@@ -312,7 +326,10 @@ def _media_kind(tokens: list[object], resource: str) -> Literal["light", "dark"]
 
 
 def _parse_rules(
-    items: list[object], resource: str, media: Literal["light", "dark"] | None
+    items: list[object],
+    resource: str,
+    media: Literal["light", "dark"] | None,
+    properties: Collection[str],
 ) -> list[CssRule]:
     rules: list[CssRule] = []
     for item in items:
@@ -329,7 +346,7 @@ def _parse_rules(
             rules.append(
                 CssRule(
                     _validate_selector(item.prelude, resource),
-                    _parse_declarations(item.content, resource),
+                    _parse_declarations(item.content, resource, properties),
                     media,
                 )
             )
@@ -339,11 +356,23 @@ def _parse_rules(
         if item.content is None:
             raise _fail("forbidden_rule", resource)
         nested = tinycss2.parse_rule_list(item.content, skip_whitespace=True, skip_comments=True)
-        rules.extend(_parse_rules(nested, resource, _media_kind(item.prelude, resource)))
+        rules.extend(
+            _parse_rules(
+                nested,
+                resource,
+                _media_kind(item.prelude, resource),
+                properties,
+            )
+        )
     return rules
 
 
-def parse_theme_css(data: bytes, *, resource: str = "theme") -> tuple[CssRule, ...]:
+def parse_theme_css(
+    data: bytes,
+    *,
+    resource: str = "theme",
+    note_presentation: bool = False,
+) -> tuple[CssRule, ...]:
     """解析受限且不加载外部资源的主题 CSS。"""
     try:
         text = data.decode("utf-8")
@@ -351,6 +380,11 @@ def parse_theme_css(data: bytes, *, resource: str = "theme") -> tuple[CssRule, .
         raise _fail("invalid_css", resource) from None
     try:
         items = tinycss2.parse_stylesheet(text, skip_whitespace=True, skip_comments=True)
-        return tuple(_parse_rules(items, resource, None))
+        properties = (
+            _THEME_PROPERTIES | _NOTE_PRESENTATION_PROPERTIES
+            if note_presentation
+            else _THEME_PROPERTIES
+        )
+        return tuple(_parse_rules(items, resource, None, properties))
     except RecursionError:
         raise _fail("invalid_css", resource) from None

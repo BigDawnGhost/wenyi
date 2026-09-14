@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Collection
 
 from lxml import etree
 
-from trans_novel.epub.markup import is_noteref, resource_parser
+from trans_novel.epub.markup import is_backlink, is_noteref
 from trans_novel.epub.navigation import nav_toc_roots_lxml
 from trans_novel.epub.slots import EpubSegmentState, EpubTextSlot, slot_contract_digest
 from trans_novel.ingest.epub.package import looks_like_internal_title
@@ -73,12 +74,22 @@ def _semantic_hints(element: etree._Element) -> list[str]:
     return list(dict.fromkeys(hints))
 
 
-def visible_text(element: etree._Element) -> str:
+def visible_text(
+    element: etree._Element,
+    *,
+    protected_paths: Collection[tuple[int, ...]] = (),
+    root: etree._Element | None = None,
+) -> str:
     parts: list[str] = []
+    resource_root = root if root is not None else element
 
     def walk(node: etree._Element) -> None:
         tag = node.tag.rsplit("}", 1)[-1].lower() if isinstance(node.tag, str) else ""
-        if tag in _IMMUTABLE_TEXT_TAGS or tag in _ATOMIC_TEXT_TAGS or is_footnote_marker(node):
+        if (
+            tag in _IMMUTABLE_TEXT_TAGS
+            or tag in _ATOMIC_TEXT_TAGS
+            or is_footnote_marker(node, protected_paths=protected_paths, root=resource_root)
+        ):
             return
         if node.text:
             parts.append(node.text)
@@ -92,12 +103,21 @@ def visible_text(element: etree._Element) -> str:
     return _WS_RE.sub(" ", "".join(parts)).strip()
 
 
-def is_footnote_marker(element: etree._Element) -> bool:
+def is_footnote_marker(
+    element: etree._Element,
+    *,
+    protected_paths: Collection[tuple[int, ...]] = (),
+    root: etree._Element | None = None,
+) -> bool:
     tag = element.tag.rsplit("}", 1)[-1].lower() if isinstance(element.tag, str) else ""
     if tag != "a":
         return False
     epub_type = element.get("{http://www.idpf.org/2007/ops}type", element.get("epub:type", ""))
-    return is_noteref(epub_type, element.get("role", ""))
+    if is_noteref(epub_type, element.get("role", "")) or is_backlink(
+        epub_type, element.get("role", "")
+    ):
+        return True
+    return root is not None and element_path(root, element) in protected_paths
 
 
 def block_slots(
@@ -108,6 +128,7 @@ def block_slots(
     resource_sha256: str,
     parse_mode: str,
     anchor: str,
+    protected_paths: Collection[tuple[int, ...]] = (),
 ) -> list[EpubTextSlot]:
     slots: list[EpubTextSlot] = []
     slot_index = 0
@@ -128,7 +149,11 @@ def block_slots(
 
     def walk(owner: etree._Element) -> None:
         tag = owner.tag.rsplit("}", 1)[-1].lower() if isinstance(owner.tag, str) else ""
-        if tag in _IMMUTABLE_TEXT_TAGS or tag in _ATOMIC_TEXT_TAGS or is_footnote_marker(owner):
+        if (
+            tag in _IMMUTABLE_TEXT_TAGS
+            or tag in _ATOMIC_TEXT_TAGS
+            or is_footnote_marker(owner, protected_paths=protected_paths, root=root)
+        ):
             return
         add(owner, "text", owner.text)
         for child in owner:
@@ -141,12 +166,22 @@ def block_slots(
     return slots
 
 
-def designated_slot_values(block: etree._Element) -> list[tuple[tuple[int, ...], str, str]]:
+def designated_slot_values(
+    block: etree._Element,
+    *,
+    protected_paths: Collection[tuple[int, ...]] = (),
+    root: etree._Element | None = None,
+) -> list[tuple[tuple[int, ...], str, str]]:
     designated: list[tuple[tuple[int, ...], str, str]] = []
+    resource_root = root if root is not None else block
 
     def walk(owner: etree._Element) -> None:
         tag = owner.tag.rsplit("}", 1)[-1].lower() if isinstance(owner.tag, str) else ""
-        if tag in _IMMUTABLE_TEXT_TAGS or tag in _ATOMIC_TEXT_TAGS or is_footnote_marker(owner):
+        if (
+            tag in _IMMUTABLE_TEXT_TAGS
+            or tag in _ATOMIC_TEXT_TAGS
+            or is_footnote_marker(owner, protected_paths=protected_paths, root=resource_root)
+        ):
             return
         if owner.text is not None:
             designated.append((element_path(block, owner), "text", owner.text))
@@ -165,13 +200,59 @@ def resource_fingerprint(block: etree._Element) -> str:
     return hashlib.sha256(etree.tostring(block, encoding="utf-8", with_tail=False)).hexdigest()
 
 
-def lxml_targets(root: etree._Element, *, skip_navigation: bool) -> list[etree._Element]:
+def _is_block_candidate(
+    root: etree._Element,
+    element: etree._Element,
+    note_target_paths: Collection[tuple[int, ...]],
+) -> bool:
+    local = element.tag.rsplit("}", 1)[-1].lower() if isinstance(element.tag, str) else ""
+    return local in _BLOCK_CANDIDATE_TAGS or (
+        local == "aside" and element_path(root, element) in note_target_paths
+    )
+
+
+def _note_aside_direct_text(
+    root: etree._Element,
+    aside: etree._Element,
+    *,
+    protected_paths: Collection[tuple[int, ...]],
+) -> str:
+    parts: list[str] = []
+
+    def walk(node: etree._Element) -> None:
+        local = node.tag.rsplit("}", 1)[-1].lower() if isinstance(node.tag, str) else ""
+        if (
+            (node is not aside and local in _BLOCK_CANDIDATE_TAGS)
+            or local in _IMMUTABLE_TEXT_TAGS
+            or local in _ATOMIC_TEXT_TAGS
+            or is_footnote_marker(node, protected_paths=protected_paths, root=root)
+        ):
+            return
+        if node.text:
+            parts.append(node.text)
+        for child in node:
+            if not isinstance(child.tag, str):
+                continue
+            walk(child)
+            if child.tail:
+                parts.append(child.tail)
+
+    walk(aside)
+    return _WS_RE.sub(" ", "".join(parts)).strip()
+
+
+def lxml_targets(
+    root: etree._Element,
+    *,
+    skip_navigation: bool,
+    protected_paths: Collection[tuple[int, ...]] = (),
+    note_target_paths: Collection[tuple[int, ...]] = (),
+) -> list[etree._Element]:
     candidates: list[etree._Element] = []
     nav_roots = nav_toc_roots_lxml(root) if skip_navigation else []
     for element in root.iter():
-        if (
-            not isinstance(element.tag, str)
-            or element.tag.rsplit("}", 1)[-1].lower() not in _BLOCK_CANDIDATE_TAGS
+        if not isinstance(element.tag, str) or not _is_block_candidate(
+            root, element, note_target_paths
         ):
             continue
         local = element.tag.rsplit("}", 1)[-1].lower()
@@ -190,8 +271,8 @@ def lxml_targets(root: etree._Element, *, skip_navigation: bool) -> list[etree._
             child
             for child in element.iterdescendants()
             if isinstance(child.tag, str)
-            and child.tag.rsplit("}", 1)[-1].lower() in _BLOCK_CANDIDATE_TAGS
-            and visible_text(child)
+            and _is_block_candidate(root, child, note_target_paths)
+            and visible_text(child, protected_paths=protected_paths, root=root)
         ]
         if local == "li":
             direct_link = next(
@@ -200,14 +281,14 @@ def lxml_targets(root: etree._Element, *, skip_navigation: bool) -> list[etree._
                     for child in element
                     if isinstance(child.tag, str)
                     and child.tag.rsplit("}", 1)[-1].lower() == "a"
-                    and visible_text(child)
+                    and visible_text(child, protected_paths=protected_paths, root=root)
                 ),
                 None,
             )
             if direct_link is not None and not any(
                 isinstance(child.tag, str)
                 and child.tag.rsplit("}", 1)[-1].lower() in _BLOCK_CANDIDATE_TAGS
-                and visible_text(child)
+                and visible_text(child, protected_paths=protected_paths, root=root)
                 for child in direct_link.iterdescendants()
             ):
                 candidates.append(direct_link)
@@ -215,7 +296,11 @@ def lxml_targets(root: etree._Element, *, skip_navigation: bool) -> list[etree._
         if descendants:
             continue
         candidates.append(element)
-    return [candidate for candidate in candidates if visible_text(candidate)]
+    return [
+        candidate
+        for candidate in candidates
+        if visible_text(candidate, protected_paths=protected_paths, root=root)
+    ]
 
 
 def _runs_for_slots(block: etree._Element, slots: list[EpubTextSlot]) -> list[list[EpubTextSlot]]:
@@ -245,6 +330,7 @@ def _segments_for_blocks(
     href: str,
     digest: str,
     parse_mode: str,
+    protected_paths: Collection[tuple[int, ...]] = (),
 ) -> list[Segment]:
     segments: list[Segment] = []
     for index, block in enumerate(blocks):
@@ -256,10 +342,11 @@ def _segments_for_blocks(
             resource_sha256=digest,
             parse_mode=parse_mode,
             anchor=anchor,
+            protected_paths=protected_paths,
         )
         if [
             (tuple(slot.element_path), slot.field, slot.source_value) for slot in slots
-        ] != designated_slot_values(block):
+        ] != designated_slot_values(block, protected_paths=protected_paths, root=root):
             raise ValueError(f"EPUB source slot coverage mismatch: {href}")
         if not slots:
             continue
@@ -357,15 +444,21 @@ def _fragment_anchors(root: etree._Element, segments: list[Segment]) -> dict[str
     return fragment_anchors
 
 
-def _resource_title(root: etree._Element, href: str, book_title: str) -> str:
+def _resource_title(
+    root: etree._Element,
+    href: str,
+    book_title: str,
+    *,
+    protected_paths: Collection[tuple[int, ...]] = (),
+) -> str:
     for heading in root.iter():
         if isinstance(heading.tag, str) and heading.tag.rsplit("}", 1)[-1].lower() in _HEADING_TAGS:
-            title = visible_text(heading)
+            title = visible_text(heading, protected_paths=protected_paths, root=root)
             if title:
                 return title
     for title_node in root.iter():
         if isinstance(title_node.tag, str) and title_node.tag.rsplit("}", 1)[-1].lower() == "title":
-            candidate = visible_text(title_node)
+            candidate = visible_text(title_node, protected_paths=protected_paths, root=root)
             return (
                 candidate
                 if candidate and not looks_like_internal_title(candidate, href, book_title)
@@ -379,22 +472,56 @@ def annotate_resource(
     resource_index: int,
     href: str,
     *,
+    tree: etree._ElementTree,
+    parse_mode: str,
+    diagnostics: list[dict[str, object]],
+    protected_paths: Collection[tuple[int, ...]] = (),
+    note_target_paths: Collection[tuple[int, ...]] = (),
     book_title: str = "",
     skip_navigation: bool = False,
 ) -> tuple[str, list[Segment], dict[str, object]]:
-    tree, parse_mode, diagnostics = resource_parser(data)
     root = tree.getroot()
+    for element in root.iter():
+        if (
+            isinstance(element.tag, str)
+            and element.tag.rsplit("}", 1)[-1].lower() == "aside"
+            and element_path(root, element) in note_target_paths
+            and any(
+                isinstance(child.tag, str)
+                and child.tag.rsplit("}", 1)[-1].lower() in _BLOCK_CANDIDATE_TAGS
+                for child in element.iterdescendants()
+            )
+            and _note_aside_direct_text(
+                root,
+                element,
+                protected_paths=protected_paths,
+            )
+        ):
+            raise ValueError(
+                f"EPUB note aside has mixed direct prose that cannot be extracted losslessly: {href}"
+            )
     digest = hashlib.sha256(data).hexdigest()
     segments = _segments_for_blocks(
         root,
-        lxml_targets(root, skip_navigation=skip_navigation),
+        lxml_targets(
+            root,
+            skip_navigation=skip_navigation,
+            protected_paths=protected_paths,
+            note_target_paths=note_target_paths,
+        ),
         resource_index=resource_index,
         href=href,
         digest=digest,
         parse_mode=parse_mode,
+        protected_paths=protected_paths,
     )
     return (
-        _resource_title(root, href, book_title),
+        _resource_title(
+            root,
+            href,
+            book_title,
+            protected_paths=protected_paths,
+        ),
         segments,
         {
             "href": href,

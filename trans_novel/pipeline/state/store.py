@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -55,8 +54,9 @@ from trans_novel.pipeline.state.models import (
     IdentityMismatchError,
     RunIdentity,
     RunState,
-    normalize_lang_code,
+    stable_digest,
 )
+from trans_novel.postprocess.language import normalize_lang_code
 
 __all__ = [
     "STATUS_DONE",
@@ -67,22 +67,15 @@ __all__ = [
 ]
 
 
-def stable_digest(payload) -> str:
-    """将任意可序列化为 JSON 的载荷规范化为 UTF-8 字节，并计算稳定的 SHA-256 摘要。
-
-    规范化参数固定为 ensure_ascii=False、sort_keys=True、紧凑分隔符与
-    default=str，保证同一逻辑载荷在任何进程/版本下得到相同摘要；该摘要可作为
-    例行翻译、跳过批次、issue 集和重写候选在事件日志中的紧凑指纹。
-    """
-    canonical = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 def slugify(name: str) -> str:
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     return s or "book"
+
+
+def _recover_note_migration(store) -> None:
+    from trans_novel.pipeline.state.note_migration import recover_note_migration
+
+    recover_note_migration(store)
 
 
 def _merge_epub_verification(store, data: dict) -> dict:
@@ -108,6 +101,19 @@ def _merge_epub_verification(store, data: dict) -> dict:
     return {**report, "published_outputs": published_outputs}
 
 
+def _manifest_has_invalid_epub_meta(store) -> bool:
+    if not os.path.isfile(store.manifest_path):
+        return False
+    try:
+        data = store.read_json(store.manifest_path)
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(data, dict) or data.get("fmt") != "epub" or not data.get("source_path"):
+        return False
+    meta = data.get("meta")
+    return not isinstance(meta, dict) or meta.get("epub_schema") != 4
+
+
 class RunStore:
     def __init__(self, run_dir: str, *, create: bool = True):
         self.run_dir = run_dir
@@ -125,27 +131,15 @@ class RunStore:
         self.event_log_path = os.path.join(run_dir, "events.jsonl")
         self.journal_path = os.path.join(run_dir, "journal.json")
         self._v2_ready = False
-        if create and not self._manifest_has_invalid_epub_meta():
+        if create and not _manifest_has_invalid_epub_meta(self):
             self.ensure_dirs()
-
-    def _manifest_has_invalid_epub_meta(self) -> bool:
-        if not os.path.isfile(self.manifest_path):
-            return False
-        try:
-            data = self.read_json(self.manifest_path)
-        except (OSError, ValueError, TypeError):
-            return False
-        if not isinstance(data, dict) or data.get("fmt") != "epub" or not data.get("source_path"):
-            return False
-        meta = data.get("meta")
-        return not isinstance(meta, dict) or meta.get("epub_schema") != 4
 
     def ensure_dirs(self) -> None:
         os.makedirs(self.chapters_v2_dir, exist_ok=True)
 
     @contextmanager
     def lock(self) -> Iterator[None]:
-        if self._manifest_has_invalid_epub_meta():
+        if _manifest_has_invalid_epub_meta(self):
             os.makedirs(self.run_dir, exist_ok=True)
         else:
             self.ensure_dirs()
@@ -196,8 +190,10 @@ class RunStore:
     def _migrate_if_needed(self) -> None:
         """已持锁时调用：迁移、恢复中断节点及检查点日志。"""
         if self._v2_ready:
+            _recover_note_migration(self)
             return
         if not os.path.isfile(self.manifest_path):
+            _recover_note_migration(self)
             self._v2_ready = True
             return
         data = self.read_json(self.manifest_path)
@@ -221,6 +217,7 @@ class RunStore:
         else:
             migrate_v1_to_v2(self)
             self._v2_ready = True
+        _recover_note_migration(self)
         state = self.load_state()
         if state.recover_interrupted():
             self.save_state(state)

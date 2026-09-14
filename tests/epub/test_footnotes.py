@@ -13,12 +13,7 @@ from tests.fixtures.fake_llm import fake_llm_dict, routing_handler
 from trans_novel.assemble.epub.rendering import assemble_source_epub
 from trans_novel.assemble.epub.verification.validation import validate_epub
 from trans_novel.config import Config
-from trans_novel.epub.slots import (
-    EpubTextSlot,
-    distribute_slot_translation,
-    normalized_source_text,
-    slot_contract_digest,
-)
+from trans_novel.epub.slots import distribute_slot_translation
 from trans_novel.ingest.epub.reader import read_epub
 from trans_novel.llm import FakeClient
 from trans_novel.pipeline import Application
@@ -31,7 +26,14 @@ class TestEpubFootnotes(unittest.TestCase):
         self.root = Path(directory.name)
         self.source = self.root / "source.epub"
 
-    def _book(self, body: bytes, resource: str = "ch1.xhtml") -> None:
+    def _book(
+        self,
+        body: bytes,
+        resource: str = "ch1.xhtml",
+        *,
+        note_resource_type: str | None = None,
+        nav_note_type: str | None = None,
+    ) -> None:
         write_sample_epub(str(self.source))
         with zipfile.ZipFile(self.source) as archive:
             members = [(info, archive.read(info)) for info in archive.infolist()]
@@ -44,8 +46,31 @@ class TestEpubFootnotes(unittest.TestCase):
                         + body
                         + b"</body></html>"
                     )
+                if info.filename == "OEBPS/content.opf" and note_resource_type is not None:
+                    guide = (
+                        f'<guide><reference type="{note_resource_type}" '
+                        f'href="{resource}"/></guide></package>'
+                    ).encode()
+                    data = data.replace(b"</package>", guide)
+                if info.filename == "OEBPS/content.opf" and nav_note_type is not None:
+                    nav_item = (
+                        b'<item id="nav" href="nav.xhtml" '
+                        b'media-type="application/xhtml+xml" properties="nav"/></manifest>'
+                    )
+                    data = data.replace(b"</manifest>", nav_item)
                 info.filename = info.filename.replace("ch1.xhtml", resource)
                 archive.writestr(info, data.replace(b"ch1.xhtml", resource.encode()))
+            if nav_note_type is not None:
+                archive.writestr(
+                    "OEBPS/nav.xhtml",
+                    (
+                        '<html xmlns="http://www.w3.org/1999/xhtml" '
+                        'xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+                        '<nav epub:type="landmarks"><ol><li>'
+                        f'<a epub:type="{nav_note_type}" href="{resource}#note">Notes</a>'
+                        "</li></ol></nav></body></html>"
+                    ),
+                )
 
     def test_explicit_markers_preserve_surrounding_text_and_unmarked_links(self) -> None:
         self._book(
@@ -93,6 +118,102 @@ class TestEpubFootnotes(unittest.TestCase):
             [item for item in report["failures"] if item["category"] == "footnotes"], []
         )
 
+    def test_reciprocal_symbol_markers_are_excluded_but_their_tails_remain(self) -> None:
+        self._book(
+            b'<p>Lead <a id="ref"/><sup><a href="#note"><span>\xe2\x80\xa0</span></a></sup>'
+            b' tail</p><p id="note"><a href="#ref">\xe2\x80\xa0</a> Note tail</p>'
+        )
+        before = self.source.read_bytes()
+
+        document = read_epub(str(self.source), "en", "zh")
+
+        self.assertEqual(self.source.read_bytes(), before)
+        self.assertEqual(document.meta["epub_note_slots_version"], 1)
+        self.assertEqual(
+            [
+                (marker["kind"], marker["label"])
+                for marker in document.meta["epub_notes"]["markers"]
+            ],
+            [("noteref", "†"), ("backlink", "†")],
+        )
+        self.assertEqual(
+            [segment.source for segment in document.chapters[0].segments],
+            ["Lead tail", "Note tail"],
+        )
+
+    def test_malformed_explicit_markers_are_protected_without_fake_relations(self) -> None:
+        self._book(
+            b'<p>Lead <a role="doc-noteref" href="#missing"><sup>1</sup></a> tail</p>'
+            b'<p><a epub:type="backlink" href="#also-missing">return</a> Note tail</p>'
+        )
+
+        document = read_epub(str(self.source), "en", "zh")
+
+        self.assertEqual(
+            document.meta["epub_notes"],
+            {"version": 1, "markers": [], "targets": []},
+        )
+        self.assertEqual(
+            [segment.source for segment in document.chapters[0].segments],
+            ["Lead tail", "Note tail"],
+        )
+
+    def test_numeric_pair_uses_exact_package_or_landmark_note_semantics(self) -> None:
+        body = (
+            b'<p>Lead <a id="ref" href="#note">[12]</a> tail</p>'
+            b'<p id="note"><a href="#ref">12</a> Note tail</p>'
+        )
+        self._book(body)
+        ordinary = read_epub(str(self.source), "en", "zh")
+        self.assertEqual(
+            [segment.source for segment in ordinary.chapters[0].segments],
+            ["Lead [12] tail", "12 Note tail"],
+        )
+
+        self._book(body, note_resource_type="endnotes")
+        notes = read_epub(str(self.source), "en", "zh")
+
+        self.assertEqual(
+            [segment.source for segment in notes.chapters[0].segments],
+            ["Lead tail", "Note tail"],
+        )
+        self.assertEqual(notes.meta["epub_notes"]["targets"][0]["kind"], "endnote")
+
+        self._book(body, nav_note_type="notes")
+        landmark_notes = read_epub(str(self.source), "en", "zh")
+        self.assertEqual(
+            [
+                segment.source
+                for chapter in landmark_notes.chapters
+                for segment in chapter.segments
+                if segment.resource_href == "OEBPS/ch1.xhtml"
+            ],
+            ["Lead tail", "Note tail"],
+        )
+        self.assertEqual(landmark_notes.meta["epub_notes"]["targets"][0]["kind"], "footnote")
+
+    def test_recognized_leaf_aside_note_body_is_extracted(self) -> None:
+        self._book(
+            b'<p>Lead <a id="ref" href="#note">*</a> tail</p>'
+            b'<aside id="note"><a href="#ref">*</a> Aside note tail</aside>'
+        )
+
+        document = read_epub(str(self.source), "en", "zh")
+
+        self.assertEqual(
+            [segment.source for segment in document.chapters[0].segments],
+            ["Lead tail", "Aside note tail"],
+        )
+
+    def test_mixed_direct_aside_prose_is_rejected_instead_of_dropped(self) -> None:
+        self._book(
+            b'<p>Lead <a id="ref" href="#note">*</a> tail</p>'
+            b'<aside id="note"><a href="#ref">*</a> Direct prose<p>Nested note</p></aside>'
+        )
+
+        with self.assertRaisesRegex(ValueError, "mixed direct prose"):
+            read_epub(str(self.source), "en", "zh")
+
     def test_explicit_reference_semantics_require_a_matching_backlink(self) -> None:
         for attributes in (
             b'role="doc-noteref"',
@@ -114,51 +235,6 @@ class TestEpubFootnotes(unittest.TestCase):
                         ],
                         [] if backlink else ["missing_backlink"],
                     )
-
-    def test_incompatible_old_slots_stop_resume_and_export_without_data_loss(self) -> None:
-        for old_excludes_marker in (True, False):
-            with self.subTest(old_excludes_marker=old_excludes_marker):
-                marker = (
-                    b'<sup><a href="#n">17</a></sup>'
-                    if old_excludes_marker
-                    else b'<a role="doc-noteref" href="#n">17</a>'
-                )
-                self._book(b"<p>Lead " + marker + b' tail</p><p id="n">Note</p>')
-                config = Config.from_dict({"llm": fake_llm_dict(), "quality": "economy"})
-                config.source_lang = "en"
-                config.state_dir = str(self.root / str(old_excludes_marker))
-                client = FakeClient(handler=routing_handler)
-                app = Application(config, client=client)
-                store = app.prepare(str(self.source))
-                chapter = store.load_chapter(0)
-                segment = chapter.segments[0]
-                state = segment.epub_state
-                if old_excludes_marker:
-                    state.slots = [slot for slot in state.slots if slot.source_value != "17"]
-                else:
-                    state.slots.insert(
-                        1,
-                        EpubTextSlot(
-                            id="legacy-marker", element_path=(0,), field="text", source_value="17"
-                        ),
-                    )
-                state.slot_contract_sha256 = slot_contract_digest(state.slots)
-                segment.source = normalized_source_text(state.slots)
-                segment.assign_translation(distribute_slot_translation(state, "Saved translation"))
-                store.save_chapter(chapter)
-                chapter_path = Path(store.chapter_path(0))
-                saved = chapter_path.read_bytes()
-                client.calls.clear()
-                with self.assertRaisesRegex(ValueError, "slot_layout_mismatch"):
-                    app.run(str(self.source))
-                self.assertEqual(client.calls, [])
-                self.assertEqual(chapter_path.read_bytes(), saved)
-                output = self.root / "existing.epub"
-                output.write_bytes(b"existing output")
-                with self.assertRaisesRegex(ValueError, "slot_layout_mismatch"):
-                    assemble_source_epub(store, str(self.source), str(output), target_lang="zh")
-                self.assertEqual(output.read_bytes(), b"existing output")
-                self.assertEqual(chapter_path.read_bytes(), saved)
 
     def test_compatible_saved_translations_remain_usable(self) -> None:
         self._book(b'<p>Lead <sup><a href="#n">17</a></sup> tail</p><p id="n">Note</p>')

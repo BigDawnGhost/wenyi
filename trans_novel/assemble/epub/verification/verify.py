@@ -6,13 +6,18 @@ import os
 import re
 import zipfile
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from lxml import etree
 
 from trans_novel.assemble.epub.metadata import epub_language
-from trans_novel.assemble.epub.rendering.theme.contracts import ThemeError, ThemePlan
+from trans_novel.assemble.epub.rendering.theme.contracts import (
+    NotePathMapping,
+    ThemeError,
+    ThemePlan,
+)
 from trans_novel.assemble.epub.verification import archive_model, preservation, validation
 from trans_novel.assemble.epub.verification import slots as slot
 from trans_novel.assemble.epub.verification.theme import theme_projection, theme_summary
@@ -325,6 +330,7 @@ def _verify_epub(
     bilingual: bool = False,
     target_lang: str | None = None,
     bilingual_order: str = "target_first",
+    note_mappings: Mapping[str, tuple[NotePathMapping, ...]] | None = None,
 ) -> dict[str, Any]:
     """Reopen an on-disk EPUB and return deterministic report v1 evidence."""
     output = Path(output_path)
@@ -406,6 +412,7 @@ def _verify_epub(
             failures=failures,
             warnings=warnings,
             checked=checked,
+            note_mappings=note_mappings,
         )
         for key, value in slot_differences.items():
             differences[key] += value
@@ -480,7 +487,28 @@ def verify_epub(
     try:
         if theme_plan is not None and theme_plan.bilingual is not bilingual:
             raise ThemeError("theme_verify", "invalid_plan")
-        with theme_projection(output, theme_plan) as projected:
+        note_mappings = (
+            {
+                resource.resource_href: resource.scope.note_paths
+                for resource in theme_plan.resources
+                if resource.note_changes
+            }
+            if theme_plan is not None
+            else {}
+        )
+        state_backed_note_proof = (
+            store
+            if bilingual and source is not None and mode in {"monolingual", "bilingual"}
+            else None
+        )
+        with theme_projection(
+            output,
+            theme_plan,
+            source_path=source,
+            store=state_backed_note_proof,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
+        ) as projected:
             report = _verify_epub(
                 projected,
                 source_path=source,
@@ -489,6 +517,7 @@ def verify_epub(
                 bilingual=bilingual,
                 target_lang=target_lang,
                 bilingual_order=bilingual_order,
+                note_mappings=note_mappings if bilingual else None,
             )
     except ThemeError as error:
         return _theme_failure_report(output, source, mode, error)

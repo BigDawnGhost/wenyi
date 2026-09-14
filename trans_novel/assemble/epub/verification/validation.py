@@ -267,6 +267,9 @@ def _validate_expected_one(
     source_path: Path,
     max_member_bytes: int,
     max_archive_bytes: int,
+    store: Any | None,
+    target_lang: str | None,
+    bilingual_order: str,
 ) -> dict[str, Any]:
     try:
         if plan is not None and plan.bilingual is not expected_bilingual:
@@ -274,6 +277,10 @@ def _validate_expected_one(
         with theme_projection(
             path,
             plan,
+            source_path=source_path,
+            store=store,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
             max_member_bytes=max_member_bytes,
             max_archive_bytes=max_archive_bytes,
         ) as projected:
@@ -367,6 +374,9 @@ def validate_epub_triplet(
     *,
     mono_theme_plan: ThemePlan | None = None,
     bilingual_theme_plan: ThemePlan | None = None,
+    store: Any | None = None,
+    target_lang: str | None = None,
+    bilingual_order: str = "target_first",
     max_member_bytes: int = MAX_MEMBER_BYTES,
     max_archive_bytes: int = MAX_ARCHIVE_BYTES,
 ) -> dict[str, Any]:
@@ -380,6 +390,9 @@ def validate_epub_triplet(
             bilingual_theme_plan,
             expected_bilingual=True,
             source_path=source_path,
+            store=store,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
             max_member_bytes=max_member_bytes,
             max_archive_bytes=max_archive_bytes,
         )
@@ -393,6 +406,10 @@ def validate_epub_triplet(
         with theme_projection(
             mono_path,
             mono_theme_plan,
+            source_path=source_path,
+            store=store,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
             max_member_bytes=max_member_bytes,
             max_archive_bytes=max_archive_bytes,
         ) as projected_mono:
@@ -402,6 +419,10 @@ def validate_epub_triplet(
                 with theme_projection(
                     bilingual_path,
                     bilingual_theme_plan,
+                    source_path=source_path,
+                    store=store,
+                    target_lang=target_lang,
+                    bilingual_order=bilingual_order,
                     max_member_bytes=max_member_bytes,
                     max_archive_bytes=max_archive_bytes,
                 ) as projected_bilingual:
@@ -445,6 +466,9 @@ def validate_epub_triplet(
             bilingual_theme_plan,
             expected_bilingual=True,
             source_path=source_path,
+            store=store,
+            target_lang=target_lang,
+            bilingual_order=bilingual_order,
             max_member_bytes=max_member_bytes,
             max_archive_bytes=max_archive_bytes,
         )

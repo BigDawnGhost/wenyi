@@ -20,6 +20,7 @@ class TestThemeLoading(unittest.TestCase):
         self.assertTrue(bundle.general_css)
         self.assertTrue(bundle.bilingual_css)
         self.assertEqual(bundle.policy_version, "epub-theme-v2")
+        self.assertTrue(bundle.note_markers)
         with self.assertRaises(FrozenInstanceError):
             bundle.digest = "changed"  # type: ignore[misc]
 
@@ -39,6 +40,7 @@ class TestThemeLoading(unittest.TestCase):
             (first / "style.css").write_bytes(b"changed")
             self.assertEqual(one.general_css, b"p { color: black; }")
             self.assertEqual(one.digest, two.digest)
+            self.assertFalse(one.note_markers)
             self.assertNotEqual(one.provenance, two.provenance)
 
     def test_custom_origin_is_metadata_not_resolution_input(self) -> None:

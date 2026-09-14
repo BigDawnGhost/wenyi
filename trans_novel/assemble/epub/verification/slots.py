@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import zipfile
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from lxml import etree
 
 from trans_novel.assemble.epub.rendering import dedupe_segment_mappings, segment_needs_source
+from trans_novel.assemble.epub.rendering.theme import NotePathMapping
 from trans_novel.assemble.epub.verification import archive_model, dom, preservation
 from trans_novel.assemble.epub.verification import bilingual as bilingual_module
 from trans_novel.assemble.epub.verification import navigation as nav_module
@@ -249,6 +251,7 @@ def _validate_resource(
     warnings,
     checked,
     differences,
+    note_mappings: tuple[NotePathMapping, ...],
 ):
     data = _resource_data(source_zip, output_zip, resource, resources, failures)
     if data is None:
@@ -258,6 +261,13 @@ def _validate_resource(
         return
     source_tree, output_tree, _, _ = parsed
     root_source, root_output = source_tree.getroot(), output_tree.getroot()
+    mapped_nodes: list[tuple[NotePathMapping, etree._Element]] = []
+    for mapping in note_mappings:
+        mapped = dom.resolve_path_lxml(root_output, mapping.target_path)
+        if mapped is None:
+            failures.append(archive_model.item("resources", "theme_verify", resource, "invalid"))
+        else:
+            mapped_nodes.append((mapping, mapped))
     is_ncx_resource = any(
         isinstance(node.tag, str) and archive_model.local_name(node.tag).lower() == "navmap"
         for node in root_source.iter()
@@ -289,6 +299,13 @@ def _validate_resource(
             resource=resource,
             failures=failures,
         )
+        for mapping, mapped in mapped_nodes:
+            if dom.element_path_lxml(root_output, mapped) != mapping.source_path:
+                failures.append(
+                    archive_model.item("resources", "theme_verify", resource, "invalid")
+                )
+    elif note_mappings:
+        failures.append(archive_model.item("resources", "theme_verify", resource, "invalid"))
     language_paths = preservation.preserved_language_paths(
         root_source, root_output, resource, segments, source_lang, failures
     )
@@ -335,6 +352,7 @@ def _validate_resources(
     warnings: list[dict[str, str]],
     checked: dict[str, int],
     differences: dict[str, int],
+    note_mappings: Mapping[str, tuple[NotePathMapping, ...]],
 ) -> None:
     with source_zip, output_zip:
         for resource, segments in sorted(by_resource.items()):
@@ -353,6 +371,7 @@ def _validate_resources(
                 warnings,
                 checked,
                 differences,
+                note_mappings.get(resource, ()),
             )
 
 
@@ -369,6 +388,7 @@ def slot_proof(
     failures: list[dict[str, str]],
     warnings: list[dict[str, str]],
     checked: dict[str, int],
+    note_mappings: Mapping[str, tuple[NotePathMapping, ...]] | None = None,
 ) -> dict[str, int]:
     all_segments = [
         segment
@@ -386,6 +406,7 @@ def slot_proof(
         state = segment.epub_state
         assert state is not None
         by_resource[state.resource_href].append(segment)
+    note_mappings = note_mappings or {}
     differences = {"text_slots": 0, "toc_labels": 0, "language_fields": 0, "bilingual_nodes": 0}
     try:
         source_zip = zipfile.ZipFile(source_path, "r")
@@ -444,6 +465,7 @@ def slot_proof(
         warnings,
         checked,
         differences,
+        note_mappings,
     )
 
     return differences

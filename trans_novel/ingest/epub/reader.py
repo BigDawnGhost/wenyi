@@ -6,14 +6,20 @@ import hashlib
 import os
 import zipfile
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Literal
+
+from lxml import etree
 
 from trans_novel.epub.archive import ZipSafetyError, preflight_zip, read_member
+from trans_novel.epub.markup import resource_parser
 from trans_novel.epub.navigation import parse_nav_landmarks, parse_toc_entries
+from trans_novel.epub.notes import detect_note_relations
 from trans_novel.epub.package import HTML_MEDIA, read_package
 from trans_novel.ingest.epub.chapters import logical_chapters
 from trans_novel.ingest.epub.markup import annotate_resource
 from trans_novel.ingest.models import Chapter, Document
+
+_ParsedResource = tuple[int, str, bytes, etree._ElementTree, str, list[dict[str, object]]]
 
 
 def _spine_paths(model: dict[str, Any]) -> list[str]:
@@ -47,6 +53,27 @@ def _semantic_hints_by_resource(
     return hints
 
 
+def _note_resources_by_semantics(
+    guide_entries: list[dict[str, Any]], landmarks: list[dict[str, Any]]
+) -> dict[str, Literal["footnote", "endnote"]]:
+    evidence: dict[str, set[Literal["footnote", "endnote"]]] = {}
+    for entry in [*guide_entries, *landmarks]:
+        href = entry.get("resource_href")
+        if not isinstance(href, str) or not href:
+            continue
+        tokens = {
+            token
+            for name in ("type", "nav_type", "role")
+            if isinstance(entry.get(name), str)
+            for token in entry[name].split()
+        }
+        if tokens & {"notes", "footnotes", "doc-footnote"}:
+            evidence.setdefault(href, set()).add("footnote")
+        if tokens & {"endnotes", "doc-endnotes"}:
+            evidence.setdefault(href, set()).add("endnote")
+    return {href: next(iter(kinds)) for href, kinds in evidence.items() if len(kinds) == 1}
+
+
 def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
     """Read a source EPUB into schema-4 structural text-slot state."""
     try:
@@ -65,18 +92,57 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             toc_entries = parse_toc_entries(zf, model["toc_kinds"])
             landmarks = parse_nav_landmarks(zf, [str(item["path"]) for item in model["nav_items"]])
             resource_hints = _semantic_hints_by_resource(model["guide_entries"], landmarks)
+            note_resources = _note_resources_by_semantics(model["guide_entries"], landmarks)
 
-            resources: list[dict[str, object]] = []
+            parsed_resources: list[_ParsedResource] = []
             archive_hash = hashlib.sha256()
             with open(path, "rb") as source_file:
                 for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
                     archive_hash.update(chunk)
             for resource_index, href in enumerate(model["content_paths"]):
                 data = read_member(zf, zf.getinfo(href))
+                tree, parse_mode, diagnostics = resource_parser(data)
+                parsed_resources.append((resource_index, href, data, tree, parse_mode, diagnostics))
+            note_relations = detect_note_relations(
+                {href: tree.getroot() for _, href, _, tree, _, _ in parsed_resources},
+                excluded_resources=toc_paths,
+                note_resources=note_resources,
+            )
+            protected_paths = {
+                href: {
+                    tuple(marker["path"])
+                    for marker in note_relations["markers"]
+                    if marker["resource_href"] == href
+                }
+                for href in model["content_paths"]
+            }
+            note_target_paths = {
+                href: {
+                    tuple(target["path"])
+                    for target in note_relations["targets"]
+                    if target["resource_href"] == href
+                }
+                for href in model["content_paths"]
+            }
+
+            resources: list[dict[str, object]] = []
+            for (
+                resource_index,
+                href,
+                data,
+                tree,
+                parse_mode,
+                diagnostics,
+            ) in parsed_resources:
                 title, segments, resource = annotate_resource(
                     data,
                     resource_index,
                     href,
+                    tree=tree,
+                    parse_mode=parse_mode,
+                    diagnostics=diagnostics,
+                    protected_paths=protected_paths[href],
+                    note_target_paths=note_target_paths[href],
                     book_title=book_title,
                     skip_navigation=href in toc_paths,
                 )
@@ -109,6 +175,8 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
             "toc_entries": toc_entries,
             "guide_entries": model["guide_entries"],
             "nav_landmarks": landmarks,
+            "epub_notes": note_relations,
+            "epub_note_slots_version": 1,
             "epub_resources": [
                 {
                     "index": resource["index"],

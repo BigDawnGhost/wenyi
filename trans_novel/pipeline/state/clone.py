@@ -33,7 +33,7 @@ def clone_closed_runstore(source: str, destination: str) -> None:
         except (BlockingIOError, OSError) as error:
             raise ValueError("runstore source is actively locked") from error
         try:
-            forbidden = {"journal.json"}
+            forbidden = {"journal.json", "note_migration.json"}
             for root, dirs, files in os.walk(source_root):
                 relative = os.path.relpath(root, source_root)
                 for name in (*dirs, *files):
@@ -48,7 +48,9 @@ def clone_closed_runstore(source: str, destination: str) -> None:
             shutil.copytree(
                 source_root,
                 destination_root,
-                ignore=shutil.ignore_patterns(".run.lock", "journal.json", "*.tmp", "*.pending"),
+                ignore=shutil.ignore_patterns(
+                    ".run.lock", "journal.json", "note_migration.json", "*.tmp", "*.pending"
+                ),
             )
         finally:
             if os.name == "nt":  # pragma: no cover - Windows-specific
