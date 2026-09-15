@@ -1,264 +1,364 @@
-"""项目启动路由的契约测试（不依赖 DB / Redis）。"""
+"""Real PostgreSQL API/worker contracts, with deterministic offline model responses."""
 
 from __future__ import annotations
 
 import asyncio
-from io import BytesIO
+import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException, UploadFile
-from wenyi_api.routers import projects
-from wenyi_api.schemas import StartTranslation
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from fastapi.testclient import TestClient
+from test_storage_pg_integration import pg_pool  # noqa: F401
+from tests.fake_llm import MeteredFakeClient, routing_handler
+from wenyi_api import dal, job_service
+from wenyi_api.db import pool as pool_module
+from wenyi_api.main import create_app
+from wenyi_api.project_service import storage_for
+from wenyi_api.routers import export
+from wenyi_api.workers import tasks
 
 
-def test_start_translation_persists_selected_strategy(monkeypatch):
-    saved: list[tuple[str, dict]] = []
-    enqueued: list[tuple[str, dict]] = []
+@pytest.fixture
+def api(monkeypatch, pg_pool, tmp_path):  # noqa: F811
+    from wenyi_api.config import settings
+    from wenyi_core.llm import factory
 
-    monkeypatch.setattr(projects.dal, "get_project", lambda pid: {"id": pid})
+    config = tmp_path / "config.yaml"
+    config.write_text("llm:\n  preset: fake\n", encoding="utf-8")
+    overrides = replace(
+        settings,
+        data_dir=str(tmp_path / "data"),
+        config_path=str(config),
+        api_token=None,
+        redis_url="redis://127.0.0.1:56379/0",
+    )
+    for module_name, module in list(sys.modules.items()):
+        if module_name.startswith("wenyi_api") and hasattr(module, "settings"):
+            monkeypatch.setattr(module, "settings", overrides)
+    monkeypatch.setattr(pool_module, "_pool", pg_pool)
+    monkeypatch.setattr(tasks, "init_pool", lambda dsn: pg_pool)
     monkeypatch.setattr(
-        projects.dal,
-        "set_project_strategy",
-        lambda pid, strategy: saved.append((pid, strategy)),
+        factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)
     )
-    monkeypatch.setattr(projects, "set_project_status", lambda pid, status: None)
+    queue = []
 
-    async def fake_enqueue(name: str, **kwargs):
-        enqueued.append((name, kwargs))
-        return SimpleNamespace(job_id="job-1")
+    async def enqueue(name, **kwargs):
+        queue.append((name, kwargs))
+        return SimpleNamespace(job_id=kwargs["_job_id"])
 
-    monkeypatch.setattr(projects, "enqueue", fake_enqueue)
+    monkeypatch.setattr(job_service, "enqueue", enqueue)
+    monkeypatch.setattr(export, "enqueue", enqueue)
+    client = TestClient(create_app())
+    yield client, queue
+    client.close()
 
-    result = asyncio.run(
-        projects.start_translation(
-            "project-1",
-            StartTranslation(
-                strategy={"template": "精翻"},
-                do_qa=True,
-            ),
-        )
+
+def new_project(api, source="en", target="zh"):
+    client, _ = api
+    response = client.post(
+        "/projects", json={"name": "Book", "source_lang": source, "target_lang": target}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+def execute_next(api):
+    _, queue = api
+    name, params = queue.pop(0)
+    params.pop("_job_id")
+    asyncio.run(getattr(tasks, name)({}, **params))
+
+
+def upload(api, pid, filename="book.html", data=None):
+    client, _ = api
+    data = (
+        data
+        or b"<html><body><h1>Chapter One</h1><p>The book begins.</p><h1>Chapter Two</h1><p>The story continues.</p></body></html>"
+    )
+    response = client.post(f"/projects/{pid}/upload", files={"file": (filename, data)})
+    assert response.status_code == 200, response.text
+    assert response.json()["kind"] == "parse"
+    assert client.get(f"/projects/{pid}/preview").status_code == 409
+    execute_next(api)
+    assert client.get(f"/projects/{pid}/preview").status_code == 200
+
+
+def test_full_web_book_workflow_and_independent_export(api):
+    client, _ = api
+    pid = new_project(api)
+    upload(api, pid)
+    config = client.get(f"/projects/{pid}/config").json()
+    assert config["effective"]["pipeline"]["review_autofix"]
+    assert client.post(f"/projects/{pid}/prepare").status_code == 200
+    assert client.put(f"/projects/{pid}/config", json={"yaml": config["yaml"]}).status_code == 409
+    execute_next(api)
+    assert client.get(f"/projects/{pid}").json()["status"] == "prepared"
+    assert client.post(f"/projects/{pid}/translate").status_code == 200
+    execute_next(api)
+    project = client.get(f"/projects/{pid}").json()
+    assert project["status"] == "done" and project["done_chapters"] == 2
+    reviews = client.get(f"/projects/{pid}/review/runs").json()
+    assert reviews and reviews[0]["status"] == "completed"
+    assert client.get(f"/projects/{pid}/stats").json()["usage"]["totals"]["calls"] > 0
+    # Export remains available while a workflow owns the project's write status.
+    dal.set_project_status(pid, "translating")
+    response = client.post(f"/projects/{pid}/exports", json={"format": "docx", "bilingual": True})
+    assert response.status_code == 200, response.text
+    execute_next(api)
+    assert dal.get_project(pid)["status"] == "translating"
+    eid = response.json()["export_id"]
+    download = client.get(f"/projects/{pid}/exports/{eid}/download")
+    assert download.status_code == 200 and download.content.startswith(b"PK")
+    assert client.post(f"/projects/{pid}/qa").status_code == 404
+    other = new_project(api)
+    assert client.get(f"/projects/{other}/exports/{eid}/download").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "yaml",
+    [
+        "language: []",
+        "pipeline: null",
+        "llm: {routes: null}",
+        "llm: {models: []}",
+        "pipeline: {consistency_qa: true}",
+        "paths: {state_dir: /tmp/x}",
+    ],
+)
+def test_config_errors_return_422(api, yaml):
+    client, _ = api
+    pid = new_project(api)
+    response = client.post(f"/projects/{pid}/config/validate", json={"yaml": yaml})
+    assert response.status_code == 422, response.text
+
+
+def test_queue_failure_and_retry_preserve_original_task_kind(api, monkeypatch):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    actual_enqueue = job_service.enqueue
+
+    async def fail(*args, **kwargs):
+        raise ConnectionError("redis offline")
+
+    monkeypatch.setattr(job_service, "enqueue", fail)
+    assert client.post(f"/projects/{pid}/prepare").status_code == 503
+    assert dal.get_project(pid)["status"] == "uploaded"
+    monkeypatch.setattr(job_service, "enqueue", actual_enqueue)
+    response = client.post(f"/projects/{pid}/resume")
+    assert response.status_code == 200 and response.json()["kind"] == "prepare"
+    assert "config_snapshot" not in queue[0][1]
+    execute_next(api)
+    assert dal.get_project(pid)["status"] == "prepared"
+
+
+def test_pause_and_resume_parse_preserves_job_identity(api):
+    client, _ = api
+    pid = new_project(api)
+    response = client.post(
+        f"/projects/{pid}/upload", files={"file": ("book.txt", b"A little book.")}
+    )
+    run_id = response.json()["job_id"]
+    assert client.post(f"/projects/{pid}/pause").status_code == 200
+    execute_next(api)
+    assert dal.get_project(pid)["status"] == "paused"
+    assert dal.get_job_by_arq_id(run_id)["status"] == "paused"
+    response = client.post(f"/projects/{pid}/resume")
+    assert response.status_code == 200 and response.json()["kind"] == "parse"
+    execute_next(api)
+    assert dal.get_project(pid)["status"] == "uploaded"
+
+
+def test_source_identity_and_config_snapshot(api):
+    client, _ = api
+    pid = new_project(api)
+    upload(api, pid)
+    response = client.post(f"/projects/{pid}/prepare")
+    run_id = response.json()["job_id"]
+    dal.set_project_config(pid, {"llm": {"preset": "deepseek"}})
+    assert tasks._build_config_for(pid, run_id).llm.preset == "fake"
+    execute_next(api)
+    assert storage_for(pid).exists()
+    assert (
+        client.post(
+            f"/projects/{pid}/upload", files={"file": ("replacement.txt", b"Replacement")}
+        ).status_code
+        == 409
     )
 
-    assert saved == [("project-1", {"template": "精翻"})]
-    assert enqueued == [
-        ("run_translation", {"project_id": "project-1", "do_qa": True})
-    ]
-    assert result["job_id"] == "job-1"
 
+def test_srt_full_workflow_manual_edit_resume_and_exports(api, monkeypatch):
+    import json
 
-def test_start_translation_without_body_keeps_existing_strategy(monkeypatch):
-    monkeypatch.setattr(projects.dal, "get_project", lambda pid: {"id": pid})
+    from wenyi_core.llm import factory
+
+    client, _ = api
+    pid = new_project(api)
+    source = (
+        b"1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n"
+    )
+    upload(api, pid, "video.srt", source)
+    assert (
+        client.put(
+            f"/projects/{pid}/config", json={"yaml": "output: {mono: true, bilingual: true}"}
+        ).status_code
+        == 200
+    )
     monkeypatch.setattr(
-        projects.dal,
-        "set_project_strategy",
-        lambda pid, strategy: (_ for _ in ()).throw(AssertionError("unexpected update")),
-    )
-    monkeypatch.setattr(projects, "set_project_status", lambda pid, status: None)
-
-    async def fake_enqueue(name: str, **kwargs):
-        return SimpleNamespace(job_id="job-2")
-
-    monkeypatch.setattr(projects, "enqueue", fake_enqueue)
-
-    result = asyncio.run(projects.start_translation("project-1"))
-
-    assert result["job_id"] == "job-2"
-
-
-def test_assemble_output_creates_default_export_before_enqueue(monkeypatch):
-    calls: list[tuple[str, object]] = []
-    monkeypatch.setattr(
-        projects.dal,
-        "get_project",
-        lambda pid: {"id": pid, "status": "done"},
-    )
-    monkeypatch.setattr(
-        projects.dal,
-        "chapter_summaries",
-        lambda pid: [{"index": 0, "status": "done"}],
-    )
-
-    def fake_create_export(pid: str, fmt: str, options: dict) -> int:
-        calls.append(("create", (pid, fmt, options)))
-        return 17
-
-    async def fake_enqueue(name: str, **kwargs):
-        calls.append(("enqueue", (name, kwargs)))
-        return SimpleNamespace(job_id="assemble-job")
-
-    monkeypatch.setattr(projects.dal, "create_export", fake_create_export)
-    monkeypatch.setattr(projects, "enqueue", fake_enqueue)
-
-    result = asyncio.run(projects.assemble_output("project-1"))
-
-    assert calls == [
-        (
-            "create",
-            (
-                "project-1",
-                "epub",
-                {
-                    "bilingual": False,
-                    "order": "target_first",
-                    "about_page": True,
-                    "preserve_source_style": False,
-                },
-            ),
+        factory,
+        "build_client",
+        lambda cfg: MeteredFakeClient(
+            handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
         ),
-        (
-            "enqueue",
-            (
-                "run_export",
-                {
-                    "project_id": "project-1",
-                    "export_id": 17,
-                    "fmt": "epub",
-                    "bilingual": False,
-                    "order": "target_first",
-                    "about_page": True,
-                    "preserve_source_style": False,
-                },
-            ),
-        ),
-    ]
-    assert result == {
-        "job_id": "assemble-job",
-        "project_id": "project-1",
-        "kind": "assemble",
-        "export_id": 17,
-    }
-
-
-def test_assemble_output_requires_existing_translation(monkeypatch):
-    monkeypatch.setattr(
-        projects.dal,
-        "get_project",
-        lambda pid: {"id": pid, "status": "prepared"},
     )
-    monkeypatch.setattr(
-        projects.dal,
-        "chapter_summaries",
-        lambda pid: [{"index": 0, "status": "pending"}],
+    assert client.post(f"/projects/{pid}/translate").json()["kind"] == "srt"
+    execute_next(api)
+    assert client.get(f"/projects/{pid}").json()["initialized"]
+    subtitles = client.get(f"/projects/{pid}/subtitles").json()
+    assert subtitles["completed"] == 2
+    assert client.get(f"/projects/{pid}/stats").json()["usage"]["totals"]["calls"] > 0
+    assert len(client.get(f"/projects/{pid}/exports").json()) == 2
+    assert (
+        client.put(f"/projects/{pid}/subtitles/1", json={"target": "人工修订"}).status_code == 200
     )
+    assert client.post(f"/projects/{pid}/translate").status_code == 200
+    execute_next(api)
+    assert client.get(f"/projects/{pid}/subtitles").json()["cues"][0]["target"] == "人工修订"
+    response = client.post(f"/projects/{pid}/exports", json={"bilingual": True})
+    assert response.status_code == 200
+    execute_next(api)
+    text = client.get(f"/projects/{pid}/exports/{response.json()['export_id']}/download").text
+    assert "人工修订" in text and "00:00:00,100 --> 00:00:01,200" in text
+    assert client.post(f"/projects/{pid}/review/run").status_code == 422
 
-    with pytest.raises(HTTPException) as raised:
-        asyncio.run(projects.assemble_output("project-1"))
 
-    assert raised.value.status_code == 409
-    assert raised.value.detail == "project has no translated chapters"
+def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
+    import os
+    import uuid
 
+    from arq import create_pool
+    from arq.connections import RedisSettings
+    from arq.worker import Worker
+    from wenyi_api import workers
 
-def _stub_upload_dependencies(monkeypatch, tmp_path):
-    saved: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(projects.dal, "get_project", lambda pid: {"id": pid})
-    monkeypatch.setattr(
-        projects.dal,
-        "set_project_source",
-        lambda pid, path, title: saved.append((pid, path, title)),
+    redis_url = os.environ.get("WENYI_TEST_REDIS_URL")
+    if not redis_url:
+        pytest.skip("Set WENYI_TEST_REDIS_URL to run a real Arq queue")
+    monkeypatch.setattr(workers, "settings", replace(workers.settings, redis_url=redis_url))
+    queue_name = "wenyi:test:" + uuid.uuid4().hex
+    monkeypatch.setattr(workers, "WORKFLOW_QUEUE", queue_name)
+    monkeypatch.setattr(job_service, "enqueue", workers.enqueue)
+    client, _ = api
+    pid = new_project(api)
+    response = client.post(
+        f"/projects/{pid}/upload", files={"file": ("story.txt", b"A new story.")}
     )
-    monkeypatch.setattr(
-        projects.paths,
-        "source_path",
-        lambda pid, fmt: str(tmp_path / f"source.{fmt}"),
-    )
-    monkeypatch.setattr(
-        projects.paths,
-        "source_cache_dir",
-        lambda pid: str(tmp_path / "source"),
-    )
-    monkeypatch.setattr(
-        projects,
-        "settings",
-        SimpleNamespace(data_dir=str(tmp_path)),
-    )
-    return saved
+    assert response.status_code == 200, response.text
 
-
-def test_upload_html_returns_chapter_preview(monkeypatch, tmp_path):
-    saved = _stub_upload_dependencies(monkeypatch, tmp_path)
-    source = b"""
-        <html><body>
-        <h1>Chapter One</h1><p>First paragraph.</p>
-        <h2>Chapter Two</h2><p>Second paragraph.</p>
-        </body></html>
-    """
-
-    result = projects.upload_source(
-        "project-1",
-        UploadFile(filename="book.html", file=BytesIO(source)),
-        fmt=None,
-    )
-
-    assert result["fmt"] == "html"
-    assert result["chapter_count"] == 2
-    assert [chapter["title"] for chapter in result["chapters"]] == [
-        "Chapter One",
-        "Chapter Two",
-    ]
-    assert saved == [("project-1", "source.html", "source")]
-
-
-def test_upload_pdf_invalidates_stale_conversion_cache(monkeypatch, tmp_path):
-    from wenyi_core.ingest import segmenter
-
-    saved = _stub_upload_dependencies(monkeypatch, tmp_path)
-    cache_dir = tmp_path / "source"
-    cache_dir.mkdir()
-    (cache_dir / "converted.html").write_text(
-        "<html><body><h1>PDF Chapter</h1><p>Body.</p></body></html>",
-        encoding="utf-8",
-    )
-
-    def load_pdf(path, source_lang, target_lang, *, cache_dir):
-        assert not (tmp_path / "source" / "converted.html").exists()
-        return Document(
-            title="novel",
-            source_lang=source_lang,
-            target_lang=target_lang,
-            fmt="pdf",
-            source_path=path,
-            chapters=[
-                Chapter(
-                    index=0,
-                    title="New PDF Chapter",
-                    segments=[Segment(index=0, source="New body.")],
-                )
-            ],
+    async def consume():
+        redis = await create_pool(RedisSettings.from_dsn(redis_url))
+        worker = Worker(
+            functions=[tasks.run_parse],
+            redis_pool=redis,
+            queue_name=queue_name,
+            burst=True,
+            handle_signals=False,
+            poll_delay=0.01,
         )
+        try:
+            await worker.async_run()
+            assert worker.jobs_complete == 1 and worker.jobs_failed == 0
+        finally:
+            await worker.close()
 
-    monkeypatch.setattr(segmenter, "load_document", load_pdf)
-
-    result = projects.upload_source(
-        "project-1",
-        UploadFile(filename="novel.pdf", file=BytesIO(b"new PDF")),
-        fmt=None,
-    )
-
-    assert result["fmt"] == "pdf"
-    assert result["title"] == "novel"
-    assert result["chapter_count"] == 1
-    assert result["chapters"][0]["title"] == "New PDF Chapter"
-    assert saved == [("project-1", "source.pdf", "novel")]
+    asyncio.run(consume())
+    assert dal.get_job_by_arq_id(response.json()["job_id"])["status"] == "done"
+    assert client.get(f"/projects/{pid}/preview").status_code == 200
 
 
-def test_upload_pdf_without_mineru_key_has_actionable_error(
-    monkeypatch, tmp_path
-):
-    saved = _stub_upload_dependencies(monkeypatch, tmp_path)
-    monkeypatch.delenv("MINERU_API_KEY", raising=False)
+def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
+    from wenyi_api.workers.recovery import recover_jobs
 
-    with pytest.raises(HTTPException) as raised:
-        projects.upload_source(
-            "project-1",
-            UploadFile(filename="novel.pdf", file=BytesIO(b"not parsed")),
-            fmt=None,
+    client, _ = api
+    pid = new_project(api)
+    upload(api, pid)
+    response = client.post(f"/projects/{pid}/prepare")
+    job = dal.get_job_by_arq_id(response.json()["job_id"])
+    dal.set_job_status(job["id"], "running")
+    with pool_module.get_pool().connection() as conn:
+        conn.execute(
+            "UPDATE jobs SET updated_at=now()-interval '3 minutes' WHERE id=%s", (job["id"],)
         )
+    # No live thread owns the project's advisory lock, even though DB says running.
+    asyncio.run(recover_jobs({"redis": None}))
+    assert dal.get_project(pid)["status"] == "paused"
+    assert dal.latest_resumable_job(pid)["kind"] == "prepare"
 
-    assert raised.value.status_code == 422
-    assert raised.value.detail == (
-        "解析失败：PDF 解析服务尚未配置 MINERU_API_KEY，"
-        "请联系管理员配置后重试"
+
+def test_comparison_results_and_usage_survive_book_initialization(api, monkeypatch):
+    from wenyi_core.llm import factory
+    from wenyi_core.llm.router import RoutedLLMClient
+    from wenyi_core.llm.usage import UsageSample
+
+    class ComparisonClient(RoutedLLMClient):
+        def complete_profile(self, messages, *, operation, profile, json_mode=False):
+            self.usage.record(
+                "direct",
+                UsageSample(prompt_tokens=2, completion_tokens=3, total_tokens=5),
+                operation,
+            )
+            return "comparison answer"
+
+    client, _ = api
+    pid = new_project(api)
+    monkeypatch.setattr(factory, "build_client", lambda cfg: ComparisonClient(cfg.llm))
+    response = client.post(
+        f"/projects/{pid}/models/compare",
+        json={
+            "operation": "translation.body",
+            "models": ["default_strong", "default_cheap"],
+            "messages": [{"role": "user", "content": "test"}],
+        },
     )
-    assert saved == []
+    assert response.status_code == 200, response.text
+    execute_next(api)
+    endpoint = f"/projects/{pid}/models/comparisons/{response.json()['job_id']}"
+    assert client.get(endpoint).json()["status"] == "completed"
+    assert client.get(f"/projects/{pid}/stats").json()["usage"]["totals"]["calls"] == 2
+    upload(api, pid)
+    monkeypatch.setattr(
+        factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)
+    )
+    assert client.post(f"/projects/{pid}/prepare").status_code == 200
+    execute_next(api)
+    stats = client.get(f"/projects/{pid}/stats").json()
+    assert stats["usage"]["totals"]["calls"] >= 2
+    assert any(run["operation"] == "model_compare" for run in stats["timing"]["runs"])
+    assert client.get(endpoint).json()["status"] == "completed"
+
+
+def test_http_download_and_websocket_require_token(api, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+    from wenyi_api import main
+    from wenyi_api.routers import ws
+
+    client, _ = api
+    pid = new_project(api)
+    secured = replace(main.settings, api_token="test-access-token")
+    monkeypatch.setattr(main, "settings", secured)
+    monkeypatch.setattr(ws, "settings", secured)
+    secured_client = TestClient(create_app())
+    assert secured_client.get(f"/projects/{pid}/exports/123/download").status_code == 401
+    assert (
+        secured_client.get(
+            f"/projects/{pid}", headers={"Authorization": "Bearer test-access-token"}
+        ).status_code
+        == 200
+    )
+    with secured_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "wrong"})
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code == 1008
+    secured_client.close()

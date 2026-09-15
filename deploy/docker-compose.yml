@@ -1,11 +1,23 @@
-# 文译全栈一键部署（docker compose）
-# 用法：
-#   cp .env.example .env  （填入 DEEPSEEK_API_KEY 等）
-#   docker compose --profile full up --build
-#
-# profiles:
-#   full   = web + api + worker + postgres + redis（完整 SaaS）
-#   server = api + worker + postgres + redis（无前端，远程 CLI 场景）
+# Run from the repository: docker compose -f deploy/docker-compose.yml --profile full up --build
+# full: Web + API + workflow worker + export worker + PostgreSQL + Redis
+# server: all backend services, suitable for API clients or a separately hosted Web UI.
+x-app: &app
+  env_file: .env
+  environment: &app-environment
+    DATABASE_URL: postgresql://wenyi:wenyi@postgres:5432/wenyi
+    REDIS_URL: redis://redis:6379/0
+    DATA_DIR: /data
+    WENYI_CONFIG: /app/config.yaml
+  volumes:
+    - data:/data
+    - ${WENYI_CONFIG_FILE:-../config.yaml}:/app/config.yaml:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  profiles: [full, server]
+  restart: unless-stopped
 
 services:
   postgres:
@@ -17,57 +29,53 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wenyi"]
+      test: [CMD-SHELL, "pg_isready -U wenyi -d wenyi"]
       interval: 5s
       timeout: 3s
       retries: 10
-    profiles: ["full", "server"]
+    profiles: [full, server]
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    profiles: ["full", "server"]
+    command: [redis-server, --appendonly, "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: [full, server]
+    restart: unless-stopped
 
   api:
+    <<: *app
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
-    environment:
-      DATABASE_URL: postgresql://wenyi:wenyi@postgres:5432/wenyi
-      REDIS_URL: redis://redis:6379/0
-      DATA_DIR: /data
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      MINERU_API_KEY: ${MINERU_API_KEY:-}
-      WENYI_API_TOKEN: ${WENYI_API_TOKEN:-}
-      WENYI_CORS_ORIGINS: "*"
-    volumes:
-      - data:/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
+      args:
+        INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
     ports:
       - "8000:8000"
-    profiles: ["full", "server"]
 
   worker:
+    <<: *app
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
-    environment:
-      DATABASE_URL: postgresql://wenyi:wenyi@postgres:5432/wenyi
-      REDIS_URL: redis://redis:6379/0
-      DATA_DIR: /data
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      MINERU_API_KEY: ${MINERU_API_KEY:-}
-    volumes:
-      - data:/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    profiles: ["full", "server"]
+      args:
+        INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+    command: [arq, wenyi_api.workers.WorkerSettings]
+
+  export-worker:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+      args:
+        INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+    command: [arq, wenyi_api.workers.ExportWorkerSettings]
 
   web:
     build:
@@ -77,8 +85,10 @@ services:
       - "8080:80"
     depends_on:
       - api
-    profiles: ["full"]
+    profiles: [full]
+    restart: unless-stopped
 
 volumes:
   pgdata:
+  redisdata:
   data:

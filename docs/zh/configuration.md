@@ -1,261 +1,150 @@
-# 配置说明
+# 配置指南
 
-[English](../configuration.md)
+[English](../configuration.md) · [使用指南](usage.md) · [Web 部署](../web.md)
 
-程序读取当前工作目录的 `config.yaml`。配置文件不存在时会自动创建带注释的默认文件。
+Web 与 CLI 共用 `wenyi_core.config.Config`。CLI 读取 `--config` 指定文件（默认 `config.yaml`）；Web 从 `WENYI_CONFIG` 读取服务默认配置，应用所选流程，再合并项目保存的显式设置。Web 路径由服务管理，提供商凭证保留在环境变量中。
 
-## 语言
+## 最小配置与默认值
 
 ```yaml
 language:
   source: auto
   target: zh
+llm:
+  preset: deepseek
+segment:
+  max_tokens_per_batch: 1800
+  max_tokens_per_segment: 1200
+pipeline:
+  book_understanding: true
+  polish: true
+  review: true
+  review_autofix: true
+output:
+  mono: true
+  bilingual: false
+  punctuation_normalize: true
 ```
 
-`source: auto` 会调用模型识别源语言；也可以写死 ISO 639-1 代码，例如 `ja`、`en`、`ko`、`ru`、`fr`、`de`、`es`。目标语言目前为简体中文。
+语言列表见 `trans-novel languages`。模型生成的说明性元数据使用目标语言，Web 界面维持中文。Web 项目初始化后不能改变目标语言或源文件内容身份。
 
-## 模型
+Token 预算使用 `tiktoken` 的 `cl100k_base` 编码，控制原文分组和按句切分，不等同于模型输出上限。`max_tokens_per_segment` 取代旧字符预算字段。
+
+## 提供商、模型配置和路由
+
+内置注册表包含 DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM、通用 OpenAI 兼容接口及测试用 Fake。预设提供 `providers`、`models`、`tiers`；也可全部显式定义。档位名称固定为 `strong`、`cheap`、`fast`。
+
+例如保留 DeepSeek 预设，同时将初始审校路由到另一个提供商：
 
 ```yaml
 llm:
-  provider: deepseek
+  preset: deepseek
+  providers:
+    review_connection:
+      kind: openai
+      api_key_env: OPENAI_API_KEY
+      timeout: 600
+      max_retries: 4
+      max_concurrency: 2
+  models:
+    review_model:
+      provider: review_connection
+      model: your-review-model
+      max_output_tokens: 4096
+  routes:
+    review.scan:
+      model: review_model
+      fallbacks: [default_cheap]
 ```
 
-只需选择模型提供商。DeepSeek provider 默认使用：
+把 `your-review-model` 替换成端点支持的模型。YAML 只保存密钥环境变量名。每条路由必须且只能选择一个 `model` 或 `tier`；`fallbacks` 是显式模型配置名列表。提供商专属请求参数放在 `models.<名称>.options`，由适配器校验。
 
-- `https://api.deepseek.com`；
-- `DEEPSEEK_API_KEY` 环境变量；
-- `deepseek-v4-pro` 作为 strong 档；
-- `deepseek-v4-flash` 作为 cheap 和 fast 档。
+覆盖预设中同名连接或模型时，该定义会整体替换，应提供完整定义。Web 项目覆盖按配置段和具名映射合并；切换预设时使用新预设及其显式覆盖，不沿用旧预设展开出的模型连接。
 
-API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
+```bash
+uv run trans-novel models list
+uv run trans-novel models explain --operation translation.body
+uv run trans-novel models check --workflow review
+```
 
-PDF 输入的首次解析另外读取 `MINERU_API_KEY`，用于调用 MinerU
-转换服务。该密钥与 LLM provider 配置无关，也不写入 `config.yaml`。
+常见操作包括 `language.detect`、`analysis.style`、`synopsis.chapter`、`synopsis.book`、`translation.body`、`translation.title`、`polish.body`、`glossary.extract`、`annotation.align`、`review.scan`、`review.verify`、`autofix.verify`、`autofix.fix`、`srt.translate`。完整列表以注册表和 `/capabilities` 为准。
 
-需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
+### 限制与预算
+
+连接支持 `max_concurrency`、`max_retries`、`timeout` 和可选 `quota_group`。在 `llm.quotas` 定义配额组，在 `llm.budget` 定义单次执行预算：
 
 ```yaml
 llm:
-  provider: deepseek
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 600
-  max_retries: 4
-  tiers:
-    strong:
-      model: deepseek-v4-pro
-      options:
-        reasoning_effort: high
-        thinking: true
-    cheap:
-      model: deepseek-v4-flash
-      options:
-        reasoning_effort: high
-        thinking: true
-    fast:
-      model: deepseek-v4-flash
-      options:
-        thinking: false
+  preset: deepseek
+  budget:
+    max_requests: 2000
+    max_tokens: 2000000
+    deadline_seconds: 7200
 ```
 
-用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
-运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
-`options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
-只属于 DeepSeek，不会进入通用 LLM 抽象层。
+配额组支持 `requests_per_minute` 与 `tokens_per_minute`。这些限制在当前客户端进程内执行，不是多个 Worker 共享的全账户分布式限流器。显式备用路由、提供商重试与成功请求用量进入操作记录。
 
-### OpenAI 与 OpenRouter
+## 书籍流程选项
 
-OpenAI 和 OpenRouter 分别维护独立 provider，会自动选择各自的 Base URL、API Key
-环境变量和思考参数格式。模型档位需要显式配置：
+| 字段 | 默认 | 作用 |
+|---|---:|---|
+| `pipeline.book_understanding` | `true` | 翻译前生成章节摘要和全书梗概。 |
+| `pipeline.polish` | `true` | 润色并保留润色前译文。 |
+| `pipeline.review` | `true` | 翻译后执行全书审校。 |
+| `pipeline.review_autofix` | `true` | 将审校修订发布到正式译文。 |
+| `pipeline.rolling_context_segments` | `6` | 提供最近已译段落作为上下文。 |
+| `pipeline.prescan_concurrency` | `4` | 章节摘要并发数。 |
+| `pipeline.annotation_alignment` | `true` | 在译文段落内放置 EPUB 注释链接。 |
+| `pipeline.annotation_alignment_concurrency` | `4` | 每段多个注释的定位并发上限。 |
+| `pipeline.align_retry_limit` | `2` | 翻译对齐失败后重试次数。 |
+| `pipeline.glossary_scope` | `chapter` | 本章相关术语；`full` 提供全表。 |
 
-```yaml
-llm:
-  provider: openrouter
-  tiers:
-    strong:
-      model: anthropic/claude-opus-4.6
-      options:
-        thinking: true
-        reasoning_effort: high
-    cheap:
-      model: openai/gpt-5-mini
-      options:
-        thinking: true
-        reasoning_effort: medium
-    fast:
-      model: google/gemini-3-flash
-      options:
-        thinking: false
-```
+Web 标准流程使用服务默认值；快速出稿关闭预理解、润色、审校和自动修复。自定义步骤或项目 YAML 可覆盖。项目运行期间，冲突的配置修改和人工正文修改会被拒绝。
 
-`openai` 默认读取 `OPENAI_API_KEY`，`openrouter` 默认读取 `OPENROUTER_API_KEY`。两者均可使用 `base_url`、`api_key_env` 覆盖默认值。
+### 审校选项
 
-### Google Gemini
+| `pipeline` 下的字段 | 默认 |
+|---|---:|
+| `review_concurrency` | `4` |
+| `review_output_retries` | `2` |
+| `review_agent_loop` | `true` |
+| `review_agent_max_evidence_rounds` | `2` |
+| `review_conflict_arbitration` | `true` |
+| `review_fix_loop` | `true` |
+| `review_fix_max_rounds` | `2` |
+| `review_clean_confirmations` | `2` |
 
-通过官方 `google-genai` SDK 原生支持 Google Gemini 模型，设置 `provider: gemini`（或 `provider: google`）。默认读取 `GEMINI_API_KEY`（或兼容 `GOOGLE_API_KEY`）环境变量：
+修订循环修改影子译文，`review_autofix` 控制独立发布阶段。仅看建议用 `--no-autofix` 或配置 `false`。已完成且匹配的审校结果可复用，匹配的中断运行可恢复；相关配置/模型路由、术语或译文变化后不复用旧结果。
 
-```yaml
-llm:
-  provider: gemini
-  api_key_env: GEMINI_API_KEY
-  tiers:
-    strong:
-      model: gemini-3.6-flash
-    cheap:
-      model: gemini-3.6-flash
-    fast:
-      model: gemini-3.6-flash
-```
-
-Gemini 专属配置还支持针对思考模型的 `thinking_level`（如 `low` / `high`）与 `thinking_budget` 参数。
-
-### 其他 OpenAI 兼容端点
-
-任意兼容 Chat Completions 的端点可使用 `openai-compatible`：
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  api_key_env: EXAMPLE_API_KEY
-  # deepseek | openai | openrouter | none
-  reasoning_style: deepseek
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        reasoning_effort: high
-        request_overrides:
-          thinking:
-            budget: 8192
-```
-
-`reasoning_style` 把统一的 `thinking`、`reasoning_effort` 转换为中转站实际
-接受的请求格式：
-
-- `deepseek`：`thinking.type` 与 `reasoning_effort`；
-- `openai`：`reasoning_effort`，关闭时发送 `none`；
-- `openrouter`：`reasoning.effort`，关闭时发送 `reasoning.enabled: false`；
-- `none`：不转换，适合依赖模型默认行为或使用自定义请求字段。
-
-`request_overrides` 是未知中转协议的兜底入口，其内容会作为原始顶层请求体
-字段发送，并在方言生成的字段之后递归合并。例如中转站使用
-`enable_thinking: true` 时可以这样配置：
-
-```yaml
-llm:
-  provider: openai-compatible
-  base_url: https://api.example.com/v1
-  reasoning_style: none
-  tiers:
-    strong:
-      model: provider-model-name
-      options:
-        thinking: true
-        request_overrides:
-          enable_thinking: true
-```
-
-方言由中转站协议决定，而不是由实际模型名称决定。例如，中转站即使代理
-DeepSeek 模型，只要它要求 OpenAI 的 `reasoning_effort` 格式，就应选择
-`reasoning_style: openai`。
-
-本地 Ollama 和 vLLM 还可以分别使用 `ollama`、`vllm`，默认地址为
-`http://localhost:11434/v1` 和 `http://localhost:8000/v1`，默认不要求 API Key。
-两者同样需要配置实际部署的模型档位。Ollama 的 OpenAI 兼容接口可使用
-`reasoning_style: openai`；vLLM 是否支持思考开关取决于模型模板和服务端启动
-参数，必要时可通过 `request_overrides.chat_template_kwargs` 传入
-`enable_thinking`。
-
-## 流水线
+## 输出、PDF 与路径
 
 ```yaml
 pipeline:
-  review: false
-  polish: true
-  backtranslate_sample: 0
-  consistency_qa: false
-  rolling_context_segments: 6
-  book_understanding: true
-  prescan_concurrency: 4
-  review_concurrency: 4
-  review_output_retries: 2
-  review_agent_loop: true
-  review_agent_tier: strong
-  review_agent_max_evidence_rounds: 2
-  review_conflict_arbitration: true
-  review_fix_loop: true
-  review_fix_max_rounds: 2
-  review_clean_confirmations: 2
-  glossary_scope: chapter
-```
-
-- `review`：默认关闭；开启后在全书翻译完成时自动执行取证式全书审校。关闭时仍可显式调用 `trans-novel review`。
-- `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
-- `backtranslate_sample`：回译抽检比例，`0` 为关闭。
-- `consistency_qa`：全书完成后进行跨章术语、人称、语气和标点检查。
-- `rolling_context_segments`：每批翻译附带的前文译文段数。
-- `book_understanding`：预扫全书，生成章节梗概和全书概览。
-- `prescan_concurrency`：预扫章节梗概的并发数。
-- `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
-- `review_output_retries`：本地 JSON 修复和较大审校块拆分后，单段响应仍缺少有效完成回执时的额外重试次数；设为 `2` 表示连同初次调用最多尝试 3 次。
-- `review_agent_loop`：原有 Reviewer 提示词在成功叶块中发现候选后，允许 Agent Loop 选择性请求证据，再确认、驳回或细化这些候选。
-- `review_agent_tier`：取证循环、跨块仲裁和临时 Review Fixer 所用的模型档位，默认 `strong`。
-- `review_agent_max_evidence_rounds`：每个 Agent Loop 最多允许的选择性取证轮数，范围为 `0` 到 `2`；用完后必须给出最终结论。
-- `review_conflict_arbitration`：所有块结束后，同一术语、人称或固定表达的一致性建议若互相矛盾，再执行只给建议、不修改数据的终局仲裁。
-- `review_fix_loop`：针对确认的问题在本次运行的影子译文中生成完整单段替换，再从头盲审全书；关闭后保持单轮、只给建议的行为。
-- `review_fix_max_rounds`：最多生成的临时 Fix 轮数，范围为 `0` 到 `4`；它不是 Review 总轮数。
-- `review_clean_confirmations`：开启影子 Fix 后，需要连续无问题的全书 Review 次数，范围为 `1` 到 `2`，默认 `2`。
-- `glossary_scope`：`chapter` 仅带本章相关术语，`full` 带全量术语表。
-
-`translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`、
-`--qa`、`--no-qa` 会覆盖对应配置。
-
-可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
-译文。Review 只会修改本次运行的影子译文，不会把替换写入正式翻译状态；统一
-结果和内部逐轮记录会保存到 `state/<书名>/reviews/review-<时间戳>/`。
-本次 Review 用量既保存为目录内增量，也会计入本书累计用量。
-
-## 输出
-
-```yaml
+  pdf_backend: mineru
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  babeldoc_timeout: 600
+  # babeldoc_pages: "6-8"
+honorific:
+  strategy: keep_style
+paths:
+  state_dir: state
 output:
   mono: true
   bilingual: false
   bilingual_order: target_first
   bilingual_preserve_source_style: false
   about_page: true
+  punctuation_normalize: true
 ```
 
-- `mono`：生成单语中文版，文件名为 `<书名>.zh.epub`。
-- `bilingual`：生成原文与译文对照版，文件名为 `<书名>.zh-bi.epub`。
-- `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
-- `bilingual_preserve_source_style`：设为 `true` 时，原文继承书籍正文样式，不使用灰色淡化背景；仅影响 EPUB 和 HTML。
-- `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
+`honorific.strategy` 可选 `keep_style`、`normalize`、`drop`，存在语言专属规则时会应用。双语顺序可选 `target_first` 或 `source_first`。
 
-默认只生成单语版；使用 `--bilingual` 可同时生成双语版，配置和命令行也可组合为仅生成双语版。
+`punctuation_normalize` 只在适用目标语言的导出副本上操作，不回写模型译文。`paths.state_dir` 是 CLI 设置；Web 拒绝项目自行指定存储路径。
 
-## 切分、敬称与路径
+默认 MinerU 解析需要 `MINERU_API_KEY`。BabelDOC 作为独立 HTTP bridge 部署，通过 `pdf_backend: babeldoc` 选择。容器中应填 API 与两个 Worker 都可访问的主机名；`127.0.0.1` 指各自容器内部。已保存的解析后端信息决定后续是否使用 BabelDOC 回填 PDF。
 
-```yaml
-segment:
-  max_chars_per_batch: 1800
-  max_chars_per_segment: 1200
+fpdf2 输出要求字体包含 **TrueType 轮廓**（`glyf` 表）。导出器跳过不兼容的 OpenType/CFF 候选；显式配置不兼容字体时，在写 PDF 前返回错误。可安装 `fonts-wqy-zenhei`，或通过 `TRANS_NOVEL_PDF_FONT` 指定覆盖原文及译文字符的兼容 TTF/TTC 字体。Docker 为 fpdf2 内置 WenQuanYi Zen Hei；WeasyPrint 继续使用已安装的 Noto CJK 字体。不能仅按文件扩展名判断轮廓格式。
 
-honorific:
-  strategy: keep_style
+## 已移除的设置
 
-punctuation:
-  normalize: true
-
-paths:
-  state_dir: state
-```
-
-- `max_chars_per_batch`：单个模型翻译批次的目标字符数。
-- `max_chars_per_segment`：超长段落的拆分阈值。
-- `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
-- `punctuation.normalize`：统一简体中文大陆常用全角标点。
-- `state_dir`：断点、章节产物、术语库和报告的位置。
+独立一致性 QA、回译抽检、`autofix_severe`、`review_agent_tier`、旧 `force` 参数和字符预算字段已移除。标点规范化配置位于 `output`。配置校验会拒绝不支持的流水线/切分字段。此次 Web 更新使用全新数据库结构，不自动迁移旧策略或数据库。

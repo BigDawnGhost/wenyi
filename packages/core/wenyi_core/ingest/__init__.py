@@ -1,1 +1,1 @@
-"""摄取与切分：把 EPUB / 纯文本解析为 Document → Chapter → Segment。"""
+"""Ingest and segment EPUB/text into Document, Chapter and Segment objects."""

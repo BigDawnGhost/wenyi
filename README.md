@@ -1,241 +1,107 @@
-<div align="center">
+# Wenyi · 文译
 
-# 📚 Wenyi
-
-**One command, from EPUB to a readable Chinese translation.**
-
-Whole-book analysis · Real-time glossary · Multi-stage review
-
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square)](https://www.python.org/)
-[![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square)](https://github.com/BigDawnGhost/wenyi/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/Tybfva4HT)
+Multilingual book and subtitle translation with a Web UI and a local CLI.
 
 **English** | [简体中文](docs/zh/README.md)
 
-<img src="docs/images/bilingual-preview.png" alt="Wenyi bilingual EPUB preview" width="720">
+Wenyi translates long-form fiction with whole-book understanding, a shared glossary, polishing, evidence-based review and recoverable automatic fixes. This branch keeps the `webui` monorepo architecture and incorporates the supported workflows from `dev`.
 
-</div>
+![Bilingual EPUB preview](docs/images/bilingual-preview.png)
 
----
+## Features
 
-## Table of contents
+- **Languages:** source detection and direct translation between the built-in languages, including Simplified/Traditional Chinese and English/Portuguese variants. Run `trans-novel languages` for the registry.
+- **Book workflows:** whole-book synopsis, rolling context, token-budgeted batches, translation followed by polishing in the same conversation where supported, live terminology extraction and chapter-title translation.
+- **Review:** whole-book evidence checks, conflict arbitration, shadow revisions and a separate Autofix publisher. Matching completed reviews are reused; interrupted reviews resume their checkpoints. Review and Autofix are enabled by default.
+- **Formats:** EPUB, DOCX, FB2, text, Markdown, HTML and PDF input; EPUB, DOCX, HTML, text, Markdown and PDF output. SRT has a separate subtitle workflow with timestamp-preserving mono/bilingual output.
+- **Model routing:** provider connections, reusable model profiles, `strong` / `cheap` / `fast` tiers, per-operation routes, explicit fallback models, concurrency limits, request/token budgets and usage by model/provider.
+- **Web workspace:** project configuration, progress, terms, manual editing, style guidance, Review history, subtitle editing and downloadable exports. An independent export queue reads consistent snapshots during translation.
 
-- [Why Wenyi](#why-wenyi)
-- [Core features](#core-features)
-- [Quick start](#quick-start)
-- [Supported formats](#supported-formats)
-- [Translation pipeline](#translation-pipeline)
-- [Documentation](#documentation)
-- [Limitations](#limitations)
-- [Community](#community)
-- [Star history](#star-history)
-- [License](#license)
+## Choose an installation
 
----
-
-## Why Wenyi
-
-| Typical approach | Wenyi |
-|---|---|
-| Segments translated in isolation, unaware of surrounding content | Whole-book prescan with chapter digests and rolling context |
-| Glossary managed manually or as an afterthought | Real-time term extraction with conflict detection, fed back into subsequent batches |
-| Single-pass translation, fragile to interruptions | Batch checkpoints and chapter status tracking: resume any interrupted run with the same command |
-| Raw model output, no systematic quality process | Translate → polish → chapter-level backtranslation sampling → final review → consistency QA |
-
-Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
-
----
-
-## Core features
-
-- **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
-- **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- **Multi-stage quality** — optional polishing (strong model), final AI review, backtranslation sampling, and cross-chapter consistency QA
-- **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
-- **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints
-- **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
-- **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support
-
----
-
-## Quick start
-
-### Prerequisites
-
-Wenyi requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
-
-### Installation
+### Web: Docker Compose
 
 ```bash
-git clone https://github.com/BigDawnGhost/wenyi.git
+git clone --branch webui https://github.com/BigDawnGhost/wenyi.git
 cd wenyi
-uv sync
+cp .env.example deploy/.env
+# Set credentials for the providers selected in config.yaml.
+docker compose -f deploy/docker-compose.yml --profile full up --build
 ```
 
-### Configuration
+Open [the Web UI](http://localhost:8080) or [API documentation](http://localhost:8000/docs). The `server` profile starts the API, both workers, PostgreSQL and Redis without the frontend.
 
-Set your API key:
+API and workers read the same `config.yaml`, environment credentials and `/data` volume. PostgreSQL stores mutable Web state; `/data` holds uploaded originals, parser resources and exports. See [Web deployment and development](docs/web.md).
 
-```bash
-export DEEPSEEK_API_KEY=sk-...
-```
+### CLI: no database or Redis required
 
-### One-command translation
+Install Python 3.10+ and `uv`, then:
 
 ```bash
+uv sync --all-packages
+export DEEPSEEK_API_KEY=your-key
 uv run trans-novel translate book.epub
 ```
 
-This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
-
-### Step-by-step workflow
+The default preset is DeepSeek. Choose another provider in `config.yaml` and set its named environment variable to use a different service. `uv sync --package wenyi-cli` installs only the local CLI and core dependencies.
 
 ```bash
-# 1. Prepare — parse, analyze, prescan (no body text translated)
 uv run trans-novel prepare book.epub
-
-# 2. Translate — resume from the prepared state
-uv run trans-novel translate book.epub
-
-# 3. Review — independent final review against the completed glossary
-uv run trans-novel review book.epub
-
-# 4. Consistency QA
-uv run trans-novel qa book.epub
-
-# 5. Check progress
+uv run trans-novel translate book.epub --bilingual
+uv run trans-novel review book.epub --no-autofix
 uv run trans-novel status book.epub
+uv run trans-novel assemble book.epub --format docx
+uv run trans-novel translate captions.srt --bilingual
 ```
 
-### Interrupt and resume
+The default book workflow enables understanding, polishing, Review and Autofix. To reduce work, use Web's **快速出稿** preset or disable the corresponding configuration options. Repeating a command resumes saved work. `review --no-autofix` generates recommendations without publishing them.
 
-Every completed batch is persisted immediately. If a run is interrupted, execute the same command again:
+CLI state is isolated by target language under `state/<book>/targets/<language>/`; subtitle state uses `state/srt/<name>/targets/<language>/`. Source hashes prevent accidentally continuing with a different input file. CLI exports normally use `output/<title>.<language>.<format>`; bilingual names include `-bi`.
 
-```bash
-uv run trans-novel translate book.epub
-```
+## Formats and optional services
 
-### Command-line overrides
-
-```bash
-uv run trans-novel translate book.epub --polish --review --qa     # enable all quality stages
-uv run trans-novel translate book.epub --no-polish                 # disable polishing
-uv run trans-novel translate book.epub --bilingual                 # produce both editions
-uv run trans-novel translate book.epub --chapter 0                 # translate the first chapter (indices start at 0)
-uv run trans-novel translate book.epub --format txt                # export as plain text
-```
-
-Final review is disabled by default. Set `pipeline.review: true` to run it
-automatically after the complete book has been translated and the glossary has
-reached its final state, or run Agent Review independently:
-
-```bash
-uv run trans-novel review book.epub
-```
-
-Each Review run starts from the beginning, checks chunks concurrently, and can
-selectively request cross-book evidence before resolving contradictory
-consistency suggestions. Confirmed issues can produce provisional full-segment
-replacements in a run-local shadow translation. A fresh whole-book review sees
-the shadow text—but not the previous issue explanation—and validates it again.
-Formal translation state is never modified. The consolidated read-only result,
-run usage, events, and internal round records are written under
-`state/<book>/reviews/review-<timestamp>/`.
-
----
-
-## Supported formats
-
-| Input | Output |
+| Input | Notes |
 |---|---|
-| EPUB, FB2, TXT, Markdown, HTML, PDF | EPUB (monolingual / bilingual), TXT, HTML, Markdown |
+| EPUB / HTML | Preserves supported structure, resources, navigation, ruby text and annotation links; EPUB supports per-paragraph annotation placement. |
+| DOCX | Retains supported headings, paragraph/inline styles, lists and tables; output font policy follows the target language. |
+| TXT / Markdown / FB2 | Parses local text into chapter/segment state. |
+| PDF / MinerU | Default PDF path; requires `MINERU_API_KEY`, caches the parsed representation and supports scanned sources through MinerU. |
+| PDF / BabelDOC | Optional external HTTP bridge selected in configuration; stores backend information for later PDF export. |
+| SRT | Independent cue/batch state and mono/bilingual subtitle output; no book synopsis or book Review stage. |
 
-- PDF input requires `MINERU_API_KEY` for the initial conversion; the resulting HTML is cached and reused.
-- EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
-- Source language is auto-detected by default, or fixed to an ISO 639-1 code in `config.yaml`.
+For local PDF output, install `uv sync --all-packages --extra pdf-output` (WeasyPrint), or `--extra pdf-output-lite` (fpdf2). The Docker backend image includes both by default and installs Noto fonts; set `INSTALL_PDF_OUTPUT=false` to omit Python PDF output extras. The BabelDOC bridge is deployed separately.
 
----
+## Architecture
 
-## Translation pipeline
-
-```mermaid
-flowchart TD
-    A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Analyze style and seed the glossary]
-    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
-    D --> E
-
-    subgraph T[Translate chapter by chapter]
-        E[Inject context and translate a batch]
-        E --> F[Polish and persist translations]
-        F --> G[Extract terms and refresh the glossary]
-        G --> H{More batches?}
-        H -- Yes --> E
-        H -- No --> I[Normalize punctuation and run chapter-level term extraction]
-        I --> J[Check backtranslation samples and persist the final chapter]
-    end
-
-    J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
-    K --> N{Confirmed issues and<br/>Fix budget remaining?}
-    N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
-    O --> K
-    N -- No or stopped --> P[Save read-only issues<br/>and modification suggestions]
-    P --> L[Optional cross-chapter consistency QA]
-    L --> M[Generate the report and assemble the selected output]
+```text
+apps/web                    React / Vite
+    │ HTTP / WebSocket
+apps/api                    FastAPI / Arq
+    ├── wenyi:workflows     parsing, preparation, translation, Review, model comparison
+    ├── wenyi:exports       independent export workers
+    └── PostgreSQL          Web state, terms, Review artifacts, subtitle caches, ledgers
+packages/core               shared translation/domain services and storage ports
+packages/cli                trans-novel → FileStorage / JSON / SQLite
+packages/shared-schema      types generated from OpenAPI
 ```
 
-When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
-The Review Fixer receives the same style brief, book synopsis, chapter digest,
-relevant glossary subset, and nearby source/translation context used to preserve
-the book's voice. Its replacements remain temporary review suggestions.
+The core owns translation behavior. API/CLI select storage; Review, Autofix and subtitle workflows persist through storage ports. Web workflows do not write local JSON or SQLite copies of database state.
 
----
+This update targets **fresh Web deployments**. It does not automatically migrate old Web databases, project strategies or saved state. Use a separate database/volume for the new schema when retaining an earlier installation.
 
-## Documentation
+## Documentation and verification
 
-- [Usage guide](docs/usage.md) — installation, Windows setup, input/output, resumability, independent stages
-- [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
-- [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
-- [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
+- [CLI usage](docs/usage.md) · [Configuration](docs/configuration.md) · [Pipeline and persistence](docs/pipeline.md)
+- [Web deployment](docs/web.md) · [Synchronization notes](docs/sync-dev-webui.md)
+- [Contributing](CONTRIBUTING.md) · [License](LICENSE)
 
-Translated state directories for public-domain books may be shared through [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase). Do not publish copyrighted text, private books, or `state/` directories containing sensitive information without permission.
+```bash
+uv sync --all-packages --group dev
+uv run pytest -q
+uv run ruff check packages/core packages/cli apps/api
+pnpm install --frozen-lockfile
+pnpm -C apps/web typecheck
+pnpm -C apps/web build
+```
 
----
-
-## Limitations
-
-- The translation pipeline is optimized for Simplified Chinese output; other target languages are not supported.
-- Polishing and final review are the most expensive stages. Shadow fixing may
-  trigger multiple full-book review passes and additional Fixer calls.
-- PDF input depends on the MinerU external service; the initial conversion requires an API key.
-- Translation quality is bounded by the capabilities of the chosen LLM model.
-- Very long books may produce large state directories; storage requirements grow with book length.
-
----
-
-## Community
-
-- [Discord server](https://discord.gg/Tybfva4HT)
-- QQ group: 1055065098
-- [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
-- [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
-
----
-
-## Star history
-
-<a href="https://www.star-history.com/?repos=BigDawnGhost%2FWenyi&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&theme=dark&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=BigDawnGhost/Wenyi&type=date&legend=top-left&sealed_token=VFuKZdjDh-9e2mG4qlvqeSpCkWCoRf9ZRy0hIDLdaECFQeoNNlQ20QxSD4PuvTZp1RJg7J2s5hr57Eq66paMrhikuuI3kc41uZZCYb-bTqsUafeSB7AVdhw7bmz70NhkVXABHtSIHdw0DROZaInmznYJ651gP2klEeW8OOM8EkfJnXgDld6f0xn8mIJ9" />
- </picture>
-</a>
-
----
-
-## License
-
-[MIT](LICENSE)
+Set `WENYI_TEST_DATABASE_URL` to an isolated PostgreSQL database to run real storage/workflow integration tests. CI provides PostgreSQL and Redis, tests Python 3.10/3.12, builds the frontend and runs browser tests. Offline fixtures verify behavior and recovery; they do not measure real-model translation quality.

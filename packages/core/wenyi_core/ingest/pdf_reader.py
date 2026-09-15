@@ -1,18 +1,16 @@
-"""PDF 读取器：PDF → MinerU API → HTML → read_html → Document。
-
-流程：
-1. 将 PDF 转换为 HTML（调用 MinerU Precision API），中间产物保存在运行状态目录
-2. 若中间 HTML 已存在则跳过转换（便于人工检查/修改后重跑）
-3. 用 html_reader 将 HTML 解析为 Document，再覆盖 fmt="pdf" 与原始路径
-
-依赖：
-  转换 PDF 需要 httpx / pypdf；缺失时给出安装提示。
-  若已有中间 HTML 则不需要这些依赖。
+"""PDF reader through MinerU HTML conversion.
+Convert PDF to HTML using MinerU Precision API and cache the intermediate file in run state.
+Reuse existing HTML for inspection and repeat runs. Parse with html_reader, then restore
+fmt="pdf" and the original path. Conversion requires httpx/pypdf and reports installation
+guidance if missing; cached HTML needs neither conversion dependency.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
+import shutil
 from pathlib import Path
 
 from .errors import MinerUError
@@ -20,8 +18,24 @@ from .html_reader import read_html
 from .models import Document
 
 
+def _source_sha256(path: str) -> str:
+    """Stream the PDF content hash to bind caches for direct reader calls."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def pdf_cache_html_path(cache_dir: str, source_hash: str) -> str:
+    """Return the MinerU HTML cache path isolated by source hash."""
+    if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
+        raise ValueError("Invalid source SHA-256 format")
+    return os.path.join(cache_dir, source_hash, "converted.html")
+
+
 def _check_deps() -> None:
-    """检查 PDF 转换所需的可选依赖，缺失时给出安装提示。"""
+    """Check optional PDF conversion dependencies and report installation guidance if absent."""
     missing = []
     for mod, pkg in [("httpx", "httpx"), ("pypdf", "pypdf")]:
         try:
@@ -30,10 +44,10 @@ def _check_deps() -> None:
             missing.append(pkg)
     if missing:
         raise ImportError(
-            f"PDF 转换需要额外依赖，请运行：\n"
+            f"PDF conversion requires optional dependencies; run: \n"
             f"  uv pip install {' '.join(missing)}\n"
-            f"或先手动将 PDF 转为 HTML，保存到本书状态目录的 "
-            f"source/converted.html，再重跑。"
+            f"After installing dependencies and converting once, inspect the cached source/<SHA-256>/"
+            f"converted.html。"
         )
 
 
@@ -43,57 +57,57 @@ def read_pdf(
     target_lang: str,
     *,
     cache_dir: str,
+    source_hash: str | None = None,
     api_token: str | None = None,
 ) -> Document:
-    """将 PDF 转换为 HTML 后解析为 Document。
-
-    中间 HTML 产物保存在本书运行状态目录的
-    ``source/converted.html``，
-    便于人工检查 MinerU 解析质量。若已存在则直接复用，不重复调用 API。
-
-    Parameters
-    ----------
-    path : str
-        PDF 文件路径。
-    source_lang : str
-        源语言代码。
-    target_lang : str
-        目标语言代码。
-    cache_dir : str
-        本书运行状态下的输入预处理缓存目录。
-    api_token : str | None
-        MinerU API token，默认读环境变量 ``MINERU_API_KEY``。
-
-    Returns
-    -------
-    Document
-        fmt="pdf"，source_path 指向原始 PDF。
+    """Convert PDF to HTML and parse it into a Document.
+    Cache the intermediate at source/<source_sha256>/converted.html within book state for
+    inspection and API-free reuse.
+    path is the PDF file; source_lang/target_lang identify languages; cache_dir is the
+    preprocessing cache. source_hash may supply a precomputed SHA-256, otherwise the reader
+    computes it. api_token defaults to MINERU_API_KEY. Return fmt="pdf" with source_path
+    pointing to the original PDF.
     """
-    os.makedirs(cache_dir, exist_ok=True)
-    html_path = os.path.join(cache_dir, "converted.html")
+    digest = source_hash or _source_sha256(path)
+    html_path = pdf_cache_html_path(cache_dir, digest)
+    os.makedirs(os.path.dirname(html_path), exist_ok=True)
 
-    # 若中间 HTML 不存在，调用 MinerU 转换
+    converted = False
+    # Call MinerU only when intermediate HTML is absent.
     if not os.path.isfile(html_path):
         _check_deps()
         from .pdf_to_html import convert_pdf_to_html
 
+        temporary_html_path = f"{html_path}.tmp"
         try:
-            convert_pdf_to_html(path, html_path, api_token=api_token)
+            os.remove(temporary_html_path)
+        except FileNotFoundError:
+            pass
+        try:
+            convert_pdf_to_html(path, temporary_html_path, api_token=api_token)
+            os.replace(temporary_html_path, html_path)
+            converted = True
         except MinerUError:
+            shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)
             raise
         except Exception as error:
-            # HTTP、PDF 解析、ZIP 解包和写盘失败统一为输入层异常；
-            # 原异常作为 cause 保留，便于调试时追踪。
-            raise MinerUError(f"PDF 转换失败：{error}") from error
+            shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)
+            # Wrap HTTP, PDF parsing, ZIP extraction and filesystem failures as input-layer errors.
+            # Retain the original exception as the cause for debugging.
+            raise MinerUError(f"PDF conversion failed: {error}") from error
 
-    # 用 html_reader 解析中间 HTML
+    # Parse intermediate HTML with html_reader.
     doc = read_html(html_path, source_lang, target_lang)
+    if _source_sha256(path) != digest:
+        if converted:
+            shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)
+        raise ValueError(
+            "PDF changed during conversion or parsing; the new cache was discarded. Retry."
+        )
 
-    # 覆盖为 PDF 原始信息
+    # Restore original PDF metadata.
     doc.title = Path(path).stem
     doc.fmt = "pdf"
     doc.source_path = os.path.abspath(path)
-    doc.meta["pdf_path"] = doc.source_path
-    doc.meta["converted_html_path"] = os.path.abspath(html_path)
 
     return doc

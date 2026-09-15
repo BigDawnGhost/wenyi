@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -17,6 +18,19 @@ router = APIRouter(tags=["ws"])
 @router.websocket("/ws/projects/{pid}/progress")
 async def project_progress(ws: WebSocket, pid: str) -> None:
     await ws.accept()
+    try:
+        auth = await asyncio.wait_for(ws.receive_json(), timeout=10)
+        if settings.api_token and not hmac.compare_digest(
+            str(auth.get("token", "")), settings.api_token
+        ):
+            await ws.close(code=1008)
+            return
+        if not dal.get_project(pid):
+            await ws.close(code=1008)
+            return
+    except (asyncio.TimeoutError, ValueError, AttributeError, WebSocketDisconnect):
+        await ws.close(code=1008)
+        return
     # 先发一次状态快照
     try:
         p = dal.get_project(pid) or {}
@@ -28,8 +42,9 @@ async def project_progress(ws: WebSocket, pid: str) -> None:
     redis = Redis.from_url(settings.redis_url)
     pubsub = redis.pubsub()
     await pubsub.subscribe(f"project:{pid}")
+    disconnected = asyncio.create_task(ws.receive())
     try:
-        while True:
+        while not disconnected.done():
             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if msg and msg.get("type") == "message":
                 data = msg.get("data")
@@ -42,8 +57,11 @@ async def project_progress(ws: WebSocket, pid: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        disconnected.cancel()
+        await asyncio.gather(disconnected, return_exceptions=True)
         try:
             await pubsub.unsubscribe(f"project:{pid}")
         except Exception:  # noqa: BLE001
             pass
-        await redis.close()
+        await pubsub.aclose()
+        await redis.aclose()

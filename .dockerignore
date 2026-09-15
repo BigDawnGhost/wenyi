@@ -1,0 +1,17 @@
+.git
+.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+**/dist
+build
+.env
+.env.*
+deploy/.env
+/data
+/state
+/output
+.scratch
+local_references

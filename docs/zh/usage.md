@@ -1,142 +1,110 @@
-# 使用指南
+# CLI 使用指南
 
-[English](../usage.md)
+[English](../usage.md) · [Web UI](../web.md) · [配置指南](configuration.md)
 
-## 安装与运行
-
-从源码运行需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。
+## 安装与配置
 
 ```bash
-uv sync
-export DEEPSEEK_API_KEY=sk-...
-uv run trans-novel --version
-uv run trans-novel translate book.epub
+uv sync --package wenyi-cli
+export DEEPSEEK_API_KEY=your-key
+uv run trans-novel --help
+uv run trans-novel languages
 ```
 
-显示的版本号由仓库 Git 标签自动生成：标签构建显示正式版本，开发构建还会包含距标签的提交数与提交哈希。
+首次启动时，若指定的配置文件不存在，CLI 会创建默认配置。自定义文件放在命令前：`uv run trans-novel --config custom.yaml translate book.epub`。凭证通过提供商配置中的 `api_key_env` 指定环境变量，不把密钥写入项目 YAML。
 
-每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
+源语言 `language.source` 可设 `auto`；目标语言必须是内置的具体语言。相同源语言与目标语言会被拒绝。明确指定源语言可省略检测调用。
 
-## Windows
-
-使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
-
-```powershell
-# 仅当前窗口有效
-$env:DEEPSEEK_API_KEY = "sk-..."
-.\wenyi.exe translate .\book.epub
-```
-
-要永久保存环境变量，执行下列命令后重新打开 PowerShell：
-
-```powershell
-setx DEEPSEEK_API_KEY "sk-..."
-```
-
-也可把 `language.source` 设为已知的语言代码，避免调用模型自动识别源语言。
-
-## 输入与输出
-
-- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF。
-- 默认输出：源文件所在目录 `output/` 中的单语版 `<书名>.zh.epub`；双语版 `<书名>.zh-bi.epub` 需按需开启。
-- `--format txt|html|markdown|pdf`：改为导出指定格式；所有输入默认仍生成 EPUB。
-- EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
-- 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
-- EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
-- 状态文件位于 `state/`，包含章节中间结果、术语 SQLite 库和报告。
-
-### 实验性 PDF 支持
-
-PDF 输入和 PDF 导出目前均属于实验性支持。
-
-#### PDF 输入
-
-首次读取 PDF 需设置 `MINERU_API_KEY`：
+## 书籍流程
 
 ```bash
-export MINERU_API_KEY=...
-uv run trans-novel translate book.pdf
-```
-
-MinerU 转换生成的 HTML 会保存到 `state/<书名>/source/converted.html`。
-后续运行会直接复用该文件，也可人工修正后再续跑。
-
-#### PDF 导出
-
-默认 PDF 引擎为 WeasyPrint。安装对应的可选依赖后，无需指定
-`--pdf-engine`：
-
-```bash
-uv sync --extra pdf-output
-uv run trans-novel assemble book.html --format pdf
-```
-
-如需不依赖系统排版库的跨平台轻量引擎，可使用 `fpdf2`：
-
-```bash
-uv sync --extra pdf-output-lite
-uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
-```
-
-`fpdf2` 可处理基础排版和图片，但只支持有限的 HTML/CSS；与文字混排的图片
-会作为独立区块输出。它会查找系统中的中文字体；如果未找到，请用
-`TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
-Windows。
-
-## 常用命令
-
-```bash
-# 一键完整翻译、只翻指定章节，或只准备而不翻译
-uv run trans-novel translate book.epub
-uv run trans-novel translate book.epub --chapter 3
-uv run trans-novel translate book.epub --format txt
+# 仅准备：解析、语言、风格、初始术语与可选全书梗概。
 uv run trans-novel prepare book.epub
-uv run trans-novel translate book.pdf
-
-# 覆盖配置中的润色、最终审校与一致性 QA 开关
-uv run trans-novel translate book.epub --polish --review --qa
-uv run trans-novel translate book.epub --no-polish --no-review --no-qa
-
-# 同时生成单语和双语版 / 仅生成双语版
-uv run trans-novel translate book.epub --bilingual
-uv run trans-novel translate book.epub --no-mono --bilingual
-```
-
-`prepare` 会解析书籍、识别语言、生成风格指南和初始术语表，并完成配置中启用的全书预扫，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
-
-## 中断与续跑
-
-已完成的批次会写入状态目录。中断后使用同一个源文件执行：
-
-```bash
+# 翻译待处理正文，润色、审校、发布修订、生成报告并导出。
 uv run trans-novel translate book.epub
-uv run trans-novel status book.epub
+# 同时生成单语版与双语版。
+uv run trans-novel translate book.epub --bilingual
+# 只翻译第 0 章（章节索引从 0 开始）。
+uv run trans-novel translate book.epub --chapter 0
+# 本次关闭可选阶段。
+uv run trans-novel translate book.epub --no-polish --no-review
 ```
 
-更改润色设置不会自动重跑已经完成的翻译批次。Review 不同：每次执行
-`review` 都会全量重审完整译文，并创建新的时间戳只读审校目录。只有需要从头翻译时
-才应使用新的状态目录或清理对应状态。
+默认开启全书预理解、润色、Review 和 Autofix。可在 YAML 关闭 `pipeline.book_understanding`；Web“快速出稿”会一起关闭预理解、润色、审校与自动修复。
 
-## 独立阶段与术语管理
+书籍输入支持 EPUB、DOCX、FB2、TXT、Markdown、HTML 和 PDF。`prepare` 虽不翻译正文，仍可能为语言检测、风格分析和梗概调用模型。Web 上传预览是独立解析任务，不调用翻译模型。
+
+### 中断续跑
+
+停止后，用相同源文件、目标语言和配置重复执行命令。系统保存已完成的翻译批次、术语提取检查点、章节与上下文；缺失术语检查点时补提取，不重新翻译已有正文。润色保留润色前译文和最终译文。
+
+CLI 状态位于 `state/<书名>/targets/<语言>/`。续跑会校验源文件 SHA-256；源内容改变需使用新的运行目录。不同目标语言使用独立目录。Web 项目初始化后固定源文件身份与目标语言，改变其中任意一项需新建项目。
+
+## 全书审校与自动修复
 
 ```bash
+# 使用 pipeline.review_autofix 的值，默认 true。
 uv run trans-novel review book.epub
+# 仅生成建议，不发布到正式译文。
+uv run trans-novel review book.epub --no-autofix
+# 本次明确开启发布。
+uv run trans-novel review book.epub --autofix
+```
+
+全书审校要求所有章节均已完成翻译。Review 基于快照和影子译文核查证据、仲裁冲突、临时修订并盲审；独立 Autofix 阶段通过前后文本哈希与发布索引写回正式译文。
+
+**不是每次执行都会新建审校运行。** 译文内容、审校配置/模型路由、术语指纹一致时，已完成结果会被复用，未完成的可恢复运行会继续检查点；相关输入变化才建立新运行。未完成的 Autofix 发布先恢复，再考虑新审校；已被人工修改的正文不会被过期修复覆盖。
+
+`--no-autofix` 控制正式发布，不关闭影子修订循环；仍可计算建议变更。运行记录包含问题、建议、实际发布记录、失败原因、证据、检查点与用量。查看问题数量时应同时查看完成状态；未审校不表示“零问题通过”。
+
+## 状态与术语
+
+```bash
+uv run trans-novel status book.epub
+uv run trans-novel report book.epub
 uv run trans-novel glossary list book.epub
 uv run trans-novel glossary conflicts book.epub
-uv run trans-novel glossary resolve book.epub "原文术语" "指定译名"
-uv run trans-novel qa book.epub
-uv run trans-novel report book.epub
-uv run trans-novel assemble book.epub
+uv run trans-novel glossary resolve --help
 ```
 
-`review` 会使用最终术语库检查完整译文。原有 Reviewer 提示词先并发检查连续
-文本块；候选问题随后可进入有界取证循环，互相矛盾的跨块一致性建议还可获得
-终局建议。确认的问题可以生成仅限本次运行的完整单段影子替换；同轮 Fixer 都读取
-同一份不可变快照，下一轮全书 Review 不接收旧问题说明，只盲审更新后的影子译文。
-这些替换不会写入 manifest、章节 JSON 或术语库。每次运行会把面向用户的统一
-`result.json`、本次模型用量、事件和内部逐轮记录写入
-`state/<书名>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
-本书累计 `usage.json`；`report.json` 只保存简短的只读审校摘要。
+术语提取保留既有映射，将不同候选译法记录为冲突，由用户明确解决。存储按插入顺序提供术语，保持提示词前缀稳定。用量跨运行累计；计时记录区分完成、中断与失败。
 
-`qa` 和 `report` 默认只汇总问题，不会修改正文；`assemble` 可在不重新调用模型
-的情况下重新导出已有译文。
+## 导出与 PDF
+
+```bash
+uv run trans-novel assemble book.epub
+uv run trans-novel assemble book.epub --format html
+uv run trans-novel assemble book.epub --format docx
+uv run trans-novel assemble book.epub --format pdf --pdf-engine weasyprint
+uv run trans-novel assemble book.epub --format pdf --pdf-engine fpdf2
+uv run trans-novel translate manuscript.docx
+```
+
+支持 `epub`、`txt`、`html`、`markdown`、`docx`、`pdf`。CLI 的 DOCX 输入默认导出 DOCX；通过 BabelDOC 解析的 PDF 默认导出 PDF；MinerU 与普通书籍默认导出 EPUB，除非显式选择格式。文件名含目标语言，双语版加 `-bi`。
+
+独立 `assemble` 在短时状态锁内读取一致快照，释放锁后排版，可在翻译继续时导出已保存内容。标点规范化只改变导出副本。EPUB/HTML 保留支持的资源、目录和注释；DOCX 保留支持的样式、列表和表格。复杂书籍仍需检查实际排版。
+
+MinerU 需要 `MINERU_API_KEY`，解析结果按源文件与配置缓存。选用 BabelDOC 时设 `pipeline.pdf_backend: babeldoc` 和可访问的 `pipeline.babeldoc_bridge_url`，独立部署 bridge。PDF 输出需对应 Python extra 与系统字体/库，容器默认值见 [Web 部署](../web.md)。
+
+## SRT 字幕
+
+```bash
+uv run trans-novel translate captions.srt
+uv run trans-novel translate captions.srt --bilingual
+```
+
+SRT 采用重叠窗口并发翻译，在 `state/srt/<名称>/targets/<语言>/` 保存字幕条目和批次缓存，保留序号与时间戳，输出单语和/或双语 SRT。重复执行恢复未完成工作；已保存字幕和 Web 人工编辑优先于旧批次响应。字幕不运行书籍预理解、术语提取和全书审校。
+
+## 模型检查与对比
+
+```bash
+uv run trans-novel models list
+uv run trans-novel models explain --operation review.scan
+uv run trans-novel models check --workflow translate
+uv run trans-novel models compare --operation translation.body \
+  --model default_strong --messages messages.json --out comparison.json
+```
+
+`messages.json` 是由 `role`/`content` 对象组成的 JSON 数组。重复 `--model` 可选择多个模型配置。对比会明确向这些模型发送测试消息，并记录输出、耗时与用量；查看路由不发送对比请求。
+
+当前流程已移除独立 `qa` 命令和回译抽检。旧 `do_qa`、`autofix_severe`、`review_agent_tier`、`force` 和字符预算字段不属于当前 API/配置；改用 Review Autofix、操作路由与 Token 预算。

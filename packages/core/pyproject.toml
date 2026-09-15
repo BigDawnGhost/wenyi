@@ -1,7 +1,7 @@
 [project]
 name = "wenyi-core"
 version = "0.2.0"
-description = "文译翻译内核：多 Agent 协同长篇小说翻译（多语言 → 中文），存储/事件抽象化"
+description = "文译翻译内核：多 Agent 协同长篇小说翻译（多语言互译），存储/事件抽象化"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40",
@@ -15,7 +15,13 @@ dependencies = [
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
     "json-repair>=0.61,<1",
+    "python-docx>=1.2.0",
+    "tiktoken>=0.14.0",
 ]
+
+[project.optional-dependencies]
+pdf-output = ["weasyprint>=69.0"]
+pdf-output-lite = ["fpdf2>=2.8.5"]
 
 [build-system]
 requires = ["hatchling"]

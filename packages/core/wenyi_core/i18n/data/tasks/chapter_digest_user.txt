@@ -1,0 +1,4 @@
+[Chapter source ($src_label)]
+$source
+
+Return the chapter digest in $tgt_label, at most $digest_length.

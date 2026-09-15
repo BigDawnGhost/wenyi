@@ -1,4 +1,4 @@
-"""为循环审校生成只读的单段临时替换候选。"""
+"""Generate temporary single-paragraph replacement candidates for iterative review."""
 
 from __future__ import annotations
 
@@ -8,7 +8,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ..config import Config
 from ..glossary.store import GlossaryTerm
+from ..i18n import languages
+from ..i18n.prompts import render
+from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from . import prompts
 from .base import Agent
@@ -23,12 +27,12 @@ _OUTPUT_FIELDS = {
 
 
 class ReviewFixerProtocolError(ValueError):
-    """Fixer 的输入或模型输出不符合临时补丁协议。"""
+    """Fixer input or output violates the temporary-patch protocol."""
 
 
 @dataclass(frozen=True)
 class ProvisionalPatch:
-    """尚未写入正式正文、只供下一轮 Review 验证的完整段落替换。"""
+    """A complete paragraph replacement for the next review, not yet published to formal text."""
 
     patch_id: str
     round: int
@@ -42,7 +46,7 @@ class ProvisionalPatch:
     status: Literal["provisional"] = "provisional"
 
     def as_dict(self) -> dict[str, Any]:
-        """返回可直接写入 Review 逐轮记录的稳定表示。"""
+        """Return a stable representation for per-round review records."""
         return {
             "patch_id": self.patch_id,
             "round": self.round,
@@ -58,8 +62,17 @@ class ProvisionalPatch:
 
 
 def _sha256(text: str) -> str:
-    """计算完整 UTF-8 文本的 SHA-256，供影子补丁做乐观校验。"""
+    """Hash complete UTF-8 text with SHA-256 for optimistic shadow-patch validation."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _dialogue_quote_pairs(text: str) -> int:
+    """Count complete double-quote pairs to detect loss of existing dialogue boundaries."""
+    return (
+        text.count('"') // 2
+        + min(text.count("“"), text.count("”"))
+        + min(text.count("「"), text.count("」"))
+    )
 
 
 def _patch_id(
@@ -70,7 +83,7 @@ def _patch_id(
     after: str,
     issue_ids: tuple[str, ...],
 ) -> str:
-    """根据补丁全部有效载荷生成可复现、内容敏感的 ID。"""
+    """Derive a reproducible, content-sensitive ID from the complete patch payload."""
     payload = json.dumps(
         {
             "round": round_number,
@@ -87,9 +100,9 @@ def _patch_id(
 
 
 def _nearby_text(pairs: Sequence[tuple[str, str]]) -> str:
-    """把固定快照中的邻近原译文对渲染为只读上下文。"""
+    """Render neighboring source/target pairs from a fixed snapshot as read-only context."""
     if not pairs:
-        return "（无）"
+        return "(none)"
     rendered: list[str] = []
     for ordinal, pair in enumerate(pairs):
         if (
@@ -99,25 +112,29 @@ def _nearby_text(pairs: Sequence[tuple[str, str]]) -> str:
         ):
             raise ReviewFixerProtocolError("invalid_nearby_pair")
         source, target = pair
-        rendered.append(f"[上下文 {ordinal}] 原文：{source}\n    译文：{target}")
+        rendered.append(f"[Context {ordinal}] Source: {source}\n    Translation: {target}")
     return "\n".join(rendered)
 
 
 def _glossary_text(
     relevant_glossary: Sequence[GlossaryTerm] | str,
 ) -> str:
-    """渲染相关术语子集；也允许编排层传入预先本地化的只读文本。"""
+    """Render relevant terms, or accept prelocalized read-only text from the pipeline."""
     if isinstance(relevant_glossary, str):
-        return relevant_glossary.strip() or "（无）"
+        return relevant_glossary.strip() or "(none)"
     return prompts.render_glossary(list(relevant_glossary))
 
 
 class ReviewFixer(Agent):
-    """按已确认问题生成一条严格校验、不可直接落盘的完整段落补丁。"""
+    """Generate strictly validated complete-paragraph patches that cannot publish themselves."""
+
+    def __init__(self, client: LLMClient, config: Config, *, operation: str = "review.fix"):
+        super().__init__(client, config)
+        self.operation = operation
 
     @staticmethod
     def target_hash(target: str) -> str:
-        """返回 Fixer 协议使用的当前译文哈希。"""
+        """Return the current translation hash used by the Fixer protocol."""
         if not isinstance(target, str):
             raise ReviewFixerProtocolError("invalid_current_target")
         return _sha256(target)
@@ -129,7 +146,9 @@ class ReviewFixer(Agent):
         chapter: int,
         index: int,
     ) -> tuple[tuple[str, ...], list[dict[str, Any]]]:
-        """验证问题归属与指导字段，并生成最小、可序列化的提示载荷。"""
+        """Validate issue ownership and guidance fields and produce a minimal serializable
+        payload.
+        """
         if not issues:
             raise ReviewFixerProtocolError("issues_required")
         issue_ids: list[str] = []
@@ -187,10 +206,10 @@ class ReviewFixer(Agent):
         nearby_pairs: Sequence[tuple[str, str]] = (),
         trace: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> ProvisionalPatch:
-        """生成单段临时替换，不写正文；协议错误会显式抛出。
-
-        ``nearby_pairs`` 应来自同一轮不可变影子快照。模型只能参考这些上下文，
-        输出仍必须是 ``source`` 所对应单段的完整译文。
+        """Generate a temporary single-paragraph replacement; raise on protocol errors.
+        nearby_pairs must come from the same immutable shadow snapshot. The model may
+        consult that context, but output must remain the complete translation of the single
+        source paragraph. No formal text is written.
         """
         if isinstance(round_number, bool) or not isinstance(round_number, int) or round_number < 1:
             raise ReviewFixerProtocolError("invalid_round")
@@ -208,29 +227,30 @@ class ReviewFixer(Agent):
 
         issue_ids, issue_payload = self._issues(issues, chapter=chapter, index=index)
         before_hash = self.target_hash(current_target)
-        system = prompts.render(
+        system = render(
             "review_fixer_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=prompts.langprofile.translate_guidance(
+            lang_guidance=languages.translate_guidance(
                 self.src,
                 self.config.honorific_strategy,
+                self.tgt,
             ),
         )
-        user = prompts.render(
+        user = render(
             "review_fixer_user",
             src=self.src,
             tgt=self.tgt,
-            style=style.strip() if isinstance(style, str) and style.strip() else "（无）",
+            style=style.strip() if isinstance(style, str) and style.strip() else "(none)",
             book_synopsis=(
                 book_synopsis.strip()
                 if isinstance(book_synopsis, str) and book_synopsis.strip()
-                else "（无）"
+                else "(none)"
             ),
             chapter_digest=(
                 chapter_digest.strip()
                 if isinstance(chapter_digest, str) and chapter_digest.strip()
-                else "（无）"
+                else "(none)"
             ),
             glossary=_glossary_text(relevant_glossary),
             nearby_pairs=_nearby_text(nearby_pairs),
@@ -250,9 +270,8 @@ class ReviewFixer(Agent):
         try:
             raw = self.client.complete(
                 messages,
-                tier=self.config.pipeline.review_agent_tier,
+                operation=self.operation,
                 json_mode=True,
-                stage=type(self).__name__,
             )
         except Exception as error:
             if trace:
@@ -308,6 +327,12 @@ class ReviewFixer(Agent):
         replacement = replacement.strip()
         if replacement == current_target.strip():
             raise ReviewFixerProtocolError("unchanged_replacement")
+        required_quote_pairs = min(
+            _dialogue_quote_pairs(source),
+            _dialogue_quote_pairs(current_target),
+        )
+        if _dialogue_quote_pairs(replacement) < required_quote_pairs:
+            raise ReviewFixerProtocolError("dropped_dialogue_quotes")
 
         return ProvisionalPatch(
             patch_id=_patch_id(

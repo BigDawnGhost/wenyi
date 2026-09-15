@@ -1,0 +1,5 @@
+{
+  "source": "Interpret the source faithfully, preserving information, narrative person, relationships and tone.",
+  "reading": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "evidence": "Character gender, references, kinship and relative age require source or contextual evidence. Do not guess from names, tone or self-reference alone. Preserve uncertainty and use wording that does not invent information."
+}

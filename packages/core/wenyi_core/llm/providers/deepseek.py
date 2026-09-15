@@ -1,4 +1,4 @@
-"""通过 DeepSeek 原生 OpenAI 兼容接口调用模型。"""
+"""Call DeepSeek through its native OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -6,15 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...config import LLMConfig
-from ..base import Messages
+from ..transport import Messages, ResolvedModel
 from ..usage import UsageSample, make_usage_sample, read_usage_int
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
-    ResolvedTier,
     base_request_kwargs,
     deep_merge,
-    resolve_provider_tiers,
 )
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -22,7 +19,7 @@ DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY"
 
 
 def normalize_deepseek_usage(usage: Any) -> UsageSample | None:
-    """把 DeepSeek 顶层缓存字段转换成统一用量。"""
+    """Normalize DeepSeek's top-level cache counters into shared usage accounting."""
     if usage is None:
         return None
     return make_usage_sample(
@@ -32,88 +29,76 @@ def normalize_deepseek_usage(usage: Any) -> UsageSample | None:
     )
 
 
-class DeepSeekTierOptions(BaseModel):
-    """DeepSeek 档位的专属请求选项。"""
+class DeepSeekOptions(BaseModel):
+    """DeepSeek-specific model request options."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     thinking: bool = True
     reasoning_effort: str = "high"
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
-def _default_tiers() -> dict[str, ResolvedTier[DeepSeekTierOptions]]:
-    """返回 DeepSeek 内置的 strong、cheap、fast 三档默认配置。"""
+def preset_models() -> dict[str, ResolvedModel[DeepSeekOptions]]:
+    """Return built-in DeepSeek defaults for strong, cheap and fast tiers."""
     return {
-        "strong": ResolvedTier(
-            model="deepseek-v4-pro",
-            options=DeepSeekTierOptions(),
+        "strong": ResolvedModel(
+            model="deepseek-flash",
+            options=DeepSeekOptions(),
         ),
-        "cheap": ResolvedTier(
-            model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(),
+        "cheap": ResolvedModel(
+            model="deepseek-flash",
+            options=DeepSeekOptions(),
         ),
-        "fast": ResolvedTier(
-            model="deepseek-v4-flash",
-            options=DeepSeekTierOptions(thinking=False),
+        "fast": ResolvedModel(
+            model="deepseek-flash",
+            options=DeepSeekOptions(),
         ),
     }
 
 
 def build_request_kwargs(
-    tier_config: ResolvedTier[DeepSeekTierOptions],
+    model_config: ResolvedModel[DeepSeekOptions],
     messages: Messages,
     *,
     json_mode: bool = False,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """把通用调用参数转换成 DeepSeek 的思考模式请求方言。"""
-    kwargs = base_request_kwargs(tier_config.model, messages, json_mode=json_mode)
+    """Convert generic arguments into DeepSeek thinking-mode request parameters."""
+    kwargs = base_request_kwargs(model_config.model, messages, json_mode=json_mode)
     extra_body: dict[str, Any] = {
-        "thinking": {"type": "enabled" if tier_config.options.thinking else "disabled"}
+        "thinking": {"type": "enabled" if model_config.options.thinking else "disabled"}
     }
-    if tier_config.options.thinking:
-        kwargs["reasoning_effort"] = tier_config.options.reasoning_effort
-    if tier_config.options.extra_body:
-        extra_body = deep_merge(extra_body, tier_config.options.extra_body)
+    if model_config.options.thinking:
+        kwargs["reasoning_effort"] = model_config.options.reasoning_effort
+    if model_config.options.extra_body:
+        extra_body = deep_merge(extra_body, model_config.options.extra_body)
     kwargs["extra_body"] = extra_body
     if max_tokens is not None:
-        kwargs["max_tokens"] = max(max_tokens, 4096) if tier_config.options.thinking else max_tokens
+        kwargs["max_tokens"] = max_tokens
     return kwargs
 
 
-class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekTierOptions]):
-    def __init__(self, cfg: LLMConfig):
-        """合并 DeepSeek 默认档位与用户覆盖后初始化兼容客户端。"""
-        tiers = resolve_provider_tiers(
-            cfg.tiers,
-            options_type=DeepSeekTierOptions,
-            defaults=_default_tiers(),
-        )
-        super().__init__(
-            cfg,
-            provider_name="DeepSeek",
-            default_base_url=DEFAULT_BASE_URL,
-            default_api_key_env=DEFAULT_API_KEY_ENV,
-            tiers=tiers,
-            requires_api_key=True,
-        )
+class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekOptions]):
+    default_base_url = DEFAULT_BASE_URL
+    default_api_key_env = DEFAULT_API_KEY_ENV
+    requires_api_key = True
 
     def _normalize_usage(self, usage: Any) -> UsageSample | None:
-        """读取 DeepSeek 顶层缓存字段并转换为统一用量。"""
+        """Normalize DeepSeek's top-level cache fields into shared usage accounting."""
         return normalize_deepseek_usage(usage)
 
     def _build_request_kwargs(
         self,
-        tier_config: ResolvedTier[DeepSeekTierOptions],
+        model_config: ResolvedModel[DeepSeekOptions],
         messages: Messages,
         *,
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """构造当前 DeepSeek 档位的最终请求参数。"""
+        """Build final request arguments for the selected DeepSeek tier."""
         return build_request_kwargs(
-            tier_config,
+            model_config,
             messages,
             json_mode=json_mode,
             max_tokens=max_tokens,

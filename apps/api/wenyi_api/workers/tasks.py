@@ -1,384 +1,519 @@
-"""Arq 任务实现：run_translation / run_export。
-
-在 worker 进程里用同步内核（经 ``asyncio.to_thread`` 包裹，避免阻塞事件循环）。
-存储走 PostgresStorage；进度经 RedisEmitter → Redis Pub/Sub → WebSocket。
-暂停：进度回调检测 projects.status=='paused'，抛 PauseRequested 在批次边界退出。
-"""
+"""Arq jobs: run synchronous domain services with PostgreSQL state and safe pauses."""
 
 from __future__ import annotations
 
 import asyncio
 import os
+import threading
+from pathlib import Path
+from time import monotonic
+from uuid import uuid4
+
+from wenyi_core.llm.limits import RequestStopped
 
 from .. import dal, paths
 from ..config import settings
 from ..db import init_pool
 from ..emitters import redis_progress_fn
+from ..project_service import effective_config
 from ..storage_pg import PostgresStorage
-from ..strategies import strategy_to_config
-
-# 这些函数由 Arq 在 worker 进程调用（非 API 进程），需自行初始化 DB 池 / Redis。
 
 
-class PauseRequested(Exception):
-    """用户请求暂停；在批次边界抛出，已落盘的内容不会丢失。"""
+class PauseRequested(KeyboardInterrupt):
+    """Stop at a persisted boundary, using the core's interruption recovery path."""
 
 
-def _load_base_config() -> "object":
-    from wenyi_core.config import Config
-    return Config.load(settings.config_path)
+def _resolve_source(pid: str) -> str:
+    project = dal.get_project(pid)
+    if not project or not project.get("source_path"):
+        raise ValueError("Project has no uploaded source")
+    source = Path(project["source_path"])
+    if not source.is_absolute():
+        source = Path(settings.data_dir) / source
+    if not source.is_file():
+        raise ValueError("Uploaded source file is missing")
+    return str(source)
 
 
 def _pipeline_storage(pid: str, pool) -> PostgresStorage:
     return PostgresStorage(pid, pool, run_dir=paths.project_dir(pid))
 
 
-def _resolve_source(pid: str) -> str:
-    p = dal.get_project(pid)
-    if p is None:
-        raise RuntimeError(f"项目 {pid} 找不到上传原件")
+def _build_config_for(pid: str, run_id: str | None = None):
+    from wenyi_core.config import Config
 
-    rel = p.get("source_path")
-    if rel:
-        abs_path = rel if os.path.isabs(rel) else os.path.join(settings.data_dir, rel)
-        if os.path.isfile(abs_path):
-            return abs_path
-    # 兜底：扫描项目目录
-    pdir = paths.project_dir(pid)
-    for fn in os.listdir(pdir):
-        if fn.startswith("source."):
-            return os.path.join(pdir, fn)
-    raise RuntimeError(f"项目 {pid} 找不到上传原件")
+    project = dal.get_project(pid)
+    if project is None:
+        raise ValueError("Project does not exist")
+    job = dal.get_job_by_arq_id(run_id) if run_id else None
+    snapshot = ((job or {}).get("params") or {}).get("config_snapshot")
+    if snapshot:
+        return Config.from_dict({**snapshot, "paths": {"state_dir": paths.project_dir(pid)}})
+    return effective_config(project)
 
 
-def _build_config_for(pid: str):
-    p = dal.get_project(pid)
-    base = _load_base_config()
-    strategy = (p or {}).get("strategy") or {"template": "标准翻译"}
-    cfg = strategy_to_config(
-        strategy, base,
-        source_lang=(p or {}).get("source_lang") or "auto",
-        target_lang=(p or {}).get("target_lang") or "zh",
-    )
-    # 输出：导出文件名控制
-    cfg.output.mono = True
-    cfg.output.bilingual = False
-    return cfg
+def _parse_source(pid, storage, config, progress):
+    from wenyi_core.pipeline.preparation import PreparationService
+
+    source = _resolve_source(pid)
+    project = dal.get_project(pid)
+    progress(0, 1, "解析原文")
+    if project["fmt"] == "srt":
+        from wenyi_core.ingest.srt_reader import parse_srt
+
+        cues = parse_srt(source)
+        storage.write_artifact(
+            "subtitle_preview.json",
+            [{"index": cue.index, "timestamp": cue.timestamp, "source": cue.text} for cue in cues],
+        )
+        preview = {
+            "title": (project.get("source_meta") or {}).get("original_filename", "Subtitles"),
+            "fmt": "srt",
+            "chapter_count": 0,
+            "total_word_count": len(cues),
+            "source_lang": config.source_lang,
+            "chapters": [],
+        }
+    else:
+        from wenyi_core.ingest.segmenter import load_document
+        from wenyi_core.pipeline.runstore import source_sha256
+
+        digest = source_sha256(source)
+        doc = PreparationService.load_parsed_document(storage, source, config, actual_sha256=digest)
+        if doc is None:
+            doc = load_document(
+                source,
+                config.source_lang,
+                config.target_lang,
+                split_segments=config.segment.max_tokens_per_segment,
+                cache_dir=storage.source_dir,
+                source_hash=digest,
+                pdf_backend=config.pipeline.pdf_backend,
+                babeldoc_bridge_url=config.pipeline.babeldoc_bridge_url,
+                babeldoc_pages=config.pipeline.babeldoc_pages,
+                babeldoc_timeout=config.pipeline.babeldoc_timeout,
+            )
+            if source_sha256(source) != digest:
+                raise ValueError("Source changed while generating preview")
+            storage.write_artifact(
+                "parsed_document.json",
+                {
+                    "source_sha256": digest,
+                    "ingest_config": PreparationService.ingest_config(config),
+                    "document": doc.model_dump(mode="json"),
+                },
+            )
+        chapters = [
+            {
+                "index": chapter.index,
+                "title": chapter.title,
+                "word_count": len(chapter.text_segments),
+            }
+            for chapter in doc.chapters
+        ]
+        preview = {
+            "title": doc.title,
+            "fmt": project["fmt"],
+            "chapter_count": len(chapters),
+            "total_word_count": sum(row["word_count"] for row in chapters),
+            "source_lang": doc.source_lang,
+            "chapters": chapters,
+        }
+    storage.write_artifact("preview.json", preview)
+    progress(1, 1, "原文预览已就绪")
+    return "uploaded"
 
 
-def _progress_with_pause(redis, pid: str):
-    """构造一个检查暂停位的 ProgressFn。"""
-    emitter_fn = redis_progress_fn(redis, pid)
-
-    def fn(done: int, total: int, label: str) -> None:
-        emitter_fn(done, total, label)
-        # 批次边界检查暂停
-        if dal.is_paused(pid):
-            raise PauseRequested(pid)
-    return fn
-
-
-def _translate_sync(pid: str, *, do_qa: bool | None = None) -> None:
-    """同步执行翻译（在 worker 的 to_thread 里调用）。"""
-    from wenyi_core.llm.factory import build_client
+def _book_operation(kind, pid, storage, config, client, progress, params):
     from wenyi_core.pipeline.orchestrator import Orchestrator
 
-    pool = init_pool(settings.psycopg_dsn)
-    import redis as redis_lib
-    redis = redis_lib.from_url(settings.redis_url)
-
-    cfg = _build_config_for(pid)
+    if params.get("autofix") is not None:
+        config.pipeline.review_autofix = params["autofix"]
+    orch = Orchestrator(config, client=client, storage=storage)
     source = _resolve_source(pid)
-    storage = _pipeline_storage(pid, pool)
-    client = build_client(cfg)
-    orch = Orchestrator(cfg, client=client, storage=storage)
-    progress = _progress_with_pause(redis, pid)
-    try:
-        orch.run_all(source, progress=progress, do_qa=do_qa)
-        dal.set_project_status(pid, "done")
-    except PauseRequested:
-        dal.set_project_status(pid, "paused")
-    except Exception as e:  # noqa: BLE001
-        dal.set_project_status(pid, "error")
-        storage.log_event("pipeline_error", error=str(e))
-        raise
-
-
-async def run_translation(ctx, *, project_id: str,
-                          do_qa: bool | None = None) -> None:
-    """Arq 任务：翻译全书（prepare → 翻译 → QA → 报告）。"""
-    dal.set_project_status(project_id, "translating")
-    try:
-        await asyncio.to_thread(_translate_sync, project_id, do_qa=do_qa)
-    except Exception:
-        # _translate_sync 会记录流水线运行期异常；这里兜底处理模块导入、
-        # 配置加载、存储初始化等发生在其 try 块之前的启动异常。
-        dal.set_project_status(project_id, "error")
-        raise
-
-
-def _translate_chapter_sync(pid: str, chapter_index: int) -> None:
-    """同步执行单章翻译，不运行全书审校、QA、报告或组装。"""
-    from wenyi_core.llm.factory import build_client
-    from wenyi_core.pipeline.orchestrator import Orchestrator
-
-    pool = init_pool(settings.psycopg_dsn)
-    import redis as redis_lib
-    redis = redis_lib.from_url(settings.redis_url)
-
-    cfg = _build_config_for(pid)
-    source = _resolve_source(pid)
-    storage = _pipeline_storage(pid, pool)
-    client = build_client(cfg)
-    orch = Orchestrator(cfg, client=client, storage=storage)
-    progress = _progress_with_pause(redis, pid)
-    try:
-        orch.run(source, only_chapter=chapter_index, progress=progress)
-        chapters = dal.chapter_summaries(pid)
-        status = (
-            "done"
-            if chapters and all(chapter["status"] == "done" for chapter in chapters)
-            else "prepared"
-        )
-        dal.set_project_status(pid, status)
-    except PauseRequested:
-        storage.set_chapter_status(chapter_index, "pending")
-        dal.set_project_status(pid, "paused")
-    except Exception as e:  # noqa: BLE001
-        storage.set_chapter_status(chapter_index, "pending")
-        dal.set_project_status(pid, "error")
-        storage.log_event(
-            "chapter_translation_error",
-            chapter=chapter_index,
-            error=str(e),
-        )
-        raise
-
-
-async def run_chapter_translation(
-    ctx,
-    *,
-    project_id: str,
-    chapter_index: int,
-) -> None:
-    """Arq 任务：只翻译并保存指定章节。"""
-    dal.set_project_status(project_id, "translating")
-    try:
-        await asyncio.to_thread(
-            _translate_chapter_sync,
-            project_id,
-            chapter_index,
-        )
-    except Exception:
-        # _translate_chapter_sync 负责恢复章节状态；此处覆盖其 try 块之前的启动异常。
-        dal.set_chapter_status(project_id, chapter_index, "pending")
-        dal.set_project_status(project_id, "error")
-        raise
-
-
-def _prepare_sync(pid: str) -> None:
-    """同步执行译前准备（解析、语言检测、风格分析、术语提取、全书概览）。"""
-    from wenyi_core.llm.factory import build_client
-    from wenyi_core.pipeline.orchestrator import Orchestrator
-
-    pool = init_pool(settings.psycopg_dsn)
-    import redis as redis_lib
-    redis = redis_lib.from_url(settings.redis_url)
-
-    cfg = _build_config_for(pid)
-    source = _resolve_source(pid)
-    storage = _pipeline_storage(pid, pool)
-    client = build_client(cfg)
-    orch = Orchestrator(cfg, client=client, storage=storage)
-    progress = _progress_with_pause(redis, pid)
-    try:
+    if kind == "prepare":
         orch.prepare_for_translation(source, progress=progress)
-        dal.set_project_status(pid, "prepared")
-    except PauseRequested:
-        dal.set_project_status(pid, "paused")
-    except Exception as e:  # noqa: BLE001
-        dal.set_project_status(pid, "error")
-        storage.log_event("pipeline_error", error=str(e))
-        raise
+        return "prepared"
+    if kind == "chapter_translation":
+        orch.run(source, only_chapter=params["chapter_index"], progress=progress)
+        return "done" if not storage.pending_chapters() else "prepared"
+    if kind == "review":
+        orch.run_review(source, progress=progress)
+        orch.run_report(source)
+        return "reviewed"
+    steps = {"translate", "report"}
+    if config.pipeline.review:
+        steps.add("review")
+    orch.run_steps(source, steps, progress=progress)
+    return "done"
 
 
-async def run_prepare(ctx, *, project_id: str) -> None:
-    """Arq 任务：仅译前准备（不翻译正文）。"""
-    dal.set_project_status(project_id, "preparing")
-    try:
-        await asyncio.to_thread(_prepare_sync, project_id)
-    except Exception:
-        # 兜底：模块导入 / 配置 / 存储初始化等发生在 _prepare_sync try 块之前的异常。
-        dal.set_project_status(project_id, "error")
-        raise
+def _compare(pid, storage, config, client, run_id, params, progress):
+    from wenyi_core.llm.usage import usage_delta
 
+    results = []
+    models = params["models"]
+    started_run = monotonic()
+    status = "running"
 
-def _review_sync(pid: str, *, force: bool = False, autofix: bool = True) -> None:
-    """同步执行全书 AI 审校（在 worker 的 to_thread 里调用）。"""
-    from wenyi_core.llm.factory import build_client
-    from wenyi_core.pipeline.orchestrator import Orchestrator
-
-    pool = init_pool(settings.psycopg_dsn)
-    import redis as redis_lib
-    redis = redis_lib.from_url(settings.redis_url)
-
-    cfg = _build_config_for(pid)
-    source = _resolve_source(pid)
-    storage = PostgresStorage(pid, pool)
-    client = build_client(cfg)
-    orch = Orchestrator(cfg, client=client, storage=storage)
-    progress = _progress_with_pause(redis, pid)
-    try:
-        orch.run_review(source, progress=progress, force=force, autofix=autofix)
-        dal.set_project_status(pid, "reviewed")
-    except PauseRequested:
-        dal.set_project_status(pid, "paused")
-    except Exception as e:  # noqa: BLE001
-        dal.set_project_status(pid, "error")
-        storage.log_event("pipeline_error", error=str(e))
-        raise
-
-
-async def run_review(ctx, *, project_id: str,
-                     force: bool = False, autofix: bool = True) -> None:
-    """Arq 任务：全书 AI 审校。"""
-    dal.set_project_status(project_id, "reviewing")
-    try:
-        await asyncio.to_thread(
-            _review_sync, project_id, force=force, autofix=autofix
+    def persist():
+        storage.write_artifact(
+            f"comparisons/{run_id}.json",
+            {
+                "status": status,
+                "operation": params["operation"],
+                "results": results,
+                "usage": client.usage_summary(),
+                "elapsed_seconds": monotonic() - started_run,
+            },
         )
-    except Exception:
-        # 兜底：模块导入 / 配置 / 存储初始化等发生在 _review_sync try 块之前的异常。
-        dal.set_project_status(project_id, "error")
-        raise
-
-
-def _record_qa_error(
-    pid: str,
-    error: Exception,
-    *,
-    completion_status: str,
-) -> None:
-    """尽力持久化 QA 启动或运行错误，避免状态永久停在 running。"""
-    from ..qa_state import (
-        COMPLETION_STATUSES,
-        read_qa_state,
-        write_qa_state,
-    )
 
     try:
-        pool = init_pool(settings.psycopg_dsn)
-        storage = _pipeline_storage(pid, pool)
-        current_state = read_qa_state(storage.load_report() or {})
-        if current_state is not None and current_state["status"] == "error":
+        for i, model in enumerate(models):
+            progress(i, len(models), f"比较模型 {model}")
+            before = client.usage_summary()
+            started = monotonic()
+            row = {
+                "profile": model,
+                "route": client.validate_profile(model, params["operation"]).describe(),
+            }
+            try:
+                row["output"] = client.complete_profile(
+                    params["messages"],
+                    operation=params["operation"],
+                    profile=model,
+                    json_mode=params.get("json_mode", False),
+                )
+            except Exception as error:
+                row["error"] = str(error)
+            row.update(
+                seconds=monotonic() - started, usage=usage_delta(client.usage_summary(), before)
+            )
+            results.append(row)
+            persist()
+        progress(len(models), len(models), "模型比较完成")
+        status = "completed"
+        return params.get("completion_status") or "created"
+    except (KeyboardInterrupt, RequestStopped):
+        status = "interrupted"
+        raise
+    except Exception:
+        status = "failed"
+        raise
+    finally:
+        persist()
+
+
+def _record_failure(pid, run_id, error, *, status="error"):
+    """A late Future or duplicate delivery may update only its own task's project."""
+    job = dal.get_job_by_arq_id(run_id) if run_id else None
+    if job:
+        dal.set_job_status(job["id"], status, error=str(error))
+        storage = _pipeline_storage(pid, init_pool(settings.psycopg_dsn))
+        latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
+        if not latest or latest["id"] != job["id"]:
             return
-        stable_status = (
-            completion_status
-            if completion_status in COMPLETION_STATUSES
-            else "done"
-        )
-        write_qa_state(
-            storage,
-            status="error",
-            completion_status=stable_status,
-            error=str(error),
-        )
-        storage.log_event("consistency_qa_error", error=str(error))
-    except Exception:  # noqa: BLE001
-        pass
+        # Brief API reads may own the advisory lock while rejecting a busy project.
+        # Wait for that boundary instead of dropping the terminal project status.
+        with storage.lock():
+            latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
+            if latest and latest["id"] == job["id"]:
+                dal.set_project_status(pid, status, error=str(error))
+    elif not run_id:
+        dal.set_project_status(pid, status, error=str(error))
 
 
-def _qa_sync(pid: str, *, completion_status: str = "done") -> None:
-    """同步执行跨章一致性检查并把结果写入项目报告。"""
-    from wenyi_core.agents.consistency import ConsistencyChecker
-    from wenyi_core.assemble.report import build_report
+def _execute(
+    kind: str, pid: str, run_id: str | None, params: dict, stop: threading.Event | None = None
+) -> None:
+    import redis as redis_lib
     from wenyi_core.llm.factory import build_client
 
-    from ..qa_state import write_qa_state
-
     pool = init_pool(settings.psycopg_dsn)
-    import redis as redis_lib
-    redis = redis_lib.from_url(settings.redis_url)
-
-    cfg = _build_config_for(pid)
     storage = _pipeline_storage(pid, pool)
-    progress = redis_progress_fn(redis, pid, kind="qa")
+    redis = redis_lib.from_url(settings.redis_url)
+    job = dal.get_job_by_arq_id(run_id) if run_id else None
+    client = None
+    stop = stop or threading.Event()
+    finished = threading.Event()
+
+    def monitor_pause():
+        while not finished.wait(0.25):
+            try:
+                if dal.is_paused(pid):
+                    stop.set()
+                if stop.is_set() and client is not None:
+                    client.cancel()
+            except Exception:
+                # A transient database outage is handled by the operation itself.
+                continue
+
+    watcher = threading.Thread(target=monitor_pause, daemon=True)
+    watcher.start()
+    emitter = redis_progress_fn(redis, pid, kind=kind, run_id=run_id)
+
+    def progress(done, total, label):
+        if stop.is_set() or (dal.get_project(pid) or {}).get("status") in {"pausing", "paused"}:
+            if client is not None:
+                client.cancel()
+            raise PauseRequested(pid)
+        emitter(done, total, label)
+
     try:
-        progress(0, 1, "一致性检查中…")
-        issues = ConsistencyChecker(build_client(cfg), cfg).check_and_record(storage)
-        report = build_report(storage, consistency_issues=issues)
-        storage.save_report(report)
-        write_qa_state(
-            storage,
-            status="completed",
-            completion_status=completion_status,
-        )
-        progress(1, 1, f"一致性检查完成：发现 {len(issues)} 项问题")
-        dal.set_project_status(pid, completion_status)
-    except Exception as e:  # noqa: BLE001
-        dal.set_project_status(pid, "error")
-        _record_qa_error(pid, e, completion_status=completion_status)
+        with storage.lock():
+            if run_id:
+                current = dal.get_job_by_arq_id(run_id)
+                latest = next(
+                    (item for item in dal.list_jobs(pid) if item["kind"] != "export"), None
+                )
+                if (
+                    not current
+                    or not latest
+                    or current["id"] != latest["id"]
+                    or current["status"] != "queued"
+                ):
+                    return
+                job = current
+                dal.set_job_status(job["id"], "running")
+            progress(0, 0, "任务启动")
+            config = _build_config_for(pid, run_id)
+            if kind == "parse":
+                result_status = _parse_source(pid, storage, config, progress)
+            else:
+                client = build_client(config)
+                client.set_event_sink(storage.log_event)
+                with client.interrupt_scope():
+                    if kind == "model_compare":
+                        result_status = _compare(
+                            pid, storage, config, client, run_id or uuid4().hex, params, progress
+                        )
+                    elif kind == "srt":
+                        from wenyi_core.srt.translate import translate_srt
+
+                        client.validate_credentials(("srt.translate",))
+                        output_dir = Path(paths.exports_dir(pid)) / (run_id or uuid4().hex)
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        base = output_dir / f"subtitles.{config.target_lang}.srt"
+                        result = translate_srt(
+                            _resolve_source(pid),
+                            config,
+                            client=client,
+                            out=str(base),
+                            progress=progress,
+                            storage=storage,
+                        )
+                        for output in result["outputs"]:
+                            eid = dal.create_export(pid, "srt", {"bilingual": "-bi.srt" in output})
+                            dal.set_export_status(
+                                eid,
+                                "done",
+                                path=os.path.relpath(output, settings.data_dir),
+                                size=os.path.getsize(output),
+                            )
+                        result_status = "done"
+                    else:
+                        from wenyi_core.llm.operations import configured_operations
+
+                        if params.get("autofix") is not None:
+                            config.pipeline.review_autofix = params["autofix"]
+                        client.validate_credentials(
+                            configured_operations(
+                                config,
+                                "review"
+                                if kind == "review"
+                                else "prepare"
+                                if kind == "prepare"
+                                else "translate",
+                            )
+                        )
+                        result_status = _book_operation(
+                            kind, pid, storage, config, client, progress, params
+                        )
+            progress(1, 1, "任务完成")
+            dal.set_project_status(pid, result_status)
+            if job:
+                dal.set_job_status(job["id"], "done")
+            storage.log_event("task_completed", kind=kind, run_id=run_id)
+    except (KeyboardInterrupt, RequestStopped) as error:
+        _record_failure(pid, run_id, error, status="paused")
+        storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
+    except Exception as error:
+        _record_failure(pid, run_id, error)
+        storage.log_event("pipeline_error", kind=kind, run_id=run_id, error=str(error))
+        raise
+    finally:
+        finished.set()
+        watcher.join(timeout=1)
+        redis.close()
+        storage.close()
+
+
+async def _run(kind, project_id, run_id, params):
+    stop = threading.Event()
+    task = asyncio.create_task(asyncio.to_thread(_execute, kind, project_id, run_id, params, stop))
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Arq timeout/shutdown must stop the synchronous pipeline before releasing its slot.
+        stop.set()
+        await asyncio.shield(task)
+        raise
+    except Exception as error:
+        _record_failure(project_id, run_id, error)
         raise
 
 
-async def run_qa(ctx, *, project_id: str,
-                 completion_status: str = "done") -> None:
-    """Arq 任务：执行全书跨章一致性检查。"""
-    dal.set_project_status(project_id, "qa")
-    try:
-        await asyncio.to_thread(
-            _qa_sync,
-            project_id,
-            completion_status=completion_status,
-        )
-    except Exception as e:
-        dal.set_project_status(project_id, "error")
-        _record_qa_error(
-            project_id,
-            e,
-            completion_status=completion_status,
-        )
-        raise
+async def run_parse(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("parse", project_id, run_id, params)
 
 
-def _export_sync(pid: str, *, export_id: int, fmt: str, bilingual: bool,
-                 order: str, about_page: bool,
-                 preserve_source_style: bool = False) -> int:
+async def run_prepare(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("prepare", project_id, run_id, params)
+
+
+async def run_translation(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("translation", project_id, run_id, params)
+
+
+async def run_chapter_translation(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("chapter_translation", project_id, run_id, params)
+
+
+async def run_review(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("review", project_id, run_id, params)
+
+
+async def run_srt(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("srt", project_id, run_id, params)
+
+
+async def run_model_compare(ctx, *, project_id: str, run_id: str | None = None, **params):
+    await _run("model_compare", project_id, run_id, params)
+
+
+def _render_export_sync(
+    pid: str,
+    *,
+    export_id: int,
+    fmt: str,
+    run_id: str | None = None,
+    bilingual: bool = False,
+    order: str = "target_first",
+    about_page: bool = True,
+    preserve_source_style: bool = False,
+    punctuation_normalize: bool | None = None,
+    pdf_engine: str = "weasyprint",
+) -> int:
     from wenyi_core.assemble.writer import assemble
-
-    ext_map = {"epub": "epub", "txt": "txt", "html": "html", "markdown": "md"}
-    ext = ext_map.get(fmt, "txt")
+    from wenyi_core.pipeline.runstore import source_sha256
 
     pool = init_pool(settings.psycopg_dsn)
-    storage = PostgresStorage(pid, pool)
-    storage.repair_resource_hrefs()
+    storage = _pipeline_storage(pid, pool)
     source = _resolve_source(pid)
-    out_dir = paths.exports_dir(pid)
-    base = os.path.join(out_dir, f"export.{ext}")
-    bi_base = os.path.join(out_dir, f"export-bi.{ext}")
-    out_path = bi_base if bilingual else base
-    result_path = assemble(
-        storage, source, out_path=out_path, out_format=fmt,
-        bilingual=bilingual, order=order, about_page=about_page,
-        preserve_source_style=preserve_source_style,
+    config = _build_config_for(pid, run_id)
+    project = dal.get_project(pid)
+    original = Path(
+        (project.get("source_meta") or {}).get("original_filename") or "translation"
+    ).stem
+    out_dir = Path(paths.exports_dir(pid)) / str(export_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "md" if fmt == "markdown" else fmt
+    out_path = str(
+        out_dir / f"{original}.{config.target_lang}{'-bi' if bilingual else ''}.{suffix}"
     )
-    size = os.path.getsize(result_path) if os.path.isfile(result_path) else None
-    rel = os.path.relpath(result_path, settings.data_dir)
-    dal.set_export_status(export_id, "done", path=rel, size=size)
+    if fmt == "srt":
+        if source_sha256(source) != project.get("source_sha256"):
+            raise ValueError("Subtitle source no longer matches project state")
+        from wenyi_core.assemble.srt_writer import write_srt_outputs
+        from wenyi_core.ingest.srt_reader import parse_srt
+        from wenyi_core.srt.store import SrtRunStore
+
+        with storage.state_lock():
+            srt = SrtRunStore(storage.run_dir, storage=storage)
+            rows = srt.load_cues()
+            translations = srt.translations_from_cues(rows)
+        if not translations:
+            raise ValueError("No translated subtitles are available")
+        write_srt_outputs(
+            parse_srt(source),
+            translations,
+            mono_path=None if bilingual else out_path,
+            bilingual_path=out_path if bilingual else None,
+        )
+    else:
+        snapshot = storage.create_export_snapshot(actual_sha256=source_sha256(source))
+        with storage.assemble_lock():
+            assemble(
+                snapshot,
+                source,
+                out_path=out_path,
+                out_format=fmt,
+                bilingual=bilingual,
+                order=order,
+                about_page=about_page,
+                preserve_source_style=preserve_source_style,
+                punctuation_normalize=config.output.punctuation_normalize
+                if punctuation_normalize is None
+                else punctuation_normalize,
+                pdf_engine=pdf_engine,
+                babeldoc_timeout=config.pipeline.babeldoc_timeout,
+            )
+    dal.set_export_status(
+        export_id,
+        "done",
+        path=os.path.relpath(out_path, settings.data_dir),
+        size=os.path.getsize(out_path),
+    )
     return export_id
 
 
-async def run_export(ctx, *, project_id: str, export_id: int, fmt: str = "epub",
-                     bilingual: bool = False, order: str = "target_first",
-                     about_page: bool = True,
-                     preserve_source_style: bool = False) -> int:
-    """Arq 任务：回填导出 EPUB/TXT。"""
+def _export_sync(pid, *, export_id, run_id=None, **params):
+    pool = init_pool(settings.psycopg_dsn)
+    storage = _pipeline_storage(pid, pool)
+    job = dal.get_job_by_arq_id(run_id) if run_id else None
     try:
-        return await asyncio.to_thread(
-            _export_sync, project_id, export_id=export_id, fmt=fmt,
-            bilingual=bilingual, order=order, about_page=about_page,
-            preserve_source_style=preserve_source_style,
-        )
-    except Exception:
-        dal.set_export_status(export_id, "error")
+        with storage.export_lock(export_id):
+            if run_id:
+                job = dal.get_job_by_arq_id(run_id)
+                if (
+                    not job
+                    or job["status"] != "queued"
+                    or job["project_id"] != pid
+                    or job["params"].get("export_id") != export_id
+                ):
+                    return export_id
+                dal.set_job_status(job["id"], "running")
+            dal.set_export_status(export_id, "running")
+            try:
+                result = _render_export_sync(pid, export_id=export_id, run_id=run_id, **params)
+                if job:
+                    dal.set_job_status(job["id"], "done")
+                return result
+            except Exception as error:
+                if job:
+                    dal.set_job_status(job["id"], "error", error=str(error))
+                dal.set_export_status(export_id, "error", error=str(error))
+                raise
+    finally:
+        storage.close()
+
+
+async def run_export(
+    ctx, *, project_id: str, export_id: int, run_id: str | None = None, **params
+) -> int:
+    task = asyncio.create_task(
+        asyncio.to_thread(_export_sync, project_id, export_id=export_id, run_id=run_id, **params)
+    )
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Rendering uses a stable snapshot. Finish and publish it before the worker
+        # releases its slot, avoiding orphan threads or lost completed files.
+        await asyncio.shield(task)
+        raise
+    except Exception as error:
+        dal.set_export_status(export_id, "error", error=str(error))
+        job = dal.get_job_by_arq_id(run_id) if run_id else None
+        if job:
+            dal.set_job_status(job["id"], "error", error=str(error))
         raise

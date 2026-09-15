@@ -1,4 +1,4 @@
-"""分析器 / 术语抽取 / 滚动上下文 的测试（离线）。"""
+"""Offline analyzer, glossary-extraction and rolling-context tests."""
 
 from __future__ import annotations
 
@@ -23,8 +23,11 @@ def _cfg():
         {
             "language": {"source": "ja", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {"strong": {"model": "p"}, "cheap": {"model": "f"}},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "p"},
+                    "default_cheap": {"provider": "default", "model": "f"},
+                },
             },
         }
     )
@@ -40,12 +43,12 @@ class TestAnalyzer(unittest.TestCase):
                 {
                     "source": "綾小路",
                     "target": "绫小路",
-                    "gender": "男",
+                    "gender": "male",
                     "reading": "あやのこうじ",
                     "note": "第一人称用俺",
                 }
             ],
-            "terms": [{"source": "高度育成高校", "target": "高度育成高中", "type": "组织"}],
+            "terms": [{"source": "高度育成高校", "target": "高度育成高中", "type": "organization"}],
         }
         client = FakeClient(handler=lambda m, t, j: json.dumps(analysis, ensure_ascii=False))
         a = Analyzer(client, _cfg())
@@ -62,8 +65,8 @@ class TestAnalyzer(unittest.TestCase):
             self.assertIsNotNone(organization)
             assert character is not None
             assert organization is not None
-            self.assertEqual(character.gender, "男")
-            self.assertEqual(organization.type, "组织")
+            self.assertEqual(character.gender, "male")
+            self.assertEqual(organization.type, "organization")
             store.close()
 
         brief = a.style_brief(result)
@@ -88,7 +91,7 @@ class TestAnalyzer(unittest.TestCase):
             school = store.get_term("学校")
             self.assertIsNotNone(school)
             assert school is not None
-            self.assertEqual(school.type, "术语")
+            self.assertEqual(school.type, "term")
             store.close()
 
 
@@ -127,11 +130,11 @@ class TestExtractor(unittest.TestCase):
                 {
                     "source": "堀北",
                     "target": "堀北",
-                    "type": "人物",
-                    "gender": "女",
+                    "type": "person",
+                    "gender": "female",
                     "aliases": ["堀北さん"],
                 },
-                {"source": "屋上", "target": "天台", "type": "地名", "gender": "未知"},
+                {"source": "屋上", "target": "天台", "type": "place", "gender": "unknown"},
             ]
         }
         client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
@@ -143,10 +146,10 @@ class TestExtractor(unittest.TestCase):
             horikita = store.get_term("堀北")
             self.assertIsNotNone(horikita)
             assert horikita is not None
-            self.assertEqual(horikita.gender, "女")
+            self.assertEqual(horikita.gender, "female")
             self.assertEqual(horikita.aliases, ["堀北さん"])
             self.assertEqual(horikita.first_chapter, 1)
-            # "未知" 应被规整为空
+            # Normalize unknown gender to an empty value.
             rooftop = store.get_term("屋上")
             self.assertIsNotNone(rooftop)
             assert rooftop is not None
@@ -171,7 +174,7 @@ class TestExtractor(unittest.TestCase):
         result = extractor.extract("term", "术语", [])
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].type, "术语")
+        self.assertEqual(result[0].type, "term")
         self.assertEqual(result[0].gender, "")
         self.assertEqual(result[0].aliases, [])
         self.assertEqual(result[0].note, "")
@@ -182,7 +185,7 @@ class TestExtractor(unittest.TestCase):
         def handler(messages, tier, json_mode):
             system = messages[0]["content"]
             calls.append(system)
-            if "术语一致性校准器" in system:
+            if "terminology consistency aligner" in system:
                 user = messages[-1]["content"]
                 self.assertIn("綾小路第一次走进教室。", user)
                 self.assertIn("绫小路第一次走进教室。", user)
@@ -200,8 +203,8 @@ class TestExtractor(unittest.TestCase):
             return json.dumps(
                 {
                     "terms": [
-                        {"source": "綾小路", "target": "凌小路", "type": "人物"},
-                        {"source": "堀北", "target": "掘北", "type": "人物"},
+                        {"source": "綾小路", "target": "凌小路", "type": "person"},
+                        {"source": "堀北", "target": "掘北", "type": "person"},
                     ]
                 },
                 ensure_ascii=False,
@@ -249,7 +252,7 @@ class TestExtractor(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_new_term_without_prior_occurrence_is_inserted_directly(self):
-        terms = {"terms": [{"source": "綾小路", "target": "绫小路", "type": "人物"}]}
+        terms = {"terms": [{"source": "綾小路", "target": "绫小路", "type": "person"}]}
         client = FakeClient(handler=lambda m, t, j: json.dumps(terms, ensure_ascii=False))
         extractor = GlossaryExtractor(client, _cfg())
 
@@ -311,8 +314,8 @@ class TestRollingContext(unittest.TestCase):
     def test_render_and_bound(self):
         ctx = RollingContext(max_recent_keep=3)
         ctx.add_targets(["a", "b", "c", "d", "e"])
-        self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # 限长
-        rendered = ctx.render(n_recent=2)  # 只取最近两段
+        self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # Bound retained context length.
+        rendered = ctx.render(n_recent=2)  # Use only the two most recent paragraphs.
         self.assertIn("d", rendered)
         self.assertIn("e", rendered)
         self.assertNotIn("c", rendered)
@@ -323,7 +326,7 @@ class TestRollingContext(unittest.TestCase):
         self.assertEqual(ctx2.recent_targets, ["x", "y"])
         self.assertEqual(ctx2.max_recent_keep, 75)
 
-    def test_configured_minimum_expands_legacy_context_limit(self):
+    def test_configured_minimum_expands_saved_context_limit(self):
         ctx = RollingContext.from_dict(
             {"recent_targets": [str(i) for i in range(40)]},
             min_recent_keep=100,

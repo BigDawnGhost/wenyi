@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 export interface ProgressMessage {
+  run_id?: string;
   kind: string; // snapshot | progress | batch | chapter | term | pipeline | log
   project_id?: string;
   done?: number;
@@ -18,6 +19,9 @@ export function useProjectProgress(pid: string | undefined) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    setMsg(null);
+    setLog([]);
+    setConnected(false);
     if (!pid) return;
     let backoff = 500;
     let stopped = false;
@@ -25,9 +29,14 @@ export function useProjectProgress(pid: string | undefined) {
     const connect = () => {
       if (stopped) return;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${proto}//${location.host}/ws/projects/${pid}/progress`);
+      const ws = new WebSocket(
+        `${proto}//${location.host}/ws/projects/${pid}/progress`,
+      );
       wsRef.current = ws;
       ws.onopen = () => {
+        ws.send(
+          JSON.stringify({ token: localStorage.getItem("wenyi_token") || "" }),
+        );
         setConnected(true);
         backoff = 500;
       };

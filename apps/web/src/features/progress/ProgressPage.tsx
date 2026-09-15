@@ -1,301 +1,263 @@
-import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import {
+  api,
+  isProjectBusy,
+  STATUS_LABELS,
+  type ChapterSummary,
+} from "@/lib/api";
 import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { WorkflowPanel } from "./WorkflowPanel";
 import { toast } from "sonner";
-import { BookOpen, Download, FileOutput, LoaderCircle, Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
 
 export default function ProgressPage() {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
-  const [assembleExportId, setAssembleExportId] = useState<number | null>(null);
-  const { data: project } = useQuery({
+  const projectQuery = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
-    enabled: !!pid,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "translating" || status === "preparing" || status === "reviewing" || status === "qa"
-        ? 3000
-        : false;
-    },
+    refetchInterval: 2500,
   });
-  const { data: chapters, refetch } = useQuery({ queryKey: ["chapters", pid], queryFn: () => api.listChapters(pid), enabled: !!pid, refetchInterval: 3000 });
-  const { data: qa } = useQuery({
-    queryKey: ["qa", pid],
-    queryFn: () => api.getQA(pid),
-    enabled: !!pid,
-    refetchInterval: (query) => query.state.data?.status === "running" ? 2000 : false,
+  const project = projectQuery.data;
+  const subtitle = project?.fmt === "srt";
+  const chapterQuery = useQuery({
+    queryKey: ["chapters", pid],
+    queryFn: () => api.listChapters(pid),
+    enabled: !!project && !subtitle,
+    refetchInterval: 3000,
   });
-  const { data: assembleExports } = useQuery({
-    queryKey: ["exports", pid],
-    queryFn: () => api.listExports(pid),
-    enabled: !!pid && assembleExportId !== null,
-    refetchInterval: (query) => {
-      const tracked = query.state.data?.find((item) => item.id === assembleExportId);
-      return tracked?.status === "pending" ? 2000 : false;
-    },
+  const { data: cues } = useQuery({
+    queryKey: ["subtitles", pid],
+    queryFn: () => api.getSubtitles(pid),
+    enabled: subtitle,
+    refetchInterval: 3000,
+  });
+  const report = useQuery({
+    queryKey: ["report", pid],
+    queryFn: () => api.getReport(pid),
+    enabled: !!project && !subtitle,
+  });
+  const stats = useQuery({
+    queryKey: ["stats", pid],
+    queryFn: () => api.getStats(pid),
+    enabled: !!project,
+    refetchInterval: isProjectBusy(project?.status) ? 5000 : false,
   });
   const { msg, log, connected } = useProjectProgress(pid);
-
-  // 实时进度优先用 WS 数据
-  const done = chapters?.filter((c) => c.status === "done").length ?? 0;
-  const total = chapters?.length ?? 0;
-  const hasTranslationProgress = msg?.kind !== "qa"
-    && typeof msg?.done === "number"
-    && typeof msg?.total === "number"
-    && msg.total > 0;
-  const wsDone = hasTranslationProgress ? msg.done! : done;
-  const wsTotal = hasTranslationProgress ? msg.total! : total;
-  const pct = wsTotal ? Math.round((wsDone / wsTotal) * 100) : 0;
-
-  const pause = useMutation({ mutationFn: () => api.pause(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已暂停"); } });
-  const resume = useMutation({ mutationFn: () => api.resume(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已恢复"); } });
-  const prepare = useMutation({ mutationFn: () => api.prepare(pid), onSuccess: () => { qc.invalidateQueries({ queryKey: ["project", pid] }); toast.success("已开始译前准备"); } });
-  const assemble = useMutation({
-    mutationFn: () => api.assemble(pid),
-    onSuccess: (result) => {
-      setAssembleExportId(result.export_id);
-      qc.invalidateQueries({ queryKey: ["exports", pid] });
-      toast.success("已开始重新组装");
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["project", pid] });
+    qc.invalidateQueries({ queryKey: ["chapters", pid] });
+    qc.invalidateQueries({ queryKey: ["stats", pid] });
+  };
+  const action = useMutation({
+    mutationFn: async (
+      kind: "pause" | "resume" | "prepare" | "translate" | "assemble",
+    ) => api[kind](pid),
+    onSuccess: (_, kind) => {
+      invalidate();
+      toast.success(
+        kind === "pause" ? "已请求暂停，正在保存已完成结果" : "任务已提交",
+      );
     },
-    onError: (error) => toast.error(`重新组装失败：${error.message}`),
   });
-  const runQA = useMutation({
-    mutationFn: () => api.runQA(pid),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project", pid] });
-      qc.invalidateQueries({ queryKey: ["qa", pid] });
-      toast.success("已开始一致性检查");
-    },
-    onError: (error) => toast.error(`无法开始一致性检查：${error.message}`),
-  });
-  const regenerateReport = useMutation({
+  const regenerate = useMutation({
     mutationFn: () => api.regenerateReport(pid),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["qa", pid] });
-      toast.success("报告已重新生成");
+    onSuccess: (result) => {
+      qc.setQueryData(["report", pid], result);
+      toast.success("报告已更新");
     },
-    onError: (error) => toast.error(`报告生成失败：${error.message}`),
   });
-
-  const translating = project?.status === "translating";
-  const preparing = project?.status === "preparing";
-  const reviewing = project?.status === "reviewing";
-  const qaRunning = project?.status === "qa" || qa?.status === "running";
+  const chapters = chapterQuery.data || [];
+  const done = subtitle
+    ? cues?.completed || 0
+    : chapters.filter((c) => c.status === "done").length;
+  const total = subtitle ? cues?.total || 0 : chapters.length;
+  const busy = isProjectBusy(project?.status);
   const paused = project?.status === "paused";
-  const pipelineBusy = translating || preparing || reviewing;
-  const busy = pipelineBusy || qaRunning;
-  const translated = total > 0 && done === total;
-  useEffect(() => {
-    if (assembleExportId === null) return;
-    const tracked = assembleExports?.find((item) => item.id === assembleExportId);
-    if (tracked?.status === "done") {
-      toast.success("重新组装完成，可前往导出页下载");
-      setAssembleExportId(null);
-    } else if (tracked?.status === "error") {
-      toast.error("重新组装失败，请查看事件日志后重试");
-      setAssembleExportId(null);
-    }
-  }, [assembleExportId, assembleExports]);
-
-  const currentStatus = paused
-    ? "已暂停"
-    : qaRunning
-      ? (msg?.kind === "qa" ? msg.label : undefined) || "一致性检查中"
-    : preparing
-      ? msg?.label || "准备中"
-      : reviewing
-        ? msg?.label || "审校中"
-        : translating
-          ? msg?.label || "翻译中"
-          : project?.status === "error"
-            ? "失败"
-            : project?.status || "—";
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
   return (
     <>
       <PageHeader
         title={project?.name || "翻译进度"}
-        subtitle={project?.title || undefined}
+        subtitle={`${project?.source_lang || "自动检测"} → ${project?.target_lang || "—"} · ${project?.title || "等待原文"}`}
         actions={
           <>
-            {!busy && <Button variant="outline" onClick={() => prepare.mutate()} disabled={prepare.isPending}><BookOpen className="h-4 w-4" /> 译前准备</Button>}
-            {pipelineBusy && <Button variant="outline" onClick={() => pause.mutate()}><Pause className="h-4 w-4" /> 暂停</Button>}
-            {paused && <Button onClick={() => resume.mutate()}><Play className="h-4 w-4" /> 恢复</Button>}
-            <Button
-              variant="outline"
-              onClick={() => runQA.mutate()}
-              disabled={!translated || busy || runQA.isPending}
-              title={translated ? "扫描跨章一致性问题" : "翻译全部完成后可用"}
-            >
-              {qaRunning || runQA.isPending
-                ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                : <ShieldCheck className="h-4 w-4" />}
-              一致性检查
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => regenerateReport.mutate()}
-              disabled={!translated || busy || regenerateReport.isPending}
-              title={translated ? "根据当前数据重生成报告（不调用模型）" : "翻译全部完成后可用"}
-            >
-              <RefreshCw className={`h-4 w-4 ${regenerateReport.isPending ? "animate-spin" : ""}`} />
-              重生成报告
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => assemble.mutate()}
-              disabled={done === 0 || busy || assemble.isPending || assembleExportId !== null}
-              title={done > 0 ? "从已有译文重新生成默认 EPUB，不调用模型" : "至少翻译一章后可用"}
-            >
-              {assemble.isPending || assembleExportId !== null
-                ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                : <FileOutput className="h-4 w-4" />}
-              重新组装
-            </Button>
-            <Link to={`/projects/${pid}/export`}><Button variant="outline"><Download className="h-4 w-4" /> 导出</Button></Link>
+            {!busy && !paused && project?.fmt && (
+              <Button
+                disabled={action.isPending}
+                onClick={() => action.mutate("translate")}
+              >
+                开始翻译
+              </Button>
+            )}
+            {busy && project?.status !== "parsing" && (
+              <Button
+                variant="outline"
+                disabled={action.isPending || project?.status === "pausing"}
+                onClick={() => action.mutate("pause")}
+              >
+                暂停
+              </Button>
+            )}
+            {(paused || project?.status === "error") && (
+              <Button
+                disabled={action.isPending}
+                onClick={() => action.mutate("resume")}
+              >
+                恢复任务
+              </Button>
+            )}
+            <Link to={`/projects/${pid}/export`}>
+              <Button variant="outline">导出</Button>
+            </Link>
           </>
         }
       />
       <PageContainer className="space-y-4">
+        <ErrorNotice
+          error={
+            projectQuery.error ||
+            chapterQuery.error ||
+            action.error ||
+            project?.error
+          }
+        />
+        <WorkflowPanel pid={pid} msg={msg} />
         <div className="grid gap-3 md:grid-cols-4">
-          <StatCard label="翻译进度" value={`${wsDone}/${wsTotal}`} sub={`${pct}%`}><Progress value={pct} className="mt-2" /></StatCard>
-          <StatCard label="当前状态" value={currentStatus} sub={connected ? "实时连接" : "离线"} />
-          <StatCard label="策略" value={(project?.strategy as { template?: string })?.template || "自定义"} />
-          <StatCard label="状态" value={project?.status || "—"} />
+          <Stat
+            label={subtitle ? "字幕翻译进度" : "章节翻译进度"}
+            value={`${done}/${total}`}
+          >
+            <Progress value={pct} className="mt-2" />
+          </Stat>
+          <Stat
+            label="当前状态"
+            value={
+              STATUS_LABELS[project?.status || ""] ||
+              project?.status ||
+              "加载中"
+            }
+          />
+          <Stat
+            label="当前步骤"
+            value={busy ? msg?.label || "等待后台进度" : "—"}
+          />
+          <Stat label="进度连接" value={connected ? "实时连接" : "自动轮询"} />
         </div>
-
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {!subtitle && (
+                <Button
+                  variant="outline"
+                  disabled={busy || !project?.fmt || action.isPending}
+                  onClick={() => action.mutate("prepare")}
+                >
+                  译前准备
+                </Button>
+              )}
+              {!subtitle && (
+                <Link to={`/projects/${pid}/review`}>
+                  <Button variant="outline">全书审校</Button>
+                </Link>
+              )}
+              {subtitle && (
+                <Link to={`/projects/${pid}/subtitles`}>
+                  <Button variant="outline">字幕对照与编辑</Button>
+                </Link>
+              )}
+              <Link to={`/projects/${pid}/settings`}>
+                <Button variant="outline">项目配置与模型</Button>
+              </Link>
+              {!project?.initialized && (
+                <Link to={`/projects/new?project=${pid}`}>
+                  <Button variant="outline">上传与预览原文</Button>
+                </Link>
+              )}
+              <Button
+                variant="outline"
+                disabled={done === 0 || action.isPending}
+                onClick={() => action.mutate("assemble")}
+              >
+                重新组装默认格式
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              导出使用已保存译文的一致快照。暂停会在安全边界保存进度，恢复继续原来的任务。
+            </p>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="p-4">
-            <div className="text-xs text-muted-foreground mb-2">实时日志</div>
-            <div className="h-36 overflow-auto rounded bg-zinc-950 text-zinc-100 p-3 font-mono text-xs space-y-0.5">
-              {log.length === 0 ? <div className="text-zinc-500">等待事件…</div> : log.map((l, i) => <div key={i}>● {l}</div>)}
+            <h2 className="font-medium text-sm mb-3">实时日志</h2>
+            <div
+              aria-live="polite"
+              className="h-36 overflow-auto rounded bg-zinc-950 text-zinc-100 p-3 font-mono text-xs space-y-1"
+            >
+              {log.length ? (
+                log.map((line, i) => <div key={i}>{line}</div>)
+              ) : (
+                <span className="text-zinc-400">
+                  等待事件…完整历史请查看事件日志。
+                </span>
+              )}
             </div>
           </CardContent>
         </Card>
-
-        <ConsistencyResults
-          status={qa?.status || "idle"}
-          issues={qa?.issues || []}
-          error={qa?.error}
-          translated={translated}
-          reportSummary={regenerateReport.data?.summary}
-        />
-
-        <ChapterTable pid={pid} chapters={chapters || []} busy={busy} />
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <h2 className="font-medium">累计用量与运行耗时</h2>
+            <ErrorNotice error={stats.error} />
+            <Accounting value={stats.data} />
+          </CardContent>
+        </Card>
+        {!subtitle && (
+          <>
+            <Card>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-medium">项目报告</h2>
+                  <Button
+                    variant="outline"
+                    disabled={regenerate.isPending || busy}
+                    onClick={() => regenerate.mutate()}
+                  >
+                    更新报告
+                  </Button>
+                </div>
+                <ErrorNotice error={report.error || regenerate.error} />
+                <StructuredData value={report.data?.summary} />
+              </CardContent>
+            </Card>
+            <ChapterTable pid={pid} chapters={chapters} busy={busy} />
+          </>
+        )}
       </PageContainer>
     </>
   );
 }
 
-const issueTypeLabels: Record<string, string> = {
-  terminology: "术语漂移",
-  pronoun: "代词 / 性别",
-  tone: "语气偏移",
-  punctuation: "标点",
-};
-
-function formatIssueLocation(value: unknown): string {
-  if (Array.isArray(value)) return value.map(String).join("、");
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  return "未指定章节";
-}
-
-function ConsistencyResults({
-  status,
-  issues,
-  error,
-  translated,
-  reportSummary,
+function Stat({
+  label,
+  value,
+  children,
 }: {
-  status: import("@/lib/api").QAResult["status"];
-  issues: import("@/lib/api").ConsistencyIssue[];
-  error?: string | null;
-  translated: boolean;
-  reportSummary?: import("@/lib/api").ReportSummary;
+  label: string;
+  value: string;
+  children?: React.ReactNode;
 }) {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="font-medium">跨章一致性</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">术语、代词与性别、语气和标点扫描结果</div>
-          </div>
-          {status === "running"
-            ? <Badge variant="info">检查中</Badge>
-            : status === "completed"
-              ? <Badge variant={issues.length > 0 ? "warning" : "success"}>{issues.length > 0 ? `${issues.length} 项问题` : "未发现问题"}</Badge>
-              : status === "error"
-                ? <Badge variant="destructive">检查失败</Badge>
-                : <Badge variant="secondary">尚未检查</Badge>}
-        </div>
-
-        {status === "running" && (
-          <div className="mt-4 flex items-center gap-2 rounded-md bg-muted p-3 text-sm text-muted-foreground">
-            <LoaderCircle className="h-4 w-4 animate-spin" />
-            正在扫描各章译文，完成后结果会自动刷新。
-          </div>
-        )}
-        {status === "idle" && (
-          <div className="mt-4 text-sm text-muted-foreground">
-            {translated ? "点击“一致性检查”开始扫描。" : "全部章节翻译完成后即可运行一致性检查。"}
-          </div>
-        )}
-        {status === "error" && (
-          <div className="mt-4 text-sm text-destructive">
-            检查未完成{error ? `：${error}` : "，请重试或查看实时日志。"}
-          </div>
-        )}
-        {status === "completed" && issues.length === 0 && (
-          <div className="mt-4 text-sm text-muted-foreground">当前译文未发现跨章一致性问题。</div>
-        )}
-        {issues.length > 0 && (
-          <div className="mt-4 divide-y rounded-md border">
-            {issues.map((issue, index) => (
-              <div key={`${issue.type}-${index}`} className="p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{issueTypeLabels[issue.type] || issue.type || "其他"}</Badge>
-                  <span className="text-xs text-muted-foreground">{formatIssueLocation(issue.where)}</span>
-                </div>
-                <p className="mt-2 text-sm">{issue.detail || "未提供详细说明"}</p>
-              </div>
-            ))}
-          </div>
-        )}
-        {reportSummary && (
-          <div className="mt-4 border-t pt-4">
-            <div className="text-xs font-medium text-muted-foreground">最新报告摘要</div>
-            <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <div>完成章节 {reportSummary.chapters_done}/{reportSummary.chapters_total}</div>
-              <div>术语 {reportSummary.terms}</div>
-              <div>待裁决冲突 {reportSummary.open_conflicts}</div>
-              <div>审校问题 {reportSummary.review_issues}</div>
-              <div>已审章节 {reportSummary.chapters_reviewed}</div>
-              <div>回译疑点 {reportSummary.backtranslation_issues}</div>
-              <div>空译文 {reportSummary.empty_targets}</div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function StatCard({ label, value, sub, children }: { label: string; value: string; sub?: string; children?: React.ReactNode }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="text-xl font-semibold mt-1 truncate">{value}</div>
-        {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
+        <div className="font-semibold mt-2 break-words">{value}</div>
         {children}
       </CardContent>
     </Card>
@@ -308,78 +270,141 @@ function ChapterTable({
   busy,
 }: {
   pid: string;
-  chapters: import("@/lib/api").ChapterSummary[];
+  chapters: ChapterSummary[];
   busy: boolean;
 }) {
-  const queryClient = useQueryClient();
-  const translateChapter = useMutation({
-    mutationFn: (chapterIndex: number) => api.translateChapter(pid, chapterIndex),
-    onSuccess: async (_, chapterIndex) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["project", pid] }),
-        queryClient.invalidateQueries({ queryKey: ["chapters", pid] }),
-      ]);
-      toast.success(`已开始翻译第 ${chapterIndex + 1} 章`);
+  const qc = useQueryClient();
+  const translate = useMutation({
+    mutationFn: (ci: number) => api.translateChapter(pid, ci),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project", pid] });
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      toast.success("单章翻译已开始");
     },
-    onError: (error) => toast.error(`无法开始单章翻译：${error.message}`),
   });
-
   return (
     <Card>
-      <CardContent className="p-0">
+      <CardContent className="p-0 overflow-x-auto">
+        <ErrorNotice error={translate.error} />
         <table className="w-full text-sm">
           <thead className="border-b text-xs text-muted-foreground">
             <tr>
-              <th className="text-left p-3 font-medium">章节</th>
-              <th className="text-right p-3 font-medium">原文段数</th>
-              <th className="text-left p-3 font-medium">状态</th>
-              <th className="text-right p-3 font-medium">译文段数</th>
-              <th className="text-left p-3 font-medium">审校</th>
-              <th className="text-right p-3 font-medium">操作</th>
+              {["章节", "原文段数", "翻译状态", "审校状态", "操作"].map((h) => (
+                <th key={h} className="text-left p-3 font-medium">
+                  {h}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {chapters.map((c) => (
-              <tr key={c.index} className="border-b last:border-0 hover:bg-muted/40">
+              <tr key={c.index} className="border-b last:border-0">
                 <td className="p-3">
-                  <span className="text-xs text-muted-foreground mr-2">Ch.{c.index + 1}</span>
-                  {c.title_translated || c.title || `第 ${c.index + 1} 章`}
+                  {c.index + 1}. {c.title_translated || c.title}
                 </td>
-                <td className="p-3 text-right text-muted-foreground">{c.word_count}</td>
+                <td className="p-3">{c.word_count}</td>
                 <td className="p-3">
-                  {c.status === "done" ? <Badge variant="success">完成</Badge> : c.status === "translating" ? <Badge variant="info">翻译中</Badge> : <Badge variant="secondary">等待</Badge>}
+                  <Badge
+                    variant={c.status === "done" ? "success" : "secondary"}
+                  >
+                    {STATUS_LABELS[c.status] || c.status}
+                  </Badge>
                 </td>
-                <td className="p-3 text-right text-muted-foreground">{c.status === "done" ? c.target_word_count : "—"}</td>
                 <td className="p-3">
-                  {c.status === "done" && (c.review_issue_count > 0 ? <Badge variant="warning">待审 {c.review_issue_count}</Badge> : <Badge variant="success">通过</Badge>)}
-                </td>
-                <td className="p-3 text-right">
-                  {c.status === "done" && (
-                    <Link to={`/projects/${pid}/review/${c.index}`} className="text-xs text-primary hover:underline">
-                      {c.review_issue_count > 0 ? "审校" : "查看"}
-                    </Link>
+                  {c.review_issue_count > 0 ? (
+                    <Badge variant="warning">
+                      {c.review_issue_count} 项意见
+                    </Badge>
+                  ) : ["completed", "ok", "done"].includes(
+                      c.review_status || "",
+                    ) ? (
+                    <Badge variant="success">已审校</Badge>
+                  ) : (
+                    <Badge variant="secondary">未审校</Badge>
                   )}
-                  {c.status !== "done" && c.status !== "translating" && (
+                </td>
+                <td className="p-3">
+                  {c.status === "done" ? (
+                    <Link
+                      className="text-primary underline"
+                      to={`/projects/${pid}/review/${c.index}`}
+                    >
+                      人工校阅
+                    </Link>
+                  ) : (
                     <Button
-                      type="button"
                       size="sm"
                       variant="outline"
-                      disabled={busy || translateChapter.isPending}
-                      onClick={() => translateChapter.mutate(c.index)}
+                      disabled={busy || translate.isPending}
+                      onClick={() => translate.mutate(c.index)}
                     >
-                      {translateChapter.isPending && translateChapter.variables === c.index
-                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                        : <Play className="h-3.5 w-3.5" />}
                       翻译此章
                     </Button>
                   )}
                 </td>
               </tr>
             ))}
-            {chapters.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-muted-foreground text-sm">尚无章节。上传原文并启动翻译后这里会出现章节列表。</td></tr>}
+            {!chapters.length && (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="p-8 text-center text-muted-foreground"
+                >
+                  解析完成后显示章节。
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </CardContent>
     </Card>
+  );
+}
+
+function Accounting({
+  value,
+}: {
+  value?: { usage: Record<string, unknown>; timing: Record<string, unknown> };
+}) {
+  if (!value)
+    return <p className="text-sm text-muted-foreground">尚无用量记录</p>;
+  const usage = value.usage || {};
+  const totals = (usage.totals || usage) as Record<string, unknown>;
+  const timing = value.timing || {};
+  const numeric = (value: unknown) =>
+    typeof value === "number" ? value.toLocaleString("zh-CN") : "—";
+  const fields: [string, string][] = [
+    ["累计 Token", numeric(totals.total_tokens)],
+    [
+      "输入 / 输出 Token",
+      `${numeric(totals.prompt_tokens)} / ${numeric(totals.completion_tokens)}`,
+    ],
+    ["模型调用次数", numeric(totals.calls)],
+    [
+      "运行耗时",
+      typeof timing.total_seconds === "number"
+        ? `${timing.total_seconds.toFixed(2)} 秒`
+        : "—",
+    ],
+  ];
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {fields.map(([label, count]) => (
+          <div key={label} className="rounded border p-3">
+            <div className="text-xs text-muted-foreground">{label}</div>
+            <div className="font-semibold mt-2">{count}</div>
+          </div>
+        ))}
+      </div>
+      <details>
+        <summary className="cursor-pointer text-sm text-muted-foreground">
+          按模型、提供商与步骤查看用量和计时明细
+        </summary>
+        <div className="mt-3">
+          <StructuredData value={value} />
+        </div>
+      </details>
+    </div>
   );
 }

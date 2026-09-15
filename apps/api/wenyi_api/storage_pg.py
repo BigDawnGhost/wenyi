@@ -1,593 +1,813 @@
-"""``PostgresStorage`` —— Storage Protocol 的 Postgres 实现（Web 模式）。
+"""PostgreSQL implementation of the core storage port.
 
-实现与 :class:`wenyi_core.storage.file.FileStorage` 完全相同的接口，
-但读写 Postgres 而非本地文件。内核（wenyi-core）通过注入的 Storage 操作它，
-不感知后端。术语全文检索走 pg_trgm GIN 索引（<500ms）。
+All mutable run state lives in PostgreSQL. ``run_dir`` contains only source resources
+and exported artifacts. Long workflow locks use session advisory locks, while state
+writes and export snapshots use short transactions with no model calls inside them.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import threading
 import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator
 
-from psycopg.types.json import Json
+from psycopg import sql
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
-from wenyi_core.glossary.store import (
-    CONFIDENCE_ORDER,
-    GlossaryStore,
-    GlossaryTerm,
-)
+from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
-from wenyi_core.storage import STATUS_DONE
+from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
 
-_SOURCE_ONLY_TYPES = {t for t in (
-    "称谓", "敬称", "口癖", "固定表达",
-)}
+
+class ProjectBusyError(BlockingIOError):
+    """A different workflow or editor currently owns this project."""
 
 
 class PostgresStorage:
-    """Postgres 后端 Storage。一个实例绑定一个 project_id。"""
-
-    def __init__(
-        self,
-        project_id: str,
-        pool: ConnectionPool,
-        *,
-        run_dir: str | None = None,
-    ):
+    def __init__(self, project_id: str, pool: ConnectionPool, *, run_dir: str | None = None):
         self.project_id = project_id
         self._pool = pool
-        self._run_dir = run_dir
+        self._run_dir = os.path.abspath(run_dir) if run_dir else None
+        self._local = threading.local()
 
-    @property
-    def _conn(self):  # 便捷：返回上下文管理器
-        return self._pool.connection()
-
-    # ── 路径兼容属性（管线可注入项目文件目录，其余场景给占位）────────────
     @property
     def run_dir(self) -> str:
-        return self._run_dir or f"<postgres:{self.project_id}>"
+        if self._run_dir is None:
+            raise ValueError("A resource directory is required for source parsing and export")
+        return self._run_dir
 
     @property
-    def glossary_path(self) -> str:
-        return f"<postgres:{self.project_id}/glossary>"
+    def source_dir(self) -> str:
+        return os.path.join(self.run_dir, "source")
 
     @property
-    def report_path(self) -> str:
-        return f"<postgres:{self.project_id}/report>"
-
-    @property
-    def manifest_path(self) -> str:
-        return f"<postgres:{self.project_id}/manifest>"
-
-    @property
-    def event_log_path(self) -> str:
-        return f"<postgres:{self.project_id}/events>"
-
-    @property
-    def usage_path(self) -> str:
-        return f"<postgres:{self.project_id}/usage>"
+    def reviews_dir(self) -> str:
+        """Logical review run identity; artifacts are persisted through the DB port."""
+        return os.path.join(self.run_dir, "reviews")
 
     def close(self) -> None:
-        # 连接池由全局管理，这里无需关闭。
-        return None
+        """The application owns the shared pool."""
 
-    # ── 生命周期 ─────────────────────────────────────────────────────────
+    @property
+    @contextmanager
+    def _conn(self):
+        current = getattr(self._local, "state_conn", None)
+        if current is not None:
+            yield current
+        else:
+            with self._pool.connection() as conn:
+                yield conn
+
+    def _lock_key(self, scope: str) -> int:
+        digest = hashlib.blake2b(f"wenyi:{scope}:{self.project_id}".encode(), digest_size=8)
+        return int.from_bytes(digest.digest(), "big", signed=True)
+
+    @contextmanager
+    def _session_lock(self, scope: str, *, blocking: bool = True) -> Iterator[None]:
+        depths = getattr(self._local, "lock_depths", None)
+        if depths is None:
+            depths = self._local.lock_depths = {}
+        if depths.get(scope, 0):
+            depths[scope] += 1
+            try:
+                yield
+            finally:
+                depths[scope] -= 1
+            return
+        key = self._lock_key(scope)
+        with self._pool.connection() as conn:
+            acquired = False
+            try:
+                if blocking:
+                    conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+                    acquired = True
+                else:
+                    acquired = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0]
+                conn.commit()  # A session lock needs no open transaction during LLM calls.
+                if not acquired:
+                    raise ProjectBusyError(f"Project {self.project_id} is busy")
+                depths[scope] = 1
+                yield
+            finally:
+                depths.pop(scope, None)
+                if acquired:
+                    conn.rollback()
+                    conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+                    conn.commit()
+
+    def lock(self, *, blocking: bool = True):
+        return self._session_lock("write", blocking=blocking)
+
+    def export_lock(self, export_id: int, *, blocking: bool = True):
+        """Keep one export's render/recovery mutually exclusive without blocking translation."""
+        if not isinstance(export_id, int) or isinstance(export_id, bool) or export_id <= 0:
+            raise ValueError("Invalid export identifier")
+        return self._session_lock(f"export:{export_id}", blocking=blocking)
+
+    def assemble_lock(self):
+        return self._session_lock("assemble")
+
+    @contextmanager
+    def state_lock(self) -> Iterator[None]:
+        """Serialize a brief state update and make its nested calls one transaction."""
+        if getattr(self._local, "state_conn", None) is not None:
+            yield
+            return
+        with self._pool.connection() as conn:
+            with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (self._lock_key("state"),))
+                self._local.state_conn = conn
+                try:
+                    yield
+                finally:
+                    self._local.state_conn = None
+
+    # Initialization is committed only after chapters, analysis, glossary and context.
     def exists(self) -> bool:
-        """项目是否已初始化（已有章节记录）。API 建项目时只建 project 行，
-        不建章节；首次翻译时内核 prepare() 据此判定要不要跑完整初始化。"""
         with self._conn as conn:
             row = conn.execute(
-                "SELECT 1 FROM chapters WHERE project_id = %s LIMIT 1",
+                "SELECT initialized FROM projects WHERE id=%s", (self.project_id,)
+            ).fetchone()
+        return bool(row and row[0])
+
+    @staticmethod
+    def _validate_digest(digest: str) -> None:
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Invalid source SHA-256 format")
+
+    def begin_initialization(self, source_hash: str) -> None:
+        self._validate_digest(source_hash)
+        with self.state_lock(), self._conn as conn:
+            row = conn.execute(
+                "SELECT initialized, initialization_sha256, source_sha256 FROM projects WHERE id=%s FOR UPDATE",
                 (self.project_id,),
             ).fetchone()
-        return row is not None
+            if row is None:
+                raise KeyError(f"project {self.project_id} not found")
+            if row[0]:
+                raise ValueError("Project is already initialized; create a new project")
+            for table in ("chapters", "glossary", "term_conflicts"):
+                conn.execute(
+                    sql.SQL("DELETE FROM {} WHERE project_id=%s").format(sql.Identifier(table)),
+                    (self.project_id,),
+                )
+            if row[1] != source_hash:
+                conn.execute("DELETE FROM events WHERE project_id=%s", (self.project_id,))
+                # Upload parsing happens before preparation. Preserve the matching
+                # source preview and comparison output, but discard mutable run state.
+                conn.execute(
+                    """DELETE FROM artifacts WHERE project_id=%s
+                    AND NOT starts_with(key,'model-comparisons/')
+                    AND NOT starts_with(key,'comparisons/')
+                    AND NOT (%s AND key IN ('parsed_document.json','preview.json'))""",
+                    (self.project_id, row[2] == source_hash),
+                )
+                conn.execute("DELETE FROM artifact_events WHERE project_id=%s", (self.project_id,))
+            else:
+                conn.execute(
+                    "DELETE FROM artifacts WHERE project_id=%s AND key IN ('usage-pending.json','timing.json')",
+                    (self.project_id,),
+                )
+            conn.execute(
+                """UPDATE projects SET initialization_sha256=%s, source_sha256=%s,
+                manifest='{}'::jsonb, meta='{}'::jsonb, context=NULL,
+                annotation_contexts=NULL, analysis=NULL, usage=NULL, report=NULL,
+                updated_at=now() WHERE id=%s""",
+                (source_hash, source_hash, self.project_id),
+            )
+
+    def finish_initialization(self) -> None:
+        with self._conn as conn:
+            conn.execute(
+                "UPDATE projects SET initialization_sha256=NULL WHERE id=%s AND initialized",
+                (self.project_id,),
+            )
+
+    def stage_document(self, doc: Document, *, source_hash: str | None = None) -> dict:
+        digest = source_hash or source_sha256(doc.source_path)
+        self._validate_digest(digest)
+        meta = dict(doc.meta)
+        annotations = meta.pop("epub_annotation_contexts", None)
+        manifest = {
+            "title": doc.title,
+            "fmt": doc.fmt,
+            "source_path": doc.source_path,
+            "source_sha256": digest,
+            "source_lang": doc.source_lang,
+            "target_lang": doc.target_lang,
+            "meta": meta,
+            "chapters": [
+                {
+                    "index": ch.index,
+                    "title": ch.title,
+                    "href": ch.href,
+                    "toc_entry_id": ch.meta.get("toc_entry_id"),
+                    "status": "pending",
+                }
+                for ch in doc.chapters
+            ],
+        }
+        with self.state_lock(), self._conn as conn:
+            conn.execute(
+                "UPDATE projects SET source_path=%s, source_sha256=%s, annotation_contexts=%s WHERE id=%s",
+                (
+                    doc.source_path,
+                    digest,
+                    Jsonb(annotations) if annotations else None,
+                    self.project_id,
+                ),
+            )
+            for chapter in doc.chapters:
+                self.save_chapter(chapter)
+        return manifest
 
     def init_from_document(self, doc: Document) -> dict:
-        """按解析后的 Document 初始化：更新 project 元信息 + 写入章节/段落。"""
-        pid = self.project_id
-        with self._conn as conn:
-            conn.execute(
-                """UPDATE projects SET title=%s, fmt=%s, source_lang=%s,
-                   target_lang=%s, meta=%s, source_path=%s, updated_at=now()
-                   WHERE id=%s""",
-                (doc.title, doc.fmt, doc.source_lang, doc.target_lang,
-                 Json(doc.meta), doc.source_path, pid),
-            )
-            for ch in doc.chapters:
-                self._upsert_chapter_row(conn, ch)
-                self._replace_segments(conn, ch)
-        return self.load_manifest()
+        manifest = self.stage_document(doc)
+        self.save_manifest(manifest)
+        self.finish_initialization()
+        return manifest
 
-    # ── manifest ─────────────────────────────────────────────────────────
+    def ensure_source_identity(self, input_path: str, *, actual_sha256: str | None = None) -> str:
+        actual = actual_sha256 or source_sha256(input_path)
+        self._validate_source_identity(self.load_manifest(), actual)
+        return actual
+
+    @classmethod
+    def _validate_source_identity(cls, manifest: dict, actual: str) -> None:
+        cls._validate_digest(actual)
+        expected = manifest.get("source_sha256")
+        cls._validate_digest(expected)
+        if expected != actual:
+            raise ValueError(
+                "Input content does not match existing translation state; create a new project"
+            )
+
     def load_manifest(self) -> dict:
-        pid = self.project_id
-        with self._conn as conn:
-            prow = conn.execute(
-                """SELECT title, fmt, source_path, source_lang, target_lang, meta
-                   FROM projects WHERE id=%s""",
-                (pid,),
+        with self.state_lock(), self._conn as conn:
+            row = conn.execute(
+                """SELECT manifest,title,fmt,source_path,source_sha256,
+                source_lang,target_lang,meta FROM projects WHERE id=%s""",
+                (self.project_id,),
             ).fetchone()
-            if prow is None:
-                raise KeyError(f"project {pid} not found")
-            rows = conn.execute(
-                """SELECT seq, title, href, status, title_translated, meta
-                   FROM chapters WHERE project_id=%s ORDER BY seq""",
-                (pid,),
+            if row is None:
+                raise KeyError(f"project {self.project_id} not found")
+            chapters = conn.execute(
+                """SELECT seq,title,href,status,title_translated,
+                review_status,manifest_entry FROM chapters WHERE project_id=%s ORDER BY seq""",
+                (self.project_id,),
             ).fetchall()
-        chapters = []
-        for r in rows:
-            c: dict[str, Any] = {
-                "index": r[0], "title": r[1] or "",
-                "href": r[2], "status": r[3] or "pending",
-            }
-            if r[4] is not None:
-                c["title_translated"] = r[4]
-            c["review_status"] = (r[5] or {}).get("_review_status", "pending")
-            chapters.append(c)
-        return {
-            "title": prow[0], "fmt": prow[1], "source_path": prow[2],
-            "source_lang": prow[3], "target_lang": prow[4],
-            "meta": prow[5] or {}, "chapters": chapters,
-        }
+        manifest = dict(row[0] or {})
+        manifest.update(
+            zip(
+                (
+                    "title",
+                    "fmt",
+                    "source_path",
+                    "source_sha256",
+                    "source_lang",
+                    "target_lang",
+                    "meta",
+                ),
+                row[1:],
+            )
+        )
+        manifest["meta"] = manifest.get("meta") or {}
+        manifest["chapters"] = []
+        for ch in chapters:
+            entry = dict(ch[6] or {})
+            entry.update(index=ch[0], title=ch[1], href=ch[2], status=ch[3], review_status=ch[5])
+            if ch[4] is not None:
+                entry["title_translated"] = ch[4]
+            manifest["chapters"].append(entry)
+        return manifest
 
     def save_manifest(self, manifest: dict) -> None:
-        pid = self.project_id
-        with self._conn as conn:
+        with self.state_lock(), self._conn as conn:
             conn.execute(
-                """UPDATE projects SET title=%s, fmt=%s, source_lang=%s,
-                   target_lang=%s, meta=%s, updated_at=now() WHERE id=%s""",
-                (manifest.get("title"), manifest.get("fmt"),
-                 manifest.get("source_lang"), manifest.get("target_lang"),
-                 Json(manifest.get("meta") or {}), pid),
+                """UPDATE projects SET manifest=%s,title=%s,fmt=%s,
+                source_path=COALESCE(%s,source_path),source_sha256=COALESCE(%s,source_sha256),
+                source_lang=%s,target_lang=%s,meta=%s,initialized=TRUE,updated_at=now()
+                WHERE id=%s""",
+                (
+                    Jsonb(manifest),
+                    manifest.get("title"),
+                    manifest.get("fmt"),
+                    manifest.get("source_path"),
+                    manifest.get("source_sha256"),
+                    manifest.get("source_lang"),
+                    manifest.get("target_lang"),
+                    Jsonb(manifest.get("meta") or {}),
+                    self.project_id,
+                ),
             )
-            for c in manifest.get("chapters", []):
+            for entry in manifest.get("chapters", []):
                 conn.execute(
-                    """INSERT INTO chapters (project_id, seq, title, href, status, title_translated)
-                       VALUES (%s,%s,%s,%s,%s,%s)
-                       ON CONFLICT (project_id, seq) DO UPDATE
-                       SET title=EXCLUDED.title, href=EXCLUDED.href,
-                           status=EXCLUDED.status,
-                           title_translated=EXCLUDED.title_translated""",
-                    (pid, c.get("index"), c.get("title", ""), c.get("href"),
-                     c.get("status", "pending"), c.get("title_translated")),
+                    """INSERT INTO chapters(project_id,seq,title,href,status,
+                    title_translated,review_status,manifest_entry) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT(project_id,seq) DO UPDATE SET title=EXCLUDED.title,
+                    href=EXCLUDED.href,status=EXCLUDED.status,title_translated=EXCLUDED.title_translated,
+                    review_status=EXCLUDED.review_status,manifest_entry=EXCLUDED.manifest_entry""",
+                    (
+                        self.project_id,
+                        entry["index"],
+                        entry.get("title", ""),
+                        entry.get("href"),
+                        entry.get("status", "pending"),
+                        entry.get("title_translated"),
+                        entry.get("review_status", "pending"),
+                        Jsonb(entry),
+                    ),
                 )
 
     def set_chapter_status(self, ci: int, status: str) -> None:
-        with self._conn as conn:
+        with self.state_lock(), self._conn as conn:
             conn.execute(
                 "UPDATE chapters SET status=%s WHERE project_id=%s AND seq=%s",
                 (status, self.project_id, ci),
             )
 
     def set_chapter_review_status(self, ci: int, status: str) -> None:
-        with self._conn as conn:
+        with self.state_lock(), self._conn as conn:
             conn.execute(
-                """UPDATE chapters
-                   SET meta=jsonb_set(
-                       COALESCE(meta, '{}'::jsonb),
-                       '{_review_status}',
-                       to_jsonb(%s::text),
-                       true
-                   )
-                   WHERE project_id=%s AND seq=%s""",
+                "UPDATE chapters SET review_status=%s WHERE project_id=%s AND seq=%s",
                 (status, self.project_id, ci),
             )
 
     def pending_chapters(self) -> list[int]:
         with self._conn as conn:
             rows = conn.execute(
-                """SELECT seq FROM chapters
-                   WHERE project_id=%s AND status<>%s ORDER BY seq""",
-                (self.project_id, STATUS_DONE),
+                "SELECT seq FROM chapters WHERE project_id=%s AND status<>'done' ORDER BY seq",
+                (self.project_id,),
             ).fetchall()
-        return [r[0] for r in rows]
-
-    # ── 章节 / 段落 ──────────────────────────────────────────────────────
-    def _upsert_chapter_row(self, conn, ch: Chapter) -> None:
-        conn.execute(
-            """INSERT INTO chapters (project_id, seq, title, href, template, status, meta)
-               VALUES (%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (project_id, seq) DO UPDATE
-               SET title=EXCLUDED.title, href=EXCLUDED.href,
-                   template=EXCLUDED.template, meta=EXCLUDED.meta""",
-            (self.project_id, ch.index, ch.title, ch.href, ch.template,
-             "pending", Json(ch.meta or {})),
-        )
-
-    def _replace_segments(self, conn, ch: Chapter) -> None:
-        conn.execute(
-            "DELETE FROM segments WHERE project_id=%s AND chapter_seq=%s",
-            (self.project_id, ch.index),
-        )
-        for s in ch.segments:
-            conn.execute(
-                """INSERT INTO segments
-                   (project_id, chapter_seq, seg_seq, source, target, kind, anchor, cont, meta, resource_href)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (self.project_id, ch.index, s.index, s.source, s.target,
-                 s.kind, s.anchor, s.cont, Json(s.meta or {}), s.resource_href),
-            )
+        return [row[0] for row in rows]
 
     def save_chapter(self, chapter: Chapter) -> None:
-        with self._conn as conn:
-            self._upsert_chapter_row(conn, chapter)
-            self._replace_segments(conn, chapter)
+        with self.state_lock(), self._conn as conn:
+            translated = getattr(chapter, "title_translated", None) or chapter.meta.get(
+                "title_translated"
+            )
+            conn.execute(
+                """INSERT INTO chapters(project_id,seq,title,href,template,meta,title_translated)
+                VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(project_id,seq) DO UPDATE
+                SET title=EXCLUDED.title,href=EXCLUDED.href,template=EXCLUDED.template,
+                meta=EXCLUDED.meta,title_translated=COALESCE(EXCLUDED.title_translated,chapters.title_translated)""",
+                (
+                    self.project_id,
+                    chapter.index,
+                    chapter.title,
+                    chapter.href,
+                    chapter.template,
+                    Jsonb(chapter.meta),
+                    translated,
+                ),
+            )
+            conn.execute(
+                "DELETE FROM segments WHERE project_id=%s AND chapter_seq=%s",
+                (self.project_id, chapter.index),
+            )
+            if chapter.segments:
+                with conn.cursor() as cursor:
+                    cursor.executemany(
+                        """INSERT INTO segments(project_id,chapter_seq,seg_seq,source,target,
+                        target_before_polish,kind,anchor,cont,meta,resource_href)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        [
+                            (
+                                self.project_id,
+                                chapter.index,
+                                s.index,
+                                s.source,
+                                s.target,
+                                s.target_before_polish,
+                                s.kind,
+                                s.anchor,
+                                s.cont,
+                                Jsonb(s.meta),
+                                s.resource_href,
+                            )
+                            for s in chapter.segments
+                        ],
+                    )
+
+    def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
+        with self.state_lock():
+            self.save_chapter(chapter)
+            self.set_chapter_status(chapter.index, status)
 
     def load_chapter(self, ci: int) -> Chapter:
-        with self._conn as conn:
-            crow = conn.execute(
-                """SELECT title, href, template, meta, title_translated FROM chapters
-                   WHERE project_id=%s AND seq=%s""",
+        with self.state_lock(), self._conn as conn:
+            row = conn.execute(
+                "SELECT title,href,template,meta,title_translated FROM chapters WHERE project_id=%s AND seq=%s",
                 (self.project_id, ci),
             ).fetchone()
-            if crow is None:
+            if row is None:
                 raise KeyError(f"chapter {ci} not found in project {self.project_id}")
-            srows = conn.execute(
-                """SELECT seg_seq, source, target, kind, anchor, cont, meta, resource_href
-                   FROM segments WHERE project_id=%s AND chapter_seq=%s
-                   ORDER BY seg_seq""",
+            segments = conn.execute(
+                """SELECT seg_seq,source,target,target_before_polish,kind,anchor,
+                cont,meta,resource_href FROM segments WHERE project_id=%s AND chapter_seq=%s ORDER BY seg_seq""",
                 (self.project_id, ci),
             ).fetchall()
-        segments = [
-            Segment(index=r[0], source=r[1], target=r[2], kind=r[3] or "text",
-                    anchor=r[4], cont=bool(r[5]), meta=r[6] or {},
-                    resource_href=r[7])
-            for r in srows
-        ]
-        return Chapter(index=ci, title=crow[0] or "", segments=segments,
-                       href=crow[1], template=crow[2], meta=crow[3] or {},
-                       title_translated=crow[4])
+        return Chapter(
+            index=ci,
+            title=row[0],
+            href=row[1],
+            template=row[2],
+            meta=row[3] or {},
+            title_translated=row[4],
+            segments=[
+                Segment(
+                    index=s[0],
+                    source=s[1],
+                    target=s[2],
+                    target_before_polish=s[3],
+                    kind=s[4],
+                    anchor=s[5],
+                    cont=s[6],
+                    meta=s[7],
+                    resource_href=s[8],
+                )
+                for s in segments
+            ],
+        )
 
-    # ── 上下文 / 分析 / 报告 / usage ─────────────────────────────────────
-    def save_context(self, data: dict) -> None:
+    def create_export_snapshot(self, *, actual_sha256: str) -> ExportSnapshotStore:
+        """Capture all chapters in one MVCC snapshot; release DB before rendering."""
+        if getattr(self._local, "state_conn", None) is not None:
+            raise RuntimeError("Export snapshot must start outside a write transaction")
+        with self._pool.connection() as conn:
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                self._local.state_conn = conn
+                try:
+                    manifest = self.load_manifest()
+                    self._validate_source_identity(manifest, actual_sha256)
+                    chapters = {
+                        entry["index"]: self.load_chapter(entry["index"])
+                        for entry in manifest["chapters"]
+                    }
+                finally:
+                    self._local.state_conn = None
+        return ExportSnapshotStore(self.run_dir, manifest, chapters)
+
+    # Structured project state and generic artifacts.
+    def _save_field(self, field: str, value: Any) -> None:
         with self._conn as conn:
             conn.execute(
-                "UPDATE projects SET context=%s WHERE id=%s",
-                (Json(data), self.project_id),
+                sql.SQL("UPDATE projects SET {}=%s,updated_at=now() WHERE id=%s").format(
+                    sql.Identifier(field)
+                ),
+                (Jsonb(value), self.project_id),
             )
 
-    def load_context(self) -> Optional[dict]:
+    def _load_field(self, field: str) -> Any:
         with self._conn as conn:
             row = conn.execute(
-                "SELECT context FROM projects WHERE id=%s", (self.project_id,)
+                sql.SQL("SELECT {} FROM projects WHERE id=%s").format(sql.Identifier(field)),
+                (self.project_id,),
             ).fetchone()
         return row[0] if row else None
+
+    def save_context(self, data: dict) -> None:
+        self._save_field("context", data)
+
+    def load_context(self) -> dict | None:
+        return self._load_field("context")
 
     def save_analysis(self, data: dict) -> None:
-        with self._conn as conn:
-            conn.execute(
-                "UPDATE projects SET analysis=%s WHERE id=%s",
-                (Json(data), self.project_id),
-            )
+        self._save_field("analysis", data)
 
-    def load_analysis(self) -> Optional[dict]:
-        with self._conn as conn:
-            row = conn.execute(
-                "SELECT analysis FROM projects WHERE id=%s", (self.project_id,)
-            ).fetchone()
-        return row[0] if row else None
+    def load_analysis(self) -> dict | None:
+        return self._load_field("analysis")
 
     def save_report(self, data: dict) -> None:
-        with self._conn as conn:
-            conn.execute(
-                "UPDATE projects SET report=%s WHERE id=%s",
-                (Json(data), self.project_id),
-            )
+        self._save_field("report", data)
 
-    def load_report(self) -> Optional[dict]:
-        with self._conn as conn:
-            row = conn.execute(
-                "SELECT report FROM projects WHERE id=%s", (self.project_id,)
-            ).fetchone()
-        return row[0] if row else None
+    def load_report(self) -> dict | None:
+        return self._load_field("report")
 
     def save_usage(self, data: dict) -> None:
-        with self._conn as conn:
-            conn.execute(
-                "UPDATE projects SET usage=%s WHERE id=%s",
-                (Json(data), self.project_id),
-            )
+        self._save_field("usage", data)
 
-    def load_usage(self) -> Optional[dict]:
+    def load_usage(self) -> dict | None:
+        return self._load_field("usage")
+
+    def save_annotation_contexts(self, data: dict) -> None:
+        self._save_field("annotation_contexts", data)
+
+    def load_annotation_contexts(self) -> dict | None:
+        return self._load_field("annotation_contexts")
+
+    @staticmethod
+    def _artifact_key(key: str, *, allow_empty: bool = False) -> str:
+        if allow_empty and not key:
+            return key
+        if (
+            not isinstance(key, str)
+            or not key
+            or "\\" in key
+            or key.startswith("/")
+            or "\x00" in key
+        ):
+            raise ValueError("Invalid artifact key")
+        if any(part in {"", ".", ".."} for part in key.rstrip("/").split("/")):
+            raise ValueError("Invalid artifact key")
+        return key
+
+    def read_artifact(self, key: str) -> Any | None:
+        key = self._artifact_key(key)
+        if key == "usage.json":
+            return self.load_usage()
         with self._conn as conn:
             row = conn.execute(
-                "SELECT usage FROM projects WHERE id=%s", (self.project_id,)
+                "SELECT value FROM artifacts WHERE project_id=%s AND key=%s", (self.project_id, key)
             ).fetchone()
         return row[0] if row else None
 
-    # ── 事件日志 ─────────────────────────────────────────────────────────
+    def write_artifact(self, key: str, value: Any) -> None:
+        key = self._artifact_key(key)
+        if key == "usage.json":
+            self.save_usage(value)
+            return
+        with self._conn as conn:
+            conn.execute(
+                """INSERT INTO artifacts(project_id,key,value) VALUES(%s,%s,%s)
+                ON CONFLICT(project_id,key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()""",
+                (self.project_id, key, Jsonb(value)),
+            )
+
+    def delete_artifact(self, key: str) -> None:
+        key = self._artifact_key(key)
+        with self._conn as conn:
+            conn.execute(
+                "DELETE FROM artifacts WHERE project_id=%s AND key=%s", (self.project_id, key)
+            )
+            conn.execute(
+                "DELETE FROM artifact_events WHERE project_id=%s AND key=%s", (self.project_id, key)
+            )
+            if key == "usage.json":
+                conn.execute("UPDATE projects SET usage=NULL WHERE id=%s", (self.project_id,))
+
+    def list_artifacts(self, prefix: str = "") -> list[str]:
+        self._artifact_key(prefix, allow_empty=True)
+        with self._conn as conn:
+            rows = conn.execute(
+                """SELECT key FROM artifacts WHERE project_id=%s AND starts_with(key,%s)
+                UNION SELECT key FROM artifact_events WHERE project_id=%s AND starts_with(key,%s)
+                ORDER BY key""",
+                (self.project_id, prefix, self.project_id, prefix),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def append_artifact_record(self, key: str, record: dict) -> None:
+        key = self._artifact_key(key)
+        with self._conn as conn:
+            conn.execute(
+                "INSERT INTO artifact_events(project_id,key,payload) VALUES(%s,%s,%s)",
+                (self.project_id, key, Jsonb(record)),
+            )
+
+    def read_artifact_records(self, key: str) -> list[dict]:
+        key = self._artifact_key(key)
+        with self._conn as conn:
+            rows = conn.execute(
+                "SELECT payload FROM artifact_events WHERE project_id=%s AND key=%s ORDER BY id",
+                (self.project_id, key),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    @staticmethod
+    def _usage_key(key: str) -> str:
+        if key != "usage.json" and not re.fullmatch(r"reviews/review-[^/]+/usage\.json", key):
+            raise ValueError("Invalid usage journal destination")
+        return key
+
+    def prepare_usage_commit(self, ledgers: dict[str, dict]) -> None:
+        from wenyi_core.llm.routing import identity
+
+        with self.state_lock():
+            entries = [
+                {
+                    "path": self._usage_key(key),
+                    "before": identity(self.read_artifact(key)),
+                    "value": value,
+                }
+                for key, value in ledgers.items()
+            ]
+            self.write_artifact("usage-pending.json", {"version": 1, "entries": entries})
+
+    def recover_usage(self) -> None:
+        from wenyi_core.llm.routing import identity
+        from wenyi_core.llm.usage import validate_usage
+
+        with self.state_lock():
+            pending = self.read_artifact("usage-pending.json")
+            if pending is None:
+                return
+            if pending.get("version") != 1 or not isinstance(pending.get("entries"), list):
+                raise ValueError("Invalid usage journal")
+            for entry in pending["entries"]:
+                key = self._usage_key(entry["path"])
+                value = validate_usage(entry["value"])
+                if identity(self.read_artifact(key)) not in {entry["before"], identity(value)}:
+                    raise ValueError("Usage ledger changed outside its pending commit")
+                self.write_artifact(key, value)
+            self.delete_artifact("usage-pending.json")
+
+    def record_timing(self, record: dict[str, Any]) -> dict[str, Any]:
+        with self.state_lock():
+            ledger = self.read_artifact("timing.json") or {"runs": []}
+            runs = {run["id"]: run for run in ledger["runs"]}
+            runs[record["id"]] = record
+            ledger = {
+                "total_seconds": sum(run["elapsed_seconds"] for run in runs.values()),
+                "runs": list(runs.values()),
+            }
+            self.write_artifact("timing.json", ledger)
+            return ledger
+
+    def load_timing(self) -> dict | None:
+        return self.read_artifact("timing.json")
+
+    def load_latest_review_result(self) -> dict | None:
+        for key in reversed(self.list_artifacts("reviews/")):
+            if re.fullmatch(r"reviews/review-[^/]+/result\.json", key):
+                result = self.read_artifact(key)
+                if isinstance(result, dict):
+                    return result
+        return None
+
+    @staticmethod
+    def batch_glossary_key(start_index: int, count: int) -> str:
+        return f"{start_index}:{count}"
+
+    def completed_batch_glossary_keys(self, chapter: int) -> set[str]:
+        rows = self.list_events(event_type="batch_glossary_extracted", limit=0)
+        return {
+            self.batch_glossary_key(row["start_index"], row["count"])
+            for row in rows
+            if row.get("chapter") == chapter
+            and isinstance(row.get("start_index"), int)
+            and isinstance(row.get("count"), int)
+        }
+
     def log_event(self, event: str, **data: Any) -> None:
         with self._conn as conn:
             conn.execute(
-                """INSERT INTO events (project_id, type, payload)
-                   VALUES (%s,%s,%s)""",
-                (self.project_id, event, Json(data)),
+                "INSERT INTO events(project_id,type,payload) VALUES(%s,%s,%s)",
+                (self.project_id, event, Jsonb(data)),
             )
 
-    def list_events(self, *, event_type: Optional[str] = None,
-                    limit: int = 200) -> list[dict]:
+    def list_events(self, *, event_type: str | None = None, limit: int = 200) -> list[dict]:
         with self._conn as conn:
-            if event_type:
-                rows = conn.execute(
-                    """SELECT id, type, payload, created_at FROM events
-                       WHERE project_id=%s AND type=%s
-                       ORDER BY created_at DESC LIMIT %s""",
-                    (self.project_id, event_type, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """SELECT id, type, payload, created_at FROM events
-                       WHERE project_id=%s ORDER BY created_at DESC LIMIT %s""",
-                    (self.project_id, limit),
-                ).fetchall()
-        out = []
-        for r in rows:
-            payload = dict(r[2] or {})
-            payload.setdefault("event", r[1])
-            payload["_id"] = r[0]
-            payload["_ts"] = r[3].isoformat() if r[3] else None
-            out.append(payload)
-        return out
+            rows = conn.execute(
+                """SELECT id,type,payload,created_at FROM events WHERE project_id=%s
+                AND (%s::text IS NULL OR type=%s) ORDER BY id DESC LIMIT %s""",
+                (self.project_id, event_type, event_type, limit or None),
+            ).fetchall()
+        result = []
+        for row in reversed(rows):
+            payload = dict(row[2] or {})
+            payload.update(event=row[1], _id=row[0], _ts=row[3].isoformat(), ts=row[3].isoformat())
+            result.append(payload)
+        return result
 
-    # ── 术语表 ───────────────────────────────────────────────────────────
-    # 术语 SELECT 列序：source,target,reading,type,gender,aliases,first_chapter,
-    #                   note,confidence,locked,status
-    def _row_to_term(self, row) -> GlossaryTerm:
+    # Glossary retains first insertion order and established translations on conflict.
+    _TERM_COLS = "source,target,reading,type,gender,aliases,first_chapter,note,status"
+
+    @staticmethod
+    def _row_to_term(row) -> GlossaryTerm:
         return GlossaryTerm(
-            source=row[0], target=row[1], reading=row[2] or "",
-            type=row[3] or "术语", gender=row[4] or "",
-            aliases=list(row[5] or []), first_chapter=row[6],
-            note=row[7] or "", confidence=row[8] or "medium",
-            locked=bool(row[9]), status=row[10] or "ok",
+            source=row[0],
+            target=row[1],
+            reading=row[2],
+            type=row[3],
+            gender=row[4],
+            aliases=row[5],
+            first_chapter=row[6],
+            note=row[7],
+            status=row[8],
         )
 
-    _TERM_COLS = """source,target,reading,type,gender,aliases,first_chapter,
-                    note,confidence,locked,status"""
-
-    def _select_term(self, conn, source: str):
-        return conn.execute(
-            f"""SELECT {self._TERM_COLS} FROM glossary
-               WHERE project_id=%s AND source=%s""",
-            (self.project_id, source),
-        ).fetchone()
-
-    def get_term(self, source: str) -> Optional[GlossaryTerm]:
+    def get_term(self, source: str) -> GlossaryTerm | None:
         with self._conn as conn:
-            row = self._select_term(conn, source)
+            row = conn.execute(
+                f"SELECT {self._TERM_COLS} FROM glossary WHERE project_id=%s AND source=%s",
+                (self.project_id, source),
+            ).fetchone()
         return self._row_to_term(row) if row else None
 
-    def upsert_term(self, term: GlossaryTerm,
-                    chapter: Optional[int] = None) -> str:
-        now = time.time()
-        with self._conn as conn:
-            existing = self._select_term(conn, term.source)
+    def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
+        with self.state_lock(), self._conn as conn:
+            existing = self.get_term(term.source)
+            now = time.time()
             if existing is None:
                 conn.execute(
-                    """INSERT INTO glossary
-                       (project_id,source,target,reading,type,gender,aliases,
-                        first_chapter,note,confidence,locked,status,updated_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (self.project_id, term.source, term.target, term.reading,
-                     term.type, term.gender, Json(term.aliases),
-                     term.first_chapter if term.first_chapter is not None else chapter,
-                     term.note, term.confidence, term.locked, term.status, now),
+                    """INSERT INTO glossary(project_id,source,target,reading,type,gender,
+                    aliases,first_chapter,note,status,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (
+                        self.project_id,
+                        term.source,
+                        term.target,
+                        term.reading,
+                        term.type,
+                        term.gender,
+                        Jsonb(term.aliases),
+                        term.first_chapter if term.first_chapter is not None else chapter,
+                        term.note,
+                        term.status,
+                        now,
+                    ),
                 )
                 return "inserted"
-
-            if existing[1] == term.target:
-                merged = sorted(set(existing[5] or []) | set(term.aliases))
+            if existing.target == term.target:
+                aliases = sorted(set(existing.aliases) | set(term.aliases))
                 conn.execute(
-                    """UPDATE glossary
-                       SET reading=COALESCE(NULLIF(%s,''),reading),
-                           gender=COALESCE(NULLIF(%s,''),gender),
-                           aliases=%s, note=COALESCE(NULLIF(%s,''),note),
-                           updated_at=%s
-                       WHERE project_id=%s AND source=%s""",
-                    (term.reading, term.gender, Json(merged), term.note, now,
-                     self.project_id, term.source),
+                    """UPDATE glossary SET reading=COALESCE(NULLIF(%s,''),reading),
+                    gender=COALESCE(NULLIF(%s,''),gender),aliases=%s,note=COALESCE(NULLIF(%s,''),note),
+                    updated_at=%s WHERE project_id=%s AND source=%s""",
+                    (
+                        term.reading,
+                        term.gender,
+                        Jsonb(aliases),
+                        term.note,
+                        now,
+                        self.project_id,
+                        term.source,
+                    ),
                 )
                 return "unchanged"
-
-            # target 不同 → 冲突判定
-            existing_priority = (bool(existing[9]), CONFIDENCE_ORDER.get(existing[8], 1))
-            new_priority = (term.locked, CONFIDENCE_ORDER.get(term.confidence, 1))
-            self._log_conflict(conn, term.source, existing[1], term.target, chapter)
-            if existing_priority >= new_priority:
-                conn.execute(
-                    """UPDATE glossary SET status='conflict', updated_at=%s
-                       WHERE project_id=%s AND source=%s""",
-                    (now, self.project_id, term.source),
-                )
-                return "conflict"
             conn.execute(
-                """UPDATE glossary SET target=%s,
-                   reading=COALESCE(NULLIF(%s,''),reading),
-                   gender=COALESCE(NULLIF(%s,''),gender), confidence=%s,
-                   status='conflict', updated_at=%s
-                   WHERE project_id=%s AND source=%s""",
-                (term.target, term.reading, term.gender, term.confidence, now,
-                 self.project_id, term.source),
+                """INSERT INTO term_conflicts(project_id,source,existing_target,proposed_target,
+                chapter,created_at) VALUES(%s,%s,%s,%s,%s,%s)""",
+                (self.project_id, term.source, existing.target, term.target, chapter, now),
             )
-            return "updated"
+            conn.execute(
+                "UPDATE glossary SET status='conflict',updated_at=%s WHERE project_id=%s AND source=%s",
+                (now, self.project_id, term.source),
+            )
+            return "conflict"
 
-    def _log_conflict(self, conn, source, existing_target, proposed_target, chapter):
-        conn.execute(
-            """INSERT INTO term_conflicts
-               (project_id,source,existing_target,proposed_target,chapter,created_at)
-               VALUES (%s,%s,%s,%s,%s,%s)""",
-            (self.project_id, source, existing_target, proposed_target,
-             chapter, time.time()),
-        )
+    def resolve_term(self, source: str, target: str) -> bool:
+        with self.state_lock(), self._conn as conn:
+            cursor = conn.execute(
+                "UPDATE glossary SET target=%s,status='ok',updated_at=%s WHERE project_id=%s AND source=%s",
+                (target, time.time(), self.project_id, source),
+            )
+            return cursor.rowcount > 0
 
     def delete_term(self, source: str) -> bool:
-        with self._conn as conn:
-            cur = conn.execute(
-                "DELETE FROM glossary WHERE project_id=%s AND source=%s",
-                (self.project_id, source),
+        with self.state_lock(), self._conn as conn:
+            cursor = conn.execute(
+                "DELETE FROM glossary WHERE project_id=%s AND source=%s", (self.project_id, source)
             )
-        return cur.rowcount > 0
-
-    def lock_term(self, source: str, target: Optional[str] = None) -> None:
-        with self._conn as conn:
-            if target is not None:
-                conn.execute(
-                    """UPDATE glossary SET target=%s, locked=TRUE, confidence='high',
-                       status='ok' WHERE project_id=%s AND source=%s""",
-                    (target, self.project_id, source),
-                )
-            else:
-                conn.execute(
-                    """UPDATE glossary SET locked=TRUE, confidence='high', status='ok'
-                       WHERE project_id=%s AND source=%s""",
-                    (self.project_id, source),
-                )
+            return cursor.rowcount > 0
 
     def all_terms(self) -> list[GlossaryTerm]:
         with self._conn as conn:
             rows = conn.execute(
-                """SELECT source,target,reading,type,gender,aliases,first_chapter,
-                          note,confidence,locked,status FROM glossary
-                   WHERE project_id=%s ORDER BY type, source""",
+                f"SELECT {self._TERM_COLS} FROM glossary WHERE project_id=%s ORDER BY insertion_id",
                 (self.project_id,),
             ).fetchall()
-        return [self._row_to_term(r) for r in rows]
+        return [self._row_to_term(row) for row in rows]
 
     def terms_in(self, terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         return GlossaryStore.terms_in(terms, text)
 
     def terms_in_text(self, text: str) -> list[GlossaryTerm]:
-        return GlossaryStore.terms_in(self.all_terms(), text)
+        return self.terms_in(self.all_terms(), text)
 
     def mark_conflicts_resolved(self, source: str) -> None:
-        with self._conn as conn:
+        with self.state_lock(), self._conn as conn:
             conn.execute(
-                """UPDATE term_conflicts SET resolved=TRUE
-                   WHERE project_id=%s AND source=%s""",
+                "UPDATE term_conflicts SET resolved=TRUE WHERE project_id=%s AND source=%s",
                 (self.project_id, source),
             )
 
     def open_conflicts(self) -> list[dict]:
         with self._conn as conn:
             rows = conn.execute(
-                """SELECT id, source, existing_target, proposed_target, chapter, note
-                   FROM term_conflicts
-                   WHERE project_id=%s AND resolved=FALSE ORDER BY created_at""",
+                """SELECT id,source,existing_target,proposed_target,chapter,note FROM term_conflicts
+                WHERE project_id=%s AND NOT resolved ORDER BY id""",
                 (self.project_id,),
             ).fetchall()
         return [
-            {"id": r[0], "source": r[1], "existing_target": r[2],
-             "proposed_target": r[3], "chapter": r[4], "note": r[5]}
-            for r in rows
+            dict(
+                zip(("id", "source", "existing_target", "proposed_target", "chapter", "note"), row)
+            )
+            for row in rows
         ]
 
-    def low_confidence_terms(self) -> list[GlossaryTerm]:
-        with self._conn as conn:
-            rows = conn.execute(
-                """SELECT source,target,reading,type,gender,aliases,first_chapter,
-                          note,confidence,locked,status FROM glossary
-                   WHERE project_id=%s AND (confidence='low' OR status='conflict')
-                   ORDER BY source""",
-                (self.project_id,),
-            ).fetchall()
-        return [self._row_to_term(r) for r in rows]
-
-    # ── 翻译记忆库 ───────────────────────────────────────────────────────
-    @staticmethod
-    def _hash(text: str) -> str:
-        return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
-
-    def add_tm(self, source_text: str, target_text: str,
-               chapter: Optional[int] = None) -> None:
-        with self._conn as conn:
-            conn.execute(
-                """INSERT INTO translation_memory
-                   (project_id,source_hash,source_text,target_text,chapter,updated_at)
-                   VALUES (%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (project_id,source_hash) DO UPDATE
-                   SET target_text=EXCLUDED.target_text, chapter=EXCLUDED.chapter,
-                       updated_at=EXCLUDED.updated_at""",
-                (self.project_id, self._hash(source_text), source_text, target_text,
-                 chapter, time.time()),
-            )
-
-    def tm_lookup(self, source_text: str) -> Optional[str]:
-        with self._conn as conn:
-            row = conn.execute(
-                """SELECT target_text FROM translation_memory
-                   WHERE project_id=%s AND source_hash=%s""",
-                (self.project_id, self._hash(source_text)),
-            ).fetchone()
-        return row[0] if row else None
-
-    # ── 统计 ─────────────────────────────────────────────────────────────
     def stats(self) -> dict[str, int]:
         with self._conn as conn:
-            g = conn.execute(
-                "SELECT COUNT(*) FROM glossary WHERE project_id=%s",
+            terms = conn.execute(
+                "SELECT count(*) FROM glossary WHERE project_id=%s", (self.project_id,)
+            ).fetchone()[0]
+            conflicts = conn.execute(
+                "SELECT count(*) FROM term_conflicts WHERE project_id=%s AND NOT resolved",
                 (self.project_id,),
             ).fetchone()[0]
-            c = conn.execute(
-                """SELECT COUNT(*) FROM term_conflicts
-                   WHERE project_id=%s AND resolved=FALSE""",
-                (self.project_id,),
-            ).fetchone()[0]
-            t = conn.execute(
-                "SELECT COUNT(*) FROM translation_memory WHERE project_id=%s",
-                (self.project_id,),
-            ).fetchone()[0]
-        return {"terms": g, "open_conflicts": c, "tm_entries": t}
-
-    # ── 升级修复 ─────────────────────────────────────────────────────────
-    _ANCHOR_RE = re.compile(r"tn(\d+)_")
-
-    def repair_resource_hrefs(self) -> int:
-        """从 anchor 反推并回填缺失的 resource_href（修复升级前已有数据）。
-
-        anchor 格式为 ``tn{resource_index}_{idx}``，resource_index → href 的
-        映射保存在 manifest.meta.epub_resources。此处只补 NULL 行，幂等，
-        已有正确值的不动。返回修复的段数。
-        """
-        meta = self.load_manifest().get("meta") or {}
-        raw_resources = meta.get("epub_resources")
-        if not isinstance(raw_resources, list):
-            return 0
-        index_to_href: dict[int, str] = {}
-        for r in raw_resources:
-            if isinstance(r, dict):
-                idx = r.get("index")
-                href = r.get("href")
-                if isinstance(idx, int) and isinstance(href, str):
-                    index_to_href[idx] = href
-        if not index_to_href:
-            return 0
-
-        pid = self.project_id
-        with self._conn as conn:
-            rows = conn.execute(
-                """SELECT chapter_seq, seg_seq, anchor FROM segments
-                   WHERE project_id=%s AND anchor IS NOT NULL
-                     AND resource_href IS NULL""",
-                (pid,),
-            ).fetchall()
-            if not rows:
-                return 0
-            fixed = 0
-            for chapter_seq, seg_seq, anchor in rows:
-                m = self._ANCHOR_RE.match(anchor)
-                if not m:
-                    continue
-                href = index_to_href.get(int(m.group(1)))
-                if not href:
-                    continue
-                conn.execute(
-                    """UPDATE segments SET resource_href=%s
-                       WHERE project_id=%s AND chapter_seq=%s AND seg_seq=%s""",
-                    (href, pid, chapter_seq, seg_seq),
-                )
-                fixed += 1
-        if fixed:
-            self.log_event("resource_href_repaired", count=fixed)
-        return fixed
+        return {"terms": terms, "open_conflicts": conflicts}

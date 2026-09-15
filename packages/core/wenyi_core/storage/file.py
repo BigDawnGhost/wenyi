@@ -15,15 +15,62 @@ from typing import Any, Iterator, Optional
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
 from ..pipeline.runstore import STATUS_DONE, RunStore  # noqa: F401 (re-export)
+from .artifacts import FileArtifacts
 from .protocol import STATUS_PENDING  # noqa: F401
 
 
-class FileStorage:
+class FileStorage(FileArtifacts):
     """文件后端 Storage：一个对象同时承担 RunStore + GlossaryStore 职责。"""
 
     def __init__(self, run_dir: str, *, create: bool = True):
+        FileArtifacts.__init__(self, run_dir)
         self._run = RunStore(run_dir, create=create)
         self._glossary: Optional[GlossaryStore] = None
+
+    def __getattr__(self, name: str):
+        # File-only state operations stay in RunStore; domain services receive this port.
+        return getattr(self._run, name)
+
+    @property
+    def _batch_glossary_event_cache(self):
+        return self._run._batch_glossary_event_cache
+
+    @_batch_glossary_event_cache.setter
+    def _batch_glossary_event_cache(self, value):
+        self._run._batch_glossary_event_cache = value
+
+    def state_lock(self):
+        return self._run.state_lock()
+
+    def assemble_lock(self):
+        return self._run.assemble_lock()
+
+    def finish_initialization(self) -> None:
+        self._run.finish_initialization()
+
+    def ensure_source_identity(self, input_path: str, *, actual_sha256: str | None = None) -> str:
+        return self._run.ensure_source_identity(input_path, actual_sha256=actual_sha256)
+
+    def create_export_snapshot(self, *, actual_sha256: str):
+        return self._run.create_export_snapshot(actual_sha256=actual_sha256)
+
+    def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
+        self._run.save_chapter_with_status(chapter, status)
+
+    def save_annotation_contexts(self, data: dict) -> None:
+        self._run.save_annotation_contexts(data)
+
+    def load_annotation_contexts(self) -> dict | None:
+        return self._run.load_annotation_contexts()
+
+    def prepare_usage_commit(self, ledgers: dict[str, dict]) -> None:
+        self._run.prepare_usage_commit(ledgers)
+
+    def recover_usage(self) -> None:
+        self._run.recover_usage()
+
+    def record_timing(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._run.record_timing(record)
 
     # 幂等获取术语库连接（懒打开，复用同一连接）
     @property
@@ -69,12 +116,16 @@ class FileStorage:
         return self._run.usage_path
 
     # ── 生命周期 ─────────────────────────────────────────────────────────
+    def begin_initialization(self, source_hash: str) -> None:
+        self.close()
+        self._run.begin_initialization(source_hash)
+
     def exists(self) -> bool:
         return self._run.exists()
 
-    def stage_document(self, doc: Document) -> dict:
+    def stage_document(self, doc: Document, *, source_hash: str | None = None) -> dict:
         """写入章节文件并返回 manifest，但不提前落盘 manifest。"""
-        return self._run.stage_document(doc)
+        return self._run.stage_document(doc, source_hash=source_hash)
 
     def init_from_document(self, doc: Document) -> dict:
         """兼容入口：stage + 立即保存 manifest（原子初始化完成标志）。"""
@@ -111,9 +162,6 @@ class FileStorage:
 
     def set_chapter_status(self, ci: int, status: str) -> None:
         self._run.set_chapter_status(ci, status)
-
-    def set_chapter_review_status(self, ci: int, status: str) -> None:
-        self._run.set_chapter_review_status(ci, status)
 
     def pending_chapters(self) -> list[int]:
         return self._run.pending_chapters()
@@ -161,8 +209,7 @@ class FileStorage:
     def log_event(self, event: str, **data: Any) -> None:
         self._run.log_event(event, **data)
 
-    def list_events(self, *, event_type: Optional[str] = None,
-                    limit: int = 200) -> list[dict]:
+    def list_events(self, *, event_type: Optional[str] = None, limit: int = 200) -> list[dict]:
         path = self._run.event_log_path
         if not os.path.isfile(path):
             return []
@@ -185,25 +232,25 @@ class FileStorage:
     def get_term(self, source: str) -> Optional[GlossaryTerm]:
         return self._g.get_term(source)
 
-    def upsert_term(self, term: GlossaryTerm,
-                    chapter: Optional[int] = None) -> str:
+    def upsert_term(self, term: GlossaryTerm, chapter: Optional[int] = None) -> str:
         return self._g.upsert_term(term, chapter=chapter)
 
     def all_terms(self) -> list[GlossaryTerm]:
         return self._g.all_terms()
 
-    def terms_in(self, terms: list[GlossaryTerm],
-                 text: str) -> list[GlossaryTerm]:
+    def terms_in(self, terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         return GlossaryStore.terms_in(terms, text)
 
     def terms_in_text(self, text: str) -> list[GlossaryTerm]:
-        return self._g.terms_in_text(text)
+        return self._g.terms_in(self._g.all_terms(), text)
 
-    def lock_term(self, source: str, target: Optional[str] = None) -> None:
-        self._g.lock_term(source, target)
+    def resolve_term(self, source: str, target: str) -> bool:
+        return self._g.resolve_term(source, target)
 
     def delete_term(self, source: str) -> bool:
-        return self._g.delete_term(source)
+        cursor = self._g.conn.execute("DELETE FROM glossary WHERE source=?", (source,))
+        self._g.conn.commit()
+        return cursor.rowcount > 0
 
     def mark_conflicts_resolved(self, source: str) -> None:
         self._g.mark_conflicts_resolved(source)
@@ -211,17 +258,5 @@ class FileStorage:
     def open_conflicts(self) -> list[dict]:
         return self._g.open_conflicts()
 
-    def low_confidence_terms(self) -> list[GlossaryTerm]:
-        return self._g.low_confidence_terms()
-
-    # ── 翻译记忆库 ───────────────────────────────────────────────────────
-    def add_tm(self, source_text: str, target_text: str,
-               chapter: Optional[int] = None) -> None:
-        self._g.add_tm(source_text, target_text, chapter)
-
-    def tm_lookup(self, source_text: str) -> Optional[str]:
-        return self._g.tm_lookup(source_text)
-
-    # ── 统计 ─────────────────────────────────────────────────────────────
     def stats(self) -> dict[str, int]:
         return self._g.stats()

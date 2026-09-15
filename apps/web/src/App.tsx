@@ -9,6 +9,9 @@ import ReviewPage from "./features/review/ReviewPage";
 import ExportPage from "./features/export/ExportPage";
 import EventsPage from "./features/events/EventsPage";
 
+import SettingsPage from "./features/settings/SettingsPage";
+import SubtitlesPage from "./features/subtitles/SubtitlesPage";
+
 export default function App() {
   return (
     <Routes>
@@ -20,6 +23,8 @@ export default function App() {
         <Route path="/projects/:pid/style" element={<StylePage />} />
         <Route path="/projects/:pid/review" element={<ReviewPage />} />
         <Route path="/projects/:pid/review/:ci" element={<ReviewPage />} />
+        <Route path="/projects/:pid/settings" element={<SettingsPage />} />
+        <Route path="/projects/:pid/subtitles" element={<SubtitlesPage />} />
         <Route path="/projects/:pid/export" element={<ExportPage />} />
         <Route path="/projects/:pid/events" element={<EventsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

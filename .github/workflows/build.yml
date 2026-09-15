@@ -45,15 +45,18 @@ jobs:
           --paths packages/core --paths packages/cli
           --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
-          --copy-metadata trans-novel
+          --collect-all wenyi_core --collect-all tiktoken --collect-all tiktoken_ext
+          --collect-all docx --collect-all google.genai
+          --copy-metadata wenyi-core --copy-metadata wenyi-cli
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
-          --distpath dist packages/core/wenyi_core/__main__.py
+          --distpath dist scripts/cli_entry.py
 
       - name: Smoke test executable
         shell: bash
         run: |
           ${{ matrix.binary }} --help
           ${{ matrix.binary }} --version
+          ${{ matrix.binary }} languages
 
       - name: Package Windows executable
         if: runner.os == 'Windows'

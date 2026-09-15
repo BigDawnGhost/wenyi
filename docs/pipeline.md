@@ -1,80 +1,62 @@
-# Translation pipeline
+# Pipeline and persistence
 
-[简体中文](zh/pipeline.md)
+[简体中文](zh/pipeline.md) · [Configuration](configuration.md)
 
-Wenyi first builds a whole-book understanding and then translates chapters in order. Optional stages can be disabled in `config.yaml` to reduce cost or runtime.
+## Entry points and architecture
 
-```text
-Read input
--> Parse chapters, text segments, and the EPUB table of contents
--> Detect the source language or use the configured language
--> Scan the book and create chapter digests and a whole-book synopsis
--> Analyze representative passages and build an initial glossary and style guide
--> Translate chapter by chapter and batch by batch
--> Extract and update terminology as translation progresses
--> Optionally polish and normalize punctuation
--> Optionally run the evidence-driven whole-book review
--> Optionally run whole-book consistency QA
--> Generate the report
--> Write translated content back and assemble the requested output
+`wenyi_cli` implements terminal commands. `wenyi_api` implements HTTP, WebSocket, task scheduling and PostgreSQL storage. Both call the shared `wenyi_core` services through `Orchestrator(config, client=None, storage=None)`.
+
+The orchestration facade orders preparation, translation, annotations, Review, Autofix, reporting and assembly. It delegates model calls and state handling to domain services. Without an injected backend, the runtime constructs `FileStorage` for the CLI. Web injects `PostgresStorage`.
+
+```mermaid
+flowchart TD
+  Upload[Parse source / preview] --> Prepare[Validate source / initialize / analyze]
+  Prepare --> Understand[Optional chapter digests / synopsis]
+  Understand --> Translate[Translate / polish / annotations / glossary]
+  Translate --> Review[Whole-book Review on shadow text]
+  Review --> Publish[Optional Autofix publication]
+  Publish --> Report[Report]
+  Translate -. Saved snapshot .-> Export[Independent export]
+  Report --> Export
 ```
 
-## Whole-book understanding and context
+Book understanding, polishing, Review and Autofix are enabled by default. SRT uses an independent cue/window workflow, not the book pipeline.
 
-The prescan creates a digest for each chapter and a synopsis of the complete book. For every translation batch, the prompt presents stable information first: style guidance, the whole-book synopsis, the current chapter digest, relevant glossary terms, recent translated context, and finally the source text to translate.
+## Preparation and translation
 
-This lets early chapters benefit from knowledge of later events while helping adjacent batches preserve pronouns, forms of address, tone, and sentences that span multiple source segments.
+Source SHA-256 and language identity are validated before continuing a run. Web upload preview uses an Arq parser task and saves the parsed document with its source/configuration fingerprint. Preparation reuses matching preview data. Expensive PDF parsing uses the same backend/cache settings.
 
-## Glossary
+Initialization writes derived chapters, annotations, analysis, glossary and context before committing the initialized manifest. A failed initialization can be retried without treating partially written chapters as a completed project.
 
-The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. By default, later batches receive only terms that appear in the current chapter, keeping unrelated entries out of the prompt.
+Translation batches are packed by token budget. Each completed batch saves its translations, annotation alignment, rolling context and glossary checkpoint. At chapter completion, text and status are persisted together. Existing translations without their term checkpoint are inspected for missing terminology rather than translated again. Polishing preserves `target_before_polish`; source resource and format metadata remain attached to segments/chapters.
 
-The glossary constrains later translation and supplies evidence to the final review, but it does not automatically rewrite every previously translated occurrence. Use `glossary list` and `glossary conflicts` to inspect entries, then combine review, QA, reports, and manual decisions when necessary.
+## Review and Autofix
 
-## Quality controls
+Whole-book Review requires translated chapters. It freezes the evidence inputs and glossary, scans blocks concurrently, verifies candidates, arbitrates contradictions, and applies temporary corrections to shadow text followed by blind rechecks. Review artifacts include metadata, results, block caches, round checkpoints, evidence and events.
 
-- **Segment alignment:** the model must return a JSON array with the same number of items as the input. Wenyi retries mismatched batches and falls back to translating one segment at a time.
-- **Polishing:** improves Chinese fluency while preserving meaning and segment count.
-- **Punctuation normalization:** converts punctuation to common Simplified Chinese full-width conventions.
-- **Agent Review:** starts only after every chapter has been translated and uses the completed glossary. Contiguous chapter chunks are checked concurrently with the existing Reviewer prompt. Every response must end with a completion receipt containing the exact reviewed-segment count and `complete: true`. Syntax-only JSON damage is repaired locally with `json-repair`; a missing or invalid receipt recursively splits only the affected chunk, and a singleton receives at most `1 + review_output_retries` attempts.
-- **Selective evidence loop:** when a successfully reviewed leaf chunk contains candidates and `review_agent_loop` is enabled, a bounded Agent Loop confirms, dismisses, or refines them and may add issues within that chunk. It can request one glossary entry by source or alias, the first, middle, last, or Nth occurrence of a term, nearby source-and-translation segments, and limited book, chapter, or style context instead of loading the whole book or glossary into every prompt. The loop uses the configured tier (`strong` by default) and must decide after at most `review_agent_max_evidence_rounds` evidence rounds.
-- **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The final suggestion set conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available in the round traces. It never changes the glossary or translated text.
-- **Shadow Fix and blind re-review:** confirmed issues for the same segment are grouped into one Fixer request. The Fixer receives the style brief, book synopsis, chapter digest, relevant glossary subset, and nearby source/translation pairs, and must return one complete replacement segment rather than a diff. All Fixers in a round read one immutable shadow snapshot; their patches are applied together only after the round finishes. The next whole-book Review and evidence index read the updated shadow text without receiving the old issue explanations. Unresolved arbitration conflicts and unverified Agent fallbacks are left unresolved. The loop stops after consecutive clean passes, the configured Fix limit, no progress, or an A→B→A cycle.
-- **Whole-book consistency QA:** checks terminology, references, voice, and punctuation after translation. It reports issues by default without rewriting the text.
+When content/configuration/glossary fingerprints match, the newest completed result can be reused and an interrupted run can resume the same identity. Changed relevant input produces a new run. The result records status and termination as well as issue/change counts.
 
-Final review is disabled by default. Setting `pipeline.review: true` inserts it
-between translation and QA in the one-command workflow. Review is also available
-as an independent stage:
+Autofix is a separate publisher, enabled by default. It persists a complete publication index before changing formal targets. Each location includes before/after hashes; repeated publication is idempotent, interrupted work resumes, and externally modified text is not overwritten. `--no-autofix` keeps formal targets unchanged while retaining shadow suggestions and diagnostics.
 
-```bash
-uv run trans-novel review book.epub
-```
+## Storage and concurrency
 
-The explicit command runs even when `pipeline.review` is disabled. Every invocation
-reviews the complete translated book from the beginning. It may update only a
-run-local shadow translation and never changes chapter JSON, the manifest, or the
-glossary. The final result, run-local usage delta, events, and internal round traces
-are written to:
+| Data | CLI | Web |
+|---|---|---|
+| Manifest, chapters, analysis, context | Atomic JSON under the target-specific run | PostgreSQL project/chapter/segment state |
+| Terms and conflicts | SQLite | PostgreSQL, stable insertion order |
+| Review, checkpoints, evidence, Autofix | JSON/JSONL artifact backend | JSON artifacts/records in PostgreSQL |
+| Subtitle cues and batch cache | SRT run files | `srt/` artifact namespace in PostgreSQL |
+| Usage and timing | Recoverable files / invocation ledger | Transactional ledgers / invocation identity |
+| Source templates, parser resources, exports | Local resources | Shared `DATA_DIR` resources |
 
-```text
-state/<book>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
-```
+The `Storage` and `ArtifactStorage` ports define all mutable state operations. Domain services do not create a Web JSON/SQLite shadow store. Review run paths serve as identities under the resource directory; actual artifact reads/writes use the injected backend.
 
-The directory has only `result.json`, `usage.json`, `events.jsonl`, and `rounds/`.
-`result.json` contains the final issues and folded modification suggestions;
-chapter and segment indices point back to the formal chapter JSON instead of
-copying source text and context. `rounds/` retains prompts, responses, patches,
-and failures for diagnosis. The run-local usage delta is also merged exactly once
-into the book's cumulative `usage.json`, while `report.json` receives only the
-Review ID, stop reason, counts, and `read_only: true`.
+A project write lock serializes preparation, translation, Review, Autofix and manual mutations. PostgreSQL uses short transactions for state updates and does not hold a database write transaction across a model request. Export takes a consistent manifest/chapter snapshot and releases its transaction before rendering. Export jobs use `wenyi:exports`, separate from `wenyi:workflows`, so translation does not prevent a queued export from starting.
 
-`not_rereported` means only that a subsequent blind review did not report the
-logical issue covered by the suggestion again. It is not proof that the proposed
-replacement is semantically correct. Stop reasons include
-`clean_confirmed`, `max_rounds`, `no_progress`, `cycle_detected`, and
-`unresolved_fixes` (a previously confirmed issue did not receive a valid patch
-even if a later Reviewer missed it).
+Usage is accumulated with recoverable publication and checkpoints; timing records are keyed by invocation. SRT flushes completed call usage when interrupted, retains saved cues and caches, and preserves manual cue edits on resume. Model limits are per client process, not a cross-worker distributed quota.
 
-## Resumability
+## Compatibility and verification
 
-Each completed translation batch is persisted immediately. Running `translate` again skips completed batches and fills only missing work. `assemble` can regenerate output directly from stored state.
+The update targets fresh Web deployments. Source changes or another target language require a new initialized Web project. Existing CLI target directories stay separate. No automatic migration of old Web state is included.
+
+Offline tests cover all domain workflows, source identity, formatting, languages, model routing, recovery and storage boundaries. Real PostgreSQL tests cover rollback, locks, consistent snapshots, complete book/subtitle workflows, interrupted Review and Autofix, and no local state shadows. Browser tests cover the Web controls. These tests do not substitute for a real-model translation-quality comparison.

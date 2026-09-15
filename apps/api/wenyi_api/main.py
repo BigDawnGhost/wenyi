@@ -7,38 +7,44 @@ OpenAPI：``/docs`` 或 ``/openapi.json``（前端类型同步的单一事实来
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
 from .config import settings
-from .db import init_pool
+from .db import close_pool, init_pool
 from .routers import (
     chapters,
+    configuration,
     events,
     export,
     glossary,
     health,
     projects,
-    qa,
+    report,
     review,
     strategies,
     style,
+    subtitles,
     ws,
 )
 
 
 def create_app() -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app):
+        init_pool(settings.psycopg_dsn)
+        yield
+        close_pool()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="文译 (Wenyi) API",
         version="0.2.0",
         description="基于 AI 的长篇小说翻译平台 — Web API（FastAPI + Postgres + Arq）",
     )
-
-    @app.on_event("startup")
-    def _startup() -> None:
-        init_pool(settings.psycopg_dsn)
 
     # CORS：开发期前端独立端口直连；生产可收紧。
     app.add_middleware(
@@ -73,7 +79,9 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(strategies.router)
     app.include_router(projects.router)
-    app.include_router(qa.router)
+    app.include_router(configuration.router)
+    app.include_router(report.router)
+    app.include_router(subtitles.router)
     app.include_router(chapters.router)
     app.include_router(glossary.router)
     app.include_router(review.router)

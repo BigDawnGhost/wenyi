@@ -11,13 +11,15 @@ from wenyi_core.events import TranslationEvent, make_progress_fn
 class RedisEmitter:
     """发布到 Redis channel ``project:{id}``，供 WebSocket 中继转发。"""
 
-    def __init__(self, redis: Redis, project_id: str):
+    def __init__(self, redis: Redis, project_id: str, run_id: str | None = None):
+        self.run_id = run_id
         self._redis = redis
         self._project_id = project_id
         self.channel = f"project:{project_id}"
 
     def emit(self, event: TranslationEvent) -> None:
         payload = {
+            "run_id": self.run_id,
             "project_id": event.project_id or self._project_id,
             "kind": event.kind,
             "done": event.done,
@@ -26,12 +28,16 @@ class RedisEmitter:
             "payload": event.payload,
         }
         try:
-            self._redis.publish(self.channel, json.dumps(payload, ensure_ascii=False))
+            encoded = json.dumps(payload, ensure_ascii=False)
+            self._redis.set(f"{self.channel}:progress", encoded, ex=604800)
+            self._redis.publish(self.channel, encoded)
         except Exception:
             # Redis 不可用不应阻断翻译；静默降级（事件仍在 events 表里）。
             return None
 
 
-def redis_progress_fn(redis: Redis, project_id: str, *, kind: str = "progress"):
+def redis_progress_fn(
+    redis: Redis, project_id: str, *, kind: str = "progress", run_id: str | None = None
+):
     """构造内核 ProgressFn：done/total/label → Redis 发布。"""
-    return make_progress_fn(RedisEmitter(redis, project_id), project_id, kind=kind)
+    return make_progress_fn(RedisEmitter(redis, project_id, run_id), project_id, kind=kind)

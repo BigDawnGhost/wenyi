@@ -1,0 +1,4 @@
+[Terms to align and their first occurrence context]
+$candidates_json
+
+Check each first translation and return JSON: {"terms":[...]}.

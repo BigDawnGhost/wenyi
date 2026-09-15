@@ -1,93 +1,55 @@
-"""导出任务路由的契约测试（不依赖 DB / Redis）。"""
-
-from __future__ import annotations
+"""Export submission fails cleanly without blocking active workflows."""
 
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from wenyi_api.routers import export
 from wenyi_api.schemas import ExportRequest
 
 
-def test_create_export_inserts_pending_record_before_enqueue(monkeypatch):
-    calls: list[tuple[str, object]] = []
+@pytest.mark.parametrize(
+    "source_fmt,meta,expected",
+    [
+        ("docx", {}, "docx"),
+        ("srt", {}, "srt"),
+        ("pdf", {"pdf_export": "babeldoc"}, "pdf"),
+        ("text", {}, "epub"),
+    ],
+)
+def test_export_defaults_and_failure_records(monkeypatch, source_fmt, meta, expected):
+    from wenyi_core.config import Config
 
-    monkeypatch.setattr(export.dal, "get_project", lambda pid: {"id": pid})
-
-    def fake_create_export(pid: str, fmt: str, options: dict) -> int:
-        calls.append(("create", (pid, fmt, options)))
-        return 42
-
-    async def fake_enqueue(name: str, **kwargs):
-        calls.append(("enqueue", (name, kwargs)))
-        return SimpleNamespace(job_id="export-job")
-
-    monkeypatch.setattr(export.dal, "create_export", fake_create_export)
-    monkeypatch.setattr(export, "enqueue", fake_enqueue)
-
-    result = asyncio.run(
-        export.create_export(
-            "project-1",
-            ExportRequest(
-                format="epub",
-                bilingual=True,
-                order="source_first",
-                about_page=False,
-            ),
-        )
+    records, statuses = [], []
+    monkeypatch.setattr(
+        export, "effective_config", lambda project: Config.from_dict({"llm": {"preset": "fake"}})
     )
-
-    assert calls[0] == (
-        "create",
-        (
-            "project-1",
-            "epub",
-                {
-                    "bilingual": True,
-                    "order": "source_first",
-                    "about_page": False,
-                    "preserve_source_style": False,
-                },
-        ),
+    monkeypatch.setattr(export.dal, "create_job", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(export.dal, "set_job_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        export,
+        "require_project",
+        lambda pid: {"id": pid, "fmt": source_fmt, "initialized": True, "status": "translating"},
     )
-    assert calls[1] == (
-        "enqueue",
-        (
-            "run_export",
-            {
-                "project_id": "project-1",
-                "export_id": 42,
-                "fmt": "epub",
-                "bilingual": True,
-                "order": "source_first",
-                "about_page": False,
-                "preserve_source_style": False,
-            },
-        ),
+    monkeypatch.setattr(
+        export, "storage_for", lambda pid: SimpleNamespace(load_manifest=lambda: {"meta": meta})
     )
-    assert result["job_id"] == "export-job"
-
-
-def test_create_export_marks_record_error_when_enqueue_fails(monkeypatch):
-    statuses: list[tuple[int, str]] = []
-    monkeypatch.setattr(export.dal, "get_project", lambda pid: {"id": pid})
-    monkeypatch.setattr(export.dal, "create_export", lambda pid, fmt, options: 7)
+    monkeypatch.setattr(
+        export.dal, "create_export", lambda pid, fmt, opts: records.append((fmt, opts)) or 9
+    )
     monkeypatch.setattr(
         export.dal,
         "set_export_status",
-        lambda export_id, status: statuses.append((export_id, status)),
+        lambda eid, status, **kw: statuses.append((eid, status, kw)),
     )
 
-    async def failing_enqueue(name: str, **kwargs):
-        raise RuntimeError("redis unavailable")
+    async def unavailable(*args, **kwargs):
+        return None
 
-    monkeypatch.setattr(export, "enqueue", failing_enqueue)
-
-    try:
-        asyncio.run(export.create_export("project-1", ExportRequest()))
-    except RuntimeError as exc:
-        assert str(exc) == "redis unavailable"
-    else:
-        raise AssertionError("enqueue failure should propagate")
-
-    assert statuses == [(7, "error")]
+    monkeypatch.setattr(export, "enqueue", unavailable)
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(export.create_export("p", ExportRequest()))
+    assert raised.value.status_code == 503
+    assert records[0][0] == expected
+    assert statuses[0][:2] == (9, "error")

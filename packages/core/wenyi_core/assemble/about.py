@@ -1,12 +1,16 @@
-"""生成书末“关于此翻译”说明页。"""
+"""Generate the About This Translation page at the end of a book."""
 
 from __future__ import annotations
 
 import os
 import posixpath
 import zipfile
+from string import Template
 
 from bs4 import BeautifulSoup
+
+from ..i18n.languages import normalize_language
+from ..i18n.resources import read_text
 
 ABOUT_TITLE = "关于此翻译"
 ABOUT_FILENAME = "trans-novel-about.xhtml"
@@ -14,47 +18,17 @@ ABOUT_REPOSITORY = "https://github.com/BigDawnGhost/wenyi"
 
 
 def about_xhtml(lang: str) -> bytes:
-    """返回可独立加入 EPUB spine 的 XHTML 页面。"""
-    return f"""<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}">
-<head>
-  <title>{ABOUT_TITLE}</title>
-  <style>
-    html, body {{ writing-mode: horizontal-tb; direction: ltr; }}
-    body {{ margin: 8% 8%; font-family: serif; line-height: 1.65; }}
-    .tn-about {{ max-width: 42em; margin: 0 auto; }}
-    h1 {{ margin: 0 0 1.8em; text-align: center; font-size: 1.7em; }}
-    p {{ margin: 0 0 1.5em; text-align: justify; }}
-    .tn-about-lead, .tn-about-closing {{ text-align: center; }}
-    .tn-about-feedback {{ margin: 1.8em 0; font-size: 1.05em; }}
-    .tn-about-feedback p {{ text-align: left; }}
-    a {{ color: #1756d1; text-decoration: underline; }}
-  </style>
-</head>
-<body>
-  <section class="tn-about">
-    <h1>{ABOUT_TITLE}</h1>
-    <p class="tn-about-lead">本书由 <strong>文译（Wenyi）</strong> 项目生成。</p>
-    <p>文译是一个开源的命令行工具，致力于将多语言 EPUB、FB2、TXT 小说翻译为中文。它以长篇小说的翻译质量为重点，支持全书预扫、滚动上下文、实时术语库、润色和审校等功能，力求在准确的前提下让译文从可读向好读迈进。</p>
-    <p>项目目前仍在初期阶段，翻译质量尚有提升空间。如果您发现译文中的问题（如专有名词翻译不一致、口头禅前后不统一等），或对翻译质量有任何建议，欢迎通过以下方式反馈：</p>
-    <div class="tn-about-feedback">
-      <p><strong>GitHub 仓库：</strong>
-        <a href="{ABOUT_REPOSITORY}">github.com/BigDawnGhost/wenyi</a><br/>
-        提交 Issue，或在讨论区提出您的想法<br/>
-        如果您具备编程能力，欢迎提交 Pull Request，共同改进这个项目<br/>
-        项目交流 QQ 群：1055065098
-      </p>
-    </div>
-    <p class="tn-about-closing">本项目为个人兴趣所开发，仅在于针对长文本书籍的译介做出一份微薄的努力。每一份反馈和建议，都会让这个工具变得更好。感谢您的阅读。</p>
-  </section>
-</body>
-</html>
-""".encode()
+    """Return a standalone XHTML page suitable for the EPUB spine."""
+    locale = "zh" if normalize_language(lang) == "zh" else "en"
+    return (
+        Template(read_text(f"export/about.{locale}.xhtml"))
+        .substitute(lang=lang, title=ABOUT_TITLE, repository=ABOUT_REPOSITORY)
+        .encode("utf-8")
+    )
 
 
 def rootfile_path(container_xml: bytes) -> str | None:
-    """从 EPUB container.xml 读取主 OPF 路径。"""
+    """Read the main OPF path from EPUB container.xml."""
     try:
         soup = BeautifulSoup(container_xml, "xml")
         rootfile = soup.find("rootfile")
@@ -67,7 +41,7 @@ def rootfile_path(container_xml: bytes) -> str | None:
 
 
 def unique_about_entry(existing_names: set[str], opf_path: str) -> tuple[str, str]:
-    """返回不与原书资源冲突的（zip 内路径, OPF 相对 href）。"""
+    """Return a ZIP path and OPF-relative href that do not collide with original resources."""
     opf_dir = posixpath.dirname(opf_path)
     stem, ext = posixpath.splitext(ABOUT_FILENAME)
     suffix = 0
@@ -80,7 +54,7 @@ def unique_about_entry(existing_names: set[str], opf_path: str) -> tuple[str, st
 
 
 def append_about_to_opf(data: bytes, href: str) -> tuple[bytes, bool]:
-    """把说明页加入 OPF manifest/spine，并返回是否成功挂载。"""
+    """Add the about page to the OPF manifest and spine; report whether insertion succeeded."""
     try:
         soup = BeautifulSoup(data, "xml")
         manifest = soup.find("manifest")
@@ -114,7 +88,7 @@ def append_about_to_opf(data: bytes, href: str) -> tuple[bytes, bool]:
 
 
 def append_about_page(epub_path: str, lang: str) -> bool:
-    """对已经生成的 EPUB 做一次原子后处理，将说明页追加到 spine 末尾。"""
+    """Atomically postprocess an existing EPUB to append the about page to its spine."""
     with zipfile.ZipFile(epub_path, "r") as zin:
         try:
             opf_path = rootfile_path(zin.read("META-INF/container.xml"))

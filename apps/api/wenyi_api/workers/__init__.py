@@ -1,10 +1,9 @@
-"""Arq 任务队列：长时翻译 / 导出在 worker 进程执行。
-
-API 进程通过 :func:`enqueue` 投递任务到 Redis；worker 进程
-（``arq wenyi_api.workers.WorkerSettings``）消费。
-"""
+"""Separate Arq workflow and export queues share the same domain implementation."""
 
 from __future__ import annotations
+
+import asyncio
+import logging
 
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -12,51 +11,85 @@ from arq.connections import RedisSettings
 from ..config import settings
 from ..db import close_pool, init_pool
 
+WORKFLOW_QUEUE = "wenyi:workflows"
+EXPORT_QUEUE = "wenyi:exports"
+
 
 def _redis_settings() -> RedisSettings:
     return RedisSettings.from_dsn(settings.redis_url)
 
 
 async def enqueue(name: str, **kwargs):
-    """从 API 进程投递一个 Arq 任务。返回 arq Job（或 None）。"""
     pool = await create_pool(_redis_settings())
     try:
-        return await pool.enqueue_job(name, **kwargs)
+        return await pool.enqueue_job(
+            name, _queue_name=EXPORT_QUEUE if name == "run_export" else WORKFLOW_QUEUE, **kwargs
+        )
     finally:
-        await pool.close()
+        await pool.aclose()
+
+
+async def _recovery_loop(ctx: dict) -> None:
+    while True:
+        try:
+            await recover_jobs(ctx)
+        except Exception:
+            logging.getLogger(__name__).exception("Could not inspect interrupted tasks")
+        await asyncio.sleep(30)
 
 
 async def startup(ctx: dict) -> None:
-    """Worker 启动时初始化 Postgres 连接池。"""
     init_pool(settings.psycopg_dsn)
+    # Maintenance must run even while a long translation occupies every job slot.
+    ctx["recovery_task"] = asyncio.create_task(_recovery_loop(ctx))
 
 
 async def shutdown(ctx: dict) -> None:
+    task = ctx.pop("recovery_task", None)
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     close_pool()
 
 
-# 真正的任务函数（worker 进程执行）
+from .recovery import recover_jobs  # noqa: E402
 from .tasks import (  # noqa: E402
     run_chapter_translation,
     run_export,
+    run_model_compare,
+    run_parse,
     run_prepare,
-    run_qa,
     run_review,
+    run_srt,
     run_translation,
 )
 
 
 class WorkerSettings:
-    """``arq wenyi_api.workers.WorkerSettings`` 入口。"""
     functions = [
+        run_parse,
+        run_prepare,
         run_translation,
         run_chapter_translation,
-        run_prepare,
         run_review,
-        run_qa,
-        run_export,
+        run_srt,
+        run_model_compare,
     ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = _redis_settings()
-    max_jobs = 1  # 翻译是重任务；单 worker 串行避免资源争抢
+    queue_name = WORKFLOW_QUEUE
+    max_jobs = 1
+    job_timeout = 86400
+    max_tries = 1
+
+
+class ExportWorkerSettings:
+    functions = [run_export]
+    on_startup = startup
+    on_shutdown = shutdown
+    redis_settings = _redis_settings()
+    queue_name = EXPORT_QUEUE
+    max_jobs = 2
+    job_timeout = 3600
+    max_tries = 1

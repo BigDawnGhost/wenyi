@@ -1,365 +1,280 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useDropzone } from "react-dropzone";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/form";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/progress";
-import { cn } from "@/lib/utils";
-import { api, type UploadPreview } from "@/lib/api";
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  FileCode2,
-  FileText,
-  Upload as UploadIcon,
-} from "lucide-react";
-
-const LANGS = [
-  ["auto", "自动检测"], ["ja", "日语"], ["en", "英语"], ["ko", "韩语"],
-  ["ru", "俄语"], ["fr", "法语"], ["de", "德语"], ["es", "西班牙语"], ["pt", "葡萄牙语"],
-];
-
-const PRESETS = [
-  { name: "快速出稿", desc: "速度优先，适合初稿或大批量", factor: 1 },
-  { name: "标准翻译", desc: "质量与速度平衡（推荐）", factor: 2, recommended: true },
-  { name: "精翻", desc: "质量优先，全部步骤开启", factor: 4 },
-];
+import { ErrorNotice } from "@/components/ui/data";
+import { api, isProjectBusy, type UploadPreview } from "@/lib/api";
 
 export default function CreateProject() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState("");
-  const [sourceLang, setSourceLang] = useState("auto");
-  const [file, setFile] = useState<File | null>(null);
+  const [source, setSource] = useState("auto");
+  const [target, setTarget] = useState("zh");
+  const [template, setTemplate] = useState("标准翻译");
+  const [pid, setPid] = useState<string | null>(searchParams.get("project"));
   const [preview, setPreview] = useState<UploadPreview | null>(null);
-  const [strategy, setStrategy] = useState<{ template?: string; steps?: Record<string, unknown> }>({ template: "标准翻译" });
-  const [customOpen, setCustomOpen] = useState(false);
-  const [pid, setPid] = useState<string | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-
-  const { data: stepsDef } = useQuery({ queryKey: ["steps"], queryFn: api.listSteps });
-
-  // 创建项目（第一步进入时即建，后续步骤复用 pid）
-  const ensureProject = useMutation({
-    mutationFn: async () => pid || api.createProject({ name, source_lang: sourceLang, target_lang: "zh", strategy }).then((p) => p.id),
-    onSuccess: (id) => setPid(id),
+  const [parsing, setParsing] = useState(false);
+  const { data: caps, error: capsError } = useQuery({
+    queryKey: ["capabilities"],
+    queryFn: api.capabilities,
   });
-
+  const { data: templates } = useQuery({
+    queryKey: ["templates"],
+    queryFn: api.listTemplates,
+  });
+  const { data: project, error: projectError } = useQuery({
+    queryKey: ["project", pid],
+    queryFn: () => api.getProject(pid!),
+    enabled: !!pid,
+    refetchInterval: parsing ? 1500 : false,
+  });
+  const { data: parsed } = useQuery({
+    queryKey: ["preview", pid],
+    queryFn: () => api.getPreview(pid!),
+    enabled: !!pid && (parsing || !!project?.fmt),
+    retry: false,
+    refetchInterval: parsing ? 1500 : false,
+  });
+  useEffect(() => {
+    if (project && pid) {
+      setName(project.name);
+      setSource(project.source_lang || "auto");
+      setTarget(project.target_lang || "zh");
+      if (project.status === "parsing") setParsing(true);
+    }
+  }, [project, pid]);
+  useEffect(() => {
+    if (parsed) {
+      setPreview(parsed);
+      setParsing(false);
+    }
+  }, [parsed]);
+  useEffect(() => {
+    if (project?.status === "error") setParsing(false);
+  }, [project?.status]);
+  const create = useMutation({
+    mutationFn: () =>
+      api.createProject({
+        name: name.trim(),
+        source_lang: source,
+        target_lang: target,
+        strategy: { template },
+      }),
+    onSuccess: (p) => {
+      setPid(p.id);
+      setSearchParams({ project: p.id }, { replace: true });
+    },
+  });
   const upload = useMutation({
-    mutationFn: ({ id, f }: { id: string; f: File }) => api.uploadSource(id, f),
-    onMutate: () => setUploadError(null),
-    onSuccess: (result) => {
-      setPreview(result);
-      setUploadError(null);
-    },
-    onError: (error, { f }) => {
-      const message = uploadErrorMessage(error, f);
-      setUploadError(message);
-      toast.error(message);
+    mutationFn: (file: File) => api.uploadSource(pid!, file),
+    onSuccess: () => {
+      setPreview(null);
+      setParsing(true);
+      toast.success("原文已上传，正在后台解析");
     },
   });
-
-  const onDrop = (accepted: File[]) => {
-    const f = accepted[0];
-    if (!f) return;
-    setFile(f);
-    setPreview(null);
-    setUploadError(null);
-    if (pid) upload.mutate({ id: pid, f });
-  };
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      "application/epub+zip": [".epub"],
-      "text/plain": [".txt", ".md"],
-      "application/x-fictionbook": [".fb2"],
-      "text/html": [".html", ".htm"],
-      "application/pdf": [".pdf"],
-    },
-    maxFiles: 1,
+  const start = useMutation({
+    mutationFn: () => api.translate(pid!),
+    onSuccess: () => navigate(`/projects/${pid}`),
   });
-
-  const startTranslation = useMutation({
-    mutationFn: async () => {
-      const id = pid!;
-      await api.translate(id, strategy);
-      return id;
-    },
-    onSuccess: (id) => { toast.success("已开始翻译"); navigate(`/projects/${id}`); },
-    onError: (e) => toast.error(`启动失败：${(e as Error).message}`),
-  });
-
-  const next = async () => {
-    if (step === 1 && !pid) {
-      if (!name.trim()) { toast.error("请填写项目名称"); return; }
-      await ensureProject.mutateAsync();
-    }
-    if (step === 2 && pid && file && !preview) {
-      await upload.mutateAsync({ id: pid, f: file });
-    }
-    setStep((s) => Math.min(4, s + 1));
-  };
+  const sameLanguage = source !== "auto" && source === target;
+  const disabled =
+    parsing || upload.isPending || isProjectBusy(project?.status);
+  const accepts = (caps?.input_formats || [])
+    .flatMap((f) =>
+      f === "markdown"
+        ? [".md", ".markdown"]
+        : f === "html"
+          ? [".html", ".htm"]
+          : [`.${f}`],
+    )
+    .join(",");
 
   return (
     <>
-      <PageHeader title="创建项目" subtitle="四步完成配置并开始翻译" />
-      <PageContainer className="max-w-3xl">
-        <Stepper step={step} />
-        <Card className="mt-4">
-          <CardContent className="p-6">
-            {step === 1 && (
-              <div className="space-y-4">
-                <div>
-                  <Label>项目名称</Label>
-                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如《xxx》中文翻译" className="mt-1.5" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>源语言</Label>
-                    <Select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} className="mt-1.5">
-                      {LANGS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>目标语言</Label>
-                    <Select value="zh" disabled className="mt-1.5">
-                      <option value="zh">简体中文</option>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {step === 2 && (
-              <div className="space-y-4">
-                {!preview ? (
-                  <div {...getRootProps()} className={cn("border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-colors", isDragActive ? "border-primary bg-accent/50" : "border-input hover:border-primary/40")}>
-                    <input {...getInputProps()} />
-                    <UploadIcon className="h-8 w-8 mx-auto text-muted-foreground" />
-                    <p className="mt-2 text-sm">拖拽文件到此处，或点击选择</p>
-                    <p className="mt-1 text-xs text-muted-foreground">支持 .epub / .fb2 / .txt / .md / .html / .pdf</p>
-                  </div>
-                ) : (
-                  <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="success">解析成功</Badge>
-                      <span className="text-sm font-medium">{file?.name}</span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-3 text-sm">
-                      <Field label="书名" value={preview.title} />
-                      <FormatField format={preview.fmt} />
-                      <Field label="章节数" value={String(preview.chapter_count)} />
-                      <Field label="总段落数" value={String(preview.total_word_count)} />
-                    </div>
-                    <details>
-                      <summary className="text-xs text-muted-foreground cursor-pointer">查看目录结构</summary>
-                      <div className="mt-2 max-h-48 overflow-auto text-xs space-y-1">
-                        {preview.chapters.map((c) => (
-                          <div key={c.index} className="flex justify-between">
-                            <span className="truncate">{c.title || `第 ${c.index + 1} 章`}</span>
-                            <span className="text-muted-foreground">{c.word_count} 段</span>
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  </div>
-                )}
-                {uploadError && (
-                  <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                    {uploadError}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {step === 3 && (
-              <StrategyStep
-                strategy={strategy} setStrategy={setStrategy}
-                stepsDef={stepsDef || []} customOpen={customOpen} setCustomOpen={setCustomOpen}
+      <PageHeader
+        title="创建项目"
+        subtitle="选择语言和流程，上传原文，确认解析结果后开始翻译"
+      />
+      <PageContainer className="max-w-3xl space-y-4">
+        <ErrorNotice
+          error={
+            capsError ||
+            projectError ||
+            create.error ||
+            upload.error ||
+            start.error ||
+            project?.error
+          }
+        />
+        <Card>
+          <CardContent className="p-5 space-y-4">
+            <h2 className="font-medium">1. 项目与语言</h2>
+            <div>
+              <Label htmlFor="project-name">项目名称</Label>
+              <Input
+                id="project-name"
+                value={name}
+                disabled={!!pid}
+                onChange={(e) => setName(e.target.value)}
+                className="mt-2"
+                placeholder="例如：短篇小说英译"
               />
-            )}
-
-            {step === 4 && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <Field label="项目名称" value={name} />
-                  <Field label="源语言" value={LANGS.find((l) => l[0] === sourceLang)?.[1] || sourceLang} />
-                  <Field label="章节数" value={String(preview?.chapter_count ?? "—")} />
-                  <Field label="总段落数" value={String(preview?.total_word_count ?? "—")} />
-                  <Field label="翻译策略" value={strategy.template || "自定义"} />
-                </div>
-                <div className="rounded-md bg-sky-50 dark:bg-sky-950/30 p-3 text-sm text-sky-800 dark:text-sky-200">
-                  预估耗时倍数：~{(PRESETS.find((p) => p.name === strategy.template)?.factor) || 2}x（相对快速出稿）
-                </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="source-language">源语言</Label>
+                <Select
+                  id="source-language"
+                  value={source}
+                  disabled={!!pid}
+                  onChange={(e) => setSource(e.target.value)}
+                  className="mt-2"
+                >
+                  <option value="auto">自动检测</option>
+                  {caps?.languages
+                    .filter((l) => l.code !== "auto")
+                    .map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.name}（{l.code}）
+                      </option>
+                    ))}
+                </Select>
               </div>
+              <div>
+                <Label htmlFor="target-language">目标语言</Label>
+                <Select
+                  id="target-language"
+                  value={target}
+                  disabled={!!pid || !caps}
+                  onChange={(e) => setTarget(e.target.value)}
+                  className="mt-2"
+                >
+                  {caps?.languages
+                    .filter((l) => l.code !== "auto")
+                    .map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.name}（{l.code}）
+                      </option>
+                    ))}
+                </Select>
+              </div>
+            </div>
+            {sameLanguage && (
+              <ErrorNotice error="源语言与目标语言相同，请选择不同的目标语言。" />
+            )}
+            <div>
+              <Label htmlFor="workflow-template">翻译流程</Label>
+              <Select
+                id="workflow-template"
+                value={template}
+                disabled={!!pid}
+                onChange={(e) => setTemplate(e.target.value)}
+                className="mt-2"
+              >
+                {templates?.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name} — {t.description}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-muted-foreground mt-2">
+                默认开启全书预理解、润色、全书审校与自动修复。快速出稿适合初稿。字幕自动使用独立流程。
+              </p>
+            </div>
+            {!pid ? (
+              <Button
+                onClick={() => create.mutate()}
+                disabled={
+                  !name.trim() || sameLanguage || !caps || create.isPending
+                }
+              >
+                {create.isPending ? "创建中…" : "创建并配置"}
+              </Button>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                项目已创建。初始化后更换语言或原文内容需新建项目。
+                <Link
+                  className="text-primary underline ml-2"
+                  to={`/projects/${pid}/settings`}
+                >
+                  项目配置与模型设置
+                </Link>
+              </p>
             )}
           </CardContent>
         </Card>
-
-        <div className="flex items-center justify-between mt-4">
-          <Button variant="ghost" disabled={step === 1} onClick={() => setStep((s) => s - 1)}>
-            <ChevronLeft className="h-4 w-4" /> 上一步
-          </Button>
-          {step < 4 ? (
-            <Button onClick={next} disabled={upload.isPending}>
-              {upload.isPending ? "上传中…" : "下一步"} <ChevronRight className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button onClick={() => startTranslation.mutate()} disabled={startTranslation.isPending || !preview}>
-              {startTranslation.isPending ? "启动中…" : "开始翻译"}
-            </Button>
-          )}
-        </div>
+        {pid && (
+          <Card>
+            <CardContent className="p-5 space-y-4">
+              <h2 className="font-medium">2. 上传原文</h2>
+              <p className="text-sm text-muted-foreground">
+                支持 {caps?.input_formats.join(" / ")}。PDF 解析服务、批次 Token
+                预算和模型可在上传前通过项目配置调整。
+              </p>
+              <Input
+                aria-label="上传原文"
+                type="file"
+                accept={accepts}
+                disabled={disabled || !!preview}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) upload.mutate(file);
+                }}
+              />
+              {disabled && (
+                <p role="status" className="text-sm">
+                  {upload.isPending
+                    ? "正在上传…"
+                    : "正在解析原文，完成后自动显示预览。可以离开此页，通过项目进度查看结果。"}
+                </p>
+              )}
+              {preview && (
+                <div className="rounded border p-4 space-y-3">
+                  <h3 className="font-medium">{preview.title}</h3>
+                  <p className="text-sm">
+                    {preview.fmt.toUpperCase()} ·{" "}
+                    {preview.fmt === "srt"
+                      ? `${preview.total_word_count} 条字幕`
+                      : `${preview.chapter_count} 章 · ${preview.total_word_count} 段文本`}
+                  </p>
+                  <details>
+                    <summary className="cursor-pointer text-sm">
+                      查看解析结构
+                    </summary>
+                    <ol className="mt-2 max-h-56 overflow-auto text-sm space-y-2">
+                      {preview.chapters.map((c) => (
+                        <li key={c.index}>
+                          {c.index + 1}. {c.title || "未命名"}{" "}
+                          <span className="text-muted-foreground">
+                            （{c.word_count} 段）
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <Button
+                  onClick={() => start.mutate()}
+                  disabled={!preview || disabled || start.isPending}
+                >
+                  {start.isPending ? "启动中…" : "开始翻译"}
+                </Button>
+                <Link to={`/projects/${pid}`}>
+                  <Button variant="outline">进入项目</Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </PageContainer>
     </>
-  );
-}
-
-function Field({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-medium truncate">{value || "—"}</div>
-    </div>
-  );
-}
-
-function FormatField({ format }: { format: string }) {
-  const normalized = format.toLowerCase();
-  const isHtml = normalized === "html";
-  const Icon = isHtml ? FileCode2 : FileText;
-  const label = isHtml ? "HTML" : normalized === "pdf" ? "PDF" : normalized.toUpperCase();
-
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">格式</div>
-      <div className="flex items-center gap-1.5 font-medium">
-        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-        <span>{label}</span>
-      </div>
-    </div>
-  );
-}
-
-function uploadErrorMessage(error: unknown, file: File): string {
-  const detail = error instanceof Error ? error.message : String(error);
-  const isPdf = file.name.toLowerCase().endsWith(".pdf");
-  if (isPdf && /MINERU_API_KEY|API token not provided/i.test(detail)) {
-    return "PDF 解析服务尚未配置，请联系管理员设置 MINERU_API_KEY 后重试。";
-  }
-  return `上传失败：${detail}`;
-}
-
-function Stepper({ step }: { step: number }) {
-  const labels = ["基本信息", "上传原文", "选择策略", "确认启动"];
-  return (
-    <div className="flex items-center gap-2">
-      {labels.map((l, i) => {
-        const n = i + 1;
-        const active = step === n;
-        const done = step > n;
-        return (
-          <div key={l} className="flex items-center gap-2">
-            <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-xs", active ? "bg-primary text-primary-foreground" : done ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground")}>
-              {done ? <Check className="h-3 w-3" /> : n}
-            </div>
-            <span className={cn("text-sm", active ? "font-medium" : "text-muted-foreground")}>{l}</span>
-            {n < labels.length && <div className="w-8 h-px bg-border mx-1" />}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// 策略选择步骤：3 预设卡 + 自定义开关面板（依赖置灰）
-function StrategyStep({ strategy, setStrategy, stepsDef, customOpen, setCustomOpen }: {
-  strategy: { template?: string; steps?: Record<string, unknown> };
-  setStrategy: (s: { template?: string; steps?: Record<string, unknown> }) => void;
-  stepsDef: { id: string; name: string; category: string; always_on?: boolean; locked?: boolean; group?: string | null; depends_on?: string[]; description?: string | null; output?: string | null }[];
-  customOpen: boolean; setCustomOpen: (b: boolean) => void;
-}) {
-  const usingTemplate = !!strategy.template;
-  const customSteps = (strategy.steps || {}) as Record<string, boolean | number>;
-
-  const setStepToggle = (id: string, val: boolean) => {
-    setStrategy({ steps: { ...customSteps, [id]: val } });
-  };
-  const isDepBlocked = (deps: string[] = []) =>
-    deps.some((d) => customSteps[d] === false || customSteps[d] === undefined);
-
-  // 按 category 分组（自定义视图）
-  const grouped = ["prepare", "per_chapter", "post_process"].map((cat) => ({
-    cat, items: stepsDef.filter((s) => s.category === cat),
-  }));
-
-  return (
-    <div className="space-y-4">
-      <div className="grid md:grid-cols-3 gap-3">
-        {PRESETS.map((p) => {
-          const active = usingTemplate && strategy.template === p.name;
-          return (
-            <button key={p.name}
-              onClick={() => setStrategy({ template: p.name })}
-              className={cn("text-left rounded-lg border p-4 transition-colors", active ? "border-primary ring-1 ring-primary" : "hover:border-primary/40")}>
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{p.name}</span>
-                {p.recommended && <Badge variant="info">推荐</Badge>}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{p.desc}</p>
-              <p className="text-xs mt-2">~{p.factor}x 耗时</p>
-            </button>
-          );
-        })}
-      </div>
-
-      <div>
-        <button className="text-sm text-primary hover:underline" onClick={() => { setCustomOpen(!customOpen); if (!customOpen && !strategy.steps) setStrategy({ steps: { book_understanding: true, polish: true, punctuation_normalize: true, chapter_review: true, autofix: false, backtranslate: 0, consistency_qa: false } }); }}>
-          {customOpen ? "收起自定义策略" : "自定义策略（展开配置）"}
-        </button>
-        {customOpen && (
-          <div className="mt-3 rounded-lg border bg-muted/30 p-4 space-y-4">
-            {grouped.map(({ cat, items }) => (
-              <div key={cat}>
-                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
-                  {cat === "prepare" ? "翻译前准备" : cat === "per_chapter" ? "每章翻译" : "翻译后处理"}
-                </div>
-                <div className="space-y-1">
-                  {items.map((s) => {
-                    const blocked = !s.always_on && !s.locked && isDepBlocked(s.depends_on);
-                    const checked = s.always_on || s.locked ? true : !!customSteps[s.id];
-                    return (
-                      <div key={s.id} className={cn("flex items-center justify-between rounded px-2 py-1.5", blocked && "opacity-50")}>
-                        <div className="min-w-0">
-                          <div className="text-sm flex items-center gap-2">
-                            {s.name}
-                            {s.locked && <Badge variant="secondary">必须</Badge>}
-                          </div>
-                          {(s.description || s.output) && (
-                            <div className="text-xs text-muted-foreground">{s.description || `→ ${s.output}`}</div>
-                          )}
-                          {blocked && <div className="text-xs text-amber-600">⚠️ 依赖：{s.depends_on?.join(", ")}</div>}
-                        </div>
-                        <Switch
-                          checked={checked}
-                          disabled={!!s.locked || s.always_on || blocked}
-                          onClick={() => setStepToggle(s.id, !checked)}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
   );
 }

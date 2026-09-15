@@ -1,117 +1,50 @@
-"""章节任务路由的契约测试（不依赖 DB / Redis）。"""
+"""Chapter queue routing delegates durable identity and rollback to start_job."""
 
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from wenyi_api.routers import chapters
 
 
-def test_translate_chapter_marks_running_and_enqueues_only_that_chapter(
-    monkeypatch,
-):
-    statuses: list[tuple[str, object]] = []
-    enqueued: list[tuple[str, dict]] = []
+def test_translate_chapter_enqueues_only_requested_chapter(monkeypatch):
+    enqueued = []
+    monkeypatch.setattr(chapters, "require_project", lambda pid: {"id": pid, "fmt": "text"})
     monkeypatch.setattr(
-        chapters.dal,
-        "get_project",
-        lambda pid: {"id": pid, "status": "prepared"},
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "chapter_summaries",
-        lambda pid: [{"index": 2, "status": "pending"}],
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "set_project_status",
-        lambda pid, status: statuses.append(("project", (pid, status))),
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "set_chapter_status",
-        lambda pid, ci, status: statuses.append(
-            ("chapter", (pid, ci, status))
-        ),
+        chapters.dal, "chapter_summaries", lambda pid: [{"index": 2, "status": "pending"}]
     )
 
-    async def fake_enqueue(name: str, **kwargs):
-        enqueued.append((name, kwargs))
-        return SimpleNamespace(job_id="chapter-job")
+    async def start(pid, kind, *, params):
+        enqueued.append((pid, kind, params))
+        return {"job_id": "chapter-job", "project_id": pid, "kind": kind}
 
-    monkeypatch.setattr(chapters, "enqueue", fake_enqueue)
-
+    monkeypatch.setattr(chapters, "start_job", start)
     result = asyncio.run(chapters.translate_chapter("project-1", 2))
-
-    assert statuses == [
-        ("project", ("project-1", "translating")),
-        ("chapter", ("project-1", 2, "translating")),
-    ]
-    assert enqueued == [
-        (
-            "run_chapter_translation",
-            {"project_id": "project-1", "chapter_index": 2},
-        )
-    ]
+    assert enqueued == [("project-1", "chapter_translation", {"chapter_index": 2})]
     assert result["kind"] == "chapter_translation"
 
 
-def test_translate_chapter_rejects_completed_chapter(monkeypatch):
-    monkeypatch.setattr(
-        chapters.dal,
-        "get_project",
-        lambda pid: {"id": pid, "status": "done"},
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "chapter_summaries",
-        lambda pid: [{"index": 0, "status": "done"}],
-    )
-
-    with pytest.raises(HTTPException) as raised:
+@pytest.mark.parametrize("entries,code", [([], 404), ([{"index": 0, "status": "done"}], 409)])
+def test_translate_chapter_rejects_missing_or_completed_chapter(monkeypatch, entries, code):
+    monkeypatch.setattr(chapters, "require_project", lambda pid: {"id": pid, "fmt": "text"})
+    monkeypatch.setattr(chapters.dal, "chapter_summaries", lambda pid: entries)
+    with pytest.raises(HTTPException) as error:
         asyncio.run(chapters.translate_chapter("project-1", 0))
-
-    assert raised.value.status_code == 409
-    assert raised.value.detail == "chapter is already translated"
+    assert error.value.status_code == code
 
 
-def test_translate_chapter_restores_status_when_enqueue_fails(monkeypatch):
-    statuses: list[tuple[str, object]] = []
+def test_translate_chapter_propagates_queue_failure(monkeypatch):
+    monkeypatch.setattr(chapters, "require_project", lambda pid: {"id": pid, "fmt": "text"})
     monkeypatch.setattr(
-        chapters.dal,
-        "get_project",
-        lambda pid: {"id": pid, "status": "prepared"},
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "chapter_summaries",
-        lambda pid: [{"index": 1, "status": "pending"}],
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "set_project_status",
-        lambda pid, status: statuses.append(("project", (pid, status))),
-    )
-    monkeypatch.setattr(
-        chapters.dal,
-        "set_chapter_status",
-        lambda pid, ci, status: statuses.append(
-            ("chapter", (pid, ci, status))
-        ),
+        chapters.dal, "chapter_summaries", lambda pid: [{"index": 1, "status": "pending"}]
     )
 
-    async def failing_enqueue(name: str, **kwargs):
-        raise RuntimeError("redis unavailable")
+    async def fail(*args, **kwargs):
+        raise HTTPException(503, "queue unavailable")
 
-    monkeypatch.setattr(chapters, "enqueue", failing_enqueue)
-
-    with pytest.raises(RuntimeError, match="redis unavailable"):
+    monkeypatch.setattr(chapters, "start_job", fail)
+    with pytest.raises(HTTPException) as error:
         asyncio.run(chapters.translate_chapter("project-1", 1))
-
-    assert statuses[-2:] == [
-        ("project", ("project-1", "prepared")),
-        ("chapter", ("project-1", 1, "pending")),
-    ]
+    assert error.value.status_code == 503

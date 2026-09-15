@@ -1,48 +1,86 @@
-"""测试和离线流程使用的可编程 provider。"""
+"""Offline workflow client and provider adapter for deterministic tests."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from ..base import LLMClient, Messages
+from ..configuration import LLMConfig
+from ..transport import ProviderAdapter, RequestContext, ResolvedModel
+
+
+class FakeOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+
+def preset_models() -> dict[str, ResolvedModel[FakeOptions]]:
+    return {tier: ResolvedModel("fake", FakeOptions()) for tier in ("strong", "cheap", "fast")}
+
+
+class FakeProvider(ProviderAdapter):
+    """A transport with injectable behavior and no SDK or credentials."""
+
+    requires_base_url = False
+
+    def _request(
+        self, messages: Messages, model: ResolvedModel, *, json_mode: bool, context: RequestContext
+    ) -> str:
+        return "[]" if json_mode else ""
 
 
 class FakeClient(LLMClient):
-    """可编程的离线 client。
-
-    handler(messages, tier, json_mode) -> str。默认对 json_mode 返回 "[]"，
-    否则返回空串。测试通过注入 handler 模拟翻译/抽取等行为。
-    """
+    """Inject directly into workflows; record immutable request snapshots."""
 
     def __init__(
         self,
         handler: Callable[[Messages, str, bool], str] | None = None,
+        *,
+        config: LLMConfig | None = None,
     ) -> None:
-        """保存可选响应处理器，并初始化调用记录列表。"""
         super().__init__()
+        from ..routing import resolve_routes
+
         self.handler = handler
-        self.calls: list[dict[str, Any]] = []  # 记录调用，便于断言
+        self.config = config or LLMConfig.model_validate({"preset": "fake"})
+        self.routes = resolve_routes(self.config)
+        self.calls: list[dict[str, Any]] = []
 
     def complete(
         self,
         messages: Messages,
         *,
-        tier: str = "strong",
+        operation: str,
         json_mode: bool = False,
         max_tokens: int | None = None,
-        stage: str | None = None,
     ) -> str:
-        """记录调用并返回处理器结果；未配置处理器时返回最小默认响应。"""
+        from ..operations import require_operation
+        from ..routing import model_route
+
+        require_operation(operation)
+        route = self.routes[operation]
+        if max_tokens is not None:
+            route = model_route(
+                self.config,
+                operation,
+                route.profile,
+                origin=route.origin,
+                tier=route.tier,
+                output_hint=max_tokens,
+            )
+        tier = route.tier or "direct"
         self.calls.append(
             {
-                # Agent Loop 会在后续轮次 append transcript；保存快照，避免历史
-                # 调用记录随同一个 mutable list 被追改。
                 "messages": [dict(message) for message in messages],
+                "operation": operation,
+                "stage": operation,
                 "tier": tier,
                 "json_mode": json_mode,
-                "max_tokens": max_tokens,
-                "stage": stage,
+                "max_tokens": route.max_output_tokens,
+                "model": route.model,
+                "provider": route.provider,
             }
         )
         if self.handler is not None:

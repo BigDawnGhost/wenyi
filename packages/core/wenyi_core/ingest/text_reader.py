@@ -1,12 +1,8 @@
-"""纯文本 / Markdown 读取器。
-
-章节识别优先级：
-1. Markdown ATX 标题行（# / ##）；
-2. 日文常见章节标记行（第〇章 / 第〇話 / 序章 / 終章 / プロローグ …）；
-3. 都没有则整篇作为一章。
-
-段落 = 以空行分隔的文本块；块内单换行保留。
-回填时按 "标题 + 段落（空行分隔）" 重建。
+"""Plain-text and Markdown reader.
+Recognize Markdown ATX headings first, then common Japanese chapter/prologue/epilogue
+labels. Without headings, use one chapter. Blank lines separate paragraphs while single
+internal newlines remain. Reconstruct output as headings and blank-line-separated
+paragraphs.
 """
 
 from __future__ import annotations
@@ -16,9 +12,9 @@ import re
 
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
-# Markdown 标题
+# Markdown headings.
 _MD_HEADING = re.compile(r"^(#{1,3})\s+(.*\S)\s*$")
-# 日文章节标记（行首）
+# Japanese chapter labels at the start of a line.
 _JA_CHAPTER = re.compile(
     r"^\s*(?:"
     r"第[0-9０-９一二三四五六七八九十百千]+[章話节節回部巻]"
@@ -28,7 +24,7 @@ _JA_CHAPTER = re.compile(
 
 
 def _is_chapter_heading(line: str) -> tuple[str, int] | None:
-    """返回标题文本与 Markdown 级别；日文章节标记视为一级标题。"""
+    """Return heading text and Markdown level; treat Japanese chapter markers as level one."""
     m = _MD_HEADING.match(line)
     if m:
         return m.group(2).strip(), len(m.group(1))
@@ -38,21 +34,21 @@ def _is_chapter_heading(line: str) -> tuple[str, int] | None:
 
 
 def _split_paragraphs(block: str) -> list[str]:
-    """按空行切段。"""
+    """Split paragraphs at blank lines."""
     parts = re.split(r"\n\s*\n", block)
     return [p.strip("\n") for p in parts if p.strip()]
 
 
 def read_text(path: str, source_lang: str, target_lang: str) -> Document:
-    """读取 UTF-8 文本或 Markdown，识别章节标题并构造 Document。"""
+    """Read UTF-8 text or Markdown, identify headings and construct a Document."""
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
     lines = content.splitlines()
     book_title = os.path.splitext(os.path.basename(path))[0]
 
-    # explicit_title 用于区分“真实标题”与首个标题前的无标题前言块；
-    # level 保留 Markdown 标题层级，供 HTML / Markdown 输出使用。
+    # explicit_title distinguishes actual headings from untitled content before the first heading.
+    # level preserves Markdown heading hierarchy for HTML/Markdown output.
     chapters_raw: list[tuple[str | None, int, list[str]]] = []
     current_title: str | None = None
     current_level = 1
@@ -74,7 +70,7 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
         title = explicit_title or book_title
         segments: list[Segment] = []
         idx = 0
-        # 标题作为 heading segment（便于翻译并回填）
+        # Keep titles as heading segments so they can be translated and backfilled.
         if explicit_title:
             segments.append(Segment(index=idx, source=explicit_title, kind=KIND_HEADING))
             idx += 1

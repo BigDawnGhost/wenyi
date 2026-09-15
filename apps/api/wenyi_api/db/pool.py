@@ -7,23 +7,35 @@
 from __future__ import annotations
 
 import pathlib
+from threading import Lock
 from typing import Optional
 
 from psycopg_pool import ConnectionPool
 
 _pool: Optional[ConnectionPool] = None
+_init_lock = Lock()
 _SCHEMA_SQL = (pathlib.Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
 
 def init_pool(dsn: str) -> ConnectionPool:
     """创建进程级连接池并初始化 schema（幂等）。"""
     global _pool
-    if _pool is not None:
-        return _pool
-    _pool = ConnectionPool(dsn, min_size=1, max_size=16, open=True)
-    with _pool.connection() as conn:
-        conn.execute(_SCHEMA_SQL)
-    return _pool
+    with _init_lock:
+        if _pool is not None:
+            return _pool
+        pool = ConnectionPool(
+            dsn, min_size=1, max_size=16, open=True, kwargs={"client_encoding": "UTF8"}
+        )
+        try:
+            with pool.connection() as conn:
+                # API and both workers may boot together on a fresh database.
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:schema',0))")
+                conn.execute(_SCHEMA_SQL)
+        except BaseException:
+            pool.close()
+            raise
+        _pool = pool
+        return pool
 
 
 def get_pool() -> ConnectionPool:

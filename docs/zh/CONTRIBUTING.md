@@ -8,10 +8,26 @@
 
 欢迎提交：
 
-- 输入解析：EPUB、FB2、TXT 等格式兼容性扩展与改进。
-- 翻译流程：上下文、术语表、审校、润色、一致性检查。
-- 导出：EPUB输出、目录、元数据、排版保留。
+- 输入解析：EPUB、DOCX、PDF、SRT 等格式兼容性扩展与改进。
+- 翻译流程：上下文、术语表、审校、润色、证据核查和自动修复。
+- 导出：EPUB/DOCX/PDF 输出、目录、元数据、排版保留。
 - 测试：真实失败样例、回归测试、离线 fake LLM 测试。
 - 文档：使用说明、配置解释、常见问题。
 
 注意，如果涉及核心翻译流程，即对翻译质量可能有影响的，请先测试一本不少于五万字的公版小说，提供修改前后版本对比分析，证明确实可以改进翻译质量。
+
+
+## 开发验证
+
+Web 架构保持 React/Vite、FastAPI、Arq、Redis、PostgreSQL，CLI 位于 `packages/cli`，共享领域服务位于 `packages/core`。可变状态必须经过存储接口，不能为 Web 另建 JSON/SQLite 状态副本。
+
+```bash
+uv sync --all-packages --group dev
+uv run pytest -q
+uv run ruff check packages/core packages/cli apps/api
+pnpm install --frozen-lockfile
+pnpm -C apps/web typecheck
+pnpm -C apps/web build
+```
+
+真实 PostgreSQL 集成测试通过 `WENYI_TEST_DATABASE_URL` 选择测试数据库。离线替身验证与真实模型质量对比需要分别报告，未执行的检查应明确标记。

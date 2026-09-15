@@ -1,4 +1,4 @@
-"""取证式 Review Agent Loop、全书证据索引和冲突仲裁测试。"""
+"""Evidence-loop, whole-book evidence-index and arbitration tests."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from wenyi_core.agents.review_arbiter import ReviewConflictArbiter
 from wenyi_core.agents.review_fixer import (
     ProvisionalPatch,
     ReviewFixer,
@@ -18,17 +19,21 @@ from wenyi_core.agents.review_fixer import (
 )
 from wenyi_core.agents.review_loop import (
     ReviewAgentLoop,
-    ReviewConflictArbiter,
-    apply_review_arbitrations,
-    build_conflict_groups,
-    normalize_review_issues,
 )
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.review_evidence import BookEvidenceIndex
-from wenyi_core.pipeline.review_run import ReviewRunStore, review_candidate_id
+from wenyi_core.llm.routing import inference_snapshot
+from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
+from wenyi_core.review.conflicts import (
+    apply_review_arbitrations,
+    build_conflict_groups,
+    normalize_review_issues,
+)
+from wenyi_core.review.evidence import BookEvidenceIndex
+from wenyi_core.review.models import review_candidate_id
+from wenyi_core.review.run_store import ReviewRunStore
 
 
 def _config() -> Config:
@@ -36,15 +41,14 @@ def _config() -> Config:
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {
-                "provider": "fake",
-                "tiers": {
-                    "strong": {"model": "strong"},
-                    "cheap": {"model": "cheap"},
+                "preset": "fake",
+                "models": {
+                    "default_strong": {"provider": "default", "model": "strong"},
+                    "default_cheap": {"provider": "default", "model": "cheap"},
                 },
             },
             "pipeline": {
                 "review_agent_max_evidence_rounds": 2,
-                "review_agent_tier": "strong",
             },
         }
     )
@@ -75,7 +79,7 @@ class TestBookEvidenceIndex(unittest.TestCase):
             ),
             _chapter(1, [("ANN returned.", "安回来了。"), ("End.", "结束。")]),
         ]
-        self.term = GlossaryTerm(source="Ann", target="安", aliases=["Annie"], type="人物")
+        self.term = GlossaryTerm(source="Ann", target="安", aliases=["Annie"], type="person")
         self.index = BookEvidenceIndex(
             self.chapters,
             [self.term],
@@ -129,7 +133,7 @@ class TestBookEvidenceIndex(unittest.TestCase):
         )
 
     def test_exact_source_wins_over_another_terms_same_alias(self):
-        other = GlossaryTerm(source="Anne", target="安妮", aliases=["Ann"], type="人物")
+        other = GlossaryTerm(source="Anne", target="安妮", aliases=["Ann"], type="person")
         index = BookEvidenceIndex(self.chapters, [self.term, other], {})
 
         term, ambiguous = index.canonical_term("Ann")
@@ -138,8 +142,8 @@ class TestBookEvidenceIndex(unittest.TestCase):
         self.assertEqual(ambiguous, [])
 
     def test_exact_case_sensitive_source_wins_and_normalized_collision_is_ambiguous(self):
-        upper = GlossaryTerm(source="ANN", target="甲", aliases=["Alice"], type="人物")
-        title = GlossaryTerm(source="Ann", target="乙", aliases=["Annie"], type="人物")
+        upper = GlossaryTerm(source="ANN", target="甲", aliases=["Alice"], type="person")
+        title = GlossaryTerm(source="Ann", target="乙", aliases=["Annie"], type="person")
         index = BookEvidenceIndex(
             [_chapter(0, [("Alice arrived.", "甲到了。"), ("Annie left.", "乙走了。")])],
             [upper, title],
@@ -172,8 +176,8 @@ class TestBookEvidenceIndex(unittest.TestCase):
         self.assertIn(result["glossary_term"]["ref"], BookEvidenceIndex.evidence_refs(result))
 
     def test_distinct_exact_sources_are_not_merged_into_one_conflict_key(self):
-        upper = GlossaryTerm(source="ANN", target="甲", type="人物")
-        title = GlossaryTerm(source="Ann", target="乙", type="人物")
+        upper = GlossaryTerm(source="ANN", target="甲", type="person")
+        title = GlossaryTerm(source="Ann", target="乙", type="person")
         evidence = BookEvidenceIndex(self.chapters, [upper, title], {})
         issues = normalize_review_issues(
             [
@@ -364,16 +368,88 @@ class TestReviewFixer(unittest.TestCase):
                 with self.assertRaisesRegex(ReviewFixerProtocolError, reason):
                     self._propose(payload)
 
+    def test_rejects_dropped_dialogue_quotes(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {
+                    "segment_ref": "ch0:text1:seg1",
+                    "before_hash": ReviewFixer.target_hash("“当前译文。”"),
+                    "issue_ids": ["r1-review-00001"],
+                    "replacement": "修订后的完整译文。",
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        with self.assertRaisesRegex(
+            ReviewFixerProtocolError,
+            "dropped_dialogue_quotes",
+        ):
+            ReviewFixer(client, _config()).propose(
+                1,
+                "ch0:text1:seg1",
+                0,
+                1,
+                '"Original sentence."',
+                "“当前译文。”",
+                [
+                    {
+                        "issue_id": "r1-review-00001",
+                        "chapter": 0,
+                        "index": 1,
+                        "type": "mistranslation",
+                        "detail": "原意不完整",
+                        "suggestion": "补全信息",
+                    }
+                ],
+            )
+
+    def test_allows_removing_target_quotes_absent_from_source(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {
+                    "segment_ref": "ch0:text1:seg1",
+                    "before_hash": ReviewFixer.target_hash("“当前译文。”"),
+                    "issue_ids": ["r1-review-00001"],
+                    "replacement": "修订后的完整译文。",
+                    "complete": True,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        patch = ReviewFixer(client, _config()).propose(
+            1,
+            "ch0:text1:seg1",
+            0,
+            1,
+            "Original sentence.",
+            "“当前译文。”",
+            [
+                {
+                    "issue_id": "r1-review-00001",
+                    "chapter": 0,
+                    "index": 1,
+                    "type": "added",
+                    "detail": "原文没有对话引号",
+                    "suggestion": "删除多余引号",
+                }
+            ],
+        )
+
+        self.assertEqual(patch.after, "修订后的完整译文。")
+
 
 class TestReadonlyGlossarySnapshot(unittest.TestCase):
     def test_reads_committed_wal_without_touching_formal_database_files(self):
-        """只读 Review 快照必须包含尚未 checkpoint 的已提交 WAL。"""
+        """Read-only glossary snapshots must include committed, uncheckpointed WAL data."""
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "glossary.db")
             writer = GlossaryStore(path)
             try:
                 writer.upsert_term(
-                    GlossaryTerm(source="Ann", target="安", type="人物"),
+                    GlossaryTerm(source="Ann", target="安", type="person"),
                     chapter=0,
                 )
                 watched = [path, f"{path}-wal", f"{path}-shm"]
@@ -394,18 +470,18 @@ class TestReadonlyGlossarySnapshot(unittest.TestCase):
                 writer.close()
 
     def test_retries_when_checkpoint_changes_db_and_wal_between_copies(self):
-        """DB/WAL 跨文件复制若撞上 checkpoint，不得接受混合时点快照。"""
+        """A checkpoint during DB/WAL copying must not produce an accepted mixed-time snapshot."""
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "glossary.db")
             writer = GlossaryStore(path)
             try:
                 writer.upsert_term(
-                    GlossaryTerm(source="Ann", target="安", type="人物"),
+                    GlossaryTerm(source="Ann", target="安", type="person"),
                     chapter=0,
                 )
                 writer.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 writer.upsert_term(
-                    GlossaryTerm(source="Bob", target="鲍勃", type="人物"),
+                    GlossaryTerm(source="Bob", target="鲍勃", type="person"),
                     chapter=0,
                 )
                 real_copy = shutil.copy2
@@ -504,6 +580,185 @@ class TestReviewRunStore(unittest.TestCase):
             [1, 2],
         )
 
+    @staticmethod
+    def _usage_summary(calls: int, tokens: int) -> dict:
+        """Build usage data with the same shape as usage_delta output."""
+        return {
+            "schema_version": 2,
+            "by_provider": {},
+            "by_model": {},
+            "totals": {
+                "calls": calls,
+                "prompt_tokens": tokens,
+                "completion_tokens": 0,
+                "total_tokens": tokens,
+                "cache_hit_tokens": 0,
+                "cache_miss_tokens": tokens,
+            },
+            "by_tier": {
+                "cheap": {
+                    "calls": calls,
+                    "prompt_tokens": tokens,
+                    "completion_tokens": 0,
+                    "total_tokens": tokens,
+                    "cache_hit_tokens": 0,
+                    "cache_miss_tokens": tokens,
+                }
+            },
+            "by_stage": {
+                "review.scan": {
+                    "calls": calls,
+                    "prompt_tokens": tokens,
+                    "completion_tokens": 0,
+                    "total_tokens": tokens,
+                    "cache_hit_tokens": 0,
+                    "cache_miss_tokens": tokens,
+                }
+            },
+        }
+
+    def test_save_usage_merges_increments_across_resumes(self):
+        """save_usage must merge persisted usage without loss across process resumes."""
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            debug.save_usage(self._usage_summary(2, 100))
+            debug.save_usage(self._usage_summary(3, 50))
+            with open(os.path.join(debug.run_dir, "usage.json"), encoding="utf-8") as file:
+                saved = json.load(file)
+
+        self.assertEqual(saved["totals"]["calls"], 5)
+        self.assertEqual(saved["totals"]["total_tokens"], 150)
+        self.assertEqual(saved["by_stage"]["review.scan"]["calls"], 5)
+
+    def test_rebuild_snapshots_skips_stale_subchunks_contained_in_parent(self):
+        """When parent and stale child chunks coexist, count once by rebuilding larger blocks
+        first.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n55",
+                {
+                    "status": "finished",
+                    "issues": [],
+                    "initial_issues": [
+                        {"index": 0, "type": "missing", "detail": "父块问题", "suggestion": "补译"}
+                    ],
+                    "dismissed": [
+                        {"index": 1, "type": "terminology", "detail": "父块驳回", "suggestion": ""}
+                    ],
+                },
+            )
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n27",
+                {
+                    "status": "finished",
+                    "issues": [],
+                    "initial_issues": [
+                        {"index": 0, "type": "missing", "detail": "陈旧子块", "suggestion": "补译"}
+                    ],
+                    "dismissed": [],
+                },
+            )
+            debug.mark_chunk_done(
+                "r1-ch0-base55-n5",
+                {
+                    "status": "finished",
+                    "issues": [],
+                    "initial_issues": [],
+                    "dismissed": [
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "独立子块驳回",
+                            "suggestion": "",
+                        }
+                    ],
+                },
+            )
+            with debug.round_scope(1):
+                debug.rebuild_snapshots_from_chunks(1)
+            initial, dismissed = debug.result_snapshots(1)
+
+        self.assertEqual([issue["detail"] for issue in initial], ["父块问题"])
+        self.assertEqual(
+            [issue["detail"] for issue in dismissed],
+            ["父块驳回", "独立子块驳回"],
+        )
+
+    def test_rebuild_snapshots_is_idempotent_across_resumes(self):
+        """Repeated process-style restores must not duplicate aggregated snapshots."""
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n55",
+                {
+                    "status": "finished",
+                    "issues": [],
+                    "initial_issues": [
+                        {"index": 0, "type": "missing", "detail": "问题A", "suggestion": "补译"}
+                    ],
+                    "dismissed": [
+                        {"index": 1, "type": "terminology", "detail": "驳回B", "suggestion": ""}
+                    ],
+                },
+            )
+            debug.mark_chunk_done(
+                "r1-ch0-base55-n5",
+                {
+                    "status": "finished",
+                    "issues": [],
+                    "initial_issues": [
+                        {"index": 0, "type": "missing", "detail": "问题C", "suggestion": "补译"}
+                    ],
+                    "dismissed": [],
+                },
+            )
+
+            def snapshot_counts() -> tuple[int, int]:
+                # Simulate a new process by rebuilding a fresh ReviewRunStore from disk.
+                fresh = ReviewRunStore(directory)
+                with fresh.round_scope(1):
+                    fresh.rebuild_snapshots_from_chunks(1)
+                initial, dismissed = fresh.result_snapshots(1)
+                keys = [
+                    (issue["review_round"], issue["chapter"], issue["index"], issue["candidate_id"])
+                    for issue in [*initial, *dismissed]
+                ]
+                return len(keys), len(set(keys))
+
+            first, first_unique = snapshot_counts()
+            # Second and third restores must preserve row counts and uniqueness.
+            for _ in range(2):
+                count, unique = snapshot_counts()
+                self.assertEqual(count, first)
+                self.assertEqual(unique, first_unique)
+            self.assertEqual(
+                first_unique, first
+            )  # No restore may introduce duplicate rows internally.
+
+    def test_from_existing_restores_started_at_from_result(self):
+        """Restore started_at from result.json on resume."""
+        with tempfile.TemporaryDirectory() as directory:
+            moment = datetime(2026, 7, 27, 12, 30, tzinfo=timezone.utc)
+            debug = ReviewRunStore(directory, now=moment)
+            debug.start(reviewed_content_digest="abc", metadata={})
+            restored = ReviewRunStore._from_existing(debug.run_dir, debug.review_id)
+
+        self.assertEqual(restored.started_at, debug.started_at)
+
+    def test_load_json_reads_round_scoped_and_returns_none_when_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            self.assertIsNone(debug.load_json("agents/r1-chunk-ch0-base0-n2.json"))
+            with debug.round_scope(1):
+                debug.write_json("agents/r1-chunk-ch0-base0-n2.json", {"status": "running"})
+                loaded = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+                self.assertIsNotNone(loaded)
+                assert loaded is not None
+                self.assertEqual(loaded["status"], "running")
+            self.assertIsNone(debug.load_json("agents/r1-chunk-ch0-base0-n2.json"))
+
 
 class TestReviewAgentLoop(unittest.TestCase):
     def _evidence(self) -> BookEvidenceIndex:
@@ -517,9 +772,574 @@ class TestReviewAgentLoop(unittest.TestCase):
                     ],
                 )
             ],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
+
+    def test_run_resumes_finished_trace_without_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "finished",
+                        "turns": [],
+                        "result": {"issues": [], "dismissed": []},
+                    },
+                )
+                calls = []
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[],
+                    review_round=1,
+                )
+            self.assertEqual(calls, [])
+            self.assertEqual(outcome.issues, [])
+
+    def test_run_resumes_fallback_trace_without_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "fallback",
+                        "fallback_reason": "malformed_json: broken",
+                        "turns": [],
+                    },
+                )
+                calls = []
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
+                    review_round=1,
+                )
+            self.assertEqual(calls, [])
+            self.assertEqual(outcome.fallback_reason, "malformed_json: broken")
+            self.assertEqual(len(outcome.issues), 1)
+            self.assertTrue(outcome.issues[0]["agent_fallback"])
+            self.assertEqual(outcome.issues[0]["fallback_reason"], "malformed_json: broken")
+            self.assertEqual(outcome.issues[0]["origin"], "initial")
+
+    def test_run_reissues_only_inflight_turn_on_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                evidence_turn = {
+                    "turn": 1,
+                    "messages": [
+                        {"role": "system", "content": "s"},
+                        {"role": "user", "content": "u"},
+                    ],
+                    "status": "responded",
+                    "raw_response": json.dumps(
+                        {
+                            "action": "request_evidence",
+                            "requests": [
+                                {
+                                    "request_id": "term-1",
+                                    "tool": "term_occurrences",
+                                    "arguments": {
+                                        "term": "Ann",
+                                        "selectors": [1],
+                                        "context_radius": 0,
+                                    },
+                                }
+                            ],
+                            "complete": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "parsed": {
+                        "action": "request_evidence",
+                        "requests": [
+                            {
+                                "request_id": "term-1",
+                                "tool": "term_occurrences",
+                                "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0},
+                            }
+                        ],
+                        "complete": False,
+                    },
+                    "json_repaired": False,
+                    "evidence_results": [
+                        {
+                            "request_id": "term-1",
+                            "tool": "term_occurrences",
+                            "ok": True,
+                            "occurrences": [],
+                        }
+                    ],
+                }
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "running",
+                        "turns": [evidence_turn],
+                    },
+                )
+                calls = []
+
+                def handler(messages, tier, json_mode):
+                    calls.append(messages)
+                    assert (
+                        messages[-1]["role"] == "user"
+                        and "[Evidence tool results (JSON)]" in messages[-1]["content"]
+                    )
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
+                    review_round=1,
+                )
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(
+                outcome.issues,
+                [
+                    {
+                        "index": 0,
+                        "type": "terminology",
+                        "detail": "术语不一致",
+                        "suggestion": "统一",
+                        "origin": "initial",
+                        "candidate_id": "r1-ch0-base0-candidate0",
+                        "consistency": {},
+                        "evidence_refs": ["ch0:text0:seg0"],
+                    }
+                ],
+            )
+            with debug.round_scope(1):
+                saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved["status"], "finished")
+            self.assertEqual(len(saved["turns"]), 2)
+            events = [
+                json.loads(line)
+                for line in Path(debug.run_dir, "events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertIn(
+                "review_agent_resumed",
+                [event["event"] for event in events],
+            )
+            # Cached evidence rounds must not duplicate events already emitted by the earlier process.
+            self.assertEqual(
+                sum(1 for e in events if e["event"] == "review_evidence_supplied"),
+                0,
+            )
+
+    def test_run_resumes_parsed_final_turn_without_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                final_raw = json.dumps(
+                    {
+                        "action": "final",
+                        "decisions": [
+                            {
+                                "candidate_id": "r1-ch0-base0-candidate0",
+                                "index": 0,
+                                "verdict": "confirmed",
+                                "reason": "ok",
+                            }
+                        ],
+                        "complete": True,
+                    },
+                    ensure_ascii=False,
+                )
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "running",
+                        "turns": [
+                            {
+                                "turn": 1,
+                                "messages": [
+                                    {"role": "system", "content": "s"},
+                                    {"role": "user", "content": "u"},
+                                ],
+                                "status": "responded",
+                                "raw_response": final_raw,
+                                "parsed": json.loads(final_raw),
+                                "json_repaired": False,
+                            }
+                        ],
+                    },
+                )
+                calls = []
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=lambda m, t, j: calls.append(1) or ""),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
+                    review_round=1,
+                )
+            self.assertEqual(calls, [])
+            self.assertEqual(outcome.issues[0]["candidate_id"], "r1-ch0-base0-candidate0")
+            self.assertEqual(outcome.issues[0]["origin"], "initial")
+            with debug.round_scope(1):
+                saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved["status"], "finished")
+
+    def test_run_resumes_reexecutes_evidence_without_llm_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                evidence_raw = json.dumps(
+                    {
+                        "action": "request_evidence",
+                        "requests": [
+                            {
+                                "request_id": "term-1",
+                                "tool": "term_occurrences",
+                                "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0},
+                            }
+                        ],
+                        "complete": False,
+                    },
+                    ensure_ascii=False,
+                )
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "running",
+                        "turns": [
+                            {
+                                "turn": 1,
+                                "messages": [
+                                    {"role": "system", "content": "s"},
+                                    {"role": "user", "content": "u"},
+                                ],
+                                "status": "responded",
+                                "raw_response": evidence_raw,
+                                "parsed": json.loads(evidence_raw),
+                                "json_repaired": False,
+                            }
+                        ],
+                    },
+                )
+                calls = []
+
+                def handler(m, t, j):
+                    calls.append(1)
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
+                    review_round=1,
+                )
+            self.assertEqual(len(calls), 1)  # Only the final turn makes a call.
+            self.assertEqual(outcome.issues[0]["candidate_id"], "r1-ch0-base0-candidate0")
+            with debug.round_scope(1):
+                saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved["status"], "finished")
+            self.assertEqual(len(saved["turns"]), 2)
+            self.assertIn("evidence_results", saved["turns"][0])
+
+    def test_run_resumes_with_reduced_evidence_rounds_still_finalizes(self):
+        """A reduced evidence-round limit must still allow a final call after cached rounds are
+        replayed.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                evidence_raw = json.dumps(
+                    {
+                        "action": "request_evidence",
+                        "requests": [
+                            {
+                                "request_id": "term-1",
+                                "tool": "term_occurrences",
+                                "arguments": {"term": "Ann", "selectors": [1], "context_radius": 0},
+                            }
+                        ],
+                        "complete": False,
+                    },
+                    ensure_ascii=False,
+                )
+                turns = []
+                for turn_number in (1, 2):
+                    turns.append(
+                        {
+                            "turn": turn_number,
+                            "messages": [
+                                {"role": "system", "content": "s"},
+                                {"role": "user", "content": "u"},
+                            ],
+                            "status": "responded",
+                            "raw_response": evidence_raw,
+                            "parsed": json.loads(evidence_raw),
+                            "json_repaired": False,
+                            "evidence_results": [
+                                {
+                                    "request_id": "term-1",
+                                    "tool": "term_occurrences",
+                                    "ok": True,
+                                    "occurrences": [],
+                                }
+                            ],
+                        }
+                    )
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "running",
+                        "turns": turns,
+                    },
+                )
+                calls = []
+
+                def handler(m, t, j):
+                    calls.append(1)
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
+                config = _config()
+                config.pipeline.review_agent_max_evidence_rounds = (
+                    1  # Set a limit below the two cached rounds.
+                )
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler), config, self._evidence(), ReviewTraceStore(debug)
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
+                    review_round=1,
+                )
+            # Previously, an empty turn range made no calls and left the trace running forever.
+            self.assertEqual(len(calls), 1)  # A final call is required.
+            self.assertEqual(outcome.issues[0]["candidate_id"], "r1-ch0-base0-candidate0")
+            self.assertFalse(outcome.issues[0].get("agent_fallback"))
+            with debug.round_scope(1):
+                saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved["status"], "finished")
+            self.assertEqual(len(saved["turns"]), 3)
+
+    def test_run_resumes_requesting_turn_without_data(self):
+        """Resume an interrupted call whose cached turn is requesting with no response data."""
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with debug.round_scope(1):
+                debug.write_json(
+                    "agents/r1-chunk-ch0-base0-n2.json",
+                    {
+                        "agent_id": "r1-chunk-ch0-base0-n2",
+                        "stage": "review.verify",
+                        "inference": inference_snapshot(_config().llm, ("review.verify",)),
+                        "status": "running",
+                        "turns": [
+                            {
+                                "turn": 1,
+                                "messages": [
+                                    {"role": "system", "content": "s"},
+                                    {"role": "user", "content": "u"},
+                                ],
+                                "status": "requesting",
+                            }
+                        ],
+                    },
+                )
+                calls = []
+
+                def handler(m, t, j):
+                    calls.append(1)
+                    return json.dumps(
+                        {
+                            "action": "final",
+                            "decisions": [
+                                {
+                                    "candidate_id": "r1-ch0-base0-candidate0",
+                                    "index": 0,
+                                    "verdict": "confirmed",
+                                    "reason": "ok",
+                                }
+                            ],
+                            "complete": True,
+                        },
+                        ensure_ascii=False,
+                    )
+
+                loop = ReviewAgentLoop(
+                    FakeClient(handler=handler),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(debug),
+                )
+                outcome = loop.review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived.", "Ann spoke."],
+                    targets=["安到了。", "安开口了。"],
+                    initial_issues=[
+                        {
+                            "index": 0,
+                            "type": "terminology",
+                            "detail": "术语不一致",
+                            "suggestion": "统一",
+                        }
+                    ],
+                    review_round=1,
+                )
+            # Reenter the empty requesting turn in place instead of advancing to the next turn.
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(outcome.issues[0]["candidate_id"], "r1-ch0-base0-candidate0")
+            with debug.round_scope(1):
+                saved = debug.load_json("agents/r1-chunk-ch0-base0-n2.json")
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved["status"], "finished")
+            self.assertEqual(len(saved["turns"]), 1)
 
     def test_requests_selected_evidence_then_confirms_and_adds(self):
         calls = 0
@@ -588,7 +1408,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                debug,
+                ReviewTraceStore(debug),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -664,7 +1484,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                debug,
+                ReviewTraceStore(debug),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -716,7 +1536,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -776,7 +1596,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -826,7 +1646,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -868,7 +1688,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -913,7 +1733,7 @@ class TestReviewAgentLoop(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 self._evidence(),
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).review_chunk(
                 chapter=0,
                 chunk_base=0,
@@ -936,7 +1756,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
     def test_conflicting_cross_chunk_claims_are_arbitrated(self):
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         issues = normalize_review_issues(
@@ -993,7 +1813,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflicts[0])
 
         self.assertEqual(result["status"], "suggested")
@@ -1002,10 +1822,10 @@ class TestReviewConflictArbiter(unittest.TestCase):
         self.assertEqual(result["rejected_issue_ids"], [issue_ids[1]])
 
     def test_all_issues_with_the_winning_value_are_kept(self):
-        """仲裁只选值，系统必须保留提出同一胜出值的全部问题。"""
+        """Arbitration chooses a value; retain every issue supporting the winning value."""
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann A.", "安。"), ("Ann B.", "安妮。"), ("Ann C.", "安。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         issues = normalize_review_issues(
@@ -1048,7 +1868,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(
@@ -1102,16 +1922,18 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["recommended_value"], "NASA")
 
     def test_arbiter_must_requery_inherited_evidence_before_citing_it(self):
-        """块级 Agent 的 opaque ref 不等于仲裁器已经看过该证据。"""
+        """A block agent's opaque reference does not establish that the arbiter has seen its
+        evidence.
+        """
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         glossary_result = evidence.glossary_term({"term": "Ann"})
@@ -1157,7 +1979,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "unresolved")
@@ -1212,7 +2034,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "suggested")
@@ -1249,12 +2071,12 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 client,
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(client.calls, [])
         self.assertEqual(result["status"], "unresolved")
-        self.assertIn("大小上限", result["reason"])
+        self.assertIn("size limit", result["reason"])
 
     def test_arbitration_is_applied_to_the_final_issue_view(self):
         issues = [
@@ -1281,9 +2103,15 @@ class TestReviewConflictArbiter(unittest.TestCase):
         )
         self.assertEqual([issue["issue_id"] for issue in rejected], ["review-00002"])
         self.assertEqual(final[0]["arbitration"]["recommended_value"], "安")
-        self.assertEqual(final[1]["detail"], "该处相关表达需按终局仲裁统一为「安」。")
+        self.assertEqual(
+            final[1]["detail"],
+            "Final arbitration requires the expression here to use “安” consistently.",
+        )
         self.assertEqual(final[1]["pre_arbitration_detail"], "改写")
-        self.assertEqual(final[1]["suggestion"], "按终局仲裁将相关表达统一为「安」。")
+        self.assertEqual(
+            final[1]["suggestion"],
+            "Use “安” consistently for this expression as determined by final arbitration.",
+        )
         self.assertEqual(final[1]["pre_arbitration_suggestion"], "统一为安妮")
 
     def test_unresolved_arbitration_keeps_every_issue(self):
@@ -1313,7 +2141,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
     def test_unproposed_suggested_value_falls_back_to_unresolved(self):
         evidence = BookEvidenceIndex(
             [_chapter(0, [("Ann.", "安。"), ("Ann.", "安妮。")])],
-            [GlossaryTerm(source="Ann", target="安", type="人物")],
+            [GlossaryTerm(source="Ann", target="安", type="person")],
             {},
         )
         issues = normalize_review_issues(
@@ -1370,7 +2198,7 @@ class TestReviewConflictArbiter(unittest.TestCase):
                 FakeClient(handler=handler),
                 _config(),
                 evidence,
-                ReviewRunStore(directory),
+                ReviewTraceStore(ReviewRunStore(directory)),
             ).arbitrate(conflict)
 
         self.assertEqual(result["status"], "unresolved")
