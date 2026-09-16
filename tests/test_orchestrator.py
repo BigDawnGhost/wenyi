@@ -1473,8 +1473,8 @@ class TestReviewReporting(unittest.TestCase):
                 finished = json.load(handle)
             self.assertEqual(finished["status"], "completed")
 
-    def test_review_permanent_error_still_finishes_failed(self):
-        """Local permanent failures remain failed and do not resume the same directory."""
+    def test_review_permanent_error_finishes_failed_but_remains_resumable(self):
+        """Local/protocol failures stay logged as failed, yet resume the same directory."""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -1492,12 +1492,19 @@ class TestReviewReporting(unittest.TestCase):
             book_root = Path(cfg.state_dir)
             first_dirs = sorted(book_root.glob("*/targets/*/reviews/review-*"))
             self.assertEqual(len(first_dirs), 1)
-            with open(first_dirs[0] / "result.json", encoding="utf-8") as handle:
+            result_path = first_dirs[0] / "result.json"
+            with open(result_path, encoding="utf-8") as handle:
                 state = json.load(handle)
             self.assertEqual(state["status"], "failed")
+            self.assertEqual(state["termination"], "error")
+            self.assertEqual(state["error"]["type"], "ValueError")
 
             second = orch.run_review(txt)
-            self.assertNotEqual(Path(second["review_dir"]).resolve(), first_dirs[0].resolve())
+            self.assertEqual(Path(second["review_dir"]).resolve(), first_dirs[0].resolve())
+            with open(result_path, encoding="utf-8") as handle:
+                finished = json.load(handle)
+            self.assertEqual(finished["status"], "completed")
+            self.assertNotIn("error", finished)
 
     def test_review_running_resume_rejects_config_change(self):
         """Changed configuration must start a new review directory instead of resuming stale
