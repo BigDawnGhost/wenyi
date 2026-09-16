@@ -184,13 +184,17 @@ class ReviewRunStore:
 
     @staticmethod
     def is_resumable_status(status: object) -> bool:
-        """Return True for Review statuses that may continue from saved caches."""
-        return status in {"running", "interrupted"}
+        """Return True for unfinished Review statuses that may continue from saved caches.
+
+        ``failed`` stays resume-eligible so protocol/local errors can reuse chunk caches;
+        failure details remain in result/event logs for diagnosis.
+        """
+        return status in {"running", "interrupted", "failed"}
 
     def start(self, *, reviewed_content_digest: str, metadata: dict[str, Any]) -> None:
         """Create a running result and save parameters before the first model call.
-        On resume with status=running/interrupted, preserve existing results and metadata
-        instead of overwriting them.
+        On resume with status=running/interrupted/failed, preserve existing results and
+        metadata instead of overwriting them.
         """
         self._reviewed_content_digest = reviewed_content_digest
         result_path = os.path.join(self.run_dir, "result.json")
@@ -208,6 +212,7 @@ class ReviewRunStore:
                     existing.pop("finished_at", None)
                     existing.pop("interrupted_at", None)
                     existing.pop("last_error", None)
+                    existing.pop("error", None)
                     self._atomic_json(result_path, existing)
                     self.log_event("review_resumed", review_id=self.review_id)
                     return

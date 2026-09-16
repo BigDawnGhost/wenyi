@@ -264,7 +264,11 @@ def write_completed(debug: ReviewRunStore, state: ReviewSessionState, loaded) ->
 def write_partial(
     debug: ReviewRunStore, state: ReviewSessionState, loaded, error: Exception, resumable: bool
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Save partial diagnostics, retaining resumable provider stops as interrupted."""
+    """Save partial diagnostics for an unfinished Review.
+
+    Provider/quota stops record ``interrupted``; local/protocol errors record ``failed``
+    for logs. Both statuses remain eligible for ``find_resumable`` when fingerprints match.
+    """
     initial_issues, dismissed = debug.result_snapshots()
     partial_issues = state.effective_issues(state.latest) if state.latest is not None else []
     public_issues = project_issues(partial_issues)

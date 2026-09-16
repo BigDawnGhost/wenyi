@@ -65,12 +65,13 @@ uv run trans-novel review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Matching completed
-results are reused; an interrupted Review resumes its saved rounds, chunks, and agent
+results are reused; an unfinished Review resumes its saved rounds, chunks, and agent
 traces when content, configuration, and glossary fingerprints match. Recoverable stops
 such as Ctrl+C, timeouts, transport failures, HTTP 429/5xx, and provider balance/quota
-errors (for example HTTP 402) leave the run as `interrupted` so the next `review`
-command can continue instead of starting a new directory. Permanent local failures still
-finish as `failed`. Otherwise, a new whole-book Review starts. Cached chunks and
+errors (for example HTTP 402) leave the run as `interrupted`. Local/protocol failures
+still finish as `failed` for diagnosis, but both `interrupted` and `failed` remain
+resume-eligible so the next `review` continues the same directory instead of starting a
+new one. Otherwise, a new whole-book Review starts. Cached chunks and
 completed initial screening skip chapter glossary matching; pending reviewer requests
 share one chapter-wide glossary snapshot. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.

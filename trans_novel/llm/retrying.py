@@ -150,11 +150,10 @@ def is_retryable_provider_error(error: Any) -> bool:
 
 
 def is_resumable_provider_interrupt(error: Any) -> bool:
-    """Return True when a provider failure should keep long Review runs resumable.
+    """Return True when a provider failure should be logged as ``interrupted``.
 
-    Covers automatic-retry cases plus payment/quota stops such as HTTP 402. Permanent
-    local configuration and certificate errors stay False so Review can still finish as
-    failed.
+    Covers automatic-retry cases plus payment/quota stops such as HTTP 402. Other errors
+    may still finish as ``failed`` for diagnosis while remaining resume-eligible.
     """
     if is_retryable_provider_error(error):
         return True
