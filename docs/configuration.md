@@ -86,6 +86,7 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 | `deepseek` | DeepSeek endpoint; `DEEPSEEK_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
 | `openai` | OpenAI endpoint; `OPENAI_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
 | `openrouter` | OpenRouter endpoint; `OPENROUTER_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
+| `opencode-go` | OpenCode Go gateway (`https://opencode.ai/zen/go/v1`); `OPENCODE_API_KEY`. Sends `User-Agent: wenyi` and a stable per-connection `x-opencode-session`. No built-in preset — configure models explicitly | `thinking`, `reasoning_effort`, `extra_body` |
 | `gemini` | Native Gemini API; `GEMINI_API_KEY`, falling back to `GOOGLE_API_KEY` when no custom variable is set | `thinking_level` or `thinking_budget`, `temperature`, `extra_body` |
 | `openai-compatible` | Explicit `base_url`; optional `api_key_env`; `reasoning_style` | `thinking`, `reasoning_effort`, `json_response_fallback`, `request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`; `ORCAROUTER_API_KEY`; `reasoning_style` | Same as `openai-compatible` |
