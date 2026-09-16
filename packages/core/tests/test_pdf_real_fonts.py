@@ -47,7 +47,7 @@ def _book(tmp_path):
 def test_real_cjk_truetype_embeds_and_renders_with_poppler(tmp_path, monkeypatch):
     pytest.importorskip("fpdf")
     pytest.importorskip("fontTools")
-    from PIL import Image
+    from PIL import Image  # type: ignore[import-not-found]
     from pypdf import PdfReader
 
     font = _font_path()
@@ -60,7 +60,7 @@ def test_real_cjk_truetype_embeds_and_renders_with_poppler(tmp_path, monkeypatch
     output = tmp_path / "story.pdf"
     _assemble_pdf_fpdf2(store, str(source), str(output), bilingual=True)
     reader = PdfReader(output)
-    fonts = reader.pages[0]["/Resources"]["/Font"].get_object()
+    fonts = reader.pages[0]["/Resources"]["/Font"].get_object()  # type: ignore[index]
     for reference in fonts.values():
         descendant = reference.get_object()["/DescendantFonts"][0].get_object()
         assert descendant["/Subtype"] == "/CIDFontType2"
@@ -131,7 +131,7 @@ def test_automatic_font_selection_skips_cff_collection(monkeypatch):
 
     monkeypatch.setattr(os.path, "isfile", available)
     # A test font can live outside system directories, as in an unprivileged developer setup.
-    from fontTools import ttLib
+    from fontTools import ttLib  # type: ignore[import-not-found]
 
     real_ttfont = ttLib.TTFont
     monkeypatch.setattr(

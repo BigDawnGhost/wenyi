@@ -106,7 +106,14 @@ def _find_fpdf_font() -> str:
     than its extension, also keeps TrueType TTC collections such as WenQuanYi and
     Microsoft YaHei usable.
     """
-    from fontTools.ttLib import TTFont, TTLibError
+    try:
+        tt_lib = importlib.import_module("fontTools.ttLib")
+        TTFont = tt_lib.TTFont
+        TTLibError = tt_lib.TTLibError
+    except ImportError as error:
+        raise ImportError(
+            "fpdf2 PDF font checks require fontTools; run: uv sync --extra pdf-output-lite"
+        ) from error
 
     def compatible(path: str) -> bool:
         try:
