@@ -1,0 +1,1570 @@
+"""Ingestion and segmentation smoke tests."""
+
+from __future__ import annotations
+
+import base64
+import os
+import tempfile
+import unittest
+import zipfile
+
+from bs4 import BeautifulSoup
+from bs4.element import Tag
+from wenyi_core.assemble.html_renderer import _render_chapter_html
+from wenyi_core.glossary.store import source_matches_text
+from wenyi_core.ingest.epub_package import _decode_markup, _find_opf_path, _parse_opf
+from wenyi_core.ingest.epub_reader import peek_epub_title
+from wenyi_core.ingest.epub_toc import parse_toc_entries
+from wenyi_core.ingest.fb2_reader import read_fb2_binaries
+from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
+from wenyi_core.ingest.segmenter import (
+    _split_text,
+    batch_segments,
+    load_document,
+    split_long_segments,
+)
+from wenyi_core.ingest.tokens import count_tokens
+from wenyi_core.markup.anchors import resolve_epub_href
+from wenyi_core.markup.ruby import strip_ruby_markers
+from wenyi_core.markup.segments import annotate_epub_resource
+
+from tests.sample_data import (
+    write_cross_resource_toc_epub,
+    write_degenerate_toc_epub,
+    write_grouped_nav_epub,
+    write_nested_toc_epub,
+    write_sample_epub,
+    write_sample_txt,
+)
+
+
+class TestTokenBudget(unittest.TestCase):
+    def test_batch_segments_uses_token_counts_not_characters(self):
+        # Under cl100k_base these are 2 + 2 + 1 tokens. A 4-token budget packs the
+        # first pair together; a 4-character budget would have split after "hell".
+        segments = [
+            Segment(index=0, source="hello world", kind=KIND_TEXT),
+            Segment(index=1, source="foo bar", kind=KIND_TEXT),
+            Segment(index=2, source="x", kind=KIND_TEXT),
+        ]
+        self.assertEqual([count_tokens(s.source) for s in segments], [2, 2, 1])
+        batches = batch_segments(segments, max_tokens=4)
+        self.assertEqual([[s.index for s in batch] for batch in batches], [[0, 1], [2]])
+
+
+class TestTextIngest(unittest.TestCase):
+    def test_untitled_preface_does_not_gain_book_title_heading(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "book.txt")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("preface\n\n# Chapter 1\nbody\n\n# Chapter 2\nbody")
+
+            doc = load_document(p, "en", "zh")
+
+        self.assertEqual(doc.chapters[0].title, "book")
+        self.assertEqual(
+            [(segment.kind, segment.source) for segment in doc.chapters[0].segments],
+            [(KIND_TEXT, "preface")],
+        )
+
+    def test_text_chapters_and_segments(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.txt")
+            write_sample_txt(p)
+            doc = load_document(p, "ja", "zh")
+
+        self.assertEqual(doc.fmt, "text")
+        self.assertEqual(len(doc.chapters), 2)
+        ch1 = doc.chapters[0]
+        self.assertEqual(ch1.title, "第一章　出会い")
+        # One heading and three body paragraphs.
+        self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
+        self.assertEqual(len(ch1.text_segments), 4)
+
+    def test_preamble_before_first_heading_does_not_gain_book_title(self):
+        content = "这是前言。\n\n# 第一章\n\n这是正文。\n"
+        for suffix in (".txt", ".md"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "novel" + suffix)
+                with open(path, "w", encoding="utf-8") as file:
+                    file.write(content)
+
+                document = load_document(path, "zh", "en")
+
+                self.assertEqual(len(document.chapters), 2)
+                self.assertEqual(
+                    [segment.kind for segment in document.chapters[0].segments],
+                    [KIND_TEXT],
+                )
+                self.assertEqual(document.chapters[0].segments[0].source, "这是前言。")
+                self.assertEqual(document.chapters[1].segments[0].kind, KIND_HEADING)
+                self.assertEqual(document.chapters[1].segments[0].source, "第一章")
+
+    def test_batching(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.txt")
+            write_sample_txt(p)
+            doc = load_document(p, "ja", "zh")
+        batches = batch_segments(doc.chapters[0].text_segments, max_tokens=60)
+        # Preserve total segment count.
+        total = sum(len(b) for b in batches)
+        self.assertEqual(total, len(doc.chapters[0].text_segments))
+        self.assertGreater(len(batches), 1)  # A 60-token budget should produce several batches.
+
+
+_FB2_FLAT = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>平铺之书</book-title></title-info></description>
+<body>
+  <section><title><p>第一章</p></title><p>第一段。</p><p>第二段。</p></section>
+  <section><title><p>第二章</p></title><p>仅一段。</p></section>
+</body>
+<body name="notes"><section><p>这是注释，应被跳过。</p></section></body>
+</FictionBook>
+"""
+
+_FB2_BODY_TITLE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>正文标题之书</book-title></title-info></description>
+<body>
+  <title><p>作者姓名</p><p>正文标题之书</p></title>
+  <section><title><p>第一章</p></title><p>第一段。</p></section>
+</body>
+</FictionBook>
+"""
+
+# Nested part/chapter sections must preserve container body text.
+_FB2_NESTED = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>嵌套之书</book-title></title-info></description>
+<body>
+  <section>
+    <title><p>第一部</p></title>
+    <section><title><p>第一章</p></title><p>一章首段。</p><p>一章次段。</p></section>
+    <section><title><p>第二章</p></title><p>二章仅一段。</p></section>
+  </section>
+</body>
+</FictionBook>
+"""
+
+
+# Preserve subtitle, poetry, citation and attribution content.
+_FB2_BLOCKS = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description><title-info><book-title>块之书</book-title></title-info></description>
+<body>
+  <section>
+    <title><p>第一章</p></title>
+    <epigraph><p>题记一行。</p><text-author>题记作者</text-author></epigraph>
+    <p>普通段落。</p>
+    <subtitle>场景小标题</subtitle>
+    <poem><title><p>诗名</p></title>
+      <stanza><v>第一诗行。</v><v>第二诗行。</v></stanza>
+      <text-author>诗人</text-author></poem>
+    <cite><p>引文段落。</p><text-author>引文作者</text-author></cite>
+    <p>结尾段落。</p>
+  </section>
+</body>
+</FictionBook>
+"""
+
+_FB2_IMAGES = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+<description><title-info>
+  <book-title>插图之书</book-title>
+  <coverpage><image xlink:href="#cover.jpg"/></coverpage>
+</title-info></description>
+<body>
+  <section><title><p>第一章</p></title>
+    <image xlink:href="#inside.png"/>
+    <p>带插图的正文。</p>
+  </section>
+</body>
+<binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
+<binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
+</FictionBook>
+"""
+
+
+class TestFb2Ingest(unittest.TestCase):
+    def _load(self, content: str):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.fb2")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(content)
+            return load_document(p, "ja", "zh")
+
+    def test_flat_sections_and_notes_skipped(self):
+        doc = self._load(_FB2_FLAT)
+        self.assertEqual(doc.fmt, "fb2")
+        self.assertEqual(doc.title, "平铺之书")
+        self.assertEqual(len(doc.chapters), 2)  # Exclude the notes body.
+        ch1 = doc.chapters[0]
+        self.assertEqual(ch1.title, "第一章")
+        self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
+        self.assertEqual(len(ch1.text_segments), 3)  # A heading and two paragraphs.
+        # Annotation body text must not appear in any chapter.
+        all_src = [s.source for ch in doc.chapters for s in ch.segments]
+        self.assertNotIn("这是注释，应被跳过。", all_src)
+
+    def test_namespace_variants_are_supported(self):
+        variants = {
+            "2.1": _FB2_FLAT.replace("fictionbook/2.0", "fictionbook/2.1"),
+            "none": _FB2_FLAT.replace(' xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"', ""),
+        }
+        for name, content in variants.items():
+            with self.subTest(namespace=name):
+                doc = self._load(content)
+                self.assertEqual(doc.title, "平铺之书")
+                self.assertEqual([ch.title for ch in doc.chapters], ["第一章", "第二章"])
+                self.assertEqual(
+                    [s.source for s in doc.chapters[0].text_segments],
+                    ["第一章", "第一段。", "第二段。"],
+                )
+
+    def test_single_quoted_windows_1251_declaration(self):
+        content = """<?xml version='1.0' encoding='windows-1251'?>
+<FictionBook>
+  <description><title-info><book-title>Детство</book-title></title-info></description>
+  <body><section><title><p>Глава</p></title><p>Текст</p></section></body>
+</FictionBook>"""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "book.fb2")
+            with open(path, "wb") as f:
+                f.write(content.encode("windows-1251"))
+
+            doc = load_document(path, "ru", "zh")
+
+        self.assertEqual(doc.title, "Детство")
+        self.assertEqual(doc.chapters[0].segments[0].source, "Глава")
+
+    def test_body_title_becomes_a_separate_chapter(self):
+        doc = self._load(_FB2_BODY_TITLE)
+        self.assertEqual(len(doc.chapters), 2)
+        title_page, first_chapter = doc.chapters
+        self.assertEqual(title_page.title, "正文标题之书")
+        self.assertEqual(
+            [s.source for s in title_page.segments],
+            ["作者姓名", "正文标题之书"],
+        )
+        self.assertTrue(all(s.kind == KIND_HEADING for s in title_page.segments))
+        self.assertEqual([s.index for s in title_page.segments], [0, 1])
+        self.assertEqual(
+            [s.anchor for s in title_page.segments],
+            ["tn0_0", "tn0_1"],
+        )
+        self.assertEqual(first_chapter.index, 1)
+        self.assertEqual(first_chapter.title, "第一章")
+        self.assertEqual(
+            [s.anchor for s in first_chapter.segments],
+            ["tn1_0", "tn1_1"],
+        )
+
+    def test_block_types_not_lost(self):
+        doc = self._load(_FB2_BLOCKS)
+        ch = doc.chapters[0]
+        texts = [s.source for s in ch.segments]
+        for expect in [
+            "题记一行。",
+            "题记作者",
+            "普通段落。",
+            "诗名",
+            "第一诗行。",
+            "第二诗行。",
+            "诗人",
+            "引文段落。",
+            "引文作者",
+            "结尾段落。",
+        ]:
+            self.assertIn(expect, texts)
+        # Treat subtitles as headings.
+        headings = [s.source for s in ch.segments if s.kind == KIND_HEADING]
+        self.assertIn("场景小标题", headings)
+
+    def test_nested_sections_not_lost(self):
+        doc = self._load(_FB2_NESTED)
+        # Preserve a part-title chapter and two child chapters without losing body paragraphs.
+        titles = [ch.title for ch in doc.chapters]
+        self.assertEqual(titles, ["第一部", "第一章", "第二章"])
+        all_text = [
+            s.source for ch in doc.chapters for s in ch.text_segments if s.kind != KIND_HEADING
+        ]
+        self.assertIn("一章首段。", all_text)
+        self.assertIn("一章次段。", all_text)
+        self.assertIn("二章仅一段。", all_text)
+
+    def test_images_and_cover_are_recorded_without_persisting_binary_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "images.fb2")
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(_FB2_IMAGES)
+
+            doc = load_document(path, "ru", "zh")
+            binaries = read_fb2_binaries(path)
+
+        self.assertEqual(doc.meta["fb2_cover_image"], "cover.jpg")
+        self.assertEqual(
+            doc.meta["fb2_resources"],
+            [
+                {"id": "cover.jpg", "content_type": "image/jpeg"},
+                {"id": "inside.png", "content_type": "image/png"},
+            ],
+        )
+        self.assertEqual(
+            doc.chapters[0].meta["fb2_images"],
+            [{"id": "inside.png", "position": 1}],
+        )
+        self.assertNotIn(base64.b64encode(b"cover-bytes").decode(), str(doc.meta))
+        self.assertEqual(binaries["cover.jpg"], ("image/jpeg", b"cover-bytes"))
+        self.assertEqual(binaries["inside.png"], ("image/png", b"inside-bytes"))
+
+
+class TestSplitLongSegments(unittest.TestCase):
+    def test_split_by_sentence_and_cont_flag(self):
+        long_src = "第一句。" * 10  # Fifty tokens under cl100k_base.
+        ch = Chapter(
+            index=0,
+            title="章",
+            segments=[
+                Segment(index=0, source="标题", kind=KIND_HEADING, anchor="a0"),
+                Segment(index=1, source=long_src, kind=KIND_TEXT, anchor="a1"),
+                Segment(index=2, source="短。", kind=KIND_TEXT, anchor="a2"),
+            ],
+        )
+        split_long_segments([ch], max_tokens=30)
+        # Split a long paragraph, retaining the first anchor and marking unanchored continuations.
+        conts = [s.cont for s in ch.segments]
+        self.assertIn(True, conts)
+        long_parts = [s for s in ch.segments if not s.cont and s.anchor == "a1"]
+        self.assertEqual(len(long_parts), 1)  # Only the first segment retains a1.
+        cont_parts = [s for s in ch.segments if s.cont]
+        self.assertTrue(all(s.anchor is None for s in cont_parts))
+        # Reassign consecutive indices.
+        self.assertEqual([s.index for s in ch.segments], list(range(len(ch.segments))))
+        # Rejoining must reproduce the original text.
+        joined = "".join(s.source for s in ch.segments if s.anchor == "a1" or s.cont)
+        self.assertEqual(joined, long_src)
+
+    def test_split_keeps_meta_only_on_anchored_first_part(self):
+        original = Segment(
+            index=0,
+            source="第一句。" * 10,
+            kind=KIND_TEXT,
+            anchor="a0",
+            meta={
+                "epub_inline": {
+                    "version": 1,
+                    "source_length": 40,
+                    "nodes": [{"id": "a0_inline_0", "offset": 0}],
+                }
+            },
+        )
+        ch = Chapter(index=0, segments=[original])
+
+        split_long_segments([ch], max_tokens=20)
+
+        self.assertGreater(len(ch.segments), 1)
+        self.assertEqual(ch.segments[0].meta, original.meta)
+        self.assertIsNot(ch.segments[0].meta, original.meta)
+        self.assertTrue(all(not segment.meta for segment in ch.segments[1:]))
+
+    def test_no_split_when_short(self):
+        ch = Chapter(
+            index=0,
+            title="章",
+            segments=[Segment(index=0, source="短句。", kind=KIND_TEXT, anchor="a0")],
+        )
+        split_long_segments([ch], max_tokens=100)
+        self.assertEqual(len(ch.segments), 1)
+        self.assertFalse(ch.segments[0].cont)
+
+    def test_oversized_single_sentence_hard_split(self):
+        chunks = _split_text(
+            "あ" * 50, 20
+        )  # An oversized string without sentence-ending punctuation.
+        self.assertTrue(all(count_tokens(c) <= 20 for c in chunks))
+        self.assertEqual("".join(chunks), "あ" * 50)
+
+    def test_english_splits_on_sentence_punctuation(self):
+        text = "Alpha beta gamma. Delta epsilon zeta! Eta theta iota?"
+        # Budget 8 tokens: each sentence fits alone, but pairs exceed the budget.
+        chunks = _split_text(text, 8)
+        self.assertEqual(chunks, ["Alpha beta gamma.", " Delta epsilon zeta!", " Eta theta iota?"])
+        self.assertEqual("".join(chunks), text)
+
+    def test_oversized_english_sentence_does_not_split_words(self):
+        text = "alphabet bravo charlie delta"
+        chunks = _split_text(text, 4)
+        self.assertEqual(chunks, ["alphabet bravo", " charlie delta"])
+        self.assertEqual("".join(chunks), text)
+        self.assertNotIn("char", chunks[0])
+        self.assertEqual(chunks[1].split()[0], "charlie")
+
+
+def _write_annotation_context_epub(path: str, *, notes_in_spine: bool) -> None:
+    notes_itemref = '<itemref idref="notes"/>' if notes_in_spine else ""
+    opf = f"""<package><metadata><title>Annotation Context</title></metadata>
+    <manifest>
+      <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+      <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>
+    </manifest><spine><itemref idref="body"/>{notes_itemref}</spine></package>"""
+    body = """<html><body>
+    <p>Alpha<sup id="ref-1"><a epub:type="noteref"
+    href="notes.xhtml#note-1">1</a></sup>.</p>
+    <p>Beta <a href="notes.xhtml#note-1">linked phrase</a>.</p>
+    </body></html>"""
+    notes = """<html><body><aside epub:type="footnote" id="note-1">
+    <p><a epub:type="backlink" href="body.xhtml#ref-1">1</a>
+    First explanation.</p><p>Second explanation.</p>
+    </aside></body></html>"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+        )
+        archive.writestr("content.opf", opf)
+        archive.writestr("body.xhtml", body)
+        archive.writestr("notes.xhtml", notes)
+
+
+class TestEpubIngest(unittest.TestCase):
+    def test_epub_annotation_only_marker_is_not_translated(self):
+        html = '<html><body><p>[<a href="#tn2_1">←1</a>]</p></body></html>'
+
+        _title, segments, template = annotate_epub_resource(html, 0, "notes.xhtml")
+
+        self.assertEqual(segments, [])
+        rendered = BeautifulSoup(template, "html.parser")
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text(), "[←1]")
+        link = rendered.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "#tn2_1")
+
+    def test_epub_point_annotation_is_excluded_from_source(self):
+        html = """<html><body><p>Buck Mulligan<sup id="note-wrap"><a
+        id="jpref1" href="notes.xhtml#jpnote1">2</a></sup> came down.</p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual([segment.source for segment in segments], ["Buck Mulligan came down."])
+        annotations = segments[0].meta["epub_annotations"]
+        self.assertEqual(annotations["source_length"], len(segments[0].source))
+        self.assertEqual(
+            annotations["items"],
+            [
+                {
+                    "id": "tn0_0_annotation_0",
+                    "mode": "point",
+                    "source_start": len("Buck Mulligan"),
+                    "source_end": len("Buck Mulligan"),
+                    "source_text": "",
+                    "marker_text": "2",
+                    "raw_href": "notes.xhtml#jpnote1",
+                    "target_key": "notes.xhtml#jpnote1",
+                    "relation": "noteref",
+                }
+            ],
+        )
+        rendered = BeautifulSoup(template, "html.parser")
+        marker = rendered.select_one("sup[data-tn-annotation-id]")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        self.assertEqual(marker.get("id"), "note-wrap")
+        link = marker.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("id"), "jpref1")
+        self.assertNotIn("epub_inline", segments[0].meta)
+
+    def test_epub_css_superscript_annotation_preserves_wrapper(self):
+        html = """<html><body><p>Parmenides left a legacy.<span
+        class="superscript"><a class="nounder" href="intro.html#intronotes_1"
+        id="intronotes1">1</a></span></p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "intro.html")
+
+        self.assertEqual(segments[0].source, "Parmenides left a legacy.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "point")
+        self.assertEqual(item["source_start"], len(segments[0].source))
+        self.assertEqual(item["source_end"], len(segments[0].source))
+        self.assertEqual(item["marker_text"], "1")
+        rendered = BeautifulSoup(template, "html.parser")
+        marker = rendered.select_one("span.superscript[data-tn-annotation-id]")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        link = marker.find("a")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "intro.html#intronotes_1")
+        self.assertEqual(link.get("id"), "intronotes1")
+
+    def test_epub_note_backlink_number_is_excluded_from_note_body(self):
+        html = """<html><body><p><a class="nounder"
+        href="intro.html#intronotes33" id="intronotes_33">33</a>
+        The word “things” prejudges the question.</p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "intro.html")
+
+        self.assertEqual(segments[0].source, "The word “things” prejudges the question.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "point")
+        self.assertEqual(item["source_start"], 0)
+        self.assertEqual(item["source_end"], 0)
+        self.assertEqual(item["marker_text"], "33")
+        self.assertEqual(item["relation"], "backlink")
+        rendered = BeautifulSoup(template, "html.parser")
+        marker = rendered.select_one("a[data-tn-annotation-id]")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        self.assertEqual(marker.get("href"), "intro.html#intronotes33")
+        self.assertEqual(marker.get("id"), "intronotes_33")
+
+    def test_epub_arrow_backlink_is_excluded_from_note_body(self):
+        html = """<html><body><p id="note-1">An explanatory note.
+        <a href="body.xhtml#ref-1">⤶</a></p></body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "notes.xhtml")
+
+        self.assertEqual(segments[0].source, "An explanatory note.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "point")
+        self.assertEqual(item["relation"], "backlink")
+        self.assertEqual(item["target_key"], "body.xhtml#ref-1")
+
+    def test_epub_plain_number_link_is_not_treated_as_note_marker(self):
+        html = '<html><body><p>See <a href="#section33">33</a> for details.</p></body></html>'
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "See 33 for details.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "range")
+        self.assertEqual(item["source_text"], "33")
+        self.assertEqual(item["marker_text"], "")
+        self.assertEqual(item["raw_href"], "#section33")
+        self.assertEqual(item["target_key"], "body.xhtml#section33")
+        self.assertEqual(item["relation"], "internal_link")
+
+    def test_epub_short_number_links_remain_ordinary_inline_ranges(self):
+        html = """<html><body><p>Read <a href="#1">1</a>,
+        <a href="#ref1">reference 1</a>, <a href="#key1">key 1</a>,
+        and <a href="#n2">number 2</a>.</p>
+        <h2 id="1">Part One</h2><h2 id="ref1">Reference One</h2>
+        <h2 id="key1">Key One</h2><h2 id="n2">Number Two</h2></body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Read 1, reference 1, key 1, and number 2.")
+        items = segments[0].meta["epub_annotations"]["items"]
+        self.assertEqual(
+            [item["mode"] for item in items],
+            ["range", "range", "range", "range"],
+        )
+        self.assertEqual(
+            [item["relation"] for item in items],
+            ["internal_link", "internal_link", "internal_link", "internal_link"],
+        )
+        self.assertEqual(
+            [item["source_text"] for item in items],
+            ["1", "reference 1", "key 1", "number 2"],
+        )
+
+    def test_epub_inline_list_note_keeps_body_and_excludes_backlink_number(self):
+        html = """<html><body><p>Body<sup><a id="ref1" href="#n1">1</a></sup>.</p>
+        <ol><li id="n1"><a href="#ref1">1</a> Full note text.</li></ol>
+        </body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual([segment.source for segment in segments], ["Body.", "Full note text."])
+        reference = segments[0].meta["epub_annotations"]["items"][0]
+        backlink = segments[1].meta["epub_annotations"]["items"][0]
+        self.assertEqual((reference["mode"], reference["relation"]), ("point", "noteref"))
+        self.assertEqual((backlink["mode"], backlink["relation"]), ("point", "backlink"))
+
+    def test_epub_short_note_number_at_end_is_a_backlink(self):
+        html = """<html><body><p>Body<sup><a id="ref2" href="#n2">2</a></sup>.</p>
+        <ol><li id="n2">Full note text. <a href="#ref2">2</a></li></ol>
+        </body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual([segment.source for segment in segments], ["Body.", "Full note text."])
+        backlink = segments[1].meta["epub_annotations"]["items"][0]
+        self.assertEqual((backlink["mode"], backlink["relation"]), ("point", "backlink"))
+
+    def test_epub_inline_list_note_becomes_annotation_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "inline-list-note.epub")
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+                )
+                archive.writestr(
+                    "content.opf",
+                    """<package><metadata><title>Inline Note</title></metadata><manifest>
+                    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="body"/></spine></package>""",
+                )
+                archive.writestr(
+                    "body.xhtml",
+                    """<html><body><p>Body<sup><a id="ref1" href="#n1">1</a></sup>.</p>
+                    <ol><li id="n1"><a href="#ref1">1</a> Full note text.</li></ol>
+                    <p>Read <a href="#1">1</a>, <a href="#ref2">reference 2</a>,
+                    and <a href="#key2">key 2</a>.</p><h2 id="1">Part One</h2>
+                    <h2 id="ref2">Reference Two</h2><h2 id="key2">Key Two</h2>
+                    </body></html>""",
+                )
+
+            document = load_document(path, "en", "zh")
+
+        contexts = document.meta["epub_annotation_contexts"]["contexts"]
+        self.assertEqual(set(contexts), {"body.xhtml#n1"})
+        context = contexts["body.xhtml#n1"]
+        self.assertEqual(context["source_blocks"], ["Full note text."])
+
+    def test_epub_range_annotation_keeps_phrase_but_excludes_marker(self):
+        html = """<html><body><p><a id="ref-1" href="#note-1">国境の長いトンネル
+        <sup id="mark-1">〔＊１〕</sup></a>を抜けると雪国であった。</p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        source = "国境の長いトンネルを抜けると雪国であった。"
+        self.assertEqual([segment.source for segment in segments], [source])
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "range")
+        self.assertEqual(item["source_start"], 0)
+        self.assertEqual(item["source_end"], len("国境の長いトンネル"))
+        self.assertEqual(item["source_text"], "国境の長いトンネル")
+        self.assertEqual(item["marker_text"], "〔＊１〕")
+        self.assertEqual(item["relation"], "noteref")
+        rendered = BeautifulSoup(template, "html.parser")
+        link = rendered.select_one("a[data-tn-annotation-id]")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("id"), "ref-1")
+        marker = link.find("sup")
+        self.assertIsInstance(marker, Tag)
+        assert isinstance(marker, Tag)
+        self.assertEqual(marker.get("id"), "mark-1")
+
+    def test_epub_records_multiple_annotations_in_source_order(self):
+        html = """<html><body><p>Alpha<sup><a href="#n1">1</a></sup> beta
+        <a href="notes.xhtml#n2">linked phrase<sup>*</sup></a> end.</p></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 3, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Alpha beta linked phrase end.")
+        items = segments[0].meta["epub_annotations"]["items"]
+        self.assertEqual(
+            [item["id"] for item in items],
+            [
+                "tn3_0_annotation_0",
+                "tn3_0_annotation_1",
+            ],
+        )
+        self.assertEqual([item["mode"] for item in items], ["point", "range"])
+        self.assertEqual((items[0]["source_start"], items[0]["source_end"]), (5, 5))
+        self.assertEqual(items[1]["source_text"], "linked phrase")
+        self.assertEqual(template.count("data-tn-annotation-id"), 2)
+        self.assertNotIn("data-tn-inline-id", template)
+
+    def test_epub_external_link_is_not_recorded_as_annotation(self):
+        html = '<html><body><p>See <a href="https://example.com/x">website</a>.</p></body></html>'
+
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "See website.")
+        self.assertNotIn("epub_annotations", segments[0].meta)
+        self.assertNotIn("data-tn-annotation-id", template)
+
+    def test_epub_linked_image_uses_inline_preservation_not_annotation(self):
+        html = (
+            '<html><body><p>See <a href="#full"><img src="thumb.png"/></a> now.</p></body></html>'
+        )
+
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "See now.")
+        self.assertNotIn("epub_annotations", segments[0].meta)
+        inline = segments[0].meta["epub_inline"]
+        self.assertEqual(inline["nodes"][0]["tag"], "a")
+        rendered = BeautifulSoup(template, "html.parser")
+        link = rendered.select_one("a[data-tn-inline-id]")
+        self.assertIsInstance(link, Tag)
+        assert isinstance(link, Tag)
+        self.assertEqual(link.get("href"), "#full")
+        self.assertIsNotNone(link.find("img", src="thumb.png"))
+
+    def test_epub_semantic_subscript_inside_link_remains_in_source(self):
+        html = '<html><body><p>Use <a href="#water">H<sub>2</sub>O</a> here.</p></body></html>'
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Use H2O here.")
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "range")
+        self.assertEqual(item["source_text"], "H2O")
+        self.assertEqual(item["marker_text"], "")
+
+    def test_epub_linked_exponent_is_not_mistaken_for_note_marker(self):
+        html = """<html><body><p>Use <a href="references.xhtml#eq">x<sup>2</sup></a>
+        and y<sup><a href="#equation">3</a></sup>.</p></body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Use x2 and y3.")
+        items = segments[0].meta["epub_annotations"]["items"]
+        self.assertEqual([item["source_text"] for item in items], ["x2", "3"])
+        self.assertEqual([item["marker_text"] for item in items], ["", ""])
+
+    def test_read_epub_persists_annotation_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "annotations.epub")
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+                )
+                archive.writestr(
+                    "content.opf",
+                    """<package><metadata><title>Annotations</title></metadata><manifest>
+                    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="body"/></spine></package>""",
+                )
+                archive.writestr(
+                    "body.xhtml",
+                    '<html><body><p>Body<sup><a href="#note-1">1</a></sup>.</p>'
+                    '<p id="note-1">A note.</p></body></html>',
+                )
+
+            document = load_document(path, "en", "zh")
+
+        first = document.chapters[0].segments[0]
+        self.assertEqual(first.source, "Body.")
+        self.assertIn("epub_annotations", first.meta)
+        self.assertNotIn("epub_inline", first.meta)
+        self.assertEqual(
+            first.meta["epub_annotations"]["items"][0]["target_key"], "body.xhtml#note-1"
+        )
+        self.assertEqual(
+            document.meta["epub_annotation_contexts"],
+            {
+                "version": 1,
+                "contexts": {
+                    "body.xhtml#note-1": {
+                        "target_key": "body.xhtml#note-1",
+                        "resource_href": "body.xhtml",
+                        "fragment": "note-1",
+                        "source_blocks": ["A note."],
+                        "segment_anchors": ["tn0_1"],
+                    }
+                },
+            },
+        )
+
+    def test_epub_annotation_context_collects_cross_spine_note_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "cross-spine-notes.epub")
+            _write_annotation_context_epub(path, notes_in_spine=True)
+
+            document = load_document(path, "en", "zh")
+
+        body = document.chapters[0]
+        first_item = body.segments[0].meta["epub_annotations"]["items"][0]
+        second_item = body.segments[1].meta["epub_annotations"]["items"][0]
+        self.assertEqual(first_item["raw_href"], "notes.xhtml#note-1")
+        self.assertEqual(first_item["target_key"], "notes.xhtml#note-1")
+        self.assertEqual(first_item["relation"], "noteref")
+        # Promote a marker-free range link only when its destination explicitly identifies a note.
+        self.assertEqual(second_item["relation"], "noteref")
+        context = document.meta["epub_annotation_contexts"]["contexts"]["notes.xhtml#note-1"]
+        self.assertEqual(
+            context["source_blocks"],
+            ["First explanation.", "Second explanation."],
+        )
+        self.assertEqual(context["segment_anchors"], ["tn1_0", "tn1_1"])
+
+        backlink = document.chapters[1].segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(backlink["relation"], "backlink")
+        self.assertNotIn(
+            backlink["target_key"], document.meta["epub_annotation_contexts"]["contexts"]
+        )
+
+    def test_epub_annotation_context_collects_implicit_note_ancestor_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "implicit-note-container.epub")
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+                )
+                archive.writestr(
+                    "content.opf",
+                    """<package><metadata><title>Implicit Note</title></metadata><manifest>
+                    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="body"/></spine></package>""",
+                )
+                archive.writestr(
+                    "body.xhtml",
+                    """<html><body><p>Body<sup><a id="ref1" href="#anchor1">1</a></sup>.</p>
+                    <div class="footnote"><a id="anchor1"></a>
+                    <p>First explanation.</p><p>Second explanation.</p></div>
+                    </body></html>""",
+                )
+
+            document = load_document(path, "en", "zh")
+
+        context = document.meta["epub_annotation_contexts"]["contexts"]["body.xhtml#anchor1"]
+        self.assertEqual(
+            context["source_blocks"],
+            ["First explanation.", "Second explanation."],
+        )
+
+    def test_epub_annotation_context_reads_non_spine_manifest_note(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "non-spine-notes.epub")
+            _write_annotation_context_epub(path, notes_in_spine=False)
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(len(document.chapters), 1)
+        context = document.meta["epub_annotation_contexts"]["contexts"]["notes.xhtml#note-1"]
+        self.assertEqual(
+            context["source_blocks"],
+            ["First explanation.", "Second explanation."],
+        )
+        self.assertEqual(len(context["segment_anchors"]), 2)
+        self.assertTrue(all(anchor.startswith("tn") for anchor in context["segment_anchors"]))
+
+    def test_nav_without_epub_type_uses_first_navigation_list(self):
+        nav = """<html><body><nav><h1>Contents</h1><ol>
+        <li><a href="body.xhtml#one">One</a></li>
+        </ol></nav></body></html>"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc.zip")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("OEBPS/nav.xhtml", nav)
+            with zipfile.ZipFile(path) as archive:
+                entries = parse_toc_entries(archive, ["OEBPS/nav.xhtml"])
+
+        self.assertEqual([entry["title"] for entry in entries], ["One"])
+        self.assertEqual(entries[0]["resource_href"], "OEBPS/body.xhtml")
+
+    def test_broken_secondary_toc_does_not_block_valid_primary_nav(self):
+        nav = """<html><body><nav epub:type="toc"><ol>
+        <li><a href="body.xhtml#one">One</a></li>
+        </ol></nav></body></html>"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc.zip")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("OEBPS/nav.xhtml", nav)
+                archive.writestr("OEBPS/toc.ncx", "<ncx><navMap>")
+            with zipfile.ZipFile(path) as archive:
+                entries = parse_toc_entries(
+                    archive,
+                    ["OEBPS/nav.xhtml", "OEBPS/toc.ncx"],
+                )
+
+        self.assertEqual([entry["title"] for entry in entries], ["One"])
+
+    def test_ncx_with_xml_extension_is_detected_from_document_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "toc-xml.epub")
+            write_nested_toc_epub(path, ncx_filename="toc.xml")
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in document.chapters],
+            ["PART I", "PART II"],
+        )
+        self.assertEqual(document.meta["toc_paths"], ["OEBPS/toc.xml"])
+        self.assertTrue(all(entry["kind"] == "ncx" for entry in document.meta["toc_entries"]))
+
+    def test_real_boundary_wins_when_empty_title_page_has_same_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "empty-title.epub")
+            write_nested_toc_epub(path, empty_title_page=True)
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in document.chapters],
+            ["PART I", "PART II"],
+        )
+        title_page, first_part = document.meta["toc_entries"][:2]
+        self.assertEqual(title_page["boundary_position"], 0)
+        self.assertNotIn("segment_anchor", title_page)
+        self.assertEqual(first_part["boundary_position"], 0)
+        self.assertTrue(first_part.get("segment_anchor"))
+
+    def test_spine_nav_preserves_toc_list_but_translates_visible_heading(self):
+        html = """<html><body><nav epub:type="toc">
+        <h1>Contents</h1>
+        <ol><li><a href="body.xhtml#one">Chapter One</a></li></ol>
+        </nav></body></html>"""
+
+        _title, segments, template = annotate_epub_resource(
+            html,
+            0,
+            "nav.xhtml",
+            skip_navigation=True,
+        )
+
+        self.assertEqual([segment.source for segment in segments], ["Contents"])
+        self.assertIn('href="body.xhtml#one"', template)
+        list_item = BeautifulSoup(template, "html.parser").find("li")
+        self.assertIsInstance(list_item, Tag)
+        assert isinstance(list_item, Tag)
+        self.assertNotIn("data-tn-id", list_item.attrs)
+
+    def test_unlinked_top_level_nav_groups_inherit_first_child_boundary(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "grouped.epub")
+            write_grouped_nav_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[0].segments],
+            ["Section 1", "One."],
+        )
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[1].segments],
+            ["Section 2", "Two."],
+        )
+        group_entries = [entry for entry in doc.meta["toc_entries"] if entry["depth"] == 0]
+        self.assertTrue(all("inherited_boundary_from" in entry for entry in group_entries))
+
+    def test_nav_is_canonical_when_epub_also_contains_legacy_ncx(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "dual-toc.epub")
+            write_nested_toc_epub(path, toc_kind="both")
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+        self.assertEqual(len(doc.meta["toc_entries"]), 8)
+        self.assertEqual(doc.meta["epub_split_toc_path"], "OEBPS/nav.xhtml")
+
+    def test_unresolved_fragment_is_not_used_as_a_chapter_boundary(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "broken-fragment.epub")
+            write_nested_toc_epub(path, broken_part2_fragment=True)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I"])
+        broken = next(entry for entry in doc.meta["toc_entries"] if entry["title"] == "PART II")
+        self.assertNotIn("segment_anchor", broken)
+        self.assertNotIn("boundary_position", broken)
+
+    def test_degenerate_toc_falls_back_to_spine_chapters(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "degenerate.epub")
+            write_degenerate_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["One", "Two", "Three"])
+        self.assertEqual(doc.meta["epub_split_strategy"], "spine-fallback")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["One", "First body."], ["Two", "Second body."], ["Three", "Third body."]],
+        )
+
+    def test_logical_chapter_can_span_multiple_spine_resources(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cross.epub")
+            write_cross_resource_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[0].segments],
+            ["PART I", "One.", "Section 1", "Two."],
+        )
+        self.assertEqual(
+            {segment.resource_href for segment in doc.chapters[0].segments},
+            {"OEBPS/one.xhtml", "OEBPS/two.xhtml"},
+        )
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[1].segments],
+            ["PART II", "Three."],
+        )
+
+    def test_nested_fragment_anchor_survives_template_flattening(self):
+        html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
+
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+
+        self.assertEqual(segments[0].source, "Section")
+        self.assertIn('id="inside"', template)
+        self.assertIn("epub_inline", segments[0].meta)
+
+    def test_nested_toc_splits_only_top_level_and_keeps_all_anchors(self):
+        expected = [
+            ("PART I", 0, "part-1"),
+            ("Section 1", 1, "section-1"),
+            ("PART II", 0, "part-2"),
+            ("Section 2", 1, "section-2"),
+        ]
+        for toc_kind in ("ncx", "nav"):
+            with self.subTest(toc_kind=toc_kind), tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "nested.epub")
+                write_nested_toc_epub(path, toc_kind=toc_kind)
+
+                doc = load_document(path, "en", "zh")
+
+                self.assertEqual([chapter.title for chapter in doc.chapters], ["PART I", "PART II"])
+                self.assertEqual(
+                    [segment.source for segment in doc.chapters[0].segments],
+                    ["PART I", "Part I intro.", "Section 1", "Section 1 body."],
+                )
+                self.assertEqual(
+                    [segment.source for segment in doc.chapters[1].segments],
+                    ["PART II", "Part II intro.", "Section 2", "Section 2 body."],
+                )
+                self.assertEqual(
+                    [
+                        (entry["title"], entry["depth"], entry["fragment"])
+                        for entry in doc.meta["toc_entries"]
+                    ],
+                    expected,
+                )
+                self.assertEqual(
+                    {entry["resource_href"] for entry in doc.meta["toc_entries"]},
+                    {"OEBPS/body.xhtml"},
+                )
+                self.assertTrue(
+                    all(
+                        segment.resource_href == "OEBPS/body.xhtml"
+                        for chapter in doc.chapters
+                        for segment in chapter.segments
+                    )
+                )
+
+    def test_epub_href_resolution_preserves_raw_href_and_plus(self):
+        resolved = resolve_epub_href(
+            "OEBPS/nav/toc.xhtml",
+            "../text/A+B%20C.xhtml#section%201",
+        )
+
+        self.assertEqual(resolved.raw_href, "../text/A+B%20C.xhtml#section%201")
+        self.assertEqual(resolved.resource_href, "OEBPS/text/A+B C.xhtml")
+        self.assertEqual(resolved.fragment, "section 1")
+        self.assertEqual(resolved.target_key, "OEBPS/text/A+B C.xhtml#section 1")
+
+    def test_ruby_reading_is_embedded_in_source_with_markers(self):
+        html = """<html><body>
+<p><ruby>漢字<rp>（</rp><rt>かんじ</rt><rp>）</rp></ruby>です</p>
+</body></html>"""
+
+        _title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
+
+        self.assertEqual([segment.source for segment in segments], ["漢字〘かんじ〙です"])
+        self.assertIn("<rt>かんじ</rt>", template)
+        self.assertIn("<rp>（</rp>", template)
+        self.assertNotIn("ruby", segments[0].meta)
+        self.assertEqual(strip_ruby_markers(segments[0].source), "漢字です")
+        self.assertEqual(strip_ruby_markers("汉字〘かんじ〙保留"), "汉字保留")
+
+    def test_ruby_in_source_disambiguates_azukaru_but_glossary_strips_marks(self):
+        html = """<html><body>
+<p>満足に<ruby>与<rt>あずか</rt></ruby>りがちな疲れ</p>
+</body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "chapter.xhtml")
+
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["満足に与〘あずか〙りがちな疲れ"],
+        )
+        # Strip reading hints before glossary matching so inserted markers cannot split a word.
+        self.assertTrue(source_matches_text("与り", segments[0].source))
+        self.assertTrue(source_matches_text("与", segments[0].source))
+        self.assertEqual(strip_ruby_markers(segments[0].source), "満足に与りがちな疲れ")
+
+    def test_table_and_definition_list_cells_are_extracted(self):
+        html = """<html><body>
+<table><tr><td>Cell A</td><td>Cell B</td></tr></table>
+<dl><dt>Term</dt><dd>Definition</dd></dl>
+</body></html>"""
+
+        _title, segments, _template = annotate_epub_resource(html, 0, "chapter.xhtml")
+
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["Cell A", "Cell B", "Term", "Definition"],
+        )
+
+    def test_leaf_div_paragraphs_are_extracted_without_layout_duplicates(self):
+        html = """<html><body>
+<div class="layout"><p>Nested paragraph.</p></div>
+<div class="calibre8">First <i>div</i> paragraph.</div>
+<div class="outer"><div class="calibre8">Second div paragraph.</div></div>
+</body></html>"""
+
+        _title, segments, template = annotate_epub_resource(
+            html,
+            0,
+            "chapter.xhtml",
+        )
+
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["Nested paragraph.", "First div paragraph.", "Second div paragraph."],
+        )
+        self.assertEqual(template.count("data-tn-id"), 3)
+
+    def test_nested_lists_and_blockquotes_use_leaf_translation_targets(self):
+        html = """<html><body>
+<ul><li><a href="#author">Author</a><ul>
+<li><a href="chapter.xhtml#one">Chapter One</a></li>
+<li><a href="chapter.xhtml#two">Chapter Two</a></li>
+</ul></li></ul>
+<blockquote><div>Dedication One</div><div>Dedication Two</div></blockquote>
+</body></html>"""
+
+        _title, segments, template = annotate_epub_resource(
+            html,
+            0,
+            "contents.xhtml",
+        )
+
+        self.assertEqual(
+            [segment.source for segment in segments],
+            [
+                "Author",
+                "Chapter One",
+                "Chapter Two",
+                "Dedication One",
+                "Dedication Two",
+            ],
+        )
+        rendered = BeautifulSoup(template, "html.parser")
+        self.assertTrue(all(not item.has_attr("data-tn-id") for item in rendered.find_all("li")))
+        self.assertTrue(
+            all(not quote.has_attr("data-tn-id") for quote in rendered.find_all("blockquote"))
+        )
+        self.assertEqual(len(rendered.select("a[data-tn-id]")), 3)
+        self.assertEqual(len(rendered.select("blockquote div[data-tn-id]")), 2)
+        self.assertTrue(all("epub_annotations" not in segment.meta for segment in segments[:3]))
+
+    def test_declared_legacy_xhtml_encoding_is_honored(self):
+        markup = (
+            '<?xml version="1.0" encoding="Shift_JIS"?><html><body><p>日本語</p></body></html>'
+        ).encode("shift_jis")
+
+        decoded = _decode_markup(markup)
+
+        self.assertIn("日本語", decoded)
+        self.assertNotIn("�", decoded)
+
+    def test_missing_required_opf_attributes_are_reported_or_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "book.epub")
+            with zipfile.ZipFile(path, "w") as zf:
+                zf.writestr(
+                    "META-INF/container.xml",
+                    "<container><rootfiles><rootfile/></rootfiles></container>",
+                )
+            with zipfile.ZipFile(path) as zf:
+                with self.assertRaisesRegex(ValueError, "full-path"):
+                    _find_opf_path(zf)
+
+            opf_path = os.path.join(d, "opf.epub")
+            with zipfile.ZipFile(opf_path, "w") as zf:
+                zf.writestr(
+                    "content.opf",
+                    """<package><manifest>
+<item href="ignored.xhtml" media-type="application/xhtml+xml"/>
+<item id="valid" href="valid.xhtml" media-type="application/xhtml+xml"/>
+</manifest><spine><itemref/><itemref idref="valid"/></spine></package>""",
+                )
+            with zipfile.ZipFile(opf_path) as zf:
+                _title, hrefs, _toc = _parse_opf(zf, "content.opf")
+            self.assertEqual(hrefs, ["valid.xhtml"])
+
+    def test_epub_records_inline_nodes_in_segment_meta(self):
+        html = """<html><body>
+<p class="Textbody"><img src="before.jpg"/>Avant<br/>Après<img src="after.jpg"/></p>
+<p class="illustration"><img src="standalone.jpg"/></p>
+</body></html>"""
+
+        _title, segments, template = annotate_epub_resource(
+            html,
+            2,
+            "chapter.xhtml",
+        )
+
+        self.assertEqual([segment.source for segment in segments], ["Avant", "Après"])
+        first_inline = segments[0].meta["epub_inline"]
+        second_inline = segments[1].meta["epub_inline"]
+        self.assertEqual(first_inline["source_length"], len(segments[0].source))
+        self.assertEqual(second_inline["source_length"], len(segments[1].source))
+        self.assertEqual(
+            [node["placement"] for node in first_inline["nodes"]],
+            ["before"],
+        )
+        self.assertEqual(
+            [node["placement"] for node in second_inline["nodes"]],
+            ["after"],
+        )
+        self.assertEqual(template.count("data-tn-inline-id"), 2)
+        self.assertEqual(template.count("data-tn-line"), 2)
+        self.assertIn('<img src="standalone.jpg"/>', template)
+
+    def test_epub_chapters_and_anchors(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.epub")
+            write_sample_epub(p)
+            doc = load_document(p, "ja", "zh")
+
+        self.assertEqual(doc.fmt, "epub")
+        self.assertEqual(len(doc.chapters), 2)
+        ch1 = doc.chapters[0]
+        self.assertEqual(ch1.title, "第一章　出会い")
+        self.assertEqual(len(ch1.text_segments), 3)  # h1 + 2 p
+        # Persist stable identity only; rebuild templates and inline layout from the original EPUB during export.
+        self.assertIsNone(ch1.template)
+        for s in ch1.text_segments:
+            self.assertIsNotNone(s.anchor)
+            self.assertIsNotNone(s.resource_href)
+            self.assertNotIn("epub_inline", s.meta)
+        self.assertIsNotNone(ch1.href)
+
+    def test_epub_ignores_internal_file_title_when_no_heading(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.epub")
+            with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+<rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles>
+</container>""",
+                )
+                zf.writestr(
+                    "OEBPS/content.opf",
+                    """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title></metadata>
+<manifest><item id="cUH.xhtml" href="cUH.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="cUH.xhtml"/></spine>
+</package>""",
+                )
+                zf.writestr(
+                    "OEBPS/cUH.xhtml",
+                    """<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>cUH</title></head><body><p>Body text.</p></body>
+</html>""",
+                )
+
+            doc = load_document(p, "en", "zh")
+
+        self.assertEqual(len(doc.chapters), 1)
+        self.assertEqual(doc.chapters[0].title, "")
+
+    def test_epub_uses_ncx_toc_label_before_repeated_html_title(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.epub")
+            with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+<rootfiles><rootfile full-path="content.opf"/></rootfiles>
+</container>""",
+                )
+                zf.writestr(
+                    "content.opf",
+                    """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Intermezzo</dc:title></metadata>
+<manifest>
+<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="ch1" href="index_split_004.html" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="ch1"/></spine>
+</package>""",
+                )
+                zf.writestr(
+                    "toc.ncx",
+                    """<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+<navMap><navPoint id="n1" playOrder="1">
+<navLabel><text>Chapter 1</text></navLabel>
+<content src="index_split_004.html"/>
+</navPoint></navMap>
+</ncx>""",
+                )
+                zf.writestr(
+                    "index_split_004.html",
+                    """<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Intermezzo</title></head><body><p>1</p><p>Body text.</p></body>
+</html>""",
+                )
+
+            doc = load_document(p, "en", "zh")
+
+        self.assertEqual(len(doc.chapters), 1)
+        self.assertEqual(doc.chapters[0].title, "Chapter 1")
+
+    def test_epub_keeps_toc_entry_for_skipped_title_page(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.epub")
+            with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+<rootfiles><rootfile full-path="content.opf"/></rootfiles>
+</container>""",
+                )
+                zf.writestr(
+                    "content.opf",
+                    """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title></metadata>
+<manifest>
+<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="title" href="title.xhtml" media-type="application/xhtml+xml"/>
+<item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="title"/><itemref idref="body"/></spine>
+</package>""",
+                )
+                zf.writestr(
+                    "toc.ncx",
+                    """<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+<navMap><navPoint id="n1" playOrder="1">
+<navLabel><text>第一章</text></navLabel><content src="title.xhtml"/>
+</navPoint></navMap>
+</ncx>""",
+                )
+                zf.writestr(
+                    "title.xhtml",
+                    """<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="title.jpg"/></body></html>""",
+                )
+                zf.writestr(
+                    "body.xhtml",
+                    """<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Body text.</p></body></html>""",
+                )
+
+            doc = load_document(p, "ja", "zh")
+
+        self.assertEqual(len(doc.chapters), 1)
+        self.assertEqual(doc.chapters[0].href, "body.xhtml")
+        self.assertEqual(doc.chapters[0].title, "第一章")
+        self.assertTrue(
+            any(
+                entry.get("resource_href") == "title.xhtml" and entry.get("title") == "第一章"
+                for entry in doc.meta["toc_entries"]
+            )
+        )
+
+    def test_peek_epub_title_matches_full_document_title(self):
+        """Lightweight OPF title lookup must match read_epub's Document.title for correct state
+        lookup.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            with_title = os.path.join(d, "named.epub")
+            write_sample_epub(with_title)
+            peeked = peek_epub_title(with_title)
+            full = load_document(with_title, "ja", "zh")
+            self.assertEqual(peeked, full.title)
+            self.assertEqual(peeked, "サンプル小説")
+
+            untitled = os.path.join(d, "untitled-book.epub")
+            with zipfile.ZipFile(untitled, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+<rootfiles><rootfile full-path="content.opf"/></rootfiles>
+</container>""",
+                )
+                zf.writestr(
+                    "content.opf",
+                    """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:language>en</dc:language>
+</metadata>
+<manifest>
+  <item id="ch" href="ch.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine><itemref idref="ch"/></spine>
+</package>""",
+                )
+                zf.writestr(
+                    "ch.xhtml",
+                    """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Body.</p></body></html>""",
+                )
+
+            peeked_untitled = peek_epub_title(untitled)
+            full_untitled = load_document(untitled, "en", "zh")
+            self.assertEqual(peeked_untitled, full_untitled.title)
+            self.assertEqual(peeked_untitled, "untitled-book")
+
+
+class TestPagebreakProcessingInstruction(unittest.TestCase):
+    """XHTML page-break processing instructions must never enter translatable source text."""
+
+    def test_pagebreak_pi_is_excluded_from_segment_source(self):
+        html = '<html><body><p><?pagebreak number="69"?>At first I was meek.</p></body></html>'
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["At first I was meek."])
+        self.assertIn('<?pagebreak number="69"?>', template)
+        for segment in segments:
+            segment.target = "起初我很温顺。"
+        rendered = _render_chapter_html(
+            Chapter(
+                index=0,
+                title=_title,
+                segments=segments,
+                href="body.xhtml",
+                template=template,
+            )
+        )
+        self.assertIn('<?pagebreak number="69"?>', rendered)
+        self.assertIn("起初我很温顺。", rendered)
+
+    def test_pagebreak_mid_paragraph_survives_export_replace(self):
+        html = '<html><body><p>Hello <?pagebreak number="70"?>world.</p></body></html>'
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["Hello world."])
+        for segment in segments:
+            segment.target = "你好世界。"
+        rendered = _render_chapter_html(
+            Chapter(
+                index=0,
+                title=_title,
+                segments=segments,
+                href="body.xhtml",
+                template=template,
+            )
+        )
+        self.assertIn('<?pagebreak number="70"?>', rendered)
+        self.assertIn("你好世界。", rendered)
+
+    def test_pagebreak_only_line_is_not_a_translation_target(self):
+        html = '<html><body><p><?pagebreak number="70"?><br/>Then I grew bold.</p></body></html>'
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["Then I grew bold."])
+
+    def test_tender_pagebreak_variant_is_excluded(self):
+        html = '<html><body><p><?tender pagebreak number="7"?>To VÉRA.</p></body></html>'
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["To VÉRA."])
+
+    def test_pagebreak_does_not_break_br_line_wrapping_of_comments(self):
+        html = (
+            '<html><body><p>First <?pagebreak number="8"?><br/>'
+            "<!-- note -->Second</p></body></html>"
+        )
+        _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["First", "Second"])
+        rendered = BeautifulSoup(template, "html.parser")
+        paragraph = rendered.find("p")
+        self.assertIsInstance(paragraph, Tag)
+        assert isinstance(paragraph, Tag)
+        self.assertEqual(paragraph.get_text(), "First Second")
+        self.assertEqual(
+            [span.get_text() for span in paragraph.find_all("span")],
+            ["First ", "Second"],
+        )
+        self.assertIn("<!-- note -->", template)
+        self.assertIn('<?pagebreak number="8"?>', template)
+        for segment, target in zip(segments, ["第一行", "第二行"], strict=True):
+            segment.target = target
+        exported = _render_chapter_html(
+            Chapter(
+                index=0,
+                title=_title,
+                segments=segments,
+                href="body.xhtml",
+                template=template,
+            )
+        )
+        self.assertIn('<?pagebreak number="8"?>', exported)
+        self.assertIn("第一行", exported)
+        self.assertIn("第二行", exported)
+
+    def test_pagebreak_inside_link_is_excluded_from_source(self):
+        html = (
+            '<html><body><p>See <a href="#x"><?pagebreak number="8"?>'
+            "the note</a> below.</p></body></html>"
+        )
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["See the note below."])
+
+    def test_pagebreak_only_line_inside_list_item_is_not_a_target(self):
+        html = '<html><body><ul><li><?pagebreak number="9"?><br/>Only item.</li></ul></body></html>'
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual([segment.source for segment in segments], ["Only item."])
+
+    def test_pagebreak_inside_heading_is_excluded_from_title(self):
+        html = '<html><body><h1>Chapter <?pagebreak number="10"?>Three</h1></body></html>'
+        title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual(title, "Chapter Three")
+        self.assertTrue(all("pagebreak" not in s.source for s in segments))
+
+    def test_range_annotation_with_pagebreak_in_phrase_keeps_source_clean(self):
+        html = (
+            '<html><body><p><a id="ref-1" href="#note-1">国境の'
+            '<?pagebreak number="9"?>長いトンネル'
+            '<sup id="mark-1">〔＊１〕</sup></a>を抜けると雪国であった。</p></body></html>'
+        )
+        _title, segments, _template = annotate_epub_resource(html, 0, "body.xhtml")
+        self.assertEqual(
+            [segment.source for segment in segments],
+            ["国境の長いトンネルを抜けると雪国であった。"],
+        )
+        item = segments[0].meta["epub_annotations"]["items"][0]
+        self.assertEqual(item["mode"], "range")
+        self.assertEqual(item["source_text"], "国境の長いトンネル")
+
+    def test_pagebreak_is_excluded_in_html_reader_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "novel.html")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(
+                    "<html><body><h1>Chapter One</h1>"
+                    '<p><?pagebreak number="11"?>Body text.</p></body></html>'
+                )
+            doc = load_document(p, "en", "zh")
+            self.assertEqual(doc.title, "novel")
+            sources = [s.source for ch in doc.chapters for s in ch.segments]
+            self.assertNotIn("pagebreak", "\n".join(sources))
+            self.assertIn("Body text.", "\n".join(sources))
+
+
+if __name__ == "__main__":
+    unittest.main()

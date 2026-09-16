@@ -10,17 +10,17 @@
 
 ## 项目定位
 
-Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是支持多语言互译、术语、润色、全书 Review 和多格式导出的长篇文本翻译工具，以磁盘状态实现断点续跑。
+Wenyi（包名 `wenyi-core` / `wenyi-cli`，Python 包 `wenyi_core` / `wenyi_cli`）是支持多语言互译、术语、润色、全书 Review 和多格式导出的长篇文本翻译工具，以磁盘状态实现断点续跑。
 
 - Python：3.10+；CI 覆盖 3.10 和 3.12。
 - 包管理与命令执行：优先使用 `uv`。
-- CLI：`uv run trans-novel ...`；`cli.py` 装配应用，`commands/` 和 `model_commands.py` 注册命令。
-- 默认配置：仓库根目录 `config.yaml`；内置模板位于 `trans_novel/config.py` 的 `_DEFAULT_CONFIG_YAML`。
+- CLI：`uv run trans-novel ...`（`packages/cli`）；`wenyi_cli/cli.py` 装配应用，`wenyi_cli/commands/` 和 `model_commands.py` 注册命令。
+- 默认配置：仓库根目录 `config.yaml`；内置模板位于 `packages/core/wenyi_core/config.py` 的 `_DEFAULT_CONFIG_YAML`。
 - 主仓许可证为 MIT；BabelDOC 是独立 AGPL 服务。
 
 ## 按任务查阅
 
-源码路径相对于 `trans_novel/`，测试路径相对于 `tests/`；按改动选择用例。
+源码路径相对于 `packages/core/wenyi_core/`（CLI 在 `packages/cli/wenyi_cli/`），测试路径相对于 `packages/core/tests/`；按改动选择用例。
 
 | 任务 | 源码入口与职责 | 相关测试入口 |
 | --- | --- | --- |
@@ -36,7 +36,7 @@ Wenyi（包名 `trans-novel`，Python 包 `trans_novel`）是支持多语言互�
 | 多语言与提示词 | `i18n/`；语言规则和任务模板统一在 `i18n/data/` | `test_i18n.py`、`test_metadata_language.py` |
 | 字幕 | `srt/` 及 SRT reader/writer | `test_srt.py` |
 
-配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，模块职责查阅 [refactoring](docs/refactoring/README.md) 的相关条目；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
+配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，Web 部署查阅 [web](docs/web.md)，模块职责查阅 [refactoring](docs/refactoring/README.md) 的相关条目；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
 
 `state/`、`output/`、`review-*`、缓存、构建目录、样例书籍和本地 `packages/core/` 属于本地数据。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 
@@ -80,7 +80,7 @@ CLI → Orchestrator → Runtime / Preparation / Translation / Annotation /
 - 配置变更同步模型、默认模板、根目录 `config.yaml`、中英文 configuration 文档及配置/CLI 测试；LLM 配置模型位于 `llm/configuration.py`。
 - 新模型操作和 provider 使用现有注册入口，保持操作 ID、路由预览、校验与实际执行一致。
 - Provider 专属字段留在对应 provider，通用 LLM 抽象不感知私有协议。
-- 重试由 `trans_novel/llm/retrying.py` 统一负责，provider SDK 的内置重试应关闭，避免嵌套重试。
+- 重试由 `packages/core/wenyi_core/llm/retrying.py` 统一负责，provider SDK 的内置重试应关闭，避免嵌套重试。
 - 用户可预期的输入、配置和外部服务错误应转换为明确异常；CLI 应简洁展示且不打印 traceback。
 
 ## 输入与输出约束

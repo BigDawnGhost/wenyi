@@ -2,32 +2,88 @@ name: Tests
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, webui]
   pull_request:
-    branches: [dev]
+    branches: [main, dev, webui]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.12"]
-
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wenyi
+          POSTGRES_PASSWORD: wenyi
+          POSTGRES_DB: wenyi_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wenyi -d wenyi_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wenyi:wenyi@localhost:5432/wenyi_test
+      WENYI_TEST_DATABASE_URL: postgresql://wenyi:wenyi@localhost:5432/wenyi_test
+      REDIS_URL: redis://localhost:6379/0
+      WENYI_TEST_REDIS_URL: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v9.0.0
+      - name: Install workspace
+        run: uv sync --locked --all-packages --group dev --python ${{ matrix.python-version }}
+      - name: Install real PDF rendering regression dependencies
+        if: matrix.python-version == '3.12'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-wqy-zenhei fonts-noto-cjk poppler-utils
+          uv sync --locked --all-packages --group dev --extra pdf-output-lite --python 3.12
+      - name: Python style and tests (offline model fixtures)
+        run: |
+          uv run --no-sync ruff check packages/core packages/cli apps/api
+          uv run --no-sync pytest -q
+          git diff --check
+      - name: Build distributable packages and verify bundled resources
+        if: matrix.python-version == '3.12'
+        run: |
+          uv build --package wenyi-core
+          uv build --package wenyi-cli
+          uv run --no-sync python scripts/check_wheel_resources.py dist
 
-      - name: Install
-        run: uv sync --locked --group dev --python ${{ matrix.python-version }}
-
-      - name: Test
-        run: uv run --no-sync pytest -q
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/web typecheck
+      - run: pnpm -C apps/web build
+      - run: pnpm -C apps/web exec playwright install --with-deps chromium
+      - run: pnpm -C apps/web test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: apps/web/test-results/
+          if-no-files-found: ignore

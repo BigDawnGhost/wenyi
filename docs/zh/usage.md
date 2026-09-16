@@ -2,6 +2,8 @@
 
 [English](../usage.md)
 
+Web（React/Vite + FastAPI）部署与开发见 [Web 部署](web.md)。
+
 ## 安装与运行
 
 从源码运行需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。

@@ -221,6 +221,7 @@ Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关�
 - [使用指南](usage.md) — 安装、Windows 使用、输入输出、断点续跑和独立工作流阶段
 - [配置说明](configuration.md) — 模型提供商、源语言、流水线开关、切分与路径配置
 - [翻译流程](pipeline.md) — 预扫、术语、上下文、润色、审校和断点续跑如何协作
+- [Web 部署](web.md) — Docker/本地 Web 栈、Worker、导出与项目工作流
 - [贡献指南](CONTRIBUTING.md) — 开发、测试和贡献要求
 
 公版书翻译生成的状态目录可在 [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase) 查看，也欢迎提交分享。请勿提交或分享无授权的版权文本、私人书籍或包含敏感信息的 `state/` 目录。

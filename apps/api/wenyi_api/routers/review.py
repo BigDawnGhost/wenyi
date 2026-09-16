@@ -1,0 +1,121 @@
+"""Whole-book review history and guarded human translation edits."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException
+
+from ..job_service import start_job
+from ..project_service import project_write, require_book, require_project, storage_for
+from ..schemas import ChapterSegments, JobEnqueued, ReviewRun, ReviewRunRequest, TargetEdit
+from .chapters import chapter_payload
+
+router = APIRouter(prefix="/projects/{pid}/review", tags=["review"])
+
+
+def _review_run(storage, rid: str) -> dict:
+    if not re.fullmatch(r"review-[A-Za-z0-9_-]+", rid):
+        raise HTTPException(404, "review run not found")
+    result = storage.read_artifact(f"reviews/{rid}/result.json")
+    if not isinstance(result, dict):
+        raise HTTPException(404, "review run not found")
+    index = storage.read_artifact(f"reviews/{rid}/autofix/index.json")
+    autofix = dict(result.get("autofix") or {})
+    if isinstance(index, dict):
+        autofix.update(index=index, records=index.get("records", []))
+    return {
+        "id": rid,
+        "review_id": rid,
+        "status": result.get("status", "running"),
+        "created_at": result.get("started_at"),
+        "issues": result.get("issues") or [],
+        "changes": result.get("changes") or [],
+        "autofix": autofix,
+        "summary": result.get("summary") or {},
+        "result": result,
+    }
+
+
+@router.post("/run", response_model=JobEnqueued)
+async def run_ai_review(pid: str, body: ReviewRunRequest | None = None) -> dict:
+    require_book(require_project(pid))
+    storage = storage_for(pid)
+    if not storage.exists():
+        raise HTTPException(409, "Prepare and translate the book before review")
+    manifest = storage.load_manifest()
+    if not manifest.get("chapters") or storage.pending_chapters():
+        raise HTTPException(409, "Complete every chapter translation before whole-book review")
+    return await start_job(pid, "review", params={"autofix": body.autofix if body else None})
+
+
+@router.get("/runs", response_model=list[ReviewRun])
+def list_runs(pid: str) -> list[dict]:
+    require_book(require_project(pid))
+    storage = storage_for(pid)
+    ids = {
+        key.split("/")[1]
+        for key in storage.list_artifacts("reviews/")
+        if re.fullmatch(r"reviews/review-[A-Za-z0-9_-]+/result\.json", key)
+    }
+    return [_review_run(storage, rid) for rid in sorted(ids, reverse=True)]
+
+
+@router.get("/runs/{rid}", response_model=ReviewRun)
+def get_run(pid: str, rid: str) -> dict:
+    require_book(require_project(pid))
+    return _review_run(storage_for(pid), rid)
+
+
+@router.get("/{ci}", response_model=ChapterSegments)
+def get_chapter_for_review(pid: str, ci: int) -> dict:
+    require_book(require_project(pid))
+    return chapter_payload(storage_for(pid), ci)
+
+
+@router.put("/{ci}/segments/{seg_idx}")
+def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
+    with project_write(pid) as (project, storage):
+        require_book(project)
+        try:
+            chapter = storage.load_chapter(ci)
+        except KeyError:
+            raise HTTPException(404, "chapter not found") from None
+        segment = next((item for item in chapter.segments if item.index == seg_idx), None)
+        if segment is None:
+            raise HTTPException(404, "segment not found")
+        before = segment.target
+        segment.target = body.target
+        chapter.meta.pop("review_passed", None)
+        chapter.meta["review_invalidated_at"] = datetime.now(timezone.utc).isoformat()
+        with storage.state_lock():
+            storage.save_chapter(chapter)
+            storage.set_chapter_review_status(ci, "pending")
+            storage.log_event(
+                "manual_translation_edited",
+                chapter=ci,
+                index=seg_idx,
+                before=before,
+                after=body.target,
+            )
+    return {"ok": True, "index": seg_idx}
+
+
+@router.post("/{ci}/complete")
+def mark_reviewed(pid: str, ci: int) -> dict:
+    with project_write(pid) as (project, storage):
+        require_book(project)
+        try:
+            chapter = storage.load_chapter(ci)
+        except KeyError:
+            raise HTTPException(404, "chapter not found") from None
+        if any(not (segment.target or "").strip() for segment in chapter.text_segments):
+            raise HTTPException(409, "Translate every text segment before marking review complete")
+        chapter.meta["review_passed"] = True
+        chapter.meta["manual_reviewed_at"] = datetime.now(timezone.utc).isoformat()
+        with storage.state_lock():
+            storage.save_chapter(chapter)
+            storage.set_chapter_review_status(ci, "completed")
+            storage.log_event("manual_review_completed", chapter=ci)
+    return {"ok": True, "chapter": ci, "review_passed": True}
