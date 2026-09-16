@@ -296,10 +296,9 @@ def test_postgres_state_transaction_rolls_back_complete_chapter(pg_storage, tmp_
 
 
 def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path):
+    from tests.fake_llm import MeteredFakeClient, routing_handler
     from wenyi_core.config import Config
     from wenyi_core.pipeline.orchestrator import Orchestrator
-
-    from tests.fake_llm import MeteredFakeClient, routing_handler
 
     doc = document(tmp_path)
     config = Config.from_dict(
@@ -404,10 +403,9 @@ def test_postgres_subtitle_translation_resume_and_dual_output(pg_storage, tmp_pa
 
 
 def test_postgres_review_interrupt_restores_same_run(pg_storage, tmp_path, monkeypatch):
+    from tests.fake_llm import MeteredFakeClient, routing_handler
     from wenyi_core.config import Config
     from wenyi_core.pipeline.orchestrator import Orchestrator
-
-    from tests.fake_llm import MeteredFakeClient, routing_handler
 
     doc = document(tmp_path)
     config = Config.from_dict(
@@ -506,11 +504,10 @@ def test_postgres_autofix_publication_resume_protects_manual_edit(
 def test_postgres_subtitle_pause_persists_usage_and_manual_edit(pg_storage, tmp_path):
     import json
 
+    from tests.fake_llm import MeteredFakeClient
     from wenyi_core.config import Config
     from wenyi_core.srt.store import SrtRunStore
     from wenyi_core.srt.translate import translate_srt
-
-    from tests.fake_llm import MeteredFakeClient
 
     source = tmp_path / "pause.srt"
     source.write_text(

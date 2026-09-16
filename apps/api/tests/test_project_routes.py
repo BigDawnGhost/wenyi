@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from test_storage_pg_integration import pg_pool  # noqa: F401
+from tests.fake_llm import MeteredFakeClient, routing_handler
 from type_helpers import must
 from wenyi_api import dal, job_service
 from wenyi_api.db import pool as pool_module
@@ -17,8 +18,6 @@ from wenyi_api.main import create_app
 from wenyi_api.project_service import storage_for
 from wenyi_api.routers import export
 from wenyi_api.workers import tasks
-
-from tests.fake_llm import MeteredFakeClient, routing_handler
 
 
 @pytest.fixture
