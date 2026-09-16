@@ -76,6 +76,7 @@ def test_progress_cache_carries_run_identity():
 
 def test_progress_from_previous_run_is_not_displayed(monkeypatch):
     import json
+
     import redis
 
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "epub"})

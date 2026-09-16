@@ -1,0 +1,35 @@
+{
+  "include": [
+    "packages/core/wenyi_core",
+    "packages/cli/wenyi_cli",
+    "packages/core/tests",
+    "apps/api/wenyi_api",
+    "apps/api/tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    ".venv",
+    "build",
+    "dist",
+    "output",
+    "state",
+    "packages/core/tests/test_pdf_real_fonts.py"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "reportUnsupportedDunderAll": "none",
+  "reportPrivateImportUsage": "none",
+  "extraPaths": [
+    "packages/core",
+    "packages/cli",
+    "packages/core/tests",
+    "apps/api",
+    "apps/api/tests"
+  ]
+}
