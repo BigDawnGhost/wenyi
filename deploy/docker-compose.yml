@@ -1,0 +1,94 @@
+# Run from the repository: docker compose -f deploy/docker-compose.yml --profile full up --build
+# full: Web + API + workflow worker + export worker + PostgreSQL + Redis
+# server: all backend services, suitable for API clients or a separately hosted Web UI.
+x-app: &app
+  env_file: .env
+  environment: &app-environment
+    DATABASE_URL: postgresql://wenyi:wenyi@postgres:5432/wenyi
+    REDIS_URL: redis://redis:6379/0
+    DATA_DIR: /data
+    WENYI_CONFIG: /app/config.yaml
+  volumes:
+    - data:/data
+    - ${WENYI_CONFIG_FILE:-../config.yaml}:/app/config.yaml:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  profiles: [full, server]
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wenyi
+      POSTGRES_PASSWORD: wenyi
+      POSTGRES_DB: wenyi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U wenyi -d wenyi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: [full, server]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: [full, server]
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+      args:
+        INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+    ports:
+      - "8000:8000"
+
+  worker:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+      args:
+        INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+    command: [arq, wenyi_api.workers.WorkerSettings]
+
+  export-worker:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+      args:
+        INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+    command: [arq, wenyi_api.workers.ExportWorkerSettings]
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    profiles: [full]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  data:

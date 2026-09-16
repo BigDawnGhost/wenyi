@@ -1,0 +1,599 @@
+"""Offline review-autofix publication tests."""
+
+from __future__ import annotations
+
+import json
+import re
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
+from wenyi_core.config import Config
+from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.runstore import STATUS_DONE
+from wenyi_core.review.models import ReviewOutcome
+from wenyi_core.review.run_store import ReviewRunStore
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
+
+from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
+
+
+def _config(state_dir: str) -> Config:
+    return Config.from_dict(
+        {
+            "language": {"source": "ja", "target": "zh"},
+            "llm": {
+                "preset": "fake",
+                "models": {"default_strong": {"provider": "default", "model": "p"}},
+            },
+            "pipeline": {
+                "review_autofix": True,
+                "review_concurrency": 1,
+            },
+            "output": {"punctuation_normalize": False},
+            "paths": {"state_dir": state_dir},
+        }
+    )
+
+
+def _store(directory: str, target: str = "正式译文。") -> FileStorage:
+    store = FileStorage(str(Path(directory, "state", "book")))
+    store.save_chapter(
+        Chapter(
+            index=0,
+            title="第一章",
+            segments=[Segment(index=0, source="原文。", target=target)],
+        )
+    )
+    store.save_manifest(
+        {
+            "title": "book",
+            "source_lang": "ja",
+            "target_lang": "zh",
+            "source_sha256": "0" * 64,
+            "chapters": [{"index": 0, "status": STATUS_DONE}],
+        }
+    )
+    return store
+
+
+def _outcome(
+    store: FileStorage,
+    *,
+    issues: list[dict] | None = None,
+    changes: list[dict] | None = None,
+) -> ReviewOutcome:
+    issues = issues or []
+    changes = changes or []
+    debug = ReviewRunStore(store.run_dir)
+    debug.start(
+        reviewed_content_digest="baseline-digest",
+        metadata={"config": {}, "glossary_fingerprint": "g"},
+    )
+    result = debug.finish(
+        status="completed",
+        termination="max_rounds" if issues else "clean_confirmed",
+        summary={
+            "issue_count": len(issues),
+            "change_count": len(changes),
+            "review_round_count": 2,
+        },
+        issues=issues,
+        changes=changes,
+    )
+    debug.write_json("rounds/final/unresolved_issues.json", issues)
+    return ReviewOutcome(run_dir=debug.run_dir, result=result, usage={})
+
+
+def _agent_final(user: str) -> str:
+    candidate_ids = re.findall(r'"candidate_id":\s*"([^"]+)"', user)
+    return json.dumps(
+        {
+            "action": "final",
+            "decisions": [
+                {
+                    "candidate_id": candidate_id,
+                    "verdict": "confirmed",
+                    "detail": "确认需修订",
+                    "suggestion": "补全信息",
+                    "reason": "",
+                    "consistency": {},
+                    "evidence_refs": [],
+                }
+                for candidate_id in candidate_ids
+            ],
+            "new_issues": [],
+            "complete": True,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _fix_json(user: str, replacement: str) -> str:
+    def field(name: str) -> str:
+        match = re.search(rf"^{name}:\s*(.+)$", user, re.MULTILINE)
+        if match is None:
+            raise AssertionError(f"Fixer prompt missing {name}")
+        return match.group(1).strip()
+
+    return json.dumps(
+        {
+            "segment_ref": field("segment_ref"),
+            "before_hash": field("before_hash"),
+            "issue_ids": json.loads(field("issue_ids")),
+            "replacement": replacement,
+            "complete": True,
+        },
+        ensure_ascii=False,
+    )
+
+
+class TestReviewAutofix(unittest.TestCase):
+    def test_export_punctuation_setting_does_not_rewrite_autofix_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            outcome = _outcome(
+                store,
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "change,译文?",
+                        "issue_keys": ["issue-1"],
+                        "review_result": "not_rereported",
+                    }
+                ],
+            )
+            config = _config(str(Path(directory, "state")))
+            config.output.punctuation_normalize = True
+
+            fixed = Orchestrator(config, client=FakeClient())._review_autofix.run(
+                store, outcome, []
+            )
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "change,译文?")
+            index = json.loads(
+                Path(outcome.run_dir, "autofix", "index.json").read_text(encoding="utf-8")
+            )
+            records = index["records"]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["origin"], "change")
+            self.assertEqual(fixed.result["autofix"]["applied_segment_count"], 1)
+
+    def test_changes_are_written_without_adding_segment_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            outcome = _outcome(
+                store,
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "change 译文。",
+                        "issue_keys": ["issue-1"],
+                        "review_result": "not_rereported",
+                    }
+                ],
+            )
+            orch = Orchestrator(_config(str(Path(directory, "state"))), client=FakeClient())
+            annotation_align = Mock()
+            style_align = Mock()
+            orch._review_autofix._publisher._annotations.align_annotations_after_batch = (
+                annotation_align
+            )
+            orch._review_autofix._publisher._docx_styles.align_styles_after_batch = style_align
+
+            fixed = orch._review_autofix.run(store, outcome, [])
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "change 译文。")
+            raw = json.loads(Path(store.chapter_path(0)).read_text(encoding="utf-8"))
+            segment = raw["segments"][0]
+            self.assertNotIn("target_before_review", segment)
+            self.assertNotIn("review_autofix", segment["meta"])
+            index = json.loads(
+                Path(outcome.run_dir, "autofix", "index.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(index["status"], "completed")
+            self.assertEqual(index["records"][0]["before"], "正式译文。")
+            self.assertEqual(index["records"][0]["after"], "change 译文。")
+            self.assertEqual(index["records"][0]["source_change"]["issue_keys"], ["issue-1"])
+            self.assertEqual(fixed.result["autofix"]["applied_segment_count"], 1)
+            annotation_align.assert_called_once()
+            style_align.assert_called_once()
+
+    def test_final_issues_reuse_agent_loop_after_changes_then_use_fixer(self):
+        seen_agent_users: list[str] = []
+        seen_fixer_users: list[str] = []
+
+        def handler(messages, tier, json_mode):
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "evidence-based review agent" in system:
+                seen_agent_users.append(user)
+                return _agent_final(user)
+            if "cautious revision editor" in system:
+                seen_fixer_users.append(user)
+                return _fix_json(user, "Agent 终局译文。")
+            return "{}"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            issue = {
+                "issue_id": "review-00001",
+                "issue_key": "issue-1",
+                "chapter": 0,
+                "index": 0,
+                "type": "mistranslation",
+                "detail": "信息不完整",
+                "suggestion": "补全信息",
+                "evidence_refs": [],
+            }
+            outcome = _outcome(
+                store,
+                issues=[issue],
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "change 工作译文。",
+                        "issue_keys": ["older-issue"],
+                        "review_result": "needs_revision",
+                    }
+                ],
+            )
+            orch = Orchestrator(
+                _config(str(Path(directory, "state"))),
+                client=FakeClient(handler=handler),
+            )
+
+            fixed = orch._review_autofix.run(store, outcome, [])
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "Agent 终局译文。")
+            self.assertEqual(len(seen_agent_users), 1)
+            self.assertIn("change 工作译文。", seen_agent_users[0])
+            self.assertEqual(len(seen_fixer_users), 1)
+            self.assertIn(
+                "Complete current Simplified Chinese translation]\nchange 工作译文。",
+                seen_fixer_users[0],
+            )
+            index = json.loads(
+                Path(outcome.run_dir, "autofix", "index.json").read_text(encoding="utf-8")
+            )
+            applied = [record for record in index["records"] if record["status"] == "applied"]
+            self.assertEqual(
+                [record["origin"] for record in applied], ["change", "final_issue_fix"]
+            )
+            self.assertEqual(applied[0]["before"], "正式译文。")
+            self.assertEqual(applied[0]["after"], "change 工作译文。")
+            self.assertEqual(applied[1]["before"], "change 工作译文。")
+            self.assertEqual(applied[1]["after"], "Agent 终局译文。")
+            self.assertEqual(applied[1]["related_issues"][0]["detail"], "确认需修订")
+            self.assertEqual(
+                applied[1]["artifacts"],
+                [
+                    "agents/r3-chunk-ch0-base0-n1.json",
+                    "autofix/fixers/ch0-text0.json",
+                ],
+            )
+            self.assertEqual(fixed.result["autofix"]["applied_issue_fix_count"], 1)
+
+    def test_failed_final_fixer_keeps_applied_change_and_records_issue(self):
+        def handler(messages, tier, json_mode):
+            system = messages[0]["content"]
+            if "evidence-based review agent" in system:
+                return _agent_final(messages[-1]["content"])
+            if "cautious revision editor" in system:
+                return "{"
+            return "{}"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            issue = {
+                "issue_id": "review-00001",
+                "issue_key": "issue-1",
+                "chapter": 0,
+                "index": 0,
+                "type": "mistranslation",
+                "detail": "仍有问题",
+                "suggestion": "继续修改",
+            }
+            outcome = _outcome(
+                store,
+                issues=[issue],
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "change 译文。",
+                        "issue_keys": [],
+                        "review_result": "needs_revision",
+                    }
+                ],
+            )
+            orch = Orchestrator(
+                _config(str(Path(directory, "state"))),
+                client=FakeClient(handler=handler),
+            )
+
+            fixed = orch._review_autofix.run(store, outcome, [])
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "change 译文。")
+            self.assertEqual(fixed.result["autofix"]["status"], "partial")
+            self.assertEqual(fixed.result["autofix"]["failed_issue_count"], 1)
+
+    def test_pending_index_resumes_without_model_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            outcome = _outcome(
+                store,
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "可恢复译文。",
+                        "issue_keys": [],
+                        "review_result": "not_rereported",
+                    }
+                ],
+            )
+            cfg = _config(str(Path(directory, "state")))
+            first = Orchestrator(cfg, client=FakeClient())
+            first._review_autofix.run(store, outcome, [])
+
+            debug = ReviewRunStore.open_existing(outcome.run_dir)
+            index = debug.load_json("autofix/index.json")
+            assert isinstance(index, dict)
+            index["status"] = "applying"
+            index["records"][0]["status"] = "planned"
+            index["locations"][0]["status"] = "pending"
+            index["locations"][0]["alignment_status"] = "pending"
+            debug.write_json("autofix/index.json", index)
+            result = debug.load_json("result.json")
+            assert isinstance(result, dict)
+            result.pop("autofix", None)
+            debug.write_json("result.json", result)
+            chapter = store.load_chapter(0)
+            chapter.text_segments[0].target = "正式译文。"
+            store.save_chapter(chapter)
+
+            cfg.llm.models["default_strong"] = cfg.llm.models["default_strong"].model_copy(
+                update={"model": "changed-after-publication-started"}
+            )
+            client = FakeClient(handler=lambda *_args, **_kwargs: "model must not run")
+            resumed = Orchestrator(cfg, client=client)._review_autofix.resume_pending(store)
+
+            self.assertIsNotNone(resumed)
+            self.assertEqual(client.calls, [])
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "可恢复译文。")
+            saved_index = debug.load_json("autofix/index.json")
+            assert isinstance(saved_index, dict)
+            self.assertEqual(saved_index["status"], "completed")
+
+    def test_interrupt_flushes_usage_and_resume_does_not_recount(self):
+        """A KeyboardInterrupt inside the autofix fixer must still flush the usage delta,
+        leave a resumable fixer trace, and let a re-run finish publication without
+        counting any call twice.
+        """
+        fixer_calls = 0
+
+        def handler(messages, tier, json_mode):
+            system = messages[0]["content"]
+            user = messages[-1]["content"]
+            if "evidence-based review agent" in system:
+                return _agent_final(user)
+            if "cautious revision editor" in system:
+                nonlocal fixer_calls
+                fixer_calls += 1
+                if fixer_calls == 1:
+                    raise KeyboardInterrupt
+                return _fix_json(user, "Agent 终局译文。")
+            return "{}"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            issue = {
+                "issue_id": "review-00001",
+                "issue_key": "issue-1",
+                "chapter": 0,
+                "index": 0,
+                "type": "mistranslation",
+                "detail": "信息不完整",
+                "suggestion": "补全信息",
+                "evidence_refs": [],
+            }
+            outcome = _outcome(store, issues=[issue])
+            service = Orchestrator(
+                _config(str(Path(directory, "state"))),
+                client=MeteredFakeClient(handler=handler),
+            )._review_autofix
+
+            with self.assertRaises(KeyboardInterrupt):
+                service.run(store, outcome, [])
+
+            # The finally block must have persisted both model calls, including the
+            # interrupted one, into the review and book ledgers.
+            self.assertEqual(fixer_calls, 1)
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "正式译文。")
+            trace = json.loads(
+                Path(outcome.run_dir, "autofix/fixers/ch0-text0.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(trace["status"], "running")
+            self.assertFalse(Path(outcome.run_dir, "autofix/index.json").exists())
+            debug = ReviewRunStore.open_existing(outcome.run_dir)
+            interrupted_usage = debug.load_usage()
+            assert interrupted_usage is not None
+            self.assertEqual(interrupted_usage["totals"]["calls"], 2)
+            book_usage = store.load_usage()
+            assert book_usage is not None
+            self.assertEqual(book_usage["totals"]["calls"], 2)
+
+            fixed = service.run(store, outcome, [])
+
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "Agent 终局译文。")
+            self.assertEqual(fixed.result["autofix"]["status"], "completed")
+            index = json.loads(
+                Path(outcome.run_dir, "autofix/index.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(index["status"], "completed")
+            # The finished agent trace is reused; only the interrupted fixer is retried.
+            self.assertEqual(fixer_calls, 2)
+            resumed_usage = debug.load_usage()
+            assert resumed_usage is not None
+            self.assertEqual(resumed_usage["totals"]["calls"], 3)
+            self.assertEqual(resumed_usage["totals"]["total_tokens"], 3 * METERED_TOTAL_TOKENS)
+            book_usage = store.load_usage()
+            assert book_usage is not None
+            self.assertEqual(book_usage["totals"]["calls"], 3)
+
+    def test_newer_review_prevents_publishing_an_older_pending_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = _store(directory)
+            older = _outcome(
+                store,
+                changes=[
+                    {
+                        "chapter": 0,
+                        "index": 0,
+                        "suggested_target": "旧 Review 候选。",
+                        "issue_keys": [],
+                        "review_result": "not_rereported",
+                    }
+                ],
+            )
+            cfg = _config(str(Path(directory, "state")))
+            service = Orchestrator(cfg, client=FakeClient())._review_autofix
+            service.run(store, older, [])
+
+            older_debug = ReviewRunStore.open_existing(older.run_dir)
+            index = older_debug.load_json("autofix/index.json")
+            assert isinstance(index, dict)
+            index["status"] = "applying"
+            index["locations"][0]["status"] = "pending"
+            older_debug.write_json("autofix/index.json", index)
+            chapter = store.load_chapter(0)
+            chapter.text_segments[0].target = "正式译文。"
+            store.save_chapter(chapter)
+
+            newer = _outcome(store)
+            self.assertGreater(Path(newer.run_dir).name, Path(older.run_dir).name)
+
+            resumed = service.resume_pending(store)
+
+            self.assertIsNone(resumed)
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "正式译文。")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+@pytest.mark.parametrize("boundary", ["index", "chapter", "alignment", "result"])
+def test_indexed_publication_recovers_between_writes(tmp_path, monkeypatch, boundary):
+    store = _store(str(tmp_path))
+    manifest = Path(store.manifest_path).read_bytes()
+    outcome = _outcome(
+        store,
+        changes=[
+            {"chapter": 0, "index": 0, "suggested_target": "First revision."},
+            {"chapter": 0, "index": 0, "suggested_target": "Final revision."},
+            {"chapter": 99, "index": 0, "suggested_target": "Invalid location."},
+        ],
+    )
+    config = _config(str(tmp_path / "state"))
+    first = Orchestrator(config, client=FakeClient())
+    original_write = ReviewRunStore.write_json
+    original_save = store.save_chapter
+    original_align = first._review_autofix._publisher._annotations.align_annotations_after_batch
+    interrupted = False
+
+    def interrupt():
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt("publication boundary")
+
+    def write(debug, name, data):
+        if boundary == "result" and name == "result.json" and "autofix" in data:
+            interrupt()
+        original_write(debug, name, data)
+        if boundary == "index" and name == "autofix/index.json":
+            interrupt()
+
+    def save(chapter):
+        original_save(chapter)
+        if boundary == "chapter":
+            interrupt()
+
+    def align(*args, **kwargs):
+        if boundary == "alignment":
+            interrupt()
+        return original_align(*args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(ReviewRunStore, "write_json", write)
+        patcher.setattr(store, "save_chapter", save)
+        patcher.setattr(
+            first._review_autofix._publisher._annotations, "align_annotations_after_batch", align
+        )
+        with pytest.raises(KeyboardInterrupt, match="publication boundary"):
+            first._review_autofix.run(store, outcome, [])
+    resumed_client = FakeClient()
+    resumed = Orchestrator(config, client=resumed_client)._review_autofix
+    result = resumed.resume_pending(store)
+    assert result is not None
+    assert result.result["autofix"]["status"] == "partial"
+    assert result.result["autofix"]["applied_change_count"] == 2
+    debug = ReviewRunStore.open_existing(outcome.run_dir)
+    index = debug.load_json("autofix/index.json")
+    assert index is not None
+    assert [r["status"] for r in index["records"]] == ["applied", "applied", "failed"]
+    assert index["locations"][0]["alignment_status"] == "completed"
+    chapter_bytes = Path(store.chapter_path(0)).read_bytes()
+    usage = store.load_usage()
+    assert resumed.resume_pending(store) is None
+    assert Path(store.chapter_path(0)).read_bytes() == chapter_bytes
+    assert store.load_usage() == usage
+    assert store.load_chapter(0).text_segments[0].target == "Final revision."
+    assert Path(store.manifest_path).read_bytes() == manifest
+    assert resumed_client.calls == []
+
+
+def test_indexed_publication_preserves_external_edit(tmp_path, monkeypatch):
+    store = _store(str(tmp_path))
+    outcome = _outcome(
+        store,
+        changes=[
+            {"chapter": 0, "index": 0, "suggested_target": "Proposed revision."},
+        ],
+    )
+    config = _config(str(tmp_path / "state"))
+    original_write = ReviewRunStore.write_json
+
+    def write(debug, name, data):
+        original_write(debug, name, data)
+        if name == "autofix/index.json":
+            raise KeyboardInterrupt()
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(ReviewRunStore, "write_json", write)
+        with pytest.raises(KeyboardInterrupt):
+            Orchestrator(config, client=FakeClient())._review_autofix.run(store, outcome, [])
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target = "External edit."
+    store.save_chapter(chapter)
+    result = Orchestrator(config, client=FakeClient())._review_autofix.resume_pending(store)
+    assert result is not None
+    assert result.result["autofix"]["status"] == "partial"
+    assert store.load_chapter(0).text_segments[0].target == "External edit."

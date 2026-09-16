@@ -14,18 +14,17 @@ from threading import Barrier
 from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
-
-from trans_novel.assemble.html_resources import _load_html_resource
-from trans_novel.cli import app
-from trans_novel.config import Config
-from trans_novel.glossary.store import GlossaryTerm
-from trans_novel.ingest.models import Chapter, Segment
-from trans_novel.llm.providers.fake import FakeClient
-from trans_novel.pipeline.orchestrator import Orchestrator
-from trans_novel.pipeline.runstore import RunStore, source_sha256
-from trans_novel.review.run_store import ReviewOutcome, ReviewRunStore
-from trans_novel.srt.store import SrtRunStore
-from trans_novel.srt.translate import _merge_batch_result, translate_srt
+from wenyi_cli.cli import app
+from wenyi_core.assemble.html_resources import _load_html_resource
+from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.runstore import RunStore, source_sha256
+from wenyi_core.review.run_store import ReviewOutcome, ReviewRunStore
+from wenyi_core.srt.store import SrtRunStore
+from wenyi_core.srt.translate import _merge_batch_result, translate_srt
 
 
 def config(root: Path) -> Config:
@@ -249,7 +248,7 @@ def srt_write_race(root: Path) -> None:
         barrier.wait(timeout=5)
         return real_replace(src, dst)
 
-    with patch("trans_novel.srt.store.os.replace", side_effect=synchronized_replace):
+    with patch("wenyi_core.srt.store.os.replace", side_effect=synchronized_replace):
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [
                 executor.submit(store.save_usage, {"value": i})

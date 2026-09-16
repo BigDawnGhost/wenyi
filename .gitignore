@@ -11,8 +11,8 @@ state/
 *.zh.epub
 *.zh.txt
 *.txt
-!trans_novel/i18n/data/tasks/*.txt
-!trans_novel/i18n/data/shared/*.txt
+!packages/core/wenyi_core/i18n/data/tasks/*.txt
+!packages/core/wenyi_core/i18n/data/shared/*.txt
 
 # Input books and generated artifacts (do not commit)
 output/
@@ -25,3 +25,20 @@ explore/
 *.html
 *.srt
 *.docx
+
+# ── Web 升级（monorepo）─────────────────────────────────────────
+node_modules/
+.next/
+.turbo/
+.env
+.env.local
+data/
+*.zh-bi.epub
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+local_references
+.scratch/

@@ -2,6 +2,8 @@
 
 [简体中文](zh/usage.md)
 
+For the React/Vite + FastAPI stack, see [Web deployment](web.md).
+
 ## Installation and first run
 
 Running from source requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).

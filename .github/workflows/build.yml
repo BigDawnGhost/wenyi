@@ -67,17 +67,20 @@ jobs:
           architecture: ${{ matrix.python_arch }}
 
       - name: Install build dependencies
-        run: python -m pip install . pyinstaller
+        run: python -m pip install ./packages/core ./packages/cli pyinstaller
 
       - name: Build single-file executable
         run: >
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
-          --paths . --collect-all ebooklib --collect-all bs4 --collect-all lxml
+          --paths packages/core --paths packages/cli
+          --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
-          --collect-data trans_novel.i18n
-          --copy-metadata trans-novel
+          --collect-all wenyi_core --collect-all tiktoken --collect-all tiktoken_ext
+          --collect-all docx --collect-all google.genai
+          --collect-data wenyi_core.i18n
+          --copy-metadata wenyi-core --copy-metadata wenyi-cli
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
-          --distpath dist trans_novel/__main__.py
+          --distpath dist scripts/cli_entry.py
 
       - name: Smoke test executable
         run: |

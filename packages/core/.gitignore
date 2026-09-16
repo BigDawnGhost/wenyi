@@ -1,0 +1,3 @@
+# Bundled language and prompt resources are source files, including .txt templates.
+!wenyi_core/i18n/data/
+!wenyi_core/i18n/data/**

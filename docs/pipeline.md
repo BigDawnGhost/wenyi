@@ -23,7 +23,7 @@ Read input
 
 ## Language rules and state scope
 
-Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `trans_novel/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Existing analysis and notes remain intact on resume; resource updates apply to new model calls.
+Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `packages/core/wenyi_core/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Existing analysis and notes remain intact on resume; resource updates apply to new model calls.
 
 All targets, including `zh`, own separate state under `state/<book>/targets/<target-language>/`. Completed segments still skip model calls; updated resources affect subsequent requests. Initialization records a prompt fingerprint, run events record applied resources, and Review cache identity includes languages, honorific strategy, and the resource fingerprint. Manifest-last initialization, atomic writes, domain locks, and Review/Autofix publication boundaries remain in place. See [P10](project-review/2026-09-05/p10-multilingual-internationalization.md).
 
@@ -65,12 +65,13 @@ uv run trans-novel review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Matching completed
-results are reused; an interrupted Review resumes its saved rounds, chunks, and agent
+results are reused; an unfinished Review resumes its saved rounds, chunks, and agent
 traces when content, configuration, and glossary fingerprints match. Recoverable stops
 such as Ctrl+C, timeouts, transport failures, HTTP 429/5xx, and provider balance/quota
-errors (for example HTTP 402) leave the run as `interrupted` so the next `review`
-command can continue instead of starting a new directory. Permanent local failures still
-finish as `failed`. Otherwise, a new whole-book Review starts. Cached chunks and
+errors (for example HTTP 402) leave the run as `interrupted`. Local/protocol failures
+still finish as `failed` for diagnosis, but both `interrupted` and `failed` remain
+resume-eligible so the next `review` continues the same directory instead of starting a
+new one. Otherwise, a new whole-book Review starts. Cached chunks and
 completed initial screening skip chapter glossary matching; pending reviewer requests
 share one chapter-wide glossary snapshot. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
