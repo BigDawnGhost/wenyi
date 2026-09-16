@@ -16,11 +16,19 @@ from wenyi_core.i18n.languages import honorific_rule
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.postprocess.punct import normalize_zh_segments
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 class TestModelLanguageDetection(unittest.TestCase):
@@ -51,7 +59,9 @@ class TestModelLanguageDetection(unittest.TestCase):
                     return json.dumps({"language": "russian"}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
-            store = Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
+            store = require_file_storage(
+                Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
+            )
             self.assertEqual(cfg.source_lang, "ru")
             self.assertEqual(store.load_manifest()["source_lang"], "ru")
 
@@ -222,7 +232,7 @@ class TestPunct(unittest.TestCase):
                 "target_end": 4,
                 "status": "aligned",
             }
-            store = RunStore(str(Path(directory) / "state" / "book"))
+            store = FileStorage(str(Path(directory) / "state" / "book"))
             store.save_chapter(
                 Chapter(
                     index=0,

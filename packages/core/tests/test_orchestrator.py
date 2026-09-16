@@ -23,14 +23,22 @@ from wenyi_core.pipeline.review_chunks import ReviewChunkService
 from wenyi_core.pipeline.runstore import (
     STATUS_DONE,
     STATUS_PENDING,
-    RunStore,
     slugify,
     source_sha256,
 )
 from wenyi_core.pipeline.translation import TranslationService
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.sample_data import write_sample_epub, write_sample_txt
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def _translated_para_count(calls) -> int:
@@ -280,7 +288,7 @@ class TestOrchestrator(unittest.TestCase):
                     "notes.xhtml#n3": {"source_blocks": ["Note three"]},
                 },
             }
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             store.save_chapter(chapter)
             store.save_manifest(
                 {
@@ -400,7 +408,7 @@ class TestOrchestrator(unittest.TestCase):
                     Segment(index=1, source="beta", target="贝塔", cont=True),
                 ],
             )
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             client = FakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
 
@@ -474,7 +482,7 @@ class TestOrchestrator(unittest.TestCase):
                     )
                 ],
             )
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
 
             orch._annotations.align_annotations_after_batch(0, chapter, 0, 1, store)
@@ -538,7 +546,7 @@ class TestOrchestrator(unittest.TestCase):
                     Segment(index=1, source="beta", target=None, cont=True),
                 ],
             )
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
 
             orch._annotations.align_annotations_after_batch(0, chapter, 0, 1, store)
@@ -620,7 +628,7 @@ class TestOrchestrator(unittest.TestCase):
                     ),
                 ],
             )
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
 
             orch._annotations.align_annotations_after_batch(0, chapter, 0, 2, store)
@@ -652,7 +660,9 @@ class TestOrchestrator(unittest.TestCase):
             self.assertEqual(len(run_dirs), 1)
             self.assertFalse(os.path.isfile(os.path.join(run_dirs[0], "manifest.json")))
 
-            store = Orchestrator(cfg, client=FakeClient(handler=routing_handler)).prepare(txt)
+            store = require_file_storage(
+                Orchestrator(cfg, client=FakeClient(handler=routing_handler)).prepare(txt)
+            )
             self.assertTrue(store.exists())
             self.assertTrue(store.load_manifest()["initialized"])
             self.assertIsNotNone(store.load_analysis())
@@ -666,7 +676,7 @@ class TestOrchestrator(unittest.TestCase):
 
             client = FakeClient(handler=routing_handler)
             orch = Orchestrator(cfg, client=client)
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
 
             # Every chapter is marked done.
             m = store.load_manifest()
@@ -719,7 +729,7 @@ class TestOrchestrator(unittest.TestCase):
             client = FakeClient(handler=routing_handler)
             orch = Orchestrator(cfg, client=client)
             # Translate chapter zero only.
-            store = orch.run(txt, only_chapter=0)
+            store = require_file_storage(orch.run(txt, only_chapter=0))
             m = store.load_manifest()
             self.assertEqual(m["chapters"][0]["status"], STATUS_DONE)
             self.assertNotEqual(m["chapters"][1]["status"], STATUS_DONE)
@@ -778,7 +788,7 @@ class TestSegmentLevelResume(unittest.TestCase):
 
             # First run: translate chapter zero with the R1 tag.
             c1 = FakeClient(handler=self._tr_handler("R1"))
-            store = Orchestrator(cfg, client=c1).run(txt, only_chapter=0)
+            store = require_file_storage(Orchestrator(cfg, client=c1).run(txt, only_chapter=0))
             ch = store.load_chapter(0)
             self.assertTrue(all(s.target and s.target.startswith("R1") for s in ch.text_segments))
 
@@ -817,7 +827,9 @@ class TestSegmentLevelResume(unittest.TestCase):
             cfg.pipeline.polish = False
 
             first_client = FakeClient(handler=self._tr_handler("R1"))
-            store = Orchestrator(cfg, client=first_client).run(txt, only_chapter=0)
+            store = require_file_storage(
+                Orchestrator(cfg, client=first_client).run(txt, only_chapter=0)
+            )
             chapter = store.load_chapter(0)
             chapter.text_segments[-1].target = None
             store.save_chapter(chapter)
@@ -848,8 +860,10 @@ class TestSegmentLevelResume(unittest.TestCase):
             cfg.pipeline.book_understanding = False
             cfg.segment.max_tokens_per_batch = 8
 
-            store = Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R1"))).run(
-                txt, only_chapter=0
+            store = require_file_storage(
+                Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R1"))).run(
+                    txt, only_chapter=0
+                )
             )
             chapter = store.load_chapter(0)
             segments = chapter.text_segments
@@ -937,7 +951,7 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
 
             client = FakeClient(handler=routing_handler)
-            store = Orchestrator(cfg, client=client).run(txt)
+            store = require_file_storage(Orchestrator(cfg, client=client).run(txt))
 
             # Persist chapter digests in chapter.meta.
             self.assertTrue(store.load_chapter(0).meta.get("source_digest"))
@@ -961,10 +975,12 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = FakeClient(handler=routing_handler)
 
-            store = Orchestrator(
-                cfg,
-                client=client,
-            ).prepare_for_translation(txt)
+            store = require_file_storage(
+                Orchestrator(
+                    cfg,
+                    client=client,
+                ).prepare_for_translation(txt)
+            )
 
             manifest = store.load_manifest()
             self.assertTrue(store.load_analysis())
@@ -996,7 +1012,7 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg.pipeline.prescan_concurrency = 3
 
             client = FakeClient(handler=routing_handler)
-            store = Orchestrator(cfg, client=client).run(txt)
+            store = require_file_storage(Orchestrator(cfg, client=client).run(txt))
 
             m = store.load_manifest()
             for c in m["chapters"]:
@@ -1032,7 +1048,7 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg.pipeline.book_understanding = False
 
             client = FakeClient(handler=routing_handler)
-            store = Orchestrator(cfg, client=client).run(txt)
+            store = require_file_storage(Orchestrator(cfg, client=client).run(txt))
 
             self.assertFalse(store.load_chapter(0).meta.get("source_digest"))
             self.assertFalse((store.load_analysis() or {}).get("book_synopsis"))
@@ -1118,7 +1134,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = FakeClient(handler=routing_handler)
 
-            store = Orchestrator(cfg, client=client).run(txt, only_chapter=0)
+            store = require_file_storage(Orchestrator(cfg, client=client).run(txt, only_chapter=0))
             Orchestrator(cfg, client=client).run(txt)
 
             review_calls = [
@@ -1139,7 +1155,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = MeteredFakeClient(handler=self._handler())
             orch = Orchestrator(cfg, client=client)
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
             watched = [
                 store.manifest_path,
                 store.chapter_path(0),
@@ -1224,7 +1240,7 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=MeteredFakeClient(handler=self._handler()))
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
             manifest_before = Path(store.manifest_path).read_bytes()
             chapter_before = Path(store.chapter_path(0)).read_bytes()
 
@@ -1475,8 +1491,8 @@ class TestReviewReporting(unittest.TestCase):
                 finished = json.load(handle)
             self.assertEqual(finished["status"], "completed")
 
-    def test_review_permanent_error_still_finishes_failed(self):
-        """Local permanent failures remain failed and do not resume the same directory."""
+    def test_review_permanent_error_finishes_failed_but_remains_resumable(self):
+        """Local/protocol failures stay logged as failed, yet resume the same directory."""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -1494,12 +1510,19 @@ class TestReviewReporting(unittest.TestCase):
             book_root = Path(cfg.state_dir)
             first_dirs = sorted(book_root.glob("*/targets/*/reviews/review-*"))
             self.assertEqual(len(first_dirs), 1)
-            with open(first_dirs[0] / "result.json", encoding="utf-8") as handle:
+            result_path = first_dirs[0] / "result.json"
+            with open(result_path, encoding="utf-8") as handle:
                 state = json.load(handle)
             self.assertEqual(state["status"], "failed")
+            self.assertEqual(state["termination"], "error")
+            self.assertEqual(state["error"]["type"], "ValueError")
 
             second = orch.run_review(txt)
-            self.assertNotEqual(Path(second["review_dir"]).resolve(), first_dirs[0].resolve())
+            self.assertEqual(Path(second["review_dir"]).resolve(), first_dirs[0].resolve())
+            with open(result_path, encoding="utf-8") as handle:
+                finished = json.load(handle)
+            self.assertEqual(finished["status"], "completed")
+            self.assertNotIn("error", finished)
 
     def test_review_running_resume_rejects_config_change(self):
         """Changed configuration must start a new review directory instead of resuming stale
@@ -1638,7 +1661,7 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
-            store = orch.run(txt, only_chapter=0)
+            store = require_file_storage(orch.run(txt, only_chapter=0))
 
             with self.assertRaisesRegex(ValueError, "requires every chapter to be translated"):
                 orch.run_review(txt)
@@ -1698,7 +1721,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg.segment.max_tokens_per_batch = 100_000
             client = MeteredFakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
             usage_before = Path(store.usage_path).read_bytes()
             events_before = Path(store.event_log_path).read_bytes()
 
@@ -1768,7 +1791,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client1 = MeteredFakeClient(handler=interrupting_handler)
             orch1 = Orchestrator(cfg, client=client1)
-            store = orch1.run(txt)
+            store = require_file_storage(orch1.run(txt))
             translated_calls = len(client1.calls)
 
             with self.assertRaises(KeyboardInterrupt):
@@ -1825,10 +1848,12 @@ class TestReviewReporting(unittest.TestCase):
                 write_sample_txt(txt)
                 cfg = _config(os.path.join(d, "state"))
                 cfg.pipeline.review_agent_loop = False
-                base_store = Orchestrator(
-                    cfg,
-                    client=FakeClient(handler=routing_handler),
-                ).run(txt)
+                base_store = require_file_storage(
+                    Orchestrator(
+                        cfg,
+                        client=FakeClient(handler=routing_handler),
+                    ).run(txt)
+                )
 
                 def handler(messages, tier, json_mode):
                     if "translation reviewer" in messages[0]["content"]:
@@ -2028,7 +2053,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg.pipeline.review_concurrency = 1
             client = MeteredFakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
             manifest_before = Path(store.manifest_path).read_bytes()
             chapter_before = Path(store.chapter_path(0)).read_bytes()
 
@@ -2598,7 +2623,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg.pipeline.review_fix_max_rounds = 2
             cfg.pipeline.review_concurrency = 1
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
             chapter = store.load_chapter(0)
             original_targets = {
                 0: chapter.text_segments[0].target or "",
@@ -2766,7 +2791,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg.pipeline.review_fix_max_rounds = 2
             cfg.pipeline.review_concurrency = 1
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
-            store = orch.run(txt)
+            store = require_file_storage(orch.run(txt))
             original_target = store.load_chapter(0).text_segments[1].target or ""
 
             result = orch.run_review(txt)
@@ -2815,7 +2840,7 @@ class TestGlossaryScope(unittest.TestCase):
         cfg.pipeline.glossary_scope = scope
 
         orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
-        store = orch.prepare(txt)
+        store = require_file_storage(orch.prepare(txt))
         g = GlossaryStore(store.glossary_path)
         # Include an absent character, an unrelated term and an entity whose alias occurs in the chapter.
         g.upsert_term(GlossaryTerm(source="外部人物X", target="外部译名", type="person"))
@@ -2923,8 +2948,10 @@ class TestGlossaryScope(unittest.TestCase):
             cfg.pipeline.book_understanding = False
             cfg.segment.max_tokens_per_batch = 8
 
-            store = Orchestrator(cfg, client=FakeClient(handler=routing_handler)).run(
-                txt, only_chapter=0
+            store = require_file_storage(
+                Orchestrator(cfg, client=FakeClient(handler=routing_handler)).run(
+                    txt, only_chapter=0
+                )
             )
             checkpoints = store.completed_batch_glossary_keys(0)
             self.assertGreater(len(checkpoints), 1)
@@ -3097,7 +3124,7 @@ class TestLocateExistingStore(unittest.TestCase):
             write_sample_epub(epub)
             digest = source_sha256(epub)
             # Use the same slug rule for the sample EPUB's OPF title as preparation does.
-            store = RunStore(
+            store = FileStorage(
                 os.path.join(directory, "state", slugify("サンプル小説"), "targets", "zh"),
             )
             store.save_manifest(

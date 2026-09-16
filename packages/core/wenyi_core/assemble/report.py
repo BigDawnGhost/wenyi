@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..glossary.store import GlossaryStore
-from ..pipeline.runstore import STATUS_DONE, RunStore
+from ..pipeline.runstore import STATUS_DONE
+from ..storage.protocol import Storage
 
 
-def build_report(store: RunStore, glossary: GlossaryStore) -> dict[str, Any]:
+def build_report(store: Storage, glossary: Storage | GlossaryStore) -> dict[str, Any]:
     """Summarize progress, empty translations, glossary conflicts and the latest review."""
     m = store.load_manifest()
     chapters_total = len(m["chapters"])

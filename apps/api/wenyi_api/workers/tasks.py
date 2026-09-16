@@ -25,6 +25,8 @@ class PauseRequested(KeyboardInterrupt):
 
 def _resolve_source(pid: str) -> str:
     project = dal.get_project(pid)
+    if project is None:
+        raise ValueError(f"Project not found: {pid}")
     if not project or not project.get("source_path"):
         raise ValueError("Project has no uploaded source")
     source = Path(project["source_path"])
@@ -57,6 +59,8 @@ def _parse_source(pid, storage, config, progress):
 
     source = _resolve_source(pid)
     project = dal.get_project(pid)
+    if project is None:
+        raise ValueError(f"Project not found: {pid}")
     progress(0, 1, "解析原文")
     if project["fmt"] == "srt":
         from wenyi_core.ingest.srt_reader import parse_srt
@@ -412,6 +416,8 @@ def _render_export_sync(
     source = _resolve_source(pid)
     config = _build_config_for(pid, run_id)
     project = dal.get_project(pid)
+    if project is None:
+        raise ValueError(f"Project not found: {pid}")
     original = Path(
         (project.get("source_meta") or {}).get("original_filename") or "translation"
     ).stem

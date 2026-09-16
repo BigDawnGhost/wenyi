@@ -20,7 +20,8 @@ from wenyi_core.ingest.docx_reader import read_docx
 from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.runstore import STATUS_DONE, RunStore
+from wenyi_core.pipeline.runstore import STATUS_DONE
+from wenyi_core.storage.file import FileStorage
 
 
 def _write_sample_docx(path: str) -> None:
@@ -123,7 +124,7 @@ class TestDocxReader(unittest.TestCase):
             segment = book.chapters[0].segments[0]
             self.assertEqual(segment.meta.get("list_fmt"), "decimal")
             self.assertIsInstance(segment.meta.get("list_num_id"), int)
-            store = RunStore(os.path.join(directory, "state", "list"))
+            store = FileStorage(os.path.join(directory, "state", "list"))
             store.save_manifest(
                 {
                     "title": "list",
@@ -225,7 +226,7 @@ class TestDocxStyles(unittest.TestCase):
             run.font.name = "Times New Roman"
             src.save(path)
             book = read_docx(path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state", "bold"))
+            store = FileStorage(os.path.join(directory, "state", "bold"))
             store.save_manifest(
                 {
                     "title": "bold",
@@ -263,7 +264,7 @@ class TestDocxStyles(unittest.TestCase):
             run.font.name = "Times New Roman"
             src.save(path)
             book = read_docx(path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state", "src"))
+            store = FileStorage(os.path.join(directory, "state", "src"))
             store.save_manifest(
                 {
                     "title": "src",
@@ -313,7 +314,7 @@ class TestDocxStyles(unittest.TestCase):
             src.save(path)
             book = read_docx(path, "en", "zh")
             self.assertEqual(book.chapters[0].segments[0].meta.get("align"), "center")
-            store = RunStore(os.path.join(directory, "state", "mixed"))
+            store = FileStorage(os.path.join(directory, "state", "mixed"))
             store.save_manifest(
                 {
                     "title": "mixed",
@@ -351,7 +352,7 @@ class TestDocxAssemble(unittest.TestCase):
             path = os.path.join(directory, "sample.docx")
             _write_sample_docx(path)
             book = read_docx(path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state", "sample"))
+            store = FileStorage(os.path.join(directory, "state", "sample"))
             store.save_manifest(
                 {
                     "title": "sample",

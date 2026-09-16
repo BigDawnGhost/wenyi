@@ -22,6 +22,7 @@ from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
 from ..review.session import ReviewPolicy, content_digest, review_overlay_digest
+from ..storage.protocol import Storage
 from . import review_results
 from .review_checkpoint import ReviewCheckpoint, ReviewInputs
 from .review_chunks import ReviewChunkService
@@ -29,7 +30,6 @@ from .review_rounds import ReviewRoundService
 from .runstore import STATUS_DONE
 
 if TYPE_CHECKING:
-    from .runstore import RunStore
     from .runtime import PipelineRuntime
 
 ProgressFn = Callable[[int, int, str], None]
@@ -47,8 +47,8 @@ class ReviewService:
 
     def session_terms(
         self,
-        store: RunStore,
-        glossary: GlossaryStore | None = None,
+        store: Storage,
+        glossary: Storage | GlossaryStore | GlossaryStore | None = None,
     ) -> list[GlossaryTerm]:
         """Return the final glossary snapshot used by this review."""
         if glossary is not None:
@@ -96,7 +96,7 @@ class ReviewService:
 
     def _review_skip_eligible(
         self,
-        store: RunStore,
+        store: Storage,
         latest: dict[str, Any],
         terms: list[GlossaryTerm],
     ) -> bool:
@@ -117,13 +117,13 @@ class ReviewService:
         )
 
     @staticmethod
-    def _review_usage_from_dir(store: RunStore, review_id: str) -> dict[str, Any]:
+    def _review_usage_from_dir(store: Storage, review_id: str) -> dict[str, Any]:
         """Read usage from a completed review directory; return empty when unavailable."""
         usage = store.read_artifact(f"reviews/{review_id}/usage.json")
         return usage if isinstance(usage, dict) else {}
 
     def _open_session(
-        self, store: RunStore, all_terms: list[GlossaryTerm], progress: ProgressFn | None
+        self, store: Storage, all_terms: list[GlossaryTerm], progress: ProgressFn | None
     ) -> ReviewInputs | ReviewOutcome:
         """Validate formal state and restore or initialize the appropriate Review directory."""
         manifest = store.load_manifest()
@@ -210,7 +210,7 @@ class ReviewService:
 
     def run_session(
         self,
-        store: RunStore,
+        store: Storage,
         all_terms: list[GlossaryTerm],
         *,
         progress: ProgressFn | None = None,

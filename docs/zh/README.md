@@ -1,97 +1,282 @@
-# 文译 · Wenyi
+<div align="center">
 
-面向长篇书籍与字幕的多语言翻译工具，同时提供 Web UI 和本地 CLI。
+<h1>
+  <img src="../images/wenyi-emblem.png" alt="" width="280">
+  <br>
+  <img src="../images/wenyi-wordmark-zh.svg" alt="文译" width="180" height="54">
+</h1>
+
+**让故事跨越语言。**
+
+面向书籍与长篇文字，在全书语境中完成翻译。
+
+全书理解 · 术语一致 · 取证式审校
+
+[![Python](https://img.shields.io/badge/python-3.10%2B-D4B56A?style=flat-square&labelColor=00263D)](https://www.python.org/)
+[![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
+[![License](https://img.shields.io/badge/license-MIT-D4B56A?style=flat-square&labelColor=00263D)](../../LICENSE)
+[![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
+[![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
+
+[快速开始](#快速开始) · [语言支持](usage.md#多语言互译实验性) · [使用文档](#文档)
 
 [English](../../README.md) | **简体中文**
 
-本分支沿用 `webui` 的 monorepo 架构，同步 `dev` 已实现的领域功能。默认书籍流程包括全书预理解、翻译、润色、全书审校和自动修复。
+<a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
 
-![双语 EPUB 预览](../images/bilingual-preview.png)
+</div>
 
-## 主要能力
+---
 
-- **多语言互译**：自动检测源语言，支持内置语言及简繁中文、英美英语、葡萄牙语等变体；完整列表见 `trans-novel languages`。
-- **长篇上下文**：全书梗概、章节摘要、滚动上下文、按 Token 预算切分批次；支持在翻译会话内继续润色、实时术语提取和章节标题翻译。
-- **全书审校**：证据核查、冲突仲裁、影子译文修订与独立 Autofix 发布。已完成且输入一致的审校可复用；中断审校可恢复检查点。
-- **格式支持**：EPUB、DOCX、FB2、TXT、Markdown、HTML、PDF 书籍流程，以及独立的 SRT 字幕翻译、编辑和双语导出。
-- **模型配置**：提供商连接、模型配置、`strong` / `cheap` / `fast` 档位、按操作路由、显式备用模型、并发限制、请求/Token 预算、按模型和提供商统计用量。
-- **Web 工作区**：项目配置、实时进度、术语、人工校阅、风格、审校历史、字幕编辑和下载。独立导出队列可在翻译期间读取已保存的一致快照。
+## 目录
 
-## Web 部署
+- [为什么选择文译](#为什么选择文译)
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [支持格式](#支持格式)
+- [翻译流水线](#翻译流水线)
+- [文档](#文档)
+- [憧憬与不足](#憧憬与不足)
+- [社区](#社区)
+- [支持项目](#支持项目)
+- [星标历史](#星标历史)
+- [许可证](#许可证)
+
+---
+
+## 为什么选择文译
+
+| 常见方案 | 文译 |
+|---|---|
+| 逐段翻译，彼此孤立，缺乏上下文 | 全书预扫 + 逐章梗概 + 滚动上下文 |
+| 术语靠人工事后整理 | 翻译中实时抽取专有名词，自动检测译法冲突，立即影响后续批次 |
+| 一次性翻译，中断即作废 | 批次检查点 + 章节状态记录，任意中断后重新执行同一命令即可续跑 |
+| 模型直出，无系统性质控 | 翻译 → 润色 → 取证式全书审校 |
+
+文译为**长文本**设计 —— 长篇小说、社科专著、纪实文学……
+
+<p align="center">
+  <img src="../images/bilingual-preview.png" alt="文译双语对照版阅读效果" width="720">
+  <br>
+  <sub>双语阅读示例：译文与淡化显示的原文相互对照。</sub>
+</p>
+
+---
+
+## 核心特性
+
+- **全书理解** — 翻译前预扫源文，生成逐章梗概和全书概览，注入每批翻译上下文
+- **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
+- **多阶段质量保证** — 可选润色（强档模型重译）和取证式全书 AI 审校
+- **断点续跑** — 批次级检查点、章节状态记录和原子状态写入；任意中断后重新执行同一命令即可续跑
+- **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点；保留三档位入口，支持按操作独立选模型、混用连接与共享限额。配置见[模型路由](configuration.md#模型与操作路由)。
+- **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
+- **双语对照输出** — 可选原文译文对照版，原文视觉淡化，支持深色模式
+
+---
+
+## 快速开始
+
+### 环境要求
+
+需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。
+
+### 安装
 
 ```bash
-git clone --branch webui https://github.com/BigDawnGhost/wenyi.git
+git clone https://github.com/BigDawnGhost/wenyi.git
 cd wenyi
-cp .env.example deploy/.env
-# 在 deploy/.env 填入 config.yaml 所选提供商对应的凭证。
-docker compose -f deploy/docker-compose.yml --profile full up --build
+uv sync
 ```
 
-打开 [Web UI](http://localhost:8080) 或 [API 文档](http://localhost:8000/docs)。`server` profile 启动 API、两个 Worker、PostgreSQL 和 Redis，不启动前端。
+### 配置
 
-API 与 Worker 共享配置文件、环境变量凭证和 `/data` 数据卷。Web 可变状态存入 PostgreSQL；数据卷保存上传原件、解析资源和导出文件。详见 [Web 部署与开发](../web.md)。
-
-## 本地 CLI
-
-需要 Python 3.10+ 和 `uv`，无需数据库或 Redis。
+设置 API 密钥：
 
 ```bash
-uv sync --all-packages
-export DEEPSEEK_API_KEY=your-key
+export DEEPSEEK_API_KEY=sk-...
+```
+
+### 一键翻译
+
+```bash
 uv run trans-novel translate book.epub
 ```
 
-默认提供商为 DeepSeek。可在 `config.yaml` 切换提供商，并设置对应环境变量。仅需 CLI 时使用 `uv sync --package wenyi-cli`。
+解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
+
+多语言互译（实验性）：通过 `language.source` / `language.target` 选择方向，例如 `zh → en`、`en → ja`。运行 `uv run trans-novel languages` 查看列表；不同目标使用独立状态和输出文件名。详见[使用指南](usage.md#多语言互译实验性)。
+
+
+### 分步工作流
 
 ```bash
+# 1. 译前准备 — 解析、分析、预扫（不翻译正文）
 uv run trans-novel prepare book.epub
-uv run trans-novel translate book.epub --bilingual
-uv run trans-novel review book.epub --no-autofix
+
+# 2. 翻译 — 从准备状态续跑
+uv run trans-novel translate book.epub
+
+# 3. 独立审校 — 基于最终术语库的逐章审校
+uv run trans-novel review book.epub
+
+# 4. 查看进度
 uv run trans-novel status book.epub
-uv run trans-novel assemble book.epub --format docx
-uv run trans-novel translate captions.srt --bilingual
 ```
 
-**Review 与 Autofix 默认开启。** 仅查看建议时使用 `review --no-autofix`。想降低处理量，可使用 Web 的“快速出稿”或在配置中关闭预理解、润色和审校。重复执行命令会继续保存的进度。
+### 中断续跑
 
-CLI 按目标语言隔离状态：书籍使用 `state/<书名>/targets/<语言>/`，字幕使用 `state/srt/<名称>/targets/<语言>/`。源文件哈希用于防止错误续跑。导出通常位于 `output/<书名>.<语言>.<格式>`，双语版带 `-bi`。
-
-## 格式与可选服务
-
-| 输入 | 处理说明 |
-|---|---|
-| EPUB / HTML | 保留支持的结构、资源、目录、锚点、Ruby 与注释链接；EPUB 支持逐段注释定位。 |
-| DOCX | 保留支持的标题、列表、表格、段落和行内样式，按目标语言选择字体策略。 |
-| TXT / Markdown / FB2 | 本地解析为章节与段落。 |
-| PDF / MinerU | 默认 PDF 路径，需要 `MINERU_API_KEY`；缓存解析结果，扫描件由 MinerU 处理。 |
-| PDF / BabelDOC | 配置选择的独立 HTTP bridge；保存解析后端信息，供 PDF 回填导出使用。 |
-| SRT | 独立字幕条目和批次缓存，保留序号与时间戳；不运行书籍预理解或全书审校。 |
-
-本地 PDF 输出可安装 `uv sync --all-packages --extra pdf-output`（WeasyPrint）或 `--extra pdf-output-lite`（fpdf2）。Docker 后端镜像默认包含两者和 Noto 字体；设 `INSTALL_PDF_OUTPUT=false` 可省略 Python PDF 输出依赖。BabelDOC bridge 需要单独部署。
-
-## 架构与升级方式
-
-- `apps/web`：React/Vite；`apps/api`：FastAPI/Arq。
-- `wenyi:workflows` 队列处理解析、准备、翻译、审校与模型对比；`wenyi:exports` 队列独立导出。
-- `packages/core` 提供领域服务与存储接口；`packages/cli` 提供 `trans-novel`。
-- Web 使用 PostgreSQL 存储项目、术语、Review、字幕与账本；CLI 使用文件和 SQLite。Web 不维护数据库状态的本地 JSON/SQLite 副本。
-- `packages/shared-schema` 保存由 OpenAPI 生成的前端接口类型。
-
-此次变更面向**全新 Web 部署**，不自动迁移旧数据库、项目策略或状态。保留旧安装时，为新版使用独立数据库和数据卷。
-
-## 文档与验证
-
-[使用指南](usage.md) · [配置指南](configuration.md) · [流水线与存储](pipeline.md) · [Web 部署](../web.md) · [同步说明](../sync-dev-webui.md)
+每个完成的批次立即持久化。中断后重新执行同一命令即可续跑：
 
 ```bash
-uv sync --all-packages --group dev
-uv run pytest -q
-uv run ruff check packages/core packages/cli apps/api
-pnpm install --frozen-lockfile
-pnpm -C apps/web typecheck
-pnpm -C apps/web build
+uv run trans-novel translate book.epub
 ```
 
-设置 `WENYI_TEST_DATABASE_URL` 可运行真实 PostgreSQL 存储及工作流集成测试。CI 提供 PostgreSQL/Redis、Python 3.10/3.12、前端构建与浏览器测试。离线模型替身验证功能和恢复行为，不代表真实模型的译文质量评估结果。
+### 命令行覆盖
 
-[贡献指南](CONTRIBUTING.md) · [MIT 许可](../../LICENSE)
+```bash
+uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
+uv run trans-novel translate book.epub --no-polish                # 关闭润色
+uv run trans-novel translate book.epub --no-review                # 跳过最终审校
+uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
+uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
+uv run trans-novel translate book.epub --format txt               # 导出为纯文本
+```
+
+最终审校默认开启，一键流程会在全书翻译完成、术语库达到最终状态后再统一执行。
+可用 `--no-review` 或设置 `pipeline.review: false` 跳过；也可以独立运行 Agent Review：
+
+```bash
+uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
+```
+
+每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
+矛盾的一致性建议。确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
+只会看到影子译文，不会收到上一轮的问题说明。Review 默认会写回正式章节 `target`；
+使用 `--no-autofix` 或设置 `pipeline.review_autofix: false` 可保持只读。开启 Autofix
+后，会先应用折叠后的 changes，再让剩余 issues 基于更新译文复用现有 Review Agent Loop
+和 Fixer。只有正式段落的 `target`
+会被覆盖，完整历史保存在 Review 目录的 `autofix/index.json`；统一结果仍写入
+`state/<书名>/targets/<目标语言>/reviews/review-<时间戳>/result.json`。
+
+---
+
+## 支持格式
+
+| 输入 | 输出 |
+|---|---|
+| EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX | EPUB（单语 / 双语）、TXT、HTML、Markdown、DOCX |
+| SRT（影视字幕） | 单语 `.zh.srt`，可选双语 `.zh-bi.srt` |
+
+- PDF 输入默认走 MinerU，首次转换需 `MINERU_API_KEY`，生成的 HTML 会缓存复用。可选 BabelDOC bridge 用于尽量保留版式。
+- EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
+- 源语言默认由模型自动识别，也可在 `config.yaml` 中固定为 ISO 639-1 语言代码。
+- `.srt` 由 `translate` 自动识别，走轻量并发路径（无术语库、润色与全书审校）。状态在 `state/srt/<slug>/targets/<目标语言>/`，成品默认写到源文件旁的 `output/`。详见[使用指南](usage.md#srt-字幕)。
+- `.docx` 走完整书籍管线：尽量保留标题导航、简易表格、列表与常见字符/段落样式；已译中文用宋体。默认导出 `.zh.docx`（可用 `--format` 覆盖）。详见[使用指南](usage.md#docxword)。
+
+---
+
+## 翻译流水线
+
+```mermaid
+flowchart TD
+    A[输入文件] --> B[解析章节并检测语言]
+    B --> C[分析风格并建立初始术语]
+    C --> D[可选并行预扫<br/>生成逐章梗概与全书概览]
+    D --> E
+
+    subgraph T[逐章翻译]
+        E[注入上下文并翻译一个批次]
+        E --> F[润色并保存译文]
+        F --> FA[立即串行定位含注释逻辑段<br/>关闭或无注释时跳过]
+        FA --> G[抽取术语并刷新术语快照]
+        G --> H{还有待译批次？}
+        H -- 是 --> E
+        H -- 否 --> IB[全章术语兜底抽取]
+        IB --> J[保存章节最终状态]
+    end
+
+    J --> K[可选并行全书审校<br/>使用完整术语库]
+    K --> N{存在确认问题且<br/>仍有修订轮次？}
+    N -- 是 --> O[基于同一固定快照<br/>生成临时影子修订]
+    O --> K
+    N -- 否或达到停止条件 --> P[保存 Review 问题<br/>与折叠后的 changes]
+    P --> Q{开启 Autofix？}
+    Q -- 是 --> R[叠加 changes 并复用 Agent Loop 与 Fixer<br/>发布最终段落 target]
+    Q -- 否 --> X[可选仅规范导出副本标点]
+    R --> X
+    X --> M[生成报告并组装所选格式]
+```
+
+启用全书理解时，预扫阶段按可配置并发数并行执行，并且幂等可续跑——已完成的梗概会跨运行复用。翻译过程中，每批获得最新的术语快照和已译上下文，确保代词、术语和语气跨章一致。
+Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，
+以保持全书风格；普通 Review 循环中的替换只存在于影子译文中，可选 Autofix 发布
+阶段会复用它生成正式段落 target。
+
+---
+
+## 文档
+
+- [使用指南](usage.md) — 安装、Windows 使用、输入输出、断点续跑和独立工作流阶段
+- [配置说明](configuration.md) — 模型提供商、源语言、流水线开关、切分与路径配置
+- [翻译流程](pipeline.md) — 预扫、术语、上下文、润色、审校和断点续跑如何协作
+- [Web 部署](web.md) — Docker/本地 Web 栈、Worker、导出与项目工作流
+- [贡献指南](CONTRIBUTING.md) — 开发、测试和贡献要求
+
+公版书翻译生成的状态目录可在 [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase) 查看，也欢迎提交分享。请勿提交或分享无授权的版权文本、私人书籍或包含敏感信息的 `state/` 目录。
+
+---
+
+## 憧憬与不足
+
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的状态目录，PDF 输入默认依赖 MinerU 外部服务（首次转换需 API Key），可选 BabelDOC bridge 保留版式。SRT 字幕走轻量并发路径，不建术语库、不做润色与全书审校，不同目录下同名文件也可能共用同一 `state/srt/<slug>/targets/<目标语言>/`。多语言互译现为实验性功能，支持中、英、日、韩、法、德、西、意、葡、俄及部分变体；真实模型长篇质量仍待验证，CLI 和提示词指令统一使用英语，模型生成的说明性元数据使用翻译目标语言。
+
+未来想让翻译在够准确的前提下更加顺畅，努力从可读向好读迈进。如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
+
+---
+
+## 社区
+
+- [Discord 服务器](https://discord.gg/sM3AQcF5D2)
+- QQ 群：1055065098
+- [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — 问题反馈
+- [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — 想法与讨论
+
+---
+
+## 支持项目
+
+如果项目对你有帮助，欢迎打赏。
+
+<p align="center">
+  <img src="../images/tip-wechat.jpg" alt="微信收款码" width="220">
+  &nbsp;&nbsp;
+  <img src="../images/tip-alipay.jpg" alt="支付宝收款码" width="220">
+  <br>
+  <sub>微信 · 支付宝</sub>
+</p>
+
+---
+
+## 星标历史
+
+<a href="https://star-history.dera.page/#BigDawnGhost/wenyi&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=BigDawnGhost/wenyi&type=date&legend=top-left" />
+ </picture>
+</a>
+
+---
+
+## 许可证
+
+[MIT](../../LICENSE)
+
+---
+
+## 国内 AtomGit 托管
+
+本项目在 AtomGit 亦有镜像：[https://atomgit.com/BigDawnGhost/wenyi](https://atomgit.com/BigDawnGhost/wenyi)

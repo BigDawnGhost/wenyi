@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Any
 from ..review.autofix_models import text_hash
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
+from ..storage.protocol import Storage
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
     from .docx_styles import DocxStyleService
-    from .runstore import RunStore
+
 ProgressFn = Callable[[int, int, str], None]
 
 
@@ -23,7 +24,7 @@ class AutofixPublisher:
 
     def apply(
         self,
-        store: RunStore,
+        store: Storage,
         debug: ReviewRunStore,
         index: dict[str, Any],
         result: dict[str, Any],
@@ -132,7 +133,7 @@ class AutofixPublisher:
 
     def finish(
         self,
-        store: RunStore,
+        store: Storage,
         debug: ReviewRunStore,
         index: dict[str, Any],
         result: dict[str, Any],

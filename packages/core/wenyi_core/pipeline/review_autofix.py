@@ -15,6 +15,7 @@ from ..glossary.store import GlossaryTerm
 from ..llm.usage import validate_usage
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
+from ..storage.protocol import Storage
 from .autofix_candidates import AutofixCandidateService
 from .autofix_plan import prepare_identity, save_plan
 from .autofix_publish import AutofixPublisher
@@ -22,7 +23,6 @@ from .docx_styles import DocxStyleService
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
-    from .runstore import RunStore
     from .runtime import PipelineRuntime
 
 ProgressFn = Callable[[int, int, str], None]
@@ -50,7 +50,7 @@ class ReviewAutofixService:
 
     def resume_pending(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         progress: ProgressFn | None = None,
     ) -> ReviewOutcome | None:
@@ -84,7 +84,7 @@ class ReviewAutofixService:
 
     def run(
         self,
-        store: RunStore,
+        store: Storage,
         outcome: ReviewOutcome,
         all_terms: list[GlossaryTerm],
         *,
@@ -101,7 +101,7 @@ class ReviewAutofixService:
 
     def _run(
         self,
-        store: RunStore,
+        store: Storage,
         outcome: ReviewOutcome,
         all_terms: list[GlossaryTerm],
         *,
@@ -150,7 +150,7 @@ class ReviewAutofixService:
 
     def _save_usage_delta(
         self,
-        store: RunStore,
+        store: Storage,
         debug: ReviewRunStore,
         *,
         scope: str,
@@ -160,7 +160,7 @@ class ReviewAutofixService:
 
     def _apply_index(
         self,
-        store: RunStore,
+        store: Storage,
         debug: ReviewRunStore,
         index: dict[str, Any],
         result: dict[str, Any],

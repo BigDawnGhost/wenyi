@@ -19,8 +19,9 @@ from ..i18n.resources import prompt_fingerprint
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.models import Document
 from ..ingest.segmenter import load_document
+from ..storage.protocol import Storage
 from .context import RollingContext
-from .runstore import RunStore, source_sha256, translation_run_dir
+from .runstore import source_sha256, translation_run_dir
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
@@ -70,7 +71,7 @@ class PreparationService:
         input_path: str,
         *,
         progress: ProgressFn | None = None,
-    ) -> RunStore:
+    ) -> Storage:
         """Locate existing state without creating or initializing a translation task.
         PDF state follows the filename and can be checked before MinerU. EPUB needs only the
         OPF title, avoiding full-resource annotation that export will later repeat. Other
@@ -119,7 +120,7 @@ class PreparationService:
         input_path: str,
         *,
         progress: ProgressFn | None = None,
-    ) -> RunStore:
+    ) -> Storage:
         """Parse input and locate state; initialize first runs under the book lock.
         PDF state follows the filename, allowing manifest checks before repeated external
         conversion. Cache the initial converted HTML within that state directory.
@@ -217,12 +218,12 @@ class PreparationService:
     def _prepare_locked(
         self,
         doc,
-        store: RunStore,
+        store: Storage,
         input_path: str,
         progress: ProgressFn | None,
         *,
         source_hash: str,
-    ) -> RunStore:
+    ) -> Storage:
         """Restore existing state, or write new derived state before atomically committing the
         manifest.
         """
@@ -297,7 +298,7 @@ class PreparationService:
         )
         return store
 
-    def activate(self, store: RunStore) -> dict[str, Any]:
+    def activate(self, store: Storage) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
         store.recover_usage()
         manifest = store.load_manifest()
@@ -359,7 +360,7 @@ class PreparationService:
     # Book-understanding prescan: chapter digests and whole-book synopsis.
     def ensure_understanding(
         self,
-        store: RunStore,
+        store: Storage,
         progress: ProgressFn | None = None,
     ) -> str:
         """Prescan source chapters into chapter.meta digests and an analysis synopsis.

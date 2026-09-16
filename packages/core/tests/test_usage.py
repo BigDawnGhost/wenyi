@@ -34,11 +34,20 @@ from wenyi_core.llm.usage import (
     usage_delta,
 )
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore, source_sha256
+from wenyi_core.pipeline.runstore import source_sha256
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
 from tests.model_fixtures import model_config
 from tests.sample_data import write_sample_txt
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def _make_usage(
@@ -633,7 +642,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
 
     def test_usage_accumulates_across_orchestrators_for_one_book(self):
         with tempfile.TemporaryDirectory() as d:
-            store = RunStore(os.path.join(d, "state", "book"))
+            store = FileStorage(os.path.join(d, "state", "book"))
             config = Config.from_dict({"llm": {"preset": "fake"}})
 
             first_client = FakeClient()
@@ -916,7 +925,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "novel.txt")
             write_sample_txt(source)
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             store.save_manifest(
                 {
                     "source_path": source,
@@ -947,7 +956,7 @@ class TestRunStoreLock(unittest.TestCase):
                 source_path=source_path,
                 chapters=[chapter],
             )
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
             manifest = store.stage_document(document, source_hash=digest)
             store.save_manifest(manifest)
 
@@ -994,7 +1003,7 @@ class TestRunStoreLock(unittest.TestCase):
                     "epub_annotation_contexts": registry,
                 },
             )
-            store = RunStore(os.path.join(directory, "state", "book"))
+            store = FileStorage(os.path.join(directory, "state", "book"))
 
             manifest = store.stage_document(document, source_hash="a" * 64)
 
@@ -1006,8 +1015,8 @@ class TestRunStoreLock(unittest.TestCase):
     def test_second_store_waits_for_first_store_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = os.path.join(directory, "state", "book")
-            first = RunStore(run_dir)
-            second = RunStore(run_dir)
+            first = FileStorage(run_dir)
+            second = FileStorage(run_dir)
             entered = threading.Event()
 
             def acquire_second() -> None:
@@ -1026,8 +1035,8 @@ class TestRunStoreLock(unittest.TestCase):
     def test_chapter_publish_waits_for_export_snapshot_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = os.path.join(directory, "state", "book")
-            snapshot_reader = RunStore(run_dir)
-            publisher = RunStore(run_dir)
+            snapshot_reader = FileStorage(run_dir)
+            publisher = FileStorage(run_dir)
             completed = threading.Event()
             chapter = Chapter(
                 index=0,

@@ -11,7 +11,7 @@ from ..agents import prompts
 from ..agents.title_translator import TitleOutputError, TitleTranslator
 from ..glossary.store import GlossaryStore
 from ..ingest.models import Chapter
-from .runstore import RunStore
+from ..storage.protocol import Storage
 
 
 def _flat(value: object) -> str:
@@ -178,8 +178,8 @@ class TitleTranslationService:
 
     def run(
         self,
-        store: RunStore,
-        glossary: GlossaryStore,
+        store: Storage,
+        glossary: Storage | GlossaryStore,
         progress: Callable[[int, int, str], None] | None = None,
     ) -> None:
         """Reuse complete headings, then translate and commit only pending title batches."""

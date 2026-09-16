@@ -6,9 +6,18 @@ from unittest.mock import patch
 import pytest
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.test_orchestrator import MeteredFakeClient, _fix_json, _review_json
 from tests.test_review_autofix import _config, _store
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def _project(directory):

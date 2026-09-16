@@ -17,9 +17,17 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
-from wenyi_core.storage.file import FileStorage as RunStore
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def _config(state_dir: str) -> Config:
@@ -40,8 +48,8 @@ def _config(state_dir: str) -> Config:
     )
 
 
-def _store(directory: str, target: str = "正式译文。") -> RunStore:
-    store = RunStore(str(Path(directory, "state", "book")))
+def _store(directory: str, target: str = "正式译文。") -> FileStorage:
+    store = FileStorage(str(Path(directory, "state", "book")))
     store.save_chapter(
         Chapter(
             index=0,
@@ -62,7 +70,7 @@ def _store(directory: str, target: str = "正式译文。") -> RunStore:
 
 
 def _outcome(
-    store: RunStore,
+    store: FileStorage,
     *,
     issues: list[dict] | None = None,
     changes: list[dict] | None = None,

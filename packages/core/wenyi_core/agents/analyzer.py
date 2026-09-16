@@ -11,6 +11,7 @@ from typing import Any
 from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
 from ..i18n.metadata import normalize_gender, normalize_term_type
 from ..i18n.prompts import render
+from ..storage.protocol import Storage
 from .base import Agent
 
 
@@ -58,7 +59,7 @@ class Analyzer(Agent):
             term["type"] = normalize_term_type(_text(term.get("type")))
         return data
 
-    def seed_glossary(self, store: GlossaryStore, analysis: dict[str, Any]) -> int:
+    def seed_glossary(self, store: Storage | GlossaryStore, analysis: dict[str, Any]) -> int:
         """Seed analyzed characters and terms into the glossary; return the entry count."""
         count = 0
         for ch in self.dict_items(analysis.get("characters")):

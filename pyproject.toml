@@ -22,6 +22,7 @@ pdf-output-lite = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=3.7",
     "ruff>=0.6",
     "pytest>=8",
 ]

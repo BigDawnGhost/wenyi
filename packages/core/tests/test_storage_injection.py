@@ -23,6 +23,13 @@ from wenyi_core.storage.protocol import Storage
 from tests.fake_llm import MeteredFakeClient, routing_handler
 
 
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
+
+
 class MemoryArtifacts:
     """An independent artifact backend with no filesystem delegation."""
 
@@ -153,8 +160,12 @@ def test_subtitle_pause_flushes_usage_and_resume_preserves_human_edits(tmp_path)
 
     with pytest.raises(RuntimeError, match="pause requested"):
         translate_srt(str(source), config, client=client, storage=storage, progress=pause)
-    assert storage.load_usage()["totals"]["calls"] == 1
-    assert storage.read_artifact("srt/manifest.json")["status"] == "interrupted"
+    usage = storage.load_usage()
+    assert usage is not None
+    assert usage["totals"]["calls"] == 1
+    manifest = storage.read_artifact("srt/manifest.json")
+    assert isinstance(manifest, dict)
+    assert manifest["status"] == "interrupted"
     subtitle = SrtRunStore(storage.run_dir, storage=storage)
     cues = subtitle.load_cues()
     cues["1"]["target"] = "人工校订。"

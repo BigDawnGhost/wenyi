@@ -263,6 +263,7 @@ def create_job(
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
             (pid, kind, status, arq_job_id, Jsonb(saved_params), run_id or uuid.uuid4().hex),
         ).fetchone()
+    assert r is not None
     return r[0]
 
 
@@ -285,7 +286,7 @@ _JOB_COLUMNS = (
 def _job_row(row) -> dict[str, Any] | None:
     if row is None:
         return None
-    result = dict(zip(_JOB_COLUMNS.split(","), row))
+    result: dict[str, Any] = dict(zip(_JOB_COLUMNS.split(","), row))
     for key in ("created_at", "updated_at"):
         result[key] = result[key].isoformat() if result[key] else None
     return result
@@ -324,7 +325,7 @@ def list_jobs(pid: str) -> list[dict[str, Any]]:
         rows = c.execute(
             f"SELECT {_JOB_COLUMNS} FROM jobs WHERE project_id=%s ORDER BY id DESC", (pid,)
         ).fetchall()
-    return [_job_row(row) for row in rows]
+    return [item for item in (_job_row(row) for row in rows) if item is not None]
 
 
 def create_export(pid: str, fmt: str, options: dict[str, Any]) -> int:
@@ -334,6 +335,7 @@ def create_export(pid: str, fmt: str, options: dict[str, Any]) -> int:
                VALUES (%s,%s,%s,'pending') RETURNING id""",
             (pid, fmt, Jsonb(options)),
         ).fetchone()
+    assert row is not None
     return row[0]
 
 

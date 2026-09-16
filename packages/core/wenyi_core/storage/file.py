@@ -115,6 +115,10 @@ class FileStorage(FileArtifacts):
     def usage_path(self) -> str:
         return self._run.usage_path
 
+    @property
+    def initialization_path(self) -> str:
+        return self._run.initialization_path
+
     # ── 生命周期 ─────────────────────────────────────────────────────────
     def begin_initialization(self, source_hash: str) -> None:
         self.close()

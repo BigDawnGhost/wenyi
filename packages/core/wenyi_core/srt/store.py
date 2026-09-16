@@ -27,6 +27,7 @@ class SrtRunStore:
 
     def __init__(self, run_dir: str, *, storage=None):
         self.run_dir = run_dir
+        self._usage_checkpoint: dict[str, Any] | None = None
         self.batches_dir = os.path.join(run_dir, "batches")
         self._storage = storage
         self._artifacts = storage or FileArtifacts(run_dir)

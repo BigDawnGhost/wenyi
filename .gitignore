@@ -11,8 +11,10 @@ state/
 *.zh.epub
 *.zh.txt
 *.txt
+!packages/core/wenyi_core/i18n/data/tasks/*.txt
+!packages/core/wenyi_core/i18n/data/shared/*.txt
 
-# 输入书籍 / 生成产物（勿入库）
+# Input books and generated artifacts (do not commit)
 output/
 explore/
 *.epub
@@ -21,6 +23,8 @@ explore/
 *.azw3
 *.pdf
 *.html
+*.srt
+*.docx
 
 # ── Web 升级（monorepo）─────────────────────────────────────────
 node_modules/

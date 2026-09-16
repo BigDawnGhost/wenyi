@@ -10,13 +10,15 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from test_storage_pg_integration import pg_pool  # noqa: F401
-from tests.fake_llm import MeteredFakeClient, routing_handler
+from type_helpers import must
 from wenyi_api import dal, job_service
 from wenyi_api.db import pool as pool_module
 from wenyi_api.main import create_app
 from wenyi_api.project_service import storage_for
 from wenyi_api.routers import export
 from wenyi_api.workers import tasks
+
+from tests.fake_llm import MeteredFakeClient, routing_handler
 
 
 @pytest.fixture
@@ -106,7 +108,7 @@ def test_full_web_book_workflow_and_independent_export(api):
     response = client.post(f"/projects/{pid}/exports", json={"format": "docx", "bilingual": True})
     assert response.status_code == 200, response.text
     execute_next(api)
-    assert dal.get_project(pid)["status"] == "translating"
+    assert must(dal.get_project(pid))["status"] == "translating"
     eid = response.json()["export_id"]
     download = client.get(f"/projects/{pid}/exports/{eid}/download")
     assert download.status_code == 200 and download.content.startswith(b"PK")
@@ -144,13 +146,13 @@ def test_queue_failure_and_retry_preserve_original_task_kind(api, monkeypatch):
 
     monkeypatch.setattr(job_service, "enqueue", fail)
     assert client.post(f"/projects/{pid}/prepare").status_code == 503
-    assert dal.get_project(pid)["status"] == "uploaded"
+    assert must(dal.get_project(pid))["status"] == "uploaded"
     monkeypatch.setattr(job_service, "enqueue", actual_enqueue)
     response = client.post(f"/projects/{pid}/resume")
     assert response.status_code == 200 and response.json()["kind"] == "prepare"
     assert "config_snapshot" not in queue[0][1]
     execute_next(api)
-    assert dal.get_project(pid)["status"] == "prepared"
+    assert must(dal.get_project(pid))["status"] == "prepared"
 
 
 def test_pause_and_resume_parse_preserves_job_identity(api):
@@ -162,12 +164,12 @@ def test_pause_and_resume_parse_preserves_job_identity(api):
     run_id = response.json()["job_id"]
     assert client.post(f"/projects/{pid}/pause").status_code == 200
     execute_next(api)
-    assert dal.get_project(pid)["status"] == "paused"
-    assert dal.get_job_by_arq_id(run_id)["status"] == "paused"
+    assert must(dal.get_project(pid))["status"] == "paused"
+    assert must(dal.get_job_by_arq_id(run_id))["status"] == "paused"
     response = client.post(f"/projects/{pid}/resume")
     assert response.status_code == 200 and response.json()["kind"] == "parse"
     execute_next(api)
-    assert dal.get_project(pid)["status"] == "uploaded"
+    assert must(dal.get_project(pid))["status"] == "uploaded"
 
 
 def test_source_identity_and_config_snapshot(api):
@@ -273,7 +275,7 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
             await worker.close()
 
     asyncio.run(consume())
-    assert dal.get_job_by_arq_id(response.json()["job_id"])["status"] == "done"
+    assert must(dal.get_job_by_arq_id(response.json()["job_id"]))["status"] == "done"
     assert client.get(f"/projects/{pid}/preview").status_code == 200
 
 
@@ -284,7 +286,7 @@ def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
     pid = new_project(api)
     upload(api, pid)
     response = client.post(f"/projects/{pid}/prepare")
-    job = dal.get_job_by_arq_id(response.json()["job_id"])
+    job = must(dal.get_job_by_arq_id(response.json()["job_id"]))
     dal.set_job_status(job["id"], "running")
     with pool_module.get_pool().connection() as conn:
         conn.execute(
@@ -292,8 +294,8 @@ def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
         )
     # No live thread owns the project's advisory lock, even though DB says running.
     asyncio.run(recover_jobs({"redis": None}))
-    assert dal.get_project(pid)["status"] == "paused"
-    assert dal.latest_resumable_job(pid)["kind"] == "prepare"
+    assert must(dal.get_project(pid))["status"] == "paused"
+    assert must(dal.latest_resumable_job(pid))["kind"] == "prepare"
 
 
 def test_comparison_results_and_usage_survive_book_initialization(api, monkeypatch):

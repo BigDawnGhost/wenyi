@@ -22,9 +22,17 @@ from wenyi_core.llm.retrying import (
 )
 from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.model_fixtures import model_config
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 class _HttpError(Exception):
@@ -216,7 +224,7 @@ def test_permanent_error_is_not_retried_or_reported_as_exhaustion():
 
 def test_orchestrator_retry_sink_writes_book_event_log():
     with tempfile.TemporaryDirectory() as directory:
-        store = RunStore(directory)
+        store = FileStorage(directory)
         client = RoutedLLMClient(_config(max_retries=0))
         orchestrator = Orchestrator(Config(), client=client)
         orchestrator._runtime.bind_llm_events(store)

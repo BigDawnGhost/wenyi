@@ -10,11 +10,13 @@ import os
 import threading
 import uuid
 from pathlib import Path
+from typing import Any, cast
 
 import psycopg
 import pytest
 from psycopg import sql
 from psycopg_pool import ConnectionPool
+from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
@@ -43,7 +45,7 @@ def pg_pool():
     try:
         schema_sql = Path(__file__).parents[1] / "wenyi_api" / "db" / "schema.sql"
         with pool.connection() as conn:
-            conn.execute(schema_sql.read_text(encoding="utf-8"))
+            conn.execute(cast(Any, schema_sql.read_text(encoding="utf-8")))
         yield pool
     finally:
         pool.close()
@@ -294,9 +296,10 @@ def test_postgres_state_transaction_rolls_back_complete_chapter(pg_storage, tmp_
 
 
 def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path):
-    from tests.fake_llm import MeteredFakeClient, routing_handler
     from wenyi_core.config import Config
     from wenyi_core.pipeline.orchestrator import Orchestrator
+
+    from tests.fake_llm import MeteredFakeClient, routing_handler
 
     doc = document(tmp_path)
     config = Config.from_dict(
@@ -401,9 +404,10 @@ def test_postgres_subtitle_translation_resume_and_dual_output(pg_storage, tmp_pa
 
 
 def test_postgres_review_interrupt_restores_same_run(pg_storage, tmp_path, monkeypatch):
-    from tests.fake_llm import MeteredFakeClient, routing_handler
     from wenyi_core.config import Config
     from wenyi_core.pipeline.orchestrator import Orchestrator
+
+    from tests.fake_llm import MeteredFakeClient, routing_handler
 
     doc = document(tmp_path)
     config = Config.from_dict(
@@ -502,10 +506,11 @@ def test_postgres_autofix_publication_resume_protects_manual_edit(
 def test_postgres_subtitle_pause_persists_usage_and_manual_edit(pg_storage, tmp_path):
     import json
 
-    from tests.fake_llm import MeteredFakeClient
     from wenyi_core.config import Config
     from wenyi_core.srt.store import SrtRunStore
     from wenyi_core.srt.translate import translate_srt
+
+    from tests.fake_llm import MeteredFakeClient
 
     source = tmp_path / "pause.srt"
     source.write_text(
@@ -565,20 +570,20 @@ def test_postgres_dal_config_job_identity_errors_and_review_summary(
         pid, doc.source_path, "中文书名", source_sha256=digest, source_meta={"parsed": True}
     )
     assert dal.get_project_config(pid) == config
-    project = dal.get_project(pid)
+    project = must(dal.get_project(pid))
     assert project["initialized"] and project["source_sha256"] == digest
     assert project["source_meta"] == {"parsed": True}
     dal.set_project_status(pid, "error", error="Service failed")
-    assert dal.get_project(pid)["error"] == "Service failed"
+    assert must(dal.get_project(pid))["error"] == "Service failed"
     dal.set_project_status(pid, "reviewing")
-    assert dal.get_project(pid)["error"] is None
+    assert must(dal.get_project(pid))["error"] is None
     job_id = dal.create_job(
         pid, "review", "queue-1", params={"chapter": 0}, config_snapshot=config, run_id="run-1"
     )
-    assert dal.get_job_by_arq_id("queue-1")["id"] == job_id
-    assert dal.get_job(job_id)["params"]["config_snapshot"] == config
+    assert must(dal.get_job_by_arq_id("queue-1"))["id"] == job_id
+    assert must(dal.get_job(job_id))["params"]["config_snapshot"] == config
     dal.set_job_status(job_id, "paused")
-    assert dal.latest_resumable_job(pid)["run_id"] == "run-1"
+    assert must(dal.latest_resumable_job(pid))["run_id"] == "run-1"
     later = dal.create_job(pid, "review", "queue-2", run_id="run-2")
     dal.set_job_status(later, "done")
     assert dal.latest_resumable_job(pid) is None

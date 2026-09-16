@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import hashlib
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, TypeAlias
 
 from ..ingest.models import Chapter
-from ..pipeline.runstore import RunStore
+from ..pipeline.runstore import ExportSnapshotStore, RunStore
 from ..postprocess.punct import normalize_zh_segments
+from ..storage.protocol import Storage
 from .writer_common import _manifest_target_lang
 
 
@@ -69,7 +70,9 @@ def _remap_metadata_offsets(metadata: object, before: str, after: str) -> None:
 class ExportViewStore(RunStore):
     """Overlay read-only export transformations on RunStore and delegate other capabilities."""
 
-    def __init__(self, store: RunStore, *, punctuation_normalize: bool) -> None:
+    def __init__(
+        self, store: Storage | ExportSnapshotStore, *, punctuation_normalize: bool
+    ) -> None:
         super().__init__(store.run_dir, create=False)
         self._store = store
         self._punctuation_normalize = (
@@ -109,3 +112,6 @@ class ExportViewStore(RunStore):
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
+
+
+AssembleStore: TypeAlias = Storage | ExportViewStore | ExportSnapshotStore

@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import pathlib
 from threading import Lock
-from typing import Optional
+from typing import Any, Optional, cast
 
 from psycopg_pool import ConnectionPool
 
-_pool: Optional[ConnectionPool] = None
+_pool: Optional[ConnectionPool[Any]] = None
 _init_lock = Lock()
 _SCHEMA_SQL = (pathlib.Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
 
-def init_pool(dsn: str) -> ConnectionPool:
+def init_pool(dsn: str) -> ConnectionPool[Any]:
     """创建进程级连接池并初始化 schema（幂等）。"""
     global _pool
     with _init_lock:
@@ -30,7 +30,7 @@ def init_pool(dsn: str) -> ConnectionPool:
             with pool.connection() as conn:
                 # API and both workers may boot together on a fresh database.
                 conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:schema',0))")
-                conn.execute(_SCHEMA_SQL)
+                conn.execute(cast(Any, _SCHEMA_SQL))
         except BaseException:
             pool.close()
             raise
@@ -38,7 +38,7 @@ def init_pool(dsn: str) -> ConnectionPool:
         return pool
 
 
-def get_pool() -> ConnectionPool:
+def get_pool() -> ConnectionPool[Any]:
     if _pool is None:
         raise RuntimeError("DB pool not initialized; call init_pool() first.")
     return _pool

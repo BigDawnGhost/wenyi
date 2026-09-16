@@ -1,5 +1,7 @@
 """Inference-aware resume and recoverable usage publication contracts."""
 
+from __future__ import annotations
+
 import json
 
 import pytest
@@ -10,12 +12,20 @@ from wenyi_core.llm.usage import UsageSample
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
 from wenyi_core.pipeline.review_workflow import ReviewService
-from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.pipeline.runtime import PipelineRuntime
 from wenyi_core.review.run_store import ReviewRunStore
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_txt
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def _config(tmp_path):
@@ -43,7 +53,7 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     config = _config(tmp_path)
     client = FakeClient()
     runtime = PipelineRuntime(config, client)
-    store = RunStore(str(tmp_path / "run"))
+    store = FileStorage(str(tmp_path / "run"))
     debug = ReviewRunStore(store.run_dir)
     client.usage.record(
         "strong",
@@ -52,7 +62,8 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
         provider="provider-id",
         model="model-id",
     )
-    original_write = store._write_json
+    # FileStorage publishes usage through the wrapped RunStore writer.
+    original_write = store._run._write_json
     failed = [False]
 
     def write(path, data):
@@ -64,7 +75,7 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
             raise OSError("simulated interrupted review ledger write")
         original_write(path, data)
 
-    monkeypatch.setattr(store, "_write_json", write)
+    monkeypatch.setattr(store._run, "_write_json", write)
     with pytest.raises(OSError):
         runtime.flush_usage(store, scope="review", review=debug)
     book_usage = store.load_usage()
@@ -151,7 +162,7 @@ def test_completed_translation_is_kept_and_changed_review_model_gets_new_run(tmp
     write_sample_txt(str(source))
     config = _config(tmp_path)
     first = Orchestrator(config, FakeClient(handler=routing_handler))
-    store = first.run(str(source))
+    store = require_file_storage(first.run(str(source)))
     initial = first.run_review(str(source))
     translated = {path.name: path.read_bytes() for path in (tmp_path / "state").rglob("ch*.json")}
     assert translated

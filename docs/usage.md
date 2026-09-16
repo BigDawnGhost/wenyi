@@ -1,110 +1,346 @@
-# CLI usage
+# Usage guide
 
-[简体中文](zh/usage.md) · [Web UI](web.md) · [Configuration](configuration.md)
+[简体中文](zh/usage.md)
 
-## Install and configure
+For the React/Vite + FastAPI stack, see [Web deployment](web.md).
 
-```bash
-uv sync --package wenyi-cli
-export DEEPSEEK_API_KEY=your-key
-uv run trans-novel --help
-uv run trans-novel languages
-```
+## Installation and first run
 
-The first invocation creates a default configuration if the selected file does not exist. Supply a configuration before the command: `uv run trans-novel --config custom.yaml translate book.epub`. Credentials belong in the environment variable named by each provider configuration.
-
-`language.source` accepts `auto`; `language.target` must be a supported concrete language. Identical source and target languages are rejected. Explicitly setting the source language avoids an initial detection call.
-
-## Book workflow
+Running from source requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# Preparation only: parsing, language, style, initial terms, optional synopsis.
-uv run trans-novel prepare book.epub
-# Translate pending text, polish, review, publish fixes, report and export.
+uv sync
+export DEEPSEEK_API_KEY=sk-...
+uv run trans-novel --version
 uv run trans-novel translate book.epub
-# Export both target-only and bilingual editions.
-uv run trans-novel translate book.epub --bilingual
-# Translate only the selected chapter (zero-based).
-uv run trans-novel translate book.epub --chapter 0
-# Control optional stages for this invocation.
-uv run trans-novel translate book.epub --no-polish --no-review
 ```
 
-The configuration defaults enable whole-book understanding, polishing, final Review and Autofix. Disable `pipeline.book_understanding` in YAML for a faster run without prescan. The Web **快速出稿** preset disables understanding, polishing, Review and Autofix together.
+The displayed version is generated from the repository's Git tags. Tagged builds show the
+release version; development builds include their commit distance and hash.
 
-Supported book inputs are EPUB, DOCX, FB2, TXT, Markdown, HTML and PDF. `prepare` can make paid model calls for language detection, analysis and synopsis even though it does not translate the body. Web upload preview is a separate parser task and does not call translation models.
+Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
-### Interrupt and resume
-
-Stop the command and repeat it with the same source, target language and configuration. Completed translation batches, glossary extraction checkpoints, chapters and context are retained. Polishing saves both the pre-polish translation and the final target. Missing glossary checkpoints are recovered without translating already saved text again.
-
-State is stored under `state/<book>/targets/<language>/`. The source SHA-256 must match: replacing the source with different content requires a fresh run directory. Another target language gets its own directory. Web projects bind a single target language and source identity after initialization; create a new project to change either.
-
-## Review and Autofix
-
-```bash
-# Use pipeline.review_autofix (true by default).
-uv run trans-novel review book.epub
-# Recommendations only; do not publish changes into formal targets.
-uv run trans-novel review book.epub --no-autofix
-# Explicitly enable publication for this invocation.
-uv run trans-novel review book.epub --autofix
-```
-
-Every chapter must be translated before whole-book Review. The review engine works on a snapshot and a shadow translation; it checks evidence, arbitrates contradictory proposals, revises the shadow and runs blind rechecks. The separate Autofix stage publishes accepted changes using before/after hashes and a saved publication index.
-
-**Review does not always create a new run.** If translated content, Review configuration/model routes and the glossary fingerprint match, a completed result is reused or an interrupted running review resumes its checkpoints. Changed relevant inputs create a new run. An unfinished Autofix publication is recovered before another review, and changed formal text is preserved rather than overwritten by an obsolete fix.
-
-`review --no-autofix` applies to publication, not to the shadow-review loop: it can still calculate suggested revisions. The run stores issues, suggested changes, actual publication records, failure reasons, evidence, checkpoints and usage. A zero issue count is meaningful only together with the review status and completion result.
-
-## Inspect state and terminology
-
-```bash
-uv run trans-novel status book.epub
-uv run trans-novel report book.epub
-uv run trans-novel glossary list book.epub
-uv run trans-novel glossary conflicts book.epub
-uv run trans-novel glossary resolve --help
-```
-
-Glossary extraction retains established mappings and records conflicting proposals. Resolve conflicts explicitly; terms are stored in insertion order for stable prompt prefixes. Usage accumulates across invocations and timing records describe completed, interrupted or failed runs.
-
-## Export and optional PDF services
-
-```bash
-uv run trans-novel assemble book.epub
-uv run trans-novel assemble book.epub --format html
-uv run trans-novel assemble book.epub --format docx
-uv run trans-novel assemble book.epub --format pdf --pdf-engine weasyprint
-uv run trans-novel assemble book.epub --format pdf --pdf-engine fpdf2
-uv run trans-novel translate manuscript.docx
-```
-
-Formats: `epub`, `txt`, `html`, `markdown`, `docx`, `pdf`. A DOCX CLI input defaults to DOCX output. A PDF parsed through BabelDOC defaults to PDF; MinerU and ordinary book inputs default to EPUB unless a format is supplied. Filenames include the target language, and bilingual filenames include `-bi`.
-
-A standalone `assemble` takes a consistent snapshot under a short state lock and renders after releasing that lock. It can export saved progress while translation continues. Export punctuation normalization changes only the export copy. EPUB/HTML preserve supported resources, navigation and annotations; DOCX preserves supported styles, lists and tables. Complex inputs may still need visual inspection.
-
-MinerU PDF parsing requires `MINERU_API_KEY`; conversion results are cached by source/configuration. Set `pipeline.pdf_backend: babeldoc` and a reachable `pipeline.babeldoc_bridge_url` for an independently deployed BabelDOC HTTP bridge. PDF output requires the appropriate extra and system fonts/libraries; see [Web deployment](web.md) for the container defaults.
-
-## Subtitles
-
-```bash
-uv run trans-novel translate captions.srt
-uv run trans-novel translate captions.srt --bilingual
-```
-
-SRT uses overlapping concurrent translation windows, cue state and batch caches in `state/srt/<name>/targets/<language>/`. It preserves cue numbers and timestamps and produces target-only and/or bilingual SRT files. Repeating the command resumes pending work; completed cues and Web manual edits take precedence over old batch responses. Subtitles do not run book understanding, glossary extraction or whole-book Review.
-
-## Model inspection and comparison
+## Inspect model routing
 
 ```bash
 uv run trans-novel models list
-uv run trans-novel models explain --operation review.scan
-uv run trans-novel models check --workflow translate
-uv run trans-novel models compare --operation translation.body \
-  --model default_strong --messages messages.json --out comparison.json
+uv run trans-novel models explain --operation review.fix
+uv run trans-novel models check --for translate
 ```
 
-`messages.json` is a JSON array of `role`/`content` objects. Repeat `--model` to compare named profiles. Comparison explicitly sends these messages to the selected models and records outputs, elapsed time and usage. Route inspection does not send a comparison request.
+These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion, budgets and `models compare`.
 
-The supported pipeline no longer includes a separate `qa` command or backtranslation sampling. Old `do_qa`, `autofix_severe`, `review_agent_tier`, `force` and character-budget settings are not part of the current API/configuration; use Review Autofix, operation routes and token budgets.
+## Multilingual translation (experimental)
+
+Run `uv run trans-novel languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:
+
+```yaml
+language:
+  source: zh
+  target: en
+```
+
+```bash
+uv run trans-novel --config config.yaml translate book.epub --bilingual
+```
+
+Outputs are `output/book.en.epub` and `output/book.en-bi.epub`. For Japanese-to-English use `source: ja`, `target: en`; for English-to-Japanese use `source: en`, `target: ja`. A reverse run takes a file in the corresponding source language; each run selects one direction. Explicit `--out` names and their `-bi` derivatives retain their existing behavior.
+
+The `.zh.*` examples below describe the default Simplified Chinese target. All book targets use `state/<book>/targets/<target-language>/`; subtitles use `state/srt/<slug>/targets/<target-language>/`. Resume and standalone stages use the same target configuration; switching back does not retranslate completed work. The EPUB about page is Chinese for Simplified Chinese targets and otherwise temporarily falls back to an English page tagged as English; disable it with `about_page: false`.
+
+The CLI uses English for help, progress, tables, and errors. Translation and generated descriptive metadata follow `language.target`; original names in `source` and `aliases` remain available for matching. Existing analysis and glossary notes are reused when resuming and are not automatically translated by this update. This version does not support RTL targets such as Arabic or Hebrew. PDF fonts and external bridge language capabilities require separate validation. Real-model long-form before/after quality evaluation remains outstanding.
+
+## Windows
+
+Windows releases provide `wenyi-windows-x64.zip`. Verify the archive against
+`SHA256SUMS.txt` before running it.
+
+When using a packaged `wenyi.exe`, set the API key in PowerShell:
+
+```powershell
+# Current PowerShell session only
+$env:DEEPSEEK_API_KEY = "sk-..."
+.\wenyi.exe translate .\book.epub
+```
+
+To save the environment variable permanently, run the following command and then open a new PowerShell window:
+
+```powershell
+setx DEEPSEEK_API_KEY "sk-..."
+```
+
+You may also set `language.source` to a known ISO language code to avoid an additional model call for language detection.
+
+## Linux
+
+Releases provide `wenyi-linux-x64.tar.gz` and `wenyi-linux-arm64.tar.gz`. Download
+the archive matching your processor, verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-linux-arm64.tar.gz  # use wenyi-linux-x64.tar.gz on x64 systems
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+## macOS
+
+Releases provide separate terminal executables for Apple Silicon (`wenyi-macos-arm64.tar.gz`)
+and Intel (`wenyi-macos-x64.tar.gz`) Macs. Download the archive matching your processor,
+verify it against `SHA256SUMS.txt`, and run:
+
+```bash
+tar -xzf wenyi-macos-arm64.tar.gz  # use wenyi-macos-x64.tar.gz on Intel Macs
+chmod +x wenyi
+export DEEPSEEK_API_KEY=sk-...
+./wenyi translate book.epub
+```
+
+These command-line executables are ad-hoc signed by PyInstaller but are not notarized with an
+Apple Developer certificate. macOS may quarantine a downloaded build; after verifying the
+checksum, approve it in **System Settings → Privacy & Security** if prompted.
+
+## Input and output
+
+- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX, and SRT.
+- Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx`, and BabelDOC PDF state defaults to `<book-name>.zh.pdf`). The bilingual `*.zh-bi.*` edition is optional.
+- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit format always takes precedence; PDF defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
+- For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
+- The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
+- EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
+- Book runtime data is stored under `state/<book>/targets/<target-language>/`, including chapter intermediates, the SQLite glossary, usage data, and reports. Subtitle runs use a separate tree under `state/srt/` (see [SRT subtitles](#srt-subtitles)).
+
+### Experimental PDF support
+
+PDF input and PDF output are both experimental.
+
+#### PDF input
+
+Default backend is MinerU. For layout-preserving export, use the external
+**BabelDOC bridge** (AGPL, separate repo/process, HTTP only):
+
+1. Install/start `wenyi-babeldoc-bridge` (default `http://127.0.0.1:8765`)
+2. In `config.yaml`:
+
+```yaml
+pipeline:
+  pdf_backend: babeldoc
+  babeldoc_bridge_url: http://127.0.0.1:8765
+  # babeldoc_pages: "15"   # optional, 1-based
+```
+
+3. `translate book.pdf` automatically exports PDF through bridge `/fillback`. Later, `assemble book.pdf` also defaults to PDF for that saved BabelDOC state; `--format pdf` is optional. Use an explicit `--format` to select another format.
+   The fillback PDF omits BabelDOC layout overlay boxes and role labels
+   such as ``plain text`` / ``title`` by default.
+   The bridge freezes the post-extraction IL as a durable session snapshot. It can
+   restart and lazily restore the same session without rerunning layout analysis,
+   provided its session directory and exact Python/BabelDOC versions are retained.
+   Set `WENYI_BABELDOC_STATE_DIR` to a persistent directory for long translations;
+   the default system temporary directory may be cleaned after a reboot. Wenyi never
+   imports babeldoc. Chapters are split from the PDF outline (bookmarks); segments
+   keep `meta.babeldoc_id` for fillback. Books without outlines fall back to one chapter.
+
+BabelDOC is intended for PDFs with an extractable text layer. Before contacting the
+bridge, Wenyi checks the selected pages and stops with a suggestion to use the default
+MinerU backend or run OCR first when it finds only scanned images and no text layer.
+
+The first MinerU PDF import requires `MINERU_API_KEY`:
+
+```bash
+export MINERU_API_KEY=...
+uv run trans-novel translate book.pdf
+```
+
+MinerU's converted HTML is saved at
+`state/<book>/targets/<target-language>/source/<source-sha256>/converted.html`. The content-addressed
+directory prevents an interrupted run from reusing another PDF's conversion.
+Later runs reuse this file, and you may correct it manually before resuming.
+
+#### PDF output
+
+WeasyPrint is the default PDF engine. Install its optional dependency and omit
+`--pdf-engine`:
+
+```bash
+uv sync --extra pdf-output
+uv run trans-novel assemble book.html --format pdf
+```
+
+For a lightweight cross-platform engine without system rendering libraries,
+use `fpdf2`:
+
+```bash
+uv sync --extra pdf-output-lite
+uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
+```
+
+`fpdf2` supports basic layout and images, but only a limited HTML/CSS subset.
+Images mixed with text are placed as separate blocks. It uses a discoverable
+CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
+TTC font file. This option also works on Windows.
+
+## DOCX (Word)
+
+`translate book.docx` uses the full book Orchestrator (glossary, polish, review, resume under `state/<slug>/targets/<target-language>/`).
+
+**Structure**
+
+- Paragraphs and heading styles (`Heading 1`–`9` / outline levels); level-1 headings start chapters.
+- Simple tables are rebuilt cell-by-cell (no merged cells / nested tables in v1).
+- Word automatic lists (`numPr`) become List Number / List Bullet groups (restart per source list id).
+- Contents-style lines that already include a visible prefix such as `1. Title` are **not** auto-numbered again (avoids double numbering).
+
+**Styles**
+
+- Keeps bold / italic / underline / color / size, paragraph alignment, and shading.
+- Uniform runs: apply on export with **no** extra model call.
+- Mixed runs: after translate, each meaningful span is positioned alone (EPUB-annotation-style markers); bold/color and other attrs are **inherited from the source item**. Failed spans fall back proportionally without discarding the whole paragraph.
+- Font/size-only run splits are ignored for alignment (noise).
+- Translated Chinese uses **Song (宋体)**; untranslated source text and bilingual source lines do **not** force Song.
+- Default Heading theme blue is neutralized unless the source set an explicit color.
+
+**Output**
+
+- Default: `output/<stem>.zh.docx` (Navigation pane via heading outline). Override with `--format epub` (etc.).
+
+```bash
+uv run trans-novel translate book.docx
+uv run trans-novel translate book.docx --bilingual
+uv run trans-novel translate book.docx --format epub
+```
+
+## SRT subtitles
+
+`translate` routes `.srt` files automatically. The subtitle path is intentionally
+lighter than the book pipeline:
+
+- sliding windows of 20 cues with overlap 10, up to 100 concurrent strong-tier calls;
+- no glossary, polishing, or whole-book review;
+- `--chapter`, `--polish`, `--review`, and `--format` are ignored or rejected where they do not apply;
+- monolingual `output/<stem>.zh.srt` by default; add `--bilingual` for `.zh-bi.srt`.
+
+```bash
+uv run trans-novel translate movie.srt
+uv run trans-novel translate movie.srt --bilingual
+uv run trans-novel translate movie.srt --no-mono --bilingual
+```
+
+Resume by running the same source file again. Cached batches under
+`state/srt/<slug>/targets/<target-language>/batches/` are skipped. Layout:
+
+```text
+state/srt/<slug>/targets/<target-language>/
+  manifest.json    # source identity, cue counts, window settings
+  cues.jsonl       # one cue per line: index, timestamp, source, target, status
+  batches/         # raw model results for resume
+  usage.json       # cumulative token usage across resumes
+  timing.json      # cumulative execution time and individual invocation durations
+  events.jsonl     # run events and LLM retry observations
+```
+
+There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives in
+`trans_novel.srt` (store + translate), with I/O in `ingest.srt_reader` and
+`assemble.srt_writer`.
+
+## Usage and event logs
+
+Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
+
+The progress-bar clock measures the entire current workflow, including parsing, model
+waits, translation, polishing, review and export. Switching stages, chapters or review
+rounds does not reset it; completing one stage does not stop it while subsequent work
+is pending. Concurrent model requests contribute wall time, not the sum of request durations.
+
+After `prepare`, `translate` (including `--chapter` and SRT), `review` or `assemble`,
+the CLI prints the last run's duration and cumulative execution time. Each target's
+`timing.json` stores `total_seconds` and a `runs` list with invocation IDs, operations,
+timestamps, durations and completion statuses. Repeating a command adds only that
+invocation's execution time, excluding downtime between runs; nested pipeline stages
+are counted once. Separately launched commands contribute their own durations, even
+when they overlap. Book timing can also be inspected with `trans-novel status book.epub`;
+inspection and report regeneration do not add time.
+
+Once book state has been initialized or validated, failures and normal Ctrl+C exits
+also save the invocation's elapsed time. Timing is committed atomically under its own
+lock, independently of token usage. Older runs have no timing history to recover;
+time is accumulated from this version onward. A forced kill or a failure before state
+initialization cannot save the current invocation's duration.
+
+Manifests bind input content with `source_sha256`. A different file with the same name, or state without a valid hash, cannot resume; create new translation state.
+
+## Common commands
+
+```bash
+# Run the complete workflow, translate one chapter, or prepare without translating
+uv run trans-novel translate book.epub
+uv run trans-novel translate book.epub --chapter 3
+uv run trans-novel translate book.epub --format txt
+uv run trans-novel prepare book.epub
+uv run trans-novel translate book.pdf
+uv run trans-novel translate movie.srt
+
+# Override polishing and final review settings
+uv run trans-novel translate book.epub --polish --review
+uv run trans-novel translate book.epub --no-polish --no-review
+
+# Produce both editions, or only the bilingual edition
+uv run trans-novel translate book.epub --bilingual
+uv run trans-novel translate book.epub --no-mono --bilingual
+```
+
+`prepare` parses the book, detects its language, generates the style guide and initial glossary, and completes the configured whole-book prescan without translating any body text. Run `translate` with the same source file to continue from the saved state.
+
+## Interrupting and resuming
+
+Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:
+
+```bash
+uv run trans-novel translate book.epub
+uv run trans-novel status book.epub
+```
+
+Changing polishing settings does not automatically rerun translation batches that
+are already complete. Review is different: every `review` invocation rechecks the
+complete translated book and creates a new timestamped Review run. Runs are
+read-only by default; `--autofix` may publish their final revisions.
+Use a new state directory or remove the corresponding state only when you
+intentionally want a fresh translation.
+
+## Independent stages and glossary management
+
+```bash
+uv run trans-novel review book.epub
+uv run trans-novel review book.epub --autofix
+uv run trans-novel glossary list book.epub
+uv run trans-novel glossary conflicts book.epub
+uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
+uv run trans-novel report book.epub
+uv run trans-novel assemble book.epub
+```
+
+`review` checks the complete translated book using the final glossary. Its
+unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
+can then enter a bounded evidence loop, and contradictory cross-chunk consistency
+suggestions can receive a final recommendation. Confirmed issues may generate
+provisional full-segment replacements in a run-local shadow translation. Every
+Fixer in a round reads the same immutable snapshot; the next whole-book pass
+blindly reviews the resulting shadow text without receiving prior issue
+explanations. By default these replacements remain read-only. With `--autofix`
+(or `pipeline.review_autofix: true`), folded `changes` are applied first; remaining
+issues then reuse the same bounded Review Agent Loop against that updated text,
+and confirmed issues reuse the same Review Fixer. The final complete segments are
+written only to chapter `target`; no Review history fields are added to chapter
+JSON, and the manifest and glossary are unchanged. Each run writes one user-facing
+`result.json`, its model-usage
+delta, an event stream, and internal round traces to
+`state/<book>/targets/<target-language>/reviews/review-<timestamp>/`. The same usage delta is also added once
+to the book's cumulative `usage.json`. Autofix keeps its full before/after chain,
+issue decisions, failures, and idempotent write journal in `autofix/index.json`;
+annotation and DOCX style offsets are refreshed after publishing. `report.json`
+contains a compact Review and Autofix summary.
+
+`report` summarizes the current translation and latest Review result without
+modifying translated text. `assemble` rebuilds output from existing state without
+calling the model again. If another terminal is still translating, export uses a
+consistent snapshot of the batches already persisted when the command starts; run
+it again to include batches completed afterward.

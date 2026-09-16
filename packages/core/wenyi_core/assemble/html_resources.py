@@ -17,7 +17,7 @@ from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup
 
-from ..pipeline.runstore import RunStore
+from .export_view import AssembleStore
 
 # Image MIME types mapped to extensions.
 _IMAGE_EXTENSION_BY_TYPE = {
@@ -162,7 +162,7 @@ def _materialize_html_resources(
 
 
 def _template_resource_source(
-    store: RunStore,
+    store: AssembleStore,
     manifest: dict,
     source_path: str,
 ) -> str:

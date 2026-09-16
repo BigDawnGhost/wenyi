@@ -23,6 +23,8 @@ from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import RunStore, source_sha256
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 _HTML = """\
 <!doctype html>
@@ -36,7 +38,14 @@ _HTML = """\
 """
 
 
-def _set_test_targets(store: RunStore) -> None:
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
+
+
+def _set_test_targets(store: FileStorage) -> None:
     manifest = store.load_manifest()
     for chapter_info in manifest["chapters"]:
         chapter = store.load_chapter(chapter_info["index"])
@@ -45,7 +54,7 @@ def _set_test_targets(store: RunStore) -> None:
         store.save_chapter(chapter)
 
 
-def _initialize_test_store(store: RunStore, document: Document) -> None:
+def _initialize_test_store(store: FileStorage, document: Document) -> None:
     """Commit a parsed document using the current manifest-last store protocol."""
     manifest = store.stage_document(document)
     manifest["initialized"] = True
@@ -169,7 +178,7 @@ class TestPdfIngest(unittest.TestCase):
             ):
                 Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
 
-            partial = RunStore(os.path.join(state_dir, "sample", "targets", "zh"), create=False)
+            partial = FileStorage(os.path.join(state_dir, "sample", "targets", "zh"), create=False)
             self.assertFalse(partial.exists())
             self.assertTrue(os.path.isfile(partial.initialization_path))
 
@@ -182,7 +191,9 @@ class TestPdfIngest(unittest.TestCase):
                 "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
                 side_effect=convert_fresh,
             ):
-                store = Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
+                store = require_file_storage(
+                    Orchestrator(config, client=FakeClient()).prepare_for_translation(pdf_path)
+                )
 
             self.assertTrue(store.exists())
             self.assertEqual(store.load_manifest()["source_sha256"], source_sha256(pdf_path))
@@ -212,7 +223,7 @@ class TestPdfIngest(unittest.TestCase):
             )
             orchestrator = Orchestrator(config, client=FakeClient())
 
-            store = orchestrator.prepare(pdf_path)
+            store = require_file_storage(orchestrator.prepare(pdf_path))
             os.remove(cached_html)
             resumed = orchestrator.prepare(pdf_path)
             serialized_manifest = str(store.load_manifest())
@@ -252,7 +263,7 @@ class TestPdfIngest(unittest.TestCase):
             ):
                 Orchestrator(config, client=FakeClient()).prepare(pdf_path)
 
-            partial_store = RunStore(os.path.join(state_dir, "sample", "targets", "zh"))
+            partial_store = FileStorage(os.path.join(state_dir, "sample", "targets", "zh"))
             stale_glossary = GlossaryStore(partial_store.glossary_path)
             stale_glossary.upsert_term(GlossaryTerm(source="OldBook", target="旧书"))
             stale_glossary.close()
@@ -270,7 +281,9 @@ class TestPdfIngest(unittest.TestCase):
                 "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
                 side_effect=convert,
             ) as conversion:
-                store = Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+                store = require_file_storage(
+                    Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+                )
 
             conversion.assert_called_once()
             self.assertEqual(store.load_manifest()["source_sha256"], fresh_hash)
@@ -376,7 +389,7 @@ class TestPdfIngest(unittest.TestCase):
                 cache_dir=cache_dir,
                 pdf_backend="mineru",
             )
-            store = RunStore(os.path.join(directory, "state", "sample"))
+            store = FileStorage(os.path.join(directory, "state", "sample"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.epub")
@@ -425,7 +438,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                     </body></html>"""
                 )
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "output", "translated.html")
@@ -457,7 +470,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                     after.</p></body></html>"""
                 )
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.epub")
@@ -509,7 +522,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             with open(source_path, "w", encoding="utf-8") as file:
                 file.write(_HTML)
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.pdf")
@@ -577,7 +590,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             with open(font_path, "wb") as file:
                 file.write(b"mock font")
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.pdf")
@@ -677,7 +690,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             with open(source_path, "w", encoding="utf-8") as file:
                 file.write(_HTML)
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "nested", "translated.html")
@@ -707,7 +720,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                 [chapter.meta["heading_level"] for chapter in document.chapters],
                 [1, 2],
             )
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.html")
@@ -733,7 +746,7 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             with open(source_path, "w", encoding="utf-8") as file:
                 file.write("Original paragraph.\n")
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             _initialize_test_store(store, document)
             _set_test_targets(store)
             output_path = os.path.join(directory, "translated.html")

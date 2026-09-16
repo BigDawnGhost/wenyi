@@ -12,11 +12,12 @@ from wenyi_core.assemble.writer_common import (
     _manifest_target_lang,
 )
 from wenyi_core.ingest.models import KIND_HEADING
-from wenyi_core.pipeline.runstore import RunStore
+
+from .export_view import AssembleStore
 
 
 def _assemble_docx(
-    store: RunStore,
+    store: AssembleStore,
     out_path: str,
     *,
     bilingual: bool = False,

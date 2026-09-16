@@ -1,6 +1,9 @@
 """Offline previews, explicit conversions and prompt-fixture comparisons."""
 
+from __future__ import annotations
+
 import json
+import re
 
 import pytest
 import yaml
@@ -10,6 +13,13 @@ from wenyi_core.config import Config
 from wenyi_core.llm.migration import convert_config
 from wenyi_core.llm.providers.fake import FakeProvider
 from wenyi_core.llm.usage import UsageSample, UsageTracker, convert_usage_ledger, validate_usage
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?\x07|\r")
+
+
+def plain_text(value: str) -> str:
+    """Strip ANSI/control sequences so CLI assertions stay stable under Rich."""
+    return _ANSI_RE.sub("", value)
 
 
 def _invoke(tmp_path, raw, *arguments):
@@ -107,7 +117,7 @@ def test_usage_conversion_preserves_totals_and_unknown_identities(tmp_path):
     assert next(run.glob("usage.before-routing-*.json")).read_bytes() == before
     again = _invoke(tmp_path, {}, "migrate-usage", str(run))
     assert again.exit_code == 0
-    assert "Converted 0" in again.output
+    assert "Converted 0" in plain_text(again.output)
 
 
 def test_comparison_records_each_model_and_its_usage(tmp_path, monkeypatch):
@@ -169,6 +179,6 @@ def test_comparison_rejects_non_string_roles_before_crashing(tmp_path):
         str(output),
     )
     assert result.exit_code == 1
-    assert "Messages must be a nonempty array of role/content objects" in result.output
-    assert "Traceback" not in result.output
+    assert "Messages must be a nonempty array of role/content objects" in plain_text(result.output)
+    assert "Traceback" not in plain_text(result.output)
     assert not output.exists()

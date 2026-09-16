@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any, cast
+
 from wenyi_api.emitters import RedisEmitter
 from wenyi_api.routers import configuration
 from wenyi_core.events import TranslationEvent
@@ -62,7 +66,7 @@ def test_progress_cache_carries_run_identity():
             self.published = json.loads(value)
 
     redis = Redis()
-    RedisEmitter(redis, "p", "run-a").emit(
+    RedisEmitter(cast(Any, redis), "p", "run-a").emit(
         TranslationEvent(kind="progress", label="batch", done=2, total=4)
     )
     assert redis.cached[0] == "project:p:progress"

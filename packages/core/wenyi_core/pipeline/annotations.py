@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..agents.annotation_aligner import AnnotationUnit, target_digest
 from ..ingest.models import Chapter, Segment
-from .runstore import RunStore
+from ..storage.protocol import Storage
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
@@ -167,7 +167,7 @@ class AnnotationService:
         ci: int,
         chapter: Chapter,
         start_position: int,
-        store: RunStore,
+        store: Storage,
     ) -> None:
         """Align EPUB links for one fully translated logical paragraph.
         Only the first slice has an anchor and parsing metadata, so wait for all
@@ -271,7 +271,7 @@ class AnnotationService:
         chapter: Chapter,
         start: int,
         count: int,
-        store: RunStore,
+        store: Storage,
     ) -> None:
         """Process complete annotated paragraphs touched by this batch serially in source
         order.

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="66" viewBox="0 0 220 66" role="img" aria-labelledby="title">
+  <title id="title">文译</title>
+  <style>
+    text { fill: #00263d; }
+    @media (prefers-color-scheme: dark) { text { fill: #faefb8; } }
+  </style>
+  <text x="110" y="46" text-anchor="middle" font-family="'Noto Serif CJK SC', 'Songti SC', SimSun, serif" font-size="48" font-weight="600" letter-spacing="8">文译</text>
+  <path d="M87 62h46" stroke="#d4b56a" stroke-width="2"/>
+</svg>

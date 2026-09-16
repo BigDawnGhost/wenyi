@@ -23,8 +23,9 @@ from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.review.run_store import ReviewRunStore
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import (
@@ -49,6 +50,13 @@ _FB2_WITH_IMAGES = """\
 <binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
 </FictionBook>
 """
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def _write_vertical_epub(path: str) -> None:
@@ -144,7 +152,7 @@ def _config(state_dir: str):
 def _run(input_path, state_dir):
     cfg = _config(state_dir)
     orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
-    return orch.run(input_path), cfg
+    return require_file_storage(orch.run(input_path)), cfg
 
 
 class TestAssembleText(unittest.TestCase):
@@ -1130,7 +1138,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
             output_path = os.path.join(directory, "linked-notes-bi.epub")
             _write_linked_notes_epub(source_path)
             document = load_document(source_path, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             manifest = store.stage_document(document)
             for chapter_meta in manifest["chapters"]:
                 chapter = store.load_chapter(chapter_meta["index"])
@@ -1247,7 +1255,7 @@ class TestTitleTranslation(unittest.TestCase):
             source = os.path.join(directory, "novel.epub")
             write_sample_epub(source)
             document = load_document(source, "ja", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             manifest = store.stage_document(document)
             manifest["meta"]["toc_entries"] = [
                 {
@@ -1288,7 +1296,7 @@ class TestTitleTranslation(unittest.TestCase):
             output = os.path.join(directory, "translated.epub")
             write_nested_toc_epub(source, ncx_filename="toc.xml")
             document = load_document(source, "en", "zh")
-            store = RunStore(os.path.join(directory, "state"))
+            store = FileStorage(os.path.join(directory, "state"))
             manifest = store.stage_document(document)
 
             for chapter_meta in manifest["chapters"]:
@@ -1356,7 +1364,7 @@ class TestTitleTranslation(unittest.TestCase):
                     nav_in_spine=toc_kind == "nav",
                 )
                 document = load_document(source, "en", "zh")
-                store = RunStore(os.path.join(d, "state"))
+                store = FileStorage(os.path.join(d, "state"))
                 manifest = store.stage_document(document)
 
                 expected_targets: list[str] = []

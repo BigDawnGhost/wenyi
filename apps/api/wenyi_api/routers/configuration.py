@@ -215,7 +215,8 @@ def workflow(pid: str) -> dict:
                 settings.redis_url, socket_timeout=1, socket_connect_timeout=1
             ) as redis:
                 raw = redis.get(f"project:{pid}:progress")
-            candidate = json.loads(raw) if raw else None
+            payload = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+            candidate = json.loads(payload) if isinstance(payload, str) else None
             if candidate and candidate.get("run_id") == job.get("run_id"):
                 progress = candidate
         except Exception:

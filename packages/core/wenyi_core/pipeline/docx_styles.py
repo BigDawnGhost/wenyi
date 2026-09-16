@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .runtime import PipelineRuntime
-from typing import TYPE_CHECKING
-
 from wenyi_core.agents.annotation_aligner import AnnotationUnit, target_digest
 from wenyi_core.document_styles.docx import (
     merge_align_results,
@@ -16,7 +12,10 @@ from wenyi_core.document_styles.docx import (
 )
 from wenyi_core.ingest.models import Chapter
 from wenyi_core.pipeline.annotations import AnnotationService
-from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.storage.protocol import Storage
+
+if TYPE_CHECKING:
+    from .runtime import PipelineRuntime
 
 
 class DocxStyleService:
@@ -30,7 +29,7 @@ class DocxStyleService:
         ci: int,
         chapter: Chapter,
         start_position: int,
-        store: RunStore,
+        store: Storage,
     ) -> None:
         """Align mixed styles for one logical paragraph including continuations and persist
         metadata.
@@ -141,7 +140,7 @@ class DocxStyleService:
         chapter: Chapter,
         start: int,
         count: int,
-        store: RunStore,
+        store: Storage,
     ) -> None:
         """Process completed mixed-style logical paragraphs touched by this batch."""
         segments = chapter.text_segments

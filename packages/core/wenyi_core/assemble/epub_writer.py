@@ -32,11 +32,12 @@ from wenyi_core.assemble.writer_common import (
     _sanitize_filename,
 )
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
-from wenyi_core.pipeline.runstore import RunStore
+
+from .export_view import AssembleStore
 
 
 def _assemble_epub(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,
@@ -149,7 +150,7 @@ def _assemble_epub(
 
 
 def _build_epub_from_chapters(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,
@@ -268,7 +269,7 @@ def _build_epub_from_chapters(
 
 
 def _build_epub_from_html_templates(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,

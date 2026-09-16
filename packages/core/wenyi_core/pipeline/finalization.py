@@ -15,10 +15,10 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.store import GlossaryStore
+from ..storage.protocol import Storage
 from .runstore import source_sha256
 
 if TYPE_CHECKING:
-    from .runstore import RunStore
     from .runtime import PipelineRuntime
 
 ProgressFn = Callable[[int, int, str], None]
@@ -31,14 +31,16 @@ class ReportService:
         self._runtime = runtime
 
     @contextmanager
-    def glossary_scope(self, store: RunStore, needed: bool) -> Iterator[GlossaryStore | None]:
+    def glossary_scope(
+        self, store: Storage, needed: bool
+    ) -> Iterator[Storage | GlossaryStore | None]:
         """Borrow the injected glossary; its lifetime belongs to the caller."""
         yield store if needed else None
 
     def build_and_save(
         self,
-        store: RunStore,
-        glossary: GlossaryStore,
+        store: Storage,
+        glossary: Storage | GlossaryStore,
         *,
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
@@ -62,7 +64,7 @@ class AssemblyService:
 
     def assemble_outputs(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         input_path: str,
         progress: ProgressFn | None,
@@ -117,7 +119,7 @@ class AssemblyService:
 
     def assemble_live(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         input_path: str,
         progress: ProgressFn | None,
@@ -149,7 +151,7 @@ class AssemblyService:
 
     def assemble_snapshot(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         input_path: str,
         progress: ProgressFn | None,

@@ -27,7 +27,7 @@ from ..llm.routing import resolve_routes
 from ..llm.usage import empty_usage, merge_usage_summaries, usage_delta, validate_usage
 from ..storage.protocol import Storage
 from ..timing import RunTimer
-from .runstore import RunStore, source_sha256
+from .runstore import source_sha256
 
 
 class PipelineRuntime:
@@ -74,17 +74,17 @@ class PipelineRuntime:
             finally:
                 self._timer = None
 
-    def bind_timing(self, store: RunStore) -> None:
+    def bind_timing(self, store: Storage) -> None:
         """Attach timing after source validation or a successful manifest commit."""
         if self._timer is not None:
             self._timer.store = store
 
     # Events and usage.
-    def log_event(self, store: RunStore, event: str, **payload: Any) -> None:
+    def log_event(self, store: Storage, event: str, **payload: Any) -> None:
         """Append a run-level event to the current book's event log."""
         store.log_event(event, **payload)
 
-    def bind_llm_events(self, store: RunStore) -> None:
+    def bind_llm_events(self, store: Storage) -> None:
         """Append provider retry events to the current book log as they occur."""
         validate_usage(store.load_usage())
         self.client.set_event_sink(store.log_event)
@@ -103,7 +103,7 @@ class PipelineRuntime:
         target = (self.config.target_lang or "").lower().replace("_", "-")
         return self.config.output.punctuation_normalize and require_language(target) == "zh"
 
-    def flush_usage(self, store: RunStore, *, scope: str, review=None) -> dict[str, Any]:
+    def flush_usage(self, store: Storage, *, scope: str, review=None) -> dict[str, Any]:
         """Merge the client's unpersisted usage delta into the book's usage.json."""
         store.recover_usage()
         current = self.client.usage_summary()
@@ -131,7 +131,7 @@ class PipelineRuntime:
         return cumulative
 
     # Source identity.
-    def ensure_store_source(self, store: RunStore, input_path: str) -> str:
+    def ensure_store_source(self, store: Storage, input_path: str) -> str:
         """Validate that candidate state belongs to the current input."""
         validate_run_languages(
             store.load_manifest(), self.config.source_lang, self.config.target_lang

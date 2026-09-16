@@ -28,8 +28,17 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import translation_run_dir
 from wenyi_core.srt.translate import translate_srt
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 def test_non_chinese_translation_has_no_chinese_target_instruction():
@@ -69,7 +78,7 @@ def test_book_targets_have_independent_state_and_output(target_order):
                 }
             )
             client = FakeClient(handler=routing_handler)
-            store = Orchestrator(config, client=client).prepare(str(source))
+            store = require_file_storage(Orchestrator(config, client=client).prepare(str(source)))
             assert store.load_manifest()["target_lang"] == target
             stores.append(store.run_dir)
             output = assemble(store, str(source), out_format="txt", about_page=False)
@@ -137,7 +146,7 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         )
         client = FakeClient(handler=handler)
         orchestrator = Orchestrator(config, client=client)
-        store = orchestrator.run(str(path))
+        store = require_file_storage(orchestrator.run(str(path)))
         formal_before = Path(store.chapter_path(0)).read_bytes()
         assert store.load_chapter(0).text_segments[0].target == translated
         assert store.load_manifest()["prompt_fingerprint"] == prompt_fingerprint()

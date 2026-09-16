@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 from bs4.element import Comment, Tag
 
-from ..pipeline.runstore import RunStore
+from .export_view import AssembleStore
 from .html_writer import _assemble_html
 
 # Print CSS: A5 pages, page numbers, CJK fonts and page-break control.
@@ -48,7 +48,7 @@ figure { break-inside: avoid; page-break-inside: avoid; }
 
 
 def _assemble_pdf_weasyprint(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,
@@ -99,32 +99,10 @@ def _assemble_pdf_weasyprint(
 
 
 def _find_fpdf_font() -> str:
-    """Find a CJK font with TrueType outlines suitable for reliable fpdf2 embedding.
-
-    OpenType/CFF files (including Noto CJK collections) can be accepted by fpdf2
-    while producing mismatched PDF font streams. Checking the font tables, rather
-    than its extension, also keeps TrueType TTC collections such as WenQuanYi and
-    Microsoft YaHei usable.
-    """
-    from fontTools.ttLib import TTFont, TTLibError
-
-    def compatible(path: str) -> bool:
-        try:
-            with TTFont(path, fontNumber=0, lazy=True) as font:
-                return "glyf" in font
-        except (OSError, TTLibError):
-            return False
-
+    """Find a user-specified or common cross-platform CJK font file."""
     configured = os.environ.get("TRANS_NOVEL_PDF_FONT", "").strip()
-    if configured:
-        if not os.path.isfile(configured) or not compatible(configured):
-            raise RuntimeError(
-                "TRANS_NOVEL_PDF_FONT must point to a font with TrueType outlines "
-                "(a glyf table). OpenType/CFF fonts are not supported by the fpdf2 "
-                "exporter; use WenQuanYi Zen Hei, Microsoft YaHei, or WeasyPrint."
-            )
-        return configured
     candidates = [
+        configured,
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/System/Library/Fonts/PingFang.ttc",
@@ -141,13 +119,11 @@ def _find_fpdf_font() -> str:
             ]
         )
     for candidate in candidates:
-        if os.path.isfile(candidate) and compatible(candidate):
+        if candidate and os.path.isfile(candidate):
             return candidate
     raise RuntimeError(
-        "fpdf2 PDF output requires a CJK-capable font with TrueType outlines. "
-        "Install fonts-wqy-zenhei, or set TRANS_NOVEL_PDF_FONT to a compatible "
-        "TTF/TTC font with the required characters. Noto CJK OpenType/CFF fonts "
-        "can be used with WeasyPrint instead."
+        "fpdf2 PDF output requires a CJK-capable font. Set TRANS_NOVEL_PDF_FONT "
+        "to a TTF/OTF/TTC font with the required characters."
     )
 
 
@@ -271,7 +247,7 @@ def _normalize_html_for_fpdf(html: str, *, base_dir: str) -> str:
 
 
 def _assemble_pdf_fpdf2(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,
@@ -335,7 +311,7 @@ def _assemble_pdf_fpdf2(
 
 
 def _assemble_pdf_babeldoc(
-    store: RunStore,
+    store: AssembleStore,
     out_path: str,
     *,
     timeout: float,
@@ -350,7 +326,7 @@ def _assemble_pdf_babeldoc(
 
 
 def _assemble_pdf(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,

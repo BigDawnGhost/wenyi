@@ -30,9 +30,14 @@ async def recover_jobs(ctx: dict) -> None:
                 job_id, "error", error="Export task is missing its persisted export identifier"
             )
             continue
+        export_id_i: int | None = None
+        if is_export:
+            # Validated above: export_id is a positive int.
+            assert isinstance(export_id, int)
+            export_id_i = export_id
         lock = (
-            storage.export_lock(export_id, blocking=False)
-            if is_export
+            storage.export_lock(export_id_i, blocking=False)
+            if export_id_i is not None
             else storage.lock(blocking=False)
         )
         try:
@@ -51,10 +56,11 @@ async def recover_jobs(ctx: dict) -> None:
                     message = (
                         "Export worker stopped before completion; create a new export to retry"
                     )
+                    assert export_id_i is not None
                     dal.set_job_status(job_id, "error", error=message)
-                    dal.set_export_status(export_id, "error", error=message)
+                    dal.set_export_status(export_id_i, "error", error=message)
                     storage.log_event(
-                        "export_interrupted", run_id=arq_id, export_id=export_id, error=message
+                        "export_interrupted", run_id=arq_id, export_id=export_id_i, error=message
                     )
                 else:
                     message = "Worker stopped before completion; resume this task to continue from saved progress"

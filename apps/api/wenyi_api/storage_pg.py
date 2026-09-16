@@ -86,7 +86,8 @@ class PostgresStorage:
                     conn.execute("SELECT pg_advisory_lock(%s)", (key,))
                     acquired = True
                 else:
-                    acquired = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0]
+                    lock_row = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()
+                    acquired = bool(lock_row[0]) if lock_row is not None else False
                 conn.commit()  # A session lock needs no open transaction during LLM calls.
                 if not acquired:
                     raise ProjectBusyError(f"Project {self.project_id} is busy")
@@ -135,7 +136,7 @@ class PostgresStorage:
         return bool(row and row[0])
 
     @staticmethod
-    def _validate_digest(digest: str) -> None:
+    def _validate_digest(digest: object) -> None:
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Invalid source SHA-256 format")
 
@@ -411,13 +412,15 @@ class PostgresStorage:
                 cont,meta,resource_href FROM segments WHERE project_id=%s AND chapter_seq=%s ORDER BY seg_seq""",
                 (self.project_id, ci),
             ).fetchall()
+        meta = dict(row[3] or {})
+        if row[4]:
+            meta["title_translated"] = row[4]
         return Chapter(
             index=ci,
             title=row[0],
             href=row[1],
             template=row[2],
-            meta=row[3] or {},
-            title_translated=row[4],
+            meta=meta,
             segments=[
                 Segment(
                     index=s[0],
@@ -803,11 +806,13 @@ class PostgresStorage:
 
     def stats(self) -> dict[str, int]:
         with self._conn as conn:
-            terms = conn.execute(
+            terms_row = conn.execute(
                 "SELECT count(*) FROM glossary WHERE project_id=%s", (self.project_id,)
-            ).fetchone()[0]
-            conflicts = conn.execute(
+            ).fetchone()
+            conflicts_row = conn.execute(
                 "SELECT count(*) FROM term_conflicts WHERE project_id=%s AND NOT resolved",
                 (self.project_id,),
-            ).fetchone()[0]
+            ).fetchone()
+            terms = 0 if terms_row is None else terms_row[0]
+            conflicts = 0 if conflicts_row is None else conflicts_row[0]
         return {"terms": terms, "open_conflicts": conflicts}

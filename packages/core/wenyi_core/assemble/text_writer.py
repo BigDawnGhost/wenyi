@@ -6,12 +6,12 @@ or bilingual text according to bilingual and order.
 from __future__ import annotations
 
 from ..ingest.models import KIND_HEADING
-from ..pipeline.runstore import RunStore
+from .export_view import AssembleStore
 from .writer_common import _bilingual_source, _merged_paragraphs, _ordered_pair
 
 
 def _assemble_plain_text(
-    store: RunStore,
+    store: AssembleStore,
     out_path: str,
     *,
     bilingual: bool = False,
@@ -47,7 +47,7 @@ def _assemble_plain_text(
 
 # Plain text.
 def _assemble_text(
-    store: RunStore,
+    store: AssembleStore,
     out_path: str,
     *,
     bilingual: bool = False,
@@ -59,7 +59,7 @@ def _assemble_text(
 
 # ── markdown ──────────────────────────────────────────────────────────────────
 def _assemble_markdown(
-    store: RunStore,
+    store: AssembleStore,
     out_path: str,
     *,
     bilingual: bool = False,

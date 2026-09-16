@@ -12,9 +12,18 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.srt.store import SrtRunStore
 from wenyi_core.srt.translate import translate_srt
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 from wenyi_core.timing import RunTimer, format_duration, load_timing
 
 from tests.fake_llm import routing_handler
+
+
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
 
 
 @pytest.mark.parametrize("store_type", [RunStore, SrtRunStore])
@@ -41,7 +50,7 @@ def test_timing_accumulates_resumes_and_upserts_once(tmp_path, store_type):
 
 @pytest.mark.parametrize("error", [RuntimeError("failed"), KeyboardInterrupt()])
 def test_interruption_saves_elapsed_and_preserves_exception(tmp_path, error):
-    store = RunStore(str(tmp_path / "run"))
+    store = FileStorage(str(tmp_path / "run"))
     now = 10.0
     with pytest.raises(type(error)) as caught:
         with RunTimer("translate", clock=lambda: now) as timer:
@@ -58,7 +67,7 @@ def test_interruption_saves_elapsed_and_preserves_exception(tmp_path, error):
 
 
 def test_timing_write_failure_preserves_previous_ledger_and_original_error(tmp_path, monkeypatch):
-    store = RunStore(str(tmp_path / "run"))
+    store = FileStorage(str(tmp_path / "run"))
     with RunTimer("prepare") as timer:
         timer.store = store
     before = load_timing(store.run_dir)

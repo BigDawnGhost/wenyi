@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +17,13 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.errors import MinerUError
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pdf_bridge import BabeldocBridgeError
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?\x07|\r")
+
+
+def plain_text(value: str) -> str:
+    """Strip ANSI/control sequences so CLI assertions stay stable under Rich."""
+    return _ANSI_RE.sub("", value)
 
 
 class FakeStore:
@@ -60,7 +68,7 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["--version"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(result.output.strip(), "0.3.5")
+        self.assertEqual(plain_text(result.output).strip(), "0.3.5")
 
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
@@ -205,8 +213,8 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertIn("Preparation complete", result.output)
-        self.assertIn("prescanned 2/2 chapters", result.output)
+        self.assertIn("Preparation complete", plain_text(result.output))
+        self.assertIn("prescanned 2/2 chapters", plain_text(result.output))
 
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
@@ -228,7 +236,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 1, result.output)
         # CliRunner may wrap the message on Windows; compare ignoring whitespace.
-        compact = "".join(result.output.split())
+        compact = "".join(plain_text(result.output).split())
         self.assertIn("--chapteronlytranslatesandsavestheselectedchapter", compact)
         self.assertIn("--review/--no-review", compact)
 
@@ -245,7 +253,7 @@ class TestCliConfig(unittest.TestCase):
             "status",
             "glossary",
         ):
-            self.assertIn(command, result.output)
+            self.assertIn(command, plain_text(result.output))
         self.assertNotRegex(result.output, r"(?m)^│\s*resume\s{2,}")
         self.assertNotRegex(result.output, r"(?m)^│\s*tools\s{2,}")
 
@@ -253,9 +261,9 @@ class TestCliConfig(unittest.TestCase):
         result = CliRunner().invoke(app, ["glossary", "--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("list", result.output)
-        self.assertIn("conflicts", result.output)
-        self.assertIn("resolve", result.output)
+        self.assertIn("list", plain_text(result.output))
+        self.assertIn("conflicts", plain_text(result.output))
+        self.assertIn("resolve", plain_text(result.output))
 
     def test_api_preflight_covers_model_commands(self):
         for command in (
@@ -270,7 +278,7 @@ class TestCliConfig(unittest.TestCase):
                 ) as validate:
                     result = CliRunner().invoke(app, [command, "input.txt"])
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn("missing key", result.output)
+                self.assertIn("missing key", plain_text(result.output))
                 self.assertEqual(validate.call_count, 1)
 
     def test_api_preflight_skips_local_commands(self):
@@ -295,7 +303,7 @@ class TestCliConfig(unittest.TestCase):
                 ) as validate:
                     result = CliRunner().invoke(app, args)
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn("Input file does not exist", result.output)
+                self.assertIn("Input file does not exist", plain_text(result.output))
                 validate.assert_not_called()
 
     def test_api_preflight_skips_help_at_every_level(self):
@@ -358,11 +366,11 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
         self.assertIn("progress", captured["kwargs"])
-        self.assertIn("max_rounds", result.output)
-        self.assertIn("Remaining issues: 1", result.output)
-        self.assertIn("suggested changes: 1", " ".join(result.output.split()))
-        self.assertIn("/tmp/reviews/review-20260801-120000", result.output)
-        self.assertIn("Clean confirmation", result.output)
+        self.assertIn("max_rounds", plain_text(result.output))
+        self.assertIn("Remaining issues: 1", plain_text(result.output))
+        self.assertIn("suggested changes: 1", plain_text(" ".join(result.output.split())))
+        self.assertIn("/tmp/reviews/review-20260801-120000", plain_text(result.output))
+        self.assertIn("Clean confirmation", plain_text(result.output))
 
     def test_review_autofix_option_overrides_config_and_reports_writeback(self):
         cfg = Config.from_dict(
@@ -406,7 +414,9 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["autofix"])
-        self.assertIn("Autofix: published 1 paragraphs, failed issues: 1", result.output)
+        self.assertIn(
+            "Autofix: published 1 paragraphs, failed issues: 1", plain_text(result.output)
+        )
 
     def test_translate_reports_missing_api_key_before_inspecting_input(self):
         missing = os.path.join(tempfile.gettempdir(), "trans-novel-missing.epub")
@@ -419,9 +429,9 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", missing])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("DEEPSEEK_API_KEY", result.output)
-        self.assertNotIn("Input file does not exist", result.output)
-        self.assertNotIn("Traceback", result.output)
+        self.assertIn("DEEPSEEK_API_KEY", plain_text(result.output))
+        self.assertNotIn("Input file does not exist", plain_text(result.output))
+        self.assertNotIn("Traceback", plain_text(result.output))
         require_input.assert_not_called()
 
     def test_assemble_skips_api_preflight(self):
@@ -434,8 +444,8 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["assemble", "missing.epub"])
 
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("Input file does not exist", result.output)
-        self.assertNotIn("DEEPSEEK_API_KEY", result.output)
+        self.assertIn("Input file does not exist", plain_text(result.output))
+        self.assertNotIn("DEEPSEEK_API_KEY", plain_text(result.output))
 
     def test_assemble_uses_local_orchestrator_entry(self):
         cfg = Config.from_dict({"llm": {"preset": "fake"}})
@@ -478,7 +488,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(captured["input"], "input.epub")
         self.assertEqual(captured["kwargs"]["out_format"], "pdf")
         self.assertEqual(captured["kwargs"]["pdf_engine"], "fpdf2")
-        self.assertIn("out.pdf", result.output)
+        self.assertIn("out.pdf", plain_text(result.output))
 
     def test_report_uses_local_orchestrator_entry(self):
         cfg = Config.from_dict({"llm": {"preset": "fake"}})
@@ -517,7 +527,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input"], "input.epub")
-        self.assertIn("state/book/report.json", result.output)
+        self.assertIn("state/book/report.json", plain_text(result.output))
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
         cfg = Config.from_dict(
@@ -557,8 +567,8 @@ class TestCliConfig(unittest.TestCase):
                     result = CliRunner().invoke(app, ["translate", "input.pdf"])
 
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn(str(error), result.output)
-                self.assertNotIn("Traceback", result.output)
+                self.assertIn(str(error), plain_text(result.output))
+                self.assertNotIn("Traceback", plain_text(result.output))
 
     def test_translate_rejects_unknown_output_format_after_api_preflight(self):
         cfg = Config.from_dict({"llm": {"preset": "fake"}})
@@ -569,7 +579,7 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", "input.txt", "--format", "xml"])
 
         self.assertEqual(result.exit_code, 2, result.output)
-        self.assertIn("Unsupported output format", result.output)
+        self.assertIn("Unsupported output format", plain_text(result.output))
 
     def test_translate_reports_out_of_range_chapter_without_traceback(self):
         cfg = Config.from_dict({"llm": {"preset": "fake"}})
@@ -590,8 +600,8 @@ class TestCliConfig(unittest.TestCase):
             result = CliRunner().invoke(app, ["translate", "input.txt", "--chapter", "9"])
 
         self.assertEqual(result.exit_code, 2, result.output)
-        self.assertIn("章节编号 9 不存在", result.output)
-        self.assertNotIn("Traceback", result.output)
+        self.assertIn("章节编号 9 不存在", plain_text(result.output))
+        self.assertNotIn("Traceback", plain_text(result.output))
 
     def test_status_does_not_create_state_directory(self):
         with tempfile.TemporaryDirectory() as d:
@@ -611,7 +621,7 @@ class TestCliConfig(unittest.TestCase):
                 result = CliRunner().invoke(app, ["status", src])
 
             self.assertEqual(result.exit_code, 1, result.output)
-            self.assertIn("No progress found", result.output)
+            self.assertIn("No progress found", plain_text(result.output))
             self.assertFalse(os.path.exists(state_dir))
 
     def test_state_commands_print_source_identity_errors(self):
@@ -633,8 +643,10 @@ class TestCliConfig(unittest.TestCase):
                     result = CliRunner().invoke(app, args)
 
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn("Error: Input content does not match existing state", result.output)
-                self.assertNotIn("Traceback", result.output)
+                self.assertIn(
+                    "Error: Input content does not match existing state", plain_text(result.output)
+                )
+                self.assertNotIn("Traceback", plain_text(result.output))
 
 
 class TestWindowsConsoleEncoding(unittest.TestCase):

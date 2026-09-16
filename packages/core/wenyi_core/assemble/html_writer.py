@@ -17,13 +17,13 @@ from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_
 from wenyi_core.assemble.html_renderer import _render_chapter_html
 
 from ..ingest.models import KIND_HEADING
-from ..pipeline.runstore import RunStore
+from .export_view import AssembleStore
 from .html_resources import _materialize_html_resources, _template_resource_source
 from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
 
 
 def _assemble_html(
-    store: RunStore,
+    store: AssembleStore,
     source_path: str,
     out_path: str,
     *,

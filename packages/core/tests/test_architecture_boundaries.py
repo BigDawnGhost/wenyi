@@ -78,7 +78,7 @@ def _imported_modules(path: pathlib.Path) -> set[str]:
 class TestArchitectureBoundaries(unittest.TestCase):
     def test_command_modules_do_not_import_cli_entry_point(self):
         """Command helpers receive dependencies instead of importing application globals."""
-        for path in (TRANS_NOVEL_DIR.parent.parent / "cli" / "wenyi_cli" / "commands").rglob("*.py"):
+        for path in (TRANS_NOVEL_DIR / "commands").rglob("*.py"):
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.ImportFrom):
                     module = node.module or ""

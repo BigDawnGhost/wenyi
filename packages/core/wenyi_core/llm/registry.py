@@ -115,6 +115,7 @@ PROVIDERS = register_providers(
         ProviderSpec("deepseek", "deepseek", "DeepSeekClient", "DeepSeekOptions"),
         ProviderSpec("openai", "openai", "OpenAIClient", "OpenAIOptions"),
         ProviderSpec("openrouter", "openrouter", "OpenRouterClient", "OpenRouterOptions"),
+        ProviderSpec("opencode-go", "opencode_go", "OpenCodeGoClient", "OpenCodeGoOptions"),
         ProviderSpec(
             "openai-compatible",
             "openai_compatible",

@@ -28,9 +28,15 @@ class ArtifactStorage(Protocol):
 
 @runtime_checkable
 class Storage(ArtifactStorage, Protocol):
-    run_dir: str
-    source_dir: str
-    reviews_dir: str
+    # Read-only path attributes: implementations expose @property (FileStorage / PostgresStorage).
+    @property
+    def run_dir(self) -> str: ...
+
+    @property
+    def source_dir(self) -> str: ...
+
+    @property
+    def reviews_dir(self) -> str: ...
 
     def exists(self) -> bool: ...
     def init_from_document(self, doc: Document) -> dict: ...

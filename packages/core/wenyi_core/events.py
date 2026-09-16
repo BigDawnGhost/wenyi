@@ -26,7 +26,7 @@ class TranslationEvent:
     """
 
     project_id: Optional[str] = None
-    kind: str = "progress"          # progress | batch | chapter | term | pipeline | log
+    kind: str = "progress"  # progress | batch | chapter | term | pipeline | log
     done: int = 0
     total: int = 0
     label: str = ""
@@ -47,17 +47,23 @@ class NullEmitter:
         return None
 
 
-def make_progress_fn(emitter: ProgressEmitter,
-                     project_id: Optional[str] = None,
-                     *,
-                     kind: str = "progress"):
+def make_progress_fn(
+    emitter: ProgressEmitter, project_id: Optional[str] = None, *, kind: str = "progress"
+):
     """把一个 :class:`ProgressEmitter` 包装成内核所需的 ``ProgressFn``。
 
     内核签名：``progress(done: int, total: int, label: str) -> None``。
     """
+
     def fn(done: int, total: int, label: str) -> None:
-        emitter.emit(TranslationEvent(
-            project_id=project_id, kind=kind,
-            done=done, total=total, label=label,
-        ))
+        emitter.emit(
+            TranslationEvent(
+                project_id=project_id,
+                kind=kind,
+                done=done,
+                total=total,
+                label=label,
+            )
+        )
+
     return fn

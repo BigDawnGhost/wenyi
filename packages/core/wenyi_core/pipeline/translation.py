@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
 from ..ingest.models import Segment
+from ..storage.protocol import Storage
 from .context import RollingContext
 from .docx_styles import DocxStyleService
-from .runstore import STATUS_DONE, RunStore
+from .runstore import STATUS_DONE
 from .title_translation import TitleTranslationService
 from .translation_batch import BatchPlan, TranslationBatchExecutor, resume_batches
 
@@ -51,12 +52,12 @@ class TranslationService:
 
     def run(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         book_synopsis: str,
         only_chapter: int | None = None,
         progress: ProgressFn | None = None,
-    ) -> RunStore:
+    ) -> Storage:
         """Translate chapters serially and persist usage/progress under the book lock.
         The caller restores languages, validates only_chapter and prepares the synopsis.
         This method performs body and title translation with restored context.
@@ -118,7 +119,7 @@ class TranslationService:
 
     @staticmethod
     def load_translation_inputs(
-        store: RunStore,
+        store: Storage,
     ) -> tuple[dict[tuple[int, int], TranslatedSegmentEvidence], str]:
         """Read chapters once to rebuild translated-history indices and concatenate the source
         corpus.
@@ -166,7 +167,7 @@ class TranslationService:
                 target=target,
             )
 
-    def progress_counts(self, store: RunStore, chapter_indices: list[int]) -> tuple[int, int]:
+    def progress_counts(self, store: Storage, chapter_indices: list[int]) -> tuple[int, int]:
         """Compute progress from batch checkpoints, starting resume at completed translation
         counts.
         Count a batch as done only when every target is not None (blank ``""`` counts). Counting
@@ -187,8 +188,8 @@ class TranslationService:
     def translate_chapter(
         self,
         ci: int,
-        store: RunStore,
-        glossary: GlossaryStore,
+        store: Storage,
+        glossary: Storage | GlossaryStore,
         context: RollingContext,
         style: str,
         book_synopsis: str = "",
@@ -410,7 +411,7 @@ class TranslationService:
         )
         return done
 
-    def chapter_term_snapshot(self, glossary: GlossaryStore, text_segs) -> list:
+    def chapter_term_snapshot(self, glossary: Storage | GlossaryStore, text_segs) -> list:
         """Return the glossary snapshot for this chapter; call again after writes to refresh
         it.
         """
@@ -431,8 +432,8 @@ class TranslationService:
 
     def extract_batch_glossary(
         self,
-        glossary: GlossaryStore,
-        store: RunStore,
+        glossary: Storage | GlossaryStore,
+        store: Storage,
         chapter: int,
         start_index: int,
         batch,

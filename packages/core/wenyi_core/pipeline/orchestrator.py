@@ -22,7 +22,6 @@ from .finalization import AssemblyService, ReportService
 from .preparation import PreparationService
 from .review_autofix import ReviewAutofixService
 from .review_workflow import ReviewService
-from .runstore import RunStore
 from .runtime import LLMClient, PipelineRuntime
 from .translation import TranslationService
 
@@ -51,7 +50,7 @@ class Orchestrator:
         self._assembly = AssemblyService(self._runtime)
 
     # Public entry points.
-    def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> RunStore:
+    def prepare(self, input_path: str, *, progress: ProgressFn | None = None) -> Storage:
         """Parse input and locate state; initialize first runs under the book lock."""
         with self._runtime.track_workflow("prepare"):
             return self._preparation.prepare(input_path, progress=progress)
@@ -61,7 +60,7 @@ class Orchestrator:
         input_path: str,
         *,
         progress: ProgressFn | None = None,
-    ) -> RunStore:
+    ) -> Storage:
         """Complete all preparation without translating body text.
         Parse the document, detect language, analyze style and initial terms, and optionally
         prescan chapters and synthesize a synopsis. Every stage resumes by reusing persisted
@@ -89,7 +88,7 @@ class Orchestrator:
         *,
         only_chapter: int | None = None,
         progress: ProgressFn | None = None,
-    ) -> RunStore:
+    ) -> Storage:
         """Prepare state and translate pending chapters under the book lock."""
         with self._runtime.track_workflow("translate"):
             store = self._preparation.prepare(input_path, progress=progress)
@@ -102,11 +101,11 @@ class Orchestrator:
 
     def _run_locked(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         only_chapter: int | None,
         progress: ProgressFn | None,
-    ) -> RunStore:
+    ) -> Storage:
         """Restore languages, validate chapter selection, build the synopsis and delegate
         translation.
         """
@@ -153,7 +152,7 @@ class Orchestrator:
 
     def _run_review_locked(
         self,
-        store: RunStore,
+        store: Storage,
         terms: Any,
         *,
         progress: ProgressFn | None,
@@ -303,7 +302,7 @@ class Orchestrator:
 
     def _finish_steps_locked(
         self,
-        store: RunStore,
+        store: Storage,
         *,
         input_path: str,
         steps: set[str],

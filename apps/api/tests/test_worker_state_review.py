@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 import test_storage_pg_integration as storage_tests
+from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.workers import tasks
 from wenyi_core.config import Config
@@ -51,8 +52,8 @@ def test_request_stopped_immediately_persists_paused_state(worker_state, monkeyp
         tasks._execute("translation", pid, "cancelled-run", {})
     except RequestStopped:
         pass
-    assert dal.get_project(pid)["status"] == "paused"
-    assert dal.get_job(job_id)["status"] in {"paused", "interrupted"}
+    assert must(dal.get_project(pid))["status"] == "paused"
+    assert must(dal.get_job(job_id))["status"] in {"paused", "interrupted"}
 
 
 def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, monkeypatch):
@@ -70,8 +71,8 @@ def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, mo
     monkeypatch.setattr(tasks, "_book_operation", operation)
     tasks._execute("translation", pid, "old-delivery", {})
     assert calls == []
-    assert dal.get_job(new)["status"] == "queued"
-    assert dal.get_project(pid)["status"] == "translating"
+    assert must(dal.get_job(new))["status"] == "queued"
+    assert must(dal.get_project(pid))["status"] == "translating"
 
 
 def test_async_error_fallback_does_not_overwrite_a_newer_task(worker_state, monkeypatch):
@@ -93,8 +94,8 @@ def test_async_error_fallback_does_not_overwrite_a_newer_task(worker_state, monk
     monkeypatch.setattr(tasks, "_execute", failed_thread)
     with pytest.raises(RuntimeError, match="old service failure"):
         asyncio.run(tasks._run("translation", pid, "old-failure", {}))
-    assert dal.get_job(latest[0])["status"] == "queued"
-    assert dal.get_project(pid)["status"] == "translating"
+    assert must(dal.get_job(latest[0]))["status"] == "queued"
+    assert must(dal.get_project(pid))["status"] == "translating"
 
 
 def _aged_export(storage, pool, run_id, status="running"):
@@ -136,9 +137,9 @@ def test_export_recovery_marks_orphan_error_without_changing_project(recovery_st
     dal.set_project_status(storage.project_id, "translating")
     export_id, job_id = _aged_export(storage, pg_pool, "orphan-render")
     asyncio.run(recovery.recover_jobs({"redis": None}))
-    assert dal.get_job(job_id)["status"] == "error"
+    assert must(dal.get_job(job_id))["status"] == "error"
     assert _export_row(pg_pool, export_id)[0] == "error"
-    assert dal.get_project(storage.project_id)["status"] == "translating"
+    assert must(dal.get_project(storage.project_id))["status"] == "translating"
 
 
 def test_export_lock_excludes_recovery_but_not_other_exports_or_translation(
@@ -152,9 +153,9 @@ def test_export_lock_excludes_recovery_but_not_other_exports_or_translation(
             with storage.export_lock(orphan_export, blocking=False):
                 pass
         asyncio.run(recovery.recover_jobs({"redis": None}))
-    assert dal.get_job(active_job)["status"] == "running"
+    assert must(dal.get_job(active_job))["status"] == "running"
     assert _export_row(pg_pool, active_export)[0] == "pending"
-    assert dal.get_job(orphan_job)["status"] == "error"
+    assert must(dal.get_job(orphan_job))["status"] == "error"
     assert _export_row(pg_pool, orphan_export)[0] == "error"
 
 
@@ -193,7 +194,7 @@ def test_export_recovery_uses_export_queue_and_retains_live_queued_jobs(
             if remote_status in {JobStatus.queued, JobStatus.deferred, JobStatus.in_progress}
             else "error"
         )
-        assert dal.get_job(job_id)["status"] == expected
+        assert must(dal.get_job(job_id))["status"] == expected
         assert _export_row(pg_pool, export_id)[0] == (
             "pending" if expected == "queued" else "error"
         )
@@ -223,8 +224,8 @@ def test_failure_does_not_leave_project_busy_when_api_briefly_owns_lock(worker_s
     assert acquired.wait(2)
     tasks._record_failure(pid, "failed-between-locks", RuntimeError("worker failed"))
     thread.join(2)
-    assert dal.get_job(job)["status"] == "error"
-    assert dal.get_project(pid)["status"] == "error"
+    assert must(dal.get_job(job))["status"] == "error"
+    assert must(dal.get_project(pid))["status"] == "error"
 
 
 def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkeypatch, tmp_path):
@@ -274,7 +275,7 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
     tasks._export_sync(pid, export_id=export_id, run_id="snapshot-export", fmt="txt")
     assert rendered[0]["punctuation_normalize"] is False
     assert rendered[0]["babeldoc_timeout"] == 123
-    assert dal.get_job(job_id)["status"] == "done"
+    assert must(dal.get_job(job_id))["status"] == "done"
     assert _export_row(pg_pool, export_id)[0] == "done"
 
 
@@ -357,5 +358,5 @@ def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_st
         thread.join(3)
     assert not errors
     assert not thread.is_alive()
-    assert dal.get_project(pid)["status"] == "paused"
-    assert dal.get_job(job_id)["status"] == "paused"
+    assert must(dal.get_project(pid))["status"] == "paused"
+    assert must(dal.get_job(job_id))["status"] == "paused"

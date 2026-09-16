@@ -14,6 +14,7 @@ from ..agents.base import Agent
 from ..config import Config
 from ..i18n.prompts import render
 from ..llm.base import LLMClient
+from ..storage.protocol import Storage
 from .store import (
     TYPE_TERM,
     GlossaryOccurrenceMatcher,
@@ -123,7 +124,7 @@ class GlossaryExtractor(Agent):
     @staticmethod
     def _first_occurrences(
         terms: list[GlossaryTerm],
-        store: GlossaryStore,
+        store: Storage | GlossaryStore,
         history: Iterable[TranslatedSegmentEvidence],
         before: tuple[int, int],
     ) -> dict[str, TranslatedSegmentEvidence]:
@@ -209,7 +210,7 @@ class GlossaryExtractor(Agent):
 
     def extract_and_store(
         self,
-        store: GlossaryStore,
+        store: Storage | GlossaryStore,
         source_text: str,
         target_text: str,
         chapter: int,

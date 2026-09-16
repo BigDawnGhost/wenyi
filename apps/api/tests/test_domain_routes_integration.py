@@ -6,6 +6,7 @@ import pytest
 import test_storage_pg_integration as storage_tests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from type_helpers import must
 from wenyi_api import dal, project_service
 from wenyi_api.routers import chapters, glossary, report, review, style, subtitles
 from wenyi_core.glossary.store import GlossaryTerm
@@ -171,7 +172,7 @@ def test_subtitle_routes_preserve_timeline_and_overlapping_cache(domain_client, 
     assert cue["id"] == "1" and cue["start"] == "00:00:00,100"
     assert cue["end"] == "00:00:01,200"
     assert client.put(root + "/subtitles/1", json={"target": "人工字幕"}).status_code == 200
-    assert store.load_batch(0)["1"] == store.load_batch(10)["1"] == "人工字幕"
+    assert must(store.load_batch(0))["1"] == must(store.load_batch(10))["1"] == "人工字幕"
     assert client.get(root + "/subtitles").json()["completed"] == 1
     for path in ("/chapters", "/review/runs", "/glossary/terms", "/analysis"):
         assert client.get(root + path).status_code == 422
