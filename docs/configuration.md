@@ -87,12 +87,15 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 | `openai` | OpenAI endpoint; `OPENAI_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
 | `openrouter` | OpenRouter endpoint; `OPENROUTER_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
 | `gemini` | Native Gemini API; `GEMINI_API_KEY`, falling back to `GOOGLE_API_KEY` when no custom variable is set | `thinking_level` or `thinking_budget`, `temperature`, `extra_body` |
+| `codex` | Experimental OpenAI Codex via `openai-codex` (ChatGPT subscription login; no API key). Install with `uv sync --extra codex`, then `trans-novel auth codex login` | `reasoning_effort`, `ephemeral` (default true) |
 | `openai-compatible` | Explicit `base_url`; optional `api_key_env`; `reasoning_style` | `thinking`, `reasoning_effort`, `json_response_fallback`, `request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`; `ORCAROUTER_API_KEY`; `reasoning_style` | Same as `openai-compatible` |
 | `ollama`, `vllm` | `http://localhost:11434/v1`, `http://localhost:8000/v1`; optional credentials; `reasoning_style` | Same as `openai-compatible` |
 | `fake` | No network or credentials | No provider options |
 
 Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `openai`, or `openrouter`. `json_response_fallback: reasoning_content` is an explicit option for gateways placing JSON there; the default is `none`, and non-JSON reasoning is never accepted. Gemini thinking level and thinking budget are mutually exclusive. Raw extension dictionaries are endpoint-specific; offline validation cannot prove a remote model supports them.
+
+`codex` is experimental and separate from the Platform API `openai` provider. It uses the official `openai-codex` SDK and ChatGPT subscription authentication (`trans-novel auth codex login`, `login --device-code`, `status`, `logout`). Do not paste Codex OAuth tokens into `OPENAI_API_KEY` or point the API provider at ChatGPT backends. Translation calls use ephemeral threads with a read-only sandbox and deny-all approvals. Available Codex model IDs depend on the signed-in plan.
 
 Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
 

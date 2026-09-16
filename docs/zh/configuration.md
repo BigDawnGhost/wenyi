@@ -87,12 +87,15 @@ llm:
 | `openai` | OpenAI 端点；`OPENAI_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
 | `openrouter` | OpenRouter 端点；`OPENROUTER_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
 | `gemini` | 原生 Gemini API；未指定自定义变量时，从 `GEMINI_API_KEY` 回退到 `GOOGLE_API_KEY` | `thinking_level` 或 `thinking_budget`、`temperature`、`extra_body` |
+| `codex` | 实验性 OpenAI Codex（`openai-codex`，ChatGPT 订阅登录，无需 API Key）。安装：`uv sync --extra codex`，登录：`trans-novel auth codex login` | `reasoning_effort`、`ephemeral`（默认 true） |
 | `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`；`ORCAROUTER_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
 | `ollama`、`vllm` | `http://localhost:11434/v1`、`http://localhost:8000/v1`；可选密钥；`reasoning_style` | 同 `openai-compatible` |
 | `fake` | 无网络、无需密钥 | 无提供商选项 |
 
 兼容端点的 `reasoning_style` 支持 `none`（默认）、`deepseek`、`openai`、`openrouter`。只有明确配置 `json_response_fallback: reasoning_content`，才会从网关的该字段读取有效 JSON；默认 `none`，非 JSON 推理文本不会被当作结果。Gemini 的 thinking level 和 budget 互斥。原始扩展字典依赖具体端点；离线校验无法保证远端模型接受这些参数。
+
+`codex` 为实验性能力，与 Platform API 的 `openai` 提供商相互独立。它通过官方 `openai-codex` SDK 使用 ChatGPT 订阅登录（`trans-novel auth codex login`、`login --device-code`、`status`、`logout`）。不要把 Codex OAuth token 填进 `OPENAI_API_KEY`，也不要把 API 提供商指向 ChatGPT 后端。翻译请求使用 ephemeral 线程、只读 sandbox，并拒绝工具审批。可用模型 ID 取决于登录账号套餐。
 
 SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 

@@ -29,6 +29,9 @@ pdf-output = [
 pdf-output-lite = [
     "fpdf2>=2.8.5",
 ]
+codex = [
+    "openai-codex>=0.154.0",
+]
 
 [dependency-groups]
 dev = [

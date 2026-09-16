@@ -133,6 +133,7 @@ PROVIDERS = register_providers(
         ),
         ProviderSpec("vllm", "vllm", "VLLMClient", "OpenAICompatibleOptions", "openai_compatible"),
         ProviderSpec("gemini", "gemini", "GeminiClient", "GeminiOptions"),
+        ProviderSpec("codex", "codex", "CodexClient", "CodexOptions"),
         ProviderSpec("fake", "fake", "FakeProvider", "FakeOptions"),
     )
 )

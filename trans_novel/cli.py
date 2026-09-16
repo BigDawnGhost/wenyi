@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
+from .commands.auth import register_auth_commands
 from .commands.bootstrap import configure_windows_console, initializing_group, register_bootstrap
 from .commands.context import current_context
 from .commands.glossary import register_glossary_commands
@@ -25,6 +26,7 @@ def create_app(*, console: Console | None = None) -> typer.Typer:
     )
     register_bootstrap(application)
     register_model_commands(application, lambda: current_context().load_config(), console)
+    register_auth_commands(application, lambda: current_context().load_config(), console)
     register_workflows_commands(application, current_context)
     register_inspection_commands(application, current_context)
     register_glossary_commands(application, current_context)
