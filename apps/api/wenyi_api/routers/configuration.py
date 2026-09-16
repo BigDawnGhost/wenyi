@@ -160,6 +160,24 @@ def project_stats(pid: str) -> dict:
                 "elapsed_seconds": seconds,
             }
         )
+    from ..db import get_pool
+
+    with get_pool().connection() as conn:
+        requests = conn.execute(
+            "SELECT id,status,usage,elapsed_seconds FROM retranslation_requests WHERE project_id=%s",
+            (pid,),
+        ).fetchall()
+    for rid, status, ledger, seconds in requests:
+        usage = merge_usage_summaries(usage, ledger or empty_usage())
+        timing["total_seconds"] += seconds
+        timing["runs"].append(
+            {
+                "id": rid,
+                "operation": "paragraph_retranslation",
+                "status": status,
+                "elapsed_seconds": seconds,
+            }
+        )
     return {"usage": usage, "timing": timing}
 
 

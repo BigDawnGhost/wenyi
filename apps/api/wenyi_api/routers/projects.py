@@ -188,9 +188,13 @@ async def resume(pid: str) -> dict:
 
 @router.delete("/{pid}", response_model=Message)
 def delete_project(pid: str) -> dict:
-    with project_write(pid):
-        from ..db import get_pool
-
-        with get_pool().connection() as conn:
+    with project_write(pid) as (_project, storage):
+        with storage.state_lock(), storage._conn as conn:
+            active = conn.execute(
+                "SELECT 1 FROM retranslation_requests WHERE project_id=%s AND status IN ('queued','running') LIMIT 1",
+                (pid,),
+            ).fetchone()
+            if active:
+                raise HTTPException(409, "请等待段落重译任务完成后再删除项目")
             conn.execute("DELETE FROM projects WHERE id=%s", (pid,))
     return {"message": "deleted"}

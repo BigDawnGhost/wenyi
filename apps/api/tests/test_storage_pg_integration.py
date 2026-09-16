@@ -445,13 +445,26 @@ def test_postgres_autofix_publication_resume_protects_manual_edit(
     from wenyi_core.config import Config
     from wenyi_core.llm.providers.fake import FakeClient
     from wenyi_core.pipeline.orchestrator import Orchestrator
+    from wenyi_core.pipeline.review_workflow import ReviewService
     from wenyi_core.review.models import ReviewOutcome
     from wenyi_core.review.run_store import ReviewRunStore
+    from wenyi_core.review.session import content_digest
 
     initialize(pg_storage, tmp_path)
     debug = ReviewRunStore(pg_storage.run_dir, storage=pg_storage)
     debug.start(
-        reviewed_content_digest="baseline", metadata={"config": {}, "glossary_fingerprint": "g"}
+        reviewed_content_digest=content_digest(
+            [
+                pg_storage.load_chapter(row["index"])
+                for row in pg_storage.load_manifest()["chapters"]
+            ]
+        ),
+        metadata={
+            "config": {},
+            "glossary_fingerprint": ReviewService._review_glossary_fingerprint(
+                pg_storage.all_terms()
+            ),
+        },
     )
     changes = [{"chapter": 0, "index": 0, "suggested_target": "发布修订译文"}]
     result = debug.finish(

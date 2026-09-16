@@ -23,7 +23,11 @@ async def enqueue(name: str, **kwargs):
     pool = await create_pool(_redis_settings())
     try:
         return await pool.enqueue_job(
-            name, _queue_name=EXPORT_QUEUE if name == "run_export" else WORKFLOW_QUEUE, **kwargs
+            name,
+            _queue_name=EXPORT_QUEUE
+            if name in {"run_export", "run_retranslation"}
+            else WORKFLOW_QUEUE,
+            **kwargs,
         )
     finally:
         await pool.aclose()
@@ -33,6 +37,7 @@ async def _recovery_loop(ctx: dict) -> None:
     while True:
         try:
             await recover_jobs(ctx)
+            await recover_retranslations(ctx)
         except Exception:
             logging.getLogger(__name__).exception("Could not inspect interrupted tasks")
         await asyncio.sleep(30)
@@ -53,6 +58,7 @@ async def shutdown(ctx: dict) -> None:
 
 
 from .recovery import recover_jobs  # noqa: E402
+from .retranslation import recover_retranslations, run_retranslation  # noqa: E402
 from .tasks import (  # noqa: E402
     run_chapter_translation,
     run_export,
@@ -85,7 +91,7 @@ class WorkerSettings:
 
 
 class ExportWorkerSettings:
-    functions = [run_export]
+    functions = [run_export, run_retranslation]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = _redis_settings()

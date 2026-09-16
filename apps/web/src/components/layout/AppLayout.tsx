@@ -81,6 +81,11 @@ export function AppLayout() {
               {project?.fmt !== "srt" && (
                 <>
                   {navItem(
+                    `/projects/${pid}/read`,
+                    <BookOpenText className="h-4 w-4" />,
+                    "边翻边看",
+                  )}
+                  {navItem(
                     `/projects/${pid}/glossary`,
                     <Library className="h-4 w-4" />,
                     "术语表",
@@ -129,6 +134,7 @@ export function AppLayout() {
           {pid && (
             <>
               <Link to={`/projects/${pid}`}>进度</Link>
+              {project?.fmt !== "srt" && <Link to={`/projects/${pid}/read`}>边翻边看</Link>}
               <Link
                 to={`/projects/${pid}/${project?.fmt === "srt" ? "subtitles" : "review"}`}
               >

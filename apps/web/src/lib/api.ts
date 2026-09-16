@@ -75,6 +75,7 @@ export type ProjectDetail = Output<"ProjectDetail">;
 export type ChapterSummary = Output<"ChapterSummary">;
 export type SegmentOut = Output<"SegmentOut">;
 export type ChapterSegments = Output<"ChapterSegments">;
+export type Retranslation = Output<"RetranslationOut">;
 export type Term = Output<"TermOut">;
 export type Conflict = Output<"ConflictOut">;
 export type StepDef = Output<"StepDef">;
@@ -204,6 +205,13 @@ export const api = {
     request<ChapterSummary[]>(`/projects/${pid}/chapters`),
   getChapter: (pid: string, ci: number) =>
     request<ChapterSegments>(`/projects/${pid}/chapters/${ci}`),
+  listRetranslations: (pid: string) =>
+    request<Retranslation[]>(`/projects/${pid}/retranslations`),
+  retranslateSegments: (pid: string, ci: number, segment_indices: number[]) =>
+    request<Retranslation>(`/projects/${pid}/chapters/${ci}/retranslate`, {
+      method: "POST",
+      body: JSON.stringify({ segment_indices }),
+    }),
   translateChapter: (pid: string, ci: number) =>
     request<JobEnqueued>(`/projects/${pid}/chapters/${ci}/translate`, {
       method: "POST",

@@ -81,7 +81,7 @@ function parseCsv(text: string): Partial<Term>[] {
 }
 
 // ── Page ────────────────────────────────────────────────────────────────
-export default function GlossaryPage() {
+export default function GlossaryPage({ embedded = false }: { embedded?: boolean }) {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
@@ -93,22 +93,25 @@ export default function GlossaryPage() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
-  const { data: project } = useQuery({
+  const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
     refetchInterval: 3000,
   });
   const busy = isProjectBusy(project?.status);
+  const locked = !project?.initialized;
   const { data: terms, error: termsError } = useQuery({
     queryKey: ["terms", pid, q, type],
     queryFn: () =>
       api.listTerms(pid, { q: q || undefined, type: type || undefined }),
-    enabled: !!pid,
+    enabled: !!pid && !!project?.initialized,
+    refetchInterval: busy ? 2500 : false,
   });
   const { data: conflicts, error: conflictsError } = useQuery({
     queryKey: ["conflicts", pid],
     queryFn: () => api.listConflicts(pid),
-    enabled: !!pid,
+    enabled: !!pid && !!project?.initialized,
+    refetchInterval: busy ? 2500 : false,
   });
 
   const invalidate = () => {
@@ -218,24 +221,24 @@ export default function GlossaryPage() {
             </div>
             <Button
               variant="outline"
-              disabled={busy}
+              disabled={locked}
               onClick={() => setImportOpen(true)}
             >
               <Upload className="h-4 w-4" /> 导入
             </Button>
-            <Button disabled={busy} onClick={() => setAddOpen(true)}>
+            <Button disabled={locked} onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" /> 添加术语
             </Button>
           </div>
         }
       />
-      <PageContainer className="space-y-4">
-        <ErrorNotice error={termsError || conflictsError} />
-        {busy && (
-          <p className="text-sm text-muted-foreground">
-            项目任务执行中，术语修改暂时只读。
-          </p>
-        )}
+      <PageContainer className={embedded ? "space-y-4 p-4" : "space-y-4"}>
+        <ErrorNotice error={projectError || termsError || conflictsError} />
+        <p className="text-sm text-muted-foreground">
+          {locked
+            ? "原文初始化完成后即可编辑术语表。"
+            : "翻译过程中可随时修改术语。保存后从后续模型请求开始采用；已完成的译文可在边翻边看中选择段落重译。"}
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <Input
             placeholder="搜索源词 / 译词 / 别名…"
@@ -264,7 +267,7 @@ export default function GlossaryPage() {
             <Button
               size="sm"
               variant="destructive"
-              disabled={busy}
+              disabled={locked}
               onClick={() => {
                 if (confirm(`确认删除 ${selected.size} 条术语？`))
                   batchDelete.mutate();
@@ -283,7 +286,7 @@ export default function GlossaryPage() {
         )}
 
         <Card>
-          <CardContent className="p-0">
+          <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="border-b text-xs text-muted-foreground">
                 <tr>
@@ -332,7 +335,7 @@ export default function GlossaryPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={busy}
+                        disabled={locked}
                         aria-label="编辑术语"
                         onClick={() => setEditTerm(t)}
                       >
@@ -341,7 +344,7 @@ export default function GlossaryPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={busy}
+                        disabled={locked}
                         aria-label="删除术语"
                         onClick={() => del.mutate(t.source)}
                       >
@@ -387,7 +390,7 @@ export default function GlossaryPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() =>
                         resolve.mutate({ cid: c.id, decision: "current" })
                       }
@@ -397,7 +400,7 @@ export default function GlossaryPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() =>
                         resolve.mutate({ cid: c.id, decision: "proposed" })
                       }
@@ -411,7 +414,7 @@ export default function GlossaryPage() {
           </Card>
         )}
 
-        {!busy && (
+        {!locked && (
           <>
             <AddTermDialog
               pid={pid}
@@ -483,6 +486,7 @@ function AddTermDialog({
         <div>
           <Label>源词 *</Label>
           <Input
+            aria-label="术语源词"
             value={form.source}
             onChange={(e) => setForm({ ...form, source: e.target.value })}
           />
@@ -490,6 +494,7 @@ function AddTermDialog({
         <div>
           <Label>译词 *</Label>
           <Input
+            aria-label="术语译词"
             value={form.target}
             onChange={(e) => setForm({ ...form, target: e.target.value })}
           />
@@ -600,6 +605,7 @@ function EditTermDialog({
         <div>
           <Label>源词 *</Label>
           <Input
+            aria-label="术语源词"
             value={form.source}
             onChange={(e) => setForm({ ...form, source: e.target.value })}
           />
@@ -607,6 +613,7 @@ function EditTermDialog({
         <div>
           <Label>译词 *</Label>
           <Input
+            aria-label="术语译词"
             value={form.target}
             onChange={(e) => setForm({ ...form, target: e.target.value })}
           />

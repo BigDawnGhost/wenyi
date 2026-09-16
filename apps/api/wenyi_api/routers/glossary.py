@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import csv
 import io
-import time
+from contextlib import contextmanager
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
-from psycopg.types.json import Jsonb
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.metadata import normalize_term_type
 
-from ..db import get_pool
-from ..project_service import project_write, require_book, require_project, storage_for
+from ..project_service import require_book, require_project, storage_for
 from ..schemas import ConflictOut, GlossaryImport, Message, ResolveConflict, TermIn, TermOut
 
 router = APIRouter(prefix="/projects/{pid}/glossary", tags=["glossary"])
+
+
+@contextmanager
+def _glossary_write(pid: str):
+    """Allow brief glossary edits while model requests hold the long workflow lock."""
+    require_book(require_project(pid))
+    storage = storage_for(pid)
+    with storage.state_lock():
+        project = require_project(pid)
+        require_book(project)
+        if not project.get("initialized") or project.get("status") in {"parsing", "preparing"}:
+            raise HTTPException(409, "Wait for book preparation before editing its glossary")
+        yield storage
 
 
 def _term(body: TermIn) -> GlossaryTerm:
@@ -48,8 +59,7 @@ def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(N
 @router.post("/terms", response_model=TermOut, status_code=201)
 def add_term(pid: str, body: TermIn) -> dict:
     term = _term(body)
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with _glossary_write(pid) as storage:
         if storage.get_term(term.source) is not None:
             raise HTTPException(409, "Term already exists; edit it or resolve its conflicts")
         storage.upsert_term(term)
@@ -60,43 +70,20 @@ def add_term(pid: str, body: TermIn) -> dict:
 @router.put("/terms/{source}", response_model=TermOut)
 def update_term(pid: str, source: str, body: TermIn) -> dict:
     term = _term(body)
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with _glossary_write(pid) as storage:
         existing = storage.get_term(source)
         if existing is None:
             raise HTTPException(404, "term not found")
         if term.source != source and storage.get_term(term.source) is not None:
             raise HTTPException(409, "Another term already uses that source")
-        # Update the row in place: deleting/reinserting would shift prompt glossary order.
-        with get_pool().connection() as conn:
-            conn.execute(
-                """UPDATE glossary SET source=%s,target=%s,reading=%s,type=%s,gender=%s,
-                aliases=%s,note=%s,status='ok',updated_at=%s WHERE project_id=%s AND source=%s""",
-                (
-                    term.source,
-                    term.target,
-                    term.reading,
-                    term.type,
-                    term.gender,
-                    Jsonb(term.aliases),
-                    term.note,
-                    time.time(),
-                    pid,
-                    source,
-                ),
-            )
-            conn.execute(
-                "UPDATE term_conflicts SET source=%s,resolved=TRUE WHERE project_id=%s AND source=%s",
-                (term.source, pid, source),
-            )
+        storage.edit_term(source, term)
         storage.log_event("glossary_term_edited", source=term.source, previous_source=source)
         return vars(storage.get_term(term.source))
 
 
 @router.delete("/terms/{source}", response_model=Message)
 def delete_term(pid: str, source: str) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with _glossary_write(pid) as storage:
         if not storage.delete_term(source):
             raise HTTPException(404, "term not found")
         storage.mark_conflicts_resolved(source)
@@ -112,8 +99,7 @@ def list_conflicts(pid: str) -> list[dict]:
 
 @router.post("/conflicts/{cid}/resolve", response_model=Message)
 def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with _glossary_write(pid) as storage:
         conflict = next((row for row in storage.open_conflicts() if row["id"] == cid), None)
         if conflict is None:
             raise HTTPException(404, "conflict not found")
@@ -172,8 +158,7 @@ def export_glossary(pid: str, format: Literal["json", "csv"] = "json"):
 @router.post("/import")
 def import_glossary(pid: str, body: GlossaryImport) -> dict:
     terms = [_term(item) for item in body.terms]
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with _glossary_write(pid) as storage:
         conflicts = 0
         with storage.state_lock():
             for term in terms:

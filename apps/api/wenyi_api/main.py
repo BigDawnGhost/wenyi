@@ -24,6 +24,7 @@ from .routers import (
     health,
     projects,
     report,
+    retranslation,
     review,
     strategies,
     style,
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(chapters.router)
     app.include_router(glossary.router)
     app.include_router(review.router)
+    app.include_router(retranslation.router)
     app.include_router(style.router)
     app.include_router(export.router)
     app.include_router(events.router)

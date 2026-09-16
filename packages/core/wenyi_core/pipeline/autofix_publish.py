@@ -86,11 +86,19 @@ class AutofixPublisher:
                     progress(done, total, "Publishing Review Autofix")
             if chapter_changed:
                 store.save_chapter(chapter)
+            # Concurrent Web edits may win the storage compare-and-swap. The
+            # storage then refreshes this chapter's segments in place, so an
+            # intended write must not be reported as a published revision.
+            for row in chapter_locations:
+                if row.get("status") in {"applied", "no_net_change"}:
+                    self._published_target_matches(chapter, row["index"], row)
 
             # Post-translation alignment depends on target offsets; refresh it against final published text.
             for text_index in sorted(set(applied_positions)):
                 row = next(item for item in chapter_locations if item.get("index") == text_index)
                 if row.get("status") == "failed" or row.get("alignment_status") == "completed":
+                    continue
+                if not self._published_target_matches(chapter, text_index, row):
                     continue
                 self._annotations.align_annotations_after_batch(
                     chapter_index,
@@ -99,6 +107,8 @@ class AutofixPublisher:
                     1,
                     store,
                 )
+                if not self._published_target_matches(chapter, text_index, row):
+                    continue
                 self._docx_styles.align_styles_after_batch(
                     chapter_index,
                     chapter,
@@ -106,7 +116,8 @@ class AutofixPublisher:
                     1,
                     store,
                 )
-                row["alignment_status"] = "completed"
+                if self._published_target_matches(chapter, text_index, row):
+                    row["alignment_status"] = "completed"
             debug.write_json("autofix/index.json", index)
 
         location_status = {
@@ -129,6 +140,17 @@ class AutofixPublisher:
         ) or any(row.get("status") == "failed" for row in locations)
         index["status"] = "partial" if has_failures else "completed"
         debug.write_json("autofix/index.json", index)
+
+    @staticmethod
+    def _published_target_matches(chapter, text_index: int, row: dict[str, Any]) -> bool:
+        current = chapter.text_segments[text_index].target or ""
+        if current == row.get("target"):
+            return True
+        row["status"] = "failed"
+        row["reason"] = "formal_target_changed"
+        row["actual_hash"] = text_hash(current)
+        row.pop("alignment_status", None)
+        return False
 
     def finish(
         self,

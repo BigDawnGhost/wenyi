@@ -14,9 +14,11 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.review_workflow import ReviewService
 from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
+from wenyi_core.review.session import content_digest
 from wenyi_core.storage.file import FileStorage as RunStore
 
 from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
@@ -71,8 +73,13 @@ def _outcome(
     changes = changes or []
     debug = ReviewRunStore(store.run_dir)
     debug.start(
-        reviewed_content_digest="baseline-digest",
-        metadata={"config": {}, "glossary_fingerprint": "g"},
+        reviewed_content_digest=content_digest(
+            [store.load_chapter(row["index"]) for row in store.load_manifest()["chapters"]]
+        ),
+        metadata={
+            "config": {},
+            "glossary_fingerprint": ReviewService._review_glossary_fingerprint(store.all_terms()),
+        },
     )
     result = debug.finish(
         status="completed",
@@ -589,3 +596,134 @@ def test_indexed_publication_preserves_external_edit(tmp_path, monkeypatch):
     assert result is not None
     assert result.result["autofix"]["status"] == "partial"
     assert store.load_chapter(0).text_segments[0].target == "External edit."
+
+
+@pytest.mark.parametrize("boundary", ["publication", "annotation", "style"])
+def test_concurrent_retranslation_is_not_reported_as_applied(tmp_path, monkeypatch, boundary):
+    """A storage CAS rejection refreshes targets before publication/alignment returns."""
+    store = _store(str(tmp_path))
+    outcome = _outcome(
+        store,
+        changes=[{"chapter": 0, "index": 0, "suggested_target": "Autofix candidate."}],
+    )
+    service = Orchestrator(_config(str(tmp_path / "state")), client=FakeClient())._review_autofix
+    original_save = store.save_chapter
+    alignment_calls = []
+
+    def concurrent_publication(chapter):
+        # Match PostgresStorage's contract: a newer stored revision wins and is
+        # copied back into the passed Segment object instead of being overwritten.
+        chapter.text_segments[0].target = "Concurrent retranslation."
+        original_save(chapter)
+
+    def annotations(ci, chapter, start, count, storage):
+        alignment_calls.append("annotation")
+        if boundary == "annotation":
+            concurrent_publication(chapter)
+
+    def styles(ci, chapter, start, count, storage):
+        alignment_calls.append("style")
+        if boundary == "style":
+            concurrent_publication(chapter)
+
+    if boundary == "publication":
+        monkeypatch.setattr(store, "save_chapter", concurrent_publication)
+    monkeypatch.setattr(
+        service._publisher._annotations, "align_annotations_after_batch", annotations
+    )
+    monkeypatch.setattr(service._publisher._docx_styles, "align_styles_after_batch", styles)
+
+    fixed = service.run(store, outcome, [])
+
+    assert store.load_chapter(0).text_segments[0].target == "Concurrent retranslation."
+    assert fixed.result["autofix"]["status"] == "partial"
+    assert fixed.result["autofix"]["applied_segment_count"] == 0
+    assert fixed.result["autofix"]["applied_change_count"] == 0
+    index = ReviewRunStore.open_existing(outcome.run_dir).load_json("autofix/index.json")
+    assert index["records"][0]["status"] == "not_applied"
+    assert index["locations"][0]["reason"] == "formal_target_changed"
+    assert index["locations"][0].get("alignment_status") != "completed"
+    expected_calls = {
+        "publication": [],
+        "annotation": ["annotation"],
+        "style": ["annotation", "style"],
+    }
+    assert alignment_calls == expected_calls[boundary]
+
+
+def test_retranslation_during_review_skips_old_autofix_suggestions(tmp_path):
+    store = _store(str(tmp_path))
+    outcome = _outcome(
+        store,
+        changes=[{"chapter": 0, "index": 0, "suggested_target": "Old review candidate."}],
+    )
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target = "New interactive translation."
+    store.save_chapter(chapter)
+    client = FakeClient()
+    service = Orchestrator(_config(str(tmp_path / "state")), client=client)._review_autofix
+
+    result = service.run(store, outcome, [])
+
+    assert store.load_chapter(0).text_segments[0].target == "New interactive translation."
+    assert result.result["autofix"]["status"] == "skipped"
+    assert result.result["autofix"]["reason"] == "reviewed_content_changed"
+    assert result.result["autofix"]["applied_segment_count"] == 0
+    assert client.calls == []
+    debug = ReviewRunStore.open_existing(outcome.run_dir)
+    assert debug.load_json("result.json")["autofix"] == result.result["autofix"]
+    assert debug.load_json("autofix/index.json") is None
+
+
+def test_review_start_covers_input_capture_before_any_chapter_load(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from wenyi_core.pipeline.review_checkpoint import ReviewInputs
+
+    store = _store(str(tmp_path))
+    service = Orchestrator(_config(str(tmp_path / "state")), client=FakeClient())._review
+    original_load = store.load_chapter
+    loaded_at = []
+
+    def load(ci):
+        loaded_at.append(datetime.now().astimezone())
+        return original_load(ci)
+
+    monkeypatch.setattr(store, "load_chapter", load)
+    opened = service._open_session(store, [], None)
+    assert isinstance(opened, ReviewInputs)
+    assert datetime.fromisoformat(opened.debug.started_at) <= loaded_at[0]
+
+
+@pytest.mark.parametrize("has_snapshot", [True, False])
+def test_edited_review_glossary_skips_autofix_when_snapshot_is_available(tmp_path, has_snapshot):
+    from wenyi_core.glossary.store import GlossaryTerm
+
+    store = _store(str(tmp_path))
+    store.upsert_term(GlossaryTerm(source="Alice", target="旧译名"))
+    outcome = _outcome(
+        store,
+        changes=[{"chapter": 0, "index": 0, "suggested_target": "Old glossary candidate."}],
+    )
+    debug = ReviewRunStore.open_existing(outcome.run_dir)
+    if not has_snapshot:
+        metadata = debug.load_json("rounds/metadata.json")
+        metadata.pop("glossary_fingerprint", None)
+        debug.write_json("rounds/metadata.json", metadata)
+    store.resolve_term("Alice", "用户指定的新译名")
+    client = FakeClient()
+    service = Orchestrator(_config(str(tmp_path / "state")), client=client)._review_autofix
+
+    result = service.run(store, outcome, [])
+
+    if has_snapshot:
+        assert result.result["autofix"]["status"] == "skipped"
+        assert result.result["autofix"]["reason"] == "reviewed_glossary_changed"
+        assert store.load_chapter(0).text_segments[0].target == "正式译文。"
+        assert debug.load_json("autofix/index.json") is None
+    else:
+        # Historical review artifacts lacking a snapshot retain the old behavior.
+        assert result.result["autofix"]["status"] == "completed"
+        assert store.load_chapter(0).text_segments[0].target == "Old glossary candidate."
+    assert store.get_term("Alice").target == "用户指定的新译名"
+    assert client.calls == []

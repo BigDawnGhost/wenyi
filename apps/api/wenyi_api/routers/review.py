@@ -78,18 +78,18 @@ def get_chapter_for_review(pid: str, ci: int) -> dict:
 def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
     with project_write(pid) as (project, storage):
         require_book(project)
-        try:
-            chapter = storage.load_chapter(ci)
-        except KeyError:
-            raise HTTPException(404, "chapter not found") from None
-        segment = next((item for item in chapter.segments if item.index == seg_idx), None)
-        if segment is None:
-            raise HTTPException(404, "segment not found")
-        before = segment.target
-        segment.target = body.target
-        chapter.meta.pop("review_passed", None)
-        chapter.meta["review_invalidated_at"] = datetime.now(timezone.utc).isoformat()
         with storage.state_lock():
+            try:
+                chapter = storage.load_chapter(ci)
+            except KeyError:
+                raise HTTPException(404, "chapter not found") from None
+            segment = next((item for item in chapter.segments if item.index == seg_idx), None)
+            if segment is None:
+                raise HTTPException(404, "segment not found")
+            before = segment.target
+            segment.target = body.target
+            chapter.meta.pop("review_passed", None)
+            chapter.meta["review_invalidated_at"] = datetime.now(timezone.utc).isoformat()
             storage.save_chapter(chapter)
             storage.set_chapter_review_status(ci, "pending")
             storage.log_event(

@@ -164,6 +164,11 @@ export default function ProgressPage() {
                 </Button>
               )}
               {!subtitle && (
+                <Link to={`/projects/${pid}/read`}>
+                  <Button variant="outline">边翻边看</Button>
+                </Link>
+              )}
+              {!subtitle && (
                 <Link to={`/projects/${pid}/review`}>
                   <Button variant="outline">全书审校</Button>
                 </Link>

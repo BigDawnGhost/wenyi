@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
@@ -141,6 +142,9 @@ class ReviewService:
             )
 
         chapter_rows = manifest.get("chapters", [])
+        # A Web retranslation may complete while chapter inputs are being loaded.
+        # Its invalidation must stay newer than this review's input capture time.
+        captured_at = datetime.now().astimezone()
         if progress:
             progress(0, len(chapter_rows), "Loading review chapters")
         loaded = []
@@ -185,7 +189,7 @@ class ReviewService:
             validate_usage(debug.load_usage())
             debug.log_event("review_resumed_from_checkpoint", review_id=debug.review_id)
         else:
-            debug = ReviewRunStore(store.run_dir, storage=store)
+            debug = ReviewRunStore(store.run_dir, now=captured_at, storage=store)
         debug.start(
             reviewed_content_digest=reviewed_content_digest,
             metadata={

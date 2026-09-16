@@ -166,8 +166,11 @@ def chapter_review_state(
             return 0.0
 
     review = review or {}
-    reviewed = timestamp(
-        review.get("finished_at") or review.get("interrupted_at") or review.get("started_at")
+    # Findings describe the inputs captured when review started. A retranslation
+    # can finish while the review is still running, so its later finish timestamp
+    # cannot make findings on the older text current again.
+    reviewed = timestamp(review.get("started_at")) or timestamp(
+        review.get("finished_at") or review.get("interrupted_at")
     )
     edited = timestamp(meta.get("review_invalidated_at"))
     manual = timestamp(meta.get("manual_reviewed_at"))

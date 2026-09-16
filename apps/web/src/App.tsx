@@ -11,6 +11,7 @@ import EventsPage from "./features/events/EventsPage";
 
 import SettingsPage from "./features/settings/SettingsPage";
 import SubtitlesPage from "./features/subtitles/SubtitlesPage";
+import ReaderPage from "./features/reader/ReaderPage";
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/projects/new" element={<CreateProject />} />
         <Route path="/projects/:pid" element={<ProgressPage />} />
+        <Route path="/projects/:pid/read" element={<ReaderPage />} />
         <Route path="/projects/:pid/glossary" element={<GlossaryPage />} />
         <Route path="/projects/:pid/style" element={<StylePage />} />
         <Route path="/projects/:pid/review" element={<ReviewPage />} />

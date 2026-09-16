@@ -676,6 +676,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/retranslations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Retranslations */
+        get: operations["list_retranslations_projects__pid__retranslations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/chapters/{ci}/retranslate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retranslate */
+        post: operations["retranslate_projects__pid__chapters__ci__retranslate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/analysis": {
         parameters: {
             query?: never;
@@ -1214,6 +1248,33 @@ export interface components {
             decision: "current" | "proposed" | "custom";
             /** Target */
             target?: string | null;
+        };
+        /** RetranslationInput */
+        RetranslationInput: {
+            /** Segment Indices */
+            segment_indices: number[];
+        };
+        /** RetranslationOut */
+        RetranslationOut: {
+            /** Id */
+            id: string;
+            /** Chapter Index */
+            chapter_index: number;
+            /** Segment Indices */
+            segment_indices: number[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "done" | "error" | "conflict";
+            /** Applied */
+            applied?: number[];
+            /** Conflicts */
+            conflicts?: number[];
+            /** Error */
+            error?: string | null;
+            /** Created At */
+            created_at: string;
         };
         /** ReviewRun */
         ReviewRun: {
@@ -2923,6 +2984,73 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_retranslations_projects__pid__retranslations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetranslationOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retranslate_projects__pid__chapters__ci__retranslate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetranslationInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetranslationOut"];
                 };
             };
             /** @description Validation Error */

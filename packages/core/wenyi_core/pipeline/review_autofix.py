@@ -15,10 +15,12 @@ from ..glossary.store import GlossaryTerm
 from ..llm.usage import validate_usage
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
+from ..review.session import content_digest
 from .autofix_candidates import AutofixCandidateService
 from .autofix_plan import prepare_identity, save_plan
 from .autofix_publish import AutofixPublisher
 from .docx_styles import DocxStyleService
+from .review_workflow import ReviewService
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
@@ -135,6 +137,44 @@ class ReviewAutofixService:
             for row in manifest.get("chapters", [])
             if isinstance(row.get("index"), int)
         ]
+        # Review suggestions were computed from the earlier read-only snapshot.
+        # Reloading a newer target as the publication baseline would otherwise
+        # let an old suggestion overwrite an interactive retranslation.
+        skip_reason = ""
+        if content_digest(chapters) != outcome.result.get("reviewed_content_digest"):
+            skip_reason = "reviewed_content_changed"
+        else:
+            # The review may also predate an interactive terminology change. Keep
+            # its suggestions as history rather than reintroduce old term choices.
+            metadata = debug.load_json("rounds/metadata.json") or {}
+            reviewed_glossary = metadata.get("glossary_fingerprint")
+            if (
+                isinstance(reviewed_glossary, str)
+                and reviewed_glossary
+                and reviewed_glossary
+                != ReviewService._review_glossary_fingerprint(store.all_terms())
+            ):
+                skip_reason = "reviewed_glossary_changed"
+        if skip_reason:
+            updated = dict(outcome.result)
+            updated["autofix"] = {
+                "enabled": True,
+                "status": "skipped",
+                "reason": skip_reason,
+                "applied_segment_count": 0,
+                "applied_change_count": 0,
+                "applied_issue_fix_count": 0,
+                "failed_issue_count": 0,
+                "failed_record_count": 0,
+            }
+            debug.write_json("result.json", updated)
+            debug.log_event("review_autofix_skipped", reason=skip_reason)
+            store.log_event(
+                "review_autofix_skipped",
+                review_id=debug.review_id,
+                reason=skip_reason,
+            )
+            return ReviewOutcome(run_dir=debug.run_dir, result=updated, usage=outcome.usage)
         candidates = self._candidates.prepare(
             chapters, store.load_analysis() or {}, outcome, all_terms, debug, progress=progress
         )

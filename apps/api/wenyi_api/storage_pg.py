@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from psycopg import sql
@@ -28,6 +29,11 @@ class ProjectBusyError(BlockingIOError):
 
 
 class PostgresStorage:
+    # File runs have an exclusive writer; Web runs admit brief interactive edits.
+    live_glossary_updates = True
+    SEGMENT_REVISION = "_wenyi_revision"
+    RETRANSLATION_REQUEST = "_wenyi_retranslation_request"
+
     def __init__(self, project_id: str, pool: ConnectionPool, *, run_dir: str | None = None):
         self.project_id = project_id
         self._pool = pool
@@ -107,6 +113,12 @@ class PostgresStorage:
         if not isinstance(export_id, int) or isinstance(export_id, bool) or export_id <= 0:
             raise ValueError("Invalid export identifier")
         return self._session_lock(f"export:{export_id}", blocking=blocking)
+
+    def retranslation_lock(self, request_id: str, *, blocking: bool = True):
+        """Serialize delivery/recovery of one interactive request independently of the book."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+            raise ValueError("Invalid retranslation request identifier")
+        return self._session_lock(f"retranslation:{request_id}", blocking=blocking)
 
     def assemble_lock(self):
         return self._session_lock("assemble")
@@ -347,6 +359,40 @@ class PostgresStorage:
 
     def save_chapter(self, chapter: Chapter) -> None:
         with self.state_lock(), self._conn as conn:
+            current = conn.execute(
+                "SELECT meta FROM chapters WHERE project_id=%s AND seq=%s",
+                (self.project_id, chapter.index),
+            ).fetchone()
+            if current:
+                existing = self.load_chapter(chapter.index)
+                by_index = {segment.index: segment for segment in existing.segments}
+                for segment in chapter.segments:
+                    previous = by_index.get(segment.index)
+                    if previous is None:
+                        continue
+                    revision = self.segment_revision(previous)
+                    if revision > self.segment_revision(segment):
+                        # A model call used an older chapter. Keep the published text and
+                        # its annotation/style metadata, and refresh the worker's objects
+                        # so its next batch/context cannot undo the interactive edit.
+                        for field in Segment.model_fields:
+                            setattr(segment, field, getattr(previous, field))
+                    elif (
+                        segment.source != previous.source
+                        or segment.target != previous.target
+                        or segment.target_before_polish != previous.target_before_polish
+                    ):
+                        segment.meta[self.SEGMENT_REVISION] = revision + 1
+                        segment.meta.pop(self.RETRANSLATION_REQUEST, None)
+                # Whole-chapter saves also carry stale review metadata. Preserve the
+                # latest invalidation until a newly loaded chapter deliberately changes it.
+                existing_meta = current[0] or {}
+                invalidated = existing_meta.get("review_invalidated_at", "")
+                if invalidated > chapter.meta.get("review_invalidated_at", ""):
+                    chapter.meta["review_invalidated_at"] = invalidated
+                    chapter.meta.pop("review_passed", None)
+                    if "manual_reviewed_at" in existing_meta:
+                        chapter.meta["manual_reviewed_at"] = existing_meta["manual_reviewed_at"]
             translated = getattr(chapter, "title_translated", None) or chapter.meta.get(
                 "title_translated"
             )
@@ -392,6 +438,139 @@ class PostgresStorage:
                             for s in chapter.segments
                         ],
                     )
+
+    @classmethod
+    def segment_revision(cls, segment: Segment) -> int:
+        revision = segment.meta.get(cls.SEGMENT_REVISION, 0)
+        return (
+            revision
+            if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 0
+            else 0
+        )
+
+    def publish_retranslations(
+        self, ci: int, replacements: dict[int, dict], *, request_id: str
+    ) -> dict[str, list[int]]:
+        """Publish independently computed targets only if their saved inputs still match.
+
+        Each replacement requires source, before, target and expected_revision; an
+        optional target_before_polish is cleared when omitted. A request may publish
+        a subset: conflicting segments are returned untouched. Retrying the same
+        successful request is idempotent, including after a worker process restart.
+        """
+        if not request_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+            raise ValueError("Invalid retranslation request identifier")
+        for index, item in replacements.items():
+            if (
+                not isinstance(index, int)
+                or isinstance(index, bool)
+                or index < 0
+                or not isinstance(item.get("source"), str)
+                or "before" not in item
+                or (item["before"] is not None and not isinstance(item["before"], str))
+                or not isinstance(item.get("target"), str)
+                or not isinstance(item.get("expected_revision"), int)
+                or isinstance(item["expected_revision"], bool)
+                or item["expected_revision"] < 0
+                or (
+                    item.get("target_before_polish") is not None
+                    and not isinstance(item["target_before_polish"], str)
+                )
+            ):
+                raise ValueError("Invalid retranslation replacement")
+        result: dict[str, list[int]] = {"applied": [], "conflicts": []}
+        with self.state_lock(), self._conn as conn:
+            chapter = self.load_chapter(ci)
+            segments = {segment.index: segment for segment in chapter.segments}
+            changed = False
+            changed_indices: set[int] = set()
+            for index, item in replacements.items():
+                segment = segments.get(index)
+                if segment is not None and (
+                    segment.meta.get(self.RETRANSLATION_REQUEST) == request_id
+                    and segment.source == item["source"]
+                    and segment.target == item["target"]
+                ):
+                    result["applied"].append(index)
+                    continue
+                if segment is None or (
+                    segment.source != item["source"]
+                    or segment.target != item["before"]
+                    or self.segment_revision(segment) != item["expected_revision"]
+                ):
+                    result["conflicts"].append(index)
+                    continue
+                meta = dict(segment.meta)
+                meta[self.SEGMENT_REVISION] = self.segment_revision(segment) + 1
+                meta[self.RETRANSLATION_REQUEST] = request_id
+                # Positional alignment belongs to the old target; the source metadata
+                # remains available for a subsequent annotation/style alignment pass.
+                for key in ("epub_annotations", "docx_styles"):
+                    if isinstance(meta.get(key), dict):
+                        meta[key] = dict(meta[key])
+                        meta[key].pop("placements", None)
+                        meta[key].pop("target_digest", None)
+                conn.execute(
+                    """UPDATE segments SET target=%s,target_before_polish=%s,meta=%s
+                    WHERE project_id=%s AND chapter_seq=%s AND seg_seq=%s""",
+                    (
+                        item["target"],
+                        item.get("target_before_polish"),
+                        Jsonb(meta),
+                        self.project_id,
+                        ci,
+                        index,
+                    ),
+                )
+                result["applied"].append(index)
+                changed = True
+                changed_indices.add(index)
+            if changed:
+                # EPUB/DOCX store whole-paragraph layout on the first slice. A
+                # continuation edit invalidates that slice too, and its revision
+                # prevents an in-flight alignment from restoring old placements.
+                text_segments = chapter.text_segments
+                layout_starts: set[int] = set()
+                for position, segment in enumerate(text_segments):
+                    if segment.index not in changed_indices:
+                        continue
+                    while position > 0 and text_segments[position].cont:
+                        position -= 1
+                    first = text_segments[position]
+                    if first.index not in changed_indices:
+                        layout_starts.add(first.index)
+                for index in layout_starts:
+                    first = segments[index]
+                    meta = dict(first.meta)
+                    invalidated = False
+                    for key in ("epub_annotations", "docx_styles"):
+                        if isinstance(meta.get(key), dict):
+                            meta[key] = dict(meta[key])
+                            meta[key].pop("placements", None)
+                            meta[key].pop("target_digest", None)
+                            invalidated = True
+                    if invalidated:
+                        meta[self.SEGMENT_REVISION] = self.segment_revision(first) + 1
+                        conn.execute(
+                            """UPDATE segments SET meta=%s
+                            WHERE project_id=%s AND chapter_seq=%s AND seg_seq=%s""",
+                            (Jsonb(meta), self.project_id, ci, index),
+                        )
+                chapter.meta.pop("review_passed", None)
+                chapter.meta["review_invalidated_at"] = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    """UPDATE chapters SET meta=%s,review_status='pending'
+                    WHERE project_id=%s AND seq=%s""",
+                    (Jsonb(chapter.meta), self.project_id, ci),
+                )
+                self.log_event(
+                    "segments_retranslated",
+                    chapter=ci,
+                    request_id=request_id,
+                    applied=result["applied"],
+                    conflicts=result["conflicts"],
+                )
+        return result
 
     def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
         with self.state_lock():
@@ -756,6 +935,31 @@ class PostgresStorage:
             cursor = conn.execute(
                 "UPDATE glossary SET target=%s,status='ok',updated_at=%s WHERE project_id=%s AND source=%s",
                 (target, time.time(), self.project_id, source),
+            )
+            return cursor.rowcount > 0
+
+    def edit_term(self, source: str, term: GlossaryTerm) -> bool:
+        """Replace an editor-controlled row without changing prompt insertion order."""
+        with self.state_lock(), self._conn as conn:
+            cursor = conn.execute(
+                """UPDATE glossary SET source=%s,target=%s,reading=%s,type=%s,gender=%s,
+                aliases=%s,note=%s,status='ok',updated_at=%s WHERE project_id=%s AND source=%s""",
+                (
+                    term.source,
+                    term.target,
+                    term.reading,
+                    term.type,
+                    term.gender,
+                    Jsonb(term.aliases),
+                    term.note,
+                    time.time(),
+                    self.project_id,
+                    source,
+                ),
+            )
+            conn.execute(
+                "UPDATE term_conflicts SET source=%s,resolved=TRUE WHERE project_id=%s AND source=%s",
+                (term.source, self.project_id, source),
             )
             return cursor.rowcount > 0
 

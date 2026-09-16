@@ -23,7 +23,6 @@ def domain_client(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(project_service, "storage_for", lambda pid: pg_storage)
     for module in (chapters, glossary, report, review, style, subtitles):
         monkeypatch.setattr(module, "storage_for", lambda pid: pg_storage)
-    monkeypatch.setattr(glossary, "get_pool", lambda: pg_pool)
     queued = []
 
     async def start(pid, kind, *, params=None):
@@ -92,7 +91,6 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
         ("post", "/review/0/complete", {}),
         ("put", "/analysis", {"analysis": {"style_guide": "blocked"}}),
         ("put", "/chapter-digests/0", {"digest": "blocked"}),
-        ("post", "/glossary/terms", {"source": "name", "target": "名字"}),
     ]:
         assert client.request(method, root + path, json=body).status_code == 409
     assert storage.load_chapter(0).segments[0].target == "润色译文"
@@ -248,3 +246,69 @@ def test_subtitle_preview_visible_before_first_translation(domain_client, pg_poo
     assert response.json()["total"] == 1 and response.json()["completed"] == 0
     assert response.json()["cues"][0]["source"] == "Hello"
     assert client.put(root + "/subtitles/1", json={"target": "not initialized"}).status_code == 404
+
+
+def test_glossary_can_edit_import_delete_and_resolve_while_worker_holds_lock(
+    domain_client, tmp_path
+):
+    import threading
+
+    from wenyi_api.storage_pg import PostgresStorage
+
+    client, storage, _ = domain_client
+    initialize(storage, tmp_path)
+    dal.set_project_status(storage.project_id, "translating")
+    root = f"/projects/{storage.project_id}/glossary"
+    locked = threading.Event()
+    release = threading.Event()
+
+    def worker():
+        other = PostgresStorage(storage.project_id, storage._pool, run_dir=storage.run_dir)
+        with other.lock():
+            locked.set()
+            assert release.wait(10)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    assert locked.wait(5)
+    try:
+        assert (
+            client.post(root + "/terms", json={"source": "Zed", "target": "旧名"}).status_code
+            == 201
+        )
+        assert (
+            client.put(root + "/terms/Zed", json={"source": "Zed", "target": "新名"}).status_code
+            == 200
+        )
+        # Automatic extraction finishing against an earlier prompt cannot overwrite the edit.
+        assert storage.upsert_term(GlossaryTerm(source="Zed", target="旧名")) == "conflict"
+        assert storage.get_term("Zed").target == "新名"
+        conflict = client.get(root + "/conflicts").json()[0]
+        assert (
+            client.post(
+                root + f"/conflicts/{conflict['id']}/resolve", json={"decision": "current"}
+            ).status_code
+            == 200
+        )
+        assert client.post(
+            root + "/import", json={"terms": [{"source": "Amy", "target": "艾米"}]}
+        ).json() == {"imported": 1, "conflicts": 0}
+        assert client.delete(root + "/terms/Amy").status_code == 200
+        assert [term.source for term in storage.all_terms()] == ["Zed"]
+        assert storage.open_conflicts() == []
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+
+
+def test_glossary_edit_rejects_initialization_and_parsing(domain_client, tmp_path):
+    client, storage, _ = domain_client
+    root = f"/projects/{storage.project_id}/glossary/terms"
+    body = {"source": "Zed", "target": "名字"}
+    assert client.post(root, json=body).status_code == 409
+    initialize(storage, tmp_path)
+    for status in ("parsing", "preparing"):
+        dal.set_project_status(storage.project_id, status)
+        assert client.post(root, json=body).status_code == 409
+    assert storage.all_terms() == []

@@ -298,7 +298,10 @@ class TranslationService:
                     progress(done, total, label)
                 continue
 
-            if term_snapshot_stale:
+            if term_snapshot_stale or getattr(glossary, "live_glossary_updates", False):
+                # Web editors may update terms while this worker waits on a model
+                # call or resumes saved batches. Take a fresh snapshot at the last
+                # boundary before each new request; in-flight requests keep theirs.
                 term_snapshot = self.chapter_term_snapshot(glossary, text_segs)
                 term_snapshot_stale = False
 

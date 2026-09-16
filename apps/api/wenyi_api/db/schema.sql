@@ -145,3 +145,23 @@ CREATE TABLE IF NOT EXISTS strategy_templates (
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS idx_glossary_source_trgm ON glossary USING gin (source gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_glossary_target_trgm ON glossary USING gin (target gin_trgm_ops);
+
+-- Interactive paragraph tasks run independently from the book workflow.
+CREATE TABLE IF NOT EXISTS retranslation_requests (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    chapter_index INTEGER NOT NULL,
+    segment_indices JSONB NOT NULL,
+    inputs JSONB NOT NULL,
+    config_snapshot JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    applied JSONB NOT NULL DEFAULT '[]'::jsonb,
+    conflicts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error TEXT,
+    usage JSONB,
+    elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_retranslations_project
+    ON retranslation_requests(project_id, created_at DESC);

@@ -337,3 +337,27 @@ class WorkflowOut(BaseModel):
     run_id: str | None = None
     stages: list[WorkflowStage]
     progress: dict | None = None
+
+
+class RetranslationInput(RequestModel):
+    segment_indices: list[int] = Field(min_length=1, max_length=50)
+
+    @field_validator("segment_indices", mode="before")
+    @classmethod
+    def valid_indices(cls, value):
+        if not isinstance(value, list) or any(type(i) is not int or i < 0 for i in value):
+            raise ValueError("段落编号必须为非负整数")
+        if len(set(value)) != len(value):
+            raise ValueError("段落编号不能重复")
+        return value
+
+
+class RetranslationOut(BaseModel):
+    id: str
+    chapter_index: int
+    segment_indices: list[int]
+    status: Literal["queued", "running", "done", "error", "conflict"]
+    applied: list[int] = Field(default_factory=list)
+    conflicts: list[int] = Field(default_factory=list)
+    error: str | None = None
+    created_at: str
