@@ -313,8 +313,8 @@ const en = {
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
-  "createProject.chooseLanguagesAndAWorkflowUploadThe":
-    "Choose languages and a workflow, upload the source, then check the preview before translating.",
+  "createProject.introduction":
+    "Choose languages and upload the source. Workflow defaults come from Settings and can be adjusted in Project settings.",
   "createProject.projectAndLanguages": "1. Project & languages",
   "createProject.projectName": "Project name",
   "createProject.forExampleEnglishTranslationOfAShort":
@@ -323,12 +323,9 @@ const en = {
   "createProject.targetLanguage": "Target language",
   "createProject.theSourceAndTargetLanguagesAreThe":
     "The source and target languages are the same. Choose a different target language.",
-  "createProject.translationWorkflow": "Translation workflow",
-  "createProject.bookUnderstandingPolishingWholeBookReviewAnd":
-    "Book understanding, polishing, whole-book review and autofix are enabled by default. Fast draft suits a first pass. Subtitles use a separate workflow.",
   "createProject.prepareSource": "Prepare before translating",
   "createProject.prepareHelp":
-    "Analyze the book and build its glossary after upload, using the selected workflow and default models. This uses model tokens. If unchecked, preparation runs when you start translation.",
+    "Analyze the book and build its glossary after upload, using the default workflow and models from Settings. This uses model tokens. If unchecked, preparation runs when you start translation.",
   "createProject.preparingSource":
     "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
   "createProject.sourceRequired":

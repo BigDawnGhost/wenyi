@@ -61,7 +61,7 @@ test("creates a multilingual project and waits for background parsing", async ({
     .getByLabel("Project name", { exact: true })
     .fill("Multilingual document");
   await page.getByLabel("Target language", { exact: true }).selectOption("en");
-  await expect(page.getByLabel("Translation workflow")).toHaveValue("标准翻译");
+  await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
   const create = page.getByRole("button", {
     name: "Create project",
     exact: true,
@@ -105,7 +105,7 @@ test("creates a multilingual project and waits for background parsing", async ({
   await expect(browseFiles).toBeDisabled();
   expect(uploaded).toBe(true);
   expect(created?.target_lang).toBe("en");
-  expect(created?.strategy).toEqual({ template: "标准翻译" });
+  expect(created).not.toHaveProperty("strategy");
   expect(created?.prepare).toBe(false);
   await page
     .getByRole("button", { name: "Start translation", exact: true })

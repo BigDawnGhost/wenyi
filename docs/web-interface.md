@@ -12,8 +12,10 @@ Project pages appear at the top of the desktop sidebar; Projects,
 Create project, and Settings stay at its bottom. On mobile, these global links follow
 the project navigation. Long project menus scroll independently of the global links.
 
-Creating a project requires a nonempty source file. Choose its languages and workflow,
-select the file, and optionally check **Prepare before translating** (off by default).
+Creating a project requires a nonempty source file. Choose its languages, select the
+file, and optionally check **Prepare before translating** (off by default). The workflow
+is inherited from the current global Settings when the project is created; the creation
+page has no workflow selector. Adjust individual steps later in Project settings.
 The upload and project metadata are sent together; a failed upload does not create an
 empty project. PDF files expose their parser selection before submission. The server
 then generates a preview, or generates the preview and prepares the book/glossary when

@@ -121,12 +121,14 @@ test("global defaults persist independently of existing project settings", async
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
 });
 
-test("creation follows the global default template", async ({ page }) => {
-  await fakeApi(page, {
-    "/strategies/templates": [
-      { name: "标准翻译", description: "", steps: {}, recommended: false },
-      { name: "快速出稿", description: "", steps: {}, recommended: true },
-    ],
+test("creation uses server defaults without a workflow selector", async ({
+  page,
+}) => {
+  await fakeApi(page);
+  const templateRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/strategies/templates"))
+      templateRequests.push(request.url());
   });
   await page.route("**/api/projects", async (route) => {
     const form = await new Response(
@@ -135,13 +137,13 @@ test("creation follows the global default template", async ({ page }) => {
         headers: { "content-type": route.request().headers()["content-type"] },
       },
     ).formData();
-    expect(JSON.parse(String(form.get("project"))).strategy).toEqual({
-      template: "快速出稿",
-    });
+    expect(JSON.parse(String(form.get("project")))).not.toHaveProperty(
+      "strategy",
+    );
     await route.fulfill({ json: { ...project, status: "parsing" } });
   });
   await page.goto("/projects/new");
-  await expect(page.getByLabel("Translation workflow")).toHaveValue("快速出稿");
+  await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
   await page.getByLabel("Project name", { exact: true }).fill("New book");
   await page.getByLabel("Upload source", { exact: true }).setInputFiles({
     name: "book.epub",
@@ -152,6 +154,7 @@ test("creation follows the global default template", async ({ page }) => {
     .getByRole("button", { name: "Create project", exact: true })
     .click();
   await expect(page).toHaveURL(new RegExp(`project=${pid}`));
+  expect(templateRequests).toEqual([]);
 });
 
 test("global model registration works in Chinese on mobile", async ({

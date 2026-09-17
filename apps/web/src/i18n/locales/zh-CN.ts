@@ -305,8 +305,8 @@ const zhCN = {
   "workflowPanel.waitingForProgressUpdates": "等待后台上报进度",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "润色随翻译批次执行；以上步骤表示流程配置，完成情况以任务状态及最近步骤为准。导出任务在导出页单独查看。",
-  "createProject.chooseLanguagesAndAWorkflowUploadThe":
-    "选择语言和流程，上传原文，确认解析结果后开始翻译",
+  "createProject.introduction":
+    "选择语言并上传原文，流程采用总设置默认值，可在项目配置中调整。",
   "createProject.projectAndLanguages": "1. 项目与语言",
   "createProject.projectName": "项目名称",
   "createProject.forExampleEnglishTranslationOfAShort": "例如：短篇小说英译",
@@ -314,12 +314,9 @@ const zhCN = {
   "createProject.targetLanguage": "目标语言",
   "createProject.theSourceAndTargetLanguagesAreThe":
     "源语言与目标语言相同，请选择不同的目标语言。",
-  "createProject.translationWorkflow": "翻译流程",
-  "createProject.bookUnderstandingPolishingWholeBookReviewAnd":
-    "默认开启全书预理解、润色、全书审校与自动修复。快速出稿适合初稿。字幕自动使用独立流程。",
   "createProject.prepareSource": "创建后执行译前准备",
   "createProject.prepareHelp":
-    "上传后按所选流程和默认模型分析全书、建立术语表，会消耗模型 Token。不勾选时，在开始翻译时执行准备。",
+    "上传后使用总设置中的默认流程和模型分析全书、建立术语表，会消耗模型 Token。不勾选时，在开始翻译时执行准备。",
   "createProject.preparingSource":
     "正在后台分析全书并准备术语表。可以离开此页，稍后到翻译总览查看进度。",
   "createProject.sourceRequired": "请先选择原文文件，再创建项目。",
