@@ -72,6 +72,7 @@ export function ProjectNavigation({
           },
         ]
       : []),
+    { path: "export", icon: Download, label: "common.export" as const },
     {
       path: "settings",
       icon: Settings2,
@@ -115,11 +116,6 @@ export function ProjectNavigation({
             label="common.subtitleEditor"
           />
         )}
-        <NavigationLink
-          to={`${base}/export`}
-          icon={Download}
-          label="common.export"
-        />
         {links.map(({ path, icon, label }) => (
           <NavigationLink
             key={path}

@@ -146,7 +146,7 @@ export default function UsageChart({
             return (
               <li key={id} className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-                  <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
+                  <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
                     {label}
                   </span>
                   <span className="shrink-0 tabular-nums">

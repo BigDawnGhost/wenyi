@@ -3,7 +3,7 @@
 [简体中文](zh/web-interface.md) · [Interface languages](web-i18n.md)
 
 Project navigation lists **Translation overview**, **Manual proofreading**, **Whole-book
-review**, **Export**, **Glossary**, **Style & synopsis**, **Project settings & models**,
+review**, **Glossary**, **Style & synopsis**, **Export**, **Project settings & models**,
 and **Event log** at the same level, with the current page highlighted. Desktop and
 mobile use the same navigation; subtitle projects show
 the subtitle editor instead of book proofreading/review and omit glossary/style tools.

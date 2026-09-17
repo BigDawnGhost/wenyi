@@ -17,6 +17,29 @@ for (const mobile of [false, true]) {
       name: mobile ? "项目导航" : "Project navigation",
     });
     await expect(nav.getByRole("link")).toHaveCount(8);
+    await expect(nav.getByRole("link")).toHaveText(
+      mobile
+        ? [
+            "翻译总览",
+            "人工校阅",
+            "全书审校",
+            "术语表",
+            "风格 & 概要",
+            "导出",
+            "项目配置与模型",
+            "事件日志",
+          ]
+        : [
+            "Translation overview",
+            "Manual proofreading",
+            "Whole-book review",
+            "Glossary",
+            "Style & synopsis",
+            "Export",
+            "Project settings & models",
+            "Event log",
+          ],
+    );
     await expect(nav.locator("details, summary")).toHaveCount(0);
     await expect(
       nav.getByRole("link", {
