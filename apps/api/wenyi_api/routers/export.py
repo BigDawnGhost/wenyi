@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
+import mimetypes
+import os
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from wenyi_core.assemble.writer_common import default_output_format
 
 from .. import dal
 from ..config import settings
 from ..db import get_pool
+from ..export_retention import EXPORT_LIMIT, open_export
 from ..project_service import config_document, effective_config, require_project, storage_for
 from ..schemas import AssembleEnqueued, ExportOut, ExportRequest
 from ..workers import enqueue
@@ -25,8 +29,10 @@ def list_exports(pid: str) -> list[dict]:
     require_project(pid)
     with get_pool().connection() as connection:
         rows = connection.execute(
-            "SELECT id,project_id,format,status,path,size,created_at,options,error FROM exports WHERE project_id=%s ORDER BY id DESC",
-            (pid,),
+            """SELECT id,project_id,format,status,path,size,created_at,options,error FROM exports
+               WHERE project_id=%s ORDER BY COALESCE(completed_at,created_at) DESC,id DESC
+               LIMIT %s""",
+            (pid, EXPORT_LIMIT),
         ).fetchall()
     result = []
     for row in rows:
@@ -121,14 +127,22 @@ async def create_export(pid: str, body: ExportRequest) -> dict:
 @router.get("/{export_id}/download")
 def download_export(pid: str, export_id: int):
     require_project(pid)
-    with get_pool().connection() as connection:
-        row = connection.execute(
-            "SELECT path,status FROM exports WHERE id=%s AND project_id=%s", (export_id, pid)
-        ).fetchone()
-    if row is None or not row[0] or row[1] != "done":
-        raise HTTPException(404, "Completed export not found")
-    root = Path(settings.data_dir).resolve()
-    file = (root / row[0]).resolve()
-    if not file.is_relative_to(root / pid) or not file.is_file():
-        raise HTTPException(404, "Export file missing")
-    return FileResponse(str(file), filename=file.name)
+    try:
+        stream, file = open_export(get_pool(), pid, export_id, data_dir=settings.data_dir)
+    except FileNotFoundError as error:
+        raise HTTPException(404, "Completed export not found") from error
+
+    def chunks():
+        with stream:
+            while chunk := stream.read(64 * 1024):
+                yield chunk
+
+    return StreamingResponse(
+        chunks(),
+        media_type=mimetypes.guess_type(file.name)[0] or "application/octet-stream",
+        headers={
+            "content-disposition": f"attachment; filename*=utf-8''{quote(file.name)}",
+            "content-length": str(os.fstat(stream.fileno()).st_size),
+        },
+        background=BackgroundTask(stream.close),
+    )

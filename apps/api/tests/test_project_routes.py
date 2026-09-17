@@ -383,6 +383,18 @@ def test_srt_full_workflow_manual_edit_resume_and_exports(api, monkeypatch):
     execute_next(api)
     text = client.get(f"/projects/{pid}/exports/{response.json()['export_id']}/download").text
     assert "人工修订" in text and "00:00:00,100 --> 00:00:01,200" in text
+    # Resuming subtitles generates new files and applies the same export retention policy.
+    assert client.post(f"/projects/{pid}/translate").status_code == 200
+    execute_next(api)
+    with dal.get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT path FROM exports WHERE project_id=%s AND status='done'", (pid,)
+        ).fetchall()
+    assert len(rows) == 5
+    from pathlib import Path
+
+    files = list((Path(tasks.settings.data_dir) / pid / "exports").rglob("*.srt"))
+    assert len(files) == 5
     assert client.post(f"/projects/{pid}/review/run").status_code == 422
 
 

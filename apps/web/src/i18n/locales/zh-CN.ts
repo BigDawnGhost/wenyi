@@ -156,6 +156,8 @@ const zhCN = {
   "export.size": "大小",
   "export.download": "下载",
   "export.noExportsYet": "尚无导出文件。",
+  "export.retentionHelp":
+    "服务端仅保留此项目最近完成的 5 份导出文件，需要长期保留的文件请下载。",
   "glossary.person": "人物",
   "glossary.appellation": "称谓",
   "glossary.honorific": "敬称",

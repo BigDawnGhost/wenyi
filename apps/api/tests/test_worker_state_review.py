@@ -288,7 +288,7 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
     monkeypatch.setattr(tasks, "init_pool", lambda _: pg_pool)
     monkeypatch.setattr(tasks, "_pipeline_storage", lambda *_: pg_storage)
     monkeypatch.setattr(tasks.paths, "project_dir", lambda _: pg_storage.run_dir)
-    monkeypatch.setattr(tasks.paths, "exports_dir", lambda _: str(tmp_path / "exports"))
+    monkeypatch.setattr(tasks.paths, "exports_dir", lambda _: str(tmp_path / pid / "exports"))
     monkeypatch.setattr(
         tasks, "settings", SimpleNamespace(psycopg_dsn="unused", data_dir=str(tmp_path))
     )

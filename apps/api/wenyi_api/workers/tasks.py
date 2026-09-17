@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from pathlib import Path
 from uuid import uuid4
@@ -14,6 +13,7 @@ from .. import dal, paths
 from ..config import settings
 from ..db import init_pool
 from ..emitters import redis_progress_fn
+from ..export_retention import publish_export
 from ..project_service import effective_config
 from ..storage_pg import PostgresStorage
 
@@ -250,11 +250,12 @@ def _execute(
                         )
                         for output in result["outputs"]:
                             eid = dal.create_export(pid, "srt", {"bilingual": "-bi.srt" in output})
-                            dal.set_export_status(
+                            publish_export(
+                                pool,
+                                pid,
                                 eid,
-                                "done",
-                                path=os.path.relpath(output, settings.data_dir),
-                                size=os.path.getsize(output),
+                                output,
+                                data_dir=settings.data_dir,
                             )
                         result_status = "done"
                     else:
@@ -405,11 +406,12 @@ def _render_export_sync(
                 pdf_engine=pdf_engine,
                 babeldoc_timeout=config.pipeline.babeldoc_timeout,
             )
-    dal.set_export_status(
+    publish_export(
+        pool,
+        pid,
         export_id,
-        "done",
-        path=os.path.relpath(out_path, settings.data_dir),
-        size=os.path.getsize(out_path),
+        out_path,
+        data_dir=settings.data_dir,
     )
     return export_id
 

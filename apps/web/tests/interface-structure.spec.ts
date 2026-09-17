@@ -115,6 +115,31 @@ test("progress keeps runtime and matching live progress visible while folding ad
   ).toBeVisible();
 });
 
+test("export history shows only five files with its retention notice", async ({
+  page,
+}) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/exports`]: Array.from({ length: 7 }, (_, i) => ({
+      id: 7 - i,
+      project_id: pid,
+      format: "txt",
+      status: "done",
+      size: 100,
+      path: `book-${7 - i}.txt`,
+      created_at: "2026-09-17T12:00:00Z",
+      options: {},
+    })),
+  });
+  await page.goto(`/projects/${pid}/export`);
+  await expect(
+    page.getByText(/The server keeps the latest 5 completed exports/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Download", exact: true }),
+  ).toHaveCount(5);
+  await expect(page.locator("tbody tr")).toHaveCount(5);
+});
+
 test("folded export options preserve edits and reveal controls after a validation failure", async ({
   page,
 }) => {

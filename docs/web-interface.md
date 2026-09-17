@@ -69,6 +69,15 @@ Export keeps format, monolingual/bilingual edition, generation, and downloads vi
 Layout options show their current values in a collapsed summary. Folding controls does
 not reset them; a failed export request reopens the advanced options. Subtitles retain
 their independent editor and export workflow.
+The history shows at most five recent requests. Each successful export removes completed
+files older than the latest five for that project, ordered by completion time; failed or
+pending requests do not displace successful files. Subtitle-generated files use the same
+limit, with monolingual and bilingual editions counting separately. The next successful
+export also prunes any earlier backlog. Expired downloads and their HTML asset directories
+are deleted; uploaded originals, translation state and job history remain intact. An open
+download can finish while its history entry expires. A filesystem cleanup failure is logged
+and retried after the next successful export, without failing the new file. Download files
+you need to archive before they expire.
 
 Global Settings owns provider connections, model registration and parameters, default
 model tiers/routes, the default creation template, and standard workflow defaults. The

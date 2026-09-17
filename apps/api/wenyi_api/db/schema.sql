@@ -125,8 +125,10 @@ CREATE TABLE IF NOT EXISTS exports (
     size BIGINT,
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
 );
+ALTER TABLE exports ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS jobs (
     id BIGSERIAL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -160,6 +160,8 @@ const en = {
   "export.size": "Size",
   "export.download": "Download",
   "export.noExportsYet": "No exports yet.",
+  "export.retentionHelp":
+    "The server keeps the latest 5 completed exports for this project. Download any files you want to keep.",
   "glossary.person": "Person",
   "glossary.appellation": "Appellation",
   "glossary.honorific": "Honorific",
