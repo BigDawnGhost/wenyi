@@ -92,7 +92,7 @@ test("progress keeps runtime and matching live progress visible while folding ad
   await expect(
     page.getByRole("button", { name: "Reassemble in the default format" }),
   ).toHaveCount(0);
-  await expect(page.getByText("123.45 s", { exact: true })).toBeVisible();
+  await expect(page.getByText("2m 3s", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Translate chapters in batches", { exact: true }),
   ).not.toBeVisible();

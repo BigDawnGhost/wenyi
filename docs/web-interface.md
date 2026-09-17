@@ -15,9 +15,18 @@ the project navigation. Long project menus scroll independently of the global li
 The translation overview owns start, pause, resume, preparation, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,
 and the latest matching workflow event visible. Expand workflow details to inspect the
-plan; expand accounting for per-model/provider/stage usage. The project report and
+plan; expand accounting for token composition, usage by model/provider/stage, and
+run-duration charts. The project report and
 preparation controls are collapsed by default. Export generation and its options live
 on the export page.
+
+Accounting keeps total tokens, request count, cache hit rate, and recorded runtime
+visible. Input/output bars use saved token counts; switching grouping never adds the
+independent views together. Missing cache information shows a dash. Run history lists
+the latest runs first, with localized status, start time, and duration; earlier runs
+remain available. Timing measures whole runs including waiting and I/O, excludes pauses
+between runs, and is saved when a run ends or stops. It does not estimate model or stage
+durations from token counts. The charts stack vertically on smaller screens.
 
 Pausing is a normal workflow action: the project and task show a paused status without
 an error notice or cancellation diagnostic in the event log. Saved work remains resumable.

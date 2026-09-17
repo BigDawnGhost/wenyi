@@ -45,6 +45,36 @@ export function workflowStageLabel(
   return stages[id] ? t(stages[id]) : fallback;
 }
 
+const operations: Record<string, MessageKey> = {
+  "language.detect": "workflow.languageDetection",
+  "analysis.style": "workflow.styleAnalysis",
+  "synopsis.chapter": "accounting.chapterSynopsis",
+  "synopsis.book": "accounting.bookSynopsis",
+  "translation.body": "workflow.translate",
+  "translation.title": "accounting.translateTitles",
+  "polish.body": "settings.polishing",
+  "glossary.extract": "workflow.terms",
+  "glossary.align_history": "accounting.alignTerms",
+  "annotation.align": "settings.paragraphAnnotationAlignment",
+  "review.scan": "accounting.reviewScan",
+  "review.verify": "accounting.reviewVerify",
+  "review.arbitrate": "accounting.reviewArbitrate",
+  "review.fix": "accounting.reviewFix",
+  "autofix.verify": "accounting.autofixVerify",
+  "autofix.fix": "accounting.autofixFix",
+  "srt.translate": "workflow.subtitles",
+  translate: "workflowPanel.bookTranslation",
+  workflow: "accounting.workflow",
+  unknown: "accounting.unknownAttribution",
+};
+
+/** Keep unfamiliar operation IDs visible until a translation is registered. */
+export function operationLabel(id: string, t: Translator) {
+  return operations[id]
+    ? t(operations[id])
+    : workflowStageLabel(id, id || "—", t);
+}
+
 export function languageName(code: string, fallback: string, locale: Locale) {
   try {
     return (

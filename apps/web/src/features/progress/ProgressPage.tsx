@@ -12,6 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 import { Disclosure } from "@/components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
+import { Accounting } from "./Accounting";
 import { toast } from "sonner";
 
 export default function ProgressPage() {
@@ -319,53 +320,5 @@ function ChapterTable({
         </table>
       </CardContent>
     </Card>
-  );
-}
-
-function Accounting({
-  value,
-}: {
-  value?: { usage: Record<string, unknown>; timing: Record<string, unknown> };
-}) {
-  const { t: tr, locale } = useI18n();
-  if (!value)
-    return (
-      <p className="text-sm text-muted-foreground">
-        {tr("progress.noUsageRecordedYet")}
-      </p>
-    );
-  const usage = value.usage || {};
-  const totals = (usage.totals || usage) as Record<string, unknown>;
-  const timing = value.timing || {};
-  const numeric = (value: unknown) =>
-    typeof value === "number" ? value.toLocaleString(locale) : "—";
-  const fields: [string, string][] = [
-    [tr("progress.cumulativeTokens"), numeric(totals.total_tokens)],
-    [
-      tr("common.runTime"),
-      typeof timing.total_seconds === "number"
-        ? tr("progress.seconds", { seconds: timing.total_seconds.toFixed(2) })
-        : "—",
-    ],
-  ];
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-x-8 gap-y-3">
-        {fields.map(([label, count]) => (
-          <div key={label}>
-            <div className="text-xs text-muted-foreground">{label}</div>
-            <div className="font-semibold mt-2">{count}</div>
-          </div>
-        ))}
-      </div>
-      <details>
-        <summary className="cursor-pointer text-sm text-muted-foreground">
-          {tr("progress.viewUsageAndTimingByModelProvider")}
-        </summary>
-        <div className="mt-3">
-          <StructuredData value={value} />
-        </div>
-      </details>
-    </div>
   );
 }

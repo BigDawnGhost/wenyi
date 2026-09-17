@@ -107,8 +107,21 @@ export async function fakeApi(
         summary: { chapters_done: 1, review_issues: 0 },
       },
       [`/projects/${pid}/stats`]: {
-        usage: { total_tokens: 100 },
-        timing: { elapsed_seconds: 12 },
+        usage: {
+          schema_version: 2,
+          totals: {
+            total_tokens: 100,
+            prompt_tokens: 70,
+            completion_tokens: 30,
+            calls: 1,
+          },
+          by_model: {},
+          by_provider: {},
+          by_stage: {},
+          by_tier: {},
+          labels: {},
+        },
+        timing: { total_seconds: 12, runs: [] },
       },
       [`/projects/${pid}/workflow`]: workflow,
       [`/projects/${pid}/exports`]: [],
