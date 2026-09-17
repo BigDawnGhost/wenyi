@@ -11,26 +11,47 @@ Web 使用 React/Vite、FastAPI、Arq、PostgreSQL 和 Redis。普通任务与�
 ```bash
 cp .env.example deploy/.env
 # 编辑 deploy/.env，为 config.yaml 所选提供商填入密钥。
-docker compose -f deploy/docker-compose.yml --profile full up --build
+cd deploy
+docker compose up -d --build
 ```
+
+Docker 构建排除了 `.git`，安装时通过 `WENYI_VERSION` 向 `hatch-vcs` 提供版本，
+使 Core、CLI 和 API 使用相同的包版本。默认 `0.0.0+docker` 表示本地开发构建。
+构建发布镜像时，先在 `deploy/.env` 中将 `WENYI_VERSION` 设为对应的包版本。
+普通 Git 工作区安装仍从 Git 标签生成版本。
 
 | 服务 | 地址 / 用途 |
 |---|---|
 | Web | http://localhost:8080 |
 | API / OpenAPI | http://localhost:8000 / http://localhost:8000/docs |
-| `worker` | `wenyi:workflows`：解析、准备、翻译、Review、SRT、模型对比 |
+| `worker` | `wenyi:workflows`：解析、准备、翻译、Review、SRT |
 | `export-worker` | `wenyi:exports`：快照导出 |
 | PostgreSQL / Redis | 默认仅容器内网 |
 
-仅后端使用 `--profile server`。该模式用于自建前端或 API 客户端；本地 CLI 自己运行核心，不调用这个服务器。
+默认启动所有服务，无需选择 profile，也无需设置构建环境变量。Dockerfile 使用普通构建指令，不依赖 BuildKit 缓存挂载或外部 Dockerfile frontend；未变化的步骤仍可复用 Docker 层缓存。后续命令在 `deploy/` 中执行：
 
 ```bash
-docker compose -f deploy/docker-compose.yml --profile server up --build
-# 后台运行可加 -d；停止保留数据：
-docker compose -f deploy/docker-compose.yml --profile full down
+docker compose logs -f
+docker compose down
 ```
 
+`down` 保留数据卷。默认使用 Debian、PyPI 和 npm 官方源；如需换源，在 `deploy/.env` 中取消对应 `DEBIAN_MIRROR`、`UV_DEFAULT_INDEX` 或 `NPM_REGISTRY` 行的注释，再运行 `docker compose up -d --build`。
+
 本次数据库结构面向全新部署，不执行旧项目/策略/数据库迁移。保留旧部署时，新版使用独立 Compose project、数据库和卷，例如启动时加 `-p wenyi-new`。不要对需要保留的数据卷执行删除操作。
+
+### 可选的 Buildx 开发构建
+
+已安装 Docker Buildx 插件（可用 `docker buildx version` 检查）时，在 `deploy/` 下启用带下载缓存的 Dockerfile：
+
+```bash
+DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
+  -f docker-compose.yml -f docker-compose.buildx.yml build
+docker compose up -d --no-build
+```
+
+覆盖文件仅切换 Dockerfile，沿用相同的服务、镜像名称、凭证、换源配置和数据卷。apt、uv 和 pnpm 下载缓存可在多次构建之间复用，缓存属于所选 builder。默认 Dockerfile 仍不要求 BuildKit；修改安装步骤时需同步两个版本。运行 `docker compose up -d --build` 即可恢复普通构建。
+
+Compose 可将构建委托给 [Buildx Bake](https://docs.docker.com/guides/compose-bake/)。此可选路径需要可用的 Buildx/BuildKit 环境，普通部署不需要安装。
 
 ## 共享配置与凭证
 
@@ -45,8 +66,10 @@ API、普通 Worker、导出 Worker 都加载 `deploy/.env`，只读挂载同一
 | `DATA_DIR` | 上传原件、解析资源与导出成品目录；容器固定 `/data`。 |
 | `DATABASE_URL` / `REDIS_URL` | 本地开发连接地址；Compose 覆盖为内部服务地址。 |
 | `INSTALL_PDF_OUTPUT` | Docker 构建参数，默认 `true`，安装 WeasyPrint 和 fpdf2；`false` 省略 Python PDF 输出依赖。 |
+| `WENYI_VERSION` | Docker 构建时传入的包版本，默认 `0.0.0+docker`；发布镜像须显式设置发布版本。 |
+| `DEBIAN_MIRROR` / `UV_DEFAULT_INDEX` / `UV_IMAGE` / `NPM_REGISTRY` | 可选构建镜像源与官方 `uv` 镜像标签；默认使用官方源；需要换源时取消 `deploy/.env` 中对应行的注释。 |
 | `WENYI_API_TOKEN` | 可选静态 token；HTTP 使用 Bearer 鉴权，WebSocket 使用连接后的首个 `{"token":"…"}` 消息鉴权，前端自动发送。 |
-| `WENYI_CORS_ORIGINS` | 允许的源，逗号分隔；默认 `*`。 |
+| `WENYI_CORS_ORIGINS` | 允许的源，逗号分隔；默认 `*`。启用 token 时允许已配置来源的预检请求，鉴权错误响应也保留 CORS 响应头。 |
 
 自建 WebSocket 客户端须在连接后 10 秒内发送 JSON 首包 `{"token":"…"}`；未配置服务端 token 时也发送首包（token 可为空）。通过鉴权后才接收项目快照和实时事件。
 
@@ -65,7 +88,7 @@ BabelDOC 作为独立 HTTP bridge 部署。将 `pipeline.pdf_backend` 设为 `ba
 ```bash
 cp .env.example deploy/.env
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
-  --profile server up -d postgres redis
+  up -d postgres redis
 uv sync --all-packages --group dev
 pnpm install --frozen-lockfile
 export DATABASE_URL=postgresql://wenyi:wenyi@localhost:5432/wenyi
@@ -88,16 +111,22 @@ Web 开发地址为 http://localhost:5173，Vite 代理 `/api` 与 `/ws` 至 API
 
 ## 使用流程
 
-1. 创建项目并选择源/目标语言，上传 EPUB、DOCX、FB2、TXT、Markdown、HTML、PDF 或 SRT。
+1. 先选择源／目标语言及非空 EPUB、DOCX、FB2、TXT、Markdown、HTML、PDF 或 SRT 文件，再创建项目。书籍可选勾选「译前准备」；PDF 解析器在上传前选择。
 2. 上传后解析作为后台任务运行，完成后显示预览；匹配的解析结果在准备时复用。
-3. 选择标准、快速出稿或自定义步骤，或在配置页编辑常用参数和高级 YAML；提交前可校验并查看实际模型路由。
+3. 项目继承全局「设置」的默认流程，创建页不提供流程选择器。需要微调时进入「项目配置」调整步骤并选用已注册模型，启动翻译前可校验实际路由。
 4. 开始执行，在进度页查看状态；安全边界暂停后用恢复继续实际任务类型。
 5. 书籍可编辑术语、风格、段落并查看全书审校历史、建议和实际修复记录；SRT 显示字幕条目及时间戳编辑入口。
 6. 导出选择格式和单语/双语，独立 Worker 读取已保存快照。每次导出有独立文件位置，完成后下载。
 
+**人工校阅**有独立导航入口，与全书审校分开。章节列表包含未完成章节；详情页每 3 秒读取已落盘的段落，每批译文保存后即可查看，无需等整章完成。待翻译段落显示“等待译文落盘”，有意保存的空译文仍计为完成。任务运行时可查看，暂停后可编辑已保存段落。自动刷新保留正在编辑的草稿。
+
+审校页区分建议与实际写回，历史运行不会混入当前任务进度。服务端每个项目只保留最近五份成功导出的文件。
+
+事件日志按最新在上的顺序展示，每 5 秒自动刷新。
+
 标准默认开启预理解、润色、审校和自动修复。快速出稿关闭这四项。Review 指纹一致时复用已完成结果或恢复中断运行；关闭 Autofix 可保留建议而不正式发布。
 
-同一项目的写入操作互斥：重复启动、执行中改配置/正文等冲突会返回明确错误。导出使用短时一致快照，可与翻译并行。项目初始化后要换目标语言或源内容应新建项目。模型对比仅在明确点击执行后发送输入的测试消息。
+同一项目的写入操作互斥：重复启动、执行中改配置/正文等冲突会返回明确错误。导出使用短时一致快照，可与翻译并行。项目初始化后要换目标语言或源内容应新建项目。
 
 ### Worker 异常退出后的恢复
 
@@ -111,8 +140,8 @@ Worker 启动独立的异步恢复循环，每 30 秒检查一次数据库中超
 
 ```bash
 pnpm gen:schema  # API 已在 localhost:8000 运行
-uv run ruff check packages/core packages/cli apps/api
-uv run pytest -q
+uv run --no-sync ruff check packages/core packages/cli apps/api
+uv run --no-sync pytest -q
 pnpm -C apps/web typecheck
 pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
@@ -127,17 +156,16 @@ pnpm -C apps/web test:e2e
 - 本地连不上数据库：使用 `docker-compose.dev.yml` 开放回环端口，或连接独立安装的数据库。
 - 旧配置字段错误：按配置页校验结果移除旧 QA、回译、字符预算等字段；当前 Web 不提供旧项目自动迁移。
 
-可用 `docker compose -f deploy/docker-compose.yml logs -f api worker export-worker` 查看任务失败原因。离线/浏览器验证结果与真实模型的翻译质量评估应分别记录。
+在 `deploy/` 下可用 `docker compose logs -f api worker export-worker` 查看任务失败原因。离线/浏览器验证结果与真实模型的翻译质量评估应分别记录。
 
 ### 提供商设置与流程视图
 
-打开项目，进入 **项目配置与模型 → API 供应商与模型**，可编辑提供商连接、Base URL、API Key 环境变量名、请求超时、模型名以及强/省/快三档分配。表单中可继续添加连接和模型。更改提供商协议会清除不兼容的模型选项；保存前请更新新提供商对应的模型名。高级 YAML 仍支持按操作路由与回退。
+全局 **设置** 统一管理提供商连接、模型注册、默认档位与步骤路由，以及默认流程模板。连接和模型 ID 可以重命名，存在引用的条目不能删除；恢复默认配置先载入草稿，保存后生效。**项目配置** 只选用已注册模型并调整本项目流程，不注册提供商或模型。高级 YAML 支持按操作路由与回退。
 
 凭证仍保存在服务端环境变量中；表单只填写变量名，不填写原始 API Key。配置检查会校验路由与凭证是否可用，但不会真正发送模型请求。检查已保存配置前请先保存。运行中的项目须先暂停再编辑；新建或恢复的任务会捕获已保存设置。
 
-进度页包含 **当前翻译流程**。它按最近一次非导出任务的配置快照展示启用/禁用步骤，并区分书籍、字幕、准备、审校和模型对比计划。首次任务前显示项目已配置的翻译计划。步骤卡片描述计划本身，不是逐项完成检查点；润色仍在翻译批次内执行。最近一次进度回调在 Redis 中缓存七天并关联 run ID，刷新页面可恢复进度且不会显示旧运行输出。导出任务仍在导出页查看。
+在 **翻译总览** 展开 **完整流程**，可查看 **当前翻译流程**。它按最近一次非导出任务的配置快照展示启用/禁用步骤，并区分书籍、字幕、准备和审校计划。首次任务前显示项目已配置的翻译计划。步骤卡片描述计划本身，不是逐项完成检查点；润色仍在翻译批次内执行。最近一次进度回调在 Redis 中缓存七天并关联 run ID，刷新页面可恢复进度且不会显示旧运行输出。导出任务仍在导出页查看。
 
 ## 相关说明
 
-- [WebUI / `dev` 同步说明](sync-dev-webui.md)
-- [验收记录](validation.md)
+- [界面语言](web-i18n.md)

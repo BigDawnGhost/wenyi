@@ -1,9 +1,9 @@
-# trans-novel 配置（多语言小说 → 中文）
-# 修改后无需改代码；模型提供商、流水线和输出开关都在这里。
+# Legacy trans-novel configuration for translating multilingual novels into Chinese.
+# Model providers, pipeline settings and output options are configured here.
 
 language:
-  source: auto # auto 由模型识别来源语言；也可写死 ja / en / ko / ru / de 等语言代码
-  target: zh # 译文语言
+  source: auto # Detect the source language with the model, or specify ja / en / ko / ru / de.
+  target: zh # Translation target language.
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
@@ -29,43 +29,43 @@ llm:
       options:
         thinking: false
 
-# ── 切分 ─────────────────────────────────────────────────────────────────
+# Segmentation.
 segment:
-  # 一个翻译批次（句群）的目标大小，按字符粗略估算 token。
+  # Target size of a translation batch, using character counts to approximate tokens.
   max_chars_per_batch: 1800
-  # 单个段落超过该长度时按句末标点再切成多段（续段回填时并回同段），避免超长段。
+  # Split long paragraphs at sentence boundaries; merge continuations during backfill.
   max_chars_per_segment: 1200
 
-# ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
+# Pipeline options balancing quality and cost.
 pipeline:
-  review: true # 章末整章审校（廉价档）：漏译/误译/术语/人称检查
-  autofix_severe: false # 审校后自动重译严重项（漏译/误译）；关掉仅上报，不改正文
+  review: true # Review omissions, mistranslations, terminology and references.
+  autofix_severe: false # Legacy severe-issue retranslation switch; false reports issues only.
   align_retry_limit: 2
-  polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
-  backtranslate_sample: 0 # 回译抽检比例（0 关闭）
-  consistency_qa: false # 全书跨章一致性收尾扫描
-  rolling_context_segments: 6 # 注入的前文译文尾段数
-  book_understanding: true # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译
-  prescan_concurrency: 4 # 预扫逐章梗概的并发线程数（各章独立，1=串行）
-  review_concurrency: 4 # 章末审校分块的并发线程数（只读固定译文/术语，1=串行）
-  glossary_scope: chapter # chapter=本章相关词条；full=全量表
+  polish: true # Polish with the strong tier; an additional pass increases model cost.
+  backtranslate_sample: 0 # Legacy backtranslation sampling ratio; 0 disables sampling.
+  consistency_qa: false # Legacy cross-chapter consistency scan after translation.
+  rolling_context_segments: 6 # Number of preceding translated segments included as context.
+  book_understanding: true # Prescan the source for a book synopsis and chapter digests.
+  prescan_concurrency: 4 # Concurrent chapter-digest workers; 1 runs serially.
+  review_concurrency: 4 # Concurrent review workers using fixed text and glossary snapshots.
+  glossary_scope: chapter # chapter: relevant chapter terms; full: the entire glossary.
 
-# ── 敬称策略（日语源文本时生效，其它语言通常不会用到）────────────────────
+# Honorific policy, primarily for Japanese source text.
 honorific:
-  # keep_style: 体现语气（前辈/小X/X君…）; normalize: 按统一规则；drop: 省略
+  # keep_style: retain tone; normalize: apply a consistent policy; drop: omit honorifics.
   strategy: keep_style
 
-# ── 标点规范化（统一为简体中文大陆通用全角标点）────────────────────────────
+# Normalize punctuation to standard full-width Simplified Chinese forms.
 punctuation:
   normalize: true
 
-# ── 路径 ─────────────────────────────────────────────────────────────────
+# Paths.
 paths:
-  state_dir: state # 运行状态、各章中间产物、术语库
+  state_dir: state # Run state, intermediate chapter data and glossary.
 
-# ── 双语输出 ───────────────────────────────────────────────────────────────
+# Monolingual and bilingual output.
 output:
-  mono: true # 产出单语中文版（<书名>.zh.epub）
-  bilingual: false # 产出原文与译文对照版（<书名>.zh-bi.epub）
-  bilingual_order: target_first # target_first=译文在上；source_first=原文在上
-  about_page: true # 在书末附加“关于此翻译”说明页
+  mono: true # Produce a Chinese translation: <title>.zh.epub.
+  bilingual: false # Produce a source/translation edition: <title>.zh-bi.epub.
+  bilingual_order: target_first # target_first: translation first; source_first: source first.
+  about_page: true # Append an About This Translation page.

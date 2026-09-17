@@ -41,10 +41,20 @@ jobs:
       WENYI_TEST_REDIS_URL: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
+      - name: Smoke test the default local CLI installation
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wenyi-cli-smoke
+        run: |
+          uv sync --locked --no-dev --python ${{ matrix.python-version }}
+          uv run --no-sync python -m wenyi_cli --version
+          uv run --no-sync wenyi --version
+          uv run --no-sync wenyi --help
       - name: Install workspace
         run: uv sync --locked --all-packages --group dev --python ${{ matrix.python-version }}
       - name: Install real PDF rendering regression dependencies
@@ -63,6 +73,7 @@ jobs:
         run: |
           uv build --package wenyi-core
           uv build --package wenyi-cli
+          uv build --package wenyi-api
           uv run --no-sync python scripts/check_wheel_resources.py dist
 
   web:

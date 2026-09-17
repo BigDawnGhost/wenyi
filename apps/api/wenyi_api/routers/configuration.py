@@ -8,13 +8,14 @@ from dataclasses import asdict
 import yaml
 from fastapi import APIRouter, HTTPException
 from wenyi_core.i18n.languages import label, supported_languages
-from wenyi_core.llm.operations import OPERATIONS, configured_operations, require_operation
+from wenyi_core.llm.operations import OPERATIONS, configured_operations
 from wenyi_core.llm.registry import PROVIDERS
 from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import resolve_routes
 
 from .. import dal
-from ..job_service import start_job
+from ..config_documents import project_document
+from ..global_settings import load_settings, registry_guard
 from ..project_service import (
     config_document,
     config_response,
@@ -27,10 +28,8 @@ from ..project_service import (
 from ..schemas import (
     Capabilities,
     ConfigInput,
-    JobEnqueued,
     ModelCheckRequest,
     ModelCheckResult,
-    ModelCompareRequest,
     ProjectConfigOut,
     ProjectStats,
     WorkflowOut,
@@ -65,6 +64,15 @@ def get_config(pid: str) -> dict:
         raise HTTPException(422, str(error)) from error
 
 
+@router.get("/projects/{pid}/config/defaults", response_model=ProjectConfigOut)
+def project_defaults(pid: str) -> dict:
+    project = require_project(pid)
+    try:
+        return config_response(project, effective_config(project, document={}))
+    except (ValueError, yaml.YAMLError) as error:
+        raise HTTPException(422, str(error)) from error
+
+
 @router.post("/projects/{pid}/config/validate", response_model=ProjectConfigOut)
 def validate_config(pid: str, body: ConfigInput) -> dict:
     project = require_project(pid)
@@ -78,20 +86,21 @@ def validate_config(pid: str, body: ConfigInput) -> dict:
 
 @router.put("/projects/{pid}/config", response_model=ProjectConfigOut)
 def save_config(pid: str, body: ConfigInput) -> dict:
-    with project_write(pid) as (project, _storage):
+    with project_write(pid) as (project, _storage), registry_guard() as conn:
         try:
-            config = effective_config(project, document=parse_project_yaml(body.yaml))
+            config = effective_config(
+                project,
+                document=parse_project_yaml(body.yaml),
+                defaults=load_settings(connection=conn).config,
+            )
         except (ValueError, yaml.YAMLError) as error:
             raise HTTPException(422, str(error)) from error
-        dal.set_project_config(pid, config_document(config))
+        dal.set_project_config(pid, project_document(config), connection=conn)
         # The project direction must also drive upload, list and worker dispatch.
-        from ..db import get_pool
-
-        with get_pool().connection() as conn:
-            conn.execute(
-                "UPDATE projects SET source_lang=%s, target_lang=%s WHERE id=%s",
-                (config.source_lang, config.target_lang, pid),
-            )
+        conn.execute(
+            "UPDATE projects SET source_lang=%s, target_lang=%s WHERE id=%s",
+            (config.source_lang, config.target_lang, pid),
+        )
         return config_response(project, config)
 
 
@@ -114,52 +123,14 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
         raise HTTPException(422, str(error)) from error
 
 
-@router.post("/projects/{pid}/models/compare", response_model=JobEnqueued)
-async def compare_models(pid: str, body: ModelCompareRequest) -> dict:
-    try:
-        require_operation(body.operation)
-        client = RoutedLLMClient(effective_config(require_project(pid)).llm)
-        for model in body.models:
-            client.validate_profile(model, body.operation)
-    except (ValueError, RuntimeError) as error:
-        raise HTTPException(422, str(error)) from error
-    return await start_job(pid, "model_compare", params=body.model_dump())
-
-
-@router.get("/projects/{pid}/models/comparisons/{job_id}")
-def comparison_result(pid: str, job_id: str) -> dict:
-    require_project(pid)
-    result = storage_for(pid).read_artifact(f"comparisons/{job_id}.json")
-    if result is None:
-        job = dal.get_job_by_arq_id(job_id)
-        if not job or job["project_id"] != pid:
-            raise HTTPException(404, "comparison not found")
-        return {"status": job["status"], "error": job.get("error"), "results": []}
-    return result
-
-
 @router.get("/projects/{pid}/stats", response_model=ProjectStats)
 def project_stats(pid: str) -> dict:
     require_project(pid)
     store = storage_for(pid)
-    from wenyi_core.llm.usage import empty_usage, merge_usage_summaries
+    from wenyi_core.llm.usage import empty_usage
 
     usage = store.load_usage() or empty_usage()
     timing = store.read_artifact("timing.json") or {"runs": [], "total_seconds": 0}
-    # Comparison ledgers are independent and survive later source initialization.
-    for key in store.list_artifacts("comparisons/"):
-        comparison = store.read_artifact(key) or {}
-        usage = merge_usage_summaries(usage, comparison.get("usage") or empty_usage())
-        seconds = comparison.get("elapsed_seconds", 0)
-        timing["total_seconds"] += seconds
-        timing["runs"].append(
-            {
-                "id": key,
-                "operation": "model_compare",
-                "status": comparison.get("status"),
-                "elapsed_seconds": seconds,
-            }
-        )
     return {"usage": usage, "timing": timing}
 
 
@@ -186,8 +157,6 @@ def workflow(pid: str) -> dict:
 
     if kind == "parse":
         add("parse", "解析原文与生成预览")
-    elif kind == "model_compare":
-        add("model_compare", "模型对比")
     elif kind == "srt":
         add("srt", "分批翻译字幕并保存检查点")
         add("assemble", "组装字幕文件")
@@ -201,11 +170,14 @@ def workflow(pid: str) -> dict:
             add("annotation_alignment", "逐段注释定位", pipeline.get("annotation_alignment"))
         if kind in {"translation", "review"}:
             review = kind == "review" or pipeline.get("review", False)
+            autofix = params.get("autofix")
+            if autofix is None:
+                autofix = pipeline.get("review_autofix")
             add("review", "全书审校", review)
             add(
                 "review_autofix",
                 "修复审校问题并写回",
-                review and params.get("autofix", pipeline.get("review_autofix")),
+                review and autofix,
             )
             add("report", "生成报告")
     progress = None
@@ -217,7 +189,11 @@ def workflow(pid: str) -> dict:
                 raw = redis.get(f"project:{pid}:progress")
             payload = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
             candidate = json.loads(payload) if isinstance(payload, str) else None
-            if candidate and candidate.get("run_id") == job.get("run_id"):
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("run_id") == job.get("run_id")
+                and candidate.get("project_id") == pid
+            ):
                 progress = candidate
         except Exception:
             # Progress is advisory: persisted job state remains available without Redis.
@@ -227,6 +203,7 @@ def workflow(pid: str) -> dict:
         "kind": kind,
         "status": job["status"] if job else "not_started",
         "run_id": job.get("run_id") if job else None,
+        "review_id": dal.job_review_id(job["id"]) if job and job.get("id") else None,
         "stages": stages,
         "progress": progress,
     }

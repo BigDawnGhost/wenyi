@@ -2,7 +2,7 @@
 
 [Index](README.md) · [简体中文](../../zh/project-review/2026-09-05/p03-request-budgets-and-backpressure.md)
 
-Type: proposed roadmap, not implemented; dependencies and order in index · 2026-09-05
+Status update (2026-09-17): partially implemented. Shared request limits, request/token budgets, deadlines and cancellation exist; see [configuration](../../configuration.md) for current behavior. Retain the proposed stage estimates and separate embedding/reranking accounting. The text below is the historical 2026-09-05 baseline and original proposal, not a current missing-feature list; reassess estimates before implementation.
 
 ## Baseline and evidence
 

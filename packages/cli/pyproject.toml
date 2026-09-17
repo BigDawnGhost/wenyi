@@ -1,7 +1,7 @@
 [project]
 name = "wenyi-cli"
-version = "0.2.0"
-description = "文译命令行（本地文件模式，零基础设施）"
+dynamic = ["version"]
+description = "Local command-line interface for Wenyi's translation engine."
 requires-python = ">=3.10"
 dependencies = [
     "wenyi-core",
@@ -10,14 +10,20 @@ dependencies = [
 ]
 
 [project.scripts]
-trans-novel = "wenyi_cli.main:main"
+wenyi = "wenyi_cli.main:main"
 
 [tool.uv.sources]
 wenyi-core = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["wenyi_cli"]

@@ -1,3 +1,5 @@
+import { useI18n, type MessageKey } from "@/i18n";
+import { statusLabel } from "@/i18n/status";
 export function ErrorNotice({ error }: { error?: unknown }) {
   if (!error) return null;
   return (
@@ -13,23 +15,33 @@ export function ErrorNotice({ error }: { error?: unknown }) {
 /** Preserve nested evidence, model usage and provider errors without truncating data. */
 export function StructuredData({
   value,
-  empty = "尚无记录",
+  empty,
   depth = 0,
 }: {
   value: unknown;
   empty?: string;
   depth?: number;
 }) {
+  const { t: tr } = useI18n();
+
   if (
     value === undefined ||
     value === null ||
     (Array.isArray(value) && !value.length)
   )
-    return <p className="text-sm text-muted-foreground">{empty}</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {empty ?? tr("data.noRecordsYet")}
+      </p>
+    );
   if (typeof value !== "object")
     return (
       <span className="whitespace-pre-wrap break-words text-sm">
-        {typeof value === "boolean" ? (value ? "是" : "否") : String(value)}
+        {typeof value === "boolean"
+          ? value
+            ? tr("data.yes")
+            : tr("data.no")
+          : String(value)}
       </span>
     );
   if (Array.isArray(value))
@@ -54,13 +66,13 @@ export function StructuredData({
           }
         >
           <dt className="break-words text-muted-foreground">
-            {LABELS[key] || key}
+            {LABELS[key] ? tr(LABELS[key]) : key}
           </dt>
           <dd className="min-w-0">
             <StructuredData
               value={
                 key === "status" && typeof item === "string"
-                  ? STATUS_TEXT[item] || item
+                  ? statusLabel(item, tr)
                   : item
               }
               empty="—"
@@ -73,104 +85,92 @@ export function StructuredData({
   );
 }
 
-const LABELS: Record<string, string> = {
-  usage: "模型用量",
-  timing: "运行耗时",
-  totals: "合计",
-  calls: "调用次数",
-  labels: "模型名称",
-  by_model: "按模型",
-  by_provider: "按提供商",
-  by_stage: "按步骤",
-  by_tier: "按档位",
-  cache_hit_rate: "缓存命中率",
-  cache_hit_tokens: "缓存命中 Token",
-  cache_miss_tokens: "缓存未命中 Token",
-  total_seconds: "总耗时（秒）",
-  runs: "运行记录",
-  schema_version: "记录版本",
-  seconds: "耗时（秒）",
-  profile: "模型配置",
-  records: "发布记录",
-  enabled: "已启用",
-  issue_count: "审校问题数",
-  patch_count: "修订补丁数",
-  change_count: "建议变更数",
-  clean_streak: "连续干净确认轮次",
-  conflict_count: "冲突数",
-  fix_round_count: "修订轮次",
-  review_round_count: "审校轮次",
-  blocked_issue_count: "受阻问题数",
-  initial_issue_count: "首次审校问题数",
-  fallback_agent_count: "回退核查次数",
-  dismissed_issue_count: "已排除问题数",
-  shadow_override_count: "影子修订数",
-  unresolved_conflict_count: "未解决冲突数",
-  autofix_failed_issue_count: "自动修复失败问题数",
-  not_rereported_patch_count: "未再次报告的修订数",
-  pre_arbitration_issue_count: "仲裁前问题数",
-  arbitration_superseded_count: "仲裁替换数",
-  autofix_applied_segment_count: "自动修复段落数",
-  failed_issue_count: "修复失败问题数",
-  failed_record_count: "失败发布记录",
-  applied_change_count: "已应用变更数",
-  applied_segment_count: "已修复段落数",
-  applied_issue_fix_count: "已修复问题数",
+const LABELS: Record<string, MessageKey> = {
+  usage: "data.modelUsage",
+  timing: "common.runTime",
+  totals: "data.totals",
+  calls: "data.calls",
+  labels: "common.modelName",
+  by_model: "data.byModel",
+  by_provider: "data.byProvider",
+  by_stage: "data.byStage",
+  by_tier: "data.byTier",
+  cache_hit_rate: "data.cacheHitRate",
+  cache_hit_tokens: "data.cachedTokens",
+  cache_miss_tokens: "data.uncachedTokens",
+  total_seconds: "data.totalTimeSeconds",
+  runs: "data.runs",
+  schema_version: "data.schemaVersion",
+  seconds: "data.timeSeconds",
+  profile: "data.modelConfiguration",
+  records: "data.publicationRecords",
+  enabled: "common.enabled",
+  issue_count: "data.reviewIssueCount",
+  patch_count: "data.revisionPatchCount",
+  change_count: "data.suggestedChangeCount",
+  clean_streak: "data.consecutiveCleanConfirmations",
+  conflict_count: "data.conflictCount",
+  fix_round_count: "data.revisionRounds",
+  review_round_count: "common.reviewRounds",
+  blocked_issue_count: "data.blockedIssues",
+  initial_issue_count: "data.initialIssues",
+  fallback_agent_count: "data.fallbackChecks",
+  dismissed_issue_count: "data.dismissedIssues",
+  shadow_override_count: "data.shadowRevisions",
+  unresolved_conflict_count: "data.unresolvedConflicts",
+  autofix_failed_issue_count: "data.failedAutofixIssues",
+  not_rereported_patch_count: "data.revisionsNotReportedAgain",
+  pre_arbitration_issue_count: "data.issuesBeforeArbitration",
+  arbitration_superseded_count: "data.arbitrationReplacements",
+  autofix_applied_segment_count: "data.autofixedParagraphs",
+  failed_issue_count: "data.failedFixes",
+  failed_record_count: "data.failedPublications",
+  applied_change_count: "data.appliedChanges",
+  applied_segment_count: "data.fixedParagraphs",
+  applied_issue_fix_count: "data.fixedIssues",
 
-  status: "状态",
-  summary: "摘要",
-  issues: "问题",
-  changes: "建议变更",
-  autofix: "自动修复",
-  type: "类型",
-  severity: "严重程度",
-  detail: "说明",
-  explanation: "说明",
-  suggestion: "建议",
-  source: "原文",
-  target: "译文",
-  target_before: "修订前",
-  target_after: "修订后",
-  before: "修订前",
-  after: "修订后",
-  chapter_index: "章节索引",
-  segment_index: "段落索引",
-  reason: "原因",
-  evidence: "证据",
-  error: "错误",
-  model: "模型",
-  provider: "提供商",
-  operation: "操作",
-  prompt_tokens: "输入 Token",
-  completion_tokens: "输出 Token",
-  total_tokens: "总 Token",
-  cost: "费用",
-  total_cost: "总费用",
-  duration: "耗时",
-  elapsed_seconds: "耗时（秒）",
-  chapters_total: "总章节",
-  chapters_done: "已完成章节",
-  chapters_reviewed: "已审章节",
-  terms: "术语",
-  open_conflicts: "待裁决冲突",
-  review_issues: "审校问题",
-  empty_targets: "空译文",
-  output: "输出",
-  results: "结果",
-  published: "已发布",
-  failed: "失败",
-  skipped: "已跳过",
-  created_at: "创建时间",
-};
-
-const STATUS_TEXT: Record<string, string> = {
-  completed: "已完成",
-  done: "已完成",
-  pending: "等待执行",
-  running: "运行中",
-  interrupted: "已中断",
-  failed: "失败",
-  error: "失败",
-  paused: "已暂停",
-  skipped: "已跳过",
+  status: "common.status",
+  summary: "common.summary",
+  issues: "data.issues",
+  changes: "common.suggestedChanges",
+  autofix: "data.autofix",
+  type: "common.type",
+  severity: "data.severity",
+  detail: "data.details",
+  explanation: "data.details",
+  suggestion: "data.suggestion",
+  source: "common.source",
+  target: "common.translation",
+  target_before: "data.beforeRevision",
+  target_after: "data.afterRevision",
+  before: "data.beforeRevision",
+  after: "data.afterRevision",
+  chapter_index: "data.chapterIndex",
+  segment_index: "data.paragraphIndex",
+  reason: "data.reason",
+  evidence: "data.evidence",
+  error: "data.error",
+  model: "data.model",
+  provider: "common.provider",
+  operation: "common.actions",
+  prompt_tokens: "data.inputTokens",
+  completion_tokens: "data.outputTokens",
+  total_tokens: "data.totalTokens",
+  cost: "data.cost",
+  total_cost: "data.totalCost",
+  duration: "data.time",
+  elapsed_seconds: "data.timeSeconds",
+  chapters_total: "data.totalChapters",
+  chapters_done: "data.completedChapters",
+  chapters_reviewed: "data.reviewedChapters",
+  terms: "common.terms",
+  open_conflicts: "data.openConflicts",
+  review_issues: "common.reviewIssues",
+  empty_targets: "data.emptyTranslations",
+  output: "data.output",
+  results: "data.results",
+  published: "data.published",
+  failed: "common.failed",
+  skipped: "data.skipped",
+  created_at: "common.created",
 };

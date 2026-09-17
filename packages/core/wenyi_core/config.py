@@ -12,7 +12,7 @@ from .i18n.languages import require_language
 from .llm.configuration import LLMConfig
 
 _DEFAULT_CONFIG_YAML = """\
-# trans-novel configuration (experimental multilingual fiction translation)
+# Wenyi configuration (experimental multilingual fiction translation)
 # Configure model providers, workflow stages and output here; no code changes are needed.
 
 language:
@@ -23,7 +23,7 @@ language:
 llm:
   preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
   # Add providers, models and routes to override individual operations.
-  # Inspect effective settings with: trans-novel models list
+  # Inspect effective settings with: wenyi models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:

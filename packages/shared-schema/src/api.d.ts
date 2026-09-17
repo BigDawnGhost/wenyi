@@ -245,6 +245,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/config/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Project Defaults */
+        get: operations["project_defaults_projects__pid__config_defaults_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/config/validate": {
         parameters: {
             query?: never;
@@ -296,40 +313,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{pid}/models/compare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Compare Models */
-        post: operations["compare_models_projects__pid__models_compare_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{pid}/models/comparisons/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Comparison Result */
-        get: operations["comparison_result_projects__pid__models_comparisons__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/projects/{pid}/stats": {
         parameters: {
             query?: never;
@@ -361,6 +344,58 @@ export interface paths {
         get: operations["workflow_projects__pid__workflow_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_settings_get"];
+        /** Save */
+        put: operations["save_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Default Settings */
+        get: operations["default_settings_settings_defaults_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate */
+        post: operations["validate_settings_validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -659,6 +694,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/review/{ci}/segments/{seg_idx}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Segment History */
+        get: operations["segment_history_projects__pid__review__ci__segments__seg_idx__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/review/{ci}/complete": {
         parameters: {
             query?: never;
@@ -793,6 +845,13 @@ export interface components {
             kind: string;
             /** Export Id */
             export_id: number;
+        };
+        /** Body_create_project_projects_post */
+        Body_create_project_projects_post: {
+            /** Project */
+            project: string;
+            /** File */
+            file: string;
         };
         /** Body_upload_source_projects__pid__upload_post */
         Body_upload_source_projects__pid__upload_post: {
@@ -982,6 +1041,32 @@ export interface components {
              */
             pdf_engine: "weasyprint" | "fpdf2";
         };
+        /** GlobalConfigInput */
+        GlobalConfigInput: {
+            /** Yaml */
+            yaml: string;
+            /** Default Template */
+            default_template: string;
+            /** Revision */
+            revision: number;
+            /** Model Renames */
+            model_renames?: {
+                [key: string]: string;
+            };
+        };
+        /** GlobalConfigOut */
+        GlobalConfigOut: {
+            /** Yaml */
+            yaml: string;
+            /** Effective */
+            effective: {
+                [key: string]: unknown;
+            };
+            /** Default Template */
+            default_template: string;
+            /** Revision */
+            revision: number;
+        };
         /** GlossaryImport */
         GlossaryImport: {
             /** Terms */
@@ -1030,30 +1115,6 @@ export interface components {
             valid: boolean;
             /** Operations */
             operations: string[];
-        };
-        /** ModelCompareRequest */
-        ModelCompareRequest: {
-            /** Operation */
-            operation: string;
-            /** Models */
-            models: string[];
-            /** Messages */
-            messages: components["schemas"]["ModelMessage"][];
-            /**
-             * Json Mode
-             * @default false
-             */
-            json_mode: boolean;
-        };
-        /** ModelMessage */
-        ModelMessage: {
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "system" | "user" | "assistant";
-            /** Content */
-            content: string;
         };
         /** PDFCapabilities */
         PDFCapabilities: {
@@ -1120,6 +1181,10 @@ export interface components {
             }[];
             /** Editable */
             editable: boolean;
+            /** Registered Models */
+            registered_models: {
+                [key: string]: unknown;
+            };
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -1139,6 +1204,13 @@ export interface components {
             strategy?: {
                 [key: string]: unknown;
             };
+            /**
+             * Prepare
+             * @default false
+             */
+            prepare: boolean;
+            /** Pdf Backend */
+            pdf_backend?: ("mineru" | "babeldoc") | null;
         };
         /** ProjectDetail */
         ProjectDetail: {
@@ -1215,6 +1287,66 @@ export interface components {
             /** Target */
             target?: string | null;
         };
+        /** ReviewItem */
+        ReviewItem: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "issue" | "change" | "publication";
+            /**
+             * Type
+             * @default
+             */
+            type: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Suggestion
+             * @default
+             */
+            suggestion: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "fixed" | "failed" | "unchanged";
+            location?: components["schemas"]["ReviewLocation"] | null;
+            /** Evidence */
+            evidence?: components["schemas"]["ReviewLocation"][];
+            /** Issue */
+            issue?: {
+                [key: string]: unknown;
+            };
+            /** Changes */
+            changes?: {
+                [key: string]: unknown;
+            }[];
+            /** Publications */
+            publications?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ReviewLocation */
+        ReviewLocation: {
+            /** Chapter */
+            chapter: number;
+            /** Text Index */
+            text_index: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Chapter Title */
+            chapter_title: string;
+            /** Source */
+            source: string;
+            /** Current Target */
+            current_target: string | null;
+        };
         /** ReviewRun */
         ReviewRun: {
             /** Id */
@@ -1245,11 +1377,20 @@ export interface components {
             result?: {
                 [key: string]: unknown;
             };
+            /** Items */
+            items?: components["schemas"]["ReviewItem"][];
         };
         /** ReviewRunRequest */
         ReviewRunRequest: {
             /** Autofix */
             autofix?: boolean | null;
+        };
+        /** SegmentEdit */
+        SegmentEdit: {
+            /** Target */
+            target: string;
+            /** Expected Target */
+            expected_target: string | null;
         };
         /** SegmentOut */
         SegmentOut: {
@@ -1268,6 +1409,22 @@ export interface components {
              * @default text
              */
             kind: string;
+        };
+        /** SegmentRevision */
+        SegmentRevision: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "translation" | "polish" | "manual" | "update" | "snapshot" | "before_polish";
+            /** Before */
+            before: string | null;
+            /** After */
+            after: string | null;
+            /** Created At */
+            created_at: string | null;
         };
         /** StartTranslation */
         StartTranslation: {
@@ -1479,6 +1636,8 @@ export interface components {
             status: string;
             /** Run Id */
             run_id?: string | null;
+            /** Review Id */
+            review_id?: string | null;
             /** Stages */
             stages: components["schemas"]["WorkflowStage"][];
             /** Progress */
@@ -1598,7 +1757,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectCreate"];
+                "multipart/form-data": components["schemas"]["Body_create_project_projects_post"];
             };
         };
         responses: {
@@ -1608,7 +1767,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["ProjectDetail"];
                 };
             };
             /** @description Validation Error */
@@ -1995,6 +2154,37 @@ export interface operations {
             };
         };
     };
+    project_defaults_projects__pid__config_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectConfigOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     validate_config_projects__pid__config_validate_post: {
         parameters: {
             query?: never;
@@ -2098,75 +2288,6 @@ export interface operations {
             };
         };
     };
-    compare_models_projects__pid__models_compare_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelCompareRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobEnqueued"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    comparison_result_projects__pid__models_comparisons__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     project_stats_projects__pid__stats_get: {
         parameters: {
             query?: never;
@@ -2216,6 +2337,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
+                };
+            };
+        };
+    };
+    save_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalConfigInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    default_settings_settings_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
+                };
+            };
+        };
+    };
+    validate_settings_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalConfigInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
                 };
             };
             /** @description Validation Error */
@@ -2876,7 +3103,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TargetEdit"];
+                "application/json": components["schemas"]["SegmentEdit"];
             };
         };
         responses: {
@@ -2889,6 +3116,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    segment_history_projects__pid__review__ci__segments__seg_idx__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+                seg_idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SegmentRevision"][];
                 };
             };
             /** @description Validation Error */

@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1
+# Optional cached variant; keep installation steps aligned with Dockerfile.api.
+# Shared API/worker image. Targets: api | worker
+# Set INSTALL_PDF_OUTPUT=false for a smaller image without WeasyPrint/fpdf2.
+# Python deps are fully baked by `uv sync`; no pip/uv install is needed at runtime.
+
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.15
+FROM ${UV_IMAGE} AS uv
+
+FROM python:3.12-slim AS base
+
+ARG INSTALL_PDF_OUTPUT=true
+ARG DEBIAN_MIRROR=
+ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
+    PATH="/app/.venv/bin:$PATH" \
+    WENYI_CONFIG=/app/config.yaml
+
+WORKDIR /app
+
+# Official uv/uvx binaries — avoid `pip install uv` and extra Python deps.
+COPY --from=uv /uv /uvx /bin/
+
+# Debian 12/13 slim images use /etc/apt/sources.list.d/debian.sources.
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i -E "s#https?://deb\.debian\.org#${DEBIAN_MIRROR}#g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+
+RUN rm -f /etc/apt/apt.conf.d/docker-clean
+
+RUN --mount=type=cache,id=wenyi-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=wenyi-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libxml2 libxslt1.1 libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+      fonts-noto-core fonts-noto-cjk fonts-wqy-zenhei fonts-dejavu-core fontconfig
+
+COPY pyproject.toml uv.lock ./
+COPY packages/core packages/core
+COPY packages/cli packages/cli
+COPY apps/api apps/api
+COPY config.yaml ./
+
+# The Docker context excludes Git metadata; release builds supply WENYI_VERSION.
+ARG WENYI_VERSION=0.0.0+docker
+
+RUN --mount=type=cache,id=wenyi-uv-cache,target=/root/.cache/uv,sharing=locked \
+    export SETUPTOOLS_SCM_PRETEND_VERSION="$WENYI_VERSION" \
+    && if [ "$INSTALL_PDF_OUTPUT" = "true" ]; then \
+      uv sync --frozen --all-packages --no-dev --extra pdf-output --extra pdf-output-lite; \
+    else \
+      uv sync --frozen --all-packages --no-dev; \
+    fi \
+    && uvicorn --version \
+    && arq --version \
+    && wenyi --version \
+    && wenyi --help >/dev/null \
+    && python -c "import wenyi_api, wenyi_core, wenyi_cli"
+
+FROM base AS api
+EXPOSE 8000
+CMD ["uvicorn", "wenyi_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM base AS worker
+CMD ["arq", "wenyi_api.workers.WorkerSettings"]

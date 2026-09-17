@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
-from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import Json
 
-from .. import dal, paths
-from ..config import settings
+from .. import dal
+from ..config_documents import project_document
+from ..global_settings import load_settings, registry_guard
 from ..job_service import start_job
 from ..project_service import (
-    config_document,
     effective_config,
     project_write,
     require_book,
@@ -30,22 +29,10 @@ from ..schemas import (
     StartTranslation,
     UploadPreview,
 )
+from ..source_upload import input_format, save_source
 from ..strategies import strategy_to_config
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-_UPLOAD_FORMATS = {
-    "epub": "epub",
-    "fb2": "fb2",
-    "txt": "text",
-    "text": "text",
-    "md": "markdown",
-    "markdown": "markdown",
-    "html": "html",
-    "htm": "html",
-    "pdf": "pdf",
-    "docx": "docx",
-    "srt": "srt",
-}
 
 
 @router.get("", response_model=list[Project])
@@ -53,22 +40,52 @@ def list_projects() -> list[dict]:
     return dal.list_projects()
 
 
-@router.post("", response_model=Project, status_code=201)
-def create_project(body: ProjectCreate) -> dict:
-    from wenyi_core.config import Config
-
+@router.post("", response_model=ProjectDetail, status_code=201)
+async def create_project(
+    project: Annotated[Json[ProjectCreate], Form()], file: UploadFile = File(...)
+) -> dict:
+    fmt = input_format(file)
+    if fmt == "srt" and project.prepare:
+        raise HTTPException(422, "Subtitles do not use book preparation")
+    if project.source_lang == project.target_lang:
+        raise HTTPException(422, "Source and target languages are identical")
+    pid = uuid4().hex[:16]
+    source = await save_source(pid, file)
     try:
-        if body.source_lang == body.target_lang:
-            raise ValueError("Source and target languages are identical")
-        strategy_to_config(
-            body.strategy,
-            Config.load(settings.config_path),
-            source_lang=body.source_lang,
-            target_lang=body.target_lang,
-        )
+        with registry_guard() as conn:
+            defaults = load_settings(connection=conn)
+            strategy = project.strategy or {"template": defaults.default_template}
+            config = strategy_to_config(
+                strategy,
+                defaults.config,
+                source_lang=project.source_lang,
+                target_lang=project.target_lang,
+            )
+            if fmt == "pdf" and project.pdf_backend:
+                config.pipeline.pdf_backend = project.pdf_backend
+            dal.create_project(
+                project.name,
+                project.source_lang,
+                project.target_lang,
+                strategy,
+                project_id=pid,
+                source=source.fields(),
+                config=project_document(config),
+                connection=conn,
+            )
     except ValueError as error:
+        source.path.unlink(missing_ok=True)
         raise HTTPException(422, str(error)) from error
-    pid = dal.create_project(body.name, body.source_lang, body.target_lang, body.strategy)
+    except BaseException:
+        source.path.unlink(missing_ok=True)
+        raise
+    try:
+        await start_job(pid, "prepare" if project.prepare else "parse", params={"preview": True})
+    except HTTPException as error:
+        if error.status_code != 503:
+            raise
+        # The source and failed task are durable; return their identity for retry.
+        dal.set_project_status(pid, "error", error=str(error.detail))
     return require_project(pid)
 
 
@@ -91,34 +108,14 @@ async def upload_source(
     with project_write(pid) as (project, storage):
         if project.get("initialized"):
             raise HTTPException(409, "Create a new project to replace an initialized source")
-        filename = Path(file.filename or "source").name
-        ext = (fmt or Path(filename).suffix.lstrip(".")).lower()
-        if ext not in _UPLOAD_FORMATS:
-            raise HTTPException(422, "Unsupported input format")
-        fmt_code = _UPLOAD_FORMATS[ext]
-        suffix = "md" if fmt_code == "markdown" else "txt" if fmt_code == "text" else fmt_code
-        destination = Path(paths.project_dir(pid)) / f"source-{uuid4().hex}.{suffix}"
-        digest = hashlib.sha256()
+        source = await save_source(pid, file, fmt)
         try:
-            with destination.open("xb") as handle:
-                while block := await file.read(1024 * 1024):
-                    digest.update(block)
-                    handle.write(block)
-            if destination.stat().st_size == 0:
-                raise HTTPException(422, "Source file is empty")
-            dal.set_project_source(
-                pid,
-                os.path.relpath(destination, settings.data_dir),
-                Path(filename).stem,
-                source_sha256=digest.hexdigest(),
-                fmt=fmt_code,
-                source_meta={"original_filename": filename},
-            )
+            dal.set_project_source(pid, **source.fields())
             storage.delete_artifact("preview.json")
             storage.delete_artifact("parsed_document.json")
             storage.delete_artifact("subtitle_preview.json")
         except BaseException:
-            destination.unlink(missing_ok=True)
+            source.path.unlink(missing_ok=True)
             raise
     return await start_job(pid, "parse")
 
@@ -135,18 +132,18 @@ def preview(pid: str) -> dict:
 @router.post("/{pid}/translate", response_model=JobEnqueued)
 async def start_translation(pid: str, body: StartTranslation | None = None) -> dict:
     if body and body.strategy is not None:
-        with project_write(pid) as (project, _storage):
+        with project_write(pid) as (project, _storage), registry_guard() as conn:
             try:
                 config = strategy_to_config(
                     body.strategy,
-                    effective_config(project),
+                    effective_config(project, defaults=load_settings(connection=conn).config),
                     source_lang=project["source_lang"],
                     target_lang=project["target_lang"],
                 )
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
-            dal.set_project_strategy(pid, body.strategy)
-            dal.set_project_config(pid, config_document(config))
+            dal.set_project_strategy(pid, body.strategy, connection=conn)
+            dal.set_project_config(pid, project_document(config), connection=conn)
     project = require_project(pid)
     return await start_job(pid, "srt" if project.get("fmt") == "srt" else "translation")
 

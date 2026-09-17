@@ -1,11 +1,13 @@
-"""项目级数据访问（不属于内核 Storage Protocol，但 API 需要的列表/统计查询）。"""
+"""Project queries and statistics used by the API outside the core Storage protocol."""
 
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from .db import get_pool
@@ -18,22 +20,47 @@ RUNNING_PROJECT_STATUSES = frozenset(
         "translating_subtitles",
         "parsing",
         "pausing",
-        "comparing",
     }
 )
 
 
-def _conn():
-    return get_pool().connection()
+def _conn(connection: Connection[Any] | None = None):
+    return nullcontext(connection) if connection is not None else get_pool().connection()
 
 
-def create_project(name: str, source_lang: str, target_lang: str, strategy: dict[str, Any]) -> str:
-    pid = uuid.uuid4().hex[:16]
-    with _conn() as c:
+def create_project(
+    name: str,
+    source_lang: str,
+    target_lang: str,
+    strategy: dict[str, Any],
+    *,
+    project_id: str | None = None,
+    source: dict | None = None,
+    config: dict | None = None,
+    connection: Connection[Any] | None = None,
+) -> str:
+    pid = project_id or uuid.uuid4().hex[:16]
+    source = source or {}
+    with _conn(connection) as c:
         c.execute(
-            """INSERT INTO projects (id, name, source_lang, target_lang, status, strategy)
-               VALUES (%s,%s,%s,%s,'created',%s)""",
-            (pid, name, source_lang, target_lang, Jsonb(strategy)),
+            """INSERT INTO projects
+               (id, name, source_lang, target_lang, status, strategy, source_path,
+                book_title, source_sha256, fmt, source_meta, config)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                pid,
+                name,
+                source_lang,
+                target_lang,
+                "uploaded" if source else "created",
+                Jsonb(strategy),
+                source.get("source_path"),
+                source.get("book_title"),
+                source.get("source_sha256"),
+                source.get("fmt"),
+                Jsonb(source.get("source_meta", {})),
+                Jsonb(config or {}),
+            ),
         )
     return pid
 
@@ -97,8 +124,10 @@ def set_project_status(pid: str, status: str, *, error: str | None = None) -> No
         )
 
 
-def set_project_strategy(pid: str, strategy: dict[str, Any]) -> None:
-    with _conn() as c:
+def set_project_strategy(
+    pid: str, strategy: dict[str, Any], *, connection: Connection[Any] | None = None
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET strategy=%s, updated_at=now() WHERE id=%s",
             (Jsonb(strategy), pid),
@@ -113,8 +142,10 @@ def get_project_config(pid: str) -> dict[str, Any]:
     return row[0] or {}
 
 
-def set_project_config(pid: str, config: dict[str, Any]) -> None:
-    with _conn() as c:
+def set_project_config(
+    pid: str, config: dict[str, Any], *, connection: Connection[Any] | None = None
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET config=%s, updated_at=now() WHERE id=%s", (Jsonb(config), pid)
         )
@@ -181,7 +212,7 @@ def chapter_review_state(
 
 
 def chapter_summaries(pid: str) -> list[dict]:
-    """章节列表 + 原文/译文词数 + 审校问题数。"""
+    """Return chapter summaries with source/target counts and review status."""
     with _conn() as c:
         rows = c.execute(
             """SELECT ch.seq, ch.title, ch.title_translated, ch.status,
@@ -190,7 +221,7 @@ def chapter_summaries(pid: str) -> list[dict]:
                           AND s.source<>'' AND s.kind='text') AS src_words,
                       (SELECT COUNT(*) FROM segments s
                         WHERE s.project_id=ch.project_id AND s.chapter_seq=ch.seq
-                          AND s.target IS NOT NULL AND s.target<>''
+                          AND s.source<>'' AND s.target IS NOT NULL
                           AND s.kind='text') AS tgt_words,
                       ch.review_status,ch.meta
                  FROM chapters ch WHERE ch.project_id=%s ORDER BY ch.seq""",
@@ -328,6 +359,24 @@ def list_jobs(pid: str) -> list[dict[str, Any]]:
     return [item for item in (_job_row(row) for row in rows) if item is not None]
 
 
+def job_review_id(job_id: int) -> str | None:
+    """Associate a review with its execution using persisted, project-scoped events."""
+    with _conn() as conn:
+        row = conn.execute(
+            """SELECT e.payload->>'review_id' FROM events e JOIN jobs j ON j.id=%s
+               WHERE e.project_id=j.project_id AND e.created_at>=j.created_at
+                 AND e.type IN ('review_started','review_autofix_finished')
+                 AND e.payload->>'review_id' IS NOT NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM jobs next WHERE next.project_id=j.project_id
+                       AND next.kind<>'export' AND next.id>j.id
+                       AND e.created_at>=next.created_at)
+               ORDER BY e.id DESC LIMIT 1""",
+            (job_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def create_export(pid: str, fmt: str, options: dict[str, Any]) -> int:
     with _conn() as c:
         row = c.execute(
@@ -355,7 +404,7 @@ def set_export_status(
 
 
 def is_paused(pid: str) -> bool:
-    """项目当前是否处于暂停态（用 projects.status='paused' 判定）。"""
+    """Return whether the project is paused or pausing."""
     with _conn() as c:
         r = c.execute("SELECT status FROM projects WHERE id=%s", (pid,)).fetchone()
     return bool(r and r[0] in {"paused", "pausing"})

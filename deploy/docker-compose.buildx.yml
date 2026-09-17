@@ -1,0 +1,16 @@
+# Opt in explicitly; the default Compose stack does not require BuildKit.
+# In deploy/: DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
+#   -f docker-compose.yml -f docker-compose.buildx.yml build
+services:
+  api:
+    build:
+      dockerfile: docker/Dockerfile.api.buildx
+  worker:
+    build:
+      dockerfile: docker/Dockerfile.api.buildx
+  export-worker:
+    build:
+      dockerfile: docker/Dockerfile.api.buildx
+  web:
+    build:
+      dockerfile: docker/Dockerfile.web.buildx

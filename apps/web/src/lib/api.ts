@@ -1,6 +1,7 @@
+import { translate as tr } from "@/i18n";
 import type { components } from "@wenyi/shared-schema";
 
-// 文译 API 客户端：类型与 OpenAPI 对齐，经 Vite 代理到 :8000（生产由 nginx/api 托管）。
+// Typed Wenyi API client: Vite proxies to port 8000; production uses the nginx/API stack.
 
 const BASE = "/api";
 
@@ -50,7 +51,12 @@ async function download(path: string, fallback: string) {
   if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
   const response = await fetch(`${BASE}${path}`, { headers });
   if (!response.ok)
-    throw new Error(`下载失败：${response.status} ${response.statusText}`);
+    throw new Error(
+      tr("api.downloadFailed", {
+        status: response.status,
+        detail: response.statusText,
+      }),
+    );
   const disposition = response.headers.get("content-disposition") || "";
   const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   const filename = encoded
@@ -75,6 +81,7 @@ export type ProjectDetail = Output<"ProjectDetail">;
 export type ChapterSummary = Output<"ChapterSummary">;
 export type SegmentOut = Output<"SegmentOut">;
 export type ChapterSegments = Output<"ChapterSegments">;
+export type SegmentRevision = Output<"SegmentRevision">;
 export type Term = Output<"TermOut">;
 export type Conflict = Output<"ConflictOut">;
 export type StepDef = Output<"StepDef">;
@@ -87,8 +94,13 @@ export type ExportOut = Output<"ExportOut">;
 export type EventOut = Output<"EventOut">;
 export type JobEnqueued = Output<"JobEnqueued">;
 export type Capabilities = Output<"Capabilities">;
+export type GlobalConfig = Output<"GlobalConfigOut">;
+export type GlobalConfigInput = components["schemas"]["GlobalConfigInput"];
 export type ProjectConfig = Output<"ProjectConfigOut">;
 export type ReviewRun = Output<"ReviewRun">;
+export type ReviewItem = components["schemas"]["ReviewItem"];
+export type ReviewLocation = components["schemas"]["ReviewLocation"];
+export type Workflow = Output<"WorkflowOut">;
 export type SubtitleCue = Output<"SubtitleCue">;
 export type SubtitleData = Output<"SubtitleResult">;
 export type UploadPreview = Output<"UploadPreview">;
@@ -100,9 +112,24 @@ export interface ReportData {
   [key: string]: unknown;
 }
 
-// ── 调用 ───────────────────────────────────────────────────────────────
+// API calls.
 export const api = {
-  getWorkflow: (pid: string) => request<Output<"WorkflowOut">>(`/projects/${pid}/workflow`),
+  getGlobalDefaults: () => request<GlobalConfig>("/settings/defaults"),
+  getProjectDefaults: (pid: string) =>
+    request<ProjectConfig>(`/projects/${pid}/config/defaults`),
+  getGlobalConfig: () => request<GlobalConfig>("/settings"),
+  saveGlobalConfig: (body: GlobalConfigInput) =>
+    request<GlobalConfig>("/settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  validateGlobalConfig: (body: GlobalConfigInput) =>
+    request<GlobalConfig>("/settings/validate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getWorkflow: (pid: string) =>
+    request<Output<"WorkflowOut">>(`/projects/${pid}/workflow`),
   capabilities: () => request<Capabilities>("/capabilities"),
   getPreview: (pid: string) =>
     request<UploadPreview>(`/projects/${pid}/preview`),
@@ -126,22 +153,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ workflow }),
     }),
-  compareModels: (
-    pid: string,
-    body: Pick<
-      components["schemas"]["ModelCompareRequest"],
-      "operation" | "models" | "messages"
-    > &
-      Partial<components["schemas"]["ModelCompareRequest"]>,
-  ) =>
-    request<JobEnqueued>(`/projects/${pid}/models/compare`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  getComparison: (pid: string, jid: string) =>
-    request<Record<string, unknown>>(
-      `/projects/${pid}/models/comparisons/${encodeURIComponent(jid)}`,
-    ),
   getStats: (pid: string) =>
     request<Output<"ProjectStats">>(`/projects/${pid}/stats`),
   listReviewRuns: (pid: string) =>
@@ -162,34 +173,23 @@ export const api = {
   createProject: (
     body: Pick<components["schemas"]["ProjectCreate"], "name"> &
       Partial<components["schemas"]["ProjectCreate"]>,
-  ) =>
-    request<Project>("/projects", {
+    file: File,
+  ) => {
+    const form = new FormData();
+    form.append("project", JSON.stringify(body));
+    form.append("file", file);
+    return request<ProjectDetail>("/projects", {
       method: "POST",
-      body: JSON.stringify(body),
-    }),
+      body: form,
+    });
+  },
   getProject: (pid: string) => request<ProjectDetail>(`/projects/${pid}`),
   deleteProject: (pid: string) =>
     request<{ message: string }>(`/projects/${pid}`, { method: "DELETE" }),
-  uploadSource: (pid: string, file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    return request<JobEnqueued>(`/projects/${pid}/upload`, {
-      method: "POST",
-      body: fd,
-    });
-  },
   translate: (pid: string, strategy?: Record<string, unknown>) =>
     request<JobEnqueued>(`/projects/${pid}/translate`, {
       method: "POST",
       body: JSON.stringify({ strategy }),
-    }),
-  prepare: (pid: string) =>
-    request<JobEnqueued>(`/projects/${pid}/prepare`, {
-      method: "POST",
-    }),
-  assemble: (pid: string) =>
-    request<Output<"AssembleEnqueued">>(`/projects/${pid}/assemble`, {
-      method: "POST",
     }),
   pause: (pid: string) =>
     request<{ message: string }>(`/projects/${pid}/pause`, { method: "POST" }),
@@ -251,22 +251,28 @@ export const api = {
 
   getReview: (pid: string, ci: number) =>
     request<ChapterSegments>(`/projects/${pid}/review/${ci}`),
-  editSegment: (pid: string, ci: number, segIdx: number, target: string) =>
+  segmentHistory: (pid: string, ci: number, segIdx: number) =>
+    request<SegmentRevision[]>(
+      `/projects/${pid}/review/${ci}/segments/${segIdx}/history`,
+    ),
+  editSegment: (
+    pid: string,
+    ci: number,
+    segIdx: number,
+    target: string,
+    expectedTarget: string | null,
+  ) =>
     request<{ ok: boolean }>(
       `/projects/${pid}/review/${ci}/segments/${segIdx}`,
       {
         method: "PUT",
-        body: JSON.stringify({ target }),
+        body: JSON.stringify({ target, expected_target: expectedTarget }),
       },
     ),
-  markReviewComplete: (pid: string, ci: number) =>
-    request<{ ok: boolean }>(`/projects/${pid}/review/${ci}/complete`, {
-      method: "POST",
-    }),
-  runAiReview: (pid: string, opts?: { autofix?: boolean }) =>
+  runAiReview: (pid: string) =>
     request<JobEnqueued>(`/projects/${pid}/review/run`, {
       method: "POST",
-      body: JSON.stringify(opts ?? {}),
+      body: JSON.stringify({}),
     }),
 
   getAnalysis: (pid: string) =>
@@ -333,26 +339,6 @@ export const ACTIVE_STATUSES = [
   "autofixing",
   "postprocessing",
   "pausing",
-  "comparing",
 ];
 export const isProjectBusy = (status?: string) =>
   ACTIVE_STATUSES.includes(status || "");
-export const STATUS_LABELS: Record<string, string> = {
-  prepared: "准备完成",
-  reviewed: "审校完成",
-  comparing: "模型对比中",
-  created: "已创建",
-  uploaded: "已上传",
-  ready: "已就绪",
-  queued: "排队中",
-  parsing: "解析中",
-  preparing: "准备中",
-  translating: "翻译中",
-  reviewing: "全书审校中",
-  autofixing: "自动修复中",
-  pausing: "正在保存并暂停",
-  paused: "已暂停",
-  postprocessing: "译后处理",
-  done: "已完成",
-  error: "失败",
-};

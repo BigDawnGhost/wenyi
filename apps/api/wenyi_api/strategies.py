@@ -138,3 +138,17 @@ def strategy_to_config(
     if not cfg.pipeline.review:
         cfg.pipeline.review_autofix = False
     return Config.model_validate(cfg.model_dump())
+
+
+def workflow_steps(config: Config) -> dict[str, bool]:
+    """Describe the actual switches for a configured workflow template."""
+    return {
+        step["id"]: (
+            bool(getattr(config.pipeline, step["id"]))
+            if step["id"] in _SWITCHES
+            else config.output.punctuation_normalize
+            if step["id"] == "punctuation_normalize"
+            else True
+        )
+        for step in STEP_REGISTRY
+    }

@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -6,16 +7,18 @@ import { api, type ExportFormat, type PdfEngine } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Select, Label } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { cn, formatBytes } from "@/lib/utils";
 
 export default function ExportPage() {
+  const { t: tr, locale } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [defaultsLoaded, setDefaultsLoaded] = useState(false);
-  const { data: config } = useQuery({
+  const { data: config, error: configError } = useQuery({
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
   });
@@ -25,6 +28,7 @@ export default function ExportPage() {
     "target_first",
   );
   const [about, setAbout] = useState(true);
+  const [punctuation, setPunctuation] = useState(true);
   const [preserveStyle, setPreserveStyle] = useState(false);
   const [pdfBackend, setPdfBackend] = useState<PdfEngine | "">("");
   const { data: project, error: projectError } = useQuery({
@@ -49,6 +53,7 @@ export default function ExportPage() {
     if (config && !defaultsLoaded) {
       const output = (config.effective.output || {}) as Record<string, unknown>;
       setBilingual(Boolean(output.bilingual));
+      setPunctuation(output.punctuation_normalize !== false);
       setAbout(output.about_page !== false);
       setPreserveStyle(Boolean(output.bilingual_preserve_source_style));
       setOrder(
@@ -74,11 +79,12 @@ export default function ExportPage() {
         order,
         about_page: subtitle ? false : about,
         preserve_source_style: preserveStyle,
+        punctuation_normalize: punctuation,
         ...(pdfBackend && fmt === "pdf" ? { pdf_engine: pdfBackend } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["exports", pid] });
-      toast.success("导出任务已提交");
+      toast.success(tr("export.exportTaskSubmitted"));
     },
   });
   const download = useMutation({
@@ -88,13 +94,16 @@ export default function ExportPage() {
   return (
     <>
       <PageHeader
-        title="导出译文"
-        subtitle="从已保存译文生成文件；执行中的翻译可同时导出已保存快照"
+        title={tr("export.exportTranslation")}
+        subtitle={tr(
+          "export.generateFilesFromSavedTranslationsIncludingSnapshots",
+        )}
       />
       <PageContainer className="space-y-4 max-w-4xl">
         <ErrorNotice
           error={
             projectError ||
+            configError ||
             capsError ||
             exportsError ||
             create.error ||
@@ -104,19 +113,20 @@ export default function ExportPage() {
         <Card>
           <CardContent className="p-5 space-y-4">
             <div>
-              <Label>输出格式</Label>
+              <Label>{tr("export.outputFormat")}</Label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
                 {!subtitle && (
                   <button
                     onClick={() => setFormat("")}
+                    aria-pressed={!fmt}
                     className={cn(
                       "rounded border p-3 text-left text-sm",
                       !fmt && "border-primary ring-1 ring-primary",
                     )}
                   >
-                    <strong>自动选择</strong>
+                    <strong>{tr("export.automatic")}</strong>
                     <p className="text-xs text-muted-foreground mt-1">
-                      依据原文格式和 PDF 解析后端
+                      {tr("export.basedOnTheSourceFormatAndPdf")}
                     </p>
                   </button>
                 )}
@@ -124,6 +134,7 @@ export default function ExportPage() {
                   <button
                     key={f}
                     onClick={() => setFormat(f)}
+                    aria-pressed={fmt === f}
                     className={cn(
                       "rounded border p-3 text-left text-sm",
                       fmt === f && "border-primary ring-1 ring-primary",
@@ -134,28 +145,10 @@ export default function ExportPage() {
                 ))}
               </div>
             </div>
-            {fmt === "pdf" && (
-              <div>
-                <Label htmlFor="pdf-export-engine">PDF 导出引擎</Label>
-                <Select
-                  id="pdf-export-engine"
-                  value={pdfBackend}
-                  onChange={(e) =>
-                    setPdfBackend(e.target.value as PdfEngine | "")
-                  }
-                  className="mt-2"
-                >
-                  <option value="">自动选择</option>
-                  {caps?.pdf?.export_backends?.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            )}
             <fieldset className="flex flex-wrap gap-5 items-center">
-              <legend className="text-sm font-medium mb-2">版本</legend>
+              <legend className="text-sm font-medium mb-2">
+                {tr("export.edition")}
+              </legend>
               <label className="text-sm flex gap-2">
                 <input
                   type="radio"
@@ -163,7 +156,7 @@ export default function ExportPage() {
                   checked={!bilingual}
                   onChange={() => setBilingual(false)}
                 />
-                单语版
+                {tr("export.monolingual")}
               </label>
               <label className="text-sm flex gap-2">
                 <input
@@ -172,61 +165,144 @@ export default function ExportPage() {
                   checked={bilingual}
                   onChange={() => setBilingual(true)}
                 />
-                双语版
+                {tr("export.bilingual")}
               </label>
-              {bilingual && !subtitle && (
-                <Select
-                  aria-label="双语顺序"
-                  value={order}
-                  onChange={(e) =>
-                    setOrder(e.target.value as "target_first" | "source_first")
-                  }
-                  className="max-w-40"
-                >
-                  <option value="target_first">译文在上</option>
-                  <option value="source_first">原文在上</option>
-                </Select>
-              )}
             </fieldset>
             {!subtitle && (
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={about}
-                  onChange={(e) => setAbout(e.target.checked)}
-                />
-                附加“关于此翻译”说明页
-              </label>
-            )}
-            {!subtitle && bilingual && (
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={preserveStyle}
-                  onChange={(e) => setPreserveStyle(e.target.checked)}
-                />
-                双语排版保留原文样式
-              </label>
+              <Disclosure
+                title={tr("export.advanced")}
+                error={create.error}
+                summary={[
+                  bilingual
+                    ? tr(
+                        order === "target_first"
+                          ? "export.translationFirst"
+                          : "export.sourceFirst",
+                      )
+                    : "",
+                  tr("export.aboutSummary", {
+                    value: tr(about ? "data.yes" : "data.no"),
+                  }),
+                  bilingual
+                    ? tr("export.styleSummary", {
+                        value: tr(preserveStyle ? "data.yes" : "data.no"),
+                      })
+                    : "",
+                  tr("export.punctuationSummary", {
+                    value: tr(punctuation ? "data.yes" : "data.no"),
+                  }),
+                  fmt === "pdf" ? pdfBackend || tr("export.automatic") : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              >
+                <label className="flex gap-2 items-center text-sm">
+                  <input
+                    type="checkbox"
+                    checked={punctuation}
+                    onChange={(e) => setPunctuation(e.target.checked)}
+                  />
+                  {tr("settings.normalizePunctuationOnExport")}
+                </label>
+                {fmt === "pdf" && (
+                  <div>
+                    <Label htmlFor="pdf-export-engine">
+                      {tr("export.pdfExportEngine")}
+                    </Label>
+                    <Select
+                      id="pdf-export-engine"
+                      value={pdfBackend}
+                      onChange={(e) =>
+                        setPdfBackend(e.target.value as PdfEngine | "")
+                      }
+                      className="mt-2"
+                    >
+                      <option value="">{tr("export.automatic")}</option>
+                      {caps?.pdf?.export_backends?.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+                {bilingual && !subtitle && (
+                  <Select
+                    aria-label={tr("export.bilingualOrder")}
+                    value={order}
+                    onChange={(e) =>
+                      setOrder(
+                        e.target.value as "target_first" | "source_first",
+                      )
+                    }
+                    className="max-w-40"
+                  >
+                    <option value="target_first">
+                      {tr("export.translationFirst")}
+                    </option>
+                    <option value="source_first">
+                      {tr("export.sourceFirst")}
+                    </option>
+                  </Select>
+                )}
+                {!subtitle && (
+                  <label className="flex gap-2 items-center text-sm">
+                    <input
+                      type="checkbox"
+                      checked={about}
+                      onChange={(e) => setAbout(e.target.checked)}
+                    />
+                    {tr("export.includeAnAboutThisTranslationPage")}
+                  </label>
+                )}
+                {!subtitle && bilingual && (
+                  <label className="flex gap-2 items-center text-sm">
+                    <input
+                      type="checkbox"
+                      checked={preserveStyle}
+                      onChange={(e) => setPreserveStyle(e.target.checked)}
+                    />
+                    {tr("export.preserveSourceFormattingInBilingualOutput")}
+                  </label>
+                )}
+              </Disclosure>
             )}
             <Button
               onClick={() => create.mutate()}
-              disabled={create.isPending || !project?.fmt || !caps}
+              disabled={
+                create.isPending ||
+                !project?.fmt ||
+                !caps ||
+                !defaultsLoaded ||
+                !!configError
+              }
             >
-              {create.isPending ? "提交中…" : "生成导出文件"}
+              {create.isPending
+                ? tr("common.submitting")
+                : tr("export.generateExport")}
             </Button>
             <p className="text-xs text-muted-foreground">
-              导出文件名包含目标语言
-              {project?.target_lang ? ` ${project.target_lang}` : ""}
-              及双语标识。标点规范化仅作用于导出副本。
+              {tr("export.filenameHelp", {
+                language: project?.target_lang || "—",
+              })}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-0 overflow-x-auto">
+            <p className="px-3 py-4 text-sm text-muted-foreground">
+              {tr("export.retentionHelp")}
+            </p>
             <table className="w-full text-sm">
               <thead className="border-b text-xs text-muted-foreground">
                 <tr>
-                  {["格式", "创建时间", "大小", "状态", "操作"].map((h) => (
+                  {[
+                    tr("export.format"),
+                    tr("common.created"),
+                    tr("export.size"),
+                    tr("common.status"),
+                    tr("common.actions"),
+                  ].map((h) => (
                     <th key={h} className="text-left p-3">
                       {h}
                     </th>
@@ -234,36 +310,29 @@ export default function ExportPage() {
                 </tr>
               </thead>
               <tbody>
-                {exports?.map((e) => (
+                {exports?.slice(0, 5).map((e) => (
                   <tr key={e.id} className="border-b last:border-0">
                     <td className="p-3">
                       {e.format.toUpperCase()}
                       <div className="text-xs text-muted-foreground mt-1">
-                        {e.options?.bilingual ? "双语版" : "单语版"}
+                        {e.options?.bilingual
+                          ? tr("export.bilingual")
+                          : tr("export.monolingual")}
                       </div>
                     </td>
                     <td className="p-3">
                       {e.created_at
-                        ? new Date(e.created_at).toLocaleString()
+                        ? new Date(e.created_at).toLocaleString(locale)
                         : "—"}
                     </td>
                     <td className="p-3">{formatBytes(e.size)}</td>
                     <td className="p-3">
-                      <Badge
-                        variant={
-                          e.status === "done"
-                            ? "success"
-                            : e.status === "error"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {e.status === "done"
-                          ? "完成"
-                          : e.status === "error"
-                            ? e.error || "失败，请查看事件日志"
-                            : "生成中"}
-                      </Badge>
+                      <StatusBadge status={e.status} />
+                      {e.error && (
+                        <p className="mt-1 text-sm text-destructive">
+                          {e.error}
+                        </p>
+                      )}
                     </td>
                     <td className="p-3">
                       {e.status === "done" && (
@@ -273,7 +342,7 @@ export default function ExportPage() {
                           disabled={download.isPending}
                           onClick={() => download.mutate(e.id)}
                         >
-                          下载
+                          {tr("export.download")}
                         </Button>
                       )}
                     </td>
@@ -285,7 +354,7 @@ export default function ExportPage() {
                       colSpan={5}
                       className="p-8 text-center text-muted-foreground"
                     >
-                      尚无导出文件。
+                      {tr("export.noExportsYet")}
                     </td>
                   </tr>
                 )}

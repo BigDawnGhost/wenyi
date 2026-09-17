@@ -32,6 +32,7 @@
 
 - [为什么选择文译](#为什么选择文译)
 - [核心特性](#核心特性)
+- [界面预览](#界面预览)
 - [快速开始](#快速开始)
 - [支持格式](#支持格式)
 - [翻译流水线](#翻译流水线)
@@ -65,6 +66,7 @@
 
 ## 核心特性
 
+- **Web 工作台** — 中英文界面、实时翻译进度、带版本记录的段落校阅，以及集中展示证据与写回结果的全书审校。
 - **全书理解** — 翻译前预扫源文，生成逐章梗概和全书概览，注入每批翻译上下文
 - **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
 - **多阶段质量保证** — 可选润色（强档模型重译）和取证式全书 AI 审校
@@ -72,6 +74,24 @@
 - **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点；保留三档位入口，支持按操作独立选模型、混用连接与共享限额。配置见[模型路由](configuration.md#模型与操作路由)。
 - **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
 - **双语对照输出** — 可选原文译文对照版，原文视觉淡化，支持深色模式
+
+---
+
+## 界面预览
+
+在 Web 工作台查看翻译进度、用量与耗时，并对照原文逐段校阅。详见[部署说明](web.md)。
+
+<p align="center">
+  <img src="../images/web-translation-overview.png" alt="翻译总览：查看步骤用量、缓存命中率和运行耗时。" width="960">
+  <br>
+  <sub>翻译总览：查看步骤用量、缓存命中率和运行耗时。</sub>
+</p>
+
+<p align="center">
+  <img src="../images/web-proofreading.png" alt="人工校阅：原文与译文对照，右键编辑译文、查看改动记录或复制文本。" width="960">
+  <br>
+  <sub>人工校阅：原文与译文对照，右键编辑译文、查看改动记录或复制文本。</sub>
+</p>
 
 ---
 
@@ -100,28 +120,28 @@ export DEEPSEEK_API_KEY=sk-...
 ### 一键翻译
 
 ```bash
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 ```
 
 解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
 
-多语言互译（实验性）：通过 `language.source` / `language.target` 选择方向，例如 `zh → en`、`en → ja`。运行 `uv run trans-novel languages` 查看列表；不同目标使用独立状态和输出文件名。详见[使用指南](usage.md#多语言互译实验性)。
+多语言互译（实验性）：通过 `language.source` / `language.target` 选择方向，例如 `zh → en`、`en → ja`。运行 `uv run wenyi languages` 查看列表；不同目标使用独立状态和输出文件名。详见[使用指南](usage.md#多语言互译实验性)。
 
 
 ### 分步工作流
 
 ```bash
 # 1. 译前准备 — 解析、分析、预扫（不翻译正文）
-uv run trans-novel prepare book.epub
+uv run wenyi prepare book.epub
 
 # 2. 翻译 — 从准备状态续跑
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 
 # 3. 独立审校 — 基于最终术语库的逐章审校
-uv run trans-novel review book.epub
+uv run wenyi review book.epub
 
 # 4. 查看进度
-uv run trans-novel status book.epub
+uv run wenyi status book.epub
 ```
 
 ### 中断续跑
@@ -129,26 +149,26 @@ uv run trans-novel status book.epub
 每个完成的批次立即持久化。中断后重新执行同一命令即可续跑：
 
 ```bash
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 ```
 
 ### 命令行覆盖
 
 ```bash
-uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
-uv run trans-novel translate book.epub --no-polish                # 关闭润色
-uv run trans-novel translate book.epub --no-review                # 跳过最终审校
-uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
-uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
-uv run trans-novel translate book.epub --format txt               # 导出为纯文本
+uv run wenyi translate book.epub --polish --review          # 开启润色和最终审校
+uv run wenyi translate book.epub --no-polish                # 关闭润色
+uv run wenyi translate book.epub --no-review                # 跳过最终审校
+uv run wenyi translate book.epub --bilingual                # 同时生成双语版
+uv run wenyi translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
+uv run wenyi translate book.epub --format txt               # 导出为纯文本
 ```
 
 最终审校默认开启，一键流程会在全书翻译完成、术语库达到最终状态后再统一执行。
 可用 `--no-review` 或设置 `pipeline.review: false` 跳过；也可以独立运行 Agent Review：
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
 ```
 
 每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
@@ -179,40 +199,7 @@ uv run trans-novel review book.epub --autofix
 
 ## 翻译流水线
 
-```mermaid
-flowchart TD
-    A[输入文件] --> B[解析章节并检测语言]
-    B --> C[分析风格并建立初始术语]
-    C --> D[可选并行预扫<br/>生成逐章梗概与全书概览]
-    D --> E
-
-    subgraph T[逐章翻译]
-        E[注入上下文并翻译一个批次]
-        E --> F[润色并保存译文]
-        F --> FA[立即串行定位含注释逻辑段<br/>关闭或无注释时跳过]
-        FA --> G[抽取术语并刷新术语快照]
-        G --> H{还有待译批次？}
-        H -- 是 --> E
-        H -- 否 --> IB[全章术语兜底抽取]
-        IB --> J[保存章节最终状态]
-    end
-
-    J --> K[可选并行全书审校<br/>使用完整术语库]
-    K --> N{存在确认问题且<br/>仍有修订轮次？}
-    N -- 是 --> O[基于同一固定快照<br/>生成临时影子修订]
-    O --> K
-    N -- 否或达到停止条件 --> P[保存 Review 问题<br/>与折叠后的 changes]
-    P --> Q{开启 Autofix？}
-    Q -- 是 --> R[叠加 changes 并复用 Agent Loop 与 Fixer<br/>发布最终段落 target]
-    Q -- 否 --> X[可选仅规范导出副本标点]
-    R --> X
-    X --> M[生成报告并组装所选格式]
-```
-
-启用全书理解时，预扫阶段按可配置并发数并行执行，并且幂等可续跑——已完成的梗概会跨运行复用。翻译过程中，每批获得最新的术语快照和已译上下文，确保代词、术语和语气跨章一致。
-Review Fixer 同样会获得风格指南、全书概览、本章梗概、相关术语及邻近原译文，
-以保持全书风格；普通 Review 循环中的替换只存在于影子译文中，可选 Autofix 发布
-阶段会复用它生成正式段落 target。
+文译将全书理解、分批翻译、可选润色、审校与导出串联起来。完整流程图与各阶段说明见[翻译流程](pipeline.md)。
 
 ---
 

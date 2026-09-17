@@ -1,4 +1,4 @@
-"""Pydantic 入参出参 DTO（OpenAPI 单一事实来源 → 前端 TS 类型）。"""
+"""Pydantic request/response models used for OpenAPI and frontend TypeScript types."""
 
 from __future__ import annotations
 
@@ -12,12 +12,22 @@ class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# ── 项目 ─────────────────────────────────────────────────────────────────
+# Projects.
 class ProjectCreate(RequestModel):
     name: str = Field(min_length=1, max_length=240)
     source_lang: str = "auto"
     target_lang: str = "zh"
-    strategy: dict[str, Any] = Field(default_factory=lambda: {"template": "标准翻译"})
+    strategy: dict[str, Any] = Field(default_factory=dict)
+    prepare: bool = False
+    pdf_backend: Literal["mineru", "babeldoc"] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Project name is required")
+        return value
 
     @field_validator("source_lang")
     @classmethod
@@ -71,7 +81,7 @@ class StartTranslation(RequestModel):
     strategy: Optional[dict[str, Any]] = None
 
 
-# ── 章节 / 段落 ──────────────────────────────────────────────────────────
+# Chapters and segments.
 class ChapterSummary(BaseModel):
     index: int
     title: str = ""
@@ -100,7 +110,7 @@ class ChapterSegments(BaseModel):
     review_issues: list[dict[str, Any]] = []
 
 
-# ── 术语 ─────────────────────────────────────────────────────────────────
+# Glossary terms.
 class TermOut(BaseModel):
     source: str
     target: str
@@ -137,7 +147,7 @@ class ResolveConflict(RequestModel):
     target: Optional[str] = None
 
 
-# ── 策略 ─────────────────────────────────────────────────────────────────
+# Strategies.
 class StepDef(BaseModel):
     id: str
     name: str
@@ -159,7 +169,7 @@ class StrategyTemplateOut(BaseModel):
     steps: dict[str, Any]
 
 
-# ── 导出 ─────────────────────────────────────────────────────────────────
+# Exports.
 class ExportRequest(RequestModel):
     format: Literal["epub", "txt", "html", "markdown", "pdf", "docx", "srt"] | None = None
     bilingual: bool = False
@@ -182,7 +192,7 @@ class ExportOut(BaseModel):
     created_at: Optional[str] = None
 
 
-# ── 事件 ─────────────────────────────────────────────────────────────────
+# Events.
 class EventOut(BaseModel):
     id: int
     type: str
@@ -190,12 +200,12 @@ class EventOut(BaseModel):
     created_at: Optional[str] = None
 
 
-# ── 风格 / 概要（编辑）──────────────────────────────────────────────────
+# Style and synopsis editing.
 class AnalysisUpdate(RequestModel):
     analysis: dict[str, Any]
 
 
-# ── 通用 ─────────────────────────────────────────────────────────────────
+# Shared responses.
 class Message(BaseModel):
     message: str
     detail: Any = None
@@ -223,8 +233,43 @@ class TargetEdit(RequestModel):
     target: str
 
 
+class SegmentEdit(TargetEdit):
+    expected_target: str | None
+
+
+class SegmentRevision(BaseModel):
+    id: str
+    kind: Literal["translation", "polish", "manual", "update", "snapshot", "before_polish"]
+    before: str | None
+    after: str | None
+    created_at: str | None
+
+
 class ReviewRunRequest(RequestModel):
     autofix: bool | None = None
+
+
+class ReviewLocation(BaseModel):
+    chapter: int
+    text_index: int
+    segment_index: int
+    chapter_title: str
+    source: str
+    current_target: str | None
+
+
+class ReviewItem(BaseModel):
+    id: str
+    kind: Literal["issue", "change", "publication"]
+    type: str = ""
+    detail: str = ""
+    suggestion: str = ""
+    status: Literal["pending", "fixed", "failed", "unchanged"]
+    location: ReviewLocation | None = None
+    evidence: list[ReviewLocation] = Field(default_factory=list)
+    issue: dict[str, Any] = Field(default_factory=dict)
+    changes: list[dict[str, Any]] = Field(default_factory=list)
+    publications: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReviewRun(BaseModel):
@@ -237,6 +282,7 @@ class ReviewRun(BaseModel):
     autofix: dict[str, Any] = Field(default_factory=dict)
     summary: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)
+    items: list[ReviewItem] = Field(default_factory=list)
 
 
 class SubtitleCue(BaseModel):
@@ -285,6 +331,20 @@ class ProjectConfigOut(BaseModel):
     effective: dict[str, Any]
     routes: list[dict[str, Any]]
     editable: bool
+    registered_models: dict[str, Any]
+
+
+class GlobalConfigInput(ConfigInput):
+    default_template: str
+    revision: int = Field(ge=0)
+    model_renames: dict[str, str] = Field(default_factory=dict)
+
+
+class GlobalConfigOut(BaseModel):
+    yaml: str
+    effective: dict[str, Any]
+    default_template: str
+    revision: int
 
 
 class ModelCheckRequest(RequestModel):
@@ -294,18 +354,6 @@ class ModelCheckRequest(RequestModel):
 class ModelCheckResult(BaseModel):
     valid: bool
     operations: list[str]
-
-
-class ModelMessage(RequestModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-class ModelCompareRequest(RequestModel):
-    operation: str
-    models: list[str] = Field(min_length=1, max_length=10)
-    messages: list[ModelMessage] = Field(min_length=1)
-    json_mode: bool = False
 
 
 class ProjectStats(BaseModel):
@@ -335,5 +383,6 @@ class WorkflowOut(BaseModel):
     kind: str
     status: str
     run_id: str | None = None
+    review_id: str | None = None
     stages: list[WorkflowStage]
     progress: dict | None = None

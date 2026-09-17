@@ -1,4 +1,4 @@
-"""Model configuration previews and explicit migration/comparison commands."""
+"""Model configuration previews and explicit migration commands."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from time import monotonic
 
 import typer
 import yaml
@@ -143,75 +142,5 @@ def register_model_commands(
                 f"Converted {len(changes)} usage ledgers; original files backed up alongside them."
             )
         except (OSError, ValueError) as error:
-            console.print(f"[red]Error: {error}[/]")
-            raise typer.Exit(1) from None
-
-    @models.command("compare")
-    def compare(
-        operation: str = typer.Option(..., "--operation"),
-        profiles: list[str] = typer.Option(..., "--model", help="Repeat for each profile"),
-        messages: Path = typer.Option(
-            ...,
-            "--messages",
-            exists=True,
-            dir_okay=False,
-            help="JSON message array to send to the selected models",
-        ),
-        out: Path = typer.Option(..., "--out", help="Comparison JSON file; must not exist"),
-        json_mode: bool = typer.Option(False, "--json-mode"),
-    ):
-        """Send an explicit prompt fixture to models and record outputs, latency and usage."""
-        try:
-            require_operation(operation)
-            if out.exists():
-                raise ValueError("Comparison output already exists")
-            payload = json.loads(messages.read_text(encoding="utf-8"))
-            if (
-                not isinstance(payload, list)
-                or not payload
-                or any(
-                    not isinstance(row, dict)
-                    or set(row) != {"role", "content"}
-                    or not isinstance(row["role"], str)
-                    or row["role"] not in {"system", "user", "assistant"}
-                    or not isinstance(row["content"], str)
-                    for row in payload
-                )
-            ):
-                raise ValueError("Messages must be a nonempty array of role/content objects")
-            config = load_config()
-            client = RoutedLLMClient(config.llm)
-            routes = {profile: client.validate_profile(profile, operation) for profile in profiles}
-            results = []
-            with out.open("x", encoding="utf-8") as file, client.interrupt_scope():
-                try:
-                    for profile in profiles:
-                        started = monotonic()
-                        before = client.usage_summary()
-                        from wenyi_core.llm.usage import usage_delta
-
-                        row = {"profile": profile, "route": routes[profile].describe()}
-                        try:
-                            row["output"] = client.complete_profile(
-                                payload, operation=operation, profile=profile, json_mode=json_mode
-                            )
-                        except Exception as error:
-                            row["error"] = type(error).__name__
-                        row["seconds"] = monotonic() - started
-                        row["usage"] = usage_delta(client.usage_summary(), before)
-                        results.append(row)
-                finally:
-                    json.dump(
-                        {
-                            "operation": operation,
-                            "results": results,
-                            "usage": client.usage_summary(),
-                        },
-                        file,
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-            console.print(f"Model comparison saved: {out}")
-        except (OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None

@@ -4,28 +4,47 @@
 
 Wenyi first builds a whole-book understanding and then translates chapters in order. Optional stages can be disabled in `config.yaml` to reduce cost or runtime.
 
-```text
-Read input
--> Parse chapters, text segments, and the EPUB table of contents
--> Detect the source language or use the configured language
--> Scan the book and create chapter digests and a whole-book synopsis
--> Analyze representative passages and build an initial glossary and style guide
--> Translate chapter by chapter and batch by batch
--> Optionally polish each completed batch
--> Immediately align each annotated EPUB logical paragraph in sequence
--> Extract and update terminology as translation progresses
--> Optionally run the evidence-driven whole-book review
--> Optionally publish Review Autofix revisions to formal segment targets
--> Generate the report
--> Optionally normalize punctuation on an export-only copy
--> Write the copy back and assemble the requested output
+```mermaid
+flowchart TD
+    A[Input file] --> B[Parse chapters and detect language]
+    B --> C[Analyze style and seed the glossary]
+    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
+    D --> E
+
+    subgraph T[Translate chapter by chapter]
+        E[Inject context and translate a batch]
+        E --> F[Polish and persist translations]
+        F --> FA[Immediately align annotated EPUB paragraphs<br/>Sequential; skipped when disabled or absent]
+        FA --> G[Extract terms and refresh the glossary]
+        G --> H{More batches?}
+        H -- Yes --> E
+        H -- No --> IB[Run chapter-level fallback term extraction]
+        IB --> J[Persist the final chapter]
+    end
+
+    J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
+    K --> N{Confirmed issues and<br/>Fix budget remaining?}
+    N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
+    O --> K
+    N -- No or stopped --> P[Save Review issues<br/>and folded changes]
+    P --> Q{Autofix enabled?}
+    Q -- Yes --> R[Overlay changes; reuse Agent Loop and Fixer<br/>Publish final segment targets]
+    Q -- No --> X[Optionally normalize punctuation<br/>on the export-only copy]
+    R --> X
+    X --> M[Generate the report and assemble the selected output]
 ```
+
+When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
+The Review Fixer receives the same style brief, book synopsis, chapter digest,
+relevant glossary subset, and nearby source/translation context used to preserve
+the book's voice. Its normal Review-loop replacements remain temporary; the
+optional Autofix publisher can later reuse it to produce formal segment targets.
 
 ## Language rules and state scope
 
 Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `packages/core/wenyi_core/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Existing analysis and notes remain intact on resume; resource updates apply to new model calls.
 
-All targets, including `zh`, own separate state under `state/<book>/targets/<target-language>/`. Completed segments still skip model calls; updated resources affect subsequent requests. Initialization records a prompt fingerprint, run events record applied resources, and Review cache identity includes languages, honorific strategy, and the resource fingerprint. Manifest-last initialization, atomic writes, domain locks, and Review/Autofix publication boundaries remain in place. See [P10](project-review/2026-09-05/p10-multilingual-internationalization.md).
+All targets, including `zh`, own separate state under `state/<book>/targets/<target-language>/`. Completed segments still skip model calls; updated resources affect subsequent requests. Initialization records a prompt fingerprint, run events record applied resources, and Review cache identity includes languages, honorific strategy, and the resource fingerprint. Manifest-last initialization, atomic writes, domain locks, and Review/Autofix publication boundaries remain in place. See [language configuration](configuration.md) and the [usage guide](usage.md).
 
 ## Whole-book understanding and context
 
@@ -60,8 +79,8 @@ default. Setting `pipeline.review: false` or passing `--no-review` skips it in t
 one-command workflow. Review is also available as an independent stage:
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Matching completed

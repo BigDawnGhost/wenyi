@@ -1,105 +1,121 @@
-import { useEffect, useState } from "react";
+import { useI18n } from "@/i18n";
+import { languageName } from "@/i18n/labels";
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen } from "lucide-react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
-import { api, isProjectBusy, type UploadPreview } from "@/lib/api";
+import { api, isProjectBusy } from "@/lib/api";
+import { SourcePreview } from "./SourcePreview";
 
 export default function CreateProject() {
+  const { t: tr, locale } = useI18n();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState("");
   const [source, setSource] = useState("auto");
   const [target, setTarget] = useState("zh");
-  const [template, setTemplate] = useState("标准翻译");
   const [pid, setPid] = useState<string | null>(searchParams.get("project"));
-  const [preview, setPreview] = useState<UploadPreview | null>(null);
-  const [parsing, setParsing] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [prepare, setPrepare] = useState(false);
+  const [pdfBackend, setPdfBackend] = useState<"" | "mineru" | "babeldoc">("");
+  const sourceFileInput = useRef<HTMLInputElement>(null);
   const { data: caps, error: capsError } = useQuery({
     queryKey: ["capabilities"],
     queryFn: api.capabilities,
-  });
-  const { data: templates } = useQuery({
-    queryKey: ["templates"],
-    queryFn: api.listTemplates,
   });
   const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid!),
     enabled: !!pid,
-    refetchInterval: parsing ? 1500 : false,
+    refetchInterval: (query) =>
+      isProjectBusy(query.state.data?.status) ? 1500 : false,
   });
-  const { data: parsed } = useQuery({
+  const busy = isProjectBusy(project?.status);
+  const { data: preview } = useQuery({
     queryKey: ["preview", pid],
     queryFn: () => api.getPreview(pid!),
-    enabled: !!pid && (parsing || !!project?.fmt),
+    enabled: !!pid && !!project?.fmt,
     retry: false,
-    refetchInterval: parsing ? 1500 : false,
+    refetchInterval: (query) => (!query.state.data && busy ? 1500 : false),
   });
+  useEffect(() => {
+    // Fetch the final preview even if the last polling request preceded completion.
+    if (pid && project?.fmt && !busy)
+      void queryClient.invalidateQueries({ queryKey: ["preview", pid] });
+  }, [pid, project?.fmt, busy, queryClient]);
   useEffect(() => {
     if (project && pid) {
       setName(project.name);
       setSource(project.source_lang || "auto");
       setTarget(project.target_lang || "zh");
-      if (project.status === "parsing") setParsing(true);
     }
   }, [project, pid]);
-  useEffect(() => {
-    if (parsed) {
-      setPreview(parsed);
-      setParsing(false);
-    }
-  }, [parsed]);
-  useEffect(() => {
-    if (project?.status === "error") setParsing(false);
-  }, [project?.status]);
+  const extensions = (caps?.input_formats || []).flatMap((format) =>
+    format === "markdown"
+      ? ["md", "markdown"]
+      : format === "html"
+        ? ["html", "htm"]
+        : format === "text" || format === "txt"
+          ? ["txt", "text"]
+          : [format],
+  );
+  const extension = file?.name.split(".").pop()?.toLowerCase();
+  const subtitle = extension === "srt";
+  const fileError =
+    file &&
+    (file.size === 0
+      ? tr("createProject.emptyFile")
+      : caps && !extensions.includes(extension || "")
+        ? tr("createProject.unsupportedFile")
+        : null);
   const create = useMutation({
-    mutationFn: () =>
-      api.createProject({
-        name: name.trim(),
-        source_lang: source,
-        target_lang: target,
-        strategy: { template },
-      }),
+    mutationFn: () => {
+      if (!file || fileError)
+        throw new Error(fileError || tr("createProject.sourceRequired"));
+      return api.createProject(
+        {
+          name: name.trim(),
+          source_lang: source,
+          target_lang: target,
+          prepare: !subtitle && prepare,
+          pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
+        },
+        file,
+      );
+    },
     onSuccess: (p) => {
+      queryClient.setQueryData(["project", p.id], p);
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       setPid(p.id);
       setSearchParams({ project: p.id }, { replace: true });
     },
   });
-  const upload = useMutation({
-    mutationFn: (file: File) => api.uploadSource(pid!, file),
-    onSuccess: () => {
-      setPreview(null);
-      setParsing(true);
-      toast.success("原文已上传，正在后台解析");
-    },
+  const resume = useMutation({
+    mutationFn: () => api.resume(pid!),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["project", pid] }),
   });
   const start = useMutation({
     mutationFn: () => api.translate(pid!),
     onSuccess: () => navigate(`/projects/${pid}`),
   });
   const sameLanguage = source !== "auto" && source === target;
-  const disabled =
-    parsing || upload.isPending || isProjectBusy(project?.status);
-  const accepts = (caps?.input_formats || [])
-    .flatMap((f) =>
-      f === "markdown"
-        ? [".md", ".markdown"]
-        : f === "html"
-          ? [".html", ".htm"]
-          : [`.${f}`],
-    )
-    .join(",");
+  const locked = !!pid || create.isPending;
+  const interrupted =
+    project?.status === "error" || project?.status === "paused";
+  const filename = file?.name || project?.source_meta?.original_filename;
 
   return (
     <>
       <PageHeader
-        title="创建项目"
-        subtitle="选择语言和流程，上传原文，确认解析结果后开始翻译"
+        title={tr("common.createProject")}
+        subtitle={tr("createProject.introduction")}
       />
       <PageContainer className="max-w-3xl space-y-4">
         <ErrorNotice
@@ -107,51 +123,64 @@ export default function CreateProject() {
             capsError ||
             projectError ||
             create.error ||
-            upload.error ||
+            resume.error ||
             start.error ||
+            fileError ||
             project?.error
           }
         />
         <Card>
           <CardContent className="p-5 space-y-4">
-            <h2 className="font-medium">1. 项目与语言</h2>
+            <h2 className="font-medium">
+              {tr("createProject.projectAndLanguages")}
+            </h2>
             <div>
-              <Label htmlFor="project-name">项目名称</Label>
+              <Label htmlFor="project-name">
+                {tr("createProject.projectName")}
+              </Label>
               <Input
                 id="project-name"
                 value={name}
-                disabled={!!pid}
+                disabled={locked}
                 onChange={(e) => setName(e.target.value)}
                 className="mt-2"
-                placeholder="例如：短篇小说英译"
+                placeholder={tr(
+                  "createProject.forExampleEnglishTranslationOfAShort",
+                )}
               />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <Label htmlFor="source-language">源语言</Label>
+                <Label htmlFor="source-language">
+                  {tr("createProject.sourceLanguage")}
+                </Label>
                 <Select
                   id="source-language"
                   value={source}
-                  disabled={!!pid}
+                  disabled={locked}
                   onChange={(e) => setSource(e.target.value)}
                   className="mt-2"
                 >
-                  <option value="auto">自动检测</option>
+                  <option value="auto">
+                    {tr("progress.detectAutomatically")}
+                  </option>
                   {caps?.languages
                     .filter((l) => l.code !== "auto")
                     .map((l) => (
                       <option key={l.code} value={l.code}>
-                        {l.name}（{l.code}）
+                        {languageName(l.code, l.name, locale)} ({l.code})
                       </option>
                     ))}
                 </Select>
               </div>
               <div>
-                <Label htmlFor="target-language">目标语言</Label>
+                <Label htmlFor="target-language">
+                  {tr("createProject.targetLanguage")}
+                </Label>
                 <Select
                   id="target-language"
                   value={target}
-                  disabled={!!pid || !caps}
+                  disabled={locked || !caps}
                   onChange={(e) => setTarget(e.target.value)}
                   className="mt-2"
                 >
@@ -159,121 +188,180 @@ export default function CreateProject() {
                     .filter((l) => l.code !== "auto")
                     .map((l) => (
                       <option key={l.code} value={l.code}>
-                        {l.name}（{l.code}）
+                        {languageName(l.code, l.name, locale)} ({l.code})
                       </option>
                     ))}
                 </Select>
               </div>
             </div>
             {sameLanguage && (
-              <ErrorNotice error="源语言与目标语言相同，请选择不同的目标语言。" />
+              <ErrorNotice
+                error={tr("createProject.theSourceAndTargetLanguagesAreThe")}
+              />
             )}
-            <div>
-              <Label htmlFor="workflow-template">翻译流程</Label>
-              <Select
-                id="workflow-template"
-                value={template}
-                disabled={!!pid}
-                onChange={(e) => setTemplate(e.target.value)}
-                className="mt-2"
-              >
-                {templates?.map((t) => (
-                  <option key={t.name} value={t.name}>
-                    {t.name} — {t.description}
-                  </option>
-                ))}
-              </Select>
-              <p className="text-xs text-muted-foreground mt-2">
-                默认开启全书预理解、润色、全书审校与自动修复。快速出稿适合初稿。字幕自动使用独立流程。
-              </p>
-            </div>
-            {!pid ? (
-              <Button
-                onClick={() => create.mutate()}
-                disabled={
-                  !name.trim() || sameLanguage || !caps || create.isPending
-                }
-              >
-                {create.isPending ? "创建中…" : "创建并配置"}
-              </Button>
-            ) : (
+            {pid && (
               <p className="text-sm text-muted-foreground">
-                项目已创建。初始化后更换语言或原文内容需新建项目。
+                {tr(
+                  "createProject.projectCreatedChangingLanguagesOrSourceContent",
+                )}
                 <Link
                   className="text-primary underline ml-2"
                   to={`/projects/${pid}/settings`}
                 >
-                  项目配置与模型设置
+                  {tr("common.projectSettings")}
                 </Link>
               </p>
             )}
           </CardContent>
         </Card>
-        {pid && (
-          <Card>
-            <CardContent className="p-5 space-y-4">
-              <h2 className="font-medium">2. 上传原文</h2>
-              <p className="text-sm text-muted-foreground">
-                支持 {caps?.input_formats.join(" / ")}。PDF 解析服务、批次 Token
-                预算和模型可在上传前通过项目配置调整。
-              </p>
-              <Input
-                aria-label="上传原文"
-                type="file"
-                accept={accepts}
-                disabled={disabled || !!preview}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) upload.mutate(file);
-                }}
-              />
-              {disabled && (
-                <p role="status" className="text-sm">
-                  {upload.isPending
-                    ? "正在上传…"
-                    : "正在解析原文，完成后自动显示预览。可以离开此页，通过项目进度查看结果。"}
-                </p>
-              )}
-              {preview && (
-                <div className="rounded border p-4 space-y-3">
-                  <h3 className="font-medium">{preview.title}</h3>
-                  <p className="text-sm">
-                    {preview.fmt.toUpperCase()} ·{" "}
-                    {preview.fmt === "srt"
-                      ? `${preview.total_word_count} 条字幕`
-                      : `${preview.chapter_count} 章 · ${preview.total_word_count} 段文本`}
-                  </p>
-                  <details>
-                    <summary className="cursor-pointer text-sm">
-                      查看解析结构
-                    </summary>
-                    <ol className="mt-2 max-h-56 overflow-auto text-sm space-y-2">
-                      {preview.chapters.map((c) => (
-                        <li key={c.index}>
-                          {c.index + 1}. {c.title || "未命名"}{" "}
-                          <span className="text-muted-foreground">
-                            （{c.word_count} 段）
-                          </span>
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
-                </div>
-              )}
-              <div className="flex gap-3">
-                <Button
-                  onClick={() => start.mutate()}
-                  disabled={!preview || disabled || start.isPending}
+        <Card>
+          <CardContent className="p-5 space-y-4">
+            <h2 className="font-medium">{tr("createProject.uploadStep")}</h2>
+            <p className="text-sm text-muted-foreground">
+              {tr("createProject.uploadHelp", {
+                formats: caps?.input_formats.join(" / ") || "—",
+              })}
+            </p>
+            <input
+              ref={sourceFileInput}
+              hidden
+              aria-label={tr("createProject.uploadSource")}
+              type="file"
+              accept={extensions.map((ext) => `.${ext}`).join(",")}
+              disabled={locked}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  setFile(file);
+                  create.reset();
+                  e.currentTarget.value = "";
+                }
+              }}
+            />
+            <div className="flex items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0"
+                disabled={locked}
+                aria-describedby="source-file-name"
+                onClick={() => sourceFileInput.current?.click()}
+              >
+                <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                {tr("createProject.browseFiles")}
+              </Button>
+              <span
+                id="source-file-name"
+                aria-live="polite"
+                className="min-w-0 break-all text-sm text-muted-foreground"
+              >
+                {typeof filename === "string"
+                  ? filename
+                  : tr("createProject.noFileSelected")}
+              </span>
+            </div>
+            {!pid && extension === "pdf" && (
+              <div>
+                <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
+                <Select
+                  id="pdf-backend"
+                  className="mt-2"
+                  value={pdfBackend}
+                  disabled={locked}
+                  onChange={(e) =>
+                    setPdfBackend(e.target.value as typeof pdfBackend)
+                  }
                 >
-                  {start.isPending ? "启动中…" : "开始翻译"}
+                  <option value="">{tr("createProject.serverDefault")}</option>
+                  <option value="mineru">MinerU</option>
+                  <option value="babeldoc">BabelDOC</option>
+                </Select>
+              </div>
+            )}
+            {!pid && !subtitle && (
+              <div className="flex items-start gap-3 rounded-lg border p-4">
+                <input
+                  id="prepare-source"
+                  type="checkbox"
+                  checked={prepare}
+                  disabled={locked}
+                  onChange={(e) => setPrepare(e.target.checked)}
+                  aria-describedby="prepare-help"
+                  className="mt-1 accent-primary"
+                />
+                <div>
+                  <Label htmlFor="prepare-source">
+                    {tr("createProject.prepareSource")}
+                  </Label>
+                  <p
+                    id="prepare-help"
+                    className="mt-1 text-sm text-muted-foreground"
+                  >
+                    {tr("createProject.prepareHelp")}
+                  </p>
+                </div>
+              </div>
+            )}
+            {!pid && (
+              <div className="space-y-2">
+                <Button
+                  onClick={() => create.mutate()}
+                  disabled={
+                    !name.trim() ||
+                    !file ||
+                    !!fileError ||
+                    sameLanguage ||
+                    !caps ||
+                    create.isPending
+                  }
+                >
+                  {create.isPending
+                    ? tr("createProject.uploading")
+                    : tr("common.createProject")}
                 </Button>
+                {!file && (
+                  <p className="text-xs text-muted-foreground">
+                    {tr("createProject.sourceRequired")}
+                  </p>
+                )}
+              </div>
+            )}
+            {busy && (
+              <p role="status" className="text-sm">
+                {project?.status === "preparing"
+                  ? tr("createProject.preparingSource")
+                  : tr("createProject.parsingTheSourceAPreviewWillAppear")}
+              </p>
+            )}
+            {preview && <SourcePreview preview={preview} />}
+            {pid && (
+              <div className="flex flex-wrap gap-3">
+                {interrupted ? (
+                  <Button
+                    onClick={() => resume.mutate()}
+                    disabled={resume.isPending}
+                  >
+                    {tr("progress.resumeTask")}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => start.mutate()}
+                    disabled={!preview || busy || start.isPending}
+                  >
+                    {start.isPending
+                      ? tr("createProject.starting")
+                      : tr("common.startTranslation")}
+                  </Button>
+                )}
                 <Link to={`/projects/${pid}`}>
-                  <Button variant="outline">进入项目</Button>
+                  <Button variant="outline">
+                    {tr("createProject.openProject")}
+                  </Button>
                 </Link>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
       </PageContainer>
     </>
   );

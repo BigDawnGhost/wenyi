@@ -59,11 +59,17 @@ def test_help_paths_and_overrides_do_not_leak_between_invocations(tmp_path, monk
 
 
 def test_installed_entry_point_runs_real_bootstrap_before_help(tmp_path, monkeypatch, capsys):
-    entry = next(e for e in distribution("wenyi-cli").entry_points if e.name == "trans-novel")
+    entries = {
+        entry.name: entry
+        for entry in distribution("wenyi-cli").entry_points
+        if entry.group == "console_scripts"
+    }
+    assert set(entries) == {"wenyi"}
+    entry = entries["wenyi"]
     assert entry.value == "wenyi_cli.main:main"
     assert entry.load() is main
     config_path = tmp_path / "entry.yaml"
-    monkeypatch.setattr("sys.argv", ["trans-novel", "--config", str(config_path), "--help"])
+    monkeypatch.setattr("sys.argv", ["wenyi", "--config", str(config_path), "--help"])
     with pytest.raises(SystemExit) as exit_info:
         entry.load()()
     assert exit_info.value.code == 0

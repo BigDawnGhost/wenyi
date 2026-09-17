@@ -6,6 +6,46 @@ Wenyi reads `config.yaml` from the current working directory. If the file is mis
 
 Top-level sections are `language`, `llm`, `segment`, `pipeline`, `output`, `honorific`, and `paths`. Unknown sections are rejected; removed settings are not translated to a newer schema.
 
+## Web settings and model registration
+
+The CLI continues to read `config.yaml`. Web **Settings** manages a shared registry
+of provider connections and model profiles, default tiers and operation routes, and
+new-project workflow defaults. The Web server reads its initial defaults from
+`WENYI_CONFIG` (default `config.yaml`); after the first save, Web settings are stored in
+PostgreSQL and survive restarts. Saving Web settings does not rewrite the CLI file.
+API keys remain server environment variables; enter only their variable names.
+
+The default creation template is selected here. Standard translation uses the configured
+workflow switches; Quick draft disables book understanding, polishing, review and
+autofix. Projects copy defaults at creation, so later default changes do not reset an
+existing project's workflow or model selections. Language choices on the creation form
+remain authoritative.
+
+Project configuration accepts registered model IDs through `llm.tiers`, `llm.routes`
+and route fallbacks, plus `llm.budget`. Provider connections, model names/options,
+presets and provider quotas belong only in global Settings. Both the project form and
+its advanced YAML enforce this boundary. Old project-local registry definitions are
+not used: register any project-specific profile IDs in global Settings before starting
+a new task with those selections.
+
+Registry edits apply to newly started or resumed tasks. Queued and running jobs keep
+their full configuration snapshots, including provider/model parameters. Connection and
+model IDs can be renamed in Settings; saving also updates model references in project
+tiers, operation overrides and fallbacks in the same transaction. Historical usage and
+queued job snapshots keep their original IDs. IDs start with a letter and contain only
+letters, digits, underscores or hyphens. A referenced connection or model cannot be
+deleted until its selections are changed. Unused registrations can be deleted.
+
+**Restore defaults** first loads a draft, and **Save configuration** applies it. Global
+Settings reloads the server configuration file and selects Standard translation as the
+creation template; project settings use current global defaults and the project's
+workflow template, preserving its translation languages. Restoring defaults cannot
+remove models still selected by other projects; change those selections first.
+Operation selectors show the effective tier directly, without a “Follow default tier”
+prefix. Selecting the operation's default tier clears its model override and preserves
+any configured fallbacks. Concurrent global saves use a revision check;
+a stale editor must reload before saving again.
+
 ## Languages
 
 ```yaml
@@ -26,11 +66,11 @@ All generated descriptive metadata, including glossary `note`, style guidance, c
 | `fr`, `de`, `es`, `it` | French, German, Spanish, Italian |
 | `pt`, `pt-BR`, `pt-PT`, `ru` | Portuguese, Brazilian/European Portuguese, Russian |
 
-Run `uv run trans-novel languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Registered aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, and `ko-KR` → `ko`. Registered script/region variants are preserved rather than truncated to two letters.
+Run `uv run wenyi languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Registered aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, and `ko-KR` → `ko`. Registered script/region variants are preserved rather than truncated to two letters.
 
 Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
 
-See [P10 internationalization implementation and follow-up design](project-review/2026-09-05/p10-multilingual-internationalization.md) for resource layout, state layout, and validation limits.
+See the [pipeline guide](pipeline.md) for prompt resources and state isolation, and [Web interface languages](web-i18n.md) for display-language settings. Multilingual long-form blind evaluation, native-language review and RTL/layout certification remain future work; interface language support does not certify translation quality. The CLI and prompt instructions remain English; there are no `ui_locale` or `prompt_locale` configuration fields.
 
 ## Models and operation routing
 
@@ -124,10 +164,10 @@ DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` ex
 ### Preview, limits and explicit failover
 
 ```bash
-uv run trans-novel models list
-uv run trans-novel models list --json
-uv run trans-novel models explain --operation review.verify
-uv run trans-novel models check --for translate
+uv run wenyi models list
+uv run wenyi models list --json
+uv run wenyi models explain --operation review.verify
+uv run wenyi models check --for translate
 ```
 
 `list` and `explain` need no keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
@@ -175,13 +215,13 @@ Changing translation, analysis, synopsis or SRT models keeps completed work and 
 Retired configuration and nonempty old usage ledgers require explicit conversion:
 
 ```bash
-uv run trans-novel models migrate-config old-config.yaml --out routed-config.yaml
-uv run trans-novel models migrate-usage state/BOOK/targets/zh
+uv run wenyi models migrate-config old-config.yaml --out routed-config.yaml
+uv run wenyi models migrate-usage state/BOOK/targets/zh
 ```
 
 The config converter creates a separate file. The usage converter backs up each selected ledger, preserves totals and old tier/stage attribution, and assigns missing provider/model history to `unknown`. It never processes source books. Run ledger conversion while that target's workflows are stopped. Review directories are preserved. `pipeline.review_agent_tier` is replaced by the separate verification, arbitration and fix routes.
 
-`models compare --operation translation.body --model writer --model editor --messages fixture.json --out comparison.json` explicitly sends a JSON array of `{role, content}` messages to each selected profile and records outputs, latency and actual usage. It consumes requests; it does not automatically read books or change translations. Use isolated public-domain fixtures before choosing a mixed-model setup. No new quality-ranked model preset is implied by routing support.
+Use isolated public-domain fixtures before choosing a mixed-model setup. No new quality-ranked model preset is implied by routing support.
 
 ## Pipeline
 
@@ -209,7 +249,7 @@ pipeline:
   babeldoc_timeout: 600
 ```
 
-- `review`: enabled by default; automatically run the evidence-driven whole-book review after the complete book has been translated. Pass `--no-review` or set this to `false` to skip it in the one-command workflow. The explicit `trans-novel review` command remains available.
+- `review`: enabled by default; automatically run the evidence-driven whole-book review after the complete book has been translated. Pass `--no-review` or set this to `false` to skip it in the one-command workflow. The explicit `wenyi review` command remains available.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch. Translation and polishing also receive one following source segment from the same chapter as a read-only reference, including when this setting is zero. This built-in lookahead does not change output counts or saved translation context; see [whole-book context](pipeline.md#whole-book-understanding-and-context).
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis.
@@ -234,7 +274,7 @@ pipeline:
 The command-line flags `--polish`, `--no-polish`, `--review`, and `--no-review`
 override the corresponding configuration values for a `translate` run.
 
-Run final review independently with `trans-novel review INPUT`. Each invocation
+Run final review independently with `wenyi review INPUT`. Each invocation
 reviews the complete translated book from the beginning. By default, Review
 publishes folded changes after the shadow loop. Use `--no-autofix` to keep that
 invocation read-only, or `--autofix` to force publishing when the config is off.

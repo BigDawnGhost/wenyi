@@ -1,4 +1,4 @@
-"""WebSocket：实时翻译进度（订阅 Redis Pub/Sub channel）。"""
+"""Relay live translation progress from Redis Pub/Sub to WebSocket clients."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ async def project_progress(ws: WebSocket, pid: str) -> None:
     except (asyncio.TimeoutError, ValueError, AttributeError, WebSocketDisconnect):
         await ws.close(code=1008)
         return
-    # 先发一次状态快照
+    # Send the current state snapshot before forwarding live events.
     try:
         p = dal.get_project(pid) or {}
         chapters = dal.chapter_summaries(pid)
@@ -52,7 +52,7 @@ async def project_progress(ws: WebSocket, pid: str) -> None:
                     data = data.decode("utf-8")
                 await ws.send_text(data if isinstance(data, str) else json.dumps(data))
             else:
-                # 顺带把暂停态反馈给前端（轻量心跳）
+                # Wait briefly when no progress event is available.
                 await asyncio.sleep(0.1)
     except WebSocketDisconnect:
         pass

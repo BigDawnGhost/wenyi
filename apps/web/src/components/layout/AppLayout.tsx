@@ -1,28 +1,43 @@
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useNavigate,
-  useParams,
-} from "react-router-dom";
-import {
-  BookOpenText,
-  FolderPlus,
-  LayoutDashboard,
-  Languages,
-  ListChecks,
-  Download,
-  ScrollText,
-  Sparkles,
-  Library,
-  Settings2,
-  Captions,
-} from "lucide-react";
+import { useI18n } from "@/i18n";
+import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
+import { FolderPlus, LayoutDashboard, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NavigationLink, ProjectNavigation } from "./Navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
+const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
+  .href;
+
+function Brand() {
+  const { t } = useI18n();
+  return (
+    <Link
+      to="/"
+      className="inline-flex items-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <img
+        src={emblemUrl}
+        alt=""
+        width={36}
+        height={36}
+        className="h-9 w-9 shrink-0 object-contain grayscale dark:invert"
+      />
+      <span
+        className="translate-y-0.5 text-[22px] font-normal leading-none tracking-wide"
+        style={{
+          fontFamily:
+            "Georgia, 'Times New Roman', 'Noto Serif CJK SC', 'Songti SC', SimSun, serif",
+        }}
+      >
+        {t("appLayout.wenyi")}
+      </span>
+    </Link>
+  );
+}
+
 export function AppLayout() {
+  const { t: tr } = useI18n();
   const { pid } = useParams();
   const { data: project } = useQuery({
     queryKey: ["project", pid],
@@ -30,115 +45,50 @@ export function AppLayout() {
     enabled: !!pid,
   });
 
-  const navItem = (to: string, icon: React.ReactNode, label: string) => (
-    <NavLink
-      to={to}
-      end={to === "/" || to === `/projects/${pid}`}
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-          isActive
-            ? "bg-accent text-accent-foreground font-medium"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-        )
-      }
-    >
-      {icon}
-      <span>{label}</span>
-    </NavLink>
-  );
-
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      <aside className="hidden md:flex w-60 shrink-0 flex-col border-r bg-card">
-        <div className="flex items-center gap-2 px-4 h-14 border-b">
-          <BookOpenText className="h-5 w-5" />
-          <span className="font-semibold">文译 Wenyi</span>
+    <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
+      <aside className="flex min-h-0 shrink-0 flex-col border-b bg-card md:w-60 md:border-b-0 md:border-r">
+        <div className="flex h-14 shrink-0 items-center border-b px-4">
+          <Brand />
         </div>
-        <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
-          {navItem("/", <LayoutDashboard className="h-4 w-4" />, "项目列表")}
-          {navItem(
-            "/projects/new",
-            <FolderPlus className="h-4 w-4" />,
-            "创建项目",
+        <div
+          className={cn(
+            "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
+            pid && "max-h-[35vh] p-3",
           )}
+        >
           {pid && (
-            <>
-              <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                当前项目
-              </div>
-              <div
-                className="px-3 pb-1 text-xs text-muted-foreground truncate"
-                title={project?.name}
-              >
-                {project?.name || pid}
-              </div>
-              {navItem(
-                `/projects/${pid}`,
-                <Sparkles className="h-4 w-4" />,
-                "翻译进度",
-              )}
-              {project?.fmt !== "srt" && (
-                <>
-                  {navItem(
-                    `/projects/${pid}/glossary`,
-                    <Library className="h-4 w-4" />,
-                    "术语表",
-                  )}
-                  {navItem(
-                    `/projects/${pid}/style`,
-                    <Languages className="h-4 w-4" />,
-                    "风格 & 概要",
-                  )}
-                  {navItem(
-                    `/projects/${pid}/review`,
-                    <ListChecks className="h-4 w-4" />,
-                    "全书审校与人工校阅",
-                  )}
-                </>
-              )}
-              {project?.fmt === "srt" &&
-                navItem(
-                  `/projects/${pid}/subtitles`,
-                  <Captions className="h-4 w-4" />,
-                  "字幕对照与编辑",
-                )}
-              {navItem(
-                `/projects/${pid}/settings`,
-                <Settings2 className="h-4 w-4" />,
-                "项目配置与模型",
-              )}
-              {navItem(
-                `/projects/${pid}/export`,
-                <Download className="h-4 w-4" />,
-                "导出",
-              )}
-              {navItem(
-                `/projects/${pid}/events`,
-                <ScrollText className="h-4 w-4" />,
-                "事件日志",
-              )}
-            </>
+            <ProjectNavigation
+              key={pid}
+              pid={pid}
+              format={project?.fmt}
+              name={project?.name}
+            />
           )}
+        </div>
+        <nav
+          aria-label={tr("navigation.global")}
+          className="flex shrink-0 flex-wrap gap-1 border-t p-3 md:block md:space-y-1"
+        >
+          <NavigationLink
+            to="/"
+            icon={LayoutDashboard}
+            label="appLayout.projects"
+            end
+          />
+          <NavigationLink
+            to="/projects/new"
+            icon={FolderPlus}
+            label="common.createProject"
+          />
+          <NavigationLink
+            to="/settings"
+            icon={Settings2}
+            label="settings.title"
+          />
         </nav>
       </aside>
-      <main className="flex-1 min-w-0 overflow-y-auto">
-        <div className="md:hidden flex gap-3 overflow-x-auto border-b p-3 text-sm">
-          <Link to="/">项目列表</Link>
-          <Link to="/projects/new">创建项目</Link>
-          {pid && (
-            <>
-              <Link to={`/projects/${pid}`}>进度</Link>
-              <Link
-                to={`/projects/${pid}/${project?.fmt === "srt" ? "subtitles" : "review"}`}
-              >
-                校阅
-              </Link>
-              <Link to={`/projects/${pid}/settings`}>配置</Link>
-              <Link to={`/projects/${pid}/export`}>导出</Link>
-            </>
-          )}
-        </div>
+      <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
         <Outlet />
       </main>
     </div>

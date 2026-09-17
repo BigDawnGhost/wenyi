@@ -36,7 +36,7 @@ class TestConfigFileCreation(unittest.TestCase):
                 self.assertEqual(profile.options["reasoning_effort"], "high")
             self.assertFalse(hasattr(cfg.llm, "api_key"))
             generated = path.read_text(encoding="utf-8")
-            self.assertIn("# trans-novel configuration", generated)
+            self.assertIn("# Wenyi configuration", generated)
             self.assertIn("  preset: deepseek", generated)
             self.assertIn("output:\n", generated)
             self.assertTrue(cfg.output.mono)

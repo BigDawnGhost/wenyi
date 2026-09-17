@@ -1,7 +1,7 @@
-"""文译 CLI 包。
+"""Wenyi command-line package for local workflows.
 
-实际的命令实现复用内核自带的 ``wenyi_cli.cli``（文件模式，零基础设施）。
-本包仅提供 console_script 入口与未来"远程模式"（经 HTTP 调 API）的扩展位。
+``wenyi_cli.cli`` assembles commands that use the shared core and file storage.
+The package exposes the ``wenyi`` console script and a Python module entry point.
 """
 
 from .main import app, main

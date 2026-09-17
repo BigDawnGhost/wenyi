@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import typer
 import yaml
 from rich.console import Console
-from typer._click.globals import get_current_context
+from typer.main import get_current_context
 from wenyi_core.config import Config
 
 

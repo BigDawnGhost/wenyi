@@ -41,14 +41,14 @@ class FileArtifacts:
         self._artifact_path(key).unlink(missing_ok=True)
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
-        base = Path(self._artifact_root)
-        if not base.exists():
+        base = Path(self._artifact_root).resolve()
+        directory = self._artifact_path(prefix.rpartition("/")[0])
+        if not directory.is_dir():
             return []
-        return sorted(
-            str(path.relative_to(base))
-            for path in base.rglob("*")
-            if path.is_file() and str(path.relative_to(base)).startswith(prefix)
+        keys = (
+            path.relative_to(base).as_posix() for path in directory.rglob("*") if path.is_file()
         )
+        return sorted(key for key in keys if key.startswith(prefix))
 
     def append_artifact_record(self, key: str, record: dict) -> None:
         path = self._artifact_path(key)

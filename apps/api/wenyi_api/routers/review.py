@@ -9,7 +9,15 @@ from fastapi import APIRouter, HTTPException
 
 from ..job_service import start_job
 from ..project_service import project_write, require_book, require_project, storage_for
-from ..schemas import ChapterSegments, JobEnqueued, ReviewRun, ReviewRunRequest, TargetEdit
+from ..review_presentation import review_items
+from ..schemas import (
+    ChapterSegments,
+    JobEnqueued,
+    ReviewRun,
+    ReviewRunRequest,
+    SegmentEdit,
+    SegmentRevision,
+)
 from .chapters import chapter_payload
 
 router = APIRouter(prefix="/projects/{pid}/review", tags=["review"])
@@ -65,7 +73,11 @@ def list_runs(pid: str) -> list[dict]:
 @router.get("/runs/{rid}", response_model=ReviewRun)
 def get_run(pid: str, rid: str) -> dict:
     require_book(require_project(pid))
-    return _review_run(storage_for(pid), rid)
+    storage = storage_for(pid)
+    with storage.state_lock():
+        run = _review_run(storage, rid)
+        run["items"] = review_items(storage, rid, run["result"], run["autofix"])
+    return run
 
 
 @router.get("/{ci}", response_model=ChapterSegments)
@@ -75,7 +87,7 @@ def get_chapter_for_review(pid: str, ci: int) -> dict:
 
 
 @router.put("/{ci}/segments/{seg_idx}")
-def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
+def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
     with project_write(pid) as (project, storage):
         require_book(project)
         try:
@@ -86,11 +98,17 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
         if segment is None:
             raise HTTPException(404, "segment not found")
         before = segment.target
+        if before != body.expected_target:
+            raise HTTPException(
+                409, "This paragraph changed; reload its latest translation before saving"
+            )
+        if before == body.target:
+            return {"ok": True, "index": seg_idx}
         segment.target = body.target
         chapter.meta.pop("review_passed", None)
         chapter.meta["review_invalidated_at"] = datetime.now(timezone.utc).isoformat()
         with storage.state_lock():
-            storage.save_chapter(chapter)
+            storage.save_chapter(chapter, revision_kind="manual")
             storage.set_chapter_review_status(ci, "pending")
             storage.log_event(
                 "manual_translation_edited",
@@ -98,8 +116,18 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
                 index=seg_idx,
                 before=before,
                 after=body.target,
+                history_recorded=True,
             )
     return {"ok": True, "index": seg_idx}
+
+
+@router.get("/{ci}/segments/{seg_idx}/history", response_model=list[SegmentRevision])
+def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
+    require_book(require_project(pid))
+    try:
+        return storage_for(pid).load_segment_history(ci, seg_idx)
+    except KeyError:
+        raise HTTPException(404, "segment not found") from None
 
 
 @router.post("/{ci}/complete")
@@ -110,7 +138,7 @@ def mark_reviewed(pid: str, ci: int) -> dict:
             chapter = storage.load_chapter(ci)
         except KeyError:
             raise HTTPException(404, "chapter not found") from None
-        if any(not (segment.target or "").strip() for segment in chapter.text_segments):
+        if any(segment.target is None for segment in chapter.text_segments):
             raise HTTPException(409, "Translate every text segment before marking review complete")
         chapter.meta["review_passed"] = True
         chapter.meta["manual_reviewed_at"] = datetime.now(timezone.utc).isoformat()

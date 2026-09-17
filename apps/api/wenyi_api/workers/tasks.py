@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from pathlib import Path
-from time import monotonic
 from uuid import uuid4
 
-from wenyi_core.llm.limits import RequestStopped
+from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 
 from .. import dal, paths
 from ..config import settings
 from ..db import init_pool
 from ..emitters import redis_progress_fn
+from ..export_retention import publish_export
 from ..project_service import effective_config
 from ..storage_pg import PostgresStorage
 
@@ -136,6 +135,8 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
     orch = Orchestrator(config, client=client, storage=storage)
     source = _resolve_source(pid)
     if kind == "prepare":
+        if params.get("preview"):
+            _parse_source(pid, storage, config, progress)
         orch.prepare_for_translation(source, progress=progress)
         return "prepared"
     if kind == "chapter_translation":
@@ -152,67 +153,12 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
     return "done"
 
 
-def _compare(pid, storage, config, client, run_id, params, progress):
-    from wenyi_core.llm.usage import usage_delta
-
-    results = []
-    models = params["models"]
-    started_run = monotonic()
-    status = "running"
-
-    def persist():
-        storage.write_artifact(
-            f"comparisons/{run_id}.json",
-            {
-                "status": status,
-                "operation": params["operation"],
-                "results": results,
-                "usage": client.usage_summary(),
-                "elapsed_seconds": monotonic() - started_run,
-            },
-        )
-
-    try:
-        for i, model in enumerate(models):
-            progress(i, len(models), f"比较模型 {model}")
-            before = client.usage_summary()
-            started = monotonic()
-            row = {
-                "profile": model,
-                "route": client.validate_profile(model, params["operation"]).describe(),
-            }
-            try:
-                row["output"] = client.complete_profile(
-                    params["messages"],
-                    operation=params["operation"],
-                    profile=model,
-                    json_mode=params.get("json_mode", False),
-                )
-            except Exception as error:
-                row["error"] = str(error)
-            row.update(
-                seconds=monotonic() - started, usage=usage_delta(client.usage_summary(), before)
-            )
-            results.append(row)
-            persist()
-        progress(len(models), len(models), "模型比较完成")
-        status = "completed"
-        return params.get("completion_status") or "created"
-    except (KeyboardInterrupt, RequestStopped):
-        status = "interrupted"
-        raise
-    except Exception:
-        status = "failed"
-        raise
-    finally:
-        persist()
-
-
-def _record_failure(pid, run_id, error, *, status="error"):
+def _record_terminal_status(pid, run_id, error: BaseException | None = None, *, status="error"):
     """A late Future or duplicate delivery may update only its own task's project."""
+    message = str(error) if error is not None else None
     job = dal.get_job_by_arq_id(run_id) if run_id else None
     if job:
-        dal.set_job_status(job["id"], status, error=str(error))
+        dal.set_job_status(job["id"], status, error=message)
         storage = _pipeline_storage(pid, init_pool(settings.psycopg_dsn))
         latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
         if not latest or latest["id"] != job["id"]:
@@ -222,9 +168,9 @@ def _record_failure(pid, run_id, error, *, status="error"):
         with storage.lock():
             latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
             if latest and latest["id"] == job["id"]:
-                dal.set_project_status(pid, status, error=str(error))
+                dal.set_project_status(pid, status, error=message)
     elif not run_id:
-        dal.set_project_status(pid, status, error=str(error))
+        dal.set_project_status(pid, status, error=message)
 
 
 def _execute(
@@ -287,11 +233,7 @@ def _execute(
                 client = build_client(config)
                 client.set_event_sink(storage.log_event)
                 with client.interrupt_scope():
-                    if kind == "model_compare":
-                        result_status = _compare(
-                            pid, storage, config, client, run_id or uuid4().hex, params, progress
-                        )
-                    elif kind == "srt":
+                    if kind == "srt":
                         from wenyi_core.srt.translate import translate_srt
 
                         client.validate_credentials(("srt.translate",))
@@ -308,11 +250,12 @@ def _execute(
                         )
                         for output in result["outputs"]:
                             eid = dal.create_export(pid, "srt", {"bilingual": "-bi.srt" in output})
-                            dal.set_export_status(
+                            publish_export(
+                                pool,
+                                pid,
                                 eid,
-                                "done",
-                                path=os.path.relpath(output, settings.data_dir),
-                                size=os.path.getsize(output),
+                                output,
+                                data_dir=settings.data_dir,
                             )
                         result_status = "done"
                     else:
@@ -338,11 +281,14 @@ def _execute(
             if job:
                 dal.set_job_status(job["id"], "done")
             storage.log_event("task_completed", kind=kind, run_id=run_id)
-    except (KeyboardInterrupt, RequestStopped) as error:
-        _record_failure(pid, run_id, error, status="paused")
+    except (KeyboardInterrupt, RequestCancelled):
+        _record_terminal_status(pid, run_id, status="paused")
+        storage.log_event("task_paused", kind=kind, run_id=run_id)
+    except RequestStopped as error:
+        _record_terminal_status(pid, run_id, error, status="paused")
         storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
     except Exception as error:
-        _record_failure(pid, run_id, error)
+        _record_terminal_status(pid, run_id, error)
         storage.log_event("pipeline_error", kind=kind, run_id=run_id, error=str(error))
         raise
     finally:
@@ -363,7 +309,7 @@ async def _run(kind, project_id, run_id, params):
         await asyncio.shield(task)
         raise
     except Exception as error:
-        _record_failure(project_id, run_id, error)
+        _record_terminal_status(project_id, run_id, error)
         raise
 
 
@@ -389,10 +335,6 @@ async def run_review(ctx, *, project_id: str, run_id: str | None = None, **param
 
 async def run_srt(ctx, *, project_id: str, run_id: str | None = None, **params):
     await _run("srt", project_id, run_id, params)
-
-
-async def run_model_compare(ctx, *, project_id: str, run_id: str | None = None, **params):
-    await _run("model_compare", project_id, run_id, params)
 
 
 def _render_export_sync(
@@ -464,11 +406,12 @@ def _render_export_sync(
                 pdf_engine=pdf_engine,
                 babeldoc_timeout=config.pipeline.babeldoc_timeout,
             )
-    dal.set_export_status(
+    publish_export(
+        pool,
+        pid,
         export_id,
-        "done",
-        path=os.path.relpath(out_path, settings.data_dir),
-        size=os.path.getsize(out_path),
+        out_path,
+        data_dir=settings.data_dir,
     )
     return export_id
 

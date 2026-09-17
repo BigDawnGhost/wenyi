@@ -1,6 +1,5 @@
-# Run from the repository: docker compose -f deploy/docker-compose.yml --profile full up --build
-# full: Web + API + workflow worker + export worker + PostgreSQL + Redis
-# server: all backend services, suitable for API clients or a separately hosted Web UI.
+# Run from deploy/: docker compose up -d --build
+# Starts Web, API, both workers, PostgreSQL, and Redis by default.
 x-app: &app
   env_file: .env
   environment: &app-environment
@@ -16,7 +15,6 @@ x-app: &app
       condition: service_healthy
     redis:
       condition: service_healthy
-  profiles: [full, server]
   restart: unless-stopped
 
 services:
@@ -33,7 +31,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    profiles: [full, server]
     restart: unless-stopped
 
   redis:
@@ -46,7 +43,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    profiles: [full, server]
     restart: unless-stopped
 
   api:
@@ -54,8 +50,13 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
+      target: api
       args:
+        WENYI_VERSION: ${WENYI_VERSION:-0.0.0+docker}
         INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
+        UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.org/simple}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.12.15}
     ports:
       - "8000:8000"
 
@@ -63,29 +64,40 @@ services:
     <<: *app
     build:
       context: ..
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.api
+      target: worker
       args:
+        WENYI_VERSION: ${WENYI_VERSION:-0.0.0+docker}
         INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
+        UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.org/simple}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.12.15}
     command: [arq, wenyi_api.workers.WorkerSettings]
 
   export-worker:
     <<: *app
     build:
       context: ..
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.api
+      target: worker
       args:
+        WENYI_VERSION: ${WENYI_VERSION:-0.0.0+docker}
         INSTALL_PDF_OUTPUT: ${INSTALL_PDF_OUTPUT:-true}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
+        UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.org/simple}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.12.15}
     command: [arq, wenyi_api.workers.ExportWorkerSettings]
 
   web:
     build:
       context: ..
       dockerfile: docker/Dockerfile.web
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
     ports:
       - "8080:80"
     depends_on:
       - api
-    profiles: [full]
     restart: unless-stopped
 
 volumes:

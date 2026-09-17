@@ -71,7 +71,13 @@ def test_review_run_listing_and_sparse_segment_mapping(domain_client, tmp_path):
     root = f"/projects/{storage.project_id}"
     run = client.get(root + "/review/runs").json()[0]
     assert run["id"] == "review-2026" and run["autofix"]["records"][0]["status"] == "failed"
-    assert client.get(root + "/review/runs/review-2026").json()["result"]["status"] == "completed"
+    detail = client.get(root + "/review/runs/review-2026").json()
+    assert detail["result"]["status"] == "completed"
+    assert detail["items"][0]["location"]["segment_index"] == 18
+    assert detail["items"][0]["location"]["text_index"] == 1
+    assert detail["items"][0]["location"]["source"] == "two"
+    assert detail["items"][0]["status"] == "pending"
+    assert detail["items"][1]["status"] == "failed"
     assert client.get(root + "/review/runs/missing").status_code == 404
     chapter = client.get(root + "/chapters/0").json()
     assert chapter["review_issues"][0]["index"] == 18
@@ -89,7 +95,7 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
     root = f"/projects/{storage.project_id}"
     dal.set_project_status(storage.project_id, "translating")
     for method, path, body in [
-        ("put", "/review/0/segments/0", {"target": "blocked"}),
+        ("put", "/review/0/segments/0", {"target": "blocked", "expected_target": "润色译文"}),
         ("post", "/review/0/complete", {}),
         ("put", "/analysis", {"analysis": {"style_guide": "blocked"}}),
         ("put", "/chapter-digests/0", {"digest": "blocked"}),
@@ -98,7 +104,13 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
         assert client.request(method, root + path, json=body).status_code == 409
     assert storage.load_chapter(0).segments[0].target == "润色译文"
     dal.set_project_status(storage.project_id, "done")
-    assert client.put(root + "/review/0/segments/0", json={"target": "人工修订"}).status_code == 200
+    assert (
+        client.put(
+            root + "/review/0/segments/0",
+            json={"target": "人工修订", "expected_target": "润色译文"},
+        ).status_code
+        == 200
+    )
     assert storage.load_chapter(0).segments[0].target_before_polish == "原始译文"
     assert client.post(root + "/review/0/complete").status_code == 200
     assert storage.load_chapter(0).meta["review_passed"]
@@ -110,6 +122,58 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
     payload = client.get(root + "/analysis").json()
     assert payload["analysis"]["style_guide"] == "自然"
     assert payload["chapter_digests"][0]["digest"] == "摘要"
+
+
+def test_partial_chapter_is_readable_after_each_saved_batch(domain_client, tmp_path):
+    client, storage, _ = domain_client
+    initialize(storage, tmp_path)
+    chapter = Chapter(
+        index=0,
+        title="Partial chapter",
+        segments=[
+            Segment(index=12, source="First paragraph", target=None),
+            Segment(index=18, source="Next paragraph", target=None),
+        ],
+    )
+    storage.save_chapter_with_status(chapter, "translating")
+    dal.set_project_status(storage.project_id, "translating")
+    root = f"/projects/{storage.project_id}"
+    assert client.get(root + "/chapters").json()[0]["target_word_count"] == 0
+    chapter.segments[0].target = "First saved translation"
+    with storage.lock():
+        storage.save_chapter(chapter)
+        response = client.get(root + "/review/0")
+        assert response.status_code == 200
+        assert [s["target"] for s in response.json()["segments"]] == [
+            "First saved translation",
+            None,
+        ]
+        summary = client.get(root + "/chapters").json()[0]
+        assert summary["status"] == "translating"
+        assert summary["target_word_count"] == 1
+    dal.set_project_status(storage.project_id, "paused")
+    assert client.post(root + "/review/0/complete").status_code == 409
+    assert (
+        client.put(
+            root + "/review/0/segments/12",
+            json={"target": "Human edit", "expected_target": "First saved translation"},
+        ).status_code
+        == 200
+    )
+    assert storage.load_chapter(0).segments[1].target is None
+
+
+def test_saved_empty_translation_counts_as_complete_for_proofreading(domain_client, tmp_path):
+    client, storage, _ = domain_client
+    initialize(storage, tmp_path)
+    storage.save_chapter_with_status(
+        Chapter(index=0, segments=[Segment(index=12, source="Parser noise", target="")]),
+        "done",
+    )
+    root = f"/projects/{storage.project_id}"
+    summary = client.get(root + "/chapters").json()[0]
+    assert summary["word_count"] == summary["target_word_count"] == 1
+    assert client.post(root + "/review/0/complete").status_code == 200
 
 
 def test_glossary_edit_keeps_order_and_conflicts_resolve(domain_client, tmp_path):
@@ -212,7 +276,10 @@ def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_c
     assert client.get(root + "/chapters").json()[0]["review_status"] == "completed"
     assert client.get(root + "/chapters/0").json()["review_issues"]
     assert (
-        client.put(root + "/review/0/segments/0", json={"target": "编辑后待复核"}).status_code
+        client.put(
+            root + "/review/0/segments/0",
+            json={"target": "编辑后待复核", "expected_target": "润色译文"},
+        ).status_code
         == 200
     )
     summary = client.get(root + "/chapters").json()[0]
@@ -224,7 +291,13 @@ def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_c
     assert client.post(root + "/review/0/complete").status_code == 200
     summary = client.get(root + "/chapters").json()[0]
     assert summary["review_status"] == "completed" and summary["review_issue_count"] == 0
-    assert client.put(root + "/review/0/segments/0", json={"target": "再次编辑"}).status_code == 200
+    assert (
+        client.put(
+            root + "/review/0/segments/0",
+            json={"target": "再次编辑", "expected_target": "编辑后待复核"},
+        ).status_code
+        == 200
+    )
     assert client.get(root + "/chapters").json()[0]["review_status"] == "pending"
     storage.write_artifact(
         "reviews/review-2099/result.json",
@@ -249,3 +322,35 @@ def test_subtitle_preview_visible_before_first_translation(domain_client, pg_poo
     assert response.json()["total"] == 1 and response.json()["completed"] == 0
     assert response.json()["cues"][0]["source"] == "Hello"
     assert client.put(root + "/subtitles/1", json={"target": "not initialized"}).status_code == 404
+
+
+def test_workflow_review_association_is_scoped_to_job_interval(pg_storage, pg_pool, monkeypatch):
+    monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
+    pid = pg_storage.project_id
+    pg_storage.log_event("review_started", review_id="before-the-job")
+    first = dal.create_job(pid, "review", "first-review")
+    assert dal.job_review_id(first) is None
+    pg_storage.log_event("review_started", review_id="review-a")
+    assert dal.job_review_id(first) == "review-a"
+
+    # An export neither steals the review nor terminates the review task's interval.
+    dal.create_job(pid, "export", "export-between-reviews")
+    pg_storage.log_event("review_autofix_finished", review_id="review-a")
+    assert dal.job_review_id(first) == "review-a"
+    second = dal.create_job(pid, "review", "second-review")
+    assert dal.job_review_id(second) is None
+    pg_storage.log_event("review_started", review_id="review-b")
+    assert dal.job_review_id(second) == "review-b"
+    assert dal.job_review_id(first) == "review-a"
+
+    with pg_pool.connection() as conn:
+        conn.execute("INSERT INTO projects(id,name) VALUES ('other-review-project','other')")
+        conn.execute(
+            """INSERT INTO events(project_id,type,payload)
+               VALUES ('other-review-project','review_started','{"review_id":"other"}')"""
+        )
+    assert dal.job_review_id(second) == "review-b"
+    # Resuming may reuse the review directory but still belongs to the new job.
+    resumed = dal.create_job(pid, "review", "resumed-review")
+    pg_storage.log_event("review_started", review_id="review-b")
+    assert dal.job_review_id(resumed) == "review-b"

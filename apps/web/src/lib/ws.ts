@@ -7,6 +7,8 @@ export interface ProgressMessage {
   done?: number;
   total?: number;
   label?: string;
+  updated_at?: string;
+  elapsed_seconds?: number;
   payload?: Record<string, unknown>;
   project?: Record<string, unknown>;
   chapters?: unknown[];
@@ -14,13 +16,11 @@ export interface ProgressMessage {
 
 export function useProjectProgress(pid: string | undefined) {
   const [msg, setMsg] = useState<ProgressMessage | null>(null);
-  const [log, setLog] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     setMsg(null);
-    setLog([]);
     setConnected(false);
     if (!pid) return;
     let backoff = 500;
@@ -42,11 +42,7 @@ export function useProjectProgress(pid: string | undefined) {
       };
       ws.onmessage = (ev) => {
         try {
-          const data: ProgressMessage = JSON.parse(ev.data);
-          setMsg(data);
-          if (data.label) {
-            setLog((l) => [...l.slice(-300), data.label!]);
-          }
+          setMsg(JSON.parse(ev.data) as ProgressMessage);
         } catch {
           /* ignore */
         }
@@ -67,5 +63,5 @@ export function useProjectProgress(pid: string | undefined) {
     };
   }, [pid]);
 
-  return { msg, log, connected };
+  return { msg, connected };
 }

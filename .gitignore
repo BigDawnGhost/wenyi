@@ -26,7 +26,7 @@ explore/
 *.srt
 *.docx
 
-# ── Web 升级（monorepo）─────────────────────────────────────────
+# Web workspace artifacts.
 node_modules/
 .next/
 .turbo/
@@ -42,3 +42,10 @@ htmlcov/
 
 local_references
 .scratch/
+
+# Generated TypeScript build metadata and compiled tooling configuration.
+*.tsbuildinfo
+/apps/web/vite.config.js
+/apps/web/vite.config.d.ts
+/apps/web/playwright.config.js
+/apps/web/playwright.config.d.ts

@@ -1,3 +1,5 @@
-"""文译 Web API 包。"""
+"""Wenyi Web API package."""
 
-__version__ = "0.2.0"
+from importlib.metadata import version
+
+__version__ = version("wenyi-api")

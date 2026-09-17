@@ -1,8 +1,8 @@
-"""``FileStorage`` —— 基于本地文件系统的 Storage 实现（CLI 本地模式）。
+"""Local filesystem implementation of Storage for CLI workflows.
 
-组合现有 :class:`wenyi_core.pipeline.runstore.RunStore`（运行态：JSON 文件）
-与 :class:`wenyi_core.glossary.store.GlossaryStore`（SQLite 术语库），
-逐方法委托，行为与升级前完全一致。CLI 与现有测试均走此实现。
+Compose :class:`wenyi_core.pipeline.runstore.RunStore` for JSON run state with
+:class:`wenyi_core.glossary.store.GlossaryStore` for the SQLite glossary.
+Domain services use the same storage interface as the Web backend.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from .protocol import STATUS_PENDING  # noqa: F401
 
 
 class FileStorage(FileArtifacts):
-    """文件后端 Storage：一个对象同时承担 RunStore + GlossaryStore 职责。"""
+    """Expose run state and glossary operations through a single file backend."""
 
     def __init__(self, run_dir: str, *, create: bool = True):
         FileArtifacts.__init__(self, run_dir)
@@ -72,14 +72,14 @@ class FileStorage(FileArtifacts):
     def record_timing(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._run.record_timing(record)
 
-    # 幂等获取术语库连接（懒打开，复用同一连接）
+    # Open the glossary lazily and reuse the connection within its lifetime.
     @property
     def _g(self) -> GlossaryStore:
         if self._glossary is None:
             self._glossary = GlossaryStore(self._run.glossary_path)
         return self._glossary
 
-    # ── 路径属性（assemble / cli 需要）────────────────────────────────────
+    # Paths used by assembly and CLI commands.
     @property
     def run_dir(self) -> str:
         return self._run.run_dir
@@ -119,7 +119,7 @@ class FileStorage(FileArtifacts):
     def initialization_path(self) -> str:
         return self._run.initialization_path
 
-    # ── 生命周期 ─────────────────────────────────────────────────────────
+    # Storage lifecycle.
     def begin_initialization(self, source_hash: str) -> None:
         self.close()
         self._run.begin_initialization(source_hash)
@@ -128,11 +128,11 @@ class FileStorage(FileArtifacts):
         return self._run.exists()
 
     def stage_document(self, doc: Document, *, source_hash: str | None = None) -> dict:
-        """写入章节文件并返回 manifest，但不提前落盘 manifest。"""
+        """Write chapter files and return the manifest without committing it."""
         return self._run.stage_document(doc, source_hash=source_hash)
 
     def init_from_document(self, doc: Document) -> dict:
-        """兼容入口：stage + 立即保存 manifest（原子初始化完成标志）。"""
+        """Stage a document and commit the manifest as the initialization marker."""
         manifest = self._run.stage_document(doc)
         manifest["initialized"] = True
         self._run.save_manifest(manifest)
@@ -140,16 +140,19 @@ class FileStorage(FileArtifacts):
 
     @contextmanager
     def lock(self) -> Iterator[None]:
-        """书级文件锁（委托 RunStore.lock）。"""
+        """Hold the book lock and release owned glossary connections before unlocking."""
         with self._run.lock():
-            yield
+            try:
+                yield
+            finally:
+                self.close()
 
     def close(self) -> None:
         if self._glossary is not None:
             self._glossary.close()
             self._glossary = None
 
-    # ── 批次术语检查点（断点续跑）────────────────────────────────────────
+    # Batch glossary checkpoints for resumable runs.
     @staticmethod
     def batch_glossary_key(start_index: int, count: int) -> str:
         return RunStore.batch_glossary_key(start_index, count)
@@ -170,14 +173,14 @@ class FileStorage(FileArtifacts):
     def pending_chapters(self) -> list[int]:
         return self._run.pending_chapters()
 
-    # ── 章节 / 段落 ──────────────────────────────────────────────────────
+    # Chapters and segments.
     def save_chapter(self, chapter: Chapter) -> None:
         self._run.save_chapter(chapter)
 
     def load_chapter(self, ci: int) -> Chapter:
         return self._run.load_chapter(ci)
 
-    # ── 上下文 / 分析 / 报告 / usage ─────────────────────────────────────
+    # Context, analysis, reports and usage.
     def save_context(self, data: dict) -> None:
         self._run.save_context(data)
 
@@ -209,7 +212,7 @@ class FileStorage(FileArtifacts):
     def load_usage(self) -> Optional[dict]:
         return self._run.load_usage()
 
-    # ── 事件日志 ─────────────────────────────────────────────────────────
+    # Event logs.
     def log_event(self, event: str, **data: Any) -> None:
         self._run.log_event(event, **data)
 
@@ -232,7 +235,7 @@ class FileStorage(FileArtifacts):
                 rows.append(row)
         return rows[-limit:] if limit else rows
 
-    # ── 术语表（委托 GlossaryStore）──────────────────────────────────────
+    # Glossary operations delegated to GlossaryStore.
     def get_term(self, source: str) -> Optional[GlossaryTerm]:
         return self._g.get_term(source)
 
@@ -240,7 +243,11 @@ class FileStorage(FileArtifacts):
         return self._g.upsert_term(term, chapter=chapter)
 
     def all_terms(self) -> list[GlossaryTerm]:
-        return self._g.all_terms()
+        if self._glossary is not None:
+            return self._glossary.all_terms()
+        if not os.path.isfile(self.glossary_path):
+            return []
+        return GlossaryStore.load_terms_readonly(self.glossary_path)
 
     def terms_in(self, terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         return GlossaryStore.terms_in(terms, text)

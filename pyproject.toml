@@ -1,8 +1,12 @@
 [project]
 name = "wenyi"
-version = "0.2.0"
-description = "文译（Wenyi）：基于 AI 的长篇小说翻译平台 — monorepo 根"
+dynamic = ["version"]
+description = "Wenyi workspace for multilingual long-form translation."
 requires-python = ">=3.10"
+dependencies = ["wenyi-cli"]
+
+[tool.uv]
+package = false
 
 [tool.uv.workspace]
 members = ["packages/core", "packages/cli", "apps/api"]
@@ -20,8 +24,23 @@ pdf-output-lite = [
     "fpdf2>=2.8.5",
 ]
 
+# Resolve dynamic workspace metadata without installing a root package.
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+only-include = ["pyproject.toml"]
+
 [dependency-groups]
 dev = [
+    "httpx2>=2.13", # Starlette's TestClient HTTP transport.
     "pre-commit>=3.7",
     "ruff>=0.6",
     "pytest>=8",
@@ -38,3 +57,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "apps/api/tests"]
 pythonpath = ["packages/core", "packages/cli"]
+filterwarnings = [
+    "error:Using `httpx` with `starlette.testclient` is deprecated",
+]

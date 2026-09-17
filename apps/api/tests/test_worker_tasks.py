@@ -5,12 +5,14 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
+from wenyi_api.job_service import start_job
 from wenyi_api.workers import ExportWorkerSettings, WorkerSettings, tasks
 
 
 @pytest.mark.parametrize(
     "kind",
-    ["parse", "prepare", "translation", "chapter_translation", "review", "srt", "model_compare"],
+    ["parse", "prepare", "translation", "chapter_translation", "review", "srt"],
 )
 def test_startup_failure_is_persisted(monkeypatch, kind):
     statuses = []
@@ -53,6 +55,13 @@ def test_exports_have_independent_queue():
     assert tasks.run_export not in WorkerSettings.functions
     assert tasks.run_export in ExportWorkerSettings.functions
     assert all("qa" not in fn.__name__ for fn in WorkerSettings.functions)
+
+
+def test_model_comparison_cannot_be_enqueued():
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(start_job("test", "model_compare"))
+    assert raised.value.status_code == 422
+    assert all(fn.__name__ != "run_model_compare" for fn in WorkerSettings.functions)
 
 
 def test_resolve_source_never_guesses_using_title(monkeypatch, tmp_path):

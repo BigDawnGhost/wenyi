@@ -1,13 +1,12 @@
-"""进度事件总线抽象（tech-stack §7）。
+"""Progress event contracts for adapters around the core callback.
 
-内核通过现有的 ``ProgressFn`` 回调（``orchestrator.run(progress=cb)``）汇报进度，
-与 UI 无关。本模块定义 :class:`ProgressEmitter` Protocol，供"桥接层"把
-``ProgressFn`` 调用转换为可推送的事件：
+The core reports progress through ``orchestrator.run(progress=cb)`` independently
+of the UI. Adapters can wrap callbacks with a :class:`ProgressEmitter`:
 
-- CLI：``NullEmitter``（进度走 rich 进度条，emitter 空实现）
-- Web：``RedisEmitter``（实现在 apps/api，发布到 Redis Pub/Sub → WebSocket）
+- ``NullEmitter`` discards events when progress is rendered locally.
+- ``RedisEmitter`` in apps/api publishes events for the WebSocket relay.
 
-内核本身不依赖 Redis；它只调用注入的 ``progress`` 回调。
+The core has no Redis dependency; it invokes the injected progress callback.
 """
 
 from __future__ import annotations
@@ -18,11 +17,10 @@ from typing import Optional, Protocol, runtime_checkable
 
 @dataclass
 class TranslationEvent:
-    """一次进度事件。
+    """One progress event.
 
-    对齐 PRD/tech-stack 的事件类型：``prepare.step_done``、``chapter.batch_done``、
-    ``term.added``、``chapter.completed``、``pipeline.completed`` 等。MVP 阶段
-    用 ``kind`` 粗粒度分类，``label`` 承载可展示文本（兼容现有 ProgressFn 的 label）。
+    ``kind`` identifies the event category. ``label`` carries display text from
+    the core ProgressFn callback, and ``payload`` holds optional event details.
     """
 
     project_id: Optional[str] = None
@@ -35,13 +33,13 @@ class TranslationEvent:
 
 @runtime_checkable
 class ProgressEmitter(Protocol):
-    """进度事件发射器接口。"""
+    """Interface for publishing progress events."""
 
     def emit(self, event: TranslationEvent) -> None: ...
 
 
 class NullEmitter:
-    """空发射器：CLI 本地模式用（进度由 rich 直接渲染，无需转发）。"""
+    """Discard events when progress is rendered directly by the local client."""
 
     def emit(self, event: TranslationEvent) -> None:  # noqa: D401
         return None
@@ -50,9 +48,9 @@ class NullEmitter:
 def make_progress_fn(
     emitter: ProgressEmitter, project_id: Optional[str] = None, *, kind: str = "progress"
 ):
-    """把一个 :class:`ProgressEmitter` 包装成内核所需的 ``ProgressFn``。
+    """Wrap a :class:`ProgressEmitter` as a core ProgressFn callback.
 
-    内核签名：``progress(done: int, total: int, label: str) -> None``。
+    The signature is ``progress(done: int, total: int, label: str) -> None``.
     """
 
     def fn(done: int, total: int, label: str) -> None:

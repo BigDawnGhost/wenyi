@@ -1,4 +1,4 @@
-"""健康检查。"""
+"""Health check endpoints."""
 
 from __future__ import annotations
 

@@ -6,6 +6,35 @@
 
 顶层配置项为 `language`、`llm`、`segment`、`pipeline`、`output`、`honorific` 和 `paths`。未知配置项会被拒绝；已移除的设置不会自动转换为新格式。
 
+## Web 设置与模型注册
+
+CLI 继续读取 `config.yaml`。Web **总设置** 统一管理提供商连接、模型注册、默认档位与
+步骤路由，以及新项目流程默认值。Web 首次使用 `WENYI_CONFIG` 指定的文件
+（默认 `config.yaml`）初始化默认值；首次保存后改从 PostgreSQL 读取，重启后保留。
+保存 Web 设置不会改写 CLI 配置文件。API Key 仍只从服务端环境变量读取，页面只填写变量名。
+
+创建项目默认选用的流程模板在这里设置。标准翻译使用配置的流程开关；快速出稿关闭
+全书预理解、润色、审校与自动修复。创建项目时会复制默认配置，之后修改默认值不会重置
+已有项目的流程和模型选择。翻译语言以创建页的选择为准。
+
+项目仅通过 `llm.tiers`、`llm.routes` 及备用路由选用已注册的模型 ID，并可设置
+`llm.budget`。提供商连接、模型名与参数、预设和提供商配额只在总设置中管理，项目表单
+及高级 YAML 都执行这一限制。旧项目内的模型定义不再作为注册来源：如果项目选用了
+自定义模型 ID，需要先在总设置注册这些 ID，再启动使用这些模型的新任务。
+
+模型库更新应用于之后启动或恢复的任务。已排队和运行中的任务保留包含提供商、模型参数
+的完整配置快照。连接 ID 与模型 ID 都可在总设置中重命名；保存时在同一事务内同步更新
+项目档位、步骤覆盖和备用路由中的模型引用，历史用量与已排队任务快照保留原 ID。
+ID 以字母开头，只能包含字母、数字、下划线和连字符。被引用的连接或模型需要先调整
+引用再删除，未使用的注册项可直接删除。
+
+**恢复默认配置** 先载入草稿，点击 **保存配置** 后才生效。总设置重新载入服务端配置
+文件，并将创建模板恢复为标准翻译；项目设置使用当前全局默认值与本项目流程模板，
+保留翻译语言。恢复默认配置也不能删除仍被其他项目选用的模型，需要先调整这些选择。
+步骤下拉框直接显示实际档位，不再加“跟随默认档位”前缀；选回步骤的默认档位会清除
+模型覆盖，并保留已有备用路由。全局保存检查配置版本，过期编辑页需要
+重新加载再保存。
+
 ## 语言
 
 ```yaml
@@ -26,11 +55,11 @@ language:
 | `fr`、`de`、`es`、`it` | 法语、德语、西班牙语、意大利语 |
 | `pt`、`pt-BR`、`pt-PT`、`ru` | 葡萄牙语、巴西/欧洲葡萄牙语、俄语 |
 
-运行 `uv run trans-novel languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
+运行 `uv run wenyi languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
 
 每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
-提示词目录、状态布局和首版验证范围见 [P10 国际化实现与后续方案](project-review/2026-09-05/p10-multilingual-internationalization.md)。
+提示词资源与状态隔离见[翻译流程](pipeline.md)，界面语言设置见 [Web 界面语言](web-i18n.md)。多语言公版长篇盲评、母语审校及 RTL／排版认证仍待开展；支持界面语言不代表翻译质量已经认证。CLI 与提示词指令仍使用英语，当前没有 `ui_locale` 或 `prompt_locale` 配置字段。
 
 ## 模型与操作路由
 
@@ -124,10 +153,10 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 ### 预览、限额与显式故障切换
 
 ```bash
-uv run trans-novel models list
-uv run trans-novel models list --json
-uv run trans-novel models explain --operation review.verify
-uv run trans-novel models check --for translate
+uv run wenyi models list
+uv run wenyi models list --json
+uv run wenyi models explain --operation review.verify
+uv run wenyi models check --for translate
 ```
 
 `list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
@@ -175,13 +204,13 @@ llm:
 旧配置和非空旧用量账本需要显式转换：
 
 ```bash
-uv run trans-novel models migrate-config old-config.yaml --out routed-config.yaml
-uv run trans-novel models migrate-usage state/BOOK/targets/zh
+uv run wenyi models migrate-config old-config.yaml --out routed-config.yaml
+uv run wenyi models migrate-usage state/BOOK/targets/zh
 ```
 
 配置转换器生成独立文件；账本转换器逐份备份，保留总量及旧档位/阶段归属，将未知提供商和模型历史标记为 `unknown`，不会处理原书。转换账本前应停止该目标的运行任务。Review 目录保留。`pipeline.review_agent_tier` 由取证、仲裁、修订的独立路由取代。
 
-`models compare --operation translation.body --model writer --model editor --messages fixture.json --out comparison.json` 会明确向每个模型发送由 `{role, content}` 对象构成的 JSON 消息数组，记录输出、延迟和实际用量。该命令消耗请求，不自动读取书籍或修改译文。选择混用配置前请用隔离的公版样本比较；支持路由不等于已经提供实测质量排序的新预设。
+选择混用配置前请用隔离的公版样本比较；支持路由不等于已经提供实测质量排序的新预设。
 
 ## 流水线
 
@@ -209,7 +238,7 @@ pipeline:
   babeldoc_timeout: 600
 ```
 
-- `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `trans-novel review`。
+- `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `wenyi review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。翻译与润色还会内置附带同章下一条原文片段作为只读参考，此值为零时也保留后文参考；它不改变输出段数，也不写入滚动译文上下文。详见[全书理解与上下文](pipeline.md#全书理解与上下文)。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
@@ -234,7 +263,7 @@ pipeline:
 `translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`
 会覆盖对应配置。
 
-可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
+可使用 `wenyi review INPUT` 独立执行最终审校。每次调用都会从头审查完整
 译文。默认会在影子循环后发布折叠后的修订；可用 `--no-autofix` 保持本次只读，
 或在配置关闭时用 `--autofix` 强制发布。Autofix 会先应用折叠后的 changes，再让最终未解决
 issues 复用同一套 Agent Loop 和 Fixer，不会另建一套 Autofix loop 或 prompt。

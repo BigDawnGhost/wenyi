@@ -2,7 +2,7 @@
 
 [Index](README.md) · [简体中文](../../zh/project-review/2026-09-05/p05-ci-and-release-validation.md)
 
-Type: proposed roadmap, not implemented; dependencies and order in index · 2026-09-05
+Status update (2026-09-17): partially implemented. CI includes Ruff, Python 3.10/3.12 tests and package-resource checks. Retain follow-up proposals for release format coverage and documentation-consistency gates. The text below describes the historical 2026-09-05 baseline; do not reimplement completed work. See [contribution guidelines](../../../CONTRIBUTING.md) for current validation commands; CI runs record their actual results.
 
 ## Baseline and evidence
 
@@ -18,7 +18,7 @@ Use synthetic EPUB/DOCX/SRT round trips for anchors/notes/TOC, indices/timestamp
 
 ## Acceptance and sequencing
 
-Gates must catch missing dependencies/resources, lost format information, and broken documentation links without real API keys. Keep existing checksums, architecture checks, and macOS signature verification. Estimate 1–2 days for lint/links, then 3–5 for binary/format coverage, before P04. Control CI runtime incrementally. GUI/Web,  and more formats should receive separate plans after existing quality/state guarantees stabilize.
+Gates must catch missing dependencies/resources, lost format information, and broken documentation links without real API keys. Keep existing checksums, architecture checks, and macOS signature verification. Reassess estimates against current CI coverage and control runtime incrementally. Review extraction, initial multilingual support and Web are already implemented, not future milestones.
 
 ## Repository evidence
 
@@ -31,4 +31,4 @@ Gates must catch missing dependencies/resources, lost format information, and br
 - [tests/test_pdf_support.py:1](https://github.com/BigDawnGhost/wenyi/blob/15943b97592dc38ef9712412b6fd83a41951e1ca/tests/test_pdf_support.py#L1)
 
 
-Follow-up on 2026-09-06: multilingual work is now tracked in [P10](p10-multilingual-internationalization.md). Its first version adds package-resource collection and a `languages` binary smoke command; the remaining release improvements are still proposed.
+Current multilingual behavior is documented in [configuration](../../configuration.md), and Web behavior in the [Web guide](../../web.md). Retained proposals require a fresh CI gap assessment.
