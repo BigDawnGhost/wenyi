@@ -49,7 +49,7 @@ export default function ProgressPage() {
     enabled: !!project,
     refetchInterval: isProjectBusy(project?.status) ? 5000 : false,
   });
-  const { msg, log, connected } = useProjectProgress(pid);
+  const { msg, connected } = useProjectProgress(pid);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", pid] });
     qc.invalidateQueries({ queryKey: ["chapters", pid] });
@@ -74,10 +74,15 @@ export default function ProgressPage() {
     },
   });
   const chapters = chapterQuery.data || [];
+  // Match CLI translation progress: segment counts, not finished chapters.
   const done = subtitle
     ? cues?.completed || 0
-    : chapters.filter((c) => c.status === "done").length;
-  const total = subtitle ? cues?.total || 0 : chapters.length;
+    : chapters.reduce((sum, c) => sum + (c.target_word_count || 0), 0);
+  const total = subtitle
+    ? cues?.total || 0
+    : chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) ||
+      project?.total_word_count ||
+      0;
   const busy = isProjectBusy(project?.status);
   const paused = project?.status === "paused";
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -132,7 +137,7 @@ export default function ProgressPage() {
         <WorkflowPanel pid={pid} msg={msg} />
         <div className="grid gap-3 md:grid-cols-4">
           <Stat
-            label={subtitle ? "字幕翻译进度" : "章节翻译进度"}
+            label={subtitle ? "字幕翻译进度" : "翻译进度"}
             value={`${done}/${total}`}
           >
             <Progress value={pct} className="mt-2" />
@@ -192,23 +197,6 @@ export default function ProgressPage() {
             <p className="text-xs text-muted-foreground">
               导出使用已保存译文的一致快照。暂停会在安全边界保存进度，恢复继续原来的任务。
             </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <h2 className="font-medium text-sm mb-3">实时日志</h2>
-            <div
-              aria-live="polite"
-              className="h-36 overflow-auto rounded bg-zinc-950 text-zinc-100 p-3 font-mono text-xs space-y-1"
-            >
-              {log.length ? (
-                log.map((line, i) => <div key={i}>{line}</div>)
-              ) : (
-                <span className="text-zinc-400">
-                  等待事件…完整历史请查看事件日志。
-                </span>
-              )}
-            </div>
           </CardContent>
         </Card>
         <Card>

@@ -47,4 +47,9 @@
 @layer base {
   * { @apply border-border; }
   body { @apply bg-background text-foreground; font-feature-settings: "rlig" 1, "calt" 1; }
+  /* Native controls: use theme foreground instead of browser default blue. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: hsl(var(--foreground));
+  }
 }
