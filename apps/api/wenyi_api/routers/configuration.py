@@ -64,6 +64,15 @@ def get_config(pid: str) -> dict:
         raise HTTPException(422, str(error)) from error
 
 
+@router.get("/projects/{pid}/config/defaults", response_model=ProjectConfigOut)
+def project_defaults(pid: str) -> dict:
+    project = require_project(pid)
+    try:
+        return config_response(project, effective_config(project, document={}))
+    except (ValueError, yaml.YAMLError) as error:
+        raise HTTPException(422, str(error)) from error
+
+
 @router.post("/projects/{pid}/config/validate", response_model=ProjectConfigOut)
 def validate_config(pid: str, body: ConfigInput) -> dict:
     project = require_project(pid)

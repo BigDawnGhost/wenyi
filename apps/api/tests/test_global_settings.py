@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import pytest
 from test_project_routes import api, new_project  # noqa: F401
@@ -12,6 +13,7 @@ from test_storage_pg_integration import pg_pool  # noqa: F401
 from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.db import get_pool
+from wenyi_api.model_registry import rename_model_references
 from wenyi_api.workers import tasks
 
 
@@ -182,3 +184,108 @@ def test_project_save_reuses_the_registry_transaction_connection(api, pg_pool):
         pg_pool.timeout = timeout
         pg_pool.resize(min_size=1, max_size=8)
     assert must(dal.get_project(pid))["config"]["pipeline"]["polish"] is False
+
+
+@pytest.mark.parametrize("reuse_id", [False, True])
+def test_renaming_updates_projects_atomically_and_preserves_queued_snapshots(api, reuse_id):
+    client, _ = api
+    current = client.get("/settings").json()
+    pid = new_project(api)
+    old = current["effective"]["llm"]["tiers"]["strong"]
+    project_config = {
+        "llm": {
+            "tiers": {"strong": old},
+            "routes": {
+                "translation.body": {"model": old},
+                "translation.title": {
+                    "model": current["effective"]["llm"]["tiers"]["cheap"],
+                    "fallbacks": [old],
+                },
+            },
+        },
+        "pipeline": {"polish": False},
+    }
+    assert (
+        client.put(f"/projects/{pid}/config", json={"yaml": json.dumps(project_config)}).status_code
+        == 200
+    )
+    saved_project = deepcopy(must(dal.get_project(pid))["config"])
+    job_id = dal.create_job(
+        pid,
+        "translation",
+        "before-rename",
+        run_id="before-rename",
+        config_snapshot=current["effective"],
+    )
+    frozen = deepcopy(must(dal.get_job(job_id))["params"])
+    llm = current["effective"]["llm"]
+    llm["preset"] = None
+    llm["providers"]["renamed_provider"] = llm["providers"].pop("default")
+    for model in llm["models"].values():
+        model["provider"] = "renamed_provider"
+    llm["models"]["renamed_model"] = llm["models"].pop(old)
+    current["effective"]["llm"] = rename_model_references(llm, {old: "renamed_model"})
+    if reuse_id:
+        # Existing selections follow the rename even when a new profile reuses the vacated ID.
+        current["effective"]["llm"]["models"][old] = {
+            "provider": "renamed_provider",
+            "model": "newly-registered-model",
+        }
+    body = payload(current, model_renames={old: "renamed_model"})
+    assert client.post("/settings/validate", json=body).status_code == 200
+    assert must(dal.get_project(pid))["config"] == saved_project
+    assert client.put("/settings", json=body).status_code == 200
+    updated = must(dal.get_project(pid))["config"]
+    assert updated["pipeline"] == saved_project["pipeline"]
+    assert updated["llm"]["tiers"]["strong"] == "renamed_model"
+    assert updated["llm"]["routes"]["translation.body"] == {
+        "model": "renamed_model",
+        "tier": None,
+        "fallbacks": [],
+    }
+    assert updated["llm"]["routes"]["translation.title"]["fallbacks"] == ["renamed_model"]
+    assert must(dal.get_job(job_id))["params"] == frozen
+    effective = client.get(f"/projects/{pid}/config").json()
+    assert effective["registered_models"]["renamed_model"]["provider"] == "renamed_provider"
+    assert client.put("/settings", json=body).status_code == 409
+
+
+def test_invalid_rename_does_not_change_registry_or_project_references(api):
+    client, _ = api
+    pid = new_project(api)
+    before = client.get("/settings").json()
+    response = client.put("/settings", json=payload(before, model_renames={"missing": "other"}))
+    assert response.status_code == 422
+    assert client.get("/settings").json() == before
+    assert must(dal.get_project(pid))["config"] == {}
+
+
+def test_unused_registrations_can_be_deleted_and_defaults_are_only_a_preview(api):
+    client, _ = api
+    defaults = client.get("/settings/defaults").json()
+    current = deepcopy(defaults)
+    llm = current["effective"]["llm"]
+    llm["providers"]["unused"] = {"kind": "fake"}
+    llm["models"]["unused"] = {"provider": "unused", "model": "unused"}
+    current["effective"]["pipeline"]["polish"] = False
+    saved = client.put("/settings", json=payload(current)).json()
+    assert client.get("/settings/defaults").json() == defaults
+    assert client.get("/settings").json() == saved
+    # Loading defaults must not save them until the caller explicitly submits them.
+    reset = client.put("/settings", json=payload(defaults, revision=saved["revision"]))
+    assert reset.status_code == 200, reset.text
+    assert reset.json()["effective"] == defaults["effective"]
+
+
+def test_project_reset_uses_global_defaults_and_preserves_language(api):
+    client, _ = api
+    pid = new_project(api, source="ja", target="en")
+    client.put(f"/projects/{pid}/config", json={"yaml": "pipeline: {polish: false}"})
+    before = deepcopy(must(dal.get_project(pid))["config"])
+    preview = client.get(f"/projects/{pid}/config/defaults").json()
+    assert preview["effective"]["language"] == {"source": "ja", "target": "en"}
+    assert preview["effective"]["pipeline"]["polish"] is True
+    assert must(dal.get_project(pid))["config"] == before
+    saved = client.put(f"/projects/{pid}/config", json={"yaml": preview["yaml"]})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["effective"] == preview["effective"]

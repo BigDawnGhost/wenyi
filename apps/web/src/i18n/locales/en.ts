@@ -403,7 +403,6 @@ const en = {
   "review.failedFixes": "Failed fixes",
   "review.viewAllRunCounts": "View all run counts",
   "providerSettings.apiProvidersModels": "API providers & models",
-  "providerSettings.connection": "Connection:",
   "providerSettings.apiProvider": "API provider",
   "providerSettings.apiBaseUrl": "API base URL",
   "providerSettings.leaveBlankForTheProviderDefaultUrl":
@@ -415,7 +414,6 @@ const en = {
   "providerSettings.addApiConnection": "Add API connection",
   "providerSettings.afterChangingProvidersChooseAModelName":
     "After changing providers, choose a model name supported by that provider. Model IDs are used in tiers and operation routes; model names are sent to the API.",
-  "providerSettings.modelId": "Model ID:",
   "providerSettings.apiConnection": "API connection",
   "providerSettings.addModel": "Add model",
   "providerSettings.qualityTier": "Quality tier",
@@ -580,7 +578,6 @@ const en = {
   "settings.operationModels": "Models by operation",
   "settings.operationModelsHelp":
     "Override individual operations with registered models. Configure fallback models in advanced YAML.",
-  "settings.followTier": "Follow default tier {tier}",
   "settings.registeredModels": "Registered providers & models",
   "settings.projectModelHelp": "Select registered models for this project.",
   "settings.manageGlobalModels": "Manage models in global Settings",
@@ -596,6 +593,19 @@ const en = {
     "Quick draft disables book understanding, polishing, review and autofix; other settings use these defaults.",
   "providerSettings.sharedRegistryHelp":
     "Connections and models are shared across projects. API keys use server environment variable names, such as DEEPSEEK_API_KEY.",
+  "registry.connectionId": "Connection ID",
+  "registry.modelId": "Model ID",
+  "registry.rename": "Rename",
+  "registry.delete": "Delete",
+  "registry.deleteConnection": "Delete connection {id}",
+  "registry.deleteModel": "Delete model {id}",
+  "registry.usedBy": "Used by: {references}",
+  "registry.invalidId":
+    "Start with a letter; use only letters, numbers, underscores and hyphens.",
+  "registry.duplicateId": "This ID already exists.",
+  "registry.finishRenaming": "Apply or discard the ID edits before saving.",
+  "settings.restoreDefaults": "Restore defaults",
+  "settings.defaultsLoaded": "Defaults loaded into the draft. Save to apply.",
   "status.applied": "Applied",
 } as const;
 

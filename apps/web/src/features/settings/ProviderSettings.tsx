@@ -1,3 +1,7 @@
+import { useCallback, useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
+import { RegistryIdField } from "./RegistryIdField";
+import { registryReferences, type RegistryGroup } from "./registryEdits";
 import { useI18n } from "@/i18n";
 import { Input, Label, Select } from "@/components/ui/form";
 import { Disclosure } from "@/components/ui/disclosure";
@@ -12,14 +16,32 @@ export function ProviderSettings({
   kinds,
   error,
   onChange,
+  onRename,
+  onEditingChange,
 }: {
   config: Document;
   disabled: boolean;
   kinds: string[];
   error?: unknown;
   onChange: (llm: Document) => void;
+  onRename: (group: RegistryGroup, oldId: string, newId: string) => void;
+  onEditingChange: (pending: boolean) => void;
 }) {
   const { t: tr } = useI18n();
+  const [pendingIds, setPendingIds] = useState<Record<string, boolean>>({});
+  const onPending = useCallback((key: string, pending: boolean) => {
+    setPendingIds((current) => {
+      if (!!current[key] === pending) return current;
+      const next = { ...current };
+      if (pending) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  useEffect(
+    () => onEditingChange(Object.keys(pendingIds).length > 0),
+    [pendingIds, onEditingChange],
+  );
   const llm = object(config.llm);
   const providers = object(llm.providers);
   const models = object(llm.models);
@@ -36,6 +58,39 @@ export function ProviderSettings({
     let i = 1;
     while (`${prefix}${i}` in entries) i++;
     onChange({ ...llm, [group]: { ...entries, [`${prefix}${i}`]: value } });
+  };
+  const remove = (group: RegistryGroup, id: string) => {
+    const entries = { ...object(llm[group]) };
+    delete entries[id];
+    onChange({ ...llm, preset: null, [group]: entries });
+  };
+  const deleteButton = (group: RegistryGroup, id: string) => {
+    const references = registryReferences(llm, group, id);
+    return (
+      <div className="space-y-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={references.length > 0}
+          aria-label={tr(
+            group === "providers"
+              ? "registry.deleteConnection"
+              : "registry.deleteModel",
+            { id },
+          )}
+          onClick={() => remove(group, id)}
+        >
+          <Trash2 className="h-4 w-4" />
+          {tr("registry.delete")}
+        </Button>
+        {references.length > 0 && (
+          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            {tr("registry.usedBy", { references: references.join(", ") })}
+          </p>
+        )}
+      </div>
+    );
   };
   return (
     <fieldset disabled={disabled} className="space-y-5 disabled:opacity-60">
@@ -63,10 +118,14 @@ export function ProviderSettings({
           const provider = object(raw);
           return (
             <div key={id} className="rounded-lg border p-4 space-y-3">
-              <h3 className="font-medium text-sm">
-                {tr("providerSettings.connection")}
-                {id}
-              </h3>
+              <RegistryIdField
+                group="providers"
+                id={id}
+                ids={Object.keys(providers)}
+                onRename={onRename}
+                onPending={onPending}
+              />
+              {deleteButton("providers", id)}
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <Label htmlFor={`provider-${id}`}>
@@ -183,9 +242,14 @@ export function ProviderSettings({
               key={id}
               className="grid sm:grid-cols-3 gap-3 rounded border p-3"
             >
-              <div className="text-sm self-center font-medium">
-                {tr("providerSettings.modelId")}
-                {id}
+              <div className="sm:col-span-3">
+                <RegistryIdField
+                  group="models"
+                  id={id}
+                  ids={Object.keys(models)}
+                  onRename={onRename}
+                  onPending={onPending}
+                />
               </div>
               <div>
                 <Label htmlFor={`connection-${id}`}>
@@ -216,12 +280,14 @@ export function ProviderSettings({
                   }
                 />
               </div>
+              {deleteButton("models", id)}
             </div>
           );
         })}
         <Button
           type="button"
           variant="outline"
+          disabled={Object.keys(providers).length === 0}
           onClick={() =>
             add("models", "model", {
               provider: Object.keys(providers)[0],

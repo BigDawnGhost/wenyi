@@ -12,8 +12,9 @@ from psycopg.types.json import Jsonb
 from wenyi_core.config import Config
 
 from .config import settings
-from .config_documents import config_document, merge_project, parse_yaml
+from .config_documents import config_document, parse_yaml
 from .db import get_pool
+from .model_registry import project_registry_updates
 from .strategies import PRESET_TEMPLATES
 
 
@@ -56,21 +57,23 @@ def validate_settings(value: str, default_template: str) -> Config:
     return config
 
 
-def save_settings(value: str, default_template: str, revision: int) -> GlobalSettings:
+def save_settings(
+    value: str, default_template: str, revision: int, *, model_renames: dict[str, str] | None = None
+) -> GlobalSettings:
     config = validate_settings(value, default_template)
     document = config_document(config)
     with registry_guard(exclusive=True) as conn:
         current = conn.execute("SELECT revision FROM application_settings WHERE id=1").fetchone()
         if revision != (current[0] if current else 0):
             raise HTTPException(409, "Global settings changed; reload before saving again")
-        # Reject removal of models still selected by projects. Jobs retain independent snapshots.
-        for pid, saved in conn.execute("SELECT id, config FROM projects").fetchall():
-            try:
-                Config.from_dict(merge_project(document, {"llm": (saved or {}).get("llm", {})}))
-            except ValueError as error:
-                raise ValueError(
-                    f"Model selections for project {pid} would be invalid: {error}"
-                ) from error
+        updates = project_registry_updates(
+            conn, load_settings(connection=conn).config, config, model_renames or {}
+        )
+        for pid, project_config in updates:
+            conn.execute(
+                "UPDATE projects SET config=%s, updated_at=now() WHERE id=%s",
+                (Jsonb(project_config), pid),
+            )
         conn.execute(
             """INSERT INTO application_settings(id, document, default_template, revision)
                VALUES(1,%s,%s,%s) ON CONFLICT(id) DO UPDATE

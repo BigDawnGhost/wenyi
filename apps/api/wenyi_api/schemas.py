@@ -301,6 +301,7 @@ class ProjectConfigOut(BaseModel):
 class GlobalConfigInput(ConfigInput):
     default_template: str
     revision: int = Field(ge=0)
+    model_renames: dict[str, str] = Field(default_factory=dict)
 
 
 class GlobalConfigOut(BaseModel):

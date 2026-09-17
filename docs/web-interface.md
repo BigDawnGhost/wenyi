@@ -82,7 +82,13 @@ and model-definition editors are absent from projects, including advanced YAML. 
 fallback routes and budgets remain in project YAML; segmentation/performance and saved
 model routes remain collapsed. Validation errors retain drafts and reopen advanced
 configuration. The autofix switch stays visible, and the PDF parser appears only for PDF
-projects. Clearing an operation override restores the operation's default tier.
+projects. Operation selectors show their effective tier directly. Selecting the default
+tier removes the model override, retaining any fallbacks. In global Settings, connection
+and model IDs can be renamed; references update when saved. Unused entries have a delete
+button. Both settings pages offer **Restore defaults**, which loads a draft for saving.
+Global reset reads the server configuration file; project reset uses current shared
+defaults and the project's workflow template, preserving its languages. References from
+other projects prevent deletion, including when saving a reset draft.
 
 Punctuation normalization is an advanced export option for that export request; it does
 not overwrite project defaults. Persistent export defaults remain in project YAML.

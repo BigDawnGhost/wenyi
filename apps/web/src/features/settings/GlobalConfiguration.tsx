@@ -12,6 +12,7 @@ import { Label, Select, Textarea } from "@/components/ui/form";
 import { ModelSelection } from "./ModelSelection";
 import { ProviderSettings } from "./ProviderSettings";
 import { WorkflowSettings } from "./WorkflowSettings";
+import { renameRegistryId, type RegistryGroup } from "./registryEdits";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -33,6 +34,9 @@ export function GlobalConfiguration() {
   });
   const [draft, setDraft] = useState<GlobalConfig | null>(null);
   const [yamlDirty, setYamlDirty] = useState(false);
+  const [registryKey, setRegistryKey] = useState(0);
+  const [editingIds, setEditingIds] = useState(false);
+  const [renames, setRenames] = useState<Record<string, string>>({});
   useEffect(() => {
     if (query.data && !draft) setDraft(query.data);
   }, [query.data, draft]);
@@ -40,6 +44,7 @@ export function GlobalConfiguration() {
     yaml: draft!.yaml,
     revision: draft!.revision,
     default_template: draft!.default_template,
+    model_renames: renames,
   });
   const apply = (value: GlobalConfig) => {
     setDraft(value);
@@ -49,6 +54,7 @@ export function GlobalConfiguration() {
     mutationFn: () => api.saveGlobalConfig(input()),
     onSuccess: (value) => {
       apply(value);
+      setRenames({});
       qc.setQueryData(["globalConfig"], value);
       for (const key of ["config", "models", "templates"])
         void qc.invalidateQueries({ queryKey: [key] });
@@ -62,8 +68,17 @@ export function GlobalConfiguration() {
       toast.success(t("settings.configurationIsValidButNotSavedYet"));
     },
   });
-  const error = save.error || validate.error;
-  const pending = save.isPending || validate.isPending;
+  const restore = useMutation({
+    mutationFn: api.getGlobalDefaults,
+    onSuccess: (value) => {
+      apply({ ...value, revision: draft!.revision });
+      setRenames({});
+      setRegistryKey((value) => value + 1);
+      toast.success(t("settings.defaultsLoaded"));
+    },
+  });
+  const error = save.error || validate.error || restore.error;
+  const pending = save.isPending || validate.isPending || restore.isPending;
   const disabled = !draft || yamlDirty || pending;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
@@ -75,19 +90,44 @@ export function GlobalConfiguration() {
         yaml: JSON.stringify(next, null, 2),
       });
   };
-  const changeLlm = (value: Document) =>
+  const changeLlm = (value: Document) => {
     change({ ...effective, llm: { ...value, preset: null } });
+    setRenames((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([, id]) => id in object(value.models)),
+      ),
+    );
+  };
+  const rename = (group: RegistryGroup, oldId: string, newId: string) => {
+    if (group === "models") {
+      const next = { ...renames };
+      const original = Object.keys(next).find((id) => next[id] === oldId);
+      if (original) {
+        if (original === newId) delete next[original];
+        else next[original] = newId;
+      } else if (
+        oldId in object(object(query.data?.effective.llm).models) &&
+        !(oldId in next)
+      )
+        next[oldId] = newId;
+      setRenames(next);
+    }
+    changeLlm(renameRegistryId(llm, group, oldId, newId));
+  };
   return (
     <>
       <ErrorNotice error={query.error || error} />
       <Card>
         <CardContent className="p-5 space-y-4">
           <ProviderSettings
+            key={registryKey}
             config={effective}
             kinds={caps?.providers || []}
             disabled={disabled}
             error={error}
             onChange={changeLlm}
+            onRename={rename}
+            onEditingChange={setEditingIds}
           />
         </CardContent>
       </Card>
@@ -179,15 +219,30 @@ export function GlobalConfiguration() {
               }}
             />
           </Disclosure>
+          {editingIds && (
+            <p className="text-sm text-muted-foreground">
+              {t("registry.finishRenaming")}
+            </p>
+          )}
           <div className="flex flex-wrap gap-3">
             <Button
               variant="outline"
               disabled={!draft || pending}
+              onClick={() => restore.mutate()}
+            >
+              {t("settings.restoreDefaults")}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!draft || pending || editingIds}
               onClick={() => validate.mutate()}
             >
               {t("settings.validateConfiguration")}
             </Button>
-            <Button disabled={!draft || pending} onClick={() => save.mutate()}>
+            <Button
+              disabled={!draft || pending || editingIds}
+              onClick={() => save.mutate()}
+            >
               {pending ? t("common.saving") : t("settings.saveConfiguration")}
             </Button>
           </div>

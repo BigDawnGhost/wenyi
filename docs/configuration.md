@@ -29,8 +29,21 @@ not used: register any project-specific profile IDs in global Settings before st
 a new task with those selections.
 
 Registry edits apply to newly started or resumed tasks. Queued and running jobs keep
-their full configuration snapshots, including provider/model parameters. A model still
-selected by a project cannot be removed. Concurrent global saves use a revision check;
+their full configuration snapshots, including provider/model parameters. Connection and
+model IDs can be renamed in Settings; saving also updates model references in project
+tiers, operation overrides and fallbacks in the same transaction. Historical usage and
+queued job snapshots keep their original IDs. IDs start with a letter and contain only
+letters, digits, underscores or hyphens. A referenced connection or model cannot be
+deleted until its selections are changed. Unused registrations can be deleted.
+
+**Restore defaults** first loads a draft, and **Save configuration** applies it. Global
+Settings reloads the server configuration file and selects Standard translation as the
+creation template; project settings use current global defaults and the project's
+workflow template, preserving its translation languages. Restoring defaults cannot
+remove models still selected by other projects; change those selections first.
+Operation selectors show the effective tier directly, without a “Follow default tier”
+prefix. Selecting the operation's default tier clears its model override and preserves
+any configured fallbacks. Concurrent global saves use a revision check;
 a stale editor must reload before saving again. See [Web workflow layout](web-interface.md)
 for the settings controls and project navigation.
 

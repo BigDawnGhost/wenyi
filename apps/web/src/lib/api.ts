@@ -110,6 +110,9 @@ export interface ReportData {
 
 // API calls.
 export const api = {
+  getGlobalDefaults: () => request<GlobalConfig>("/settings/defaults"),
+  getProjectDefaults: (pid: string) =>
+    request<ProjectConfig>(`/projects/${pid}/config/defaults`),
   getGlobalConfig: () => request<GlobalConfig>("/settings"),
   saveGlobalConfig: (body: GlobalConfigInput) =>
     request<GlobalConfig>("/settings", {

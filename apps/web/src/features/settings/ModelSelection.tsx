@@ -71,9 +71,7 @@ export function ModelSelection({
             const route = object(routes[id]);
             const value = route.model
               ? String(route.model)
-              : route.tier
-                ? `tier:${route.tier}`
-                : "";
+              : `tier:${route.tier || operation.tier}`;
             return (
               <div
                 key={id}
@@ -91,7 +89,12 @@ export function ModelSelection({
                   onChange={(event) => {
                     const selected = event.target.value;
                     const next = { ...routes };
-                    if (!selected) delete next[id];
+                    if (
+                      selected === `tier:${operation.tier}` &&
+                      (!Array.isArray(route.fallbacks) ||
+                        route.fallbacks.length === 0)
+                    )
+                      delete next[id];
                     else
                       next[id] = {
                         ...(selected.startsWith("tier:")
@@ -102,14 +105,6 @@ export function ModelSelection({
                     onChange({ ...llm, routes: next });
                   }}
                 >
-                  <option value="">
-                    {t("settings.followTier", {
-                      tier:
-                        tierNames.find(
-                          ([tier]) => tier === operation.tier,
-                        )?.[1] || "",
-                    })}
-                  </option>
                   {tierNames.map(([tier, label]) => (
                     <option key={tier} value={`tier:${tier}`}>
                       {label}

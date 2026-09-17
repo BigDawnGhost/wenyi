@@ -86,7 +86,13 @@ export const capabilities = {
     export_backends: ["weasyprint", "fpdf2"],
   },
   providers: ["deepseek"],
-  operations: [{ id: "translation.body", description: "Translate paragraphs" }],
+  operations: [
+    {
+      id: "translation.body",
+      tier: "strong",
+      description: "Translate paragraphs",
+    },
+  ],
 };
 
 export async function fakeApi(
@@ -99,6 +105,7 @@ export async function fakeApi(
     const data: Record<string, unknown> = {
       "/capabilities": capabilities,
       "/settings": globalConfiguration,
+      "/settings/defaults": globalConfiguration,
       "/settings/validate": globalConfiguration,
       "/strategies/templates": [
         {
@@ -113,6 +120,7 @@ export async function fakeApi(
       [`/projects/${pid}`]: project,
       [`/projects/${pid}/chapters`]: [chapter],
       [`/projects/${pid}/config`]: configuration,
+      [`/projects/${pid}/config/defaults`]: configuration,
       [`/projects/${pid}/config/validate`]: configuration,
       [`/projects/${pid}/models`]: configuration.routes,
       [`/projects/${pid}/review/runs`]: [],

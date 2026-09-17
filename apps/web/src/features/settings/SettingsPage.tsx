@@ -70,6 +70,13 @@ export default function SettingsPage() {
       toast.success(tr("settings.configurationIsValidButNotSavedYet"));
     },
   });
+  const restore = useMutation({
+    mutationFn: () => api.getProjectDefaults(pid),
+    onSuccess: (value) => {
+      apply(value);
+      toast.success(tr("settings.defaultsLoaded"));
+    },
+  });
   const check = useMutation({
     mutationFn: () =>
       api.checkModels(pid, project?.fmt === "srt" ? "srt" : "translate"),
@@ -86,9 +93,14 @@ export default function SettingsPage() {
     setEffective(next);
     setDraft(JSON.stringify(next, null, 2));
   };
-  const configurationError = save.error || validate.error;
+  const configurationError = save.error || validate.error || restore.error;
   const formDisabled =
-    busy || yamlDirty || !loaded || save.isPending || validate.isPending;
+    busy ||
+    yamlDirty ||
+    !loaded ||
+    save.isPending ||
+    validate.isPending ||
+    restore.isPending;
   return (
     <>
       <PageHeader
@@ -96,7 +108,7 @@ export default function SettingsPage() {
         subtitle={tr("settings.configurationIsValidatedOnTheServerAdvanced")}
       />
       <PageContainer className="max-w-5xl space-y-4">
-        <ErrorNotice error={config.error || save.error || validate.error} />
+        <ErrorNotice error={config.error || configurationError} />
         {busy && (
           <p role="status" className="rounded border p-3 text-sm">
             {tr("settings.settingsAreReadOnlyWhileATask")}
@@ -158,10 +170,25 @@ export default function SettingsPage() {
                 }}
               />
             </Disclosure>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <Button
                 variant="outline"
-                disabled={!loaded || busy || validate.isPending}
+                disabled={
+                  !loaded ||
+                  busy ||
+                  restore.isPending ||
+                  save.isPending ||
+                  validate.isPending
+                }
+                onClick={() => restore.mutate()}
+              >
+                {tr("settings.restoreDefaults")}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={
+                  !loaded || busy || validate.isPending || restore.isPending
+                }
                 onClick={() => validate.mutate()}
               >
                 {validate.isPending
@@ -169,7 +196,9 @@ export default function SettingsPage() {
                   : tr("settings.validateConfiguration")}
               </Button>
               <Button
-                disabled={!loaded || busy || save.isPending}
+                disabled={
+                  !loaded || busy || save.isPending || restore.isPending
+                }
                 onClick={() => save.mutate()}
               >
                 {save.isPending

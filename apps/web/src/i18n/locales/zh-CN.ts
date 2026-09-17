@@ -389,7 +389,6 @@ const zhCN = {
   "review.failedFixes": "修复失败",
   "review.viewAllRunCounts": "查看全部运行计数",
   "providerSettings.apiProvidersModels": "API 供应商与模型",
-  "providerSettings.connection": "连接：",
   "providerSettings.apiProvider": "API 供应商",
   "providerSettings.apiBaseUrl": "API 地址（Base URL）",
   "providerSettings.leaveBlankForTheProviderDefaultUrl":
@@ -401,7 +400,6 @@ const zhCN = {
   "providerSettings.addApiConnection": "添加 API 连接",
   "providerSettings.afterChangingProvidersChooseAModelName":
     "切换供应商后，请将下面的模型名称改为该供应商支持的模型。模型 ID 用于档位和操作路由，模型名称用于实际 API 请求。",
-  "providerSettings.modelId": "模型 ID：",
   "providerSettings.apiConnection": "所属 API 连接",
   "providerSettings.addModel": "添加模型",
   "providerSettings.qualityTier": "高质量档位",
@@ -560,7 +558,6 @@ const zhCN = {
   "settings.operationModels": "按步骤选择模型",
   "settings.operationModelsHelp":
     "可以为具体步骤选用已注册模型，备用模型可在高级 YAML 中设置。",
-  "settings.followTier": "跟随默认档位 {tier}",
   "settings.registeredModels": "提供商与模型注册",
   "settings.projectModelHelp": "为当前项目选用已注册的模型。",
   "settings.manageGlobalModels": "前往总设置管理模型",
@@ -576,6 +573,18 @@ const zhCN = {
     "快速出稿会关闭预理解、润色、审校和自动修复；其他设置沿用这里的默认值。",
   "providerSettings.sharedRegistryHelp":
     "所有项目共用连接和模型。API Key 填写服务端环境变量名称，例如 DEEPSEEK_API_KEY。",
+  "registry.connectionId": "连接 ID",
+  "registry.modelId": "模型 ID",
+  "registry.rename": "重命名",
+  "registry.delete": "删除",
+  "registry.deleteConnection": "删除连接 {id}",
+  "registry.deleteModel": "删除模型 {id}",
+  "registry.usedBy": "正在被引用：{references}",
+  "registry.invalidId": "以英文字母开头，仅使用字母、数字、下划线和连字符。",
+  "registry.duplicateId": "此 ID 已存在。",
+  "registry.finishRenaming": "请先完成或撤销 ID 修改，再保存配置。",
+  "settings.restoreDefaults": "恢复默认配置",
+  "settings.defaultsLoaded": "默认配置已载入草稿，保存后生效。",
   "status.applied": "已应用",
 } satisfies Messages;
 

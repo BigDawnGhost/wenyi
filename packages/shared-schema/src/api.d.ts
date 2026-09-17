@@ -245,6 +245,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/config/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Project Defaults */
+        get: operations["project_defaults_projects__pid__config_defaults_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/config/validate": {
         parameters: {
             query?: never;
@@ -344,6 +361,23 @@ export interface paths {
         get: operations["get_settings_settings_get"];
         /** Save */
         put: operations["save_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Default Settings */
+        get: operations["default_settings_settings_defaults_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -998,6 +1032,10 @@ export interface components {
             default_template: string;
             /** Revision */
             revision: number;
+            /** Model Renames */
+            model_renames?: {
+                [key: string]: string;
+            };
         };
         /** GlobalConfigOut */
         GlobalConfigOut: {
@@ -2012,6 +2050,37 @@ export interface operations {
             };
         };
     };
+    project_defaults_projects__pid__config_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectConfigOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     validate_config_projects__pid__config_validate_post: {
         parameters: {
             query?: never;
@@ -2226,6 +2295,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    default_settings_settings_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
                 };
             };
         };
