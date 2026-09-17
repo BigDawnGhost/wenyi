@@ -54,9 +54,28 @@ Budget limits, request deadlines, and model failures still display their diagnos
 
 Manual proofreading lists chapters in rows with search, translation-status filtering,
 and saved paragraph counts. Opening a chapter shows its source and saved translation
-without adding paragraph numbers. Polishing history and review notes expand on demand.
-Newly persisted translation batches
-refresh automatically. Editing remains disabled during a running project task.
+without adding paragraph numbers. Translation paragraphs are selectable text: clicking
+does not start editing. Right-click a translation for **Edit translation**, **Change
+history**, **Copy selection**, **Copy translation**, or **Copy source**. A small paragraph
+actions button provides the same menu on touch screens and for keyboard users; Shift+F10
+opens it from that button, arrow keys move between actions, and Escape dismisses it.
+Newly persisted translation batches refresh automatically. Running tasks disable editing
+while keeping copying and history available. Review notes remain a chapter-level disclosure.
+
+The paragraph editor shows the source beside an expanding translation field. Long text
+uses the dialog's single scroll area, with save/close controls always visible. History
+appears in a separate tab and combines translation, polishing, other automatic updates,
+and manual edits. Selecting a saved version loads a draft; it does not publish a change
+until **Save translation** is pressed. Closing the dialog discards unsaved edits.
+Polling preserves drafts. If the saved translation changes during editing, saving is
+blocked until the latest translation is loaded; stale API writes also return a conflict.
+
+New revisions and their chapter updates are recorded atomically in PostgreSQL, outside
+the core chapter model. Unchanged saves add no revisions. Existing manual-edit events and
+saved pre-polish snapshots remain visible; snapshots without known timestamps are labeled
+**Time not recorded**, and missing intermediate versions are not reconstructed. The
+history endpoint uses stable chapter/segment IDs. Book edit requests include
+`expected_target` with the original saved value to prevent overwriting a newer translation.
 
 Whole-book review opens the latest run. Search its issue list and expand individual
 evidence, suggested changes, publication records, or full technical details. Review

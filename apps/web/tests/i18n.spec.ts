@@ -83,7 +83,7 @@ test("interface language is available only in global settings without changing p
   await page.goto(`/projects/${pid}/proofreading/0`);
   await expect(page.getByText("原文第一段", { exact: false })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Original translation" }),
+    page.getByText("Original translation", { exact: true }),
   ).toBeVisible();
 });
 

@@ -694,6 +694,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/review/{ci}/segments/{seg_idx}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Segment History */
+        get: operations["segment_history_projects__pid__review__ci__segments__seg_idx__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/review/{ci}/complete": {
         parameters: {
             query?: never;
@@ -1306,6 +1323,13 @@ export interface components {
             /** Autofix */
             autofix?: boolean | null;
         };
+        /** SegmentEdit */
+        SegmentEdit: {
+            /** Target */
+            target: string;
+            /** Expected Target */
+            expected_target: string | null;
+        };
         /** SegmentOut */
         SegmentOut: {
             /** Index */
@@ -1323,6 +1347,22 @@ export interface components {
              * @default text
              */
             kind: string;
+        };
+        /** SegmentRevision */
+        SegmentRevision: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "translation" | "polish" | "manual" | "update" | "snapshot" | "before_polish";
+            /** Before */
+            before: string | null;
+            /** After */
+            after: string | null;
+            /** Created At */
+            created_at: string | null;
         };
         /** StartTranslation */
         StartTranslation: {
@@ -2999,7 +3039,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TargetEdit"];
+                "application/json": components["schemas"]["SegmentEdit"];
             };
         };
         responses: {
@@ -3012,6 +3052,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    segment_history_projects__pid__review__ci__segments__seg_idx__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+                seg_idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SegmentRevision"][];
                 };
             };
             /** @description Validation Error */

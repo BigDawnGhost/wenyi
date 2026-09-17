@@ -89,7 +89,7 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
     root = f"/projects/{storage.project_id}"
     dal.set_project_status(storage.project_id, "translating")
     for method, path, body in [
-        ("put", "/review/0/segments/0", {"target": "blocked"}),
+        ("put", "/review/0/segments/0", {"target": "blocked", "expected_target": "润色译文"}),
         ("post", "/review/0/complete", {}),
         ("put", "/analysis", {"analysis": {"style_guide": "blocked"}}),
         ("put", "/chapter-digests/0", {"digest": "blocked"}),
@@ -98,7 +98,13 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
         assert client.request(method, root + path, json=body).status_code == 409
     assert storage.load_chapter(0).segments[0].target == "润色译文"
     dal.set_project_status(storage.project_id, "done")
-    assert client.put(root + "/review/0/segments/0", json={"target": "人工修订"}).status_code == 200
+    assert (
+        client.put(
+            root + "/review/0/segments/0",
+            json={"target": "人工修订", "expected_target": "润色译文"},
+        ).status_code
+        == 200
+    )
     assert storage.load_chapter(0).segments[0].target_before_polish == "原始译文"
     assert client.post(root + "/review/0/complete").status_code == 200
     assert storage.load_chapter(0).meta["review_passed"]
@@ -142,7 +148,11 @@ def test_partial_chapter_is_readable_after_each_saved_batch(domain_client, tmp_p
     dal.set_project_status(storage.project_id, "paused")
     assert client.post(root + "/review/0/complete").status_code == 409
     assert (
-        client.put(root + "/review/0/segments/12", json={"target": "Human edit"}).status_code == 200
+        client.put(
+            root + "/review/0/segments/12",
+            json={"target": "Human edit", "expected_target": "First saved translation"},
+        ).status_code
+        == 200
     )
     assert storage.load_chapter(0).segments[1].target is None
 
@@ -260,7 +270,10 @@ def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_c
     assert client.get(root + "/chapters").json()[0]["review_status"] == "completed"
     assert client.get(root + "/chapters/0").json()["review_issues"]
     assert (
-        client.put(root + "/review/0/segments/0", json={"target": "编辑后待复核"}).status_code
+        client.put(
+            root + "/review/0/segments/0",
+            json={"target": "编辑后待复核", "expected_target": "润色译文"},
+        ).status_code
         == 200
     )
     summary = client.get(root + "/chapters").json()[0]
@@ -272,7 +285,13 @@ def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_c
     assert client.post(root + "/review/0/complete").status_code == 200
     summary = client.get(root + "/chapters").json()[0]
     assert summary["review_status"] == "completed" and summary["review_issue_count"] == 0
-    assert client.put(root + "/review/0/segments/0", json={"target": "再次编辑"}).status_code == 200
+    assert (
+        client.put(
+            root + "/review/0/segments/0",
+            json={"target": "再次编辑", "expected_target": "编辑后待复核"},
+        ).status_code
+        == 200
+    )
     assert client.get(root + "/chapters").json()[0]["review_status"] == "pending"
     storage.write_artifact(
         "reviews/review-2099/result.json",

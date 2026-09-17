@@ -81,6 +81,7 @@ export type ProjectDetail = Output<"ProjectDetail">;
 export type ChapterSummary = Output<"ChapterSummary">;
 export type SegmentOut = Output<"SegmentOut">;
 export type ChapterSegments = Output<"ChapterSegments">;
+export type SegmentRevision = Output<"SegmentRevision">;
 export type Term = Output<"TermOut">;
 export type Conflict = Output<"ConflictOut">;
 export type StepDef = Output<"StepDef">;
@@ -247,12 +248,22 @@ export const api = {
 
   getReview: (pid: string, ci: number) =>
     request<ChapterSegments>(`/projects/${pid}/review/${ci}`),
-  editSegment: (pid: string, ci: number, segIdx: number, target: string) =>
+  segmentHistory: (pid: string, ci: number, segIdx: number) =>
+    request<SegmentRevision[]>(
+      `/projects/${pid}/review/${ci}/segments/${segIdx}/history`,
+    ),
+  editSegment: (
+    pid: string,
+    ci: number,
+    segIdx: number,
+    target: string,
+    expectedTarget: string | null,
+  ) =>
     request<{ ok: boolean }>(
       `/projects/${pid}/review/${ci}/segments/${segIdx}`,
       {
         method: "PUT",
-        body: JSON.stringify({ target }),
+        body: JSON.stringify({ target, expected_target: expectedTarget }),
       },
     ),
   runAiReview: (pid: string) =>

@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { api, type ChapterSummary } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
@@ -7,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 import { Disclosure } from "@/components/ui/disclosure";
-import { SegmentEditor } from "@/components/SegmentEditor";
+import { ParagraphActions } from "./ParagraphActions";
+import { ParagraphEditor } from "./ParagraphEditor";
 
 export function ChapterProofreading({
   pid,
@@ -25,7 +27,10 @@ export function ChapterProofreading({
   error: unknown;
 }) {
   const { t } = useI18n();
-  const qc = useQueryClient();
+  const [editor, setEditor] = useState<{
+    index: number;
+    view: "edit" | "history";
+  } | null>(null);
   const validIndex = Number.isSafeInteger(index) && index >= 0;
   const chapter = useQuery({
     queryKey: ["review", pid, index],
@@ -39,6 +44,7 @@ export function ChapterProofreading({
   const segments = chapter.data?.segments.filter((s) => s.source.trim()) || [];
   const paragraphs = segments.filter((s) => s.kind === "text");
   const saved = paragraphs.filter((s) => s.target != null).length;
+  const activeSegment = segments.find((s) => s.index === editor?.index);
   return (
     <>
       <PageHeader
@@ -94,7 +100,7 @@ export function ChapterProofreading({
         )}
         <Card>
           <CardContent className="p-0">
-            <div className="grid grid-cols-2 border-b p-3 text-sm font-medium">
+            <div className="hidden md:grid grid-cols-2 border-b p-4 text-sm font-medium">
               <span>{t("common.source")}</span>
               <span>{t("common.translation")}</span>
             </div>
@@ -103,49 +109,35 @@ export function ChapterProofreading({
                 key={segment.index}
                 className="grid md:grid-cols-2 border-b last:border-0"
               >
-                <div className="p-3 whitespace-pre-wrap text-sm border-r">
-                  {segment.source}
+                <div className="min-w-0 p-4 text-sm md:border-r">
+                  <span className="mb-2 block text-xs text-muted-foreground md:hidden">
+                    {t("common.source")}
+                  </span>
+                  <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
+                    {segment.source}
+                  </p>
                 </div>
-                <div>
-                  {segment.target == null ? (
-                    <p className="p-3 text-sm text-muted-foreground">
-                      {t("proofreading.waitingForTranslation")}
-                    </p>
-                  ) : (
-                    <SegmentEditor
-                      value={segment.target}
-                      disabled={readOnly || chapter.isError}
-                      onSave={async (target) => {
-                        await api.editSegment(
-                          pid,
-                          index,
-                          segment.index,
-                          target,
-                        );
-                        await Promise.all([
-                          qc.invalidateQueries({
-                            queryKey: ["review", pid, index],
-                          }),
-                          qc.invalidateQueries({ queryKey: ["chapters", pid] }),
-                        ]);
-                      }}
-                    />
-                  )}
-                  {segment.target_before_polish && (
-                    <details className="px-3 pb-3 text-sm">
-                      <summary className="text-muted-foreground cursor-pointer">
-                        {t("review.translationBeforePolishing")}
-                      </summary>
-                      <p className="mt-2 whitespace-pre-wrap">
-                        {segment.target_before_polish}
-                      </p>
-                    </details>
-                  )}
-                </div>
+                <ParagraphActions
+                  source={segment.source}
+                  target={segment.target}
+                  disabled={readOnly || chapter.isError}
+                  onOpen={(view) => setEditor({ index: segment.index, view })}
+                />
               </div>
             ))}
           </CardContent>
         </Card>
+        {editor && activeSegment && (
+          <ParagraphEditor
+            key={activeSegment.index}
+            pid={pid}
+            chapterIndex={index}
+            segment={activeSegment}
+            initialView={editor.view}
+            readOnly={readOnly || chapter.isError}
+            onClose={() => setEditor(null)}
+          />
+        )}
         <Disclosure title={t("review.recordedReviewNotesForThisChapter")}>
           <StructuredData
             value={chapter.data?.review_issues}

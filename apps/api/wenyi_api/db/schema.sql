@@ -63,6 +63,19 @@ CREATE TABLE IF NOT EXISTS segments (
     PRIMARY KEY (project_id, chapter_seq, seg_seq),
     FOREIGN KEY (project_id, chapter_seq) REFERENCES chapters(project_id, seq) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS segment_revisions (
+    id BIGSERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    chapter_seq INTEGER NOT NULL,
+    seg_seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    previous_target TEXT,
+    new_target TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (project_id, chapter_seq) REFERENCES chapters(project_id, seq) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_segment_revisions_paragraph
+    ON segment_revisions (project_id, chapter_seq, seg_seq, id DESC);
 CREATE TABLE IF NOT EXISTS glossary (
     insertion_id BIGSERIAL NOT NULL,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -116,6 +129,9 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_events_project_time ON events (project_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_manual_paragraph
+    ON events (project_id, (payload->>'chapter'), (payload->>'index'), id DESC)
+    WHERE type='manual_translation_edited';
 CREATE TABLE IF NOT EXISTS exports (
     id BIGSERIAL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

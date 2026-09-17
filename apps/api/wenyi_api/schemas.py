@@ -233,6 +233,18 @@ class TargetEdit(RequestModel):
     target: str
 
 
+class SegmentEdit(TargetEdit):
+    expected_target: str | None
+
+
+class SegmentRevision(BaseModel):
+    id: str
+    kind: Literal["translation", "polish", "manual", "update", "snapshot", "before_polish"]
+    before: str | None
+    after: str | None
+    created_at: str | None
+
+
 class ReviewRunRequest(RequestModel):
     autofix: bool | None = None
 

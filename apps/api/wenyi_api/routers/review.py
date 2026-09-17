@@ -9,7 +9,14 @@ from fastapi import APIRouter, HTTPException
 
 from ..job_service import start_job
 from ..project_service import project_write, require_book, require_project, storage_for
-from ..schemas import ChapterSegments, JobEnqueued, ReviewRun, ReviewRunRequest, TargetEdit
+from ..schemas import (
+    ChapterSegments,
+    JobEnqueued,
+    ReviewRun,
+    ReviewRunRequest,
+    SegmentEdit,
+    SegmentRevision,
+)
 from .chapters import chapter_payload
 
 router = APIRouter(prefix="/projects/{pid}/review", tags=["review"])
@@ -75,7 +82,7 @@ def get_chapter_for_review(pid: str, ci: int) -> dict:
 
 
 @router.put("/{ci}/segments/{seg_idx}")
-def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
+def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
     with project_write(pid) as (project, storage):
         require_book(project)
         try:
@@ -86,11 +93,17 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
         if segment is None:
             raise HTTPException(404, "segment not found")
         before = segment.target
+        if before != body.expected_target:
+            raise HTTPException(
+                409, "This paragraph changed; reload its latest translation before saving"
+            )
+        if before == body.target:
+            return {"ok": True, "index": seg_idx}
         segment.target = body.target
         chapter.meta.pop("review_passed", None)
         chapter.meta["review_invalidated_at"] = datetime.now(timezone.utc).isoformat()
         with storage.state_lock():
-            storage.save_chapter(chapter)
+            storage.save_chapter(chapter, revision_kind="manual")
             storage.set_chapter_review_status(ci, "pending")
             storage.log_event(
                 "manual_translation_edited",
@@ -98,8 +111,18 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: TargetEdit) -> dict:
                 index=seg_idx,
                 before=before,
                 after=body.target,
+                history_recorded=True,
             )
     return {"ok": True, "index": seg_idx}
+
+
+@router.get("/{ci}/segments/{seg_idx}/history", response_model=list[SegmentRevision])
+def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
+    require_book(require_project(pid))
+    try:
+        return storage_for(pid).load_segment_history(ci, seg_idx)
+    except KeyError:
+        raise HTTPException(404, "segment not found") from None
 
 
 @router.post("/{ci}/complete")

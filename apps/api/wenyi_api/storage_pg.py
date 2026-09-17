@@ -13,7 +13,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 from psycopg import sql
 from psycopg.types.json import Jsonb
@@ -21,6 +21,8 @@ from psycopg_pool import ConnectionPool
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
+
+from .segment_history import load_history, record_chapter_changes
 
 
 class ProjectBusyError(BlockingIOError):
@@ -344,7 +346,9 @@ class PostgresStorage:
             ).fetchall()
         return [row[0] for row in rows]
 
-    def save_chapter(self, chapter: Chapter) -> None:
+    def save_chapter(
+        self, chapter: Chapter, *, revision_kind: Literal["manual"] | None = None
+    ) -> None:
         with self.state_lock(), self._conn as conn:
             translated = getattr(chapter, "title_translated", None) or chapter.meta.get(
                 "title_translated"
@@ -364,6 +368,7 @@ class PostgresStorage:
                     translated,
                 ),
             )
+            record_chapter_changes(conn, self.project_id, chapter, kind=revision_kind)
             conn.execute(
                 "DELETE FROM segments WHERE project_id=%s AND chapter_seq=%s",
                 (self.project_id, chapter.index),
@@ -396,6 +401,10 @@ class PostgresStorage:
         with self.state_lock():
             self.save_chapter(chapter)
             self.set_chapter_status(chapter.index, status)
+
+    def load_segment_history(self, ci: int, si: int) -> list[dict]:
+        with self.state_lock(), self._conn as conn:
+            return load_history(conn, self.project_id, ci, si)
 
     def load_chapter(self, ci: int) -> Chapter:
         with self.state_lock(), self._conn as conn:

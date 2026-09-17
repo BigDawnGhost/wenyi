@@ -58,11 +58,15 @@ test("proofreading is separate and refreshes saved batches before a chapter fini
   await expect(page.getByText(/^#\d+$/)).toHaveCount(0);
   saved = true;
   await expect(
-    page.getByRole("button", { name: "First saved batch" }),
+    page.getByText("First saved batch", { exact: true }),
   ).toBeVisible({ timeout: 8000 });
+  await page
+    .getByText("First saved batch", { exact: true })
+    .click({ button: "right" });
   await expect(
-    page.getByRole("button", { name: "First saved batch" }),
+    page.getByRole("menuitem", { name: "Edit translation", exact: true }),
   ).toBeDisabled();
+  await page.keyboard.press("Escape");
   await expect(
     page.getByText("Waiting for translation", { exact: true }),
   ).toHaveCount(1);
@@ -123,24 +127,48 @@ test("paused partial proofreading preserves drafts while polling and isolates ch
   });
   await page.goto(`/projects/${pid}/proofreading/0`);
   await page
-    .getByRole("button", { name: "Saved translation", exact: true })
+    .getByText("Saved translation", { exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Edit translation", exact: true })
     .click();
   await page.getByLabel("Edit translation").fill("Human draft");
   const before = reads;
   target = "Updated stored translation";
   await expect.poll(() => reads, { timeout: 8000 }).toBeGreaterThan(before);
   await expect(page.getByLabel("Edit translation")).toHaveValue("Human draft");
-  await page.getByRole("button", { name: "Save translation" }).click();
   await expect(
-    page.getByRole("button", { name: "Human draft", exact: true }),
-  ).toBeVisible();
-  expect(edit).toEqual({ target: "Human draft" });
-  await page.getByRole("button", { name: "Human draft", exact: true }).click();
+    page.getByRole("button", { name: "Save translation" }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Load latest translation", exact: true })
+    .click();
+  await expect(page.getByLabel("Edit translation")).toHaveValue(
+    "Updated stored translation",
+  );
+  await page.getByLabel("Edit translation").fill("Human draft");
+  await page.getByRole("button", { name: "Save translation" }).click();
+  await expect(page.getByText("Human draft", { exact: true })).toBeVisible();
+  expect(edit).toEqual({
+    target: "Human draft",
+    expected_target: "Updated stored translation",
+  });
+  await page
+    .getByText("Human draft", { exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Edit translation", exact: true })
+    .click();
   await page.getByLabel("Edit translation").fill("Unsaved chapter draft");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close", exact: true })
+    .last()
+    .click();
   await page.getByRole("link", { name: "Next chapter" }).click();
   await expect(page).toHaveURL(`/projects/${pid}/proofreading/2`);
   await expect(
-    page.getByRole("button", { name: "Independent translation", exact: true }),
+    page.getByText("Independent translation", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Edit translation")).toHaveCount(0);
 });
@@ -167,7 +195,8 @@ test("mobile Chinese navigation opens proofreading and distinguishes saved empty
   await expect(
     page.getByText("已保存 1 / 1 段", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "段落操作", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "（空译文，点击编辑）" }),
+    page.getByRole("menuitem", { name: "编辑译文", exact: true }),
   ).toBeEnabled();
 });

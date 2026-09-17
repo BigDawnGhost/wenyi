@@ -147,6 +147,7 @@ export async function fakeApi(
       [`/projects/${pid}/workflow`]: workflow,
       [`/projects/${pid}/exports`]: [],
       [`/projects/${pid}/events`]: [],
+      [`/projects/${pid}/review/0/segments/0/history`]: [],
       [`/projects/${pid}/review/0`]: {
         index: 0,
         title: "Chapter One",

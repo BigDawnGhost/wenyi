@@ -178,7 +178,12 @@ test("failed manual edit keeps the draft and does not show a success state", asy
     r.fulfill({ status: 409, json: { detail: "项目正在执行任务" } }),
   );
   await page.goto(`/projects/${pid}/proofreading/0`);
-  await page.getByRole("button", { name: "Original translation" }).click();
+  await page
+    .getByText("Original translation", { exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Edit translation", exact: true })
+    .click();
   await page.getByLabel("Edit translation").fill("Keep this draft");
   await page.getByRole("button", { name: "Save translation" }).click();
   await expect(page.getByRole("alert")).toContainText("409");
