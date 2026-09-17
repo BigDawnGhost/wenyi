@@ -110,7 +110,7 @@ def mark_reviewed(pid: str, ci: int) -> dict:
             chapter = storage.load_chapter(ci)
         except KeyError:
             raise HTTPException(404, "chapter not found") from None
-        if any(not (segment.target or "").strip() for segment in chapter.text_segments):
+        if any(segment.target is None for segment in chapter.text_segments):
             raise HTTPException(409, "Translate every text segment before marking review complete")
         chapter.meta["review_passed"] = True
         chapter.meta["manual_reviewed_at"] = datetime.now(timezone.utc).isoformat()

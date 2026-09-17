@@ -189,7 +189,7 @@ def chapter_summaries(pid: str) -> list[dict]:
                           AND s.source<>'' AND s.kind='text') AS src_words,
                       (SELECT COUNT(*) FROM segments s
                         WHERE s.project_id=ch.project_id AND s.chapter_seq=ch.seq
-                          AND s.target IS NOT NULL AND s.target<>''
+                          AND s.source<>'' AND s.target IS NOT NULL
                           AND s.kind='text') AS tgt_words,
                       ch.review_status,ch.meta
                  FROM chapters ch WHERE ch.project_id=%s ORDER BY ch.seq""",

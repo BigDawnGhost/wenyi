@@ -7,13 +7,11 @@ const en = {
   "common.translationProgress": "Translation progress",
   "common.glossary": "Glossary",
   "common.styleSynopsis": "Style & synopsis",
-  "appLayout.reviewProofreading": "Review & proofreading",
   "common.subtitleEditor": "Subtitle editor",
   "common.projectSettingsModels": "Project settings & models",
   "common.export": "Export",
   "common.eventLog": "Event log",
   "appLayout.progress": "Progress",
-  "appLayout.review": "Review",
   "appLayout.configuration": "Configuration",
   "data.noRecordsYet": "No records yet",
   "data.yes": "Yes",
@@ -347,6 +345,16 @@ const en = {
   "review.noReviewYet": "No review yet",
   "review.selectARunToViewResultsAn":
     "Select a run to view results. An unreviewed project has not been checked for issues.",
+  "proofreading.savedBatchesRefresh":
+    "Saved paragraphs refresh every 3 seconds, including unfinished chapters.",
+  "proofreading.savedParagraphs": "{done} / {total} paragraphs saved",
+  "proofreading.chaptersAppearAfterPreparation":
+    "Chapters appear as the book is prepared. You can open them before translation finishes.",
+  "proofreading.waitingForTranslation": "Waiting for translation",
+  "proofreading.pauseToEdit":
+    "A project task is running. Saved translations refresh automatically; pause the task before editing.",
+  "proofreading.invalidChapter": "Invalid chapter number",
+  "review.emptyTranslation": "(Empty translation)",
   "review.proofreadByChapter": "Proofread by chapter",
   "review.runSummary": "Run summary",
   "review.issuesEvidence": "Issues & evidence",
@@ -358,13 +366,9 @@ const en = {
   "review.fullRunCheckpointDetails": "Full run & checkpoint details",
   "review.markedAsProofread": "Marked as proofread",
   "review.manualProofreading": "Manual proofreading — {title}",
-  "review.compareSourceAndTranslationParagraphByParagraph":
-    "Compare source and translation paragraph by paragraph. Saving updates the project translation.",
   "review.previousChapter": "Previous chapter",
   "review.nextChapter": "Next chapter",
   "review.markAsProofread": "Mark as proofread",
-  "review.editingIsDisabledWhileAProjectTask":
-    "Editing is disabled while a project task is running.",
   "review.translationBeforePolishing": "Translation before polishing",
   "review.recordedReviewNotesForThisChapter":
     "Recorded review notes for this chapter",

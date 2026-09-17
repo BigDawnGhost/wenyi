@@ -79,7 +79,7 @@ test("interface language is available only in global settings without changing p
     page.getByRole("button", { name: "Save configuration", exact: true }),
   ).toBeVisible();
   expect(writes).toEqual([]);
-  await page.goto(`/projects/${pid}/review/0`);
+  await page.goto(`/projects/${pid}/proofreading/0`);
   await expect(page.getByText("原文第一段", { exact: false })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Original translation" }),

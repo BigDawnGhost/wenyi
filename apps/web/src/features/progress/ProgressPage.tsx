@@ -342,23 +342,24 @@ function ChapterTable({
                   )}
                 </td>
                 <td className="p-3">
-                  {c.status === "done" ? (
+                  <div className="flex flex-wrap items-center gap-3">
                     <Link
                       className="text-primary underline"
-                      to={`/projects/${pid}/review/${c.index}`}
+                      to={`/projects/${pid}/proofreading/${c.index}`}
                     >
                       {tr("progress.manualProofreading")}
                     </Link>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy || translate.isPending}
-                      onClick={() => translate.mutate(c.index)}
-                    >
-                      {tr("progress.translateChapter")}
-                    </Button>
-                  )}
+                    {c.status !== "done" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || translate.isPending}
+                        onClick={() => translate.mutate(c.index)}
+                      >
+                        {tr("progress.translateChapter")}
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

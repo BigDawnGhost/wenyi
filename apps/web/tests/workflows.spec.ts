@@ -140,7 +140,7 @@ test("failed manual edit keeps the draft and does not show a success state", asy
   await page.route(`**/api/projects/${pid}/review/0/segments/0`, async (r) =>
     r.fulfill({ status: 409, json: { detail: "项目正在执行任务" } }),
   );
-  await page.goto(`/projects/${pid}/review/0`);
+  await page.goto(`/projects/${pid}/proofreading/0`);
   await page.getByRole("button", { name: "Original translation" }).click();
   await page.getByLabel("Edit translation").fill("Keep this draft");
   await page.getByRole("button", { name: "Save translation" }).click();

@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Languages,
   ListChecks,
+  BookOpenCheck,
   Download,
   ScrollText,
   Sparkles,
@@ -130,9 +131,14 @@ export function AppLayout() {
                     tr("common.styleSynopsis"),
                   )}
                   {navItem(
+                    `/projects/${pid}/proofreading`,
+                    <BookOpenCheck className="h-4 w-4" />,
+                    tr("progress.manualProofreading"),
+                  )}
+                  {navItem(
                     `/projects/${pid}/review`,
                     <ListChecks className="h-4 w-4" />,
-                    tr("appLayout.reviewProofreading"),
+                    tr("common.wholeBookReview"),
                   )}
                 </>
               )}
@@ -173,11 +179,20 @@ export function AppLayout() {
             {pid && (
               <>
                 <Link to={`/projects/${pid}`}>{tr("appLayout.progress")}</Link>
-                <Link
-                  to={`/projects/${pid}/${project?.fmt === "srt" ? "subtitles" : "review"}`}
-                >
-                  {tr("appLayout.review")}
-                </Link>
+                {project?.fmt === "srt" ? (
+                  <Link to={`/projects/${pid}/subtitles`}>
+                    {tr("common.subtitleEditor")}
+                  </Link>
+                ) : (
+                  <>
+                    <Link to={`/projects/${pid}/proofreading`}>
+                      {tr("progress.manualProofreading")}
+                    </Link>
+                    <Link to={`/projects/${pid}/review`}>
+                      {tr("common.wholeBookReview")}
+                    </Link>
+                  </>
+                )}
                 <Link to={`/projects/${pid}/settings`}>
                   {tr("appLayout.configuration")}
                 </Link>

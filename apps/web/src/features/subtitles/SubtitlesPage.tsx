@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
-import { SegmentEditor } from "@/features/review/ReviewPage";
+import { SegmentEditor } from "@/components/SegmentEditor";
 
 export default function SubtitlesPage() {
   const { t: tr } = useI18n();

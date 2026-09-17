@@ -112,6 +112,54 @@ def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_p
     assert payload["chapter_digests"][0]["digest"] == "摘要"
 
 
+def test_partial_chapter_is_readable_after_each_saved_batch(domain_client, tmp_path):
+    client, storage, _ = domain_client
+    initialize(storage, tmp_path)
+    chapter = Chapter(
+        index=0,
+        title="Partial chapter",
+        segments=[
+            Segment(index=12, source="First paragraph", target=None),
+            Segment(index=18, source="Next paragraph", target=None),
+        ],
+    )
+    storage.save_chapter_with_status(chapter, "translating")
+    dal.set_project_status(storage.project_id, "translating")
+    root = f"/projects/{storage.project_id}"
+    assert client.get(root + "/chapters").json()[0]["target_word_count"] == 0
+    chapter.segments[0].target = "First saved translation"
+    with storage.lock():
+        storage.save_chapter(chapter)
+        response = client.get(root + "/review/0")
+        assert response.status_code == 200
+        assert [s["target"] for s in response.json()["segments"]] == [
+            "First saved translation",
+            None,
+        ]
+        summary = client.get(root + "/chapters").json()[0]
+        assert summary["status"] == "translating"
+        assert summary["target_word_count"] == 1
+    dal.set_project_status(storage.project_id, "paused")
+    assert client.post(root + "/review/0/complete").status_code == 409
+    assert (
+        client.put(root + "/review/0/segments/12", json={"target": "Human edit"}).status_code == 200
+    )
+    assert storage.load_chapter(0).segments[1].target is None
+
+
+def test_saved_empty_translation_counts_as_complete_for_proofreading(domain_client, tmp_path):
+    client, storage, _ = domain_client
+    initialize(storage, tmp_path)
+    storage.save_chapter_with_status(
+        Chapter(index=0, segments=[Segment(index=12, source="Parser noise", target="")]),
+        "done",
+    )
+    root = f"/projects/{storage.project_id}"
+    summary = client.get(root + "/chapters").json()[0]
+    assert summary["word_count"] == summary["target_word_count"] == 1
+    assert client.post(root + "/review/0/complete").status_code == 200
+
+
 def test_glossary_edit_keeps_order_and_conflicts_resolve(domain_client, tmp_path):
     client, storage, _ = domain_client
     initialize(storage, tmp_path)

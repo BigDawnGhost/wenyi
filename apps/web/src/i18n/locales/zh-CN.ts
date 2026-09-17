@@ -8,13 +8,11 @@ const zhCN = {
   "common.translationProgress": "翻译进度",
   "common.glossary": "术语表",
   "common.styleSynopsis": "风格 & 概要",
-  "appLayout.reviewProofreading": "全书审校与人工校阅",
   "common.subtitleEditor": "字幕对照与编辑",
   "common.projectSettingsModels": "项目配置与模型",
   "common.export": "导出",
   "common.eventLog": "事件日志",
   "appLayout.progress": "进度",
-  "appLayout.review": "校阅",
   "appLayout.configuration": "配置",
   "data.noRecordsYet": "尚无记录",
   "data.yes": "是",
@@ -337,6 +335,16 @@ const zhCN = {
   "review.noReviewYet": "尚未审校",
   "review.selectARunToViewResultsAn":
     "选择运行查看结果。未执行审校不表示没有问题。",
+  "proofreading.savedBatchesRefresh":
+    "每 3 秒更新已落盘的段落，无需等待整章翻译完成。",
+  "proofreading.savedParagraphs": "已保存 {done} / {total} 段",
+  "proofreading.chaptersAppearAfterPreparation":
+    "章节在书籍准备过程中显示，可在翻译完成前打开查看。",
+  "proofreading.waitingForTranslation": "等待译文落盘",
+  "proofreading.pauseToEdit":
+    "项目任务正在运行，已落盘的译文会自动刷新；暂停任务后可编辑。",
+  "proofreading.invalidChapter": "无效的章节编号",
+  "review.emptyTranslation": "（空译文）",
   "review.proofreadByChapter": "人工逐章校阅",
   "review.runSummary": "运行摘要",
   "review.issuesEvidence": "问题与证据",
@@ -347,13 +355,9 @@ const zhCN = {
   "review.fullRunCheckpointDetails": "完整运行与检查点信息",
   "review.markedAsProofread": "已标记人工校阅完成",
   "review.manualProofreading": "人工校阅 — {title}",
-  "review.compareSourceAndTranslationParagraphByParagraph":
-    "按段对照原文与译文，保存成功后更新正式译文",
   "review.previousChapter": "上一章",
   "review.nextChapter": "下一章",
   "review.markAsProofread": "标记人工校阅完成",
-  "review.editingIsDisabledWhileAProjectTask":
-    "项目任务执行中，人工修改暂时只读。",
   "review.translationBeforePolishing": "润色前译文",
   "review.recordedReviewNotesForThisChapter": "本章已记录的审校意见",
   "review.noNotesRecordedCheckTheWholeBook":
