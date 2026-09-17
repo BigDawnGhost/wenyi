@@ -8,6 +8,9 @@ settings & models, and Event log. Opening a tool URL expands the group and highl
 the current page. Desktop and mobile use the same navigation; subtitle projects show
 the subtitle editor instead of book proofreading/review and omit glossary/style tools.
 Browser interface language stays in global Settings.
+Project navigation and tools appear at the top of the desktop sidebar; Projects,
+Create project, and Settings stay at its bottom. On mobile, these global links follow
+the project navigation. Long project menus scroll independently of the global links.
 
 The progress page owns start, pause, resume, preparation, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,

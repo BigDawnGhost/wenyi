@@ -47,32 +47,16 @@ export function AppLayout() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
-      <aside className="shrink-0 border-b bg-card md:flex md:w-60 md:flex-col md:border-b-0 md:border-r">
-        <div className="flex h-14 items-center border-b px-4">
+      <aside className="flex min-h-0 shrink-0 flex-col border-b bg-card md:w-60 md:border-b-0 md:border-r">
+        <div className="flex h-14 shrink-0 items-center border-b px-4">
           <Brand />
         </div>
-        <div className="max-h-[45vh] overflow-y-auto p-3 md:max-h-none md:flex-1">
-          <nav
-            aria-label={tr("navigation.global")}
-            className="flex flex-wrap gap-1 md:block md:space-y-1"
-          >
-            <NavigationLink
-              to="/"
-              icon={LayoutDashboard}
-              label="appLayout.projects"
-              end
-            />
-            <NavigationLink
-              to="/projects/new"
-              icon={FolderPlus}
-              label="common.createProject"
-            />
-            <NavigationLink
-              to="/settings"
-              icon={Settings2}
-              label="settings.title"
-            />
-          </nav>
+        <div
+          className={cn(
+            "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
+            pid && "max-h-[35vh] p-3",
+          )}
+        >
           {pid && (
             <ProjectNavigation
               key={pid}
@@ -82,6 +66,27 @@ export function AppLayout() {
             />
           )}
         </div>
+        <nav
+          aria-label={tr("navigation.global")}
+          className="flex shrink-0 flex-wrap gap-1 border-t p-3 md:block md:space-y-1"
+        >
+          <NavigationLink
+            to="/"
+            icon={LayoutDashboard}
+            label="appLayout.projects"
+            end
+          />
+          <NavigationLink
+            to="/projects/new"
+            icon={FolderPlus}
+            label="common.createProject"
+          />
+          <NavigationLink
+            to="/settings"
+            icon={Settings2}
+            label="settings.title"
+          />
+        </nav>
       </aside>
       <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
         <Outlet />

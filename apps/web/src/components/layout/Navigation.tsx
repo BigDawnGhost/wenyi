@@ -87,10 +87,7 @@ export function ProjectNavigation({
     if (activeTool) setExpanded(true);
   }, [pathname, activeTool]);
   return (
-    <nav
-      aria-label={t("navigation.project")}
-      className="mt-3 border-t pt-3 space-y-1"
-    >
+    <nav aria-label={t("navigation.project")} className="space-y-1">
       <p
         className="px-3 pb-1 text-xs text-muted-foreground truncate"
         title={name}
