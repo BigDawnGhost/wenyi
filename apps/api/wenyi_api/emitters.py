@@ -1,4 +1,4 @@
-"""进度事件发射器：把内核的 ProgressFn 调用发布到 Redis Pub/Sub。"""
+"""Publish core ProgressFn callbacks as Redis Pub/Sub events."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from wenyi_core.events import TranslationEvent, make_progress_fn
 
 
 class RedisEmitter:
-    """发布到 Redis channel ``project:{id}``，供 WebSocket 中继转发。"""
+    """Publish to Redis channel ``project:{id}`` for the WebSocket relay."""
 
     def __init__(self, redis: Redis, project_id: str, run_id: str | None = None):
         self.run_id = run_id
@@ -32,12 +32,12 @@ class RedisEmitter:
             self._redis.set(f"{self.channel}:progress", encoded, ex=604800)
             self._redis.publish(self.channel, encoded)
         except Exception:
-            # Redis 不可用不应阻断翻译；静默降级（事件仍在 events 表里）。
+            # Redis failures must not interrupt translation; persisted events remain available.
             return None
 
 
 def redis_progress_fn(
     redis: Redis, project_id: str, *, kind: str = "progress", run_id: str | None = None
 ):
-    """构造内核 ProgressFn：done/total/label → Redis 发布。"""
+    """Build a core progress callback that publishes done, total and label to Redis."""
     return make_progress_fn(RedisEmitter(redis, project_id, run_id), project_id, kind=kind)

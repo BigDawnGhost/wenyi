@@ -1,4 +1,4 @@
-"""翻译策略与步骤注册表。"""
+"""Translation strategy and workflow step registry endpoints."""
 
 from __future__ import annotations
 
@@ -18,8 +18,12 @@ def list_steps() -> list[dict]:
 @router.get("/templates", response_model=list[StrategyTemplateOut])
 def list_templates() -> list[dict]:
     return [
-        {"name": t["name"], "description": t.get("description", ""),
-         "time_factor": t.get("time_factor", 1),
-         "recommended": t.get("recommended", False), "steps": t["steps"]}
+        {
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "time_factor": t.get("time_factor", 1),
+            "recommended": t.get("recommended", False),
+            "steps": t["steps"],
+        }
         for t in PRESET_TEMPLATES
     ]

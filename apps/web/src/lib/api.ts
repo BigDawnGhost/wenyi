@@ -1,6 +1,6 @@
 import type { components } from "@wenyi/shared-schema";
 
-// 文译 API 客户端：类型与 OpenAPI 对齐，经 Vite 代理到 :8000（生产由 nginx/api 托管）。
+// Typed Wenyi API client: Vite proxies to port 8000; production uses the nginx/API stack.
 
 const BASE = "/api";
 
@@ -100,7 +100,7 @@ export interface ReportData {
   [key: string]: unknown;
 }
 
-// ── 调用 ───────────────────────────────────────────────────────────────
+// API calls.
 export const api = {
   getWorkflow: (pid: string) => request<Output<"WorkflowOut">>(`/projects/${pid}/workflow`),
   capabilities: () => request<Capabilities>("/capabilities"),

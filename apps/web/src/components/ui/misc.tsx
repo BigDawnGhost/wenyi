@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
-// 简易 Dialog（非 Radix，足够 MVP）
+// Lightweight dialog component.
 export function Dialog({ open, onClose, children, className }: {
   open: boolean; onClose: () => void; children: React.ReactNode; className?: string;
 }) {
@@ -28,7 +28,7 @@ export function Dialog({ open, onClose, children, className }: {
   );
 }
 
-// 简易 Tabs
+// Lightweight tab components.
 const TabsCtx = React.createContext<{ value: string; setValue: (v: string) => void }>({ value: "", setValue: () => {} });
 export function Tabs({ value, onValueChange, children, className }: {
   value: string; onValueChange: (v: string) => void; children: React.ReactNode; className?: string;
@@ -60,7 +60,7 @@ export function TabsContent({ value, children, className }: { value: string; chi
   return <div className={className}>{children}</div>;
 }
 
-// Table 基础件
+// Table primitives.
 export const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...p }, ref) => (
     <div className="w-full overflow-auto">

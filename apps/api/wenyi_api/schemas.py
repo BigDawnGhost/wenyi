@@ -1,4 +1,4 @@
-"""Pydantic 入参出参 DTO（OpenAPI 单一事实来源 → 前端 TS 类型）。"""
+"""Pydantic request/response models used for OpenAPI and frontend TypeScript types."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# ── 项目 ─────────────────────────────────────────────────────────────────
+# Projects.
 class ProjectCreate(RequestModel):
     name: str = Field(min_length=1, max_length=240)
     source_lang: str = "auto"
@@ -71,7 +71,7 @@ class StartTranslation(RequestModel):
     strategy: Optional[dict[str, Any]] = None
 
 
-# ── 章节 / 段落 ──────────────────────────────────────────────────────────
+# Chapters and segments.
 class ChapterSummary(BaseModel):
     index: int
     title: str = ""
@@ -100,7 +100,7 @@ class ChapterSegments(BaseModel):
     review_issues: list[dict[str, Any]] = []
 
 
-# ── 术语 ─────────────────────────────────────────────────────────────────
+# Glossary terms.
 class TermOut(BaseModel):
     source: str
     target: str
@@ -137,7 +137,7 @@ class ResolveConflict(RequestModel):
     target: Optional[str] = None
 
 
-# ── 策略 ─────────────────────────────────────────────────────────────────
+# Strategies.
 class StepDef(BaseModel):
     id: str
     name: str
@@ -159,7 +159,7 @@ class StrategyTemplateOut(BaseModel):
     steps: dict[str, Any]
 
 
-# ── 导出 ─────────────────────────────────────────────────────────────────
+# Exports.
 class ExportRequest(RequestModel):
     format: Literal["epub", "txt", "html", "markdown", "pdf", "docx", "srt"] | None = None
     bilingual: bool = False
@@ -182,7 +182,7 @@ class ExportOut(BaseModel):
     created_at: Optional[str] = None
 
 
-# ── 事件 ─────────────────────────────────────────────────────────────────
+# Events.
 class EventOut(BaseModel):
     id: int
     type: str
@@ -190,12 +190,12 @@ class EventOut(BaseModel):
     created_at: Optional[str] = None
 
 
-# ── 风格 / 概要（编辑）──────────────────────────────────────────────────
+# Style and synopsis editing.
 class AnalysisUpdate(RequestModel):
     analysis: dict[str, Any]
 
 
-# ── 通用 ─────────────────────────────────────────────────────────────────
+# Shared responses.
 class Message(BaseModel):
     message: str
     detail: Any = None

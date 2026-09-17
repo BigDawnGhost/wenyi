@@ -26,7 +26,7 @@ explore/
 *.srt
 *.docx
 
-# ── Web 升级（monorepo）─────────────────────────────────────────
+# Web workspace artifacts.
 node_modules/
 .next/
 .turbo/

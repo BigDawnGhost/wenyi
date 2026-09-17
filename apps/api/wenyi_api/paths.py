@@ -1,4 +1,4 @@
-"""文件路径工具：上传原件 / 导出成品 在 data/ 卷下的组织。"""
+"""Organize uploaded originals and exported files within the data volume."""
 
 from __future__ import annotations
 

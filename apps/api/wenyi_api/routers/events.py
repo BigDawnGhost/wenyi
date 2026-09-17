@@ -1,4 +1,4 @@
-"""项目事件日志（时间线）。"""
+"""Project event log and timeline endpoints."""
 
 from __future__ import annotations
 

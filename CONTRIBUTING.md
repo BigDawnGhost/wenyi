@@ -9,11 +9,11 @@ Thank you for helping improve Wenyi. The project prioritizes the quality and rel
 Contributions are welcome in the following areas:
 
 - Input parsing: compatibility improvements and new support for EPUB, FB2, TXT, DOCX, SRT, and related formats.
-- Translation pipeline: context handling, terminology, review, polishing, and consistency checks. Subtitle work belongs in `trans_novel.srt`, not the book Orchestrator.
+- Translation pipeline: context handling, terminology, review, polishing, and consistency checks. Subtitle work belongs in the independent `wenyi_core.srt` pipeline.
 - Export: EPUB/DOCX output, tables of contents, metadata, layout preservation, and SRT writers.
 - Tests: real-world failure cases, regression tests, and offline fake-LLM tests.
 - Documentation: usage instructions, configuration explanations, troubleshooting, and translations.
 
 Changes to the core translation pipeline can affect translation quality in subtle ways. Before proposing such a change, test it on a public-domain novel of at least 50,000 words and include a before-and-after comparison that explains the quality impact.
 
-Use standard English for code comments, docstrings, configuration comments, CLI messages, and prompt instructions. Keep language rules and task templates in `trans_novel/i18n/data/`. Generated prose, including glossary notes and analysis descriptions, follows the translation target; original `source` and `aliases` remain unchanged for matching. Preserve language-specific examples and multilingual test fixtures, and keep English and Chinese documentation synchronized.
+Use standard English for code comments, docstrings, configuration comments, CLI messages, and prompt instructions. Keep language rules and task templates in `packages/core/wenyi_core/i18n/data/`. Generated prose, including glossary notes and analysis descriptions, follows the translation target; original `source` and `aliases` remain unchanged for matching. Preserve language-specific examples and multilingual test fixtures, and keep English and Chinese documentation synchronized.

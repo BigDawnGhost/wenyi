@@ -42,7 +42,7 @@ export default function StylePage() {
 
   const [guideDraft, setGuideDraft] = useState<string>(styleGuide);
   const [synopsisDraft, setSynopsisDraft] = useState<string>(synopsis);
-  // 同步外部数据到 draft
+  // Copy incoming data into the editable draft.
   useEffect(() => {
     setGuideDraft(styleGuide);
     setSynopsisDraft(synopsis);

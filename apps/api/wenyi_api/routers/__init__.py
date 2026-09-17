@@ -1,4 +1,4 @@
-"""API 路由聚合。"""
+"""API router package."""
 
 from . import (
     chapters,

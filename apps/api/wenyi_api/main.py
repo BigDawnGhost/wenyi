@@ -1,7 +1,7 @@
-"""FastAPI 装配：挂载路由、初始化 DB 池、可选静态 Token、CORS。
+"""Assemble FastAPI routes, the database pool, optional token authentication and CORS.
 
-启动：``uvicorn wenyi_api.main:app --reload``
-OpenAPI：``/docs`` 或 ``/openapi.json``（前端类型同步的单一事实来源）。
+Start with ``uvicorn wenyi_api.main:app --reload``.
+OpenAPI is available at ``/docs`` and ``/openapi.json`` and defines frontend types.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
         description="基于 AI 的长篇小说翻译平台 — Web API（FastAPI + Postgres + Arq）",
     )
 
-    # CORS：开发期前端独立端口直连；生产可收紧。
+    # Allow a separate frontend origin during development; restrict origins in production.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=os.environ.get("WENYI_CORS_ORIGINS", "*").split(","),
@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 可选静态 Token 鉴权（v1 无用户系统）：仅校验 HTTP 请求，放行健康检查与 WebSocket。
+    # Optional HTTP token authentication; health checks are public and WebSocket auth is separate.
     if settings.api_token:
         from fastapi import Request
         from fastapi.responses import JSONResponse
@@ -96,7 +96,7 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
-def _custom_openapi():  # 让 OpenAPI 标题更友好（可选）
+def _custom_openapi():  # Customize the title exposed by the OpenAPI schema.
     if app.openapi_schema:
         return app.openapi_schema
     schema = get_openapi(

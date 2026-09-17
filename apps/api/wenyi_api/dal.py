@@ -1,4 +1,4 @@
-"""项目级数据访问（不属于内核 Storage Protocol，但 API 需要的列表/统计查询）。"""
+"""Project queries and statistics used by the API outside the core Storage protocol."""
 
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ def chapter_review_state(
 
 
 def chapter_summaries(pid: str) -> list[dict]:
-    """章节列表 + 原文/译文词数 + 审校问题数。"""
+    """Return chapter summaries with source/target counts and review status."""
     with _conn() as c:
         rows = c.execute(
             """SELECT ch.seq, ch.title, ch.title_translated, ch.status,
@@ -355,7 +355,7 @@ def set_export_status(
 
 
 def is_paused(pid: str) -> bool:
-    """项目当前是否处于暂停态（用 projects.status='paused' 判定）。"""
+    """Return whether the project is paused or pausing."""
     with _conn() as c:
         r = c.execute("SELECT status FROM projects WHERE id=%s", (pid,)).fetchone()
     return bool(r and r[0] in {"paused", "pausing"})
