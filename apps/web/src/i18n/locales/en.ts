@@ -329,8 +329,10 @@ const en = {
     "Analyze the book and build its glossary after upload, using the selected workflow and default models. This uses model tokens. If unchecked, preparation runs when you start translation.",
   "createProject.preparingSource":
     "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
-  "createProject.sourceRequired": "Choose a source file before creating the project.",
-  "createProject.emptyFile": "The source file is empty. Choose a file with content.",
+  "createProject.sourceRequired":
+    "Choose a source file before creating the project.",
+  "createProject.emptyFile":
+    "The source file is empty. Choose a file with content.",
   "createProject.unsupportedFile": "This file format is not supported.",
   "createProject.serverDefault": "Use server default",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
@@ -402,8 +404,6 @@ const en = {
   "review.failedFixes": "Failed fixes",
   "review.viewAllRunCounts": "View all run counts",
   "providerSettings.apiProvidersModels": "API providers & models",
-  "providerSettings.settingsAreSavedPerProjectEnterThe":
-    "Settings are saved per project. Enter the name of a server environment variable, such as DEEPSEEK_API_KEY, rather than the key itself. New and resumed tasks use the saved configuration.",
   "providerSettings.connection": "Connection:",
   "providerSettings.apiProvider": "API provider",
   "providerSettings.apiBaseUrl": "API base URL",
@@ -423,7 +423,7 @@ const en = {
   "providerSettings.economyTier": "Economy tier",
   "providerSettings.fastTier": "Fast tier",
   "providerSettings.operationSpecificModelRoutesTakePrecedenceOver":
-    "Operation-specific model routes take precedence over tiers. Check the saved model routes below. Edit advanced YAML for complex routing and fallback models.",
+    "Model IDs are used by project selections and fallback routes. Configure model parameters in advanced YAML.",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
   "settings.applyAutofixesToTheSavedTranslation":
@@ -433,7 +433,7 @@ const en = {
   "settings.configurationIsValidButNotSavedYet":
     "Configuration is valid but not saved yet",
   "settings.configurationIsValidatedOnTheServerAdvanced":
-    "Configuration is validated on the server. Advanced YAML supports providers, model tiers, operation routes, retries, concurrency and budgets.",
+    "Choose registered models and configure this project’s workflow.",
   "settings.settingsAreReadOnlyWhileATask":
     "Settings are read-only while a task runs. Pause and save a checkpoint before editing.",
   "settings.workflowSettings": "Workflow settings",
@@ -516,7 +516,7 @@ const en = {
   "api.postprocessing": "Postprocessing",
   "app.documentTitle": "Wenyi — AI translation",
   "settings.title": "Settings",
-  "settings.subtitle": "Preferences for this browser",
+  "settings.subtitle": "Interface language, shared models and project defaults",
   "settings.interfaceLanguage": "Interface language",
   "settings.languageDescription":
     "Choose the language used for menus, buttons and labels. Project source and target languages are managed separately.",
@@ -536,7 +536,7 @@ const en = {
   "workflow.stageCount": "({done}/{total})",
   "workflow.standard": "Standard translation",
   "workflow.standardDescription":
-    "Book understanding, polishing, review and autofix",
+    "Use the workflow defaults from global Settings",
   "workflow.quick": "Fast draft",
   "workflow.quickDescription":
     "Translate text and terms without book understanding, polishing or review",
@@ -570,7 +570,7 @@ const en = {
   "settings.modelSetup": "Model setup",
   "settings.presetSummary": "Preset: {name}",
   "settings.modelSummary":
-    "{providers} connections · {models} models · {routes} operation overrides",
+    "Connections: {providers} · Models: {models} · Overrides: {routes}",
   "settings.performance": "Segmentation and performance",
   "settings.performanceSummary": "Batch: {tokens} tokens",
   "settings.unsavedSummary": "Unsaved changes",
@@ -578,6 +578,25 @@ const en = {
   "settings.yamlSummary":
     "All settings, including operation routing and budgets",
   "export.punctuationSummary": "Punctuation: {value}",
+  "settings.operationModels": "Models by operation",
+  "settings.operationModelsHelp":
+    "Override individual operations with registered models. Configure fallback models in advanced YAML.",
+  "settings.followTier": "Follow default tier {tier}",
+  "settings.registeredModels": "Registered providers & models",
+  "settings.projectModelHelp": "Select registered models for this project.",
+  "settings.manageGlobalModels": "Manage models in global Settings",
+  "settings.projectYamlHelp":
+    "Project YAML accepts model selections, operation routes and budgets. Register connections and model parameters in global Settings.",
+  "settings.globalSaved": "Global settings saved",
+  "settings.newProjectDefaults": "New project defaults",
+  "settings.defaultScopeHelp":
+    "Defaults are copied when a project is created. Registry changes apply to future tasks; queued and running tasks keep their original configuration.",
+  "settings.defaultTemplate": "Default workflow template",
+  "settings.standardDefaults": "Standard workflow defaults",
+  "settings.quickTemplateHelp":
+    "Quick draft disables book understanding, polishing, review and autofix; other settings use these defaults.",
+  "providerSettings.sharedRegistryHelp":
+    "Connections and models are shared across projects. API keys use server environment variable names, such as DEEPSEEK_API_KEY.",
   "status.applied": "Applied",
 } as const;
 

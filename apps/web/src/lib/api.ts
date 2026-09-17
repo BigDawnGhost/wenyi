@@ -93,6 +93,8 @@ export type ExportOut = Output<"ExportOut">;
 export type EventOut = Output<"EventOut">;
 export type JobEnqueued = Output<"JobEnqueued">;
 export type Capabilities = Output<"Capabilities">;
+export type GlobalConfig = Output<"GlobalConfigOut">;
+export type GlobalConfigInput = components["schemas"]["GlobalConfigInput"];
 export type ProjectConfig = Output<"ProjectConfigOut">;
 export type ReviewRun = Output<"ReviewRun">;
 export type SubtitleCue = Output<"SubtitleCue">;
@@ -108,6 +110,17 @@ export interface ReportData {
 
 // API calls.
 export const api = {
+  getGlobalConfig: () => request<GlobalConfig>("/settings"),
+  saveGlobalConfig: (body: GlobalConfigInput) =>
+    request<GlobalConfig>("/settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  validateGlobalConfig: (body: GlobalConfigInput) =>
+    request<GlobalConfig>("/settings/validate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getWorkflow: (pid: string) =>
     request<Output<"WorkflowOut">>(`/projects/${pid}/workflow`),
   capabilities: () => request<Capabilities>("/capabilities"),

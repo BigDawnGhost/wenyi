@@ -333,6 +333,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_settings_get"];
+        /** Save */
+        put: operations["save_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate */
+        post: operations["validate_settings_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/report": {
         parameters: {
             query?: never;
@@ -955,6 +990,28 @@ export interface components {
              */
             pdf_engine: "weasyprint" | "fpdf2";
         };
+        /** GlobalConfigInput */
+        GlobalConfigInput: {
+            /** Yaml */
+            yaml: string;
+            /** Default Template */
+            default_template: string;
+            /** Revision */
+            revision: number;
+        };
+        /** GlobalConfigOut */
+        GlobalConfigOut: {
+            /** Yaml */
+            yaml: string;
+            /** Effective */
+            effective: {
+                [key: string]: unknown;
+            };
+            /** Default Template */
+            default_template: string;
+            /** Revision */
+            revision: number;
+        };
         /** GlossaryImport */
         GlossaryImport: {
             /** Terms */
@@ -1069,6 +1126,10 @@ export interface components {
             }[];
             /** Editable */
             editable: boolean;
+            /** Registered Models */
+            registered_models: {
+                [key: string]: unknown;
+            };
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -2103,6 +2164,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
+                };
+            };
+        };
+    };
+    save_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalConfigInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_settings_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalConfigInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalConfigOut"];
                 };
             };
             /** @description Validation Error */

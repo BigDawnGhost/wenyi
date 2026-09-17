@@ -8,6 +8,7 @@ import {
   effective,
   configuration,
   capabilities,
+  globalConfiguration,
 } from "./fixtures";
 
 test("creates a multilingual project and waits for background parsing", async ({
@@ -280,7 +281,7 @@ test("authenticates the progress socket before displaying project events", async
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("API provider form saves endpoint, model and tier changes", async ({
+test("global API provider form saves endpoint, model and tier changes", async ({
   page,
 }) => {
   const settings = {
@@ -307,13 +308,13 @@ test("API provider form saves endpoint, model and tier changes", async ({
       ...capabilities,
       providers: ["deepseek", "openai-compatible"],
     },
-    [`/projects/${pid}/config`]: {
-      ...configuration,
+    "/settings": {
+      ...globalConfiguration,
       effective: settings,
       yaml: JSON.stringify(settings),
     },
   });
-  await page.goto(`/projects/${pid}/settings`);
+  await page.goto("/settings");
   await page
     .locator("summary")
     .filter({ hasText: "API providers & models" })
@@ -325,7 +326,7 @@ test("API provider form saves endpoint, model and tier changes", async ({
   await page.getByLabel("API key environment variable").fill("CUSTOM_API_KEY");
   await page.getByLabel("Model name", { exact: true }).fill("custom-model");
   const request = page.waitForRequest(
-    (r) => r.method() === "PUT" && r.url().endsWith(`/projects/${pid}/config`),
+    (r) => r.method() === "PUT" && r.url().endsWith("/settings"),
   );
   await page
     .getByRole("button", { name: "Save configuration", exact: true })

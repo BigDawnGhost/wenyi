@@ -17,7 +17,7 @@ class ProjectCreate(RequestModel):
     name: str = Field(min_length=1, max_length=240)
     source_lang: str = "auto"
     target_lang: str = "zh"
-    strategy: dict[str, Any] = Field(default_factory=lambda: {"template": "标准翻译"})
+    strategy: dict[str, Any] = Field(default_factory=dict)
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
 
@@ -295,6 +295,19 @@ class ProjectConfigOut(BaseModel):
     effective: dict[str, Any]
     routes: list[dict[str, Any]]
     editable: bool
+    registered_models: dict[str, Any]
+
+
+class GlobalConfigInput(ConfigInput):
+    default_template: str
+    revision: int = Field(ge=0)
+
+
+class GlobalConfigOut(BaseModel):
+    yaml: str
+    effective: dict[str, Any]
+    default_template: str
+    revision: int
 
 
 class ModelCheckRequest(RequestModel):

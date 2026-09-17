@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from .db import get_pool
@@ -22,8 +24,8 @@ RUNNING_PROJECT_STATUSES = frozenset(
 )
 
 
-def _conn():
-    return get_pool().connection()
+def _conn(connection: Connection[Any] | None = None):
+    return nullcontext(connection) if connection is not None else get_pool().connection()
 
 
 def create_project(
@@ -35,10 +37,11 @@ def create_project(
     project_id: str | None = None,
     source: dict | None = None,
     config: dict | None = None,
+    connection: Connection[Any] | None = None,
 ) -> str:
     pid = project_id or uuid.uuid4().hex[:16]
     source = source or {}
-    with _conn() as c:
+    with _conn(connection) as c:
         c.execute(
             """INSERT INTO projects
                (id, name, source_lang, target_lang, status, strategy, source_path,
@@ -121,8 +124,10 @@ def set_project_status(pid: str, status: str, *, error: str | None = None) -> No
         )
 
 
-def set_project_strategy(pid: str, strategy: dict[str, Any]) -> None:
-    with _conn() as c:
+def set_project_strategy(
+    pid: str, strategy: dict[str, Any], *, connection: Connection[Any] | None = None
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET strategy=%s, updated_at=now() WHERE id=%s",
             (Jsonb(strategy), pid),
@@ -137,8 +142,10 @@ def get_project_config(pid: str) -> dict[str, Any]:
     return row[0] or {}
 
 
-def set_project_config(pid: str, config: dict[str, Any]) -> None:
-    with _conn() as c:
+def set_project_config(
+    pid: str, config: dict[str, Any], *, connection: Connection[Any] | None = None
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET config=%s, updated_at=now() WHERE id=%s", (Jsonb(config), pid)
         )

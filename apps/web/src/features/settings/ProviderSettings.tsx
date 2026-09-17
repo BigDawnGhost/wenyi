@@ -23,7 +23,6 @@ export function ProviderSettings({
   const llm = object(config.llm);
   const providers = object(llm.providers);
   const models = object(llm.models);
-  const tiers = object(llm.tiers);
   const update = (group: string, id: string, patch: Document) =>
     onChange({
       ...llm,
@@ -41,39 +40,12 @@ export function ProviderSettings({
   return (
     <fieldset disabled={disabled} className="space-y-5 disabled:opacity-60">
       <div>
-        <h2 className="font-medium">{tr("settings.modelSetup")}</h2>
+        <h2 className="font-medium">{tr("settings.registeredModels")}</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           {llm.preset
             ? tr("settings.presetSummary", { name: String(llm.preset) })
             : tr("settings.custom")}
         </p>
-      </div>
-      <div className="grid sm:grid-cols-3 gap-3">
-        {[
-          ["strong", tr("providerSettings.qualityTier")],
-          ["cheap", tr("providerSettings.economyTier")],
-          ["fast", tr("providerSettings.fastTier")],
-        ].map(([tier, label]) => (
-          <div key={tier}>
-            <Label htmlFor={`tier-${tier}`}>{label}</Label>
-            <Select
-              id={`tier-${tier}`}
-              value={String(tiers[tier] || "")}
-              onChange={(e) =>
-                onChange({
-                  ...llm,
-                  tiers: { ...tiers, [tier]: e.target.value },
-                })
-              }
-            >
-              {Object.keys(models).map((m) => (
-                <option key={m} value={m}>
-                  {m} · {String(object(models[m]).model || m)}
-                </option>
-              ))}
-            </Select>
-          </div>
-        ))}
       </div>
       <Disclosure
         title={tr("providerSettings.apiProvidersModels")}
@@ -85,7 +57,7 @@ export function ProviderSettings({
         })}
       >
         <p className="text-sm text-muted-foreground">
-          {tr("providerSettings.settingsAreSavedPerProjectEnterThe")}
+          {tr("providerSettings.sharedRegistryHelp")}
         </p>
         {Object.entries(providers).map(([id, raw]) => {
           const provider = object(raw);

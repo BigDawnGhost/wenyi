@@ -390,8 +390,6 @@ const zhCN = {
   "review.failedFixes": "修复失败",
   "review.viewAllRunCounts": "查看全部运行计数",
   "providerSettings.apiProvidersModels": "API 供应商与模型",
-  "providerSettings.settingsAreSavedPerProjectEnterThe":
-    "按项目保存。API Key 填写服务器已配置的环境变量名称（例如 DEEPSEEK_API_KEY），不要填写密钥本身。保存后，新的翻译任务和恢复任务使用新配置。",
   "providerSettings.connection": "连接：",
   "providerSettings.apiProvider": "API 供应商",
   "providerSettings.apiBaseUrl": "API 地址（Base URL）",
@@ -411,15 +409,16 @@ const zhCN = {
   "providerSettings.economyTier": "经济档位",
   "providerSettings.fastTier": "快速档位",
   "providerSettings.operationSpecificModelRoutesTakePrecedenceOver":
-    "单独指定模型的操作路由优先于档位。可在下方“已保存配置的模型路由”中核对；复杂路由和备用模型继续通过高级 YAML 调整。",
+    "模型 ID 用于项目选用和备用路由，模型参数可在高级 YAML 中配置。",
   "settings.bookUnderstanding": "全书预理解",
   "settings.polishing": "润色",
-  "settings.applyAutofixesToTheSavedTranslation": "审校后自动修复并写回正式译文",
+  "settings.applyAutofixesToTheSavedTranslation":
+    "审校后自动修复并写回正式译文",
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
   "settings.projectSettingsSaved": "项目配置已保存",
   "settings.configurationIsValidButNotSavedYet": "配置有效，尚未保存",
   "settings.configurationIsValidatedOnTheServerAdvanced":
-    "配置校验在服务端执行；高级 YAML 支持提供商、模型档位、操作路由、重试、并发和预算",
+    "选用已注册模型，并设置当前项目的翻译流程。",
   "settings.settingsAreReadOnlyWhileATask":
     "项目任务正在执行，配置暂时只读。暂停并保存检查点后可修改。",
   "settings.workflowSettings": "翻译流程配置",
@@ -501,7 +500,7 @@ const zhCN = {
   "api.postprocessing": "译后处理",
   "app.documentTitle": "文译 — AI 翻译",
   "settings.title": "设置",
-  "settings.subtitle": "当前浏览器的偏好设置",
+  "settings.subtitle": "界面语言、共享模型与项目默认配置",
   "settings.interfaceLanguage": "界面语言",
   "settings.languageDescription":
     "选择菜单、按钮与标签的显示语言。项目的源语言和目标语言独立设置。",
@@ -519,7 +518,7 @@ const zhCN = {
   "progress.reviewIssueCount": "{count} 项意见",
   "workflow.stageCount": "（{done}/{total}）",
   "workflow.standard": "标准翻译",
-  "workflow.standardDescription": "全书预理解、润色、审校及自动修复",
+  "workflow.standardDescription": "使用总设置中的默认流程配置",
   "workflow.quick": "快速出稿",
   "workflow.quickDescription": "关闭预理解、润色和审校，保留正文与术语翻译",
   "workflow.languageDetection": "语言检测",
@@ -559,6 +558,25 @@ const zhCN = {
   "settings.routeSummary": "{count} 项操作路由",
   "settings.yamlSummary": "完整设置，包括操作路由和预算",
   "export.punctuationSummary": "标点规范化：{value}",
+  "settings.operationModels": "按步骤选择模型",
+  "settings.operationModelsHelp":
+    "可以为具体步骤选用已注册模型，备用模型可在高级 YAML 中设置。",
+  "settings.followTier": "跟随默认档位 {tier}",
+  "settings.registeredModels": "提供商与模型注册",
+  "settings.projectModelHelp": "为当前项目选用已注册的模型。",
+  "settings.manageGlobalModels": "前往总设置管理模型",
+  "settings.projectYamlHelp":
+    "项目 YAML 只配置模型选择、步骤路由和预算。连接与模型参数统一在总设置中注册。",
+  "settings.globalSaved": "总设置已保存",
+  "settings.newProjectDefaults": "新项目默认配置",
+  "settings.defaultScopeHelp":
+    "默认配置在创建项目时复制。模型库修改应用于之后启动的任务，已排队和执行中的任务保留原配置。",
+  "settings.defaultTemplate": "默认流程模板",
+  "settings.standardDefaults": "标准流程默认配置",
+  "settings.quickTemplateHelp":
+    "快速出稿会关闭预理解、润色、审校和自动修复；其他设置沿用这里的默认值。",
+  "providerSettings.sharedRegistryHelp":
+    "所有项目共用连接和模型。API Key 填写服务端环境变量名称，例如 DEEPSEEK_API_KEY。",
   "status.applied": "已应用",
 } satisfies Messages;
 

@@ -95,9 +95,6 @@ test("advanced settings retain invalid drafts and reveal them after validation",
   const settings = {
     ...effective,
     llm: {
-      preset: "deepseek",
-      providers: { default: { kind: "deepseek" } },
-      models: { main: { provider: "default", model: "deepseek-flash" } },
       tiers: { strong: "main", cheap: "main", fast: "main" },
       routes: { "translation.body": { model: "main" } },
     },
@@ -105,6 +102,9 @@ test("advanced settings retain invalid drafts and reveal them after validation",
   await fakeApi(page, {
     [`/projects/${pid}/config`]: {
       ...configuration,
+      registered_models: {
+        main: { provider: "default", model: "deepseek-flash" },
+      },
       effective: settings,
       yaml: JSON.stringify(settings),
     },

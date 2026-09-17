@@ -91,12 +91,14 @@ test("language preference synchronizes between tabs and unknown locales fall bac
   page,
   context,
 }) => {
+  await fakeApi(page);
   await page.addInitScript(() =>
     localStorage.setItem("wenyi.locale", "unsupported-language"),
   );
   await page.goto("/settings");
   await expect(page.getByLabel("Interface language")).toHaveValue("en");
   const other = await context.newPage();
+  await fakeApi(other);
   await other.goto("/settings");
   await page.getByLabel("Interface language").selectOption("zh-CN");
   await expect(other.getByLabel("界面语言")).toHaveValue("zh-CN");
@@ -166,6 +168,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     });
     await page.goto(`/projects/${pid}/glossary`);
     const settings = await context.newPage();
+    await fakeApi(settings);
     await settings.goto("/settings");
     await settings.getByLabel("Interface language").selectOption(locale);
     await settings.close();

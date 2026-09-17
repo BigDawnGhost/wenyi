@@ -31,6 +31,9 @@ from .routers import (
     subtitles,
     ws,
 )
+from .routers import (
+    settings as global_settings,
+)
 
 
 def create_app() -> FastAPI:
@@ -81,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(strategies.router)
     app.include_router(projects.router)
     app.include_router(configuration.router)
+    app.include_router(global_settings.router)
     app.include_router(report.router)
     app.include_router(subtitles.router)
     app.include_router(chapters.router)

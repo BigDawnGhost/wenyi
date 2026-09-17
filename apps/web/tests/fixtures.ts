@@ -56,11 +56,22 @@ export const effective = {
   },
   output: { punctuation_normalize: true },
 };
+export const projectEffective = {
+  ...effective,
+  llm: { tiers: effective.llm.tiers, routes: effective.llm.routes, budget: {} },
+};
 export const configuration = {
-  yaml: JSON.stringify(effective, null, 2),
-  effective,
+  yaml: JSON.stringify(projectEffective, null, 2),
+  effective: projectEffective,
+  registered_models: effective.llm.models,
   routes: [{ operation: "translate", model: "model-a" }],
   editable: true,
+};
+export const globalConfiguration = {
+  yaml: JSON.stringify(effective, null, 2),
+  effective,
+  default_template: "标准翻译",
+  revision: 0,
 };
 export const capabilities = {
   languages: [
@@ -87,6 +98,8 @@ export async function fakeApi(
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     const data: Record<string, unknown> = {
       "/capabilities": capabilities,
+      "/settings": globalConfiguration,
+      "/settings/validate": globalConfiguration,
       "/strategies/templates": [
         {
           name: "标准翻译",

@@ -6,6 +6,34 @@ Wenyi reads `config.yaml` from the current working directory. If the file is mis
 
 Top-level sections are `language`, `llm`, `segment`, `pipeline`, `output`, `honorific`, and `paths`. Unknown sections are rejected; removed settings are not translated to a newer schema.
 
+## Web settings and model registration
+
+The CLI continues to read `config.yaml`. Web **Settings** manages a shared registry
+of provider connections and model profiles, default tiers and operation routes, and
+new-project workflow defaults. The Web server reads its initial defaults from
+`WENYI_CONFIG` (default `config.yaml`); after the first save, Web settings are stored in
+PostgreSQL and survive restarts. Saving Web settings does not rewrite the CLI file.
+API keys remain server environment variables; enter only their variable names.
+
+The default creation template is selected here. Standard translation uses the configured
+workflow switches; Quick draft disables book understanding, polishing, review and
+autofix. Projects copy defaults at creation, so later default changes do not reset an
+existing project's workflow or model selections. Language choices on the creation form
+remain authoritative.
+
+Project configuration accepts registered model IDs through `llm.tiers`, `llm.routes`
+and route fallbacks, plus `llm.budget`. Provider connections, model names/options,
+presets and provider quotas belong only in global Settings. Both the project form and
+its advanced YAML enforce this boundary. Old project-local registry definitions are
+not used: register any project-specific profile IDs in global Settings before starting
+a new task with those selections.
+
+Registry edits apply to newly started or resumed tasks. Queued and running jobs keep
+their full configuration snapshots, including provider/model parameters. A model still
+selected by a project cannot be removed. Concurrent global saves use a revision check;
+a stale editor must reload before saving again. See [Web workflow layout](web-interface.md)
+for the settings controls and project navigation.
+
 ## Languages
 
 ```yaml

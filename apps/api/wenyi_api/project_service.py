@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any
 
 import yaml
 from fastapi import HTTPException
@@ -11,8 +10,15 @@ from wenyi_core.config import Config
 from wenyi_core.llm.routing import resolve_routes
 
 from . import dal, paths
-from .config import settings
+from .config_documents import (
+    config_document,
+    merge_project,
+    parse_yaml,
+    project_document,
+    project_llm,
+)
 from .db import get_pool
+from .global_settings import load_settings, registered_models
 from .storage_pg import PostgresStorage
 from .strategies import strategy_to_config
 
@@ -47,44 +53,10 @@ def project_write(pid: str):
         raise HTTPException(409, "project already has a running task") from error
 
 
-def config_document(config: Config) -> dict[str, Any]:
-    return {
-        "language": {"source": config.source_lang, "target": config.target_lang},
-        "llm": config.llm.model_dump(mode="json"),
-        "segment": config.segment.model_dump(mode="json"),
-        "pipeline": config.pipeline.model_dump(mode="json"),
-        "output": config.output.model_dump(mode="json"),
-        "honorific": {"strategy": config.honorific_strategy},
-    }
-
-
-def _overlay(base: dict, override: dict) -> dict:
-    """Merge project sections, replacing provider/model profiles as complete definitions."""
-    result = {**base}
-    for section, value in override.items():
-        if section in base and not isinstance(value, dict):
-            raise ValueError(f"Configuration section {section} must be a mapping")
-        if section == "llm":
-            for name in ("providers", "models", "tiers", "routes", "quotas"):
-                if name in value and not isinstance(value[name], dict):
-                    raise ValueError(f"llm.{name} must be a mapping")
-    for section, value in override.items():
-        if section not in base or not isinstance(value, dict):
-            result[section] = value
-            continue
-        result[section] = {**base[section], **value}
-        if section == "llm":
-            if "preset" in value and value["preset"] != base[section].get("preset"):
-                result[section] = value
-            else:
-                for name in ("providers", "models", "tiers", "routes", "quotas"):
-                    if name in value:
-                        result[section][name] = {**base[section].get(name, {}), **value[name]}
-    return result
-
-
-def effective_config(project: dict, *, document: dict | None = None) -> Config:
-    base = Config.load(settings.config_path)
+def effective_config(
+    project: dict, *, document: dict | None = None, defaults: Config | None = None
+) -> Config:
+    base = defaults if defaults is not None else load_settings().config
     base = strategy_to_config(
         project.get("strategy") or {"template": "标准翻译"},
         base,
@@ -92,7 +64,7 @@ def effective_config(project: dict, *, document: dict | None = None) -> Config:
         target_lang=project.get("target_lang") or "zh",
     )
     saved = project.get("config") or {}
-    raw = _overlay(config_document(base), saved if document is None else document)
+    raw = merge_project(config_document(base), saved if document is None else document)
     raw["paths"] = {"state_dir": paths.project_dir(project["id"])}
     config = Config.from_dict(raw)
     if config.source_lang == config.target_lang:
@@ -108,21 +80,20 @@ def effective_config(project: dict, *, document: dict | None = None) -> Config:
 
 
 def parse_project_yaml(value: str) -> dict:
-    raw = yaml.safe_load(value) or {}
-    if not isinstance(raw, dict):
-        raise ValueError("Configuration must be a mapping")
-    if "paths" in raw:
-        raise ValueError("Web project storage paths are managed by the server")
+    raw = parse_yaml(value)
+    if "llm" in raw:
+        project_llm(raw["llm"], strict=True)
     return raw
 
 
 def config_response(project: dict, config: Config) -> dict:
-    document = config_document(config)
+    document = project_document(config)
     return {
         "yaml": yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
         "effective": document,
         "routes": [route.describe() for route in resolve_routes(config.llm).values()],
         "editable": not busy(project),
+        "registered_models": registered_models(config),
     }
 
 

@@ -194,7 +194,7 @@ def test_creation_saves_pdf_parser_before_queueing(api):
     )
     assert response.status_code == 201, response.text
     project = must(dal.get_project(response.json()["id"]))
-    assert project["config"] == {"pipeline": {"pdf_backend": "babeldoc"}}
+    assert project["config"]["pipeline"]["pdf_backend"] == "babeldoc"
     run_id = queue[0][1]["run_id"]
     assert tasks._build_config_for(project["id"], run_id).pipeline.pdf_backend == "babeldoc"
 

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from wenyi_api.emitters import RedisEmitter
 from wenyi_api.routers import configuration
 from wenyi_core.events import TranslationEvent
 
 
-def test_workflow_uses_snapshot_and_excludes_exports(monkeypatch):
+@pytest.mark.parametrize("autofix, enabled", [(False, False), (True, True), (None, True)])
+def test_workflow_uses_snapshot_and_excludes_exports(monkeypatch, autofix, enabled):
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "epub"})
     monkeypatch.setattr(
         configuration.dal,
@@ -19,7 +21,7 @@ def test_workflow_uses_snapshot_and_excludes_exports(monkeypatch):
                 "status": "paused",
                 "run_id": "run-a",
                 "params": {
-                    "autofix": False,
+                    "autofix": autofix,
                     "config_snapshot": {"pipeline": {"review_autofix": True}},
                 },
             },
@@ -38,7 +40,7 @@ def test_workflow_uses_snapshot_and_excludes_exports(monkeypatch):
     assert result["status"] == "paused"
     assert [(s["id"], s["enabled"]) for s in result["stages"]] == [
         ("review", True),
-        ("review_autofix", False),
+        ("review_autofix", enabled),
         ("report", True),
     ]
     assert result["progress"] is None

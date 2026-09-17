@@ -69,12 +69,19 @@ Layout options show their current values in a collapsed summary. Folding control
 not reset them; a failed export request reopens the advanced options. Subtitles retain
 their independent editor and export workflow.
 
-Project settings show the model preset, tier selections, and common workflow switches.
-Provider connections/model names, segmentation/performance, YAML, and saved operation
-routes are collapsed with summaries. Operation overrides and fallbacks remain editable
-through YAML; existing overrides are preserved when editing other fields. Validation
-failures reopen advanced configuration so invalid draft values remain accessible.
-The autofix switch stays visible. The PDF parser control appears only for PDF projects.
+Global Settings owns provider connections, model registration and parameters, default
+model tiers/routes, the default creation template, and standard workflow defaults. The
+interface language remains a browser preference; model/default settings persist on the
+server. Quick draft disables understanding, polishing, review and autofix. New projects
+copy defaults at creation; queued/running tasks keep complete execution snapshots.
+
+Project settings select registered models for tiers or individual operations and expose
+common workflow switches. They link to global Settings to register new models. Connection
+and model-definition editors are absent from projects, including advanced YAML. Complex
+fallback routes and budgets remain in project YAML; segmentation/performance and saved
+model routes remain collapsed. Validation errors retain drafts and reopen advanced
+configuration. The autofix switch stays visible, and the PDF parser appears only for PDF
+projects. Clearing an operation override restores the operation's default tier.
 
 Punctuation normalization is an advanced export option for that export request; it does
 not overwrite project defaults. Persistent export defaults remain in project YAML.

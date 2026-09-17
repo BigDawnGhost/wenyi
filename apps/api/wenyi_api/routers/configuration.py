@@ -14,6 +14,8 @@ from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import resolve_routes
 
 from .. import dal
+from ..config_documents import project_document
+from ..global_settings import load_settings, registry_guard
 from ..project_service import (
     config_document,
     config_response,
@@ -75,20 +77,21 @@ def validate_config(pid: str, body: ConfigInput) -> dict:
 
 @router.put("/projects/{pid}/config", response_model=ProjectConfigOut)
 def save_config(pid: str, body: ConfigInput) -> dict:
-    with project_write(pid) as (project, _storage):
+    with project_write(pid) as (project, _storage), registry_guard() as conn:
         try:
-            config = effective_config(project, document=parse_project_yaml(body.yaml))
+            config = effective_config(
+                project,
+                document=parse_project_yaml(body.yaml),
+                defaults=load_settings(connection=conn).config,
+            )
         except (ValueError, yaml.YAMLError) as error:
             raise HTTPException(422, str(error)) from error
-        dal.set_project_config(pid, config_document(config))
+        dal.set_project_config(pid, project_document(config), connection=conn)
         # The project direction must also drive upload, list and worker dispatch.
-        from ..db import get_pool
-
-        with get_pool().connection() as conn:
-            conn.execute(
-                "UPDATE projects SET source_lang=%s, target_lang=%s WHERE id=%s",
-                (config.source_lang, config.target_lang, pid),
-            )
+        conn.execute(
+            "UPDATE projects SET source_lang=%s, target_lang=%s WHERE id=%s",
+            (config.source_lang, config.target_lang, pid),
+        )
         return config_response(project, config)
 
 
@@ -158,11 +161,14 @@ def workflow(pid: str) -> dict:
             add("annotation_alignment", "逐段注释定位", pipeline.get("annotation_alignment"))
         if kind in {"translation", "review"}:
             review = kind == "review" or pipeline.get("review", False)
+            autofix = params.get("autofix")
+            if autofix is None:
+                autofix = pipeline.get("review_autofix")
             add("review", "全书审校", review)
             add(
                 "review_autofix",
                 "修复审校问题并写回",
-                review and params.get("autofix", pipeline.get("review_autofix")),
+                review and autofix,
             )
             add("report", "生成报告")
     progress = None

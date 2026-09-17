@@ -1,9 +1,5 @@
 import { useI18n } from "@/i18n";
-import {
-  defaultWorkflowTemplate,
-  workflowTemplateLabel,
-  languageName,
-} from "@/i18n/labels";
+import { workflowTemplateLabel, languageName } from "@/i18n/labels";
 import { useEffect, useRef, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
@@ -24,7 +20,7 @@ export default function CreateProject() {
   const [name, setName] = useState("");
   const [source, setSource] = useState("auto");
   const [target, setTarget] = useState("zh");
-  const [template, setTemplate] = useState(defaultWorkflowTemplate);
+  const [template, setTemplate] = useState<string | null>(null);
   const [pid, setPid] = useState<string | null>(searchParams.get("project"));
   const [file, setFile] = useState<File | null>(null);
   const [prepare, setPrepare] = useState(false);
@@ -34,10 +30,14 @@ export default function CreateProject() {
     queryKey: ["capabilities"],
     queryFn: api.capabilities,
   });
-  const { data: templates } = useQuery({
+  const { data: templates, error: templatesError } = useQuery({
     queryKey: ["templates"],
     queryFn: api.listTemplates,
   });
+  const selectedTemplate =
+    template ??
+    templates?.find((value) => value.recommended)?.name ??
+    templates?.[0]?.name;
   const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid!),
@@ -94,7 +94,7 @@ export default function CreateProject() {
           name: name.trim(),
           source_lang: source,
           target_lang: target,
-          strategy: { template },
+          strategy: selectedTemplate ? { template: selectedTemplate } : {},
           prepare: !subtitle && prepare,
           pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
         },
@@ -133,6 +133,7 @@ export default function CreateProject() {
         <ErrorNotice
           error={
             capsError ||
+            templatesError ||
             projectError ||
             create.error ||
             resume.error ||
@@ -217,7 +218,7 @@ export default function CreateProject() {
               </Label>
               <Select
                 id="workflow-template"
-                value={template}
+                value={selectedTemplate || ""}
                 disabled={locked}
                 onChange={(e) => setTemplate(e.target.value)}
                 className="mt-2"

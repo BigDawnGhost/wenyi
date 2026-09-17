@@ -1,4 +1,11 @@
 -- Fresh-deployment PostgreSQL schema. No legacy-state migrations are provided.
+CREATE TABLE IF NOT EXISTS application_settings (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    document JSONB NOT NULL,
+    default_template TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

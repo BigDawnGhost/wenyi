@@ -1,6 +1,6 @@
 import { useI18n } from "@/i18n";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, isProjectBusy, type ProjectConfig } from "@/lib/api";
@@ -8,23 +8,17 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Select, Textarea } from "@/components/ui/form";
+import { Textarea } from "@/components/ui/form";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 
-import { ProviderSettings } from "./ProviderSettings";
+import { ModelSelection } from "./ModelSelection";
+import { WorkflowSettings } from "./WorkflowSettings";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
 
 export default function SettingsPage() {
   const { t: tr } = useI18n();
-  const PIPELINE: [string, string][] = [
-    ["book_understanding", tr("settings.bookUnderstanding")],
-    ["polish", tr("settings.polishing")],
-    ["review", tr("common.wholeBookReview")],
-    ["review_autofix", tr("settings.applyAutofixesToTheSavedTranslation")],
-  ];
-
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
@@ -110,11 +104,18 @@ export default function SettingsPage() {
         )}
         <Card>
           <CardContent className="p-5 space-y-4">
-            <ProviderSettings
-              config={effective}
+            <h2 className="font-medium">{tr("settings.modelSetup")}</h2>
+            <p className="text-sm text-muted-foreground">
+              {tr("settings.projectModelHelp")}{" "}
+              <Link to="/settings" className="underline underline-offset-4">
+                {tr("settings.manageGlobalModels")}
+              </Link>
+            </p>
+            <ModelSelection
+              llm={section(effective, "llm")}
+              models={config.data?.registered_models || {}}
+              operations={caps?.operations}
               disabled={formDisabled}
-              error={configurationError}
-              kinds={caps?.providers || []}
               onChange={(llm) => {
                 const next = { ...effective, llm };
                 setEffective(next);
@@ -127,159 +128,14 @@ export default function SettingsPage() {
                 {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
               </p>
             )}
-            <fieldset
+            <WorkflowSettings
+              config={effective}
               disabled={formDisabled}
-              className="space-y-4 disabled:opacity-60"
-            >
-              {!subtitles && (
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {PIPELINE.map(([key, label]) => (
-                    <label
-                      key={key}
-                      className="flex gap-2 items-center text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={Boolean(section(effective, "pipeline")[key])}
-                        onChange={(e) =>
-                          setField("pipeline", key, e.target.checked)
-                        }
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              )}
-              {subtitles && (
-                <p className="text-sm text-muted-foreground">
-                  {tr("settings.subtitlesUseASeparateWorkflowWithoutBook")}
-                </p>
-              )}
-              <Disclosure
-                title={tr("settings.performance")}
-                error={configurationError}
-                summary={tr("settings.performanceSummary", {
-                  tokens: Number(
-                    section(effective, "segment").max_tokens_per_batch ?? 1800,
-                  ),
-                })}
-              >
-                {!subtitles && (
-                  <label className="flex gap-2 items-center text-sm">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(
-                        section(effective, "pipeline").annotation_alignment,
-                      )}
-                      onChange={(e) =>
-                        setField(
-                          "pipeline",
-                          "annotation_alignment",
-                          e.target.checked,
-                        )
-                      }
-                    />
-                    {tr("settings.paragraphAnnotationAlignment")}
-                  </label>
-                )}
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="batch-tokens">
-                      {tr("settings.tokensPerBatch")}
-                    </Label>
-                    <Input
-                      id="batch-tokens"
-                      type="number"
-                      min={1}
-                      value={Number(
-                        section(effective, "segment").max_tokens_per_batch ??
-                          1800,
-                      )}
-                      onChange={(e) =>
-                        setField(
-                          "segment",
-                          "max_tokens_per_batch",
-                          Number(e.target.value),
-                        )
-                      }
-                      className="mt-2"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="segment-tokens">
-                      {tr("settings.tokensPerParagraph")}
-                    </Label>
-                    <Input
-                      id="segment-tokens"
-                      type="number"
-                      min={1}
-                      value={Number(
-                        section(effective, "segment").max_tokens_per_segment ??
-                          1200,
-                      )}
-                      onChange={(e) =>
-                        setField(
-                          "segment",
-                          "max_tokens_per_segment",
-                          Number(e.target.value),
-                        )
-                      }
-                      className="mt-2"
-                    />
-                  </div>
-                  {!subtitles && (
-                    <div>
-                      <Label htmlFor="review-concurrency">
-                        {tr("settings.reviewConcurrency")}
-                      </Label>
-                      <Input
-                        id="review-concurrency"
-                        type="number"
-                        min={1}
-                        value={Number(
-                          section(effective, "pipeline").review_concurrency ??
-                            4,
-                        )}
-                        onChange={(e) =>
-                          setField(
-                            "pipeline",
-                            "review_concurrency",
-                            Number(e.target.value),
-                          )
-                        }
-                        className="mt-2"
-                      />
-                    </div>
-                  )}
-                  {project?.fmt === "pdf" && (
-                    <div>
-                      <Label htmlFor="pdf-backend">
-                        {tr("settings.pdfParser")}
-                      </Label>
-                      <Select
-                        id="pdf-backend"
-                        value={String(
-                          section(effective, "pipeline").pdf_backend ||
-                            "mineru",
-                        )}
-                        onChange={(e) =>
-                          setField("pipeline", "pdf_backend", e.target.value)
-                        }
-                        className="mt-2"
-                      >
-                        {(caps?.pdf?.backends || ["mineru", "babeldoc"]).map(
-                          (s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ),
-                        )}
-                      </Select>
-                    </div>
-                  )}
-                </div>
-              </Disclosure>
-            </fieldset>
+              error={configurationError}
+              subtitles={subtitles}
+              pdf={project?.fmt === "pdf"}
+              onField={setField}
+            />
             <Disclosure
               title={tr("settings.advancedYamlConfiguration")}
               summary={tr(
@@ -288,7 +144,7 @@ export default function SettingsPage() {
               error={configurationError}
             >
               <p className="text-xs text-muted-foreground mt-3">
-                {tr("settings.useServerEnvironmentVariableNamesForApi")}
+                {tr("settings.projectYamlHelp")}
               </p>
               <Textarea
                 aria-label={tr("settings.advancedYamlConfiguration")}
