@@ -3,6 +3,7 @@ name = "wenyi"
 version = "0.2.0"
 description = "文译（Wenyi）：基于 AI 的长篇小说翻译平台 — monorepo 根"
 requires-python = ">=3.10"
+dependencies = ["wenyi-cli"]
 
 [tool.uv.workspace]
 members = ["packages/core", "packages/cli", "apps/api"]

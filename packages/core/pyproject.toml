@@ -1,6 +1,6 @@
 [project]
 name = "wenyi-core"
-version = "0.2.0"
+dynamic = ["version"]
 description = "文译翻译内核：多 Agent 协同长篇小说翻译（多语言互译），存储/事件抽象化"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,8 +24,14 @@ pdf-output = ["weasyprint>=69.0"]
 pdf-output-lite = ["fpdf2>=2.8.5"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["wenyi_core"]

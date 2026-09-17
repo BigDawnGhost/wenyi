@@ -2539,6 +2539,9 @@ wheels = [
 name = "wenyi"
 version = "0.2.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "wenyi-cli" },
+]
 
 [package.optional-dependencies]
 pdf-output = [
@@ -2559,6 +2562,7 @@ dev = [
 requires-dist = [
     { name = "fpdf2", marker = "extra == 'pdf-output-lite'", specifier = ">=2.8.5" },
     { name = "weasyprint", marker = "extra == 'pdf-output'", specifier = ">=69.0" },
+    { name = "wenyi-cli", editable = "packages/cli" },
 ]
 provides-extras = ["pdf-output", "pdf-output-lite"]
 
@@ -2598,7 +2602,6 @@ requires-dist = [
 
 [[package]]
 name = "wenyi-cli"
-version = "0.2.0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "rich" },
@@ -2615,7 +2618,6 @@ requires-dist = [
 
 [[package]]
 name = "wenyi-core"
-version = "0.2.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "beautifulsoup4" },

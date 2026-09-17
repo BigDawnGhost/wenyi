@@ -15,6 +15,11 @@ uv run trans-novel --version
 uv run trans-novel translate book.epub
 ```
 
+From the repository root, `uv sync` installs the local CLI (`wenyi-cli`) and translation
+engine (`wenyi-core`). The command remains `trans-novel`; `python -m wenyi_cli` is the
+module entry point. To develop the complete Python workspace, including the Web API,
+use `uv sync --locked --all-packages --group dev`.
+
 The displayed version is generated from the repository's Git tags. Tagged builds show the
 release version; development builds include their commit distance and hash.
 
