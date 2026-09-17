@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { projectStatusLabel } from "@/i18n/labels";
+import { statusLabel } from "@/i18n/status";
 import { api, isProjectBusy } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Input, Label, Select } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { ChapterProofreading } from "./ChapterProofreading";
 
@@ -24,6 +26,18 @@ export default function ProofreadingPage() {
     enabled: !!project.data && !subtitle,
     refetchInterval: 3000,
   });
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const filtered = chapters.data?.filter(
+    (chapter) =>
+      (!status || chapter.status === status) &&
+      `${chapter.title} ${chapter.title_translated || ""}`
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase()),
+  );
+  const statuses = [
+    ...new Set(chapters.data?.map((chapter) => chapter.status)),
+  ];
   const busy = isProjectBusy(project.data?.status);
   if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   if (ci !== undefined) {
@@ -50,32 +64,65 @@ export default function ProofreadingPage() {
         <Card>
           <CardContent className="p-4 space-y-3">
             <h2 className="font-medium">{t("review.proofreadByChapter")}</h2>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {chapters.data?.map((chapter) => (
-                <Link
-                  key={chapter.index}
-                  className="rounded border p-3 space-y-2 hover:bg-accent"
-                  to={`/projects/${pid}/proofreading/${chapter.index}`}
+            <div className="flex flex-wrap gap-3">
+              <div className="flex-1 min-w-48 space-y-1">
+                <Label htmlFor="chapter-search">
+                  {t("proofreading.search")}
+                </Label>
+                <Input
+                  id="chapter-search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="chapter-status">
+                  {t("proofreading.filter")}
+                </Label>
+                <Select
+                  id="chapter-status"
+                  value={status}
+                  onChange={(event) => setStatus(event.target.value)}
                 >
-                  <div className="text-sm font-medium">
-                    {chapter.title_translated || chapter.title}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {t("proofreading.savedParagraphs", {
-                      done: chapter.target_word_count,
-                      total: chapter.word_count,
-                    })}
-                  </div>
-                  <Badge
-                    variant={
-                      chapter.status === "done" ? "success" : "secondary"
-                    }
-                  >
-                    {projectStatusLabel(chapter.status, t)}
-                  </Badge>
-                </Link>
-              ))}
+                  <option value="">{t("list.all")}</option>
+                  {statuses.map((code) => (
+                    <option key={code} value={code}>
+                      {statusLabel(code, t, "chapter")}
+                    </option>
+                  ))}
+                </Select>
+              </div>
             </div>
+            <ul aria-label={t("proofreading.chapterList")} className="divide-y">
+              {filtered?.map((chapter) => (
+                <li key={chapter.index}>
+                  <Link
+                    className="flex items-center justify-between gap-4 py-4 hover:bg-accent rounded"
+                    to={`/projects/${pid}/proofreading/${chapter.index}`}
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-sm font-medium break-words">
+                        {chapter.title_translated || chapter.title}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {t("proofreading.savedParagraphs", {
+                          done: chapter.target_word_count,
+                          total: chapter.word_count,
+                        })}
+                      </div>
+                    </div>
+                    <span className="shrink-0">
+                      <StatusBadge status={chapter.status} context="chapter" />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            {!!chapters.data?.length && !filtered?.length && (
+              <p className="text-sm text-muted-foreground">
+                {t("list.noMatches")}
+              </p>
+            )}
             {!chapters.data?.length && (
               <p className="text-sm text-muted-foreground">
                 {project.isPending || chapters.isFetching

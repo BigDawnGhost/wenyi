@@ -54,26 +54,3 @@ export function languageName(code: string, fallback: string, locale: Locale) {
     return fallback;
   }
 }
-
-const projectStatuses: Record<string, MessageKey> = {
-  prepared: "api.prepared",
-  reviewed: "api.reviewCompleted",
-  created: "api.created",
-  uploaded: "api.uploaded",
-  ready: "api.ready",
-  queued: "common.queued",
-  parsing: "api.parsing",
-  preparing: "api.preparing",
-  translating: "api.translating",
-  reviewing: "api.reviewingBook",
-  autofixing: "api.applyingAutofixes",
-  pausing: "api.savingAndPausing",
-  paused: "common.paused",
-  postprocessing: "api.postprocessing",
-  done: "common.completed",
-  error: "common.failed",
-};
-
-export function projectStatusLabel(status: string, t: Translator) {
-  return projectStatuses[status] ? t(projectStatuses[status]) : status;
-}

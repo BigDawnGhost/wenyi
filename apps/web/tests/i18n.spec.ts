@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { locales, createTranslator } from "../src/i18n/catalog";
+import { statusLabel, statusTone } from "../src/i18n/status";
 import { fakeApi, pid } from "./fixtures";
 
 test("locale catalogs have matching keys and interpolation parameters", () => {
@@ -245,4 +246,15 @@ test("language settings remain accessible from mobile navigation", async ({
     path: testInfo.outputPath("mobile-language-settings.png"),
     fullPage: true,
   });
+});
+
+test("status aliases share labels and tones while chapter pending retains its meaning", () => {
+  const en = createTranslator("en"),
+    zh = createTranslator("zh-CN");
+  expect(statusLabel("done", en)).toBe(statusLabel("completed", en));
+  expect(statusLabel("done", zh)).toBe("已完成");
+  expect(statusTone("failed")).toBe(statusTone("error"));
+  expect(statusLabel("pending", en)).toBe("Pending");
+  expect(statusLabel("pending", zh, "chapter")).toBe("待翻译");
+  expect(statusLabel("custom_unrecognized", en)).toBe("Unknown status");
 });

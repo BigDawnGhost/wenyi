@@ -532,6 +532,15 @@ const en = {
   "workflow.export": "Export translation",
   "workflow.subtitles": "Translate subtitles",
   "workflow.parse": "Parse source",
+  "status.awaitingTranslation": "Awaiting translation",
+  "status.unknown": "Unknown status",
+  "proofreading.chapterList": "Chapter list",
+  "proofreading.search": "Search chapters",
+  "proofreading.filter": "Filter translation status",
+  "list.all": "All",
+  "list.noMatches": "No matching results",
+  "review.searchIssues": "Search issues",
+  "review.issueDetails": "Evidence and details",
 } as const;
 
 export default en;

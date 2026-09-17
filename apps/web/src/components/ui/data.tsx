@@ -1,4 +1,5 @@
 import { useI18n, type MessageKey } from "@/i18n";
+import { statusLabel } from "@/i18n/status";
 export function ErrorNotice({ error }: { error?: unknown }) {
   if (!error) return null;
   return (
@@ -71,9 +72,7 @@ export function StructuredData({
             <StructuredData
               value={
                 key === "status" && typeof item === "string"
-                  ? STATUS_TEXT[item]
-                    ? tr(STATUS_TEXT[item])
-                    : item
+                  ? statusLabel(item, tr)
                   : item
               }
               empty="—"
@@ -85,18 +84,6 @@ export function StructuredData({
     </dl>
   );
 }
-
-const STATUS_TEXT: Record<string, MessageKey> = {
-  completed: "common.completed",
-  done: "common.completed",
-  pending: "common.pending",
-  running: "common.running",
-  interrupted: "common.interrupted",
-  failed: "common.failed",
-  error: "common.failed",
-  paused: "common.paused",
-  skipped: "data.skipped",
-};
 
 const LABELS: Record<string, MessageKey> = {
   usage: "data.modelUsage",

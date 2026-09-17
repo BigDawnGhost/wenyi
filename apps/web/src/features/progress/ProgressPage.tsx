@@ -1,4 +1,5 @@
-import { projectStatusLabel } from "@/i18n/labels";
+import { statusLabel } from "@/i18n/status";
+import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -153,9 +154,7 @@ export default function ProgressPage() {
           <Stat
             label={tr("progress.currentStatus")}
             value={
-              project
-                ? projectStatusLabel(project.status, tr)
-                : tr("progress.loading")
+              project ? statusLabel(project.status, tr) : tr("progress.loading")
             }
           />
           <Stat
@@ -318,11 +317,7 @@ function ChapterTable({
                 <td className="p-3">{c.title_translated || c.title}</td>
                 <td className="p-3">{c.word_count}</td>
                 <td className="p-3">
-                  <Badge
-                    variant={c.status === "done" ? "success" : "secondary"}
-                  >
-                    {projectStatusLabel(c.status, tr)}
-                  </Badge>
+                  <StatusBadge status={c.status} context="chapter" />
                 </td>
                 <td className="p-3">
                   {c.review_issue_count > 0 ? (

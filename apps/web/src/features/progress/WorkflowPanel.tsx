@@ -1,3 +1,4 @@
+import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { workflowStageLabel } from "@/i18n/labels";
 import { useQuery } from "@tanstack/react-query";
@@ -14,16 +15,6 @@ export function WorkflowPanel({
   msg: ProgressMessage | null;
 }) {
   const { t: tr } = useI18n();
-  const STATES: Record<string, string> = {
-    not_started: tr("workflowPanel.notStarted"),
-    queued: tr("common.queued"),
-    running: tr("common.running"),
-    paused: tr("common.paused"),
-    error: tr("common.failed"),
-    interrupted: tr("common.interrupted"),
-    done: tr("common.completed"),
-  };
-
   const TASKS: Record<string, string> = {
     parse: tr("workflowPanel.sourceParsing"),
     prepare: tr("common.preparation"),
@@ -59,7 +50,7 @@ export function WorkflowPanel({
           <>
             <div className="flex flex-wrap gap-3 text-sm">
               <strong>{TASKS[workflow.kind] || workflow.kind}</strong>
-              <span>{STATES[workflow.status] || workflow.status}</span>
+              <StatusBadge status={workflow.status} />
             </div>
             <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {workflow.stages.map((stage, index) => (

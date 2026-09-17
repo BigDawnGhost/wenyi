@@ -1,4 +1,4 @@
-import { projectStatusLabel } from "@/i18n/labels";
+import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -6,7 +6,6 @@ import { Link, PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/data";
-import { Badge } from "@/components/ui/badge";
 import { api, type Project } from "@/lib/api";
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
 
@@ -97,9 +96,7 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <div className="relative z-10 flex shrink-0 items-center gap-1 pointer-events-auto">
-                      <Badge variant="secondary">
-                        {projectStatusLabel(p.status, tr)}
-                      </Badge>
+                      <StatusBadge status={p.status} />
                       <Button
                         type="button"
                         variant="ghost"

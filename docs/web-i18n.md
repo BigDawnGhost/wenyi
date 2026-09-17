@@ -31,3 +31,14 @@ Frontend localization is managed in [`apps/web/src/i18n/`](../apps/web/src/i18n/
 
 Use complete messages for sentences containing counts or names, rather than joining
 translated fragments. Keep source/target content separate from interface messages.
+
+## Lists and status labels
+
+Chapter proofreading uses searchable rows with a translation-status filter and saved
+paragraph counts. Whole-book review shows searchable issue rows; expand each row to
+inspect its complete evidence. Translation completion does not imply manual proofreading.
+
+Status labels and badge colors are shared in `src/i18n/status.ts` and `StatusBadge`.
+Both `done` and `completed` display as “Completed”; chapter `pending` displays as
+“Awaiting translation”. Unknown codes display “Unknown status”; original codes remain
+available in raw run details. This changes presentation only, not API or stored state.

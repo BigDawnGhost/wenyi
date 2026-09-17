@@ -7,7 +7,7 @@ import { api, type ExportFormat, type PdfEngine } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Select, Label } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { cn, formatBytes } from "@/lib/utils";
@@ -271,21 +271,12 @@ export default function ExportPage() {
                     </td>
                     <td className="p-3">{formatBytes(e.size)}</td>
                     <td className="p-3">
-                      <Badge
-                        variant={
-                          e.status === "done"
-                            ? "success"
-                            : e.status === "error"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {e.status === "done"
-                          ? tr("events.completed")
-                          : e.status === "error"
-                            ? e.error || tr("export.failedCheckTheEventLog")
-                            : tr("export.generating")}
-                      </Badge>
+                      <StatusBadge status={e.status} />
+                      {e.error && (
+                        <p className="mt-1 text-sm text-destructive">
+                          {e.error}
+                        </p>
+                      )}
                     </td>
                     <td className="p-3">
                       {e.status === "done" && (

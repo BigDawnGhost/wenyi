@@ -1,4 +1,4 @@
-import { useI18n, translate as tr } from "@/i18n";
+import { useI18n } from "@/i18n";
 import { useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,7 +7,8 @@ import { api, isProjectBusy, type ReviewRun } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/StatusBadge";
+import { ReviewIssues } from "./ReviewIssues";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 
 export default function ReviewPage() {
@@ -133,9 +134,7 @@ export default function ReviewPage() {
                       ? new Date(r.created_at).toLocaleString(locale)
                       : r.id}
                   </div>
-                  <Badge variant="secondary" className="mt-2">
-                    {reviewStatus(r.status)}
-                  </Badge>
+                  <StatusBadge status={r.status} context="review" />
                 </button>
               ))}
             </CardContent>
@@ -166,7 +165,7 @@ function RunDetail({ run }: { run: ReviewRun }) {
           {tr("common.review")}
           {run.id}
         </h2>
-        <Badge variant="secondary">{reviewStatus(run.status)}</Badge>
+        <StatusBadge status={run.status} context="review" />
       </div>
       <section>
         <h3 className="font-medium mb-3">{tr("review.runSummary")}</h3>
@@ -174,8 +173,8 @@ function RunDetail({ run }: { run: ReviewRun }) {
       </section>
       <section>
         <h3 className="font-medium mb-3">{tr("review.issuesEvidence")}</h3>
-        <StructuredData
-          value={run.issues}
+        <ReviewIssues
+          issues={run.issues}
           empty={
             run.status === "completed"
               ? tr("review.noIssuesRecordedInThisReview")
@@ -212,20 +211,6 @@ function RunDetail({ run }: { run: ReviewRun }) {
   );
 }
 
-function reviewStatus(status: string) {
-  return (
-    (
-      {
-        completed: tr("common.completed"),
-        running: tr("review.reviewing"),
-        interrupted: tr("common.interrupted"),
-        error: tr("common.failed"),
-        failed: tr("common.failed"),
-        pending: tr("common.pending"),
-      } as Record<string, string>
-    )[status] || status
-  );
-}
 function ReviewSummary({ summary }: { summary: Record<string, unknown> }) {
   const { t: tr } = useI18n();
   const keys: [string, string][] = [
@@ -238,16 +223,16 @@ function ReviewSummary({ summary }: { summary: Record<string, unknown> }) {
   ];
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-3">
+      <dl className="flex flex-wrap gap-x-6 gap-y-3 border-y py-3">
         {keys.map(([key, label]) => (
-          <div key={key} className="rounded border p-3">
-            <div className="text-xs text-muted-foreground">{label}</div>
-            <div className="font-semibold mt-1">
+          <div key={key} className="flex items-baseline gap-2">
+            <dt className="text-xs text-muted-foreground">{label}</dt>
+            <dd className="font-semibold">
               {typeof summary[key] === "number" ? String(summary[key]) : "—"}
-            </div>
+            </dd>
           </div>
         ))}
-      </div>
+      </dl>
       <details>
         <summary className="cursor-pointer text-xs text-muted-foreground">
           {tr("review.viewAllRunCounts")}

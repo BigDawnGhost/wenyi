@@ -514,6 +514,15 @@ const zhCN = {
   "workflow.export": "导出译文",
   "workflow.subtitles": "字幕翻译",
   "workflow.parse": "解析原文",
+  "status.awaitingTranslation": "待翻译",
+  "status.unknown": "未知状态",
+  "proofreading.chapterList": "章节列表",
+  "proofreading.search": "搜索章节",
+  "proofreading.filter": "翻译状态筛选",
+  "list.all": "全部",
+  "list.noMatches": "没有匹配的结果",
+  "review.searchIssues": "搜索审校问题",
+  "review.issueDetails": "证据与详情",
 } satisfies Messages;
 
 export default zhCN;
