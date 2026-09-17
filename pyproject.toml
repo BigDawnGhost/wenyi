@@ -40,6 +40,7 @@ only-include = ["pyproject.toml"]
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13", # Starlette's TestClient HTTP transport.
     "pre-commit>=3.7",
     "ruff>=0.6",
     "pytest>=8",
@@ -56,3 +57,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "apps/api/tests"]
 pythonpath = ["packages/core", "packages/cli"]
+filterwarnings = [
+    "error:Using `httpx` with `starlette.testclient` is deprecated",
+]
