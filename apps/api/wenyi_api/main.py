@@ -11,7 +11,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 
 from . import __version__
 from .config import settings
@@ -50,15 +49,6 @@ def create_app() -> FastAPI:
         description="Web API and background workers for Wenyi's translation engine.",
     )
 
-    # Allow a separate frontend origin during development; restrict origins in production.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=os.environ.get("WENYI_CORS_ORIGINS", "*").split(","),
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     # Optional HTTP token authentication; health checks are public and WebSocket auth is separate.
     if settings.api_token:
         from fastapi import Request
@@ -80,6 +70,15 @@ def create_app() -> FastAPI:
 
         app.add_middleware(_TokenMiddleware)
 
+    # CORS wraps authentication so preflights and error responses reach browser clients.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=os.environ.get("WENYI_CORS_ORIGINS", "*").split(","),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.include_router(health.router)
     app.include_router(strategies.router)
     app.include_router(projects.router)
@@ -99,19 +98,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
-
-def _custom_openapi():  # Customize the title exposed by the OpenAPI schema.
-    if app.openapi_schema:
-        return app.openapi_schema
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    )
-    app.openapi_schema = schema
-    return schema
-
-
-app.openapi = _custom_openapi  # type: ignore[assignment]

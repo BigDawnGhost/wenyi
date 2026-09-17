@@ -22,12 +22,11 @@ def test_new_app_uses_package_version(monkeypatch):
     assert application.openapi()["info"]["version"] == application.version
 
 
-def test_custom_openapi_uses_application_metadata(monkeypatch):
+def test_openapi_uses_application_metadata():
     application = main.create_app()
     application.title = "Wenyi API metadata fixture"
     application.version = "0.9.1"
-    monkeypatch.setattr(main, "app", application)
-    info = main._custom_openapi()["info"]
+    info = application.openapi()["info"]
     assert info["title"] == application.title
     assert info["version"] == application.version
     assert info["description"] == application.description
