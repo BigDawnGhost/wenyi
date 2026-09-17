@@ -53,7 +53,8 @@ jobs:
         run: |
           uv sync --locked --no-dev --python ${{ matrix.python-version }}
           uv run --no-sync python -m wenyi_cli --version
-          uv run --no-sync trans-novel --help
+          uv run --no-sync wenyi --version
+          uv run --no-sync wenyi --help
       - name: Install workspace
         run: uv sync --locked --all-packages --group dev --python ${{ matrix.python-version }}
       - name: Install real PDF rendering regression dependencies

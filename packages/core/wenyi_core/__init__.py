@@ -1,1 +1,1 @@
-"""trans-novel: multilingual long-form fiction translation with cooperating agents."""
+"""Wenyi: multilingual long-form fiction translation with cooperating agents."""

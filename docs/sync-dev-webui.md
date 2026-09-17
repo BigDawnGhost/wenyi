@@ -20,7 +20,7 @@ Deployment uses a fresh database schema. There is no automatic migration for leg
 | SRT | core `srt`; timeline, batch cache, pause usage, resume without double billing, preserving manual subtitle edits. |
 | Web PostgreSQL | storage-port injection; transaction rollback, project locks, MVCC snapshots, full workflows, and no local state-copy tests. |
 | Web execution and export | separate workflow/export queues; async parse, model config, review history, subtitle editing, human proofreading, export download; durable job identity and an independent recovery loop after abnormal exits. |
-| CLI package | `packages/cli/wenyi_cli`; `trans-novel` and `python -m wenyi_cli`, with core independent from terminal modules. |
+| CLI package | `packages/cli/wenyi_cli`; `wenyi` and `python -m wenyi_cli`, with core independent from terminal modules. |
 
 Standalone consistency QA, back-translation sampling, the old severe-issue repair option, and the old model-tier/character-budget fields were removed. Punctuation normalization lives under output settings and only affects export copies.
 

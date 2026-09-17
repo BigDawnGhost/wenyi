@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-trans-novel = "wenyi_cli.main:main"
+wenyi = "wenyi_cli.main:main"
 
 [tool.uv.sources]
 wenyi-core = { workspace = true }

@@ -26,7 +26,7 @@ language:
 | `fr`、`de`、`es`、`it` | 法语、德语、西班牙语、意大利语 |
 | `pt`、`pt-BR`、`pt-PT`、`ru` | 葡萄牙语、巴西/欧洲葡萄牙语、俄语 |
 
-运行 `uv run trans-novel languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
+运行 `uv run wenyi languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
 
 每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
@@ -124,10 +124,10 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 ### 预览、限额与显式故障切换
 
 ```bash
-uv run trans-novel models list
-uv run trans-novel models list --json
-uv run trans-novel models explain --operation review.verify
-uv run trans-novel models check --for translate
+uv run wenyi models list
+uv run wenyi models list --json
+uv run wenyi models explain --operation review.verify
+uv run wenyi models check --for translate
 ```
 
 `list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
@@ -175,8 +175,8 @@ llm:
 旧配置和非空旧用量账本需要显式转换：
 
 ```bash
-uv run trans-novel models migrate-config old-config.yaml --out routed-config.yaml
-uv run trans-novel models migrate-usage state/BOOK/targets/zh
+uv run wenyi models migrate-config old-config.yaml --out routed-config.yaml
+uv run wenyi models migrate-usage state/BOOK/targets/zh
 ```
 
 配置转换器生成独立文件；账本转换器逐份备份，保留总量及旧档位/阶段归属，将未知提供商和模型历史标记为 `unknown`，不会处理原书。转换账本前应停止该目标的运行任务。Review 目录保留。`pipeline.review_agent_tier` 由取证、仲裁、修订的独立路由取代。
@@ -209,7 +209,7 @@ pipeline:
   babeldoc_timeout: 600
 ```
 
-- `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `trans-novel review`。
+- `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `wenyi review`。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。翻译与润色还会内置附带同章下一条原文片段作为只读参考，此值为零时也保留后文参考；它不改变输出段数，也不写入滚动译文上下文。详见[全书理解与上下文](pipeline.md#全书理解与上下文)。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。
@@ -234,7 +234,7 @@ pipeline:
 `translate` 命令的 `--polish`、`--no-polish`、`--review`、`--no-review`
 会覆盖对应配置。
 
-可使用 `trans-novel review INPUT` 独立执行最终审校。每次调用都会从头审查完整
+可使用 `wenyi review INPUT` 独立执行最终审校。每次调用都会从头审查完整
 译文。默认会在影子循环后发布折叠后的修订；可用 `--no-autofix` 保持本次只读，
 或在配置关闭时用 `--autofix` 强制发布。Autofix 会先应用折叠后的 changes，再让最终未解决
 issues 复用同一套 Agent Loop 和 Fixer，不会另建一套 Autofix loop 或 prompt。

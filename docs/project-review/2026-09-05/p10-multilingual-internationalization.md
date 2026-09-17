@@ -15,8 +15,8 @@ language:
 ```
 
 ```bash
-uv run trans-novel languages
-uv run trans-novel --config config.yaml translate book.epub --bilingual
+uv run wenyi languages
+uv run wenyi --config config.yaml translate book.epub --bilingual
 ```
 
 The first command lists built-in languages without an API key. The second translates directly through your configured provider, producing `output/book.en.epub` and `output/book.en-bi.epub`. Japanese-to-English uses `source: ja`, `target: en`; English-to-Japanese uses `source: en`, `target: ja`. Each invocation selects one direction and takes a file in the corresponding source language, without a Chinese pivot. Subtitles retain their separate lightweight path behind the same `translate` command.

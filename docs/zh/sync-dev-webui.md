@@ -20,7 +20,7 @@
 | SRT | core `srt`；时间轴、批次缓存、暂停用量、恢复不重复计费、人工字幕编辑保留。 |
 | Web PostgreSQL | 存储接口注入；事务回滚、项目锁、MVCC 快照、完整工作流和无本地状态副本测试。 |
 | Web 执行与导出 | 工作流/导出分队列；异步解析、模型配置、Review 历史、字幕编辑、人工校阅、导出下载；持久任务身份与独立恢复循环处理异常退出。 |
-| CLI 分包 | `packages/cli/wenyi_cli`；`trans-novel` 和 `python -m wenyi_cli`，核心不依赖终端模块。 |
+| CLI 分包 | `packages/cli/wenyi_cli`；`wenyi` 和 `python -m wenyi_cli`，核心不依赖终端模块。 |
 
 已删除独立一致性 QA、回译抽检、旧严重问题修复选项和旧模型档位/字符预算字段。标点规范化位于输出配置，仅操作导出副本。
 

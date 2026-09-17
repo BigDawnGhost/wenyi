@@ -15,8 +15,8 @@ language:
 ```
 
 ```bash
-uv run trans-novel languages
-uv run trans-novel --config config.yaml translate book.epub --bilingual
+uv run wenyi languages
+uv run wenyi --config config.yaml translate book.epub --bilingual
 ```
 
 第一条命令列出内置语言，不需要 API Key；第二条使用已有 provider 直接中译英，生成 `output/book.en.epub` 和 `output/book.en-bi.epub`。日译英改为 `source: ja`、`target: en`，英译日改为 `source: en`、`target: ja`。每次选择一个方向，以相应语言的文件为输入，不经过中文中转。字幕仍由同一 `translate` 命令分流到独立轻量流程。

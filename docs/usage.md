@@ -11,14 +11,18 @@ Running from source requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync
 export DEEPSEEK_API_KEY=sk-...
-uv run trans-novel --version
-uv run trans-novel translate book.epub
+uv run wenyi --version
+uv run wenyi translate book.epub
 ```
 
 From the repository root, `uv sync` installs the local CLI (`wenyi-cli`) and translation
-engine (`wenyi-core`). The command remains `trans-novel`; `python -m wenyi_cli` is the
+engine (`wenyi-core`). The command is `wenyi`; `python -m wenyi_cli` is the
 module entry point. To develop the complete Python workspace, including the Web API,
 use `uv sync --locked --all-packages --group dev`.
+
+When upgrading from a checkout that used `trans-novel`, run `uv sync --locked` to
+refresh the installed command, then use `uv run wenyi ...`. The old command is no
+longer installed.
 
 The displayed version is generated from the repository's Git tags. Tagged builds show the
 release version; development builds include their commit distance and hash.
@@ -31,16 +35,16 @@ Whenever the program starts, it checks for `config.yaml` in the current director
 ## Inspect model routing
 
 ```bash
-uv run trans-novel models list
-uv run trans-novel models explain --operation review.fix
-uv run trans-novel models check --for translate
+uv run wenyi models list
+uv run wenyi models explain --operation review.fix
+uv run wenyi models check --for translate
 ```
 
 These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion, budgets and `models compare`.
 
 ## Multilingual translation (experimental)
 
-Run `uv run trans-novel languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:
+Run `uv run wenyi languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:
 
 ```yaml
 language:
@@ -49,7 +53,7 @@ language:
 ```
 
 ```bash
-uv run trans-novel --config config.yaml translate book.epub --bilingual
+uv run wenyi --config config.yaml translate book.epub --bilingual
 ```
 
 Outputs are `output/book.en.epub` and `output/book.en-bi.epub`. For Japanese-to-English use `source: ja`, `target: en`; for English-to-Japanese use `source: en`, `target: ja`. A reverse run takes a file in the corresponding source language; each run selects one direction. Explicit `--out` names and their `-bi` derivatives retain their existing behavior.
@@ -156,7 +160,7 @@ The first MinerU PDF import requires `MINERU_API_KEY`:
 
 ```bash
 export MINERU_API_KEY=...
-uv run trans-novel translate book.pdf
+uv run wenyi translate book.pdf
 ```
 
 MinerU's converted HTML is saved at
@@ -171,7 +175,7 @@ WeasyPrint is the default PDF engine. Install its optional dependency and omit
 
 ```bash
 uv sync --extra pdf-output
-uv run trans-novel assemble book.html --format pdf
+uv run wenyi assemble book.html --format pdf
 ```
 
 For a lightweight cross-platform engine without system rendering libraries,
@@ -179,7 +183,7 @@ use `fpdf2`:
 
 ```bash
 uv sync --extra pdf-output-lite
-uv run trans-novel assemble book.html --format pdf --pdf-engine fpdf2
+uv run wenyi assemble book.html --format pdf --pdf-engine fpdf2
 ```
 
 `fpdf2` supports basic layout and images, but only a limited HTML/CSS subset.
@@ -212,9 +216,9 @@ TTC font file. This option also works on Windows.
 - Default: `output/<stem>.zh.docx` (Navigation pane via heading outline). Override with `--format epub` (etc.).
 
 ```bash
-uv run trans-novel translate book.docx
-uv run trans-novel translate book.docx --bilingual
-uv run trans-novel translate book.docx --format epub
+uv run wenyi translate book.docx
+uv run wenyi translate book.docx --bilingual
+uv run wenyi translate book.docx --format epub
 ```
 
 ## SRT subtitles
@@ -228,9 +232,9 @@ lighter than the book pipeline:
 - monolingual `output/<stem>.zh.srt` by default; add `--bilingual` for `.zh-bi.srt`.
 
 ```bash
-uv run trans-novel translate movie.srt
-uv run trans-novel translate movie.srt --bilingual
-uv run trans-novel translate movie.srt --no-mono --bilingual
+uv run wenyi translate movie.srt
+uv run wenyi translate movie.srt --bilingual
+uv run wenyi translate movie.srt --no-mono --bilingual
 ```
 
 Resume by running the same source file again. Cached batches under
@@ -265,7 +269,7 @@ the CLI prints the last run's duration and cumulative execution time. Each targe
 timestamps, durations and completion statuses. Repeating a command adds only that
 invocation's execution time, excluding downtime between runs; nested pipeline stages
 are counted once. Separately launched commands contribute their own durations, even
-when they overlap. Book timing can also be inspected with `trans-novel status book.epub`;
+when they overlap. Book timing can also be inspected with `wenyi status book.epub`;
 inspection and report regeneration do not add time.
 
 Once book state has been initialized or validated, failures and normal Ctrl+C exits
@@ -280,20 +284,20 @@ Manifests bind input content with `source_sha256`. A different file with the sam
 
 ```bash
 # Run the complete workflow, translate one chapter, or prepare without translating
-uv run trans-novel translate book.epub
-uv run trans-novel translate book.epub --chapter 3
-uv run trans-novel translate book.epub --format txt
-uv run trans-novel prepare book.epub
-uv run trans-novel translate book.pdf
-uv run trans-novel translate movie.srt
+uv run wenyi translate book.epub
+uv run wenyi translate book.epub --chapter 3
+uv run wenyi translate book.epub --format txt
+uv run wenyi prepare book.epub
+uv run wenyi translate book.pdf
+uv run wenyi translate movie.srt
 
 # Override polishing and final review settings
-uv run trans-novel translate book.epub --polish --review
-uv run trans-novel translate book.epub --no-polish --no-review
+uv run wenyi translate book.epub --polish --review
+uv run wenyi translate book.epub --no-polish --no-review
 
 # Produce both editions, or only the bilingual edition
-uv run trans-novel translate book.epub --bilingual
-uv run trans-novel translate book.epub --no-mono --bilingual
+uv run wenyi translate book.epub --bilingual
+uv run wenyi translate book.epub --no-mono --bilingual
 ```
 
 `prepare` parses the book, detects its language, generates the style guide and initial glossary, and completes the configured whole-book prescan without translating any body text. Run `translate` with the same source file to continue from the saved state.
@@ -303,8 +307,8 @@ uv run trans-novel translate book.epub --no-mono --bilingual
 Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:
 
 ```bash
-uv run trans-novel translate book.epub
-uv run trans-novel status book.epub
+uv run wenyi translate book.epub
+uv run wenyi status book.epub
 ```
 
 Changing polishing settings does not automatically rerun translation batches that
@@ -317,13 +321,13 @@ intentionally want a fresh translation.
 ## Independent stages and glossary management
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
-uv run trans-novel glossary list book.epub
-uv run trans-novel glossary conflicts book.epub
-uv run trans-novel glossary resolve book.epub "source term" "chosen translation"
-uv run trans-novel report book.epub
-uv run trans-novel assemble book.epub
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
+uv run wenyi glossary list book.epub
+uv run wenyi glossary conflicts book.epub
+uv run wenyi glossary resolve book.epub "source term" "chosen translation"
+uv run wenyi report book.epub
+uv run wenyi assemble book.epub
 ```
 
 `review` checks the complete translated book using the final glossary. Its

@@ -60,8 +60,8 @@ default. Setting `pipeline.review: false` or passing `--no-review` skips it in t
 one-command workflow. Review is also available as an independent stage:
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
 ```
 
 The explicit command runs even when `pipeline.review` is disabled. Matching completed

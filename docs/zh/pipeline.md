@@ -61,8 +61,8 @@
 作为独立阶段使用：
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
 ```
 
 即使关闭 `pipeline.review`，显式调用上述命令仍会执行审校。内容、配置与术语库指纹匹配时，

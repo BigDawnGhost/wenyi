@@ -100,27 +100,27 @@ export DEEPSEEK_API_KEY=sk-...
 ### One-command translation
 
 ```bash
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 ```
 
 This parses the book, detects the source language, prescans for understanding, translates all chapters, and assembles the output. The monolingual Chinese EPUB is written to `output/book.zh.epub` by default.
 
-Multilingual translation (experimental): select a direction using `language.source` / `language.target`, such as `zh → en` or `en → ja`. Run `uv run trans-novel languages` for the list. Targets have separate state and output names. See the [usage guide](docs/usage.md#multilingual-translation-experimental).
+Multilingual translation (experimental): select a direction using `language.source` / `language.target`, such as `zh → en` or `en → ja`. Run `uv run wenyi languages` for the list. Targets have separate state and output names. See the [usage guide](docs/usage.md#multilingual-translation-experimental).
 
 ### Step-by-step workflow
 
 ```bash
 # 1. Prepare — parse, analyze, prescan (no body text translated)
-uv run trans-novel prepare book.epub
+uv run wenyi prepare book.epub
 
 # 2. Translate — resume from the prepared state
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 
 # 3. Review — independent final review against the completed glossary
-uv run trans-novel review book.epub
+uv run wenyi review book.epub
 
 # 4. Check progress
-uv run trans-novel status book.epub
+uv run wenyi status book.epub
 ```
 
 ### Interrupt and resume
@@ -128,18 +128,18 @@ uv run trans-novel status book.epub
 Every completed batch is persisted immediately. If a run is interrupted, execute the same command again:
 
 ```bash
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 ```
 
 ### Command-line overrides
 
 ```bash
-uv run trans-novel translate book.epub --polish --review          # enable polishing and final review
-uv run trans-novel translate book.epub --no-polish                # disable polishing
-uv run trans-novel translate book.epub --no-review                # skip final review
-uv run trans-novel translate book.epub --bilingual                # produce both editions
-uv run trans-novel translate book.epub --chapter 0                # translate the first chapter (indices start at 0)
-uv run trans-novel translate book.epub --format txt               # export as plain text
+uv run wenyi translate book.epub --polish --review          # enable polishing and final review
+uv run wenyi translate book.epub --no-polish                # disable polishing
+uv run wenyi translate book.epub --no-review                # skip final review
+uv run wenyi translate book.epub --bilingual                # produce both editions
+uv run wenyi translate book.epub --chapter 0                # translate the first chapter (indices start at 0)
+uv run wenyi translate book.epub --format txt               # export as plain text
 ```
 
 Final review runs by default after the complete book has been translated and the
@@ -147,8 +147,8 @@ glossary has reached its final state. Pass `--no-review` or set
 `pipeline.review: false` to skip it. You can also run Agent Review independently:
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
 ```
 
 Each Review run starts from the beginning, checks chunks concurrently, and can

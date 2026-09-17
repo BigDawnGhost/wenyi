@@ -100,28 +100,28 @@ export DEEPSEEK_API_KEY=sk-...
 ### 一键翻译
 
 ```bash
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 ```
 
 解析书籍、检测源语言、预扫全书、翻译所有章节、组装输出，一步完成。默认在 `output/` 目录生成单语中文版 `book.zh.epub`。
 
-多语言互译（实验性）：通过 `language.source` / `language.target` 选择方向，例如 `zh → en`、`en → ja`。运行 `uv run trans-novel languages` 查看列表；不同目标使用独立状态和输出文件名。详见[使用指南](usage.md#多语言互译实验性)。
+多语言互译（实验性）：通过 `language.source` / `language.target` 选择方向，例如 `zh → en`、`en → ja`。运行 `uv run wenyi languages` 查看列表；不同目标使用独立状态和输出文件名。详见[使用指南](usage.md#多语言互译实验性)。
 
 
 ### 分步工作流
 
 ```bash
 # 1. 译前准备 — 解析、分析、预扫（不翻译正文）
-uv run trans-novel prepare book.epub
+uv run wenyi prepare book.epub
 
 # 2. 翻译 — 从准备状态续跑
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 
 # 3. 独立审校 — 基于最终术语库的逐章审校
-uv run trans-novel review book.epub
+uv run wenyi review book.epub
 
 # 4. 查看进度
-uv run trans-novel status book.epub
+uv run wenyi status book.epub
 ```
 
 ### 中断续跑
@@ -129,26 +129,26 @@ uv run trans-novel status book.epub
 每个完成的批次立即持久化。中断后重新执行同一命令即可续跑：
 
 ```bash
-uv run trans-novel translate book.epub
+uv run wenyi translate book.epub
 ```
 
 ### 命令行覆盖
 
 ```bash
-uv run trans-novel translate book.epub --polish --review          # 开启润色和最终审校
-uv run trans-novel translate book.epub --no-polish                # 关闭润色
-uv run trans-novel translate book.epub --no-review                # 跳过最终审校
-uv run trans-novel translate book.epub --bilingual                # 同时生成双语版
-uv run trans-novel translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
-uv run trans-novel translate book.epub --format txt               # 导出为纯文本
+uv run wenyi translate book.epub --polish --review          # 开启润色和最终审校
+uv run wenyi translate book.epub --no-polish                # 关闭润色
+uv run wenyi translate book.epub --no-review                # 跳过最终审校
+uv run wenyi translate book.epub --bilingual                # 同时生成双语版
+uv run wenyi translate book.epub --chapter 0                # 仅翻译第一章（索引从 0 开始）
+uv run wenyi translate book.epub --format txt               # 导出为纯文本
 ```
 
 最终审校默认开启，一键流程会在全书翻译完成、术语库达到最终状态后再统一执行。
 可用 `--no-review` 或设置 `pipeline.review: false` 跳过；也可以独立运行 Agent Review：
 
 ```bash
-uv run trans-novel review book.epub
-uv run trans-novel review book.epub --autofix
+uv run wenyi review book.epub
+uv run wenyi review book.epub --autofix
 ```
 
 每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相

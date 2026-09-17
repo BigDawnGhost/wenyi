@@ -25,7 +25,7 @@ Implemented: application construction, early bootstrap, invocation context, vali
 | `commands/workflows.py` | Register translate, prepare and review; preserve SRT dispatch to its lightweight path. |
 | `commands/inspection.py`, `commands/glossary.py` | Register status/report/assemble and glossary actions respectively. |
 
-Keep `model_commands.py` as an independent existing registrar initially. Registrars receive the app and a typed context accessor; none imports `cli.py` for global state. Retain `trans-novel = trans_novel.cli:main` as the real application entry point, not as a compatibility forwarding module.
+Keep `model_commands.py` as an independent existing registrar initially. Registrars receive the app and a typed context accessor; none imports `cli.py` for global state. Retain `wenyi = wenyi_cli.main:main` as the real application entry point, not as a compatibility forwarding module.
 
 ## Context and errors
 

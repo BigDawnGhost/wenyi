@@ -99,7 +99,7 @@ def test_usage_conversion_preserves_totals_and_unknown_identities(tmp_path):
     )
     current = tracker.summary()
     old = {key: current[key] for key in ("totals", "by_tier", "by_stage")}
-    with pytest.raises(ValueError, match="conversion"):
+    with pytest.raises(ValueError, match="wenyi models migrate-usage RUN_DIR"):
         validate_usage(old)
     converted = convert_usage_ledger(old)
     assert converted["totals"] == old["totals"]

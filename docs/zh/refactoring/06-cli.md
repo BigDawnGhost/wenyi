@@ -25,7 +25,7 @@
 | `commands/workflows.py` | 注册 translate、prepare、review，SRT 仍分流到轻量路径。 |
 | `commands/inspection.py`、`commands/glossary.py` | 分别注册 status/report/assemble 和术语操作。 |
 
-第一阶段保留现有独立的 `model_commands.py` 注册器。各注册器接收 app 和有类型的上下文访问函数，不能为获取全局变量反向导入 `cli.py`。保留 `trans-novel = trans_novel.cli:main` 作为实际应用入口，不把它变成兼容转发文件。
+第一阶段保留现有独立的 `model_commands.py` 注册器。各注册器接收 app 和有类型的上下文访问函数，不能为获取全局变量反向导入 `cli.py`。保留 `wenyi = wenyi_cli.main:main` 作为实际应用入口，不把它变成兼容转发文件。
 
 ## 上下文与错误
 
