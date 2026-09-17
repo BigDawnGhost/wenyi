@@ -64,28 +64,43 @@ export function ProviderSettings({
     delete entries[id];
     onChange({ ...llm, preset: null, [group]: entries });
   };
-  const deleteButton = (group: RegistryGroup, id: string) => {
+  const entryHeader = (group: RegistryGroup, id: string) => {
     const references = registryReferences(llm, group, id);
+    const descriptionId = `references-${group}-${id}`;
     return (
-      <div className="space-y-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={references.length > 0}
-          aria-label={tr(
-            group === "providers"
-              ? "registry.deleteConnection"
-              : "registry.deleteModel",
-            { id },
-          )}
-          onClick={() => remove(group, id)}
-        >
-          <Trash2 className="h-4 w-4" />
-          {tr("registry.delete")}
-        </Button>
+      <div className="space-y-2">
+        <RegistryIdField
+          group={group}
+          id={id}
+          ids={Object.keys(object(llm[group]))}
+          onRename={onRename}
+          onPending={onPending}
+          action={
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              disabled={references.length > 0}
+              aria-describedby={references.length ? descriptionId : undefined}
+              aria-label={tr(
+                group === "providers"
+                  ? "registry.deleteConnection"
+                  : "registry.deleteModel",
+                { id },
+              )}
+              onClick={() => remove(group, id)}
+            >
+              <Trash2 className="h-4 w-4" />
+              {tr("registry.delete")}
+            </Button>
+          }
+        />
         {references.length > 0 && (
-          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          <p
+            id={descriptionId}
+            className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
+          >
             {tr("registry.usedBy", { references: references.join(", ") })}
           </p>
         )}
@@ -118,14 +133,7 @@ export function ProviderSettings({
           const provider = object(raw);
           return (
             <div key={id} className="rounded-lg border p-4 space-y-3">
-              <RegistryIdField
-                group="providers"
-                id={id}
-                ids={Object.keys(providers)}
-                onRename={onRename}
-                onPending={onPending}
-              />
-              {deleteButton("providers", id)}
+              {entryHeader("providers", id)}
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <Label htmlFor={`provider-${id}`}>
@@ -238,49 +246,41 @@ export function ProviderSettings({
         {Object.entries(models).map(([id, raw]) => {
           const model = object(raw);
           return (
-            <div
-              key={id}
-              className="grid sm:grid-cols-3 gap-3 rounded border p-3"
-            >
-              <div className="sm:col-span-3">
-                <RegistryIdField
-                  group="models"
-                  id={id}
-                  ids={Object.keys(models)}
-                  onRename={onRename}
-                  onPending={onPending}
-                />
+            <div key={id} className="rounded-lg border p-4 space-y-3">
+              {entryHeader("models", id)}
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor={`connection-${id}`}>
+                    {tr("providerSettings.apiConnection")}
+                  </Label>
+                  <Select
+                    id={`connection-${id}`}
+                    value={String(model.provider)}
+                    onChange={(e) =>
+                      update("models", id, {
+                        provider: e.target.value,
+                        options: {},
+                      })
+                    }
+                  >
+                    {Object.keys(providers).map((p) => (
+                      <option key={p}>{p}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor={`model-${id}`}>
+                    {tr("common.modelName")}
+                  </Label>
+                  <Input
+                    id={`model-${id}`}
+                    value={String(model.model || "")}
+                    onChange={(e) =>
+                      update("models", id, { model: e.target.value })
+                    }
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor={`connection-${id}`}>
-                  {tr("providerSettings.apiConnection")}
-                </Label>
-                <Select
-                  id={`connection-${id}`}
-                  value={String(model.provider)}
-                  onChange={(e) =>
-                    update("models", id, {
-                      provider: e.target.value,
-                      options: {},
-                    })
-                  }
-                >
-                  {Object.keys(providers).map((p) => (
-                    <option key={p}>{p}</option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor={`model-${id}`}>{tr("common.modelName")}</Label>
-                <Input
-                  id={`model-${id}`}
-                  value={String(model.model || "")}
-                  onChange={(e) =>
-                    update("models", id, { model: e.target.value })
-                  }
-                />
-              </div>
-              {deleteButton("models", id)}
             </div>
           );
         })}

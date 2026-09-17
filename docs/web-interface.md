@@ -112,8 +112,10 @@ model routes remain collapsed. Validation errors retain drafts and reopen advanc
 configuration. The autofix switch stays visible, and the PDF parser appears only for PDF
 projects. Operation selectors show their effective tier directly. Selecting the default
 tier removes the model override, retaining any fallbacks. In global Settings, connection
-and model IDs can be renamed; references update when saved. Unused entries have a delete
-button. Both settings pages offer **Restore defaults**, which loads a draft for saving.
+and model IDs can be renamed; references update when saved. Provider and model cards share
+a delete button in the upper-right corner, with reference details below the ID field;
+referenced entries cannot be deleted. Both settings pages offer **Restore defaults**, which
+loads a draft for saving.
 Global reset reads the server configuration file; project reset uses current shared
 defaults and the project's workflow template, preserving its languages. References from
 other projects prevent deletion, including when saving a reset draft.

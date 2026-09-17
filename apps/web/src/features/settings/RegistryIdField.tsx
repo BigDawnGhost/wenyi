@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Input, Label } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n";
@@ -8,12 +8,14 @@ export function RegistryIdField({
   group,
   id,
   ids,
+  action,
   onRename,
   onPending,
 }: {
   group: RegistryGroup;
   id: string;
   ids: string[];
+  action: ReactNode;
   onRename: (group: RegistryGroup, id: string, next: string) => void;
   onPending: (key: string, pending: boolean) => void;
 }) {
@@ -39,14 +41,20 @@ export function RegistryIdField({
   };
   return (
     <div className="space-y-2 min-w-0">
-      <Label htmlFor={`registry-${key}`}>
-        {t(
-          group === "providers" ? "registry.connectionId" : "registry.modelId",
-        )}
-      </Label>
+      <div className="flex items-center justify-between gap-3">
+        <Label htmlFor={`registry-${key}`}>
+          {t(
+            group === "providers"
+              ? "registry.connectionId"
+              : "registry.modelId",
+          )}
+        </Label>
+        {action}
+      </div>
       <div className="flex gap-2">
         <Input
           id={`registry-${key}`}
+          className="min-w-0"
           value={draft}
           aria-invalid={!!error}
           aria-describedby={error ? `error-${key}` : undefined}
@@ -70,6 +78,7 @@ export function RegistryIdField({
         <Button
           type="button"
           variant="outline"
+          className="shrink-0"
           disabled={draft === id}
           onClick={apply}
         >
