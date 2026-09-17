@@ -148,14 +148,17 @@ test("paused partial proofreading preserves drafts while polling and isolates ch
   );
   await page.getByLabel("Edit translation").fill("Human draft");
   await page.getByRole("button", { name: "Save translation" }).click();
-  await expect(page.getByText("Human draft", { exact: true })).toBeVisible();
+  // Saving also refreshes chapter data before the editor closes.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const savedTranslation = page
+    .locator("#paragraph-12")
+    .getByTestId("translation-text");
+  await expect(savedTranslation).toHaveText("Human draft");
   expect(edit).toEqual({
     target: "Human draft",
     expected_target: "Updated stored translation",
   });
-  await page
-    .getByText("Human draft", { exact: true })
-    .click({ button: "right" });
+  await savedTranslation.click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Edit translation", exact: true })
     .click();
