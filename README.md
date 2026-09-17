@@ -32,6 +32,7 @@ Whole-book understanding · Consistent terminology · Evidence-based review
 
 - [Why Wenyi](#why-wenyi)
 - [Core features](#core-features)
+- [Interface preview](#interface-preview)
 - [Quick start](#quick-start)
 - [Supported formats](#supported-formats)
 - [Translation pipeline](#translation-pipeline)
@@ -65,7 +66,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 
 ## Core features
 
-- **Web workspace** — English and Chinese interfaces, live translation progress, paragraph proofreading with revision history, and whole-book review with evidence and publication results. See the [interface guide](docs/web-interface.md).
+- **Web workspace** — English and Chinese interfaces, live translation progress, paragraph proofreading with revision history, and whole-book review with evidence and publication results.
 - **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
 - **Multi-stage quality** — optional polishing (strong model) and an evidence-driven whole-book AI review
@@ -73,6 +74,24 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints; keep three convenient tiers or select models per operation, mix connections, and share request limits. See [model routing](docs/configuration.md#models-and-operation-routing).
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
 - **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support
+
+---
+
+## Interface preview
+
+Track translation progress, usage, and elapsed time, then proofread paragraphs alongside the source. See the [deployment guide](docs/web.md). Screenshots show the Chinese interface; English is available in Settings.
+
+<p align="center">
+  <img src="docs/images/web-translation-overview.png" alt="Translation overview: usage by step, cache hit rates, and run durations." width="960">
+  <br>
+  <sub>Translation overview: usage by step, cache hit rates, and run durations.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/web-proofreading.png" alt="Manual proofreading: compare source and translation; right-click to edit, inspect revisions, or copy text." width="960">
+  <br>
+  <sub>Manual proofreading: compare source and translation; right-click to edit, inspect revisions, or copy text.</sub>
+</p>
 
 ---
 
@@ -184,41 +203,7 @@ internal records are written under `state/<book>/targets/<target-language>/revie
 
 ## Translation pipeline
 
-```mermaid
-flowchart TD
-    A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Analyze style and seed the glossary]
-    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
-    D --> E
-
-    subgraph T[Translate chapter by chapter]
-        E[Inject context and translate a batch]
-        E --> F[Polish and persist translations]
-        F --> FA[Immediately align annotated EPUB paragraphs<br/>Sequential; skipped when disabled or absent]
-        FA --> G[Extract terms and refresh the glossary]
-        G --> H{More batches?}
-        H -- Yes --> E
-        H -- No --> IB[Run chapter-level fallback term extraction]
-        IB --> J[Persist the final chapter]
-    end
-
-    J --> K[Optional parallel whole-book review<br/>Using the completed glossary]
-    K --> N{Confirmed issues and<br/>Fix budget remaining?}
-    N -- Yes --> O[Generate provisional shadow fixes<br/>From one immutable snapshot]
-    O --> K
-    N -- No or stopped --> P[Save Review issues<br/>and folded changes]
-    P --> Q{Autofix enabled?}
-    Q -- Yes --> R[Overlay changes; reuse Agent Loop and Fixer<br/>Publish final segment targets]
-    Q -- No --> X[Optionally normalize punctuation<br/>on the export-only copy]
-    R --> X
-    X --> M[Generate the report and assemble the selected output]
-```
-
-When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
-The Review Fixer receives the same style brief, book synopsis, chapter digest,
-relevant glossary subset, and nearby source/translation context used to preserve
-the book's voice. Its normal Review-loop replacements remain temporary; the
-optional Autofix publisher can later reuse it to produce formal segment targets.
+Wenyi combines whole-book understanding, batch translation, optional polishing, review, and export. See the [translation pipeline](docs/pipeline.md) for the flowchart and stage details.
 
 ---
 
@@ -227,8 +212,6 @@ optional Autofix publisher can later reuse it to produce formal segment targets.
 - [Usage guide](docs/usage.md) — installation, Windows setup, input/output, resumability, independent stages
 - [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
 - [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
-- [Web interface guide](docs/web-interface.md) — project creation, global/project settings, proofreading, review, and usage charts
-- [Web interface languages](docs/web-i18n.md) — English by default, language settings, and locale extension
 - [Web deployment](docs/web.md) — Docker/local Web stack, workers, exports, and project workflows
 - [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
 

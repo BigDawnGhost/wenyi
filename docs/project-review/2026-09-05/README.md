@@ -4,7 +4,7 @@
 
 Cleanup on 2026-09-17 removed the seven completed refactoring plans, P04 Review extraction,
 and P10's initial multilingual design. Current behavior lives in the [module map](../../architecture.md),
-[configuration](../../configuration.md), [pipeline](../../pipeline.md), and [Web interface](../../web-interface.md)
+[configuration](../../configuration.md), [pipeline](../../pipeline.md), and [Web deployment](../../web.md)
 guides. Old milestones, estimates, and claims that Web is deferred no longer describe the backlog.
 
 ## Retained proposals

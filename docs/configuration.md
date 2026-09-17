@@ -44,8 +44,7 @@ remove models still selected by other projects; change those selections first.
 Operation selectors show the effective tier directly, without a “Follow default tier”
 prefix. Selecting the operation's default tier clears its model override and preserves
 any configured fallbacks. Concurrent global saves use a revision check;
-a stale editor must reload before saving again. See [Web workflow layout](web-interface.md)
-for the settings controls and project navigation.
+a stale editor must reload before saving again.
 
 ## Languages
 

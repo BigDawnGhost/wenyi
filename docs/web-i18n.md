@@ -1,6 +1,6 @@
 # Web interface languages
 
-[简体中文](zh/web-i18n.md) · [Web deployment](web.md) · [Workflow layout](web-interface.md)
+[简体中文](zh/web-i18n.md) · [Web deployment](web.md)
 
 The Web interface defaults to English, regardless of the browser's preferred language.
 Open global **Settings → Interface language** to choose **English** or **简体中文**.
@@ -48,5 +48,5 @@ available in raw run details. This changes presentation only, not API or stored 
 
 Review handling labels and phase patterns are mapped in `src/features/review/reviewData.ts`;
 the translated messages still belong to the locale catalogs. Paragraph-history labels also
-follow the interface language, while all historical text remains unchanged. See the
-[history explanation](web-interface.md) before interpreting an absent polishing entry.
+follow the interface language, while all historical text remains unchanged. History records
+text changes, so an absent polishing entry does not establish that polishing was skipped.

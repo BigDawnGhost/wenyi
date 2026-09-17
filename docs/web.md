@@ -122,7 +122,7 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list includes unfinished chapters. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
 
-For paragraph context menus, revision-history semantics, review progress and evidence, and export retention, see the [interface guide](web-interface.md). The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
+The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
 
 The event log displays the newest entries first and refreshes every 5 seconds.
 
@@ -162,7 +162,7 @@ From `deploy/`, inspect task failures with `docker compose logs -f api worker ex
 
 ### Provider settings and workflow view
 
-Global **Settings** owns provider connections, model registration, default tiers and operation routes, and the default workflow template. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts project workflow options; it does not register providers or models. Advanced YAML supports operation-specific routes and fallbacks. See the [settings guide](web-interface.md) for reference handling and default restoration.
+Global **Settings** owns provider connections, model registration, default tiers and operation routes, and the default workflow template. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts project workflow options; it does not register providers or models. Advanced YAML supports operation-specific routes and fallbacks.
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 
@@ -170,7 +170,4 @@ In **Translation overview**, expand **Workflow details** to see **Current workfl
 
 ## Related notes
 
-- [Interface guide](web-interface.md)
 - [Interface languages](web-i18n.md)
-- [WebUI / `dev` sync notes](sync-dev-webui.md)
-- [Validation record](validation.md)

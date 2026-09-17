@@ -2,7 +2,7 @@
 
 [Index](README.md) · [简体中文](../../zh/project-review/2026-09-05/p05-ci-and-release-validation.md)
 
-Status update (2026-09-17): partially implemented. CI includes Ruff, Python 3.10/3.12 tests and package-resource checks. Retain follow-up proposals for release format coverage and documentation-consistency gates. The text below describes the historical 2026-09-05 baseline; do not reimplement completed work. See [validation records](../../validation.md) for verified scope.
+Status update (2026-09-17): partially implemented. CI includes Ruff, Python 3.10/3.12 tests and package-resource checks. Retain follow-up proposals for release format coverage and documentation-consistency gates. The text below describes the historical 2026-09-05 baseline; do not reimplement completed work. See [contribution guidelines](../../../CONTRIBUTING.md) for current validation commands; CI runs record their actual results.
 
 ## Baseline and evidence
 
@@ -31,4 +31,4 @@ Gates must catch missing dependencies/resources, lost format information, and br
 - [tests/test_pdf_support.py:1](https://github.com/BigDawnGhost/wenyi/blob/15943b97592dc38ef9712412b6fd83a41951e1ca/tests/test_pdf_support.py#L1)
 
 
-Current multilingual behavior is documented in [configuration](../../configuration.md), and Web behavior in the [interface guide](../../web-interface.md). Retained proposals require a fresh CI gap assessment.
+Current multilingual behavior is documented in [configuration](../../configuration.md), and Web behavior in the [Web guide](../../web.md). Retained proposals require a fresh CI gap assessment.
