@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..job_service import start_job
 from ..project_service import project_write, require_book, require_project, storage_for
+from ..review_presentation import review_items
 from ..schemas import (
     ChapterSegments,
     JobEnqueued,
@@ -72,7 +73,11 @@ def list_runs(pid: str) -> list[dict]:
 @router.get("/runs/{rid}", response_model=ReviewRun)
 def get_run(pid: str, rid: str) -> dict:
     require_book(require_project(pid))
-    return _review_run(storage_for(pid), rid)
+    storage = storage_for(pid)
+    with storage.state_lock():
+        run = _review_run(storage, rid)
+        run["items"] = review_items(storage, rid, run["result"], run["autofix"])
+    return run
 
 
 @router.get("/{ci}", response_model=ChapterSegments)

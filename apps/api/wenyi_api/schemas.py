@@ -249,6 +249,29 @@ class ReviewRunRequest(RequestModel):
     autofix: bool | None = None
 
 
+class ReviewLocation(BaseModel):
+    chapter: int
+    text_index: int
+    segment_index: int
+    chapter_title: str
+    source: str
+    current_target: str | None
+
+
+class ReviewItem(BaseModel):
+    id: str
+    kind: Literal["issue", "change", "publication"]
+    type: str = ""
+    detail: str = ""
+    suggestion: str = ""
+    status: Literal["pending", "fixed", "failed", "unchanged"]
+    location: ReviewLocation | None = None
+    evidence: list[ReviewLocation] = Field(default_factory=list)
+    issue: dict[str, Any] = Field(default_factory=dict)
+    changes: list[dict[str, Any]] = Field(default_factory=list)
+    publications: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ReviewRun(BaseModel):
     id: str
     review_id: str
@@ -259,6 +282,7 @@ class ReviewRun(BaseModel):
     autofix: dict[str, Any] = Field(default_factory=dict)
     summary: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)
+    items: list[ReviewItem] = Field(default_factory=list)
 
 
 class SubtitleCue(BaseModel):
@@ -359,5 +383,6 @@ class WorkflowOut(BaseModel):
     kind: str
     status: str
     run_id: str | None = None
+    review_id: str | None = None
     stages: list[WorkflowStage]
     progress: dict | None = None

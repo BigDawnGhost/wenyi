@@ -189,7 +189,11 @@ def workflow(pid: str) -> dict:
                 raw = redis.get(f"project:{pid}:progress")
             payload = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
             candidate = json.loads(payload) if isinstance(payload, str) else None
-            if candidate and candidate.get("run_id") == job.get("run_id"):
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("run_id") == job.get("run_id")
+                and candidate.get("project_id") == pid
+            ):
                 progress = candidate
         except Exception:
             # Progress is advisory: persisted job state remains available without Redis.
@@ -199,6 +203,7 @@ def workflow(pid: str) -> dict:
         "kind": kind,
         "status": job["status"] if job else "not_started",
         "run_id": job.get("run_id") if job else None,
+        "review_id": dal.job_review_id(job["id"]) if job and job.get("id") else None,
         "stages": stages,
         "progress": progress,
     }

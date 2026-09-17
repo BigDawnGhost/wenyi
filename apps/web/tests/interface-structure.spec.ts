@@ -52,6 +52,30 @@ test("review issues use searchable rows and preserve complete evidence on demand
     ],
     changes: [],
     autofix: {},
+    items: [
+      {
+        id: "issue:a",
+        kind: "issue",
+        status: "pending",
+        detail: "A missing phrase",
+        issue: {
+          evidence: { source: "Exact source evidence", status: "pending" },
+        },
+        evidence: [],
+        changes: [],
+        publications: [],
+      },
+      {
+        id: "issue:b",
+        kind: "issue",
+        status: "pending",
+        detail: "Inconsistent character name",
+        issue: { evidence: { source: "Other evidence" } },
+        evidence: [],
+        changes: [],
+        publications: [],
+      },
+    ],
   };
   await fakeApi(page, {
     [`/projects/${pid}/review/runs`]: [run],

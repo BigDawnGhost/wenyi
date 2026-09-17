@@ -7,6 +7,8 @@ export interface ProgressMessage {
   done?: number;
   total?: number;
   label?: string;
+  updated_at?: string;
+  elapsed_seconds?: number;
   payload?: Record<string, unknown>;
   project?: Record<string, unknown>;
   chapters?: unknown[];

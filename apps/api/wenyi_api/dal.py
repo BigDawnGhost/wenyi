@@ -359,6 +359,24 @@ def list_jobs(pid: str) -> list[dict[str, Any]]:
     return [item for item in (_job_row(row) for row in rows) if item is not None]
 
 
+def job_review_id(job_id: int) -> str | None:
+    """Associate a review with its execution using persisted, project-scoped events."""
+    with _conn() as conn:
+        row = conn.execute(
+            """SELECT e.payload->>'review_id' FROM events e JOIN jobs j ON j.id=%s
+               WHERE e.project_id=j.project_id AND e.created_at>=j.created_at
+                 AND e.type IN ('review_started','review_autofix_finished')
+                 AND e.payload->>'review_id' IS NOT NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM jobs next WHERE next.project_id=j.project_id
+                       AND next.kind<>'export' AND next.id>j.id
+                       AND e.created_at>=next.created_at)
+               ORDER BY e.id DESC LIMIT 1""",
+            (job_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def create_export(pid: str, fmt: str, options: dict[str, Any]) -> int:
     with _conn() as c:
         row = c.execute(

@@ -1287,6 +1287,66 @@ export interface components {
             /** Target */
             target?: string | null;
         };
+        /** ReviewItem */
+        ReviewItem: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "issue" | "change" | "publication";
+            /**
+             * Type
+             * @default
+             */
+            type: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Suggestion
+             * @default
+             */
+            suggestion: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "fixed" | "failed" | "unchanged";
+            location?: components["schemas"]["ReviewLocation"] | null;
+            /** Evidence */
+            evidence?: components["schemas"]["ReviewLocation"][];
+            /** Issue */
+            issue?: {
+                [key: string]: unknown;
+            };
+            /** Changes */
+            changes?: {
+                [key: string]: unknown;
+            }[];
+            /** Publications */
+            publications?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ReviewLocation */
+        ReviewLocation: {
+            /** Chapter */
+            chapter: number;
+            /** Text Index */
+            text_index: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Chapter Title */
+            chapter_title: string;
+            /** Source */
+            source: string;
+            /** Current Target */
+            current_target: string | null;
+        };
         /** ReviewRun */
         ReviewRun: {
             /** Id */
@@ -1317,6 +1377,8 @@ export interface components {
             result?: {
                 [key: string]: unknown;
             };
+            /** Items */
+            items?: components["schemas"]["ReviewItem"][];
         };
         /** ReviewRunRequest */
         ReviewRunRequest: {
@@ -1574,6 +1636,8 @@ export interface components {
             status: string;
             /** Run Id */
             run_id?: string | null;
+            /** Review Id */
+            review_id?: string | null;
             /** Stages */
             stages: components["schemas"]["WorkflowStage"][];
             /** Progress */

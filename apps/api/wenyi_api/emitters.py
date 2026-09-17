@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime, timezone
 
 from redis import Redis
 from wenyi_core.events import TranslationEvent, make_progress_fn
@@ -16,6 +18,7 @@ class RedisEmitter:
         self._redis = redis
         self._project_id = project_id
         self.channel = f"project:{project_id}"
+        self._started = time.monotonic()
 
     def emit(self, event: TranslationEvent) -> None:
         payload = {
@@ -26,6 +29,8 @@ class RedisEmitter:
             "total": event.total,
             "label": event.label,
             "payload": event.payload,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": max(0.0, time.monotonic() - self._started),
         }
         try:
             encoded = json.dumps(payload, ensure_ascii=False)

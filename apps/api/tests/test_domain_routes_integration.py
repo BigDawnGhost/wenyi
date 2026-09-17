@@ -71,7 +71,13 @@ def test_review_run_listing_and_sparse_segment_mapping(domain_client, tmp_path):
     root = f"/projects/{storage.project_id}"
     run = client.get(root + "/review/runs").json()[0]
     assert run["id"] == "review-2026" and run["autofix"]["records"][0]["status"] == "failed"
-    assert client.get(root + "/review/runs/review-2026").json()["result"]["status"] == "completed"
+    detail = client.get(root + "/review/runs/review-2026").json()
+    assert detail["result"]["status"] == "completed"
+    assert detail["items"][0]["location"]["segment_index"] == 18
+    assert detail["items"][0]["location"]["text_index"] == 1
+    assert detail["items"][0]["location"]["source"] == "two"
+    assert detail["items"][0]["status"] == "pending"
+    assert detail["items"][1]["status"] == "failed"
     assert client.get(root + "/review/runs/missing").status_code == 404
     chapter = client.get(root + "/chapters/0").json()
     assert chapter["review_issues"][0]["index"] == 18
@@ -316,3 +322,35 @@ def test_subtitle_preview_visible_before_first_translation(domain_client, pg_poo
     assert response.json()["total"] == 1 and response.json()["completed"] == 0
     assert response.json()["cues"][0]["source"] == "Hello"
     assert client.put(root + "/subtitles/1", json={"target": "not initialized"}).status_code == 404
+
+
+def test_workflow_review_association_is_scoped_to_job_interval(pg_storage, pg_pool, monkeypatch):
+    monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
+    pid = pg_storage.project_id
+    pg_storage.log_event("review_started", review_id="before-the-job")
+    first = dal.create_job(pid, "review", "first-review")
+    assert dal.job_review_id(first) is None
+    pg_storage.log_event("review_started", review_id="review-a")
+    assert dal.job_review_id(first) == "review-a"
+
+    # An export neither steals the review nor terminates the review task's interval.
+    dal.create_job(pid, "export", "export-between-reviews")
+    pg_storage.log_event("review_autofix_finished", review_id="review-a")
+    assert dal.job_review_id(first) == "review-a"
+    second = dal.create_job(pid, "review", "second-review")
+    assert dal.job_review_id(second) is None
+    pg_storage.log_event("review_started", review_id="review-b")
+    assert dal.job_review_id(second) == "review-b"
+    assert dal.job_review_id(first) == "review-a"
+
+    with pg_pool.connection() as conn:
+        conn.execute("INSERT INTO projects(id,name) VALUES ('other-review-project','other')")
+        conn.execute(
+            """INSERT INTO events(project_id,type,payload)
+               VALUES ('other-review-project','review_started','{"review_id":"other"}')"""
+        )
+    assert dal.job_review_id(second) == "review-b"
+    # Resuming may reuse the review directory but still belongs to the new job.
+    resumed = dal.create_job(pid, "review", "resumed-review")
+    pg_storage.log_event("review_started", review_id="review-b")
+    assert dal.job_review_id(resumed) == "review-b"

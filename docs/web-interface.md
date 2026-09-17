@@ -79,9 +79,28 @@ saved pre-polish snapshots remain visible; snapshots without known timestamps ar
 history endpoint uses stable chapter/segment IDs. Book edit requests include
 `expected_target` with the original saved value to prevent overwriting a newer translation.
 
-Whole-book review opens the latest run. Search its issue list and expand individual
-evidence, suggested changes, publication records, or full technical details. Review
-history is collapsed; selecting an older run shows a link back to the latest result.
+Whole-book review opens the latest run. While it runs, the page shows the reported
+stage, completed/total count when known, task elapsed time, and the last progress update.
+Elapsed time covers the current task invocation, including earlier translation stages;
+it is not a review-only or cross-resume total. It continues between progress messages
+while running and freezes at the last reported value when paused or finished. Missing
+totals do not produce a percentage, and unfinished results are not presented as zero issues.
+
+Search or filter the row list by handling status. Each row brings together its source
+location, evidence, suggested translation, and publication record. Only a recorded
+successful publication is labeled **Written back**; a suggested translation remains a
+recommendation. The source/translation excerpts are current chapter data; stored before/after
+texts show the recorded revision. When several revisions affect one paragraph, the
+publication index supplies the final written-back text; intermediate drafts are not
+presented as the published version. **Open in proofreading** focuses the corresponding
+paragraph using its stable segment ID, without opening an editor automatically.
+
+The history selector appears in the header when multiple runs exist, with dates and
+localized statuses. Historical results never display the current task's progress, and a
+new task preparing a review labels any older result explicitly. Empty suggestion/publication
+sections are omitted. Raw run IDs, counts and checkpoint data remain in one **Technical
+details** disclosure. Progress and the selected run are associated through persisted review
+events; a cache or socket message from another project/task is ignored.
 Autofix is controlled only in project settings and is enabled by default in the standard
 workflow. Starting review uses the saved setting, including an explicit opt-out, without
 a separate checkbox or temporary override on the review page.

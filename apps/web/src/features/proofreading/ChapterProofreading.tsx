@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { api, type ChapterSummary } from "@/lib/api";
@@ -27,6 +27,9 @@ export function ChapterProofreading({
   error: unknown;
 }) {
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const requested = searchParams.get("segment");
+  const focused = useRef<string | undefined>(undefined);
   const [editor, setEditor] = useState<{
     index: number;
     view: "edit" | "history";
@@ -45,6 +48,19 @@ export function ChapterProofreading({
   const paragraphs = segments.filter((s) => s.kind === "text");
   const saved = paragraphs.filter((s) => s.target != null).length;
   const activeSegment = segments.find((s) => s.index === editor?.index);
+  useEffect(() => {
+    if (!requested || !/^\d+$/.test(requested)) {
+      focused.current = undefined;
+      return;
+    }
+    if (focused.current === requested || !chapter.data) return;
+    const row = document.getElementById(`paragraph-${Number(requested)}`);
+    if (row) {
+      row.scrollIntoView({ block: "center" });
+      row.focus({ preventScroll: true });
+      focused.current = requested;
+    }
+  }, [requested, chapter.data]);
   return (
     <>
       <PageHeader
@@ -107,7 +123,9 @@ export function ChapterProofreading({
             {segments.map((segment) => (
               <div
                 key={segment.index}
-                className="grid md:grid-cols-2 border-b last:border-0"
+                id={`paragraph-${segment.index}`}
+                tabIndex={-1}
+                className="grid md:grid-cols-2 border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30"
               >
                 <div className="min-w-0 p-4 text-sm md:border-r">
                   <span className="mb-2 block text-xs text-muted-foreground md:hidden">

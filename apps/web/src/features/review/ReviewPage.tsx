@@ -1,20 +1,27 @@
-import { useI18n } from "@/i18n";
 import { useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, isProjectBusy, type ReviewRun } from "@/lib/api";
+import { useI18n } from "@/i18n";
+import { statusLabel } from "@/i18n/status";
+import { api, isProjectBusy } from "@/lib/api";
+import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Select } from "@/components/ui/form";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Disclosure } from "@/components/ui/disclosure";
+import { ErrorNotice } from "@/components/ui/data";
 import { ReviewIssues } from "./ReviewIssues";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { ReviewActivity } from "./ReviewActivity";
+import { reviewPhase, reviewProgress } from "./reviewData";
 
 export default function ReviewPage() {
-  const { t: tr, locale } = useI18n();
   const { pid = "" } = useParams();
+  return <ReviewWorkbench key={pid} pid={pid} />;
+}
+
+function ReviewWorkbench({ pid }: { pid: string }) {
+  const { t, locale } = useI18n();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string>();
   const project = useQuery({
@@ -36,198 +43,208 @@ export default function ReviewPage() {
     refetchInterval: 3000,
   });
   const rid = selected || runs.data?.[0]?.id;
+  const historical = !!selected && selected !== runs.data?.[0]?.id;
+  const busy = isProjectBusy(project.data?.status);
+  const workflow = useQuery({
+    queryKey: ["workflow", pid],
+    queryFn: () => api.getWorkflow(pid),
+    enabled: !subtitle,
+    refetchInterval: 3000,
+  });
+  const { msg } = useProjectProgress(subtitle ? undefined : pid);
   const run = useQuery({
     queryKey: ["review-run", pid, rid],
     queryFn: () => api.getReviewRun(pid, rid!),
     enabled: !!rid && !subtitle,
-    refetchInterval: isProjectBusy(project.data?.status) ? 3000 : false,
+    refetchInterval: !historical && busy ? 3000 : false,
   });
-  const busy = isProjectBusy(project.data?.status);
+  const progress = reviewProgress(pid, workflow.data, msg);
+  const job = workflow.data;
+  const active = job?.status === "running" || job?.status === "queued";
+  const reviewing =
+    !historical &&
+    active &&
+    (job?.kind === "review" || !!reviewPhase(progress?.label));
+  const sameRun = !!rid && job?.review_id === rid;
+  const status =
+    sameRun &&
+    run.data?.status === "running" &&
+    ["paused", "error", "interrupted"].includes(job?.status || "")
+      ? job!.status
+      : run.data?.status;
+  const previousResults = reviewing && !!run.data && !sameRun;
+  const showActivity =
+    !historical &&
+    (reviewing ||
+      (sameRun &&
+        (!!progress ||
+          ["paused", "error", "interrupted"].includes(job?.status || ""))));
   const review = useMutation({
     mutationFn: () => api.runAiReview(pid),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project", pid] });
-      qc.invalidateQueries({ queryKey: ["review-runs", pid] });
-      toast.success(tr("review.wholeBookReviewSubmitted"));
+      for (const key of ["project", "workflow", "review-runs"])
+        qc.invalidateQueries({ queryKey: [key, pid] });
+      toast.success(t("review.wholeBookReviewSubmitted"));
     },
   });
   const translated =
     !!chapters.data?.length && chapters.data.every((c) => c.status === "done");
+  const items = run.data?.items || [];
+  const date = run.data?.created_at
+    ? new Date(run.data.created_at).toLocaleString(locale)
+    : undefined;
+  const loading =
+    project.isLoading ||
+    runs.isLoading ||
+    (!!rid && run.isLoading) ||
+    workflow.isLoading;
+  const error =
+    project.error ||
+    chapters.error ||
+    runs.error ||
+    run.error ||
+    workflow.error ||
+    review.error;
   if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   return (
     <>
       <PageHeader
-        title={tr("common.wholeBookReview")}
-        subtitle={tr("review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd")}
+        title={t("common.wholeBookReview")}
+        subtitle={t("review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd")}
+        actions={
+          <>
+            {(runs.data?.length || 0) > 1 && (
+              <Select
+                aria-label={t("review.history")}
+                className="w-full sm:w-auto sm:max-w-72"
+                value={rid || ""}
+                onChange={(event) =>
+                  setSelected(
+                    event.target.value === runs.data?.[0]?.id
+                      ? undefined
+                      : event.target.value,
+                  )
+                }
+              >
+                {runs.data?.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.created_at
+                      ? new Date(entry.created_at).toLocaleString(locale)
+                      : t("review.results")}{" "}
+                    · {statusLabel(entry.status, t, "review")}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {!historical &&
+              !busy &&
+              !active &&
+              translated &&
+              !loading &&
+              !error && (
+                <Button
+                  disabled={review.isPending}
+                  onClick={() => review.mutate()}
+                >
+                  {review.isPending
+                    ? t("common.submitting")
+                    : t("review.runWholeBookReview")}
+                </Button>
+              )}
+          </>
+        }
       />
-      <PageContainer className="space-y-4">
-        <ErrorNotice
-          error={
-            project.error ||
-            chapters.error ||
-            runs.error ||
-            run.error ||
-            review.error
-          }
-        />
-        <Card>
-          <CardContent className="p-5 space-y-4">
-            <p className="text-sm text-muted-foreground">
-              {tr("review.completedResultsAreReusedWhenContentConfiguration")}
-            </p>
-            <Button
-              disabled={!translated || busy || review.isPending}
-              onClick={() => review.mutate()}
-            >
-              {review.isPending
-                ? tr("common.submitting")
-                : tr("review.runWholeBookReview")}
-            </Button>
-            {!translated && (
-              <p className="text-sm text-muted-foreground">
-                {tr("review.wholeBookReviewIsAvailableOnceAll")}
-              </p>
-            )}
-            {busy && (
-              <p role="status" className="text-sm text-muted-foreground">
-                {tr("review.aProjectTaskIsRunningReviewResults")}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Disclosure
-          title={tr("review.reviewRuns")}
-          summary={tr("review.runCount", { count: runs.data?.length || 0 })}
-          error={runs.error}
-        >
-          {!runs.data?.length && (
-            <p className="text-sm text-muted-foreground">
-              {tr("review.noReviewYet")}
-            </p>
-          )}
-          {runs.data?.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => setSelected(r.id)}
-              className={`w-full text-left rounded border p-3 text-sm ${rid === r.id ? "border-primary bg-accent" : "hover:bg-muted"}`}
-            >
-              <div className="break-all">
-                {r.created_at
-                  ? new Date(r.created_at).toLocaleString(locale)
-                  : r.id}
-              </div>
-              <StatusBadge status={r.status} context="review" />
-            </button>
-          ))}
-        </Disclosure>
-        {selected && selected !== runs.data?.[0]?.id && (
-          <div className="flex items-center gap-3 text-sm">
-            <span>{tr("review.viewingHistory")}</span>
+      <PageContainer className="space-y-5">
+        <ErrorNotice error={error} />
+        {historical && (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-muted-foreground">
+              {t("review.viewingHistory")}
+            </span>
             <Button variant="outline" onClick={() => setSelected(undefined)}>
-              {tr("review.latestResult")}
+              {t("review.latestResult")}
             </Button>
           </div>
         )}
-        <Card>
-          <CardContent className="p-5 space-y-5">
-            {run.data ? (
-              <RunDetail key={run.data.id} run={run.data} />
-            ) : (
+        {showActivity && (
+          <ReviewActivity pid={pid} status={job!.status} progress={progress} />
+        )}
+        {!historical && busy && !reviewing && !showActivity && (
+          <p className="text-sm text-muted-foreground">
+            {t("review.waitingTask")}{" "}
+            <Link
+              className="underline underline-offset-4"
+              to={`/projects/${pid}`}
+            >
+              {t("review.openOverview")}
+            </Link>
+          </p>
+        )}
+        {reviewing && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("review.generating")}
+          </p>
+        )}
+        {loading && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("progress.loading")}
+          </p>
+        )}
+        {run.data && (
+          <section className="space-y-5 rounded-lg border p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-medium">
+                {t(
+                  previousResults
+                    ? "review.previousResults"
+                    : historical
+                      ? "review.results"
+                      : "review.currentRun",
+                )}
+                {date && (
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    · {date}
+                  </span>
+                )}
+              </h2>
+              {!showActivity || previousResults ? (
+                <StatusBadge status={status || "unknown"} context="review" />
+              ) : null}
+            </div>
+            {status !== "completed" && !reviewing && (
               <p className="text-sm text-muted-foreground">
-                {tr("review.selectARunToViewResultsAn")}
+                {t("review.incomplete")}
               </p>
             )}
-          </CardContent>
-        </Card>
+            {!!items.length && (
+              <ReviewIssues key={run.data.id} pid={pid} items={items} />
+            )}
+            {!items.length &&
+              status === "completed" &&
+              (!reviewing || previousResults) && (
+                <p className="text-sm text-muted-foreground">
+                  {t("review.noIssues")}
+                </p>
+              )}
+            <details className="border-t pt-4">
+              <summary className="w-fit cursor-pointer text-xs text-muted-foreground">
+                {t("review.technicalDetails")}
+              </summary>
+              <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">
+                {JSON.stringify(run.data, null, 2)}
+              </pre>
+            </details>
+          </section>
+        )}
+        {!loading && !error && !run.data && !reviewing && (
+          <div className="space-y-2 rounded-lg border p-5 text-sm text-muted-foreground">
+            <p>{t("review.noReviewYet")}</p>
+            {!translated && (
+              <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>
+            )}
+          </div>
+        )}
       </PageContainer>
     </>
-  );
-}
-
-function RunDetail({ run }: { run: ReviewRun }) {
-  const { t: tr } = useI18n();
-  return (
-    <>
-      <div className="flex justify-between gap-3">
-        <h2 className="font-medium break-all">
-          {tr("common.review")}
-          {run.id}
-        </h2>
-        <StatusBadge status={run.status} context="review" />
-      </div>
-      <section>
-        <h3 className="font-medium mb-3">{tr("review.runSummary")}</h3>
-        <ReviewSummary summary={run.summary} />
-      </section>
-      <section>
-        <h3 className="font-medium mb-3">{tr("review.issuesEvidence")}</h3>
-        <ReviewIssues
-          issues={run.issues}
-          empty={
-            run.status === "completed"
-              ? tr("review.noIssuesRecordedInThisReview")
-              : tr("review.noIssuesRecordedYetTheRunMay")
-          }
-        />
-      </section>
-      <Disclosure
-        title={tr("common.suggestedChanges")}
-        summary={run.changes.length}
-      >
-        <StructuredData value={run.changes} />
-      </Disclosure>
-      <Disclosure title={tr("review.autofixPublicationRecords")}>
-        <StructuredData
-          value={Object.fromEntries(
-            Object.entries(run.autofix || {}).filter(
-              ([key]) => key !== "index",
-            ),
-          )}
-          empty={tr("review.noPublicationRecordsYet")}
-        />
-      </Disclosure>
-      <details>
-        <summary className="cursor-pointer text-sm text-muted-foreground">
-          {tr("review.fullRunCheckpointDetails")}
-        </summary>
-        <pre className="mt-3 text-xs whitespace-pre-wrap break-all overflow-auto max-h-96">
-          {JSON.stringify(run, null, 2)}
-        </pre>
-      </details>
-    </>
-  );
-}
-
-function ReviewSummary({ summary }: { summary: Record<string, unknown> }) {
-  const { t: tr } = useI18n();
-  const keys: [string, string][] = [
-    ["issue_count", tr("common.reviewIssues")],
-    ["change_count", tr("common.suggestedChanges")],
-    ["conflict_count", tr("review.conflicts")],
-    ["review_round_count", tr("common.reviewRounds")],
-    ["autofix_applied_segment_count", tr("review.fixedParagraphs")],
-    ["autofix_failed_issue_count", tr("review.failedFixes")],
-  ];
-  return (
-    <div className="space-y-3">
-      <dl className="flex flex-wrap gap-x-6 gap-y-3 border-y py-3">
-        {keys.map(([key, label]) => (
-          <div key={key} className="flex items-baseline gap-2">
-            <dt className="text-xs text-muted-foreground">{label}</dt>
-            <dd className="font-semibold">
-              {typeof summary[key] === "number" ? String(summary[key]) : "—"}
-            </dd>
-          </div>
-        ))}
-      </dl>
-      <details>
-        <summary className="cursor-pointer text-xs text-muted-foreground">
-          {tr("review.viewAllRunCounts")}
-        </summary>
-        <div className="mt-3">
-          <StructuredData value={summary} />
-        </div>
-      </details>
-    </div>
   );
 }
