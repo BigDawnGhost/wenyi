@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import { ErrorNotice } from "@/components/ui/data";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 
 export default function StylePage() {
+  const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [tab, setTab] = useState("style");
@@ -36,7 +38,7 @@ export default function StylePage() {
     mutationFn: (a: Record<string, unknown>) => api.updateAnalysis(pid, a),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["analysis", pid] });
-      toast.success("已保存");
+      toast.success(tr("style.saved"));
     },
   });
 
@@ -51,39 +53,45 @@ export default function StylePage() {
   return (
     <>
       <PageHeader
-        title="风格 & 概要"
-        subtitle="翻译前准备的产物，可编辑以影响后续翻译"
+        title={tr("common.styleSynopsis")}
+        subtitle={tr("style.preparationResultsCanBeEditedToGuide")}
       />
       <PageContainer>
         <ErrorNotice error={error || save.error} />
         {busy && (
           <p className="text-sm text-muted-foreground mb-4">
-            任务执行中，风格与概要暂时只读。
+            {tr("style.styleAndSynopsisAreReadOnlyWhile")}
           </p>
         )}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="style">风格分析</TabsTrigger>
-            <TabsTrigger value="characters">角色列表</TabsTrigger>
-            <TabsTrigger value="synopsis">书籍概要</TabsTrigger>
-            <TabsTrigger value="digests">章节摘要</TabsTrigger>
+            <TabsTrigger value="style">{tr("style.styleAnalysis")}</TabsTrigger>
+            <TabsTrigger value="characters">
+              {tr("style.characters")}
+            </TabsTrigger>
+            <TabsTrigger value="synopsis">
+              {tr("style.bookSynopsis")}
+            </TabsTrigger>
+            <TabsTrigger value="digests">
+              {tr("style.chapterSummaries")}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="style" className="mt-4 space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>风格概览</CardTitle>
+                <CardTitle>{tr("style.styleOverview")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid md:grid-cols-3 gap-4 text-sm">
                   {(
                     [
-                      ["体裁", analysis.genre],
-                      ["语调", analysis.tone],
-                      ["叙事", analysis.narration],
-                      ["节奏", analysis.pacing],
-                      ["对话风格", analysis.dialogue_style],
-                      ["修辞", analysis.rhetoric],
+                      [tr("style.genre"), analysis.genre],
+                      [tr("style.tone"), analysis.tone],
+                      [tr("style.narration"), analysis.narration],
+                      [tr("style.pacing"), analysis.pacing],
+                      [tr("style.dialogueStyle"), analysis.dialogue_style],
+                      [tr("style.rhetoric"), analysis.rhetoric],
                     ] as [string, unknown][]
                   ).map(([k, v]) => (
                     <div key={k}>
@@ -98,7 +106,7 @@ export default function StylePage() {
             </Card>
             <Card>
               <CardHeader className="flex-row items-center justify-between">
-                <CardTitle>风格指南</CardTitle>
+                <CardTitle>{tr("style.styleGuide")}</CardTitle>
                 <Button
                   size="sm"
                   onClick={() =>
@@ -106,7 +114,7 @@ export default function StylePage() {
                   }
                   disabled={save.isPending || busy}
                 >
-                  保存
+                  {tr("common.save")}
                 </Button>
               </CardHeader>
               <CardContent>
@@ -126,13 +134,17 @@ export default function StylePage() {
                 <table className="w-full text-sm">
                   <thead className="border-b text-xs text-muted-foreground">
                     <tr>
-                      {["角色名", "译名", "描述", "性别", "首次出场"].map(
-                        (h) => (
-                          <th key={h} className="text-left p-3 font-medium">
-                            {h}
-                          </th>
-                        ),
-                      )}
+                      {[
+                        tr("style.characterName"),
+                        tr("style.translatedName"),
+                        tr("style.description"),
+                        tr("common.gender"),
+                        tr("style.firstAppearance"),
+                      ].map((h) => (
+                        <th key={h} className="text-left p-3 font-medium">
+                          {h}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -155,7 +167,7 @@ export default function StylePage() {
                           colSpan={5}
                           className="p-8 text-center text-muted-foreground text-sm"
                         >
-                          尚无角色数据（需开启风格分析并完成准备阶段）。
+                          {tr("style.noCharacterDataYetEnableStyleAnalysis")}
                         </td>
                       </tr>
                     )}
@@ -168,7 +180,7 @@ export default function StylePage() {
           <TabsContent value="synopsis" className="mt-4">
             <Card>
               <CardHeader className="flex-row items-center justify-between">
-                <CardTitle>全书概要</CardTitle>
+                <CardTitle>{tr("style.wholeBookSynopsis")}</CardTitle>
                 <Button
                   size="sm"
                   onClick={() =>
@@ -176,7 +188,7 @@ export default function StylePage() {
                   }
                   disabled={save.isPending || busy}
                 >
-                  保存
+                  {tr("common.save")}
                 </Button>
               </CardHeader>
               <CardContent>
@@ -196,15 +208,20 @@ export default function StylePage() {
                 <table className="w-full text-sm">
                   <thead className="border-b text-xs text-muted-foreground">
                     <tr>
-                      <th className="text-left p-3 font-medium">章节</th>
-                      <th className="text-left p-3 font-medium">摘要</th>
+                      <th className="text-left p-3 font-medium">
+                        {tr("common.chapter")}
+                      </th>
+                      <th className="text-left p-3 font-medium">
+                        {tr("common.summary")}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {digests.map((d) => (
                       <tr key={d.index} className="border-b last:border-0">
                         <td className="p-3 align-top whitespace-nowrap font-medium">
-                          {d.title || `第 ${d.index + 1} 章`}
+                          {d.title ||
+                            tr("style.chapter", { chapter: d.index + 1 })}
                         </td>
                         <td className="p-3 text-muted-foreground">
                           <DigestEditor
@@ -222,7 +239,9 @@ export default function StylePage() {
                           colSpan={2}
                           className="p-8 text-center text-muted-foreground text-sm"
                         >
-                          尚无章节摘要（需开启书籍预理解）。
+                          {tr(
+                            "style.noChapterSummariesYetEnableBookUnderstanding",
+                          )}
                         </td>
                       </tr>
                     )}
@@ -248,6 +267,7 @@ function DigestEditor({
   value: string;
   disabled: boolean;
 }) {
+  const { t: tr } = useI18n();
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -256,7 +276,7 @@ function DigestEditor({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["analysis", pid] });
       setEditing(false);
-      toast.success("章节摘要已保存");
+      toast.success(tr("style.chapterSummarySaved"));
     },
   });
   if (!editing)
@@ -269,14 +289,14 @@ function DigestEditor({
           setEditing(true);
         }}
       >
-        {value || "点击添加摘要"}
+        {value || tr("style.clickToAddASummary")}
       </button>
     );
   return (
     <div className="space-y-2">
       <ErrorNotice error={save.error} />
       <Textarea
-        aria-label={`第 ${index + 1} 章摘要`}
+        aria-label={tr("style.chapterSummary", { chapter: index + 1 })}
         disabled={disabled || save.isPending}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -287,7 +307,7 @@ function DigestEditor({
           disabled={disabled || save.isPending}
           onClick={() => save.mutate()}
         >
-          保存摘要
+          {tr("style.saveSummary")}
         </Button>
         <Button
           size="sm"
@@ -295,7 +315,7 @@ function DigestEditor({
           disabled={save.isPending}
           onClick={() => setEditing(false)}
         >
-          取消
+          {tr("common.cancel")}
         </Button>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +11,7 @@ import { ErrorNotice } from "@/components/ui/data";
 import { SegmentEditor } from "@/features/review/ReviewPage";
 
 export default function SubtitlesPage() {
+  const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
@@ -36,11 +38,14 @@ export default function SubtitlesPage() {
   return (
     <>
       <PageHeader
-        title="字幕对照与编辑"
-        subtitle={`已翻译 ${subtitles.data?.completed || 0} / ${subtitles.data?.total || 0} 条；保留原始序号和时间轴`}
+        title={tr("common.subtitleEditor")}
+        subtitle={tr("subtitles.translatedCuesOriginalIdsAndTimestampsAre", {
+          completed: subtitles.data?.completed || 0,
+          total: subtitles.data?.total || 0,
+        })}
         actions={
           <Link to={`/projects/${pid}/export`}>
-            <Button variant="outline">导出 SRT</Button>
+            <Button variant="outline">{tr("subtitles.exportSrt")}</Button>
           </Link>
         }
       />
@@ -48,17 +53,17 @@ export default function SubtitlesPage() {
         <ErrorNotice error={subtitles.error} />
         {busy && (
           <p className="rounded border p-3 text-sm">
-            字幕任务执行中，内容自动刷新。暂停完成后可编辑译文。
+            {tr("subtitles.aSubtitleTaskIsRunningContentRefreshes")}
           </p>
         )}
         <Input
-          aria-label="搜索字幕"
+          aria-label={tr("subtitles.searchSubtitles")}
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
             setPage(0);
           }}
-          placeholder="搜索原文或译文…"
+          placeholder={tr("subtitles.searchSourceOrTranslation")}
         />
         <Card>
           <CardContent className="p-0">
@@ -86,7 +91,7 @@ export default function SubtitlesPage() {
             ))}
             {!cues.length && (
               <p className="p-8 text-sm text-center text-muted-foreground">
-                暂无匹配的字幕。
+                {tr("subtitles.noMatchingSubtitles")}
               </p>
             )}
           </CardContent>
@@ -97,17 +102,21 @@ export default function SubtitlesPage() {
             disabled={current === 0}
             onClick={() => setPage(current - 1)}
           >
-            上一页
+            {tr("subtitles.previousPage")}
           </Button>
           <span>
-            {current + 1} / {pageCount} 页 · {cues.length} 条
+            {tr("subtitles.pagination", {
+              page: current + 1,
+              pages: pageCount,
+              count: cues.length,
+            })}
           </span>
           <Button
             variant="outline"
             disabled={current + 1 >= pageCount}
             onClick={() => setPage(current + 1)}
           >
-            下一页
+            {tr("subtitles.nextPage")}
           </Button>
         </div>
       </PageContainer>

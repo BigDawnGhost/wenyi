@@ -226,6 +226,7 @@ optional Autofix publisher can later reuse it to produce formal segment targets.
 - [Usage guide](docs/usage.md) — installation, Windows setup, input/output, resumability, independent stages
 - [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
 - [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
+- [Web interface languages](docs/web-i18n.md) — English by default, language settings, and locale extension
 - [Web deployment](docs/web.md) — Docker/local Web stack, workers, exports, and project workflows
 - [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
 

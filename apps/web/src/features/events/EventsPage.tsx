@@ -1,3 +1,4 @@
+import { useI18n, translate as tr } from "@/i18n";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, type EventOut } from "@/lib/api";
@@ -6,28 +7,37 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 import { Badge } from "@/components/ui/badge";
 
-const BADGE: Record<
-  string,
-  { variant: "info" | "success" | "warning" | "secondary"; label: string }
-> = {
-  project: { variant: "info", label: "项目" },
-  run_initialized: { variant: "secondary", label: "准备" },
-  language_detected: { variant: "secondary", label: "准备" },
-  analysis_saved: { variant: "secondary", label: "准备" },
-  book_synopsis_saved: { variant: "secondary", label: "准备" },
-  batch_translated: { variant: "info", label: "翻译" },
-  batch_skipped: { variant: "secondary", label: "翻译" },
-  chapter_done: { variant: "success", label: "完成" },
-  chapter_reviewed: { variant: "warning", label: "审校" },
-  batch_glossary_extracted: { variant: "secondary", label: "术语" },
-  assembled: { variant: "success", label: "导出" },
-};
-
 function badgeFor(type: string) {
+  const BADGE: Record<
+    string,
+    { variant: "info" | "success" | "warning" | "secondary"; label: string }
+  > = {
+    project: { variant: "info", label: tr("events.project") },
+    run_initialized: { variant: "secondary", label: tr("events.preparation") },
+    language_detected: {
+      variant: "secondary",
+      label: tr("events.preparation"),
+    },
+    analysis_saved: { variant: "secondary", label: tr("events.preparation") },
+    book_synopsis_saved: {
+      variant: "secondary",
+      label: tr("events.preparation"),
+    },
+    batch_translated: { variant: "info", label: tr("events.translation") },
+    batch_skipped: { variant: "secondary", label: tr("events.translation") },
+    chapter_done: { variant: "success", label: tr("events.completed") },
+    chapter_reviewed: { variant: "warning", label: tr("common.review") },
+    batch_glossary_extracted: {
+      variant: "secondary",
+      label: tr("common.terms"),
+    },
+    assembled: { variant: "success", label: tr("common.export") },
+  };
+
   return (
     BADGE[type] || {
       variant: "secondary" as const,
-      label: type.split("_")[0] || "事件",
+      label: type.split("_")[0] || tr("events.event"),
     }
   );
 }
@@ -36,29 +46,43 @@ function describe(e: EventOut): string {
   const p = e.payload;
   switch (e.type) {
     case "language_detected":
-      return `检测到源语言：${p.source_lang}`;
+      return tr("events.sourceLanguageDetected", { language: p.source_lang });
     case "analysis_saved":
-      return "风格分析完成";
+      return tr("events.styleAnalysisCompleted");
     case "book_synopsis_saved":
-      return "生成全书概览";
+      return tr("events.bookSynopsisGenerated");
     case "batch_translated":
-      return `第 ${(Number(p.chapter) ?? 0) + 1} 章 批次完成（${p.count} 段）`;
+      return tr("events.chapterBatchCompletedParagraphs", {
+        chapter: (Number(p.chapter) ?? 0) + 1,
+        count: p.count,
+      });
     case "batch_skipped":
-      return `第 ${(Number(p.chapter) ?? 0) + 1} 章 批次跳过（已译）`;
+      return tr("events.chapterTranslatedBatchSkipped", {
+        chapter: (Number(p.chapter) ?? 0) + 1,
+      });
     case "chapter_done":
-      return `第 ${(Number(p.chapter) ?? 0) + 1} 章《${p.title}》翻译完成`;
+      return tr("events.chapterTranslated", {
+        chapter: (Number(p.chapter) ?? 0) + 1,
+        title: p.title,
+      });
     case "chapter_reviewed":
-      return `第 ${(Number(p.chapter) ?? 0) + 1} 章审校：${p.issue_count} 个问题`;
+      return tr("events.chapterReviewIssues", {
+        chapter: (Number(p.chapter) ?? 0) + 1,
+        count: p.issue_count,
+      });
     case "assembled":
-      return `导出文件：${(p.outputs as string[])?.join(", ") || ""}`;
+      return tr("events.exportedFiles", {
+        files: (p.outputs as string[])?.join(", ") || "",
+      });
     case "run_initialized":
-      return `项目初始化：${p.chapters} 章`;
+      return tr("events.projectInitializedChapters", { count: p.chapters });
     default:
       return e.type;
   }
 }
 
 export default function EventsPage() {
+  const { t: tr, locale } = useI18n();
   const { pid = "" } = useParams();
   const { data: events, error } = useQuery({
     queryKey: ["events", pid],
@@ -70,8 +94,8 @@ export default function EventsPage() {
   return (
     <>
       <PageHeader
-        title="事件日志"
-        subtitle="项目生命周期中的关键事件（每 5 秒刷新）"
+        title={tr("common.eventLog")}
+        subtitle={tr("events.keyProjectEventsRefreshedEvery5Seconds")}
       />
       <PageContainer>
         <ErrorNotice error={error} />
@@ -79,7 +103,7 @@ export default function EventsPage() {
           <CardContent className="p-4">
             {!events?.length ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                暂无事件。
+                {tr("events.noEventsYet")}
               </p>
             ) : (
               <div className="space-y-2">
@@ -92,7 +116,7 @@ export default function EventsPage() {
                     >
                       <span className="text-xs text-muted-foreground whitespace-nowrap mt-0.5">
                         {e.created_at
-                          ? new Date(e.created_at).toLocaleString()
+                          ? new Date(e.created_at).toLocaleString(locale)
                           : ""}
                       </span>
                       <Badge variant={b.variant}>{b.label}</Badge>

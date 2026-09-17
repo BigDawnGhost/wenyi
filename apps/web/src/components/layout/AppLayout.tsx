@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n";
 import {
   Link,
   NavLink,
@@ -23,6 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 export function AppLayout() {
+  const { t: tr } = useI18n();
   const { pid } = useParams();
   const { data: project } = useQuery({
     queryKey: ["project", pid],
@@ -53,19 +55,28 @@ export function AppLayout() {
       <aside className="hidden md:flex w-60 shrink-0 flex-col border-r bg-card">
         <div className="flex items-center gap-2 px-4 h-14 border-b">
           <BookOpenText className="h-5 w-5" />
-          <span className="font-semibold">文译 Wenyi</span>
+          <span className="font-semibold">{tr("appLayout.wenyi")}</span>
         </div>
         <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
-          {navItem("/", <LayoutDashboard className="h-4 w-4" />, "项目列表")}
+          {navItem(
+            "/",
+            <LayoutDashboard className="h-4 w-4" />,
+            tr("appLayout.projects"),
+          )}
           {navItem(
             "/projects/new",
             <FolderPlus className="h-4 w-4" />,
-            "创建项目",
+            tr("common.createProject"),
+          )}
+          {navItem(
+            "/settings",
+            <Settings2 className="h-4 w-4" />,
+            tr("settings.title"),
           )}
           {pid && (
             <>
               <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                当前项目
+                {tr("appLayout.currentProject")}
               </div>
               <div
                 className="px-3 pb-1 text-xs text-muted-foreground truncate"
@@ -76,24 +87,24 @@ export function AppLayout() {
               {navItem(
                 `/projects/${pid}`,
                 <Sparkles className="h-4 w-4" />,
-                "翻译进度",
+                tr("common.translationProgress"),
               )}
               {project?.fmt !== "srt" && (
                 <>
                   {navItem(
                     `/projects/${pid}/glossary`,
                     <Library className="h-4 w-4" />,
-                    "术语表",
+                    tr("common.glossary"),
                   )}
                   {navItem(
                     `/projects/${pid}/style`,
                     <Languages className="h-4 w-4" />,
-                    "风格 & 概要",
+                    tr("common.styleSynopsis"),
                   )}
                   {navItem(
                     `/projects/${pid}/review`,
                     <ListChecks className="h-4 w-4" />,
-                    "全书审校与人工校阅",
+                    tr("appLayout.reviewProofreading"),
                   )}
                 </>
               )}
@@ -101,22 +112,22 @@ export function AppLayout() {
                 navItem(
                   `/projects/${pid}/subtitles`,
                   <Captions className="h-4 w-4" />,
-                  "字幕对照与编辑",
+                  tr("common.subtitleEditor"),
                 )}
               {navItem(
                 `/projects/${pid}/settings`,
                 <Settings2 className="h-4 w-4" />,
-                "项目配置与模型",
+                tr("common.projectSettingsModels"),
               )}
               {navItem(
                 `/projects/${pid}/export`,
                 <Download className="h-4 w-4" />,
-                "导出",
+                tr("common.export"),
               )}
               {navItem(
                 `/projects/${pid}/events`,
                 <ScrollText className="h-4 w-4" />,
-                "事件日志",
+                tr("common.eventLog"),
               )}
             </>
           )}
@@ -124,18 +135,21 @@ export function AppLayout() {
       </aside>
       <main className="flex-1 min-w-0 overflow-y-auto">
         <div className="md:hidden flex gap-3 overflow-x-auto border-b p-3 text-sm">
-          <Link to="/">项目列表</Link>
-          <Link to="/projects/new">创建项目</Link>
+          <Link to="/">{tr("appLayout.projects")}</Link>
+          <Link to="/projects/new">{tr("common.createProject")}</Link>
+          <Link to="/settings">{tr("settings.title")}</Link>
           {pid && (
             <>
-              <Link to={`/projects/${pid}`}>进度</Link>
+              <Link to={`/projects/${pid}`}>{tr("appLayout.progress")}</Link>
               <Link
                 to={`/projects/${pid}/${project?.fmt === "srt" ? "subtitles" : "review"}`}
               >
-                校阅
+                {tr("appLayout.review")}
               </Link>
-              <Link to={`/projects/${pid}/settings`}>配置</Link>
-              <Link to={`/projects/${pid}/export`}>导出</Link>
+              <Link to={`/projects/${pid}/settings`}>
+                {tr("appLayout.configuration")}
+              </Link>
+              <Link to={`/projects/${pid}/export`}>{tr("common.export")}</Link>
             </>
           )}
         </div>

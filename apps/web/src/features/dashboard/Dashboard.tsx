@@ -1,3 +1,5 @@
+import { projectStatusLabel } from "@/i18n/labels";
+import { useI18n } from "@/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Link, PageContainer, PageHeader } from "@/components/layout/AppLayout";
@@ -5,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/data";
 import { Badge } from "@/components/ui/badge";
-import { api, STATUS_LABELS, type Project } from "@/lib/api";
+import { api, type Project } from "@/lib/api";
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
 
 export default function Dashboard() {
+  const { t: tr, locale } = useI18n();
   const queryClient = useQueryClient();
   const {
     data: projects,
@@ -23,13 +26,20 @@ export default function Dashboard() {
     mutationFn: (project: Project) => api.deleteProject(project.id),
     onSuccess: async (_, project) => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      toast.success(`已删除项目“${project.name}”`);
+      toast.success(tr("dashboard.projectDeleted", { name: project.name }));
     },
-    onError: (error) => toast.error(`删除失败：${error.message}`),
+    onError: (error) =>
+      toast.error(
+        tr("dashboard.couldNotDeleteProject", { error: error.message }),
+      ),
   });
 
   const requestDelete = (project: Project) => {
-    if (window.confirm(`确认删除项目“${project.name}”？此操作无法撤销。`)) {
+    if (
+      window.confirm(
+        tr("dashboard.deleteProjectThisCannotBeUndone", { name: project.name }),
+      )
+    ) {
       deleteProject.mutate(project);
     }
   };
@@ -37,12 +47,13 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader
-        title="我的项目"
-        subtitle="点击项目查看翻译进度，或创建新项目"
+        title={tr("dashboard.myProjects")}
+        subtitle={tr("dashboard.openAProjectToViewItsProgress")}
         actions={
           <Link to="/projects/new">
             <Button>
-              <Plus className="h-4 w-4" /> 创建项目
+              <Plus className="h-4 w-4" />
+              {tr("common.createProject")}
             </Button>
           </Link>
         }
@@ -50,14 +61,17 @@ export default function Dashboard() {
       <PageContainer>
         <ErrorNotice error={error} />
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">加载中…</p>
+          <p className="text-sm text-muted-foreground">
+            {tr("dashboard.loading")}
+          </p>
         ) : !projects?.length ? (
           <Card>
             <CardContent className="py-16 text-center text-muted-foreground">
-              <p>还没有项目。</p>
+              <p>{tr("dashboard.noProjectsYet")}</p>
               <Link to="/projects/new" className="inline-block mt-3">
                 <Button>
-                  <Plus className="h-4 w-4" /> 创建第一个项目
+                  <Plus className="h-4 w-4" />
+                  {tr("dashboard.createYourFirstProject")}
                 </Button>
               </Link>
             </CardContent>
@@ -71,7 +85,7 @@ export default function Dashboard() {
               >
                 <Link
                   to={`/projects/${p.id}`}
-                  aria-label={`打开项目 ${p.name}`}
+                  aria-label={tr("dashboard.openProject", { name: p.name })}
                   className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <CardContent className="relative pointer-events-none p-5">
@@ -79,20 +93,22 @@ export default function Dashboard() {
                     <div className="min-w-0">
                       <div className="font-medium truncate">{p.name}</div>
                       <div className="text-xs text-muted-foreground truncate mt-0.5">
-                        {p.title || "（未上传）"}
+                        {p.title || tr("dashboard.noSourceUploaded")}
                       </div>
                     </div>
                     <div className="relative z-10 flex shrink-0 items-center gap-1 pointer-events-auto">
                       <Badge variant="secondary">
-                        {STATUS_LABELS[p.status] || p.status}
+                        {projectStatusLabel(p.status, tr)}
                       </Badge>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        aria-label={`删除项目 ${p.name}`}
-                        title="删除项目"
+                        aria-label={tr("dashboard.deleteProject", {
+                          name: p.name,
+                        })}
+                        title={tr("dashboard.deleteAction")}
                         disabled={deleteProject.isPending}
                         onClick={() => requestDelete(p)}
                       >
@@ -112,7 +128,7 @@ export default function Dashboard() {
                     {p.fmt && <span>· {p.fmt}</span>}
                     {p.created_at && (
                       <span>
-                        · {new Date(p.created_at).toLocaleDateString()}
+                        · {new Date(p.created_at).toLocaleDateString(locale)}
                       </span>
                     )}
                   </div>

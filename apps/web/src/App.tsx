@@ -9,6 +9,7 @@ import ReviewPage from "./features/review/ReviewPage";
 import ExportPage from "./features/export/ExportPage";
 import EventsPage from "./features/events/EventsPage";
 
+import InterfaceSettingsPage from "./features/settings/InterfaceSettingsPage";
 import SettingsPage from "./features/settings/SettingsPage";
 import SubtitlesPage from "./features/subtitles/SubtitlesPage";
 
@@ -17,6 +18,7 @@ export default function App() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/settings" element={<InterfaceSettingsPage />} />
         <Route path="/projects/new" element={<CreateProject />} />
         <Route path="/projects/:pid" element={<ProgressPage />} />
         <Route path="/projects/:pid/glossary" element={<GlossaryPage />} />

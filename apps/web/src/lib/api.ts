@@ -1,3 +1,4 @@
+import { translate as tr } from "@/i18n";
 import type { components } from "@wenyi/shared-schema";
 
 // Typed Wenyi API client: Vite proxies to port 8000; production uses the nginx/API stack.
@@ -50,7 +51,12 @@ async function download(path: string, fallback: string) {
   if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
   const response = await fetch(`${BASE}${path}`, { headers });
   if (!response.ok)
-    throw new Error(`下载失败：${response.status} ${response.statusText}`);
+    throw new Error(
+      tr("api.downloadFailed", {
+        status: response.status,
+        detail: response.statusText,
+      }),
+    );
   const disposition = response.headers.get("content-disposition") || "";
   const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   const filename = encoded
@@ -102,7 +108,8 @@ export interface ReportData {
 
 // API calls.
 export const api = {
-  getWorkflow: (pid: string) => request<Output<"WorkflowOut">>(`/projects/${pid}/workflow`),
+  getWorkflow: (pid: string) =>
+    request<Output<"WorkflowOut">>(`/projects/${pid}/workflow`),
   capabilities: () => request<Capabilities>("/capabilities"),
   getPreview: (pid: string) =>
     request<UploadPreview>(`/projects/${pid}/preview`),
@@ -337,22 +344,3 @@ export const ACTIVE_STATUSES = [
 ];
 export const isProjectBusy = (status?: string) =>
   ACTIVE_STATUSES.includes(status || "");
-export const STATUS_LABELS: Record<string, string> = {
-  prepared: "准备完成",
-  reviewed: "审校完成",
-  comparing: "模型对比中",
-  created: "已创建",
-  uploaded: "已上传",
-  ready: "已就绪",
-  queued: "排队中",
-  parsing: "解析中",
-  preparing: "准备中",
-  translating: "翻译中",
-  reviewing: "全书审校中",
-  autofixing: "自动修复中",
-  pausing: "正在保存并暂停",
-  paused: "已暂停",
-  postprocessing: "译后处理",
-  done: "已完成",
-  error: "失败",
-};

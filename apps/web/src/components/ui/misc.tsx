@@ -1,11 +1,21 @@
+import { useI18n } from "@/i18n";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
 // Lightweight dialog component.
-export function Dialog({ open, onClose, children, className }: {
-  open: boolean; onClose: () => void; children: React.ReactNode; className?: string;
+export function Dialog({
+  open,
+  onClose,
+  children,
+  className,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  className?: string;
 }) {
+  const { t } = useI18n();
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -14,12 +24,22 @@ export function Dialog({ open, onClose, children, className }: {
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
       <div
-        className={cn("relative w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg max-h-[85vh] overflow-auto", className)}
+        className={cn(
+          "relative w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg max-h-[85vh] overflow-auto",
+          className,
+        )}
         onClick={(e) => e.stopPropagation()}
       >
-        <button className="absolute right-4 top-4 text-muted-foreground hover:text-foreground" onClick={onClose}>
+        <button
+          aria-label={t("common.close")}
+          className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+        >
           <X className="h-4 w-4" />
         </button>
         {children}
@@ -29,9 +49,20 @@ export function Dialog({ open, onClose, children, className }: {
 }
 
 // Lightweight tab components.
-const TabsCtx = React.createContext<{ value: string; setValue: (v: string) => void }>({ value: "", setValue: () => {} });
-export function Tabs({ value, onValueChange, children, className }: {
-  value: string; onValueChange: (v: string) => void; children: React.ReactNode; className?: string;
+const TabsCtx = React.createContext<{
+  value: string;
+  setValue: (v: string) => void;
+}>({ value: "", setValue: () => {} });
+export function Tabs({
+  value,
+  onValueChange,
+  children,
+  className,
+}: {
+  value: string;
+  onValueChange: (v: string) => void;
+  children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <TabsCtx.Provider value={{ value, setValue: onValueChange }}>
@@ -39,38 +70,93 @@ export function Tabs({ value, onValueChange, children, className }: {
     </TabsCtx.Provider>
   );
 }
-export function TabsList({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("inline-flex items-center gap-1 rounded-md bg-muted p-1", className)}>{children}</div>;
+export function TabsList({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md bg-muted p-1",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
-export function TabsTrigger({ value, children, className }: { value: string; children: React.ReactNode; className?: string }) {
+export function TabsTrigger({
+  value,
+  children,
+  className,
+}: {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   const ctx = React.useContext(TabsCtx);
   const active = ctx.value === value;
   return (
     <button
-      className={cn("rounded px-3 py-1 text-sm transition-colors", active ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground", className)}
+      className={cn(
+        "rounded px-3 py-1 text-sm transition-colors",
+        active
+          ? "bg-background shadow text-foreground"
+          : "text-muted-foreground hover:text-foreground",
+        className,
+      )}
       onClick={() => ctx.setValue(value)}
     >
       {children}
     </button>
   );
 }
-export function TabsContent({ value, children, className }: { value: string; children: React.ReactNode; className?: string }) {
+export function TabsContent({
+  value,
+  children,
+  className,
+}: {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   const ctx = React.useContext(TabsCtx);
   if (ctx.value !== value) return null;
   return <div className={className}>{children}</div>;
 }
 
 // Table primitives.
-export const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...p }, ref) => (
-    <div className="w-full overflow-auto">
-      <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...p} />
-    </div>
-  )
-);
+export const Table = React.forwardRef<
+  HTMLTableElement,
+  React.HTMLAttributes<HTMLTableElement>
+>(({ className, ...p }, ref) => (
+  <div className="w-full overflow-auto">
+    <table
+      ref={ref}
+      className={cn("w-full caption-bottom text-sm", className)}
+      {...p}
+    />
+  </div>
+));
 Table.displayName = "Table";
-export const THead = (p: React.HTMLAttributes<HTMLTableSectionElement>) => <thead className="[&_tr]:border-b" {...p} />;
-export const TBody = (p: React.HTMLAttributes<HTMLTableSectionElement>) => <tbody className="[&_tr:last-child]:border-0" {...p} />;
-export const TR = (p: React.HTMLAttributes<HTMLTableRowElement>) => <tr className="border-b transition-colors hover:bg-muted/50" {...p} />;
-export const TH = (p: React.ThHTMLAttributes<HTMLTableCellElement>) => <th className="h-9 px-3 text-left align-middle font-medium text-muted-foreground" {...p} />;
-export const TD = (p: React.TdHTMLAttributes<HTMLTableCellElement>) => <td className="px-3 py-2 align-middle" {...p} />;
+export const THead = (p: React.HTMLAttributes<HTMLTableSectionElement>) => (
+  <thead className="[&_tr]:border-b" {...p} />
+);
+export const TBody = (p: React.HTMLAttributes<HTMLTableSectionElement>) => (
+  <tbody className="[&_tr:last-child]:border-0" {...p} />
+);
+export const TR = (p: React.HTMLAttributes<HTMLTableRowElement>) => (
+  <tr className="border-b transition-colors hover:bg-muted/50" {...p} />
+);
+export const TH = (p: React.ThHTMLAttributes<HTMLTableCellElement>) => (
+  <th
+    className="h-9 px-3 text-left align-middle font-medium text-muted-foreground"
+    {...p}
+  />
+);
+export const TD = (p: React.TdHTMLAttributes<HTMLTableCellElement>) => (
+  <td className="px-3 py-2 align-middle" {...p} />
+);

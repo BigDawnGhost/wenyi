@@ -1,11 +1,8 @@
+import { projectStatusLabel } from "@/i18n/labels";
+import { useI18n } from "@/i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  api,
-  isProjectBusy,
-  STATUS_LABELS,
-  type ChapterSummary,
-} from "@/lib/api";
+import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
 import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -17,6 +14,7 @@ import { WorkflowPanel } from "./WorkflowPanel";
 import { toast } from "sonner";
 
 export default function ProgressPage() {
+  const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const projectQuery = useQuery({
@@ -62,7 +60,9 @@ export default function ProgressPage() {
     onSuccess: (_, kind) => {
       invalidate();
       toast.success(
-        kind === "pause" ? "已请求暂停，正在保存已完成结果" : "任务已提交",
+        kind === "pause"
+          ? tr("progress.pauseRequestedSavingCompletedWork")
+          : tr("progress.taskSubmitted"),
       );
     },
   });
@@ -70,7 +70,7 @@ export default function ProgressPage() {
     mutationFn: () => api.regenerateReport(pid),
     onSuccess: (result) => {
       qc.setQueryData(["report", pid], result);
-      toast.success("报告已更新");
+      toast.success(tr("progress.reportUpdated"));
     },
   });
   const chapters = chapterQuery.data || [];
@@ -90,8 +90,12 @@ export default function ProgressPage() {
   return (
     <>
       <PageHeader
-        title={project?.name || "翻译进度"}
-        subtitle={`${project?.source_lang || "自动检测"} → ${project?.target_lang || "—"} · ${project?.title || "等待原文"}`}
+        title={project?.name || tr("common.translationProgress")}
+        subtitle={tr("progress.languageSummary", {
+          source: project?.source_lang || tr("progress.detectAutomatically"),
+          target: project?.target_lang || "—",
+          title: project?.title || tr("progress.waitingForSource"),
+        })}
         actions={
           <>
             {!busy && !paused && project?.fmt && (
@@ -99,7 +103,7 @@ export default function ProgressPage() {
                 disabled={action.isPending}
                 onClick={() => action.mutate("translate")}
               >
-                开始翻译
+                {tr("common.startTranslation")}
               </Button>
             )}
             {busy && project?.status !== "parsing" && (
@@ -108,7 +112,7 @@ export default function ProgressPage() {
                 disabled={action.isPending || project?.status === "pausing"}
                 onClick={() => action.mutate("pause")}
               >
-                暂停
+                {tr("progress.pause")}
               </Button>
             )}
             {(paused || project?.status === "error") && (
@@ -116,11 +120,11 @@ export default function ProgressPage() {
                 disabled={action.isPending}
                 onClick={() => action.mutate("resume")}
               >
-                恢复任务
+                {tr("progress.resumeTask")}
               </Button>
             )}
             <Link to={`/projects/${pid}/export`}>
-              <Button variant="outline">导出</Button>
+              <Button variant="outline">{tr("common.export")}</Button>
             </Link>
           </>
         }
@@ -137,24 +141,31 @@ export default function ProgressPage() {
         <WorkflowPanel pid={pid} msg={msg} />
         <div className="grid gap-3 md:grid-cols-4">
           <Stat
-            label={subtitle ? "字幕翻译进度" : "翻译进度"}
+            label={
+              subtitle
+                ? tr("progress.subtitleTranslationProgress")
+                : tr("common.translationProgress")
+            }
             value={`${done}/${total}`}
           >
             <Progress value={pct} className="mt-2" />
           </Stat>
           <Stat
-            label="当前状态"
+            label={tr("progress.currentStatus")}
             value={
-              STATUS_LABELS[project?.status || ""] ||
-              project?.status ||
-              "加载中"
+              project
+                ? projectStatusLabel(project.status, tr)
+                : tr("progress.loading")
             }
           />
           <Stat
-            label="当前步骤"
-            value={busy ? msg?.label || "等待后台进度" : "—"}
+            label={tr("progress.currentStage")}
+            value={busy ? msg?.label || tr("progress.waitingForProgress") : "—"}
           />
-          <Stat label="进度连接" value={connected ? "实时连接" : "自动轮询"} />
+          <Stat
+            label={tr("progress.progressConnection")}
+            value={connected ? tr("progress.live") : tr("progress.polling")}
+          />
         </div>
         <Card>
           <CardContent className="p-4 space-y-3">
@@ -165,25 +176,33 @@ export default function ProgressPage() {
                   disabled={busy || !project?.fmt || action.isPending}
                   onClick={() => action.mutate("prepare")}
                 >
-                  译前准备
+                  {tr("common.preparation")}
                 </Button>
               )}
               {!subtitle && (
                 <Link to={`/projects/${pid}/review`}>
-                  <Button variant="outline">全书审校</Button>
+                  <Button variant="outline">
+                    {tr("common.wholeBookReview")}
+                  </Button>
                 </Link>
               )}
               {subtitle && (
                 <Link to={`/projects/${pid}/subtitles`}>
-                  <Button variant="outline">字幕对照与编辑</Button>
+                  <Button variant="outline">
+                    {tr("common.subtitleEditor")}
+                  </Button>
                 </Link>
               )}
               <Link to={`/projects/${pid}/settings`}>
-                <Button variant="outline">项目配置与模型</Button>
+                <Button variant="outline">
+                  {tr("common.projectSettingsModels")}
+                </Button>
               </Link>
               {!project?.initialized && (
                 <Link to={`/projects/new?project=${pid}`}>
-                  <Button variant="outline">上传与预览原文</Button>
+                  <Button variant="outline">
+                    {tr("progress.uploadPreviewSource")}
+                  </Button>
                 </Link>
               )}
               <Button
@@ -191,17 +210,17 @@ export default function ProgressPage() {
                 disabled={done === 0 || action.isPending}
                 onClick={() => action.mutate("assemble")}
               >
-                重新组装默认格式
+                {tr("progress.reassembleInTheDefaultFormat")}
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              导出使用已保存译文的一致快照。暂停会在安全边界保存进度，恢复继续原来的任务。
+              {tr("progress.exportsUseAConsistentSnapshotOfSaved")}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 space-y-3">
-            <h2 className="font-medium">累计用量与运行耗时</h2>
+            <h2 className="font-medium">{tr("progress.totalUsageRunTime")}</h2>
             <ErrorNotice error={stats.error} />
             <Accounting value={stats.data} />
           </CardContent>
@@ -211,13 +230,15 @@ export default function ProgressPage() {
             <Card>
               <CardContent className="p-4 space-y-3">
                 <div className="flex justify-between items-center">
-                  <h2 className="font-medium">项目报告</h2>
+                  <h2 className="font-medium">
+                    {tr("progress.projectReport")}
+                  </h2>
                   <Button
                     variant="outline"
                     disabled={regenerate.isPending || busy}
                     onClick={() => regenerate.mutate()}
                   >
-                    更新报告
+                    {tr("progress.updateReport")}
                   </Button>
                 </div>
                 <ErrorNotice error={report.error || regenerate.error} />
@@ -261,13 +282,14 @@ function ChapterTable({
   chapters: ChapterSummary[];
   busy: boolean;
 }) {
+  const { t: tr } = useI18n();
   const qc = useQueryClient();
   const translate = useMutation({
     mutationFn: (ci: number) => api.translateChapter(pid, ci),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["project", pid] });
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      toast.success("单章翻译已开始");
+      toast.success(tr("progress.chapterTranslationStarted"));
     },
   });
   return (
@@ -277,7 +299,13 @@ function ChapterTable({
         <table className="w-full text-sm">
           <thead className="border-b text-xs text-muted-foreground">
             <tr>
-              {["章节", "原文段数", "翻译状态", "审校状态", "操作"].map((h) => (
+              {[
+                tr("common.chapter"),
+                tr("progress.sourceParagraphs"),
+                tr("progress.translationStatus"),
+                tr("progress.reviewStatus"),
+                tr("common.actions"),
+              ].map((h) => (
                 <th key={h} className="text-left p-3 font-medium">
                   {h}
                 </th>
@@ -295,20 +323,24 @@ function ChapterTable({
                   <Badge
                     variant={c.status === "done" ? "success" : "secondary"}
                   >
-                    {STATUS_LABELS[c.status] || c.status}
+                    {projectStatusLabel(c.status, tr)}
                   </Badge>
                 </td>
                 <td className="p-3">
                   {c.review_issue_count > 0 ? (
                     <Badge variant="warning">
-                      {c.review_issue_count} 项意见
+                      {tr("progress.reviewIssueCount", {
+                        count: c.review_issue_count,
+                      })}
                     </Badge>
                   ) : ["completed", "ok", "done"].includes(
                       c.review_status || "",
                     ) ? (
-                    <Badge variant="success">已审校</Badge>
+                    <Badge variant="success">{tr("progress.reviewed")}</Badge>
                   ) : (
-                    <Badge variant="secondary">未审校</Badge>
+                    <Badge variant="secondary">
+                      {tr("progress.notReviewed")}
+                    </Badge>
                   )}
                 </td>
                 <td className="p-3">
@@ -317,7 +349,7 @@ function ChapterTable({
                       className="text-primary underline"
                       to={`/projects/${pid}/review/${c.index}`}
                     >
-                      人工校阅
+                      {tr("progress.manualProofreading")}
                     </Link>
                   ) : (
                     <Button
@@ -326,7 +358,7 @@ function ChapterTable({
                       disabled={busy || translate.isPending}
                       onClick={() => translate.mutate(c.index)}
                     >
-                      翻译此章
+                      {tr("progress.translateChapter")}
                     </Button>
                   )}
                 </td>
@@ -338,7 +370,7 @@ function ChapterTable({
                   colSpan={5}
                   className="p-8 text-center text-muted-foreground"
                 >
-                  解析完成后显示章节。
+                  {tr("progress.chaptersWillAppearAfterParsing")}
                 </td>
               </tr>
             )}
@@ -354,24 +386,29 @@ function Accounting({
 }: {
   value?: { usage: Record<string, unknown>; timing: Record<string, unknown> };
 }) {
+  const { t: tr, locale } = useI18n();
   if (!value)
-    return <p className="text-sm text-muted-foreground">尚无用量记录</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {tr("progress.noUsageRecordedYet")}
+      </p>
+    );
   const usage = value.usage || {};
   const totals = (usage.totals || usage) as Record<string, unknown>;
   const timing = value.timing || {};
   const numeric = (value: unknown) =>
-    typeof value === "number" ? value.toLocaleString("zh-CN") : "—";
+    typeof value === "number" ? value.toLocaleString(locale) : "—";
   const fields: [string, string][] = [
-    ["累计 Token", numeric(totals.total_tokens)],
+    [tr("progress.cumulativeTokens"), numeric(totals.total_tokens)],
     [
-      "输入 / 输出 Token",
+      tr("progress.inputOutputTokens"),
       `${numeric(totals.prompt_tokens)} / ${numeric(totals.completion_tokens)}`,
     ],
-    ["模型调用次数", numeric(totals.calls)],
+    [tr("progress.modelCalls"), numeric(totals.calls)],
     [
-      "运行耗时",
+      tr("common.runTime"),
       typeof timing.total_seconds === "number"
-        ? `${timing.total_seconds.toFixed(2)} 秒`
+        ? tr("progress.seconds", { seconds: timing.total_seconds.toFixed(2) })
         : "—",
     ],
   ];
@@ -387,7 +424,7 @@ function Accounting({
       </div>
       <details>
         <summary className="cursor-pointer text-sm text-muted-foreground">
-          按模型、提供商与步骤查看用量和计时明细
+          {tr("progress.viewUsageAndTimingByModelProvider")}
         </summary>
         <div className="mt-3">
           <StructuredData value={value} />

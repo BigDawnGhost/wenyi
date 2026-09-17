@@ -1,3 +1,4 @@
+import { useI18n, translate as tr } from "@/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,14 +20,14 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-const TYPES: Record<string, string> = {
-  person: "人物",
-  term: "术语",
-  appellation: "称谓",
-  honorific: "敬称",
-  speech: "口癖",
-  fixed_expression: "固定表达",
-};
+const termTypes = (): Record<string, string> => ({
+  person: tr("glossary.person"),
+  term: tr("common.terms"),
+  appellation: tr("glossary.appellation"),
+  honorific: tr("glossary.honorific"),
+  speech: tr("glossary.speechHabit"),
+  fixed_expression: tr("glossary.fixedExpression"),
+});
 
 // ── CSV helpers ─────────────────────────────────────────────────────────
 function parseCsv(text: string): Partial<Term>[] {
@@ -51,7 +52,7 @@ function parseCsv(text: string): Partial<Term>[] {
       value = "";
     } else value += char;
   }
-  if (quoted) throw new Error("CSV 引号未闭合");
+  if (quoted) throw new Error(tr("glossary.unclosedQuoteInCsv"));
   if (value || row.length) {
     row.push(value.replace(/\r$/, ""));
     rows.push(row);
@@ -82,6 +83,7 @@ function parseCsv(text: string): Partial<Term>[] {
 
 // ── Page ────────────────────────────────────────────────────────────────
 export default function GlossaryPage() {
+  const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
@@ -120,7 +122,7 @@ export default function GlossaryPage() {
     mutationFn: (s: string) => api.deleteTerm(pid, s),
     onSuccess: () => {
       invalidate();
-      toast.success("已删除");
+      toast.success(tr("glossary.deleted"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -136,7 +138,7 @@ export default function GlossaryPage() {
     }) => api.resolveConflict(pid, cid, { decision, target }),
     onSuccess: () => {
       invalidate();
-      toast.success("已解决冲突");
+      toast.success(tr("glossary.conflictResolved"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -147,9 +149,9 @@ export default function GlossaryPage() {
       Promise.all([...selected].map((s) => api.deleteTerm(pid, s))),
     onSuccess: () => {
       invalidate();
-      toast.success("批量删除完成");
+      toast.success(tr("glossary.selectedTermsDeleted"));
     },
-    onError: () => toast.error("批量删除失败"),
+    onError: () => toast.error(tr("glossary.couldNotDeleteSelectedTerms")),
   });
 
   const toggleSelect = (source: string) => {
@@ -187,8 +189,8 @@ export default function GlossaryPage() {
   return (
     <>
       <PageHeader
-        title="术语表"
-        subtitle="维护专有名词、称谓与固定表达，裁决自动提取的译名冲突"
+        title={tr("common.glossary")}
+        subtitle={tr("glossary.manageNamesAppellationsAndFixedExpressionsAnd")}
         actions={
           <div className="flex items-center gap-2">
             <div className="relative" ref={exportRef} onBlur={handleExportBlur}>
@@ -196,8 +198,8 @@ export default function GlossaryPage() {
                 variant="outline"
                 onClick={() => setExportMenuOpen(!exportMenuOpen)}
               >
-                <Download className="h-4 w-4" /> 导出{" "}
-                <ChevronDown className="h-3 w-3" />
+                <Download className="h-4 w-4" />
+                {tr("common.export")} <ChevronDown className="h-3 w-3" />
               </Button>
               {exportMenuOpen && (
                 <div className="absolute right-0 top-full z-10 mt-1 w-36 rounded-md border bg-popover p-1 shadow-md">
@@ -205,13 +207,13 @@ export default function GlossaryPage() {
                     className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
                     onClick={() => handleExport("csv")}
                   >
-                    CSV 文件
+                    {tr("glossary.csvFile")}
                   </button>
                   <button
                     className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
                     onClick={() => handleExport("json")}
                   >
-                    JSON 文件
+                    {tr("glossary.jsonFile")}
                   </button>
                 </div>
               )}
@@ -221,10 +223,12 @@ export default function GlossaryPage() {
               disabled={busy}
               onClick={() => setImportOpen(true)}
             >
-              <Upload className="h-4 w-4" /> 导入
+              <Upload className="h-4 w-4" />
+              {tr("glossary.import")}
             </Button>
             <Button disabled={busy} onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4" /> 添加术语
+              <Plus className="h-4 w-4" />
+              {tr("glossary.addTerm")}
             </Button>
           </div>
         }
@@ -233,12 +237,12 @@ export default function GlossaryPage() {
         <ErrorNotice error={termsError || conflictsError} />
         {busy && (
           <p className="text-sm text-muted-foreground">
-            项目任务执行中，术语修改暂时只读。
+            {tr("glossary.theGlossaryIsReadOnlyWhileA")}
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <Input
-            placeholder="搜索源词 / 译词 / 别名…"
+            placeholder={tr("glossary.searchSourceTermsTranslationsOrAliases")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="max-w-xs"
@@ -248,8 +252,8 @@ export default function GlossaryPage() {
             onChange={(e) => setType(e.target.value)}
             className="max-w-[140px]"
           >
-            <option value="">全部类型</option>
-            {Object.entries(TYPES).map(([id, label]) => (
+            <option value="">{tr("glossary.allTypes")}</option>
+            {Object.entries(termTypes()).map(([id, label]) => (
               <option key={id} value={id}>
                 {label}
               </option>
@@ -260,24 +264,33 @@ export default function GlossaryPage() {
         {/* batch action bar */}
         {selected.size > 0 && (
           <div className="flex items-center gap-3 rounded-md border bg-muted/60 px-4 py-2 text-sm">
-            <span>已选 {selected.size} 项</span>
+            <span>
+              {tr("glossary.selectedCount", { count: selected.size })}
+            </span>
             <Button
               size="sm"
               variant="destructive"
               disabled={busy}
               onClick={() => {
-                if (confirm(`确认删除 ${selected.size} 条术语？`))
+                if (
+                  confirm(
+                    tr("glossary.deleteSelectedTerms", {
+                      count: selected.size,
+                    }),
+                  )
+                )
                   batchDelete.mutate();
               }}
             >
-              <Trash2 className="h-3.5 w-3.5" /> 批量删除
+              <Trash2 className="h-3.5 w-3.5" />
+              {tr("glossary.deleteSelected")}
             </Button>
             <Button
               size="sm"
               variant="ghost"
               onClick={() => setSelected(new Set())}
             >
-              取消选择
+              {tr("glossary.clearSelection")}
             </Button>
           </div>
         )}
@@ -298,11 +311,21 @@ export default function GlossaryPage() {
                       onChange={toggleSelectAll}
                     />
                   </th>
-                  <th className="text-left p-3 font-medium">源词</th>
-                  <th className="text-left p-3 font-medium">译词</th>
-                  <th className="text-left p-3 font-medium">读音</th>
-                  <th className="text-left p-3 font-medium">类型</th>
-                  <th className="text-right p-3 font-medium">操作</th>
+                  <th className="text-left p-3 font-medium">
+                    {tr("glossary.sourceTerm")}
+                  </th>
+                  <th className="text-left p-3 font-medium">
+                    {tr("glossary.translatedTerm")}
+                  </th>
+                  <th className="text-left p-3 font-medium">
+                    {tr("glossary.reading")}
+                  </th>
+                  <th className="text-left p-3 font-medium">
+                    {tr("common.type")}
+                  </th>
+                  <th className="text-right p-3 font-medium">
+                    {tr("common.actions")}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -325,7 +348,7 @@ export default function GlossaryPage() {
                     </td>
                     <td className="p-3">
                       <Badge variant="outline">
-                        {TYPES[t.type || ""] || t.type}
+                        {termTypes()[t.type || ""] || t.type}
                       </Badge>
                     </td>
                     <td className="p-3 text-right">
@@ -333,7 +356,7 @@ export default function GlossaryPage() {
                         variant="ghost"
                         size="sm"
                         disabled={busy}
-                        aria-label="编辑术语"
+                        aria-label={tr("glossary.editTerm")}
                         onClick={() => setEditTerm(t)}
                       >
                         <Pencil className="h-3.5 w-3.5" />
@@ -342,7 +365,7 @@ export default function GlossaryPage() {
                         variant="ghost"
                         size="sm"
                         disabled={busy}
-                        aria-label="删除术语"
+                        aria-label={tr("glossary.deleteTerm")}
                         onClick={() => del.mutate(t.source)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -356,7 +379,7 @@ export default function GlossaryPage() {
                       colSpan={6}
                       className="p-8 text-center text-muted-foreground text-sm"
                     >
-                      暂无术语。翻译过程中会自动提取。
+                      {tr("glossary.noTermsYetTermsAreExtractedDuring")}
                     </td>
                   </tr>
                 )}
@@ -369,7 +392,7 @@ export default function GlossaryPage() {
           <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
             <CardContent className="p-4 space-y-2">
               <div className="font-medium text-sm">
-                待解决冲突（{conflicts.length}）
+                {tr("glossary.conflictCount", { count: conflicts.length })}
               </div>
               {conflicts.map((c) => (
                 <div
@@ -378,10 +401,12 @@ export default function GlossaryPage() {
                 >
                   <span className="font-medium">{c.source}</span>
                   <span className="text-muted-foreground">
-                    当前：{c.existing_target}
+                    {tr("glossary.current")}
+                    {c.existing_target}
                   </span>
                   <span className="text-muted-foreground">
-                    AI 提议：{c.proposed_target}
+                    {tr("glossary.aiSuggestion")}
+                    {c.proposed_target}
                   </span>
                   <span className="flex gap-1 ml-auto">
                     <Button
@@ -392,7 +417,7 @@ export default function GlossaryPage() {
                         resolve.mutate({ cid: c.id, decision: "current" })
                       }
                     >
-                      采纳当前
+                      {tr("glossary.keepCurrent")}
                     </Button>
                     <Button
                       size="sm"
@@ -402,7 +427,7 @@ export default function GlossaryPage() {
                         resolve.mutate({ cid: c.id, decision: "proposed" })
                       }
                     >
-                      采纳提议
+                      {tr("glossary.acceptSuggestion")}
                     </Button>
                   </span>
                 </div>
@@ -460,6 +485,7 @@ function AddTermDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t: tr } = useI18n();
   const [form, setForm] = useState({
     source: "",
     target: "",
@@ -470,25 +496,28 @@ function AddTermDialog({
   const m = useMutation({
     mutationFn: () => api.addTerm(pid, form),
     onSuccess: () => {
-      toast.success("已添加");
+      toast.success(tr("glossary.added"));
       setForm({ source: "", target: "", reading: "", type: "term", note: "" });
       onSaved();
     },
-    onError: (e) => toast.error(`添加失败：${(e as Error).message}`),
+    onError: (e) =>
+      toast.error(
+        tr("glossary.couldNotAddTerm", { error: (e as Error).message }),
+      ),
   });
   return (
     <Dialog open={open} onClose={onClose}>
-      <div className="text-lg font-semibold mb-4">添加术语</div>
+      <div className="text-lg font-semibold mb-4">{tr("glossary.addTerm")}</div>
       <div className="space-y-3">
         <div>
-          <Label>源词 *</Label>
+          <Label>{tr("glossary.requiredSourceTerm")}</Label>
           <Input
             value={form.source}
             onChange={(e) => setForm({ ...form, source: e.target.value })}
           />
         </div>
         <div>
-          <Label>译词 *</Label>
+          <Label>{tr("glossary.requiredTranslatedTerm")}</Label>
           <Input
             value={form.target}
             onChange={(e) => setForm({ ...form, target: e.target.value })}
@@ -496,19 +525,19 @@ function AddTermDialog({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>读音</Label>
+            <Label>{tr("glossary.reading")}</Label>
             <Input
               value={form.reading}
               onChange={(e) => setForm({ ...form, reading: e.target.value })}
             />
           </div>
           <div>
-            <Label>类型</Label>
+            <Label>{tr("common.type")}</Label>
             <Select
               value={form.type}
               onChange={(e) => setForm({ ...form, type: e.target.value })}
             >
-              {Object.entries(TYPES).map(([id, label]) => (
+              {Object.entries(termTypes()).map(([id, label]) => (
                 <option key={id} value={id}>
                   {label}
                 </option>
@@ -517,7 +546,7 @@ function AddTermDialog({
           </div>
         </div>
         <div>
-          <Label>备注</Label>
+          <Label>{tr("glossary.notes")}</Label>
           <Textarea
             value={form.note}
             onChange={(e) => setForm({ ...form, note: e.target.value })}
@@ -526,13 +555,13 @@ function AddTermDialog({
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button variant="outline" onClick={onClose}>
-          取消
+          {tr("common.cancel")}
         </Button>
         <Button
           onClick={() => m.mutate()}
           disabled={!form.source || !form.target || m.isPending}
         >
-          添加
+          {tr("glossary.add")}
         </Button>
       </div>
     </Dialog>
@@ -551,6 +580,7 @@ function EditTermDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t: tr } = useI18n();
   const [form, setForm] = useState({
     source: "",
     target: "",
@@ -585,27 +615,32 @@ function EditTermDialog({
           .filter(Boolean),
       }),
     onSuccess: () => {
-      toast.success("已更新");
+      toast.success(tr("glossary.updated"));
       onSaved();
     },
-    onError: (e) => toast.error(`更新失败：${(e as Error).message}`),
+    onError: (e) =>
+      toast.error(
+        tr("glossary.couldNotUpdateTerm", { error: (e as Error).message }),
+      ),
   });
 
   if (!term) return null;
 
   return (
     <Dialog open={!!term} onClose={onClose}>
-      <div className="text-lg font-semibold mb-4">编辑术语</div>
+      <div className="text-lg font-semibold mb-4">
+        {tr("glossary.editTerm")}
+      </div>
       <div className="space-y-3">
         <div>
-          <Label>源词 *</Label>
+          <Label>{tr("glossary.requiredSourceTerm")}</Label>
           <Input
             value={form.source}
             onChange={(e) => setForm({ ...form, source: e.target.value })}
           />
         </div>
         <div>
-          <Label>译词 *</Label>
+          <Label>{tr("glossary.requiredTranslatedTerm")}</Label>
           <Input
             value={form.target}
             onChange={(e) => setForm({ ...form, target: e.target.value })}
@@ -613,19 +648,19 @@ function EditTermDialog({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>读音</Label>
+            <Label>{tr("glossary.reading")}</Label>
             <Input
               value={form.reading}
               onChange={(e) => setForm({ ...form, reading: e.target.value })}
             />
           </div>
           <div>
-            <Label>类型</Label>
+            <Label>{tr("common.type")}</Label>
             <Select
               value={form.type}
               onChange={(e) => setForm({ ...form, type: e.target.value })}
             >
-              {Object.entries(TYPES).map(([id, label]) => (
+              {Object.entries(termTypes()).map(([id, label]) => (
                 <option key={id} value={id}>
                   {label}
                 </option>
@@ -635,29 +670,29 @@ function EditTermDialog({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>性别</Label>
+            <Label>{tr("common.gender")}</Label>
             <Select
               value={form.gender}
               onChange={(e) => setForm({ ...form, gender: e.target.value })}
             >
-              <option value="">未指定</option>
-              <option value="male">男性</option>
-              <option value="female">女性</option>
-              <option value="other">其他</option>
-              <option value="unknown">未知</option>
+              <option value="">{tr("glossary.unspecified")}</option>
+              <option value="male">{tr("glossary.male")}</option>
+              <option value="female">{tr("glossary.female")}</option>
+              <option value="other">{tr("glossary.other")}</option>
+              <option value="unknown">{tr("glossary.unknown")}</option>
             </Select>
           </div>
         </div>
         <div>
-          <Label>别名（逗号分隔）</Label>
+          <Label>{tr("glossary.aliasesCommaSeparated")}</Label>
           <Input
             value={form.aliases}
             onChange={(e) => setForm({ ...form, aliases: e.target.value })}
-            placeholder="别名1, 别名2"
+            placeholder={tr("glossary.aliasPlaceholder")}
           />
         </div>
         <div>
-          <Label>备注</Label>
+          <Label>{tr("glossary.notes")}</Label>
           <Textarea
             value={form.note}
             onChange={(e) => setForm({ ...form, note: e.target.value })}
@@ -666,13 +701,13 @@ function EditTermDialog({
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button variant="outline" onClick={onClose}>
-          取消
+          {tr("common.cancel")}
         </Button>
         <Button
           onClick={() => m.mutate()}
           disabled={!form.source || !form.target || m.isPending}
         >
-          保存
+          {tr("common.save")}
         </Button>
       </div>
     </Dialog>
@@ -700,6 +735,7 @@ function ImportDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t: tr } = useI18n();
   const [step, setStep] = useState<"upload" | "conflicts" | "importing">(
     "upload",
   );
@@ -731,7 +767,7 @@ function ImportDialog({
         try {
           items = JSON.parse(text);
         } catch {
-          toast.error("JSON 解析失败");
+          toast.error(tr("glossary.couldNotParseJson"));
           return;
         }
       }
@@ -744,11 +780,11 @@ function ImportDialog({
             typeof item.target !== "string",
         )
       ) {
-        toast.error("术语文件必须是包含 source 和 target 的列表");
+        toast.error(tr("glossary.theTermFileMustBeAList"));
         return;
       }
       if (items.length === 0) {
-        toast.error("文件为空或格式不正确");
+        toast.error(tr("glossary.theFileIsEmptyOrHasAn"));
         return;
       }
       // detect conflicts
@@ -791,12 +827,14 @@ function ImportDialog({
   const m = useMutation({
     mutationFn: (items: Partial<Term>[]) => api.importGlossary(pid, items),
     onSuccess: (res) => {
-      toast.success(`成功导入 ${res.imported} 条术语`);
+      toast.success(tr("glossary.importedTerms", { count: res.imported }));
       reset();
       onSaved();
     },
     onError: (e) => {
-      toast.error(`导入失败：${(e as Error).message}`);
+      toast.error(
+        tr("glossary.couldNotImportTerms", { error: (e as Error).message }),
+      );
       setStep("upload");
     },
   });
@@ -819,12 +857,14 @@ function ImportDialog({
         onClose();
       }}
     >
-      <div className="text-lg font-semibold mb-4">导入术语</div>
+      <div className="text-lg font-semibold mb-4">
+        {tr("glossary.importTerms")}
+      </div>
 
       {step === "upload" && (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            选择 CSV 或 JSON 文件导入术语。CSV 需包含 source, target 等列头。
+            {tr("glossary.importTermsFromCsvOrJsonCsv")}
           </p>
           <input
             ref={fileRef}
@@ -834,7 +874,8 @@ function ImportDialog({
             onChange={handleFile}
           />
           <Button onClick={() => fileRef.current?.click()}>
-            <Upload className="h-4 w-4" /> 选择文件
+            <Upload className="h-4 w-4" />
+            {tr("glossary.chooseFile")}
           </Button>
         </div>
       )}
@@ -842,7 +883,7 @@ function ImportDialog({
       {step === "conflicts" && (
         <div className="space-y-4">
           <p className="text-sm">
-            发现 {conflicts.length} 条冲突术语，请选择处理方式：
+            {tr("glossary.importConflictCount", { count: conflicts.length })}
           </p>
           <div className="max-h-60 overflow-auto space-y-2">
             {conflicts.map((c, i) => (
@@ -852,16 +893,20 @@ function ImportDialog({
               >
                 <span className="font-medium min-w-[80px]">{c.source}</span>
                 <span className="text-muted-foreground">
-                  当前：{c.existingTarget}
+                  {tr("glossary.current")}
+                  {c.existingTarget}
                 </span>
                 <span className="text-muted-foreground">
-                  导入：{c.newTarget}
+                  {tr("glossary.imported")}
+                  {c.newTarget}
                 </span>
                 <button
                   className={`ml-auto rounded px-2 py-0.5 text-xs ${c.decision === "overwrite" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
                   onClick={() => toggleConflict(i)}
                 >
-                  {c.decision === "overwrite" ? "覆盖" : "跳过"}
+                  {c.decision === "overwrite"
+                    ? tr("glossary.overwrite")
+                    : tr("glossary.skip")}
                 </button>
               </div>
             ))}
@@ -874,16 +919,18 @@ function ImportDialog({
                 onClose();
               }}
             >
-              取消
+              {tr("common.cancel")}
             </Button>
-            <Button onClick={() => doImport()}>确认导入</Button>
+            <Button onClick={() => doImport()}>
+              {tr("glossary.confirmImport")}
+            </Button>
           </div>
         </div>
       )}
 
       {step === "importing" && (
         <div className="py-8 text-center text-sm text-muted-foreground">
-          导入中…
+          {tr("glossary.importing")}
         </div>
       )}
     </Dialog>

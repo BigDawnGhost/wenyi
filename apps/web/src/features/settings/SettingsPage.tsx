@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,19 +10,22 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 
+import { LanguageSettings } from "./LanguageSettings";
 import { ProviderSettings } from "./ProviderSettings";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
-const PIPELINE: [string, string][] = [
-  ["book_understanding", "全书预理解"],
-  ["polish", "润色"],
-  ["review", "全书审校"],
-  ["review_autofix", "自动修复并写回正式译文"],
-  ["annotation_alignment", "逐段注释定位"],
-];
 
 export default function SettingsPage() {
+  const { t: tr } = useI18n();
+  const PIPELINE: [string, string][] = [
+    ["book_understanding", tr("settings.bookUnderstanding")],
+    ["polish", tr("settings.polishing")],
+    ["review", tr("common.wholeBookReview")],
+    ["review_autofix", tr("settings.applyAutofixesToTheSavedTranslation")],
+    ["annotation_alignment", tr("settings.paragraphAnnotationAlignment")],
+  ];
+
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
@@ -79,14 +83,14 @@ export default function SettingsPage() {
       apply(value);
       qc.invalidateQueries({ queryKey: ["config", pid] });
       qc.invalidateQueries({ queryKey: ["models", pid] });
-      toast.success("项目配置已保存");
+      toast.success(tr("settings.projectSettingsSaved"));
     },
   });
   const validate = useMutation({
     mutationFn: () => api.validateConfig(pid, draft),
     onSuccess: (value) => {
       apply(value);
-      toast.success("配置有效，尚未保存");
+      toast.success(tr("settings.configurationIsValidButNotSavedYet"));
     },
   });
   const check = useMutation({
@@ -105,7 +109,7 @@ export default function SettingsPage() {
       }),
     onSuccess: (job) => {
       setComparisonId(job.job_id);
-      toast.success("模型对比已启动");
+      toast.success(tr("settings.modelComparisonStarted"));
     },
   });
   const busy =
@@ -131,27 +135,33 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader
-        title="项目配置与模型"
-        subtitle="配置校验在服务端执行；高级 YAML 支持提供商、模型档位、操作路由、重试、并发和预算"
+        title={tr("common.projectSettingsModels")}
+        subtitle={tr("settings.configurationIsValidatedOnTheServerAdvanced")}
       />
       <PageContainer className="max-w-5xl space-y-4">
+        <LanguageSettings />
         <ErrorNotice error={config.error || save.error || validate.error} />
         {busy && (
           <p role="status" className="rounded border p-3 text-sm">
-            项目任务正在执行，配置暂时只读。暂停并保存检查点后可修改。
+            {tr("settings.settingsAreReadOnlyWhileATask")}
           </p>
         )}
         <Card>
           <CardContent className="p-5 space-y-4">
-            <ProviderSettings config={effective} disabled={formDisabled} kinds={caps?.providers || []} onChange={(llm) => {
-              const next = { ...effective, llm };
-              setEffective(next);
-              setDraft(JSON.stringify(next, null, 2));
-            }} />
-            <h2 className="font-medium">翻译流程配置</h2>
+            <ProviderSettings
+              config={effective}
+              disabled={formDisabled}
+              kinds={caps?.providers || []}
+              onChange={(llm) => {
+                const next = { ...effective, llm };
+                setEffective(next);
+                setDraft(JSON.stringify(next, null, 2));
+              }}
+            />
+            <h2 className="font-medium">{tr("settings.workflowSettings")}</h2>
             {yamlDirty && (
               <p className="text-sm text-amber-700">
-                高级 YAML 有未校验的修改。点击“校验配置”后同步到表单。
+                {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
               </p>
             )}
             <fieldset
@@ -179,12 +189,14 @@ export default function SettingsPage() {
               )}
               {subtitles && (
                 <p className="text-sm text-muted-foreground">
-                  字幕使用独立翻译流程；书籍预理解、全书审校和章节润色不应用于字幕。
+                  {tr("settings.subtitlesUseASeparateWorkflowWithoutBook")}
                 </p>
               )}
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="batch-tokens">每批 Token 预算</Label>
+                  <Label htmlFor="batch-tokens">
+                    {tr("settings.tokensPerBatch")}
+                  </Label>
                   <Input
                     id="batch-tokens"
                     type="number"
@@ -204,7 +216,9 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="segment-tokens">每段 Token 预算</Label>
+                  <Label htmlFor="segment-tokens">
+                    {tr("settings.tokensPerParagraph")}
+                  </Label>
                   <Input
                     id="segment-tokens"
                     type="number"
@@ -225,7 +239,9 @@ export default function SettingsPage() {
                 </div>
                 {!subtitles && (
                   <div>
-                    <Label htmlFor="review-concurrency">审校并发数</Label>
+                    <Label htmlFor="review-concurrency">
+                      {tr("settings.reviewConcurrency")}
+                    </Label>
                     <Input
                       id="review-concurrency"
                       type="number"
@@ -245,7 +261,9 @@ export default function SettingsPage() {
                   </div>
                 )}
                 <div>
-                  <Label htmlFor="pdf-backend">PDF 解析后端</Label>
+                  <Label htmlFor="pdf-backend">
+                    {tr("settings.pdfParser")}
+                  </Label>
                   <Select
                     id="pdf-backend"
                     value={String(
@@ -280,19 +298,18 @@ export default function SettingsPage() {
                     )
                   }
                 />
-                导出时规范标点
+                {tr("settings.normalizePunctuationOnExport")}
               </label>
             </fieldset>
             <details>
               <summary className="cursor-pointer font-medium text-sm">
-                高级 YAML 配置
+                {tr("settings.advancedYamlConfiguration")}
               </summary>
               <p className="text-xs text-muted-foreground mt-3">
-                API Key 使用服务端环境变量名称。模型、备用模型、请求与 Token
-                预算等完整配置会由核心校验器验证。
+                {tr("settings.useServerEnvironmentVariableNamesForApi")}
               </p>
               <Textarea
-                aria-label="高级 YAML 配置"
+                aria-label={tr("settings.advancedYamlConfiguration")}
                 spellCheck={false}
                 className="mt-3 min-h-[420px] font-mono text-xs"
                 value={draft}
@@ -309,19 +326,23 @@ export default function SettingsPage() {
                 disabled={!loaded || busy || validate.isPending}
                 onClick={() => validate.mutate()}
               >
-                {validate.isPending ? "校验中…" : "校验配置"}
+                {validate.isPending
+                  ? tr("settings.validating")
+                  : tr("settings.validateConfiguration")}
               </Button>
               <Button
                 disabled={!loaded || busy || save.isPending}
                 onClick={() => save.mutate()}
               >
-                {save.isPending ? "保存中…" : "保存配置"}
+                {save.isPending
+                  ? tr("common.saving")
+                  : tr("settings.saveConfiguration")}
               </Button>
             </div>
             {validate.data && (
               <details>
                 <summary className="cursor-pointer text-sm">
-                  已校验配置的有效路由
+                  {tr("settings.validatedModelRoutes")}
                 </summary>
                 <div className="mt-3">
                   <StructuredData value={validate.data.routes} />
@@ -333,13 +354,13 @@ export default function SettingsPage() {
         <Card>
           <CardContent className="p-5 space-y-4">
             <div className="flex gap-3 items-center justify-between">
-              <h2 className="font-medium">已保存配置的模型路由</h2>
+              <h2 className="font-medium">{tr("settings.savedModelRoutes")}</h2>
               <Button
                 variant="outline"
                 disabled={check.isPending}
                 onClick={() => check.mutate()}
               >
-                检查模型配置
+                {tr("settings.checkModelConfiguration")}
               </Button>
             </div>
             <ErrorNotice error={routes.error || check.error} />
@@ -353,14 +374,15 @@ export default function SettingsPage() {
         </Card>
         <Card>
           <CardContent className="p-5 space-y-4">
-            <h2 className="font-medium">模型对比</h2>
+            <h2 className="font-medium">{tr("common.modelComparison")}</h2>
             <p className="text-sm text-muted-foreground">
-              点击“运行模型对比”后会发送测试消息并产生实际用量。结果展示输出、耗时与
-              Token 用量。
+              {tr("settings.runningAModelComparisonSendsTestMessages")}
             </p>
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="comparison-operation">操作名称</Label>
+                <Label htmlFor="comparison-operation">
+                  {tr("settings.operationName")}
+                </Label>
                 <Select
                   id="comparison-operation"
                   value={operation}
@@ -378,10 +400,12 @@ export default function SettingsPage() {
                 </Select>
               </div>
               <div>
-                <Label htmlFor="comparison-models">模型 ID（逗号分隔）</Label>
+                <Label htmlFor="comparison-models">
+                  {tr("settings.modelIdsCommaSeparated")}
+                </Label>
                 <Input
                   id="comparison-models"
-                  placeholder="使用上方已配置的模型 ID"
+                  placeholder={tr("settings.useTheModelIdsConfiguredAbove")}
                   value={models}
                   onChange={(e) => setModels(e.target.value)}
                   className="mt-2"
@@ -389,10 +413,10 @@ export default function SettingsPage() {
               </div>
             </div>
             <Textarea
-              aria-label="模型对比测试消息"
+              aria-label={tr("settings.modelComparisonTestMessage")}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="输入供各模型处理的同一条测试消息"
+              placeholder={tr("settings.enterTheSameTestMessageForAll")}
             />
             <Button
               disabled={
@@ -406,8 +430,8 @@ export default function SettingsPage() {
               onClick={() => compare.mutate()}
             >
               {activeComparison || compare.isPending
-                ? "对比运行中…"
-                : "运行模型对比"}
+                ? tr("settings.comparisonRunning")
+                : tr("settings.runModelComparison")}
             </Button>
             <ErrorNotice error={compare.error || comparison.error} />
             {comparison.data && <StructuredData value={comparison.data} />}
@@ -419,19 +443,24 @@ export default function SettingsPage() {
 }
 
 function ModelRoutes({ value }: { value: unknown }) {
+  const { t: tr } = useI18n();
   if (!Array.isArray(value)) return <StructuredData value={value} />;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="border-b text-xs text-muted-foreground">
           <tr>
-            {["操作", "模型配置 / 模型", "提供商", "档位", "备用模型"].map(
-              (label) => (
-                <th key={label} className="text-left py-2 pr-4 font-medium">
-                  {label}
-                </th>
-              ),
-            )}
+            {[
+              tr("common.actions"),
+              tr("settings.modelProfileModel"),
+              tr("common.provider"),
+              tr("settings.tier"),
+              tr("settings.fallbackModels"),
+            ].map((label) => (
+              <th key={label} className="text-left py-2 pr-4 font-medium">
+                {label}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -450,7 +479,9 @@ function ModelRoutes({ value }: { value: unknown }) {
                 </div>
               </td>
               <td className="py-3 pr-4">{String(route.provider || "—")}</td>
-              <td className="py-3 pr-4">{String(route.tier || "自定义")}</td>
+              <td className="py-3 pr-4">
+                {String(route.tier || tr("settings.custom"))}
+              </td>
               <td className="py-3 pr-4">
                 {Array.isArray(route.fallbacks) && route.fallbacks.length
                   ? route.fallbacks.join(", ")
@@ -462,7 +493,7 @@ function ModelRoutes({ value }: { value: unknown }) {
       </table>
       <details className="mt-3">
         <summary className="cursor-pointer text-xs text-muted-foreground">
-          完整路由参数
+          {tr("settings.fullRouteParameters")}
         </summary>
         <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">
           {JSON.stringify(value, null, 2)}
