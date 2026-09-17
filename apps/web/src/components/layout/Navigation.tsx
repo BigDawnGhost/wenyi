@@ -76,7 +76,7 @@ export function ProjectNavigation({
     {
       path: "settings",
       icon: Settings2,
-      label: "common.projectSettingsModels" as const,
+      label: "common.projectSettings" as const,
     },
     { path: "events", icon: ScrollText, label: "common.eventLog" as const },
   ];

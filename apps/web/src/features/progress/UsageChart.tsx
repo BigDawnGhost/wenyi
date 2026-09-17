@@ -12,9 +12,9 @@ import {
 } from "./accountingData";
 
 const groups: [UsageGroup, MessageKey][] = [
+  ["by_stage", "data.byStage"],
   ["by_model", "data.byModel"],
   ["by_provider", "data.byProvider"],
-  ["by_stage", "data.byStage"],
 ];
 type TokenPart = {
   label: MessageKey;
@@ -89,7 +89,7 @@ export default function UsageChart({
   usage: Record<string, unknown>;
 }) {
   const { t, locale } = useI18n();
-  const [group, setGroup] = useState<UsageGroup>("by_model");
+  const [group, setGroup] = useState<UsageGroup>(groups[0][0]);
   const labels = record(usage.labels);
   const rows = usageRows(usage, group);
   const maximum = Math.max(

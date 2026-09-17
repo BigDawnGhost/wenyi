@@ -7,7 +7,7 @@ const en = {
   "common.glossary": "Glossary",
   "common.styleSynopsis": "Style & synopsis",
   "common.subtitleEditor": "Subtitle editor",
-  "common.projectSettingsModels": "Project settings & models",
+  "common.projectSettings": "Project settings",
   "common.export": "Export",
   "common.eventLog": "Event log",
   "data.noRecordsYet": "No records yet",
@@ -337,7 +337,6 @@ const en = {
   "createProject.serverDefault": "Use server default",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
     "Project created. Changing languages or source content after initialization requires a new project.",
-  "createProject.projectSettingsModels": "Project settings & models",
   "createProject.uploadStep": "2. Upload source",
   "createProject.uploadSource": "Upload source",
   "createProject.browseFiles": "Browse files",

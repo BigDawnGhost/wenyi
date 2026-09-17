@@ -244,7 +244,7 @@ export default function CreateProject() {
                   className="text-primary underline ml-2"
                   to={`/projects/${pid}/settings`}
                 >
-                  {tr("createProject.projectSettingsModels")}
+                  {tr("common.projectSettings")}
                 </Link>
               </p>
             )}

@@ -3,7 +3,7 @@
 [简体中文](zh/web-interface.md) · [Interface languages](web-i18n.md)
 
 Project navigation lists **Translation overview**, **Manual proofreading**, **Whole-book
-review**, **Glossary**, **Style & synopsis**, **Export**, **Project settings & models**,
+review**, **Glossary**, **Style & synopsis**, **Export**, **Project settings**,
 and **Event log** at the same level, with the current page highlighted. Desktop and
 mobile use the same navigation; subtitle projects show
 the subtitle editor instead of book proofreading/review and omit glossary/style tools.
@@ -29,8 +29,9 @@ If queueing fails after the source is saved, the project keeps the source and ex
 The translation overview owns start, pause, resume, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,
 and the latest matching workflow event visible. Expand workflow details to inspect the
-plan. Accounting always shows usage by model/provider/stage and
-run-duration charts. The project report is collapsed by default. Export generation and its options live
+plan. Accounting always shows usage and run-duration charts. Usage grouping controls
+appear as **By stage**, **By model**, then **By provider**, with **By stage** selected
+initially. The project report is collapsed by default. Export generation and its options live
 on the export page.
 
 Accounting keeps total tokens, request count, cache hit rate, and recorded runtime

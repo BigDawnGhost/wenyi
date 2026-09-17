@@ -118,6 +118,9 @@ test("model usage combines configuration identities with the same provider and m
   const rows = accounting
     .getByRole("list", { name: "By model", exact: true })
     .getByRole("listitem");
+  await accounting
+    .getByRole("button", { name: "By model", exact: true })
+    .click();
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("10,000 tokens");
   await expect(rows).toContainText("Calls: 8");
@@ -150,6 +153,20 @@ test("usage charts switch attribution without double counting and retain resumed
   ).toHaveCount(0);
   await expect(accounting.locator("summary")).toHaveCount(0);
   await expect(accounting.getByRole("figure")).toHaveCount(0);
+  await expect(accounting.getByRole("group").getByRole("button")).toHaveText([
+    "By stage",
+    "By model",
+    "By provider",
+  ]);
+  await expect(
+    accounting.getByRole("button", { name: "By stage", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    accounting.getByRole("list", { name: "By stage", exact: true }),
+  ).toContainText("Verify review evidence");
+  await accounting
+    .getByRole("button", { name: "By model", exact: true })
+    .click();
   const models = accounting.getByRole("list", {
     name: "By model",
     exact: true,
@@ -243,6 +260,14 @@ test("Chinese accounting fits narrow screens with long provider names and locali
     page.getByRole("heading", { name: "翻译总览", level: 2, exact: true }),
   ).toBeVisible();
   const accounting = page.getByRole("region", { name: "累计用量与运行耗时" });
+  await expect(accounting.getByRole("group").getByRole("button")).toHaveText([
+    "按步骤",
+    "按模型",
+    "按提供商",
+  ]);
+  await expect(
+    accounting.getByRole("button", { name: "按步骤", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await accounting.locator("dl").scrollIntoViewIfNeeded();
   await expect(accounting.locator("dl")).toContainText("1时30分0秒");
   await page.screenshot({
@@ -368,6 +393,7 @@ test("unknown cache usage remains distinct from uncached input", async ({
   });
   await page.goto(`/projects/${pid}`);
   const row = page.getByRole("list", { name: "By model", exact: true });
+  await page.getByRole("button", { name: "By model", exact: true }).click();
   await expect(row).toContainText("Cached input: 200");
   await expect(row).toContainText("Uncached input: 100");
   await expect(row).toContainText("Input with unknown cache status: 700");

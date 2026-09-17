@@ -8,7 +8,7 @@ const zhCN = {
   "common.glossary": "术语表",
   "common.styleSynopsis": "风格 & 概要",
   "common.subtitleEditor": "字幕对照与编辑",
-  "common.projectSettingsModels": "项目配置与模型",
+  "common.projectSettings": "项目配置",
   "common.export": "导出",
   "common.eventLog": "事件日志",
   "data.noRecordsYet": "尚无记录",
@@ -326,7 +326,6 @@ const zhCN = {
   "createProject.serverDefault": "使用服务端默认设置",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
     "项目已创建。初始化后更换语言或原文内容需新建项目。",
-  "createProject.projectSettingsModels": "项目配置与模型设置",
   "createProject.uploadStep": "2. 上传原文",
   "createProject.uploadSource": "上传原文",
   "createProject.browseFiles": "浏览文件",

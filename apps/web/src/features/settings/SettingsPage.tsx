@@ -92,7 +92,7 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader
-        title={tr("common.projectSettingsModels")}
+        title={tr("common.projectSettings")}
         subtitle={tr("settings.configurationIsValidatedOnTheServerAdvanced")}
       />
       <PageContainer className="max-w-5xl space-y-4">

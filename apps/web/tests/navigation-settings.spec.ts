@@ -26,7 +26,7 @@ for (const mobile of [false, true]) {
             "术语表",
             "风格 & 概要",
             "导出",
-            "项目配置与模型",
+            "项目配置",
             "事件日志",
           ]
         : [
@@ -36,7 +36,7 @@ for (const mobile of [false, true]) {
             "Glossary",
             "Style & synopsis",
             "Export",
-            "Project settings & models",
+            "Project settings",
             "Event log",
           ],
     );
@@ -64,6 +64,12 @@ for (const mobile of [false, true]) {
       fullPage: true,
     });
     await page.goto(`/projects/${pid}/settings`);
+    await expect(
+      page.getByRole("heading", {
+        name: mobile ? "项目配置" : "Project settings",
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(nav.locator('a[href$="/settings"]')).toHaveAttribute(
       "aria-current",
       "page",
