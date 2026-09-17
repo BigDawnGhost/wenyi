@@ -15,13 +15,15 @@ the project navigation. Long project menus scroll independently of the global li
 The translation overview owns start, pause, resume, preparation, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,
 and the latest matching workflow event visible. Expand workflow details to inspect the
-plan; expand accounting for token composition, usage by model/provider/stage, and
+plan. Accounting always shows token composition, usage by model/provider/stage, and
 run-duration charts. The project report and
 preparation controls are collapsed by default. Export generation and its options live
 on the export page.
 
 Accounting keeps total tokens, request count, cache hit rate, and recorded runtime
-visible. Input/output bars use saved token counts; switching grouping never adds the
+visible, with no accounting collapse control. Status badges use pale backgrounds with
+colored text. The model view combines records with the same provider/model name across
+inference configurations, without rewriting the usage ledger. Input/output bars use saved token counts; switching grouping never adds the
 independent views together. Missing cache information shows a dash. Run history lists
 the latest runs first, with localized status, start time, and duration; earlier runs
 remain available. Timing measures whole runs including waiting and I/O, excludes pauses

@@ -67,6 +67,42 @@ const stats = {
   },
 };
 
+test("model usage combines configuration identities with the same provider and model name", async ({
+  page,
+}) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/stats`]: {
+      ...stats,
+      usage: {
+        ...stats.usage,
+        labels: {
+          ...stats.usage.labels,
+          "model-b": "deepseek / deepseek-flash",
+        },
+      },
+    },
+  });
+  await page.goto(`/projects/${pid}`);
+  const accounting = page.getByRole("region", {
+    name: "Total usage & run time",
+  });
+  const rows = accounting
+    .getByRole("list", { name: "By model", exact: true })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText("10,000 tokens");
+  await expect(rows).toContainText("Calls: 8");
+  await expect(rows).toContainText("Input tokens: 8,000");
+  await expect(rows).toContainText("Cached tokens: 4,800");
+  await accounting
+    .getByRole("button", { name: "By provider", exact: true })
+    .click();
+  await expect(
+    accounting.getByRole("list", { name: "By provider" }).getByRole("listitem"),
+  ).toHaveCount(2);
+  await expect(accounting.locator("dl")).toContainText("10,000");
+});
+
 test("usage charts switch attribution without double counting and retain resumed run history", async ({
   page,
 }, testInfo) => {
@@ -81,8 +117,8 @@ test("usage charts switch attribution without double counting and retain resumed
   await expect(totals).toContainText("1h 30m 0s");
   await expect(
     accounting.getByRole("region", { name: "Token usage", exact: true }),
-  ).not.toBeVisible();
-  await accounting.locator("summary").click();
+  ).toBeVisible();
+  await expect(accounting.locator("summary")).toHaveCount(0);
   const composition = accounting.getByRole("figure", {
     name: "Input and output token composition",
   });
@@ -133,9 +169,6 @@ test("usage charts switch attribution without double counting and retain resumed
   );
   await accounting.getByRole("button", { name: "Show recent runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(3);
-  await accounting.locator("summary").click();
-  await expect(runs).not.toBeVisible();
-  await accounting.locator("summary").click();
   await expect(
     accounting.getByRole("button", { name: "By stage", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -168,7 +201,6 @@ test("Chinese accounting fits narrow screens with long provider names and locali
   await page.screenshot({
     path: testInfo.outputPath("accounting-mobile-summary.png"),
   });
-  await page.getByText("用量与计时明细", { exact: true }).click();
   await page.getByRole("button", { name: "按提供商", exact: true }).click();
   await expect(
     page.getByRole("list", { name: "按提供商", exact: true }),
@@ -221,7 +253,6 @@ test("empty and partially reported usage shows honest empty states", async ({
   });
   await expect(accounting.locator("dl")).toContainText("0 s");
   await expect(accounting.locator("dl")).not.toContainText("0%");
-  await accounting.locator("summary").click();
   await expect(
     accounting.getByText("No usage breakdown recorded yet."),
   ).toBeVisible();
@@ -241,7 +272,6 @@ test("empty and partially reported usage shows honest empty states", async ({
     }),
   );
   await page.reload();
-  await accounting.locator("summary").click();
   await expect(accounting.getByRole("figure")).toContainText(
     "Unclassified tokens 500",
   );

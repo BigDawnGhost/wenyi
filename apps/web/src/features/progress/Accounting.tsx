@@ -1,12 +1,11 @@
 import {
   BarChart3,
-  ChevronDown,
   Clock3,
   Database,
   Layers,
   MessagesSquare,
 } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { useI18n } from "@/i18n";
 import {
   amount,
@@ -21,7 +20,6 @@ const RunTimeChart = lazy(() => import("./RunTimeChart"));
 
 export function Accounting({ value }: { value?: Stats }) {
   const { t, locale } = useI18n();
-  const [detailsLoaded, setDetailsLoaded] = useState(false);
   if (!value)
     return (
       <p className="text-sm text-muted-foreground">
@@ -77,38 +75,27 @@ export function Accounting({ value }: { value?: Stats }) {
           </div>
         ))}
       </dl>
-      <details
-        className="group border-t pt-4"
-        onToggle={(event) => {
-          if (event.currentTarget.open) setDetailsLoaded(true);
-        }}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+      <div className="border-t pt-4">
+        <h3 className="flex items-center gap-2 text-sm font-medium">
           <BarChart3
             className="h-4 w-4 text-muted-foreground"
             aria-hidden="true"
           />
           {t("accounting.details")}
-          <ChevronDown
-            className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180"
-            aria-hidden="true"
-          />
-        </summary>
-        {detailsLoaded && (
-          <Suspense
-            fallback={
-              <p className="mt-5 text-sm text-muted-foreground">
-                {t("progress.loading")}
-              </p>
-            }
-          >
-            <div className="mt-5 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-              <UsageChart usage={usage} />
-              <RunTimeChart timing={timing} />
-            </div>
-          </Suspense>
-        )}
-      </details>
+        </h3>
+        <Suspense
+          fallback={
+            <p className="mt-5 text-sm text-muted-foreground">
+              {t("progress.loading")}
+            </p>
+          }
+        >
+          <div className="mt-5 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+            <UsageChart usage={usage} />
+            <RunTimeChart timing={timing} />
+          </div>
+        </Suspense>
+      </div>
     </section>
   );
 }

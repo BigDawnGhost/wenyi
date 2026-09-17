@@ -48,13 +48,39 @@ export function tokenParts(slot: Record<string, unknown>) {
 }
 
 export function usageRows(usage: Record<string, unknown>, group: UsageGroup) {
-  return Object.entries(record(usage[group]))
-    .map(([id, value]) => ({ id, slot: record(value) }))
-    .sort(
-      (a, b) =>
-        tokenParts(b.slot).total - tokenParts(a.slot).total ||
-        a.id.localeCompare(b.id),
-    );
+  const labels = record(usage.labels);
+  const rows = new Map<string, { id: string; slot: Record<string, unknown> }>();
+  for (const [id, value] of Object.entries(record(usage[group]))) {
+    const label = typeof labels[id] === "string" ? labels[id].trim() : "";
+    // A model's ledger identity also includes inference options and output limits.
+    // Combine matching provider/model names only in this presentation view.
+    const key = group === "by_model" && label ? `model:${label}` : `id:${id}`;
+    const slot = record(value);
+    const existing = rows.get(key);
+    if (!existing) {
+      rows.set(key, { id, slot: { ...slot } });
+      continue;
+    }
+    for (const field of [
+      "calls",
+      "prompt_tokens",
+      "completion_tokens",
+      "total_tokens",
+      "cache_hit_tokens",
+      "cache_miss_tokens",
+    ]) {
+      const left = amount(existing.slot[field]);
+      const right = amount(slot[field]);
+      existing.slot[field] =
+        left === undefined || right === undefined ? undefined : left + right;
+    }
+    delete existing.slot.cache_hit_rate;
+  }
+  return [...rows.values()].sort(
+    (a, b) =>
+      tokenParts(b.slot).total - tokenParts(a.slot).total ||
+      a.id.localeCompare(b.id),
+  );
 }
 
 export function timingRuns(timing: Record<string, unknown>) {
