@@ -90,7 +90,7 @@ export default function ProgressPage() {
   return (
     <>
       <PageHeader
-        title={project?.name || tr("common.translationProgress")}
+        title={project?.name || tr("common.translationOverview")}
         subtitle={tr("progress.languageSummary", {
           source: project?.source_lang || tr("progress.detectAutomatically"),
           target: project?.target_lang || "—",
@@ -143,8 +143,8 @@ export default function ProgressPage() {
             <div className="flex flex-wrap justify-between items-center gap-3">
               <h2 className="font-medium">
                 {subtitle
-                  ? tr("progress.subtitleTranslationProgress")
-                  : tr("common.translationProgress")}
+                  ? tr("progress.subtitleTranslationOverview")
+                  : tr("common.translationOverview")}
               </h2>
               {project && <StatusBadge status={project.status} />}
             </div>

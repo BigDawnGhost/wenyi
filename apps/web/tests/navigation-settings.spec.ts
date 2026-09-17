@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { fakeApi, pid, project, configuration, effective } from "./fixtures";
 
 for (const mobile of [false, true]) {
-  test(`project tools are accessible and deep links expand on ${mobile ? "mobile in Chinese" : "desktop"}`, async ({
+  test(`project navigation stays flat on ${mobile ? "mobile in Chinese" : "desktop"}`, async ({
     page,
   }, testInfo) => {
     if (mobile) {
@@ -16,17 +16,20 @@ for (const mobile of [false, true]) {
     const nav = page.getByRole("navigation", {
       name: mobile ? "项目导航" : "Project navigation",
     });
-    await expect(nav.getByRole("link")).toHaveCount(4);
+    await expect(nav.getByRole("link")).toHaveCount(8);
+    await expect(nav.locator("details, summary")).toHaveCount(0);
+    await expect(
+      nav.getByRole("link", {
+        name: mobile ? "翻译总览" : "Translation overview",
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(
       nav.getByRole("link", {
         name: mobile ? "人工校阅" : "Manual proofreading",
         exact: true,
       }),
     ).toHaveAttribute("aria-current", "page");
-    const tools = nav.locator("summary");
-    await tools.focus();
-    await tools.press("Enter");
-    await expect(nav.getByRole("link")).toHaveCount(8);
     await expect(
       nav.getByRole("link", {
         name: mobile ? "事件日志" : "Event log",
@@ -51,14 +54,12 @@ for (const mobile of [false, true]) {
   });
 }
 
-test("subtitle navigation omits book-only pages even inside project tools", async ({
+test("subtitle navigation stays flat and omits book-only pages", async ({
   page,
 }) => {
   await fakeApi(page, { [`/projects/${pid}`]: { ...project, fmt: "srt" } });
   await page.goto(`/projects/${pid}/subtitles`);
   const nav = page.getByRole("navigation", { name: "Project navigation" });
-  await expect(nav.getByRole("link")).toHaveCount(3);
-  await nav.locator("summary").click();
   await expect(nav.getByRole("link")).toHaveCount(5);
   await expect(
     nav.getByRole("link", { name: /Glossary|Style|review/i }),

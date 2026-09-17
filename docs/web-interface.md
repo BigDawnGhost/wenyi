@@ -2,17 +2,17 @@
 
 [简体中文](zh/web-interface.md) · [Interface languages](web-i18n.md)
 
-Project navigation keeps **Progress**, **Manual proofreading**, **Whole-book review**,
-and **Export** visible. **Project tools** groups Glossary, Style & synopsis, Project
-settings & models, and Event log. Opening a tool URL expands the group and highlights
-the current page. Desktop and mobile use the same navigation; subtitle projects show
+Project navigation lists **Translation overview**, **Manual proofreading**, **Whole-book
+review**, **Export**, **Glossary**, **Style & synopsis**, **Project settings & models**,
+and **Event log** at the same level, with the current page highlighted. Desktop and
+mobile use the same navigation; subtitle projects show
 the subtitle editor instead of book proofreading/review and omit glossary/style tools.
 Browser interface language stays in global Settings.
-Project navigation and tools appear at the top of the desktop sidebar; Projects,
+Project pages appear at the top of the desktop sidebar; Projects,
 Create project, and Settings stay at its bottom. On mobile, these global links follow
 the project navigation. Long project menus scroll independently of the global links.
 
-The progress page owns start, pause, resume, preparation, and individual chapter
+The translation overview owns start, pause, resume, preparation, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,
 and the latest matching workflow event visible. Expand workflow details to inspect the
 plan; expand accounting for per-model/provider/stage usage. The project report and

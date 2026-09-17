@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import {
   BookOpenCheck,
   Captions,
@@ -56,10 +55,9 @@ export function ProjectNavigation({
   name?: string;
 }) {
   const { t } = useI18n();
-  const { pathname } = useLocation();
   const base = `/projects/${pid}`;
   const book = !!format && format !== "srt";
-  const tools = [
+  const links = [
     ...(book
       ? [
           {
@@ -81,11 +79,6 @@ export function ProjectNavigation({
     },
     { path: "events", icon: ScrollText, label: "common.eventLog" as const },
   ];
-  const activeTool = tools.some(({ path }) => pathname === `${base}/${path}`);
-  const [expanded, setExpanded] = useState(activeTool);
-  useEffect(() => {
-    if (activeTool) setExpanded(true);
-  }, [pathname, activeTool]);
   return (
     <nav aria-label={t("navigation.project")} className="space-y-1">
       <p
@@ -98,7 +91,7 @@ export function ProjectNavigation({
         <NavigationLink
           to={base}
           icon={Sparkles}
-          label="common.translationProgress"
+          label="common.translationOverview"
           end
         />
         {book && (
@@ -127,25 +120,15 @@ export function ProjectNavigation({
           icon={Download}
           label="common.export"
         />
+        {links.map(({ path, icon, label }) => (
+          <NavigationLink
+            key={path}
+            to={`${base}/${path}`}
+            icon={icon}
+            label={label}
+          />
+        ))}
       </div>
-      <details
-        open={expanded}
-        onToggle={(event) => setExpanded(event.currentTarget.open)}
-      >
-        <summary className="cursor-pointer rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent/50">
-          {t("navigation.tools")}
-        </summary>
-        <div className="flex flex-wrap border-l ml-3 pl-1 md:block">
-          {tools.map(({ path, icon, label }) => (
-            <NavigationLink
-              key={path}
-              to={`${base}/${path}`}
-              icon={icon}
-              label={label}
-            />
-          ))}
-        </div>
-      </details>
     </nav>
   );
 }
