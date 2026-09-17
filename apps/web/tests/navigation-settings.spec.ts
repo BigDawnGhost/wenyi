@@ -99,7 +99,7 @@ test("advanced settings retain invalid drafts and reveal them after validation",
   await page.goto(`/projects/${pid}/settings`);
   await expect(page.getByLabel("Quality tier")).toBeVisible();
   await expect(
-    page.getByLabel("Apply autofixes to the saved translation", {
+    page.getByLabel("Apply autofixes to the saved translation after review", {
       exact: true,
     }),
   ).toBeVisible();

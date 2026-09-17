@@ -125,10 +125,18 @@ test("unreviewed chapters remain unreviewed and obsolete QA actions are absent",
   await expect(page.getByText("Total usage & run time")).toBeVisible();
 });
 
-test("review defaults to configured autofix and sends no force flag", async ({
+test("autofix defaults on in project settings and review sends no temporary override", async ({
   page,
 }) => {
   await fakeApi(page);
+  let saved = { ...effective, pipeline: { ...effective.pipeline } };
+  await page.route(`**/api/projects/${pid}/config`, async (r) => {
+    if (r.request().method() === "PUT")
+      saved = JSON.parse(r.request().postDataJSON().yaml);
+    await r.fulfill({
+      json: { ...configuration, effective: saved, yaml: JSON.stringify(saved) },
+    });
+  });
   let request: Record<string, unknown> | undefined;
   await page.route(`**/api/projects/${pid}/review/run`, async (r) => {
     request = r.request().postDataJSON();
@@ -136,7 +144,7 @@ test("review defaults to configured autofix and sends no force flag", async ({
       json: { job_id: "review-1", kind: "review", project_id: pid },
     });
   });
-  await page.goto(`/projects/${pid}/review`);
+  await page.goto(`/projects/${pid}/settings`);
   await expect(
     page.getByLabel("Apply autofixes to the saved translation after review"),
   ).toBeChecked();
@@ -144,9 +152,21 @@ test("review defaults to configured autofix and sends no force flag", async ({
     .getByLabel("Apply autofixes to the saved translation after review")
     .uncheck();
   await page
+    .getByRole("button", { name: "Save configuration", exact: true })
+    .click();
+  await expect.poll(() => saved.pipeline.review_autofix).toBe(false);
+  await page.reload();
+  await expect(
+    page.getByLabel("Apply autofixes to the saved translation after review"),
+  ).not.toBeChecked();
+  await page
+    .getByRole("link", { name: "Whole-book review", exact: true })
+    .click();
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await page
     .getByRole("button", { name: "Run whole-book review", exact: true })
     .click();
-  await expect.poll(() => request).toEqual({ autofix: false });
+  await expect.poll(() => request).toEqual({});
 });
 
 test("failed manual edit keeps the draft and does not show a success state", async ({

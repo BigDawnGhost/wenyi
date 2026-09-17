@@ -17,15 +17,10 @@ export default function ReviewPage() {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string>();
-  const [autofix, setAutofix] = useState<boolean>();
   const project = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
     refetchInterval: 3000,
-  });
-  const config = useQuery({
-    queryKey: ["config", pid],
-    queryFn: () => api.getConfig(pid),
   });
   const subtitle = project.data?.fmt === "srt";
   const chapters = useQuery({
@@ -48,13 +43,8 @@ export default function ReviewPage() {
     refetchInterval: isProjectBusy(project.data?.status) ? 3000 : false,
   });
   const busy = isProjectBusy(project.data?.status);
-  const configuredAutofix = Boolean(
-    (config.data?.effective.pipeline as Record<string, unknown> | undefined)
-      ?.review_autofix ?? true,
-  );
-  const allowAutofix = autofix ?? configuredAutofix;
   const review = useMutation({
-    mutationFn: () => api.runAiReview(pid, { autofix: allowAutofix }),
+    mutationFn: () => api.runAiReview(pid),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["project", pid] });
       qc.invalidateQueries({ queryKey: ["review-runs", pid] });
@@ -74,7 +64,6 @@ export default function ReviewPage() {
         <ErrorNotice
           error={
             project.error ||
-            config.error ||
             chapters.error ||
             runs.error ||
             run.error ||
@@ -83,15 +72,6 @@ export default function ReviewPage() {
         />
         <Card>
           <CardContent className="p-5 space-y-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={allowAutofix}
-                disabled={busy || review.isPending}
-                onChange={(e) => setAutofix(e.target.checked)}
-              />
-              {tr("review.applyAutofixesToTheSavedTranslationAfter")}
-            </label>
             <p className="text-sm text-muted-foreground">
               {tr("review.completedResultsAreReusedWhenContentConfiguration")}
             </p>

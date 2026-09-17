@@ -4,6 +4,7 @@ import { operationLabel } from "@/i18n/labels";
 import { cn } from "@/lib/utils";
 import {
   amount,
+  cacheRate,
   record,
   tokenParts,
   usageRows,
@@ -15,31 +16,67 @@ const groups: [UsageGroup, MessageKey][] = [
   ["by_provider", "data.byProvider"],
   ["by_stage", "data.byStage"],
 ];
-const colors = [
-  "bg-sky-600 dark:bg-sky-400",
-  "bg-teal-500 dark:bg-teal-400",
-  "bg-slate-400",
-];
+type TokenPart = {
+  label: MessageKey;
+  value: number | undefined;
+  color: string;
+};
 
-function TokenBar({
-  slot,
-  scale,
-}: {
-  slot: Record<string, unknown>;
-  scale?: number;
-}) {
-  const { input, output, other, total } = tokenParts(slot);
-  const denominator = Math.max(scale ?? total, input + output + other, 1);
+function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
+  const parts = tokenParts(slot);
+  return [
+    {
+      label: "accounting.cachedInput",
+      value: parts.cachedInput,
+      color: "bg-sky-300",
+    },
+    {
+      label: "accounting.uncachedInput",
+      value: parts.uncachedInput,
+      color: "bg-sky-600 dark:bg-sky-400",
+    },
+    ...(parts.unknownInput
+      ? [
+          {
+            label: "accounting.unknownInput" as const,
+            value: parts.unknownInput,
+            color: "bg-slate-300",
+          },
+        ]
+      : []),
+    {
+      label: "data.outputTokens",
+      value: amount(slot.completion_tokens),
+      color: "bg-teal-500 dark:bg-teal-400",
+    },
+    ...(parts.other
+      ? [
+          {
+            label: "accounting.unclassifiedTokens" as const,
+            value: parts.other,
+            color: "bg-slate-500",
+          },
+        ]
+      : []),
+  ];
+}
+
+function TokenBar({ parts, scale }: { parts: TokenPart[]; scale: number }) {
+  const denominator = Math.max(
+    scale,
+    parts.reduce((sum, part) => sum + (part.value ?? 0), 0),
+    1,
+  );
   return (
     <div
       className="flex h-2.5 overflow-hidden rounded-full bg-muted"
       aria-hidden="true"
     >
-      {[input, output, other].map((value, index) => (
+      {parts.map(({ label, value, color }) => (
         <span
-          key={index}
-          className={colors[index]}
-          style={{ width: `${(value / denominator) * 100}%` }}
+          key={label}
+          className={color}
+          style={{ width: `${((value ?? 0) / denominator) * 100}%` }}
         />
       ))}
     </div>
@@ -53,7 +90,6 @@ export default function UsageChart({
 }) {
   const { t, locale } = useI18n();
   const [group, setGroup] = useState<UsageGroup>("by_model");
-  const totals = record(usage.totals);
   const labels = record(usage.labels);
   const rows = usageRows(usage, group);
   const maximum = Math.max(
@@ -62,48 +98,15 @@ export default function UsageChart({
   );
   const number = (value: unknown) =>
     amount(value)?.toLocaleString(locale) ?? "—";
-  const parts = tokenParts(totals);
-  const legend: [MessageKey, unknown][] = [
-    ["data.inputTokens", totals.prompt_tokens],
-    ["data.outputTokens", totals.completion_tokens],
-    ...(parts.other
-      ? [
-          ["accounting.unclassifiedTokens", parts.other] as [
-            MessageKey,
-            unknown,
-          ],
-        ]
-      : []),
-  ];
+  const percent = new Intl.NumberFormat(locale, {
+    style: "percent",
+    maximumFractionDigits: 1,
+  });
   return (
     <section
-      aria-label={t("accounting.tokenUsage")}
+      aria-label={t("accounting.usageBreakdown")}
       className="min-w-0 space-y-5"
     >
-      <h4 className="text-sm font-medium">{t("accounting.tokenUsage")}</h4>
-      <figure
-        aria-label={t("accounting.tokenComposition")}
-        className="space-y-3"
-      >
-        <TokenBar slot={totals} />
-        <figcaption className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
-          {legend.map(([label, value], index) => (
-            <span
-              key={label}
-              className="inline-flex items-center gap-2 text-muted-foreground"
-            >
-              <span
-                className={cn("h-2 w-2 shrink-0 rounded-full", colors[index])}
-                aria-hidden="true"
-              />
-              {t(label)}{" "}
-              <span className="font-medium text-foreground tabular-nums">
-                {number(value)}
-              </span>
-            </span>
-          ))}
-        </figcaption>
-      </figure>
       <div
         className="flex flex-wrap gap-1 rounded-lg bg-muted/60 p-1"
         role="group"
@@ -132,6 +135,8 @@ export default function UsageChart({
           className="max-h-96 space-y-5 overflow-y-auto pr-1"
         >
           {rows.map(({ id, slot }) => {
+            const parts = tokenBreakdown(slot);
+            const rate = cacheRate(slot);
             const label =
               typeof labels[id] === "string"
                 ? String(labels[id])
@@ -151,22 +156,29 @@ export default function UsageChart({
                     </span>
                   </span>
                 </div>
-                <TokenBar slot={slot} scale={maximum} />
+                <TokenBar parts={parts} scale={maximum} />
+                <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground tabular-nums">
+                  {parts.map(({ label, value, color }) => (
+                    <span
+                      key={label}
+                      className="inline-flex items-center gap-1.5"
+                    >
+                      <span
+                        className={cn("h-2 w-2 shrink-0 rounded-full", color)}
+                        aria-hidden="true"
+                      />
+                      {t(label)}: {number(value)}
+                    </span>
+                  ))}
+                </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground tabular-nums">
                   <span>
                     {t("accounting.callCount", { count: number(slot.calls) })}
                   </span>
                   <span>
-                    {t("data.inputTokens")}: {number(slot.prompt_tokens)}
+                    {t("data.cacheHitRate")}:{" "}
+                    {rate === undefined ? "—" : percent.format(rate)}
                   </span>
-                  <span>
-                    {t("data.outputTokens")}: {number(slot.completion_tokens)}
-                  </span>
-                  {amount(slot.cache_hit_tokens) !== undefined && (
-                    <span>
-                      {t("data.cachedTokens")}: {number(slot.cache_hit_tokens)}
-                    </span>
-                  )}
                 </div>
               </li>
             );

@@ -267,8 +267,10 @@ const en = {
   "accounting.details": "Usage & timing details",
   "accounting.requests": "Model requests",
   "accounting.recordedTime": "Recorded run time",
-  "accounting.tokenUsage": "Token usage",
-  "accounting.tokenComposition": "Input and output token composition",
+  "accounting.usageBreakdown": "Usage breakdown",
+  "accounting.cachedInput": "Cached input",
+  "accounting.uncachedInput": "Uncached input",
+  "accounting.unknownInput": "Input with unknown cache status",
   "accounting.groupBy": "Group usage by",
   "accounting.callCount": "Calls: {count}",
   "accounting.unclassifiedTokens": "Unclassified tokens",
@@ -351,10 +353,8 @@ const en = {
   "review.wholeBookReviewSubmitted": "Whole-book review submitted",
   "review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd":
     "Inspect review issues, evidence, suggested revisions and published autofixes.",
-  "review.applyAutofixesToTheSavedTranslationAfter":
-    "Apply autofixes to the saved translation after review",
   "review.completedResultsAreReusedWhenContentConfiguration":
-    "Completed results are reused when content, configuration and glossary are unchanged. Eligible interrupted reviews resume their original run. With autofix off, saved translations remain unchanged.",
+    "Completed results are reused when content, configuration and glossary are unchanged. Eligible interrupted reviews resume their original run. Autofix follows the saved project settings.",
   "review.runWholeBookReview": "Run whole-book review",
   "review.wholeBookReviewIsAvailableOnceAll":
     "Whole-book review is available once all chapters are translated.",
@@ -427,7 +427,7 @@ const en = {
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
   "settings.applyAutofixesToTheSavedTranslation":
-    "Apply autofixes to the saved translation",
+    "Apply autofixes to the saved translation after review",
   "settings.paragraphAnnotationAlignment": "Paragraph annotation alignment",
   "settings.projectSettingsSaved": "Project settings saved",
   "settings.configurationIsValidButNotSavedYet":

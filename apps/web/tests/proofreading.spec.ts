@@ -55,6 +55,7 @@ test("proofreading is separate and refreshes saved batches before a chapter fini
   await expect(
     page.getByText("Waiting for translation", { exact: true }),
   ).toHaveCount(2);
+  await expect(page.getByText(/^#\d+$/)).toHaveCount(0);
   saved = true;
   await expect(
     page.getByRole("button", { name: "First saved batch" }),

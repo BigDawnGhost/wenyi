@@ -22,7 +22,13 @@ export function amount(value: unknown): number | undefined {
 export function cacheRate(slot: Record<string, unknown>) {
   const hit = amount(slot.cache_hit_tokens);
   const miss = amount(slot.cache_miss_tokens);
-  if (hit === undefined || miss === undefined || hit + miss === 0)
+  const input = amount(slot.prompt_tokens);
+  if (
+    hit === undefined ||
+    miss === undefined ||
+    hit + miss === 0 ||
+    (input !== undefined && hit + miss !== input)
+  )
     return undefined;
   return hit / (hit + miss);
 }
@@ -44,7 +50,20 @@ export function tokenParts(slot: Record<string, unknown>) {
   const input = amount(slot.prompt_tokens) ?? 0;
   const output = amount(slot.completion_tokens) ?? 0;
   const total = amount(slot.total_tokens) ?? input + output;
-  return { input, output, other: Math.max(0, total - input - output), total };
+  const cached = amount(slot.cache_hit_tokens);
+  const uncached = amount(slot.cache_miss_tokens);
+  const reported = (cached ?? 0) + (uncached ?? 0);
+  // Unreported cache usage cannot be inferred to be a cache miss.
+  const validCache = reported <= input;
+  return {
+    input,
+    output,
+    other: Math.max(0, total - input - output),
+    total,
+    cachedInput: validCache ? cached : undefined,
+    uncachedInput: validCache ? uncached : undefined,
+    unknownInput: validCache ? input - reported : input,
+  };
 }
 
 export function usageRows(usage: Record<string, unknown>, group: UsageGroup) {

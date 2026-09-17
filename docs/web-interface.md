@@ -29,15 +29,19 @@ If queueing fails after the source is saved, the project keeps the source and ex
 The translation overview owns start, pause, resume, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,
 and the latest matching workflow event visible. Expand workflow details to inspect the
-plan. Accounting always shows token composition, usage by model/provider/stage, and
+plan. Accounting always shows usage by model/provider/stage and
 run-duration charts. The project report is collapsed by default. Export generation and its options live
 on the export page.
 
 Accounting keeps total tokens, request count, cache hit rate, and recorded runtime
 visible, with no accounting collapse control. Status badges use pale backgrounds with
 colored text. The model view combines records with the same provider/model name across
-inference configurations, without rewriting the usage ledger. Input/output bars use saved token counts; switching grouping never adds the
-independent views together. Missing cache information shows a dash. Run history lists
+inference configurations, without rewriting the usage ledger. Usage starts with the
+three grouping controls, without a second total-token chart. Each row distinguishes
+cached input, uncached input, and output, with counts and a cache hit rate below the bar.
+The rate is cached input divided by cached plus uncached input; incomplete cache data
+shows a dash and unknown input is separate from cache misses. Switching grouping never
+adds the independent views together. Run history lists
 the latest runs first, with localized status, start time, and duration; earlier runs
 remain available. Timing measures whole runs including waiting and I/O, excludes pauses
 between runs, and is saved when a run ends or stops. It does not estimate model or stage
@@ -48,14 +52,17 @@ an error notice or cancellation diagnostic in the event log. Saved work remains 
 Budget limits, request deadlines, and model failures still display their diagnostic messages.
 
 Manual proofreading lists chapters in rows with search, translation-status filtering,
-and saved paragraph counts. Opening a chapter shows its source and saved translation;
-polishing history and review notes expand on demand. Newly persisted translation batches
+and saved paragraph counts. Opening a chapter shows its source and saved translation
+without adding paragraph numbers. Polishing history and review notes expand on demand.
+Newly persisted translation batches
 refresh automatically. Editing remains disabled during a running project task.
 
 Whole-book review opens the latest run. Search its issue list and expand individual
 evidence, suggested changes, publication records, or full technical details. Review
 history is collapsed; selecting an older run shows a link back to the latest result.
-The autofix checkbox remains visible because enabling it can update saved translations.
+Autofix is controlled only in project settings and is enabled by default in the standard
+workflow. Starting review uses the saved setting, including an explicit opt-out, without
+a separate checkbox or temporary override on the review page.
 
 Export keeps format, monolingual/bilingual edition, generation, and downloads visible.
 Layout options show their current values in a collapsed summary. Folding controls does

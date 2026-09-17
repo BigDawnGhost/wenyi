@@ -104,9 +104,6 @@ export function ChapterProofreading({
                 className="grid md:grid-cols-2 border-b last:border-0"
               >
                 <div className="p-3 whitespace-pre-wrap text-sm border-r">
-                  <span className="text-xs text-muted-foreground mr-2">
-                    #{segment.index + 1}
-                  </span>
                   {segment.source}
                 </div>
                 <div>

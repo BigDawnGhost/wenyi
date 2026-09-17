@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { fakeApi, pid } from "./fixtures";
+import { cacheRate, tokenParts } from "../src/features/progress/accountingData";
 
 const modelA = {
   total_tokens: 8000,
@@ -67,6 +68,34 @@ const stats = {
   },
 };
 
+test("cache partitions preserve input totals and rates require complete cache information", () => {
+  for (const [cache, expectedRate, unknown] of [
+    [{ cache_hit_tokens: 60, cache_miss_tokens: 40 }, 0.6, 0],
+    [{ cache_hit_tokens: 0, cache_miss_tokens: 100 }, 0, 0],
+    [{ cache_hit_tokens: 100, cache_miss_tokens: 0 }, 1, 0],
+    [{}, undefined, 100],
+    [{ cache_hit_tokens: 0, cache_miss_tokens: 0 }, undefined, 100],
+    [{ cache_hit_tokens: 20, cache_miss_tokens: 30 }, undefined, 50],
+    [{ cache_hit_tokens: 120, cache_miss_tokens: 0 }, undefined, 100],
+  ] as const) {
+    const slot = {
+      prompt_tokens: 100,
+      completion_tokens: 25,
+      total_tokens: 125,
+      ...cache,
+    };
+    const parts = tokenParts(slot);
+    expect(
+      (parts.cachedInput ?? 0) +
+        (parts.uncachedInput ?? 0) +
+        parts.unknownInput,
+    ).toBe(100);
+    expect(parts.unknownInput).toBe(unknown);
+    expect(cacheRate(slot)).toBe(expectedRate);
+    expect(parts.total).toBe(125);
+  }
+});
+
 test("model usage combines configuration identities with the same provider and model name", async ({
   page,
 }) => {
@@ -92,8 +121,9 @@ test("model usage combines configuration identities with the same provider and m
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("10,000 tokens");
   await expect(rows).toContainText("Calls: 8");
-  await expect(rows).toContainText("Input tokens: 8,000");
-  await expect(rows).toContainText("Cached tokens: 4,800");
+  await expect(rows).toContainText("Cached input: 4,800");
+  await expect(rows).toContainText("Uncached input: 3,200");
+  await expect(rows).toContainText("Cache hit rate: 60%");
   await accounting
     .getByRole("button", { name: "By provider", exact: true })
     .click();
@@ -116,14 +146,10 @@ test("usage charts switch attribution without double counting and retain resumed
   await expect(totals).toContainText("60%");
   await expect(totals).toContainText("1h 30m 0s");
   await expect(
-    accounting.getByRole("region", { name: "Token usage", exact: true }),
-  ).toBeVisible();
+    accounting.getByRole("heading", { name: "Token usage", exact: true }),
+  ).toHaveCount(0);
   await expect(accounting.locator("summary")).toHaveCount(0);
-  const composition = accounting.getByRole("figure", {
-    name: "Input and output token composition",
-  });
-  await expect(composition).toContainText("Input tokens 8,000");
-  await expect(composition).toContainText("Output tokens 2,000");
+  await expect(accounting.getByRole("figure")).toHaveCount(0);
   const models = accounting.getByRole("list", {
     name: "By model",
     exact: true,
@@ -135,18 +161,39 @@ test("usage charts switch attribution without double counting and retain resumed
   await expect(models.getByRole("listitem").first()).toContainText(
     "8,000 tokens",
   );
+  await expect(models.getByRole("listitem").first()).toContainText(
+    "Cached input: 4,000",
+  );
+  await expect(models.getByRole("listitem").first()).toContainText(
+    "Uncached input: 2,500",
+  );
+  await expect(models.getByRole("listitem").first()).toContainText(
+    "Cache hit rate: 61.5%",
+  );
   await accounting
     .getByRole("button", { name: "By provider", exact: true })
     .click();
   await expect(
     accounting.getByRole("list", { name: "By provider" }),
   ).toContainText("deepseek https://api.deepseek.com/v1");
+  await expect(
+    accounting
+      .getByRole("list", { name: "By provider" })
+      .getByRole("listitem")
+      .first(),
+  ).toContainText("Cache hit rate: 61.5%");
   await accounting
     .getByRole("button", { name: "By stage", exact: true })
     .click();
   await expect(
     accounting.getByRole("list", { name: "By stage" }),
   ).toContainText("Verify review evidence");
+  await expect(
+    accounting
+      .getByRole("list", { name: "By stage" })
+      .getByRole("listitem")
+      .first(),
+  ).toContainText("Cache hit rate: 67.9%");
   await expect(totals).toContainText("10,000");
   await expect(totals).toContainText("1h 30m 0s");
   const runs = accounting.getByRole("list", {
@@ -214,6 +261,15 @@ test("Chinese accounting fits narrow screens with long provider names and locali
   await expect(page.getByRole("list", { name: "按步骤" })).toContainText(
     "审校证据核验",
   );
+  await expect(page.getByRole("list", { name: "按步骤" })).toContainText(
+    "输入 Token（缓存命中）: 3,800",
+  );
+  await expect(page.getByRole("list", { name: "按步骤" })).toContainText(
+    "输入 Token（未命中）: 1,800",
+  );
+  await expect(page.getByRole("list", { name: "按步骤" })).toContainText(
+    "缓存命中率: 67.9%",
+  );
   await expect(page.getByRole("list", { name: "运行记录" })).toContainText(
     "已中断",
   );
@@ -272,13 +328,49 @@ test("empty and partially reported usage shows honest empty states", async ({
     }),
   );
   await page.reload();
-  await expect(accounting.getByRole("figure")).toContainText(
-    "Unclassified tokens 500",
-  );
   await accounting
     .getByRole("button", { name: "By stage", exact: true })
     .click();
   await expect(
     accounting.getByRole("list", { name: "By stage" }),
   ).toContainText("custom.operation");
+  await expect(
+    accounting.getByRole("list", { name: "By stage" }),
+  ).toContainText("Unclassified tokens: 500");
+  await expect(
+    accounting.getByRole("list", { name: "By stage" }),
+  ).toContainText("Cache hit rate: —");
+});
+
+test("unknown cache usage remains distinct from uncached input", async ({
+  page,
+}) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/stats`]: {
+      usage: {
+        totals: {
+          prompt_tokens: 1000,
+          completion_tokens: 100,
+          total_tokens: 1100,
+        },
+        by_model: {
+          "partial-cache": {
+            prompt_tokens: 1000,
+            completion_tokens: 100,
+            total_tokens: 1100,
+            cache_hit_tokens: 200,
+            cache_miss_tokens: 100,
+            calls: 2,
+          },
+        },
+      },
+    },
+  });
+  await page.goto(`/projects/${pid}`);
+  const row = page.getByRole("list", { name: "By model", exact: true });
+  await expect(row).toContainText("Cached input: 200");
+  await expect(row).toContainText("Uncached input: 100");
+  await expect(row).toContainText("Input with unknown cache status: 700");
+  await expect(row).toContainText("Cache hit rate: —");
+  await expect(row).not.toContainText("66.7%");
 });

@@ -259,8 +259,10 @@ const zhCN = {
   "accounting.details": "用量与计时明细",
   "accounting.requests": "模型请求",
   "accounting.recordedTime": "已记录用时",
-  "accounting.tokenUsage": "Token 用量",
-  "accounting.tokenComposition": "输入与输出 Token 构成",
+  "accounting.usageBreakdown": "用量明细",
+  "accounting.cachedInput": "输入 Token（缓存命中）",
+  "accounting.uncachedInput": "输入 Token（未命中）",
+  "accounting.unknownInput": "输入 Token（缓存未知）",
   "accounting.groupBy": "用量分组",
   "accounting.callCount": "调用：{count} 次",
   "accounting.unclassifiedTokens": "未分类 Token",
@@ -341,10 +343,8 @@ const zhCN = {
   "review.wholeBookReviewSubmitted": "全书审校已提交",
   "review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd":
     "查看审校问题、核查证据、建议修订与自动修复发布结果",
-  "review.applyAutofixesToTheSavedTranslationAfter":
-    "审校后自动修复并写回正式译文",
   "review.completedResultsAreReusedWhenContentConfiguration":
-    "内容、配置和术语未变化时复用已完成结果；符合恢复条件的中断审校会继续原有运行。关闭自动修复时保留正式译文。",
+    "内容、配置和术语未变化时复用已完成结果；符合恢复条件的中断审校会继续原有运行。自动修复遵循已保存的项目配置。",
   "review.runWholeBookReview": "运行全书审校",
   "review.wholeBookReviewIsAvailableOnceAll":
     "所有章节翻译完成后可运行全书审校。",
@@ -414,7 +414,7 @@ const zhCN = {
     "单独指定模型的操作路由优先于档位。可在下方“已保存配置的模型路由”中核对；复杂路由和备用模型继续通过高级 YAML 调整。",
   "settings.bookUnderstanding": "全书预理解",
   "settings.polishing": "润色",
-  "settings.applyAutofixesToTheSavedTranslation": "自动修复并写回正式译文",
+  "settings.applyAutofixesToTheSavedTranslation": "审校后自动修复并写回正式译文",
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
   "settings.projectSettingsSaved": "项目配置已保存",
   "settings.configurationIsValidButNotSavedYet": "配置有效，尚未保存",

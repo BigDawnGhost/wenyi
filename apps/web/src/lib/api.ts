@@ -239,10 +239,10 @@ export const api = {
         body: JSON.stringify({ target }),
       },
     ),
-  runAiReview: (pid: string, opts?: { autofix?: boolean }) =>
+  runAiReview: (pid: string) =>
     request<JobEnqueued>(`/projects/${pid}/review/run`, {
       method: "POST",
-      body: JSON.stringify(opts ?? {}),
+      body: JSON.stringify({}),
     }),
 
   getAnalysis: (pid: string) =>
