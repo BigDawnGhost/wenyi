@@ -1,7 +1,7 @@
 [project]
 name = "wenyi-cli"
 dynamic = ["version"]
-description = "文译命令行（本地文件模式，零基础设施）"
+description = "Local command-line interface for Wenyi's translation engine."
 requires-python = ">=3.10"
 dependencies = [
     "wenyi-core",

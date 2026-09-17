@@ -1,7 +1,7 @@
 {
   "name": "@wenyi/web",
   "private": true,
-  "version": "0.2.0",
+  "description": "Web interface for Wenyi's multilingual translation workflows.",
   "type": "module",
   "scripts": {
     "dev": "vite",

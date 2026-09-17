@@ -41,6 +41,8 @@ jobs:
       WENYI_TEST_REDIS_URL: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -70,6 +72,7 @@ jobs:
         run: |
           uv build --package wenyi-core
           uv build --package wenyi-cli
+          uv build --package wenyi-api
           uv run --no-sync python scripts/check_wheel_resources.py dist
 
   web:

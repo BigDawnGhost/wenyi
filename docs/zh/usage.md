@@ -20,6 +20,8 @@ uv run trans-novel translate book.epub
 工作区时，使用 `uv sync --locked --all-packages --group dev`。
 
 显示的版本号由仓库 Git 标签自动生成：标签构建显示正式版本，开发构建还会包含距标签的提交数与提交哈希。
+CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包的版本。
+根虚拟工作区和私有前端包不维护独立发布版本。
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 

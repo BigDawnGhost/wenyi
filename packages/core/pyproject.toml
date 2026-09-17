@@ -1,7 +1,7 @@
 [project]
 name = "wenyi-core"
 dynamic = ["version"]
-description = "文译翻译内核：多 Agent 协同长篇小说翻译（多语言互译），存储/事件抽象化"
+description = "Shared translation engine for multilingual long-form documents."
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40",

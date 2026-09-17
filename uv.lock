@@ -2537,7 +2537,6 @@ wheels = [
 
 [[package]]
 name = "wenyi"
-version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "wenyi-cli" },
@@ -2575,7 +2574,6 @@ dev = [
 
 [[package]]
 name = "wenyi-api"
-version = "0.2.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "arq" },

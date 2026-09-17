@@ -16,7 +16,7 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 - 包管理与命令执行：优先使用 `uv`。
 - CLI：`uv run trans-novel ...`（`packages/cli`）；`wenyi_cli/cli.py` 装配应用，`wenyi_cli/commands/` 和 `model_commands.py` 注册命令。
 - Web：`apps/web`（React/Vite）；API 与 worker：`apps/api/wenyi_api`。前端使用 pnpm，Node/pnpm 版本以 CI 和 [Web 文档](docs/web.md) 为准。
-- CLI/Core 版本由仓库 Git 标签通过 `hatch-vcs` 生成；包配置位于各自的 `pyproject.toml`。
+- CLI/Core/API 的发布版本由仓库 Git 标签通过 `hatch-vcs` 生成，运行时读取已安装包的元数据；根虚拟工作区和私有前端包不维护独立发布版本。包描述统一使用英语。
 - 默认配置：仓库根目录 `config.yaml`；内置模板位于 `packages/core/wenyi_core/config.py` 的 `_DEFAULT_CONFIG_YAML`。
 - 主仓许可证为 MIT；BabelDOC 是独立 AGPL 服务。
 

@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
+from . import __version__
 from .config import settings
 from .db import close_pool, init_pool
 from .routers import (
@@ -41,9 +42,9 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         lifespan=lifespan,
-        title="文译 (Wenyi) API",
-        version="0.2.0",
-        description="基于 AI 的长篇小说翻译平台 — Web API（FastAPI + Postgres + Arq）",
+        title="Wenyi API",
+        version=__version__,
+        description="Web API and background workers for Wenyi's translation engine.",
     )
 
     # Allow a separate frontend origin during development; restrict origins in production.
@@ -100,8 +101,8 @@ def _custom_openapi():  # Customize the title exposed by the OpenAPI schema.
     if app.openapi_schema:
         return app.openapi_schema
     schema = get_openapi(
-        title="文译 (Wenyi) API",
-        version="0.2.0",
+        title=app.title,
+        version=app.version,
         description=app.description,
         routes=app.routes,
     )

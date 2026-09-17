@@ -22,6 +22,9 @@ use `uv sync --locked --all-packages --group dev`.
 
 The displayed version is generated from the repository's Git tags. Tagged builds show the
 release version; development builds include their commit distance and hash.
+CLI, Core and API packages use this same version source; OpenAPI reads the installed API
+package version. The virtual workspace root and private frontend packages do not maintain
+separate release versions.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
