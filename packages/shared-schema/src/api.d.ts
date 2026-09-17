@@ -760,6 +760,13 @@ export interface components {
             /** Export Id */
             export_id: number;
         };
+        /** Body_create_project_projects_post */
+        Body_create_project_projects_post: {
+            /** Project */
+            project: string;
+            /** File */
+            file: string;
+        };
         /** Body_upload_source_projects__pid__upload_post */
         Body_upload_source_projects__pid__upload_post: {
             /** File */
@@ -1081,6 +1088,13 @@ export interface components {
             strategy?: {
                 [key: string]: unknown;
             };
+            /**
+             * Prepare
+             * @default false
+             */
+            prepare: boolean;
+            /** Pdf Backend */
+            pdf_backend?: ("mineru" | "babeldoc") | null;
         };
         /** ProjectDetail */
         ProjectDetail: {
@@ -1540,7 +1554,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectCreate"];
+                "multipart/form-data": components["schemas"]["Body_create_project_projects_post"];
             };
         };
         responses: {
@@ -1550,7 +1564,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["ProjectDetail"];
                 };
             };
             /** @description Validation Error */

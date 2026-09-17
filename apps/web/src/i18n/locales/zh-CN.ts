@@ -301,8 +301,6 @@ const zhCN = {
   "workflowPanel.waitingForProgressUpdates": "等待后台上报进度",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "润色随翻译批次执行；以上步骤表示流程配置，完成情况以任务状态及最近步骤为准。导出任务在导出页单独查看。",
-  "createProject.sourceUploadedParsingInTheBackground":
-    "原文已上传，正在后台解析",
   "createProject.chooseLanguagesAndAWorkflowUploadThe":
     "选择语言和流程，上传原文，确认解析结果后开始翻译",
   "createProject.projectAndLanguages": "1. 项目与语言",
@@ -315,8 +313,15 @@ const zhCN = {
   "createProject.translationWorkflow": "翻译流程",
   "createProject.bookUnderstandingPolishingWholeBookReviewAnd":
     "默认开启全书预理解、润色、全书审校与自动修复。快速出稿适合初稿。字幕自动使用独立流程。",
-  "createProject.creating": "创建中…",
-  "createProject.createConfigure": "创建并配置",
+  "createProject.prepareSource": "创建后执行译前准备",
+  "createProject.prepareHelp":
+    "上传后按所选流程和默认模型分析全书、建立术语表，会消耗模型 Token。不勾选时，在开始翻译时执行准备。",
+  "createProject.preparingSource":
+    "正在后台分析全书并准备术语表。可以离开此页，稍后到翻译总览查看进度。",
+  "createProject.sourceRequired": "请先选择原文文件，再创建项目。",
+  "createProject.emptyFile": "原文文件为空，请选择有内容的文件。",
+  "createProject.unsupportedFile": "不支持此文件格式。",
+  "createProject.serverDefault": "使用服务端默认设置",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
     "项目已创建。初始化后更换语言或原文内容需新建项目。",
   "createProject.projectSettingsModels": "项目配置与模型设置",
@@ -508,7 +513,7 @@ const zhCN = {
   "export.filenameHelp":
     "导出文件名包含目标语言（{language}）及双语标识。标点规范化仅作用于导出副本。",
   "createProject.uploadHelp":
-    "支持 {formats}。PDF 解析服务、批次 Token 预算和模型可在上传前通过项目配置调整。",
+    "支持 {formats}。创建项目时上传所选文件，模型和批次设置可在开始翻译前通过项目配置调整。",
   "createProject.paragraphCount": "（{count} 段）",
   "subtitles.pagination": "{page} / {pages} 页 · {count} 条",
   "progress.reviewIssueCount": "{count} 项意见",
@@ -536,7 +541,6 @@ const zhCN = {
   "review.searchIssues": "搜索审校问题",
   "review.issueDetails": "证据与详情",
   "progress.workflowDetails": "完整流程",
-  "progress.moreActions": "高级操作",
   "review.runCount": "共 {count} 次",
   "review.latestResult": "最新结果",
   "review.viewingHistory": "正在查看历史审校",

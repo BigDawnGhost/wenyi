@@ -18,6 +18,16 @@ class ProjectCreate(RequestModel):
     source_lang: str = "auto"
     target_lang: str = "zh"
     strategy: dict[str, Any] = Field(default_factory=lambda: {"template": "标准翻译"})
+    prepare: bool = False
+    pdf_backend: Literal["mineru", "babeldoc"] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Project name is required")
+        return value
 
     @field_validator("source_lang")
     @classmethod

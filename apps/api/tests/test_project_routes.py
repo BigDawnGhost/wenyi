@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
@@ -56,12 +57,161 @@ def api(monkeypatch, pg_pool, tmp_path):  # noqa: F811
 
 
 def new_project(api, source="en", target="zh"):
-    client, _ = api
+    # Seed existing projects for endpoint tests; public creation requires a source.
+    return dal.create_project("Book", source, target, {"template": "标准翻译"})
+
+
+def test_creation_requires_an_uploaded_source(api):
+    client, queue = api
+    before = dal.list_projects()
+    response = client.post("/projects", json={"name": "Book"})
+    assert response.status_code == 422
+    assert dal.list_projects() == before
+    assert queue == []
+
+
+@pytest.mark.parametrize("prepare", [False, True])
+def test_creation_uploads_source_and_runs_selected_setup(api, prepare):
+    client, queue = api
     response = client.post(
-        "/projects", json={"name": "Book", "source_lang": source, "target_lang": target}
+        "/projects",
+        data={"project": json.dumps({"name": "Book", "source_lang": "en", "prepare": prepare})},
+        files={"file": ("book.html", b"<h1>Chapter One</h1><p>A book begins.</p>")},
     )
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+    project = response.json()
+    pid = project["id"]
+    assert project["status"] == ("preparing" if prepare else "parsing")
+    assert project["source_meta"]["original_filename"] == "book.html"
+    assert queue[0][0] == ("run_prepare" if prepare else "run_parse")
+    assert must(dal.get_project(pid))["source_sha256"]
+    execute_next(api)
+    assert client.get(f"/projects/{pid}/preview").status_code == 200
+    assert client.get(f"/projects/{pid}").json()["status"] == (
+        "prepared" if prepare else "uploaded"
+    )
+    assert all(ch["status"] != "done" for ch in dal.chapter_summaries(pid))
+
+
+@pytest.mark.parametrize(
+    "metadata,filename,content",
+    [
+        ({"name": "Book"}, "book.txt", b""),
+        ({"name": "Book"}, "book.exe", b"contents"),
+        ({"name": "  "}, "book.txt", b"contents"),
+        ({"name": "Book", "source_lang": "en", "target_lang": "en"}, "book.txt", b"text"),
+        ({"name": "Book", "target_lang": "invalid"}, "book.txt", b"text"),
+        ({"name": "Book", "prepare": True}, "book.srt", b"subtitles"),
+    ],
+)
+def test_invalid_creation_never_publishes_a_project(api, metadata, filename, content, tmp_path):
+    client, queue = api
+    before = dal.list_projects()
+    response = client.post(
+        "/projects", data={"project": json.dumps(metadata)}, files={"file": (filename, content)}
+    )
+    assert response.status_code == 422, response.text
+    assert dal.list_projects() == before
+    assert queue == []
+    assert not list((tmp_path / "data").rglob("source-*"))
+
+
+def test_creation_queue_failure_keeps_source_and_resumes_preparation(api, monkeypatch):
+    client, queue = api
+    before = dal.list_projects()
+    actual_enqueue = job_service.enqueue
+
+    async def fail(*args, **kwargs):
+        raise ConnectionError("redis offline")
+
+    monkeypatch.setattr(job_service, "enqueue", fail)
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps({"name": "Book", "prepare": True})},
+        files={"file": ("book.html", b"<h1>Chapter One</h1><p>The story begins.</p>")},
+    )
+    assert response.status_code == 201, response.text
+    project = response.json()
+    pid = project["id"]
+    assert project["status"] == "error" and project["error"]
+    assert project["source_meta"]["original_filename"] == "book.html"
+    assert len(dal.list_projects()) == len(before) + 1 and queue == []
+    monkeypatch.setattr(job_service, "enqueue", actual_enqueue)
+    assert client.post(f"/projects/{pid}/resume").json()["kind"] == "prepare"
+    execute_next(api)
+    assert client.get(f"/projects/{pid}").json()["status"] == "prepared"
+    assert client.get(f"/projects/{pid}/preview").status_code == 200
+
+
+def test_creation_database_failure_removes_its_uploaded_file(api, monkeypatch, tmp_path):
+    client, queue = api
+    before = dal.list_projects()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(dal, "create_project", fail)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        client.post(
+            "/projects",
+            data={"project": json.dumps({"name": "Book"})},
+            files={"file": ("book.txt", b"A book begins.")},
+        )
+    assert dal.list_projects() == before and queue == []
+    assert not list((tmp_path / "data").rglob("source-*"))
+
+
+def test_interrupted_upload_removes_partial_source(api, monkeypatch, tmp_path):
+    from io import BytesIO
+
+    from fastapi import UploadFile
+    from wenyi_api.source_upload import save_source
+
+    before = dal.list_projects()
+    file = UploadFile(file=BytesIO(b"first block"), filename="book.txt")
+    reads = 0
+
+    async def interrupted_read(size):
+        nonlocal reads
+        reads += 1
+        if reads > 1:
+            raise OSError("upload interrupted")
+        return b"first block"
+
+    monkeypatch.setattr(file, "read", interrupted_read)
+    with pytest.raises(OSError, match="upload interrupted"):
+        asyncio.run(save_source("partial-upload", file))
+    assert not list((tmp_path / "data").rglob("source-*"))
+    assert dal.list_projects() == before
+
+
+def test_creation_saves_pdf_parser_before_queueing(api):
+    client, queue = api
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps({"name": "PDF", "pdf_backend": "babeldoc"})},
+        files={"file": ("book.pdf", b"%PDF-test-fixture")},
+    )
+    assert response.status_code == 201, response.text
+    project = must(dal.get_project(response.json()["id"]))
+    assert project["config"] == {"pipeline": {"pdf_backend": "babeldoc"}}
+    run_id = queue[0][1]["run_id"]
+    assert tasks._build_config_for(project["id"], run_id).pipeline.pdf_backend == "babeldoc"
+
+
+def test_subtitle_creation_only_parses_source(api):
+    client, queue = api
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps({"name": "Subtitles"})},
+        files={"file": ("video.srt", b"1\n00:00:00,100 --> 00:00:01,200\nHello\n")},
+    )
+    assert response.status_code == 201, response.text
+    assert queue[0][0] == "run_parse"
+    pid = response.json()["id"]
+    execute_next(api)
+    assert client.get(f"/projects/{pid}/preview").json()["total_word_count"] == 1
+    assert not must(dal.get_project(pid))["initialized"]
 
 
 def execute_next(api):

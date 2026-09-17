@@ -7,26 +7,28 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
-import { api, isProjectBusy, type UploadPreview } from "@/lib/api";
+import { api, isProjectBusy } from "@/lib/api";
+import { SourcePreview } from "./SourcePreview";
 
 export default function CreateProject() {
   const { t: tr, locale } = useI18n();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState("");
   const [source, setSource] = useState("auto");
   const [target, setTarget] = useState("zh");
   const [template, setTemplate] = useState(defaultWorkflowTemplate);
   const [pid, setPid] = useState<string | null>(searchParams.get("project"));
-  const [preview, setPreview] = useState<UploadPreview | null>(null);
-  const [parsing, setParsing] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [prepare, setPrepare] = useState(false);
+  const [pdfBackend, setPdfBackend] = useState<"" | "mineru" | "babeldoc">("");
   const sourceFileInput = useRef<HTMLInputElement>(null);
   const { data: caps, error: capsError } = useQuery({
     queryKey: ["capabilities"],
@@ -40,69 +42,86 @@ export default function CreateProject() {
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid!),
     enabled: !!pid,
-    refetchInterval: parsing ? 1500 : false,
+    refetchInterval: (query) =>
+      isProjectBusy(query.state.data?.status) ? 1500 : false,
   });
-  const { data: parsed } = useQuery({
+  const busy = isProjectBusy(project?.status);
+  const { data: preview } = useQuery({
     queryKey: ["preview", pid],
     queryFn: () => api.getPreview(pid!),
-    enabled: !!pid && (parsing || !!project?.fmt),
+    enabled: !!pid && !!project?.fmt,
     retry: false,
-    refetchInterval: parsing ? 1500 : false,
+    refetchInterval: (query) => (!query.state.data && busy ? 1500 : false),
   });
+  useEffect(() => {
+    // Fetch the final preview even if the last polling request preceded completion.
+    if (pid && project?.fmt && !busy)
+      void queryClient.invalidateQueries({ queryKey: ["preview", pid] });
+  }, [pid, project?.fmt, busy, queryClient]);
   useEffect(() => {
     if (project && pid) {
       setName(project.name);
       setSource(project.source_lang || "auto");
       setTarget(project.target_lang || "zh");
-      if (project.status === "parsing") setParsing(true);
+      if (typeof project.strategy?.template === "string")
+        setTemplate(project.strategy.template);
     }
   }, [project, pid]);
-  useEffect(() => {
-    if (parsed) {
-      setPreview(parsed);
-      setParsing(false);
-    }
-  }, [parsed]);
-  useEffect(() => {
-    if (project?.status === "error") setParsing(false);
-  }, [project?.status]);
+  const extensions = (caps?.input_formats || []).flatMap((format) =>
+    format === "markdown"
+      ? ["md", "markdown"]
+      : format === "html"
+        ? ["html", "htm"]
+        : format === "text" || format === "txt"
+          ? ["txt", "text"]
+          : [format],
+  );
+  const extension = file?.name.split(".").pop()?.toLowerCase();
+  const subtitle = extension === "srt";
+  const fileError =
+    file &&
+    (file.size === 0
+      ? tr("createProject.emptyFile")
+      : caps && !extensions.includes(extension || "")
+        ? tr("createProject.unsupportedFile")
+        : null);
   const create = useMutation({
-    mutationFn: () =>
-      api.createProject({
-        name: name.trim(),
-        source_lang: source,
-        target_lang: target,
-        strategy: { template },
-      }),
+    mutationFn: () => {
+      if (!file || fileError)
+        throw new Error(fileError || tr("createProject.sourceRequired"));
+      return api.createProject(
+        {
+          name: name.trim(),
+          source_lang: source,
+          target_lang: target,
+          strategy: { template },
+          prepare: !subtitle && prepare,
+          pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
+        },
+        file,
+      );
+    },
     onSuccess: (p) => {
+      queryClient.setQueryData(["project", p.id], p);
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       setPid(p.id);
       setSearchParams({ project: p.id }, { replace: true });
     },
   });
-  const upload = useMutation({
-    mutationFn: (file: File) => api.uploadSource(pid!, file),
-    onSuccess: () => {
-      setPreview(null);
-      setParsing(true);
-      toast.success(tr("createProject.sourceUploadedParsingInTheBackground"));
-    },
+  const resume = useMutation({
+    mutationFn: () => api.resume(pid!),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["project", pid] }),
   });
   const start = useMutation({
     mutationFn: () => api.translate(pid!),
     onSuccess: () => navigate(`/projects/${pid}`),
   });
   const sameLanguage = source !== "auto" && source === target;
-  const disabled =
-    parsing || upload.isPending || isProjectBusy(project?.status);
-  const accepts = (caps?.input_formats || [])
-    .flatMap((f) =>
-      f === "markdown"
-        ? [".md", ".markdown"]
-        : f === "html"
-          ? [".html", ".htm"]
-          : [`.${f}`],
-    )
-    .join(",");
+  const locked = !!pid || create.isPending;
+  const interrupted =
+    project?.status === "error" || project?.status === "paused";
+  const filename = file?.name || project?.source_meta?.original_filename;
 
   return (
     <>
@@ -116,8 +135,9 @@ export default function CreateProject() {
             capsError ||
             projectError ||
             create.error ||
-            upload.error ||
+            resume.error ||
             start.error ||
+            fileError ||
             project?.error
           }
         />
@@ -133,7 +153,7 @@ export default function CreateProject() {
               <Input
                 id="project-name"
                 value={name}
-                disabled={!!pid}
+                disabled={locked}
                 onChange={(e) => setName(e.target.value)}
                 className="mt-2"
                 placeholder={tr(
@@ -149,7 +169,7 @@ export default function CreateProject() {
                 <Select
                   id="source-language"
                   value={source}
-                  disabled={!!pid}
+                  disabled={locked}
                   onChange={(e) => setSource(e.target.value)}
                   className="mt-2"
                 >
@@ -172,7 +192,7 @@ export default function CreateProject() {
                 <Select
                   id="target-language"
                   value={target}
-                  disabled={!!pid || !caps}
+                  disabled={locked || !caps}
                   onChange={(e) => setTarget(e.target.value)}
                   className="mt-2"
                 >
@@ -198,7 +218,7 @@ export default function CreateProject() {
               <Select
                 id="workflow-template"
                 value={template}
-                disabled={!!pid}
+                disabled={locked}
                 onChange={(e) => setTemplate(e.target.value)}
                 className="mt-2"
               >
@@ -214,18 +234,7 @@ export default function CreateProject() {
                 )}
               </p>
             </div>
-            {!pid ? (
-              <Button
-                onClick={() => create.mutate()}
-                disabled={
-                  !name.trim() || sameLanguage || !caps || create.isPending
-                }
-              >
-                {create.isPending
-                  ? tr("createProject.creating")
-                  : tr("createProject.createConfigure")}
-              </Button>
-            ) : (
+            {pid && (
               <p className="text-sm text-muted-foreground">
                 {tr(
                   "createProject.projectCreatedChangingLanguagesOrSourceContent",
@@ -240,109 +249,154 @@ export default function CreateProject() {
             )}
           </CardContent>
         </Card>
-        {pid && (
-          <Card>
-            <CardContent className="p-5 space-y-4">
-              <h2 className="font-medium">{tr("createProject.uploadStep")}</h2>
-              <p className="text-sm text-muted-foreground">
-                {tr("createProject.uploadHelp", {
-                  formats: caps?.input_formats.join(" / ") || "—",
-                })}
-              </p>
-              <input
-                ref={sourceFileInput}
-                hidden
-                aria-label={tr("createProject.uploadSource")}
-                type="file"
-                accept={accepts}
-                disabled={disabled || !!preview}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    upload.mutate(file);
-                    e.currentTarget.value = "";
+        <Card>
+          <CardContent className="p-5 space-y-4">
+            <h2 className="font-medium">{tr("createProject.uploadStep")}</h2>
+            <p className="text-sm text-muted-foreground">
+              {tr("createProject.uploadHelp", {
+                formats: caps?.input_formats.join(" / ") || "—",
+              })}
+            </p>
+            <input
+              ref={sourceFileInput}
+              hidden
+              aria-label={tr("createProject.uploadSource")}
+              type="file"
+              accept={extensions.map((ext) => `.${ext}`).join(",")}
+              disabled={locked}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  setFile(file);
+                  create.reset();
+                  e.currentTarget.value = "";
+                }
+              }}
+            />
+            <div className="flex items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0"
+                disabled={locked}
+                aria-describedby="source-file-name"
+                onClick={() => sourceFileInput.current?.click()}
+              >
+                <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                {tr("createProject.browseFiles")}
+              </Button>
+              <span
+                id="source-file-name"
+                aria-live="polite"
+                className="min-w-0 break-all text-sm text-muted-foreground"
+              >
+                {typeof filename === "string"
+                  ? filename
+                  : tr("createProject.noFileSelected")}
+              </span>
+            </div>
+            {!pid && extension === "pdf" && (
+              <div>
+                <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
+                <Select
+                  id="pdf-backend"
+                  className="mt-2"
+                  value={pdfBackend}
+                  disabled={locked}
+                  onChange={(e) =>
+                    setPdfBackend(e.target.value as typeof pdfBackend)
                   }
-                }}
-              />
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="shrink-0"
-                  disabled={disabled || !!preview}
-                  aria-describedby="source-file-name"
-                  onClick={() => sourceFileInput.current?.click()}
                 >
-                  <FolderOpen className="h-4 w-4" aria-hidden="true" />
-                  {tr("createProject.browseFiles")}
-                </Button>
-                <span
-                  id="source-file-name"
-                  aria-live="polite"
-                  className="min-w-0 break-all text-sm text-muted-foreground"
-                >
-                  {upload.variables?.name || tr("createProject.noFileSelected")}
-                </span>
+                  <option value="">{tr("createProject.serverDefault")}</option>
+                  <option value="mineru">MinerU</option>
+                  <option value="babeldoc">BabelDOC</option>
+                </Select>
               </div>
-              {disabled && (
-                <p role="status" className="text-sm">
-                  {upload.isPending
-                    ? tr("createProject.uploading")
-                    : tr("createProject.parsingTheSourceAPreviewWillAppear")}
-                </p>
-              )}
-              {preview && (
-                <div className="rounded border p-4 space-y-3">
-                  <h3 className="font-medium">{preview.title}</h3>
-                  <p className="text-sm">
-                    {preview.fmt.toUpperCase()} ·{" "}
-                    {preview.fmt === "srt"
-                      ? tr("createProject.subtitleCues", {
-                          count: preview.total_word_count,
-                        })
-                      : tr("createProject.chaptersParagraphs", {
-                          chapters: preview.chapter_count,
-                          count: preview.total_word_count,
-                        })}
+            )}
+            {!pid && !subtitle && (
+              <div className="flex items-start gap-3 rounded-lg border p-4">
+                <input
+                  id="prepare-source"
+                  type="checkbox"
+                  checked={prepare}
+                  disabled={locked}
+                  onChange={(e) => setPrepare(e.target.checked)}
+                  aria-describedby="prepare-help"
+                  className="mt-1 accent-primary"
+                />
+                <div>
+                  <Label htmlFor="prepare-source">
+                    {tr("createProject.prepareSource")}
+                  </Label>
+                  <p
+                    id="prepare-help"
+                    className="mt-1 text-sm text-muted-foreground"
+                  >
+                    {tr("createProject.prepareHelp")}
                   </p>
-                  <details>
-                    <summary className="cursor-pointer text-sm">
-                      {tr("createProject.viewParsedStructure")}
-                    </summary>
-                    <ol className="mt-2 max-h-56 overflow-auto text-sm space-y-2">
-                      {preview.chapters.map((c) => (
-                        <li key={c.index}>
-                          {c.index + 1}.{" "}
-                          {c.title || tr("createProject.untitled")}{" "}
-                          <span className="text-muted-foreground">
-                            {tr("createProject.paragraphCount", {
-                              count: c.word_count,
-                            })}
-                          </span>
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
                 </div>
-              )}
-              <div className="flex gap-3">
+              </div>
+            )}
+            {!pid && (
+              <div className="space-y-2">
                 <Button
-                  onClick={() => start.mutate()}
-                  disabled={!preview || disabled || start.isPending}
+                  onClick={() => create.mutate()}
+                  disabled={
+                    !name.trim() ||
+                    !file ||
+                    !!fileError ||
+                    sameLanguage ||
+                    !caps ||
+                    create.isPending
+                  }
                 >
-                  {start.isPending
-                    ? tr("createProject.starting")
-                    : tr("common.startTranslation")}
+                  {create.isPending
+                    ? tr("createProject.uploading")
+                    : tr("common.createProject")}
                 </Button>
+                {!file && (
+                  <p className="text-xs text-muted-foreground">
+                    {tr("createProject.sourceRequired")}
+                  </p>
+                )}
+              </div>
+            )}
+            {busy && (
+              <p role="status" className="text-sm">
+                {project?.status === "preparing"
+                  ? tr("createProject.preparingSource")
+                  : tr("createProject.parsingTheSourceAPreviewWillAppear")}
+              </p>
+            )}
+            {preview && <SourcePreview preview={preview} />}
+            {pid && (
+              <div className="flex flex-wrap gap-3">
+                {interrupted ? (
+                  <Button
+                    onClick={() => resume.mutate()}
+                    disabled={resume.isPending}
+                  >
+                    {tr("progress.resumeTask")}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => start.mutate()}
+                    disabled={!preview || busy || start.isPending}
+                  >
+                    {start.isPending
+                      ? tr("createProject.starting")
+                      : tr("common.startTranslation")}
+                  </Button>
+                )}
                 <Link to={`/projects/${pid}`}>
                   <Button variant="outline">
                     {tr("createProject.openProject")}
                   </Button>
                 </Link>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
       </PageContainer>
     </>
   );

@@ -56,7 +56,7 @@ export default function ProgressPage() {
     qc.invalidateQueries({ queryKey: ["stats", pid] });
   };
   const action = useMutation({
-    mutationFn: async (kind: "pause" | "resume" | "prepare" | "translate") =>
+    mutationFn: async (kind: "pause" | "resume" | "translate") =>
       api[kind](pid),
     onSuccess: (_, kind) => {
       invalidate();
@@ -199,18 +199,6 @@ export default function ProgressPage() {
                   )
                 }
               />
-            </Disclosure>
-            <Disclosure
-              title={tr("progress.moreActions")}
-              error={action.variables === "prepare" ? action.error : undefined}
-            >
-              <Button
-                variant="outline"
-                disabled={busy || !project?.fmt || action.isPending}
-                onClick={() => action.mutate("prepare")}
-              >
-                {tr("common.preparation")}
-              </Button>
             </Disclosure>
             <ChapterTable pid={pid} chapters={chapters} busy={busy} />
           </>

@@ -153,30 +153,23 @@ export const api = {
   createProject: (
     body: Pick<components["schemas"]["ProjectCreate"], "name"> &
       Partial<components["schemas"]["ProjectCreate"]>,
-  ) =>
-    request<Project>("/projects", {
+    file: File,
+  ) => {
+    const form = new FormData();
+    form.append("project", JSON.stringify(body));
+    form.append("file", file);
+    return request<ProjectDetail>("/projects", {
       method: "POST",
-      body: JSON.stringify(body),
-    }),
+      body: form,
+    });
+  },
   getProject: (pid: string) => request<ProjectDetail>(`/projects/${pid}`),
   deleteProject: (pid: string) =>
     request<{ message: string }>(`/projects/${pid}`, { method: "DELETE" }),
-  uploadSource: (pid: string, file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    return request<JobEnqueued>(`/projects/${pid}/upload`, {
-      method: "POST",
-      body: fd,
-    });
-  },
   translate: (pid: string, strategy?: Record<string, unknown>) =>
     request<JobEnqueued>(`/projects/${pid}/translate`, {
       method: "POST",
       body: JSON.stringify({ strategy }),
-    }),
-  prepare: (pid: string) =>
-    request<JobEnqueued>(`/projects/${pid}/prepare`, {
-      method: "POST",
     }),
   pause: (pid: string) =>
     request<{ message: string }>(`/projects/${pid}/pause`, { method: "POST" }),

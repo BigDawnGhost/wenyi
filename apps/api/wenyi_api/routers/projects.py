@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
-from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import Json
 
-from .. import dal, paths
+from .. import dal
 from ..config import settings
 from ..job_service import start_job
 from ..project_service import (
@@ -30,22 +29,10 @@ from ..schemas import (
     StartTranslation,
     UploadPreview,
 )
+from ..source_upload import input_format, save_source
 from ..strategies import strategy_to_config
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-_UPLOAD_FORMATS = {
-    "epub": "epub",
-    "fb2": "fb2",
-    "txt": "text",
-    "text": "text",
-    "md": "markdown",
-    "markdown": "markdown",
-    "html": "html",
-    "htm": "html",
-    "pdf": "pdf",
-    "docx": "docx",
-    "srt": "srt",
-}
 
 
 @router.get("", response_model=list[Project])
@@ -53,22 +40,53 @@ def list_projects() -> list[dict]:
     return dal.list_projects()
 
 
-@router.post("", response_model=Project, status_code=201)
-def create_project(body: ProjectCreate) -> dict:
+@router.post("", response_model=ProjectDetail, status_code=201)
+async def create_project(
+    project: Annotated[Json[ProjectCreate], Form()], file: UploadFile = File(...)
+) -> dict:
     from wenyi_core.config import Config
 
+    fmt = input_format(file)
+    if fmt == "srt" and project.prepare:
+        raise HTTPException(422, "Subtitles do not use book preparation")
     try:
-        if body.source_lang == body.target_lang:
+        if project.source_lang == project.target_lang:
             raise ValueError("Source and target languages are identical")
         strategy_to_config(
-            body.strategy,
+            project.strategy,
             Config.load(settings.config_path),
-            source_lang=body.source_lang,
-            target_lang=body.target_lang,
+            source_lang=project.source_lang,
+            target_lang=project.target_lang,
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
-    pid = dal.create_project(body.name, body.source_lang, body.target_lang, body.strategy)
+    pid = uuid4().hex[:16]
+    source = await save_source(pid, file)
+    config = (
+        {"pipeline": {"pdf_backend": project.pdf_backend}}
+        if fmt == "pdf" and project.pdf_backend
+        else {}
+    )
+    try:
+        dal.create_project(
+            project.name,
+            project.source_lang,
+            project.target_lang,
+            project.strategy,
+            project_id=pid,
+            source=source.fields(),
+            config=config,
+        )
+    except BaseException:
+        source.path.unlink(missing_ok=True)
+        raise
+    try:
+        await start_job(pid, "prepare" if project.prepare else "parse", params={"preview": True})
+    except HTTPException as error:
+        if error.status_code != 503:
+            raise
+        # The source and failed task are durable; return their identity for retry.
+        dal.set_project_status(pid, "error", error=str(error.detail))
     return require_project(pid)
 
 
@@ -91,34 +109,14 @@ async def upload_source(
     with project_write(pid) as (project, storage):
         if project.get("initialized"):
             raise HTTPException(409, "Create a new project to replace an initialized source")
-        filename = Path(file.filename or "source").name
-        ext = (fmt or Path(filename).suffix.lstrip(".")).lower()
-        if ext not in _UPLOAD_FORMATS:
-            raise HTTPException(422, "Unsupported input format")
-        fmt_code = _UPLOAD_FORMATS[ext]
-        suffix = "md" if fmt_code == "markdown" else "txt" if fmt_code == "text" else fmt_code
-        destination = Path(paths.project_dir(pid)) / f"source-{uuid4().hex}.{suffix}"
-        digest = hashlib.sha256()
+        source = await save_source(pid, file, fmt)
         try:
-            with destination.open("xb") as handle:
-                while block := await file.read(1024 * 1024):
-                    digest.update(block)
-                    handle.write(block)
-            if destination.stat().st_size == 0:
-                raise HTTPException(422, "Source file is empty")
-            dal.set_project_source(
-                pid,
-                os.path.relpath(destination, settings.data_dir),
-                Path(filename).stem,
-                source_sha256=digest.hexdigest(),
-                fmt=fmt_code,
-                source_meta={"original_filename": filename},
-            )
+            dal.set_project_source(pid, **source.fields())
             storage.delete_artifact("preview.json")
             storage.delete_artifact("parsed_document.json")
             storage.delete_artifact("subtitle_preview.json")
         except BaseException:
-            destination.unlink(missing_ok=True)
+            source.path.unlink(missing_ok=True)
             raise
     return await start_job(pid, "parse")
 

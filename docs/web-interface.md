@@ -12,12 +12,25 @@ Project pages appear at the top of the desktop sidebar; Projects,
 Create project, and Settings stay at its bottom. On mobile, these global links follow
 the project navigation. Long project menus scroll independently of the global links.
 
-The translation overview owns start, pause, resume, preparation, and individual chapter
+Creating a project requires a nonempty source file. Choose its languages and workflow,
+select the file, and optionally check **Prepare before translating** (off by default).
+The upload and project metadata are sent together; a failed upload does not create an
+empty project. PDF files expose their parser selection before submission. The server
+then generates a preview, or generates the preview and prepares the book/glossary when
+the checkbox is selected. Preparation uses model tokens and the configured default
+models; leave it unchecked to adjust project settings before starting translation.
+Subtitles only generate a preview and have no book-preparation checkbox.
+
+Parsing and preparation continue if the page is closed. Reopening the creation URL
+restores its filename and progress; the preview appearing does not end preparation.
+If queueing fails after the source is saved, the project keeps the source and exposes
+**Resume task**. Starting translation still performs any required preparation.
+
+The translation overview owns start, pause, resume, and individual chapter
 translation. It keeps translation progress, cumulative recorded runtime, token totals,
 and the latest matching workflow event visible. Expand workflow details to inspect the
 plan. Accounting always shows token composition, usage by model/provider/stage, and
-run-duration charts. The project report and
-preparation controls are collapsed by default. Export generation and its options live
+run-duration charts. The project report is collapsed by default. Export generation and its options live
 on the export page.
 
 Accounting keeps total tokens, request count, cache hit rate, and recorded runtime
@@ -60,5 +73,7 @@ Punctuation normalization is an advanced export option for that export request; 
 not overwrite project defaults. Persistent export defaults remain in project YAML.
 Export generation waits for those defaults to load successfully.
 
-These changes organize existing operations without changing model prompts, task state,
-review publication rules, or persisted translations.
+The creation API accepts `multipart/form-data`: `project` contains JSON matching
+`ProjectCreate` (including optional `prepare` and `pdf_backend`), and `file` is the
+required original. Its response contains the created project's identity and current
+status, including a recoverable queue error if applicable.

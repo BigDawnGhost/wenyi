@@ -83,6 +83,12 @@ test("progress keeps runtime and matching live progress visible while folding ad
     },
   });
   await page.goto(`/projects/${pid}`);
+  await expect(page.getByText("Advanced actions", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Preparation", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Resume task", exact: true }),
   ).toBeVisible();

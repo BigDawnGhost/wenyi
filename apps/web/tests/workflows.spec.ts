@@ -16,23 +16,27 @@ test("creates a multilingual project and waits for background parsing", async ({
   await fakeApi(page, {
     [`/projects/${pid}`]: {
       ...project,
-      fmt: null,
-      status: "created",
+      fmt: "docx",
+      status: "uploaded",
       initialized: false,
+      source_meta: { original_filename: "test.docx" },
     },
   });
   let created: Record<string, unknown> | undefined;
   let uploaded = false;
   await page.route("**/api/projects", async (r) => {
-    created = r.request().postDataJSON();
+    const form = await new Response(
+      new Uint8Array(r.request().postDataBuffer()!),
+      {
+        headers: { "content-type": r.request().headers()["content-type"] },
+      },
+    ).formData();
+    created = JSON.parse(String(form.get("project")));
+    const source = form.get("file") as File;
+    uploaded =
+      source.name === "test.docx" && (await source.text()) === "fixture";
     await r.fulfill({
-      json: { ...project, status: "created", initialized: false },
-    });
-  });
-  await page.route(`**/api/projects/${pid}/upload`, async (r) => {
-    uploaded = true;
-    await r.fulfill({
-      json: { job_id: "parse-1", project_id: pid, kind: "parse" },
+      json: { ...project, fmt: "docx", status: "parsing", initialized: false },
     });
   });
   await page.route(`**/api/projects/${pid}/preview`, async (r) =>
@@ -57,7 +61,15 @@ test("creates a multilingual project and waits for background parsing", async ({
     .fill("Multilingual document");
   await page.getByLabel("Target language", { exact: true }).selectOption("en");
   await expect(page.getByLabel("Translation workflow")).toHaveValue("标准翻译");
-  await page.getByRole("button", { name: "Create & configure" }).click();
+  const create = page.getByRole("button", {
+    name: "Create project",
+    exact: true,
+  });
+  await expect(create).toBeDisabled();
+  expect(created).toBeUndefined();
+  await expect(
+    page.getByRole("checkbox", { name: "Prepare before translating" }),
+  ).not.toBeChecked();
   const browseFiles = page.getByRole("button", {
     name: "Browse files",
     exact: true,
@@ -74,8 +86,6 @@ test("creates a multilingual project and waits for background parsing", async ({
     .locator("..")
     .screenshot({ path: testInfo.outputPath("upload-control-mobile.png") });
   await page.setViewportSize({ width: 1280, height: 720 });
-  expect(created?.target_lang).toBe("en");
-  expect(created?.strategy).toEqual({ template: "标准翻译" });
   const chooserPromise = page.waitForEvent("filechooser");
   await browseFiles.focus();
   await browseFiles.press("Enter");
@@ -86,10 +96,16 @@ test("creates a multilingual project and waits for background parsing", async ({
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     buffer: Buffer.from("fixture"),
   });
+  await expect(create).toBeEnabled();
+  expect(created).toBeUndefined();
+  await create.click();
   await expect(page.getByText("Document", { exact: true })).toBeVisible();
   await expect(page.getByText("test.docx", { exact: true })).toBeVisible();
   await expect(browseFiles).toBeDisabled();
   expect(uploaded).toBe(true);
+  expect(created?.target_lang).toBe("en");
+  expect(created?.strategy).toEqual({ template: "标准翻译" });
+  expect(created?.prepare).toBe(false);
   await page
     .getByRole("button", { name: "Start translation", exact: true })
     .click();

@@ -26,13 +26,38 @@ def _conn():
     return get_pool().connection()
 
 
-def create_project(name: str, source_lang: str, target_lang: str, strategy: dict[str, Any]) -> str:
-    pid = uuid.uuid4().hex[:16]
+def create_project(
+    name: str,
+    source_lang: str,
+    target_lang: str,
+    strategy: dict[str, Any],
+    *,
+    project_id: str | None = None,
+    source: dict | None = None,
+    config: dict | None = None,
+) -> str:
+    pid = project_id or uuid.uuid4().hex[:16]
+    source = source or {}
     with _conn() as c:
         c.execute(
-            """INSERT INTO projects (id, name, source_lang, target_lang, status, strategy)
-               VALUES (%s,%s,%s,%s,'created',%s)""",
-            (pid, name, source_lang, target_lang, Jsonb(strategy)),
+            """INSERT INTO projects
+               (id, name, source_lang, target_lang, status, strategy, source_path,
+                book_title, source_sha256, fmt, source_meta, config)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                pid,
+                name,
+                source_lang,
+                target_lang,
+                "uploaded" if source else "created",
+                Jsonb(strategy),
+                source.get("source_path"),
+                source.get("book_title"),
+                source.get("source_sha256"),
+                source.get("fmt"),
+                Jsonb(source.get("source_meta", {})),
+                Jsonb(config or {}),
+            ),
         )
     return pid
 

@@ -135,6 +135,8 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
     orch = Orchestrator(config, client=client, storage=storage)
     source = _resolve_source(pid)
     if kind == "prepare":
+        if params.get("preview"):
+            _parse_source(pid, storage, config, progress)
         orch.prepare_for_translation(source, progress=progress)
         return "prepared"
     if kind == "chapter_translation":

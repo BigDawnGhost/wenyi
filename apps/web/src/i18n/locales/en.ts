@@ -309,8 +309,6 @@ const en = {
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
-  "createProject.sourceUploadedParsingInTheBackground":
-    "Source uploaded. Parsing in the background.",
   "createProject.chooseLanguagesAndAWorkflowUploadThe":
     "Choose languages and a workflow, upload the source, then check the preview before translating.",
   "createProject.projectAndLanguages": "1. Project & languages",
@@ -324,8 +322,15 @@ const en = {
   "createProject.translationWorkflow": "Translation workflow",
   "createProject.bookUnderstandingPolishingWholeBookReviewAnd":
     "Book understanding, polishing, whole-book review and autofix are enabled by default. Fast draft suits a first pass. Subtitles use a separate workflow.",
-  "createProject.creating": "Creating…",
-  "createProject.createConfigure": "Create & configure",
+  "createProject.prepareSource": "Prepare before translating",
+  "createProject.prepareHelp":
+    "Analyze the book and build its glossary after upload, using the selected workflow and default models. This uses model tokens. If unchecked, preparation runs when you start translation.",
+  "createProject.preparingSource":
+    "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
+  "createProject.sourceRequired": "Choose a source file before creating the project.",
+  "createProject.emptyFile": "The source file is empty. Choose a file with content.",
+  "createProject.unsupportedFile": "This file format is not supported.",
+  "createProject.serverDefault": "Use server default",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
     "Project created. Changing languages or source content after initialization requires a new project.",
   "createProject.projectSettingsModels": "Project settings & models",
@@ -524,7 +529,7 @@ const en = {
   "export.filenameHelp":
     "Export filenames include the target language ({language}) and bilingual marker. Punctuation normalization only affects exported copies.",
   "createProject.uploadHelp":
-    "Supported: {formats}. Set the PDF parser, batch token budget and models in project settings before uploading.",
+    "Supported: {formats}. The file is uploaded when you create the project. Models and batch settings can be adjusted in project settings before translation.",
   "createProject.paragraphCount": "(paragraphs: {count})",
   "subtitles.pagination": "Page {page} / {pages} · Cues: {count}",
   "progress.reviewIssueCount": "Issues: {count}",
@@ -554,7 +559,6 @@ const en = {
   "review.searchIssues": "Search issues",
   "review.issueDetails": "Evidence and details",
   "progress.workflowDetails": "Workflow details",
-  "progress.moreActions": "Advanced actions",
   "review.runCount": "{count} runs",
   "review.latestResult": "Latest result",
   "review.viewingHistory": "Viewing an earlier review",
