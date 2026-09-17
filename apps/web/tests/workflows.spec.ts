@@ -23,6 +23,14 @@ const chapter = {
   review_issue_count: 0,
   review_status: "pending",
 };
+const workflow = {
+  source: "snapshot",
+  kind: "translation",
+  status: "done",
+  run_id: "run-a",
+  stages: [{ id: "translation", label: "分批翻译章节", enabled: true }],
+  progress: null,
+};
 const effective = {
   language: { source: "ja", target: "en" },
   llm: { preset: "deepseek" },
@@ -89,6 +97,7 @@ async function fakeApi(page: Page, overrides: Record<string, unknown> = {}) {
         usage: { total_tokens: 100 },
         timing: { elapsed_seconds: 12 },
       },
+      [`/projects/${pid}/workflow`]: workflow,
       [`/projects/${pid}/exports`]: [],
       [`/projects/${pid}/events`]: [],
       [`/projects/${pid}/review/0`]: {
@@ -327,10 +336,14 @@ test("authenticates the progress socket before displaying project events", async
   const messages: unknown[] = [];
   await page.routeWebSocket("**/ws/projects/*/progress", (socket) => {
     socket.onMessage((raw) => {
-      messages.push(JSON.parse(String(raw)));
+      const message = JSON.parse(String(raw));
+      messages.push(message);
+      if (message.token !== "test-auth-token") return;
       socket.send(
         JSON.stringify({
           kind: "progress",
+          project_id: pid,
+          run_id: workflow.run_id,
           label: "Authenticated event",
           done: 1,
           total: 1,
@@ -339,10 +352,10 @@ test("authenticates the progress socket before displaying project events", async
     });
   });
   await page.goto(`/projects/${pid}`);
-  await expect(
-    page.getByText("Authenticated event", { exact: true }),
-  ).toBeVisible();
-  expect(messages[0]).toEqual({ token: "test-auth-token" });
+  await expect.poll(() => messages[0]).toEqual({ token: "test-auth-token" });
+  await expect(page.getByRole("status")).toContainText("Authenticated event");
+  await expect(page.getByRole("status")).toContainText("（1/1）");
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("API provider form saves endpoint, model and tier changes", async ({ page }) => {
