@@ -210,7 +210,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       chinese ? "风格分析完成" : "Style analysis completed",
       chinese ? "项目初始化：2 章" : "Project initialized — chapters: 2",
     ];
-    await expect(page.locator("summary")).toHaveText(summaries);
+    await expect(page.locator("main summary")).toHaveText(summaries);
     events.push({
       id: 3,
       type: "book_synopsis_saved",
@@ -218,7 +218,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       created_at: "2026-09-17T08:01:00Z",
     });
     await page.reload();
-    await expect(page.locator("summary")).toHaveText([
+    await expect(page.locator("main summary")).toHaveText([
       chinese ? "生成全书概览" : "Book synopsis generated",
       ...summaries,
     ]);

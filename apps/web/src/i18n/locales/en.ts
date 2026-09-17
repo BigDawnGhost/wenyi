@@ -3,7 +3,6 @@ const en = {
   "appLayout.wenyi": "Wenyi",
   "appLayout.projects": "Projects",
   "common.createProject": "Create project",
-  "appLayout.currentProject": "Current project",
   "common.translationProgress": "Translation progress",
   "common.glossary": "Glossary",
   "common.styleSynopsis": "Style & synopsis",
@@ -11,8 +10,6 @@ const en = {
   "common.projectSettingsModels": "Project settings & models",
   "common.export": "Export",
   "common.eventLog": "Event log",
-  "appLayout.progress": "Progress",
-  "appLayout.configuration": "Configuration",
   "data.noRecordsYet": "No records yet",
   "data.yes": "Yes",
   "data.no": "No",
@@ -161,8 +158,6 @@ const en = {
   "export.generateExport": "Generate export",
   "export.format": "Format",
   "export.size": "Size",
-  "export.failedCheckTheEventLog": "Failed. Check the event log.",
-  "export.generating": "Generating",
   "export.download": "Download",
   "export.noExportsYet": "No exports yet.",
   "glossary.person": "Person",
@@ -245,19 +240,13 @@ const en = {
   "progress.pause": "Pause",
   "progress.resumeTask": "Resume task",
   "progress.subtitleTranslationProgress": "Subtitle translation progress",
-  "progress.currentStatus": "Current status",
   "progress.loading": "Loading",
-  "progress.currentStage": "Current stage",
-  "progress.waitingForProgress": "Waiting for progress",
   "progress.progressConnection": "Progress connection",
   "progress.live": "Live",
   "progress.polling": "Polling",
   "common.preparation": "Preparation",
   "common.wholeBookReview": "Whole-book review",
   "progress.uploadPreviewSource": "Upload & preview source",
-  "progress.reassembleInTheDefaultFormat": "Reassemble in the default format",
-  "progress.exportsUseAConsistentSnapshotOfSaved":
-    "Exports use a consistent snapshot of saved translations. Pausing saves progress at a safe boundary; resuming continues the same task.",
   "progress.totalUsageRunTime": "Total usage & run time",
   "progress.projectReport": "Project report",
   "progress.updateReport": "Update report",
@@ -274,8 +263,6 @@ const en = {
     "Chapters will appear after parsing.",
   "progress.noUsageRecordedYet": "No usage recorded yet",
   "progress.cumulativeTokens": "Cumulative tokens",
-  "progress.inputOutputTokens": "Input / output tokens",
-  "progress.modelCalls": "Model calls",
   "progress.seconds": "{seconds} s",
   "progress.viewUsageAndTimingByModelProvider":
     "View usage and timing by model, provider and stage",
@@ -294,7 +281,7 @@ const en = {
   "workflowPanel.latestStage": "Latest stage:",
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
-    "Polishing runs with translation batches. These cards show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
+    "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
   "createProject.sourceUploadedParsingInTheBackground":
     "Source uploaded. Parsing in the background.",
   "createProject.chooseLanguagesAndAWorkflowUploadThe":
@@ -549,6 +536,21 @@ const en = {
   "export.advanced": "Layout and advanced options",
   "export.aboutSummary": "About page: {value}",
   "export.styleSummary": "Source formatting: {value}",
+  "navigation.global": "Global navigation",
+  "navigation.project": "Project navigation",
+  "navigation.tools": "Project tools",
+  "settings.modelSetup": "Model setup",
+  "settings.presetSummary": "Preset: {name}",
+  "settings.modelSummary":
+    "{providers} connections · {models} models · {routes} operation overrides",
+  "settings.performance": "Segmentation and performance",
+  "settings.performanceSummary": "Batch: {tokens} tokens",
+  "settings.unsavedSummary": "Unsaved changes",
+  "settings.routeSummary": "{count} operation routes",
+  "settings.yamlSummary":
+    "All settings, including operation routing and budgets",
+  "export.punctuationSummary": "Punctuation: {value}",
+  "status.applied": "Applied",
 } as const;
 
 export default en;

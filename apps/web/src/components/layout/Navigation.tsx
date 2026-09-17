@@ -1,0 +1,154 @@
+import { useEffect, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import {
+  BookOpenCheck,
+  Captions,
+  Download,
+  Languages,
+  Library,
+  ListChecks,
+  ScrollText,
+  Settings2,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react";
+import { useI18n, type MessageKey } from "@/i18n";
+import { cn } from "@/lib/utils";
+
+export function NavigationLink({
+  to,
+  icon: Icon,
+  label,
+  end,
+}: {
+  to: string;
+  icon: LucideIcon;
+  label: MessageKey;
+  end?: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+          isActive
+            ? "bg-accent text-accent-foreground font-medium"
+            : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+        )
+      }
+    >
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>{t(label)}</span>
+    </NavLink>
+  );
+}
+
+export function ProjectNavigation({
+  pid,
+  format,
+  name,
+}: {
+  pid: string;
+  format?: string | null;
+  name?: string;
+}) {
+  const { t } = useI18n();
+  const { pathname } = useLocation();
+  const base = `/projects/${pid}`;
+  const book = !!format && format !== "srt";
+  const tools = [
+    ...(book
+      ? [
+          {
+            path: "glossary",
+            icon: Library,
+            label: "common.glossary" as const,
+          },
+          {
+            path: "style",
+            icon: Languages,
+            label: "common.styleSynopsis" as const,
+          },
+        ]
+      : []),
+    {
+      path: "settings",
+      icon: Settings2,
+      label: "common.projectSettingsModels" as const,
+    },
+    { path: "events", icon: ScrollText, label: "common.eventLog" as const },
+  ];
+  const activeTool = tools.some(({ path }) => pathname === `${base}/${path}`);
+  const [expanded, setExpanded] = useState(activeTool);
+  useEffect(() => {
+    if (activeTool) setExpanded(true);
+  }, [pathname, activeTool]);
+  return (
+    <nav
+      aria-label={t("navigation.project")}
+      className="mt-3 border-t pt-3 space-y-1"
+    >
+      <p
+        className="px-3 pb-1 text-xs text-muted-foreground truncate"
+        title={name}
+      >
+        {name || pid}
+      </p>
+      <div className="flex flex-wrap md:block">
+        <NavigationLink
+          to={base}
+          icon={Sparkles}
+          label="common.translationProgress"
+          end
+        />
+        {book && (
+          <>
+            <NavigationLink
+              to={`${base}/proofreading`}
+              icon={BookOpenCheck}
+              label="progress.manualProofreading"
+            />
+            <NavigationLink
+              to={`${base}/review`}
+              icon={ListChecks}
+              label="common.wholeBookReview"
+            />
+          </>
+        )}
+        {format === "srt" && (
+          <NavigationLink
+            to={`${base}/subtitles`}
+            icon={Captions}
+            label="common.subtitleEditor"
+          />
+        )}
+        <NavigationLink
+          to={`${base}/export`}
+          icon={Download}
+          label="common.export"
+        />
+      </div>
+      <details
+        open={expanded}
+        onToggle={(event) => setExpanded(event.currentTarget.open)}
+      >
+        <summary className="cursor-pointer rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent/50">
+          {t("navigation.tools")}
+        </summary>
+        <div className="flex flex-wrap border-l ml-3 pl-1 md:block">
+          {tools.map(({ path, icon, label }) => (
+            <NavigationLink
+              key={path}
+              to={`${base}/${path}`}
+              icon={icon}
+              label={label}
+            />
+          ))}
+        </div>
+      </details>
+    </nav>
+  );
+}

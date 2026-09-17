@@ -25,7 +25,7 @@ const statuses: Record<string, [MessageKey, Tone]> = {
   done: ["common.completed", "success"],
   completed: ["common.completed", "success"],
   reviewed: ["api.reviewCompleted", "success"],
-  applied: ["data.appliedChanges", "success"],
+  applied: ["status.applied", "success"],
   published: ["data.published", "success"],
   failed: ["common.failed", "destructive"],
   error: ["common.failed", "destructive"],

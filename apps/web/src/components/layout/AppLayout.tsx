@@ -1,25 +1,8 @@
 import { useI18n } from "@/i18n";
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useNavigate,
-  useParams,
-} from "react-router-dom";
-import {
-  FolderPlus,
-  LayoutDashboard,
-  Languages,
-  ListChecks,
-  BookOpenCheck,
-  Download,
-  ScrollText,
-  Sparkles,
-  Library,
-  Settings2,
-  Captions,
-} from "lucide-react";
+import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
+import { FolderPlus, LayoutDashboard, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NavigationLink, ProjectNavigation } from "./Navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -62,147 +45,45 @@ export function AppLayout() {
     enabled: !!pid,
   });
 
-  const navItem = (to: string, icon: React.ReactNode, label: string) => (
-    <NavLink
-      to={to}
-      end={to === "/" || to === `/projects/${pid}`}
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-          isActive
-            ? "bg-accent text-accent-foreground font-medium"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-        )
-      }
-    >
-      {icon}
-      <span>{label}</span>
-    </NavLink>
-  );
-
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      <aside className="hidden md:flex w-60 shrink-0 flex-col border-r bg-card">
-        <div className="flex items-center px-4 h-14 border-b">
+    <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
+      <aside className="shrink-0 border-b bg-card md:flex md:w-60 md:flex-col md:border-b-0 md:border-r">
+        <div className="flex h-14 items-center border-b px-4">
           <Brand />
         </div>
-        <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
-          {navItem(
-            "/",
-            <LayoutDashboard className="h-4 w-4" />,
-            tr("appLayout.projects"),
-          )}
-          {navItem(
-            "/projects/new",
-            <FolderPlus className="h-4 w-4" />,
-            tr("common.createProject"),
-          )}
-          {navItem(
-            "/settings",
-            <Settings2 className="h-4 w-4" />,
-            tr("settings.title"),
-          )}
-          {pid && (
-            <>
-              <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                {tr("appLayout.currentProject")}
-              </div>
-              <div
-                className="px-3 pb-1 text-xs text-muted-foreground truncate"
-                title={project?.name}
-              >
-                {project?.name || pid}
-              </div>
-              {navItem(
-                `/projects/${pid}`,
-                <Sparkles className="h-4 w-4" />,
-                tr("common.translationProgress"),
-              )}
-              {project?.fmt !== "srt" && (
-                <>
-                  {navItem(
-                    `/projects/${pid}/glossary`,
-                    <Library className="h-4 w-4" />,
-                    tr("common.glossary"),
-                  )}
-                  {navItem(
-                    `/projects/${pid}/style`,
-                    <Languages className="h-4 w-4" />,
-                    tr("common.styleSynopsis"),
-                  )}
-                  {navItem(
-                    `/projects/${pid}/proofreading`,
-                    <BookOpenCheck className="h-4 w-4" />,
-                    tr("progress.manualProofreading"),
-                  )}
-                  {navItem(
-                    `/projects/${pid}/review`,
-                    <ListChecks className="h-4 w-4" />,
-                    tr("common.wholeBookReview"),
-                  )}
-                </>
-              )}
-              {project?.fmt === "srt" &&
-                navItem(
-                  `/projects/${pid}/subtitles`,
-                  <Captions className="h-4 w-4" />,
-                  tr("common.subtitleEditor"),
-                )}
-              {navItem(
-                `/projects/${pid}/settings`,
-                <Settings2 className="h-4 w-4" />,
-                tr("common.projectSettingsModels"),
-              )}
-              {navItem(
-                `/projects/${pid}/export`,
-                <Download className="h-4 w-4" />,
-                tr("common.export"),
-              )}
-              {navItem(
-                `/projects/${pid}/events`,
-                <ScrollText className="h-4 w-4" />,
-                tr("common.eventLog"),
-              )}
-            </>
-          )}
-        </nav>
-      </aside>
-      <main className="flex-1 min-w-0 overflow-y-auto">
-        <div className="md:hidden border-b">
-          <div className="flex h-14 items-center px-4">
-            <Brand />
-          </div>
-          <nav className="flex gap-3 overflow-x-auto whitespace-nowrap px-4 pb-3 text-sm">
-            <Link to="/">{tr("appLayout.projects")}</Link>
-            <Link to="/projects/new">{tr("common.createProject")}</Link>
-            <Link to="/settings">{tr("settings.title")}</Link>
-            {pid && (
-              <>
-                <Link to={`/projects/${pid}`}>{tr("appLayout.progress")}</Link>
-                {project?.fmt === "srt" ? (
-                  <Link to={`/projects/${pid}/subtitles`}>
-                    {tr("common.subtitleEditor")}
-                  </Link>
-                ) : (
-                  <>
-                    <Link to={`/projects/${pid}/proofreading`}>
-                      {tr("progress.manualProofreading")}
-                    </Link>
-                    <Link to={`/projects/${pid}/review`}>
-                      {tr("common.wholeBookReview")}
-                    </Link>
-                  </>
-                )}
-                <Link to={`/projects/${pid}/settings`}>
-                  {tr("appLayout.configuration")}
-                </Link>
-                <Link to={`/projects/${pid}/export`}>
-                  {tr("common.export")}
-                </Link>
-              </>
-            )}
+        <div className="max-h-[45vh] overflow-y-auto p-3 md:max-h-none md:flex-1">
+          <nav
+            aria-label={tr("navigation.global")}
+            className="flex flex-wrap gap-1 md:block md:space-y-1"
+          >
+            <NavigationLink
+              to="/"
+              icon={LayoutDashboard}
+              label="appLayout.projects"
+              end
+            />
+            <NavigationLink
+              to="/projects/new"
+              icon={FolderPlus}
+              label="common.createProject"
+            />
+            <NavigationLink
+              to="/settings"
+              icon={Settings2}
+              label="settings.title"
+            />
           </nav>
+          {pid && (
+            <ProjectNavigation
+              key={pid}
+              pid={pid}
+              format={project?.fmt}
+              name={project?.name}
+            />
+          )}
         </div>
+      </aside>
+      <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
         <Outlet />
       </main>
     </div>

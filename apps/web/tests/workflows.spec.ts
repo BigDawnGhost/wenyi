@@ -193,13 +193,16 @@ test("advanced configuration reports validation errors", async ({
   );
   await page.goto(`/projects/${pid}/settings`);
   await expect(
-    page.getByText("Saved model routes", { exact: true }),
+    page.locator("summary").filter({ hasText: "Saved model routes" }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("settings.png"),
     fullPage: true,
   });
-  await page.getByText("Advanced YAML configuration", { exact: true }).click();
+  await page
+    .locator("summary")
+    .filter({ hasText: "Advanced YAML configuration" })
+    .click();
   await page
     .getByLabel("Advanced YAML configuration", { exact: true })
     .fill("pipeline:\n  invalid_option: true");
@@ -275,6 +278,10 @@ test("API provider form saves endpoint, model and tier changes", async ({
     },
   });
   await page.goto(`/projects/${pid}/settings`);
+  await page
+    .locator("summary")
+    .filter({ hasText: "API providers & models" })
+    .click();
   await page
     .getByLabel("API provider", { exact: true })
     .selectOption("openai-compatible");

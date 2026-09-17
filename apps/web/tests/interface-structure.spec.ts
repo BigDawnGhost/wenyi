@@ -132,6 +132,7 @@ test("folded export options preserve edits and reveal controls after a validatio
   await advanced.click();
   await page.getByLabel("Bilingual order").selectOption("source_first");
   await page.getByLabel("PDF export engine").selectOption("fpdf2");
+  await page.getByLabel("Normalize punctuation on export").uncheck();
   await page.getByLabel("Include an “About this translation” page").uncheck();
   await advanced.click();
   await expect(advanced).toContainText("Source first");
@@ -147,5 +148,6 @@ test("folded export options preserve edits and reveal controls after a validatio
     order: "source_first",
     about_page: false,
     pdf_engine: "fpdf2",
+    punctuation_normalize: false,
   });
 });

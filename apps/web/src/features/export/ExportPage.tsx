@@ -18,7 +18,7 @@ export default function ExportPage() {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const [defaultsLoaded, setDefaultsLoaded] = useState(false);
-  const { data: config } = useQuery({
+  const { data: config, error: configError } = useQuery({
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
   });
@@ -28,6 +28,7 @@ export default function ExportPage() {
     "target_first",
   );
   const [about, setAbout] = useState(true);
+  const [punctuation, setPunctuation] = useState(true);
   const [preserveStyle, setPreserveStyle] = useState(false);
   const [pdfBackend, setPdfBackend] = useState<PdfEngine | "">("");
   const { data: project, error: projectError } = useQuery({
@@ -52,6 +53,7 @@ export default function ExportPage() {
     if (config && !defaultsLoaded) {
       const output = (config.effective.output || {}) as Record<string, unknown>;
       setBilingual(Boolean(output.bilingual));
+      setPunctuation(output.punctuation_normalize !== false);
       setAbout(output.about_page !== false);
       setPreserveStyle(Boolean(output.bilingual_preserve_source_style));
       setOrder(
@@ -77,6 +79,7 @@ export default function ExportPage() {
         order,
         about_page: subtitle ? false : about,
         preserve_source_style: preserveStyle,
+        punctuation_normalize: punctuation,
         ...(pdfBackend && fmt === "pdf" ? { pdf_engine: pdfBackend } : {}),
       }),
     onSuccess: () => {
@@ -100,6 +103,7 @@ export default function ExportPage() {
         <ErrorNotice
           error={
             projectError ||
+            configError ||
             capsError ||
             exportsError ||
             create.error ||
@@ -184,11 +188,22 @@ export default function ExportPage() {
                         value: tr(preserveStyle ? "data.yes" : "data.no"),
                       })
                     : "",
+                  tr("export.punctuationSummary", {
+                    value: tr(punctuation ? "data.yes" : "data.no"),
+                  }),
                   fmt === "pdf" ? pdfBackend || tr("export.automatic") : "",
                 ]
                   .filter(Boolean)
                   .join(" · ")}
               >
+                <label className="flex gap-2 items-center text-sm">
+                  <input
+                    type="checkbox"
+                    checked={punctuation}
+                    onChange={(e) => setPunctuation(e.target.checked)}
+                  />
+                  {tr("settings.normalizePunctuationOnExport")}
+                </label>
                 {fmt === "pdf" && (
                   <div>
                     <Label htmlFor="pdf-export-engine">
@@ -254,7 +269,13 @@ export default function ExportPage() {
             )}
             <Button
               onClick={() => create.mutate()}
-              disabled={create.isPending || !project?.fmt || !caps}
+              disabled={
+                create.isPending ||
+                !project?.fmt ||
+                !caps ||
+                !defaultsLoaded ||
+                !!configError
+              }
             >
               {create.isPending
                 ? tr("common.submitting")

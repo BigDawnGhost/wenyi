@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, isProjectBusy, type ProjectConfig } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
@@ -22,7 +23,6 @@ export default function SettingsPage() {
     ["polish", tr("settings.polishing")],
     ["review", tr("common.wholeBookReview")],
     ["review_autofix", tr("settings.applyAutofixesToTheSavedTranslation")],
-    ["annotation_alignment", tr("settings.paragraphAnnotationAlignment")],
   ];
 
   const { pid = "" } = useParams();
@@ -92,6 +92,7 @@ export default function SettingsPage() {
     setEffective(next);
     setDraft(JSON.stringify(next, null, 2));
   };
+  const configurationError = save.error || validate.error;
   const formDisabled =
     busy || yamlDirty || !loaded || save.isPending || validate.isPending;
   return (
@@ -112,6 +113,7 @@ export default function SettingsPage() {
             <ProviderSettings
               config={effective}
               disabled={formDisabled}
+              error={configurationError}
               kinds={caps?.providers || []}
               onChange={(llm) => {
                 const next = { ...effective, llm };
@@ -153,119 +155,138 @@ export default function SettingsPage() {
                   {tr("settings.subtitlesUseASeparateWorkflowWithoutBook")}
                 </p>
               )}
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="batch-tokens">
-                    {tr("settings.tokensPerBatch")}
-                  </Label>
-                  <Input
-                    id="batch-tokens"
-                    type="number"
-                    min={1}
-                    value={Number(
-                      section(effective, "segment").max_tokens_per_batch ||
-                        1800,
-                    )}
-                    onChange={(e) =>
-                      setField(
-                        "segment",
-                        "max_tokens_per_batch",
-                        Number(e.target.value),
-                      )
-                    }
-                    className="mt-2"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="segment-tokens">
-                    {tr("settings.tokensPerParagraph")}
-                  </Label>
-                  <Input
-                    id="segment-tokens"
-                    type="number"
-                    min={1}
-                    value={Number(
-                      section(effective, "segment").max_tokens_per_segment ||
-                        1200,
-                    )}
-                    onChange={(e) =>
-                      setField(
-                        "segment",
-                        "max_tokens_per_segment",
-                        Number(e.target.value),
-                      )
-                    }
-                    className="mt-2"
-                  />
-                </div>
+              <Disclosure
+                title={tr("settings.performance")}
+                error={configurationError}
+                summary={tr("settings.performanceSummary", {
+                  tokens: Number(
+                    section(effective, "segment").max_tokens_per_batch ?? 1800,
+                  ),
+                })}
+              >
                 {!subtitles && (
-                  <div>
-                    <Label htmlFor="review-concurrency">
-                      {tr("settings.reviewConcurrency")}
-                    </Label>
-                    <Input
-                      id="review-concurrency"
-                      type="number"
-                      min={1}
-                      value={Number(
-                        section(effective, "pipeline").review_concurrency || 4,
+                  <label className="flex gap-2 items-center text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(
+                        section(effective, "pipeline").annotation_alignment,
                       )}
                       onChange={(e) =>
                         setField(
                           "pipeline",
-                          "review_concurrency",
+                          "annotation_alignment",
+                          e.target.checked,
+                        )
+                      }
+                    />
+                    {tr("settings.paragraphAnnotationAlignment")}
+                  </label>
+                )}
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="batch-tokens">
+                      {tr("settings.tokensPerBatch")}
+                    </Label>
+                    <Input
+                      id="batch-tokens"
+                      type="number"
+                      min={1}
+                      value={Number(
+                        section(effective, "segment").max_tokens_per_batch ??
+                          1800,
+                      )}
+                      onChange={(e) =>
+                        setField(
+                          "segment",
+                          "max_tokens_per_batch",
                           Number(e.target.value),
                         )
                       }
                       className="mt-2"
                     />
                   </div>
-                )}
-                <div>
-                  <Label htmlFor="pdf-backend">
-                    {tr("settings.pdfParser")}
-                  </Label>
-                  <Select
-                    id="pdf-backend"
-                    value={String(
-                      section(effective, "pipeline").pdf_backend || "mineru",
-                    )}
-                    onChange={(e) =>
-                      setField("pipeline", "pdf_backend", e.target.value)
-                    }
-                    className="mt-2"
-                  >
-                    {(caps?.pdf?.backends || ["mineru", "babeldoc"]).map(
-                      (s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ),
-                    )}
-                  </Select>
-                </div>
-              </div>
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={Boolean(
-                    section(effective, "output").punctuation_normalize,
+                  <div>
+                    <Label htmlFor="segment-tokens">
+                      {tr("settings.tokensPerParagraph")}
+                    </Label>
+                    <Input
+                      id="segment-tokens"
+                      type="number"
+                      min={1}
+                      value={Number(
+                        section(effective, "segment").max_tokens_per_segment ??
+                          1200,
+                      )}
+                      onChange={(e) =>
+                        setField(
+                          "segment",
+                          "max_tokens_per_segment",
+                          Number(e.target.value),
+                        )
+                      }
+                      className="mt-2"
+                    />
+                  </div>
+                  {!subtitles && (
+                    <div>
+                      <Label htmlFor="review-concurrency">
+                        {tr("settings.reviewConcurrency")}
+                      </Label>
+                      <Input
+                        id="review-concurrency"
+                        type="number"
+                        min={1}
+                        value={Number(
+                          section(effective, "pipeline").review_concurrency ??
+                            4,
+                        )}
+                        onChange={(e) =>
+                          setField(
+                            "pipeline",
+                            "review_concurrency",
+                            Number(e.target.value),
+                          )
+                        }
+                        className="mt-2"
+                      />
+                    </div>
                   )}
-                  onChange={(e) =>
-                    setField(
-                      "output",
-                      "punctuation_normalize",
-                      e.target.checked,
-                    )
-                  }
-                />
-                {tr("settings.normalizePunctuationOnExport")}
-              </label>
+                  {project?.fmt === "pdf" && (
+                    <div>
+                      <Label htmlFor="pdf-backend">
+                        {tr("settings.pdfParser")}
+                      </Label>
+                      <Select
+                        id="pdf-backend"
+                        value={String(
+                          section(effective, "pipeline").pdf_backend ||
+                            "mineru",
+                        )}
+                        onChange={(e) =>
+                          setField("pipeline", "pdf_backend", e.target.value)
+                        }
+                        className="mt-2"
+                      >
+                        {(caps?.pdf?.backends || ["mineru", "babeldoc"]).map(
+                          (s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ),
+                        )}
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              </Disclosure>
             </fieldset>
-            <details>
-              <summary className="cursor-pointer font-medium text-sm">
-                {tr("settings.advancedYamlConfiguration")}
-              </summary>
+            <Disclosure
+              title={tr("settings.advancedYamlConfiguration")}
+              summary={tr(
+                yamlDirty ? "settings.unsavedSummary" : "settings.yamlSummary",
+              )}
+              error={configurationError}
+            >
               <p className="text-xs text-muted-foreground mt-3">
                 {tr("settings.useServerEnvironmentVariableNamesForApi")}
               </p>
@@ -280,7 +301,7 @@ export default function SettingsPage() {
                   setYamlDirty(true);
                 }}
               />
-            </details>
+            </Disclosure>
             <div className="flex gap-3">
               <Button
                 variant="outline"
@@ -312,27 +333,28 @@ export default function SettingsPage() {
             )}
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-5 space-y-4">
-            <div className="flex gap-3 items-center justify-between">
-              <h2 className="font-medium">{tr("settings.savedModelRoutes")}</h2>
-              <Button
-                variant="outline"
-                disabled={check.isPending}
-                onClick={() => check.mutate()}
-              >
-                {tr("settings.checkModelConfiguration")}
-              </Button>
+        <Disclosure
+          title={tr("settings.savedModelRoutes")}
+          summary={tr("settings.routeSummary", {
+            count: Array.isArray(routes.data) ? routes.data.length : 0,
+          })}
+          error={routes.error || check.error}
+        >
+          <Button
+            variant="outline"
+            disabled={check.isPending}
+            onClick={() => check.mutate()}
+          >
+            {tr("settings.checkModelConfiguration")}
+          </Button>
+          <ErrorNotice error={routes.error || check.error} />
+          <ModelRoutes value={routes.data} />
+          {check.data !== undefined && (
+            <div className="rounded border p-3">
+              <StructuredData value={check.data} />
             </div>
-            <ErrorNotice error={routes.error || check.error} />
-            <ModelRoutes value={routes.data} />
-            {check.data !== undefined && (
-              <div className="rounded border p-3">
-                <StructuredData value={check.data} />
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </Disclosure>
       </PageContainer>
     </>
   );

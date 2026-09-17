@@ -19,7 +19,7 @@ export const chapter = {
   title: "Chapter One",
   status: "done",
   word_count: 12,
-  target_word_count: 15,
+  target_word_count: 12,
   review_issue_count: 0,
   review_status: "pending",
 };
@@ -33,7 +33,17 @@ export const workflow = {
 };
 export const effective = {
   language: { source: "ja", target: "en" },
-  llm: { preset: "deepseek" },
+  llm: {
+    preset: "deepseek",
+    providers: { default: { kind: "deepseek" } },
+    models: { default_model: { provider: "default", model: "deepseek-flash" } },
+    tiers: {
+      strong: "default_model",
+      cheap: "default_model",
+      fast: "default_model",
+    },
+    routes: {},
+  },
   segment: { max_tokens_per_batch: 1800, max_tokens_per_segment: 1200 },
   pipeline: {
     book_understanding: true,
