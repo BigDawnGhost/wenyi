@@ -79,6 +79,16 @@ saved pre-polish snapshots remain visible; snapshots without known timestamps ar
 history endpoint uses stable chapter/segment IDs. Book edit requests include
 `expected_target` with the original saved value to prevent overwriting a newer translation.
 
+**Why can a paragraph have no polishing entry?** History records text changes, not
+every executed workflow step. If polishing returns the same text, it adds no revision.
+Currently, a polishing entry is inferred when a newly saved pre-polish snapshot differs
+from the resulting translation; other non-manual replacements are labeled **Translation
+update**. That generic label alone does not identify polishing or Autofix. Missing history
+therefore does not prove that polishing was skipped. Check the task's saved workflow
+configuration and available events to investigate execution; use the whole-book review's
+publication records to confirm an Autofix write-back. Historical snapshots cannot recover
+an unrecorded cause or intermediate version.
+
 Whole-book review opens the latest run. While it runs, the page shows the reported
 stage, completed/total count when known, task elapsed time, and the last progress update.
 Elapsed time covers the current task invocation, including earlier translation stages;

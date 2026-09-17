@@ -88,14 +88,16 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 ## Workflow
 
-1. Create a project, choose source/target languages, and upload EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT.
+1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
 2. Parsing runs as a background task after upload and then shows a preview. Matching parse results are reused during preparation.
-3. Choose standard, fast-draft, or custom steps, or edit common settings and advanced YAML on the config page. Validate and preview actual model routes before submit.
+3. The project inherits the workflow defaults from global **Settings**; creation has no workflow selector. Use **Project settings** to adjust steps and select already registered models, and validate actual routes before starting translation.
 4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.
 5. For books, edit glossary, style, and paragraphs, and inspect whole-book review history, suggestions, and published fixes. For SRT, edit subtitle cues and timestamps.
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list includes unfinished chapters. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
+
+For paragraph context menus, revision-history semantics, review progress and evidence, and export retention, see the [interface guide](web-interface.md). The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
 
 The event log displays the newest entries first and refreshes every 5 seconds.
 
@@ -115,8 +117,8 @@ The live `/openapi.json` is the source of API types. `GET /capabilities` reports
 
 ```bash
 pnpm gen:schema  # API already running on localhost:8000
-uv run ruff check packages/core packages/cli apps/api
-uv run pytest -q
+uv run --no-sync ruff check packages/core packages/cli apps/api
+uv run --no-sync pytest -q
 pnpm -C apps/web typecheck
 pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
@@ -135,13 +137,15 @@ Inspect task failures with `docker compose -f deploy/docker-compose.yml logs -f 
 
 ### Provider settings and workflow view
 
-Open a project and choose **Project config & models → API providers & models** to edit provider connections, base URLs, API-key environment variable names, request timeouts, model names, and strong/cheap/fast tier assignments. Extra connections and models can be added in the form. Changing provider protocol clears incompatible model options; update model names for the new provider before saving. Advanced YAML still supports operation-specific routes and fallbacks.
+Global **Settings** owns provider connections, model registration, default tiers and operation routes, and the default workflow template. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts project workflow options; it does not register providers or models. Advanced YAML supports operation-specific routes and fallbacks. See the [settings guide](web-interface.md) for reference handling and default restoration.
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 
-The progress page includes **Current translation plan**. It shows enabled and disabled steps for the latest non-export task using that task's configuration snapshot, with separate plans for books, subtitles, preparation, and review. Before the first task it shows the project's configured translation plan. Step cards describe the plan, not individual completion checkpoints; polishing still runs inside translation batches. The latest progress callback is cached in Redis for seven days and associated with the run ID, so reloading restores progress without showing an older run. Export jobs remain on the export page.
+In **Translation overview**, expand **Workflow details** to see **Current workflow**. It shows enabled and disabled steps for the latest non-export task using that task's configuration snapshot, with separate plans for books, subtitles, preparation, and review. Before the first task it shows the project's configured translation plan. Step cards describe the plan, not individual completion checkpoints; polishing still runs inside translation batches. The latest progress callback is cached in Redis for seven days and associated with the run ID, so reloading restores progress without showing an older run. Export jobs remain on the export page.
 
 ## Related notes
 
+- [Interface guide](web-interface.md)
+- [Interface languages](web-i18n.md)
 - [WebUI / `dev` sync notes](sync-dev-webui.md)
 - [Validation record](validation.md)

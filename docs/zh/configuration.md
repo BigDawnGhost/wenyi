@@ -59,7 +59,7 @@ language:
 
 每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
-提示词目录、状态布局和首版验证范围见 [P10 国际化实现与后续方案](project-review/2026-09-05/p10-multilingual-internationalization.md)。
+提示词资源与状态隔离见[翻译流程](pipeline.md)，界面语言设置见 [Web 界面语言](web-i18n.md)。多语言公版长篇盲评、母语审校及 RTL／排版认证仍待开展；支持界面语言不代表翻译质量已经认证。CLI 与提示词指令仍使用英语，当前没有 `ui_locale` 或 `prompt_locale` 配置字段。
 
 ## 模型与操作路由
 

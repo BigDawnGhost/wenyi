@@ -2,6 +2,25 @@
 
 [English](../validation.md)
 
+## 审校工作台更新 · 2026-09-17
+
+对应实现提交 `444bd3c`，不代表后续文档编辑又执行了一次测试：
+
+| 检查 | 结果 |
+|---|---|
+| Python 3.12 全量，使用隔离 PostgreSQL 与 Redis | 955 passed，3 skipped，49 subtests passed |
+| Playwright 全量 | 59 passed |
+| 最终发布文本展示调整后的审校与国际化补充回归 | 15 passed |
+| TypeScript、Vite 构建、Ruff 检查／格式、Prettier 与 `git diff --check` | 通过 |
+
+覆盖任务身份匹配的进度、持续／暂停计时、历史隔离、建议与实际写回区分、最终发布文本、
+稀疏段落 ID 定位和中文手机布局。仍有 Arq 调用 Redis 关闭接口的弃用提示与 Vite 主包
+体积提示。本次界面更新未重复 Python 3.10 和分发包构建，未调用真实模型或 PDF 服务。
+临时测试服务已在验证后移除。
+
+以下保留 **最初 WebUI 迁移** 的验证证据和当时环境限制，其中测试数量与截图描述的是
+早期实现，不代表当前界面；当前行为请参阅[界面操作指南](web-interface.md)。
+
 ## 验收范围
 
 实现以 `webui@ff65cddf` 的 React/Vite、FastAPI、Arq/Redis、PostgreSQL 和 core/CLI 分包架构为基础，移植 `dev@85115927` 的领域行为。使用全新 Web 数据库结构；未进行旧项目迁移。

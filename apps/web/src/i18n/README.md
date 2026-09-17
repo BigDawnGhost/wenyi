@@ -5,6 +5,7 @@
 - `index.ts` exposes `useI18n()` for reactive components, `translate()` for non-React helpers, and the browser preference store.
 - `DocumentLanguage.tsx` keeps the document language and title in sync.
 - `labels.ts` maps known backend identifiers to interface messages without changing submitted identifiers or custom labels.
+- `status.ts` maps task/chapter status codes to message keys and badge tones. Review-specific handling states and phase patterns live in `features/review/reviewData.ts`; their messages remain in the locale catalogs.
 
 ```tsx
 const { t, locale, setLocale } = useI18n();

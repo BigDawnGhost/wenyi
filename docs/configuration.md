@@ -71,7 +71,7 @@ Run `uv run wenyi languages` to list built-in profiles without an API key. `targ
 
 Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
 
-See [P10 internationalization implementation and follow-up design](project-review/2026-09-05/p10-multilingual-internationalization.md) for resource layout, state layout, and validation limits.
+See the [pipeline guide](pipeline.md) for prompt resources and state isolation, and [Web interface languages](web-i18n.md) for display-language settings. Multilingual long-form blind evaluation, native-language review and RTL/layout certification remain future work; interface language support does not certify translation quality. The CLI and prompt instructions remain English; there are no `ui_locale` or `prompt_locale` configuration fields.
 
 ## Models and operation routing
 

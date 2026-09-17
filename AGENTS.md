@@ -44,7 +44,7 @@ Web 相关入口使用仓库根目录相对路径：
 - API、任务与数据库：`apps/api/wenyi_api/` 下的 `routers/`、`workers/`、`storage_pg.py`、`db/`；测试在 `apps/api/tests/`。
 - 前端页面与进度：`apps/web/src/` 下的 `features/`、`lib/api.ts`、`lib/ws.ts`；E2E 在 `apps/web/tests/`。API 类型在 `packages/shared-schema/`，接口变更需同步检查后端 schema、共享类型与前端调用。
 
-配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，Web 部署查阅 [web](docs/web.md)，模块职责查阅 [refactoring](docs/refactoring/README.md) 的相关条目；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
+配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，Web 部署查阅 [web](docs/web.md)，模块职责查阅 [architecture](docs/architecture.md)；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
 
 `packages/core/`、`packages/cli/` 和 `apps/` 包含产品源码；其中忽略的运行产物仍属于本地数据。`state/`、`output/`、`review-*`、Web `DATA_DIR`、缓存、构建目录和样例书籍均需保留。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 

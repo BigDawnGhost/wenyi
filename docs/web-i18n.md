@@ -16,7 +16,8 @@ Interface language controls navigation, forms, notifications, built-in workflow 
 page titles, and localized number/date formatting. It does not change translation source
 or target languages, model configuration, API identifiers, original text, translations,
 glossary entries, or model-generated analysis. Server errors and live log messages are
-shown as received; unknown/custom workflow labels are preserved.
+shown as received. Workflow details preserve unknown/custom labels. The review activity
+summary localizes known phases and uses neutral status wording when the phase is unknown.
 
 ## Adding a language
 
@@ -35,10 +36,17 @@ translated fragments. Keep source/target content separate from interface message
 ## Lists and status labels
 
 Chapter proofreading uses searchable rows with a translation-status filter and saved
-paragraph counts. Whole-book review shows searchable issue rows; expand each row to
-inspect its complete evidence. Translation completion does not imply manual proofreading.
+paragraph counts. Whole-book review shows searchable rows filtered by handling status:
+**Needs attention**, **Written back**, **Fix failed**, or **Unchanged**. Expand a row for
+evidence, suggested text and publication details, or jump to its paragraph in proofreading.
+Translation completion does not imply manual proofreading.
 
-Status labels and badge colors are shared in `src/i18n/status.ts` and `StatusBadge`.
+Task/chapter status labels and badge colors are shared in `src/i18n/status.ts` and `StatusBadge`.
 Both `done` and `completed` display as “Completed”; chapter `pending` displays as
 “Awaiting translation”. Unknown codes display “Unknown status”; original codes remain
 available in raw run details. This changes presentation only, not API or stored state.
+
+Review handling labels and phase patterns are mapped in `src/features/review/reviewData.ts`;
+the translated messages still belong to the locale catalogs. Paragraph-history labels also
+follow the interface language, while all historical text remains unchanged. See the
+[history explanation](web-interface.md) before interpreting an absent polishing entry.

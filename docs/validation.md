@@ -2,6 +2,27 @@
 
 [简体中文](zh/validation.md)
 
+## Review workbench update · 2026-09-17
+
+Recorded for implementation commit `444bd3c` (not a new validation run for later documentation edits):
+
+| Check | Result |
+|---|---|
+| Python 3.12 full suite, with isolated PostgreSQL and Redis | 955 passed, 3 skipped, 49 subtests passed |
+| Full Playwright suite | 59 passed |
+| Follow-up review and localization checks after final publication-display adjustment | 15 passed |
+| TypeScript, Vite build, Ruff checks/format, Prettier, and `git diff --check` | Passed |
+
+Coverage includes task-scoped progress, ticking/frozen timers, history isolation, pending
+versus published revisions, final publication text, sparse paragraph IDs, and Chinese mobile
+layout. The remaining notices were Arq's Redis-close deprecation and Vite's main-chunk size
+warning. Python 3.10 and package builds were not repeated for this interface update; no
+real model or PDF service was called. Temporary test services were removed afterward.
+
+The sections below preserve the **original WebUI migration** evidence and environment
+limitations. Their test counts and screenshots describe that earlier implementation, not
+the current interface; see the [interface guide](web-interface.md) for current behavior.
+
 ## Scope
 
 The implementation keeps the React/Vite, FastAPI, Arq/Redis, PostgreSQL, and core/CLI package architecture from `webui@ff65cddf`, and ports domain behavior from `dev@85115927`. It uses a fresh Web database schema; legacy projects were not migrated.
