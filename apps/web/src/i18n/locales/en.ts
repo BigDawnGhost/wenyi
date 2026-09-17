@@ -351,11 +351,9 @@ const en = {
   "review.autofixPublicationRecords": "Autofix & publication records",
   "review.noPublicationRecordsYet": "No publication records yet",
   "review.fullRunCheckpointDetails": "Full run & checkpoint details",
-  "review.markedAsProofread": "Marked as proofread",
   "review.manualProofreading": "Manual proofreading — {title}",
   "review.previousChapter": "Previous chapter",
   "review.nextChapter": "Next chapter",
-  "review.markAsProofread": "Mark as proofread",
   "review.translationBeforePolishing": "Translation before polishing",
   "review.recordedReviewNotesForThisChapter":
     "Recorded review notes for this chapter",

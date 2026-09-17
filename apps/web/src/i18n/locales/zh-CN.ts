@@ -340,11 +340,9 @@ const zhCN = {
   "review.autofixPublicationRecords": "自动修复与发布记录",
   "review.noPublicationRecordsYet": "尚无发布记录",
   "review.fullRunCheckpointDetails": "完整运行与检查点信息",
-  "review.markedAsProofread": "已标记人工校阅完成",
   "review.manualProofreading": "人工校阅 — {title}",
   "review.previousChapter": "上一章",
   "review.nextChapter": "下一章",
-  "review.markAsProofread": "标记人工校阅完成",
   "review.translationBeforePolishing": "润色前译文",
   "review.recordedReviewNotesForThisChapter": "本章已记录的审校意见",
   "review.noNotesRecordedCheckTheWholeBook":

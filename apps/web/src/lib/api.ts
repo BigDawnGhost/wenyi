@@ -246,10 +246,6 @@ export const api = {
         body: JSON.stringify({ target }),
       },
     ),
-  markReviewComplete: (pid: string, ci: number) =>
-    request<{ ok: boolean }>(`/projects/${pid}/review/${ci}/complete`, {
-      method: "POST",
-    }),
   runAiReview: (pid: string, opts?: { autofix?: boolean }) =>
     request<JobEnqueued>(`/projects/${pid}/review/run`, {
       method: "POST",

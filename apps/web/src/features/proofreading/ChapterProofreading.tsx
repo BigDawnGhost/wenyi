@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { api, type ChapterSummary } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
@@ -40,13 +39,6 @@ export function ChapterProofreading({
   const segments = chapter.data?.segments.filter((s) => s.source.trim()) || [];
   const paragraphs = segments.filter((s) => s.kind === "text");
   const saved = paragraphs.filter((s) => s.target != null).length;
-  const complete = useMutation({
-    mutationFn: () => api.markReviewComplete(pid, index),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      toast.success(t("review.markedAsProofread"));
-    },
-  });
   return (
     <>
       <PageHeader
@@ -74,19 +66,6 @@ export function ChapterProofreading({
                 <Button variant="outline">{t("review.nextChapter")}</Button>
               </Link>
             )}
-            <Button
-              disabled={
-                readOnly ||
-                chapter.isError ||
-                !chapter.data ||
-                chapters[current]?.status !== "done" ||
-                segments.some((s) => s.target == null) ||
-                complete.isPending
-              }
-              onClick={() => complete.mutate()}
-            >
-              {t("review.markAsProofread")}
-            </Button>
           </>
         }
       />
@@ -95,7 +74,6 @@ export function ChapterProofreading({
           error={
             error ||
             chapter.error ||
-            complete.error ||
             (!validIndex
               ? new Error(t("proofreading.invalidChapter"))
               : undefined)

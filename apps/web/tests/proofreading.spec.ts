@@ -68,9 +68,6 @@ test("proofreading is separate and refreshes saved batches before a chapter fini
   await expect(
     page.getByText("1 / 2 paragraphs saved", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Mark as proofread" }),
-  ).toBeDisabled();
 });
 
 test("paused partial proofreading preserves drafts while polling and isolates chapters", async ({
@@ -132,9 +129,6 @@ test("paused partial proofreading preserves drafts while polling and isolates ch
   target = "Updated stored translation";
   await expect.poll(() => reads, { timeout: 8000 }).toBeGreaterThan(before);
   await expect(page.getByLabel("Edit translation")).toHaveValue("Human draft");
-  await expect(
-    page.getByRole("button", { name: "Mark as proofread" }),
-  ).toBeDisabled();
   await page.getByRole("button", { name: "Save translation" }).click();
   await expect(
     page.getByRole("button", { name: "Human draft", exact: true }),
@@ -173,6 +167,6 @@ test("mobile Chinese navigation opens proofreading and distinguishes saved empty
     page.getByText("已保存 1 / 1 段", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "标记人工校阅完成" }),
+    page.getByRole("button", { name: "（空译文，点击编辑）" }),
   ).toBeEnabled();
 });
