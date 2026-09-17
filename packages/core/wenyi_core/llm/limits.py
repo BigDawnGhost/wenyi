@@ -16,6 +16,10 @@ class RequestStopped(BaseException):
     """Stop the workflow without converting a budget/cancellation into a model fallback."""
 
 
+class RequestCancelled(RequestStopped):
+    """Stop cooperatively at the caller's request, without reporting a failure."""
+
+
 @dataclass
 class Reservation:
     started: float
@@ -44,7 +48,7 @@ class RequestLimits:
 
     def check(self) -> None:
         if self.cancelled.is_set():
-            raise RequestStopped("Model requests cancelled; completed work remains resumable")
+            raise RequestCancelled("Model requests cancelled; completed work remains resumable")
         deadline = self.config.budget.deadline_seconds
         if deadline is not None and self.clock() - self.started >= deadline:
             raise RequestStopped("Model request deadline reached; resume with a new deadline")

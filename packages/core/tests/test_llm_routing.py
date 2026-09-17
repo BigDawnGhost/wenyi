@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import LLMConfig
-from wenyi_core.llm.limits import RequestLimits, RequestStopped
+from wenyi_core.llm.limits import RequestCancelled, RequestLimits, RequestStopped
 from wenyi_core.llm.operations import OperationSpec, register_operations
 from wenyi_core.llm.providers.fake import FakeProvider
 from wenyi_core.llm.router import RoutedLLMClient
@@ -471,7 +471,7 @@ def test_request_budget_deadline_and_cancel_stop_before_fallback(monkeypatch):
         limits.check()
     other = RequestLimits(_graph())
     other.cancel()
-    with pytest.raises(RequestStopped, match="cancelled"):
+    with pytest.raises(RequestCancelled, match="cancelled"):
         other.wait_for_retry(600)
 
 

@@ -11,7 +11,7 @@ from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.workers import tasks
 from wenyi_core.config import Config
-from wenyi_core.llm.limits import RequestStopped
+from wenyi_core.llm.limits import RequestLimits, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
 
 pg_pool = storage_tests.pg_pool
@@ -39,21 +39,69 @@ def worker_state(pg_storage, pg_pool, monkeypatch):
     return pg_storage
 
 
-def test_request_stopped_immediately_persists_paused_state(worker_state, monkeypatch):
+def test_cancelled_requests_pause_without_recording_an_error(worker_state, monkeypatch):
     pid = worker_state.project_id
     job_id = dal.create_job(pid, "translation", "cancelled-run", run_id="cancelled-run")
     dal.set_project_status(pid, "translating")
 
     def cancelled(*_):
-        raise RequestStopped("Model requests cancelled; completed work remains resumable")
+        limits = RequestLimits(Config.from_dict({"llm": {"preset": "fake"}}).llm)
+        limits.cancel()
+        limits.check()
 
     monkeypatch.setattr(tasks, "_book_operation", cancelled)
-    try:
-        tasks._execute("translation", pid, "cancelled-run", {})
-    except RequestStopped:
-        pass
+    tasks._execute("translation", pid, "cancelled-run", {})
     assert must(dal.get_project(pid))["status"] == "paused"
-    assert must(dal.get_job(job_id))["status"] in {"paused", "interrupted"}
+    assert must(dal.get_project(pid))["error"] is None
+    assert must(dal.get_job(job_id))["status"] == "paused"
+    assert must(dal.get_job(job_id))["error"] is None
+    events = worker_state.list_events()
+    pause = next(event for event in events if event["event"] == "task_paused")
+    assert pause["kind"] == "translation"
+    assert pause["run_id"] == "cancelled-run"
+    assert "reason" not in pause
+    assert not any(event["event"] == "pipeline_error" for event in events)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Model request budget exhausted",
+        "Model request deadline reached; resume with a new deadline",
+    ],
+)
+def test_limit_stops_keep_actionable_diagnostics(worker_state, monkeypatch, reason):
+    pid = worker_state.project_id
+    job_id = dal.create_job(pid, "translation", "budget-run", run_id="budget-run")
+    dal.set_project_status(pid, "translating")
+
+    def exhausted(*_):
+        raise RequestStopped(reason)
+
+    monkeypatch.setattr(tasks, "_book_operation", exhausted)
+    tasks._execute("translation", pid, "budget-run", {})
+    assert must(dal.get_project(pid))["status"] == "paused"
+    assert must(dal.get_project(pid))["error"] == reason
+    assert must(dal.get_job(job_id))["error"] == reason
+    pause = next(event for event in worker_state.list_events() if event["event"] == "task_paused")
+    assert pause["reason"] == reason
+
+
+def test_model_failures_still_record_an_error(worker_state, monkeypatch):
+    pid = worker_state.project_id
+    job_id = dal.create_job(pid, "translation", "failed-model", run_id="failed-model")
+    dal.set_project_status(pid, "translating")
+
+    def failed(*_):
+        raise RuntimeError("Provider connection failed")
+
+    monkeypatch.setattr(tasks, "_book_operation", failed)
+    with pytest.raises(RuntimeError, match="Provider connection failed"):
+        tasks._execute("translation", pid, "failed-model", {})
+    assert must(dal.get_project(pid))["status"] == "error"
+    assert must(dal.get_project(pid))["error"] == "Provider connection failed"
+    assert must(dal.get_job(job_id))["error"] == "Provider connection failed"
+    assert any(event["event"] == "pipeline_error" for event in worker_state.list_events())
 
 
 def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, monkeypatch):
@@ -222,7 +270,7 @@ def test_failure_does_not_leave_project_busy_when_api_briefly_owns_lock(worker_s
     thread = threading.Thread(target=api_request)
     thread.start()
     assert acquired.wait(2)
-    tasks._record_failure(pid, "failed-between-locks", RuntimeError("worker failed"))
+    tasks._record_terminal_status(pid, "failed-between-locks", RuntimeError("worker failed"))
     thread.join(2)
     assert must(dal.get_job(job))["status"] == "error"
     assert must(dal.get_project(pid))["status"] == "error"
@@ -319,9 +367,11 @@ def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_st
     cancelled = threading.Event()
     finished = threading.Event()
     errors = []
+    limits = RequestLimits(Config.from_dict({"llm": {"preset": "fake"}}).llm)
 
     class WaitingClient(FakeClient):
         def cancel(self):
+            limits.cancel()
             cancelled.set()
 
     client = WaitingClient()
@@ -332,7 +382,7 @@ def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_st
         entered.set()
         if not cancelled.wait(3):
             raise AssertionError("Pause monitor did not cancel the waiting client")
-        raise RequestStopped("Model requests cancelled; completed work remains resumable")
+        limits.check()
 
     monkeypatch.setattr(tasks, "_book_operation", wait_for_model)
 
@@ -360,3 +410,5 @@ def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_st
     assert not thread.is_alive()
     assert must(dal.get_project(pid))["status"] == "paused"
     assert must(dal.get_job(job_id))["status"] == "paused"
+    assert must(dal.get_project(pid))["error"] is None
+    assert must(dal.get_job(job_id))["error"] is None

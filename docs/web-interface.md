@@ -19,6 +19,10 @@ plan; expand accounting for per-model/provider/stage usage. The project report a
 preparation controls are collapsed by default. Export generation and its options live
 on the export page.
 
+Pausing is a normal workflow action: the project and task show a paused status without
+an error notice or cancellation diagnostic in the event log. Saved work remains resumable.
+Budget limits, request deadlines, and model failures still display their diagnostic messages.
+
 Manual proofreading lists chapters in rows with search, translation-status filtering,
 and saved paragraph counts. Opening a chapter shows its source and saved translation;
 polishing history and review notes expand on demand. Newly persisted translation batches

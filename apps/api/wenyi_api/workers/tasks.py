@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
-from wenyi_core.llm.limits import RequestStopped
+from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 
 from .. import dal, paths
 from ..config import settings
@@ -151,11 +151,12 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
     return "done"
 
 
-def _record_failure(pid, run_id, error, *, status="error"):
+def _record_terminal_status(pid, run_id, error: BaseException | None = None, *, status="error"):
     """A late Future or duplicate delivery may update only its own task's project."""
+    message = str(error) if error is not None else None
     job = dal.get_job_by_arq_id(run_id) if run_id else None
     if job:
-        dal.set_job_status(job["id"], status, error=str(error))
+        dal.set_job_status(job["id"], status, error=message)
         storage = _pipeline_storage(pid, init_pool(settings.psycopg_dsn))
         latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
         if not latest or latest["id"] != job["id"]:
@@ -165,9 +166,9 @@ def _record_failure(pid, run_id, error, *, status="error"):
         with storage.lock():
             latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
             if latest and latest["id"] == job["id"]:
-                dal.set_project_status(pid, status, error=str(error))
+                dal.set_project_status(pid, status, error=message)
     elif not run_id:
-        dal.set_project_status(pid, status, error=str(error))
+        dal.set_project_status(pid, status, error=message)
 
 
 def _execute(
@@ -277,11 +278,14 @@ def _execute(
             if job:
                 dal.set_job_status(job["id"], "done")
             storage.log_event("task_completed", kind=kind, run_id=run_id)
-    except (KeyboardInterrupt, RequestStopped) as error:
-        _record_failure(pid, run_id, error, status="paused")
+    except (KeyboardInterrupt, RequestCancelled):
+        _record_terminal_status(pid, run_id, status="paused")
+        storage.log_event("task_paused", kind=kind, run_id=run_id)
+    except RequestStopped as error:
+        _record_terminal_status(pid, run_id, error, status="paused")
         storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
     except Exception as error:
-        _record_failure(pid, run_id, error)
+        _record_terminal_status(pid, run_id, error)
         storage.log_event("pipeline_error", kind=kind, run_id=run_id, error=str(error))
         raise
     finally:
@@ -302,7 +306,7 @@ async def _run(kind, project_id, run_id, params):
         await asyncio.shield(task)
         raise
     except Exception as error:
-        _record_failure(project_id, run_id, error)
+        _record_terminal_status(project_id, run_id, error)
         raise
 
 

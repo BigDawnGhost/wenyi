@@ -165,6 +165,8 @@ def test_pause_and_resume_parse_preserves_job_identity(api):
     execute_next(api)
     assert must(dal.get_project(pid))["status"] == "paused"
     assert must(dal.get_job_by_arq_id(run_id))["status"] == "paused"
+    assert client.get(f"/projects/{pid}").json()["error"] is None
+    assert must(dal.get_job_by_arq_id(run_id))["error"] is None
     response = client.post(f"/projects/{pid}/resume")
     assert response.status_code == 200 and response.json()["kind"] == "parse"
     execute_next(api)
