@@ -7,6 +7,7 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { Disclosure } from "@/components/ui/disclosure";
 import { SegmentEditor } from "@/components/SegmentEditor";
 
 export function ChapterProofreading({
@@ -170,17 +171,12 @@ export function ChapterProofreading({
             ))}
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <h2 className="font-medium">
-              {t("review.recordedReviewNotesForThisChapter")}
-            </h2>
-            <StructuredData
-              value={chapter.data?.review_issues}
-              empty={t("review.noNotesRecordedCheckTheWholeBook")}
-            />
-          </CardContent>
-        </Card>
+        <Disclosure title={t("review.recordedReviewNotesForThisChapter")}>
+          <StructuredData
+            value={chapter.data?.review_issues}
+            empty={t("review.noNotesRecordedCheckTheWholeBook")}
+          />
+        </Disclosure>
       </PageContainer>
     </>
   );

@@ -1,6 +1,6 @@
 # Web interface languages
 
-[简体中文](zh/web-i18n.md) · [Web deployment](web.md)
+[简体中文](zh/web-i18n.md) · [Web deployment](web.md) · [Workflow layout](web-interface.md)
 
 The Web interface defaults to English, regardless of the browser's preferred language.
 Open global **Settings → Interface language** to choose **English** or **简体中文**.

@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Disclosure } from "@/components/ui/disclosure";
 import { ReviewIssues } from "./ReviewIssues";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 
@@ -114,43 +115,50 @@ export default function ReviewPage() {
             )}
           </CardContent>
         </Card>
-        <div className="grid lg:grid-cols-[280px_1fr] gap-4">
-          <Card>
-            <CardContent className="p-4 space-y-3">
-              <h2 className="font-medium">{tr("review.reviewRuns")}</h2>
-              {!runs.data?.length && (
-                <p className="text-sm text-muted-foreground">
-                  {tr("review.noReviewYet")}
-                </p>
-              )}
-              {runs.data?.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setSelected(r.id)}
-                  className={`w-full text-left rounded border p-3 text-sm ${rid === r.id ? "border-primary bg-accent" : "hover:bg-muted"}`}
-                >
-                  <div className="break-all">
-                    {r.created_at
-                      ? new Date(r.created_at).toLocaleString(locale)
-                      : r.id}
-                  </div>
-                  <StatusBadge status={r.status} context="review" />
-                </button>
-              ))}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5 space-y-5">
-              {run.data ? (
-                <RunDetail run={run.data} />
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  {tr("review.selectARunToViewResultsAn")}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <Disclosure
+          title={tr("review.reviewRuns")}
+          summary={tr("review.runCount", { count: runs.data?.length || 0 })}
+          error={runs.error}
+        >
+          {!runs.data?.length && (
+            <p className="text-sm text-muted-foreground">
+              {tr("review.noReviewYet")}
+            </p>
+          )}
+          {runs.data?.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => setSelected(r.id)}
+              className={`w-full text-left rounded border p-3 text-sm ${rid === r.id ? "border-primary bg-accent" : "hover:bg-muted"}`}
+            >
+              <div className="break-all">
+                {r.created_at
+                  ? new Date(r.created_at).toLocaleString(locale)
+                  : r.id}
+              </div>
+              <StatusBadge status={r.status} context="review" />
+            </button>
+          ))}
+        </Disclosure>
+        {selected && selected !== runs.data?.[0]?.id && (
+          <div className="flex items-center gap-3 text-sm">
+            <span>{tr("review.viewingHistory")}</span>
+            <Button variant="outline" onClick={() => setSelected(undefined)}>
+              {tr("review.latestResult")}
+            </Button>
+          </div>
+        )}
+        <Card>
+          <CardContent className="p-5 space-y-5">
+            {run.data ? (
+              <RunDetail key={run.data.id} run={run.data} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {tr("review.selectARunToViewResultsAn")}
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </PageContainer>
     </>
   );
@@ -182,14 +190,13 @@ function RunDetail({ run }: { run: ReviewRun }) {
           }
         />
       </section>
-      <section>
-        <h3 className="font-medium mb-3">{tr("common.suggestedChanges")}</h3>
+      <Disclosure
+        title={tr("common.suggestedChanges")}
+        summary={run.changes.length}
+      >
         <StructuredData value={run.changes} />
-      </section>
-      <section>
-        <h3 className="font-medium mb-3">
-          {tr("review.autofixPublicationRecords")}
-        </h3>
+      </Disclosure>
+      <Disclosure title={tr("review.autofixPublicationRecords")}>
         <StructuredData
           value={Object.fromEntries(
             Object.entries(run.autofix || {}).filter(
@@ -198,7 +205,7 @@ function RunDetail({ run }: { run: ReviewRun }) {
           )}
           empty={tr("review.noPublicationRecordsYet")}
         />
-      </section>
+      </Disclosure>
       <details>
         <summary className="cursor-pointer text-sm text-muted-foreground">
           {tr("review.fullRunCheckpointDetails")}

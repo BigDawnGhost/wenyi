@@ -326,6 +326,7 @@ test("workflow snapshot and cached progress survive a page reload", async ({
   await expect(
     page.getByText("正在翻译第 3 章", { exact: false }),
   ).toBeVisible();
+  await page.getByText("Workflow details", { exact: true }).click();
   await expect(page.getByText("2 · Disabled")).toBeVisible();
   await page.reload();
   await expect(

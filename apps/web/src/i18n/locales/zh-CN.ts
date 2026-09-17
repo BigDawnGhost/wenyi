@@ -523,6 +523,14 @@ const zhCN = {
   "list.noMatches": "没有匹配的结果",
   "review.searchIssues": "搜索审校问题",
   "review.issueDetails": "证据与详情",
+  "progress.workflowDetails": "完整流程",
+  "progress.moreActions": "高级操作",
+  "review.runCount": "共 {count} 次",
+  "review.latestResult": "最新结果",
+  "review.viewingHistory": "正在查看历史审校",
+  "export.advanced": "排版与高级选项",
+  "export.aboutSummary": "说明页：{value}",
+  "export.styleSummary": "原文样式：{value}",
 } satisfies Messages;
 
 export default zhCN;

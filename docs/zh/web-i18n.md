@@ -1,6 +1,6 @@
 # Web 界面语言
 
-[English](../web-i18n.md) · [Web 部署](web.md)
+[English](../web-i18n.md) · [Web 部署](web.md) · [工作流布局](web-interface.md)
 
 Web 界面默认使用英语，不自动跟随浏览器语言。打开全局 **设置 → 界面语言**，可选择
 **English** 或 **简体中文**。界面语言属于浏览器偏好，仅在全局设置中提供。

@@ -541,6 +541,14 @@ const en = {
   "list.noMatches": "No matching results",
   "review.searchIssues": "Search issues",
   "review.issueDetails": "Evidence and details",
+  "progress.workflowDetails": "Workflow details",
+  "progress.moreActions": "Advanced actions",
+  "review.runCount": "{count} runs",
+  "review.latestResult": "Latest result",
+  "review.viewingHistory": "Viewing an earlier review",
+  "export.advanced": "Layout and advanced options",
+  "export.aboutSummary": "About page: {value}",
+  "export.styleSummary": "Source formatting: {value}",
 } as const;
 
 export default en;

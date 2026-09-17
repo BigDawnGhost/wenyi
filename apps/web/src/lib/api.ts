@@ -178,10 +178,6 @@ export const api = {
     request<JobEnqueued>(`/projects/${pid}/prepare`, {
       method: "POST",
     }),
-  assemble: (pid: string) =>
-    request<Output<"AssembleEnqueued">>(`/projects/${pid}/assemble`, {
-      method: "POST",
-    }),
   pause: (pid: string) =>
     request<{ message: string }>(`/projects/${pid}/pause`, { method: "POST" }),
   resume: (pid: string) =>

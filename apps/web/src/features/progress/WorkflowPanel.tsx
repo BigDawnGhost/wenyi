@@ -4,6 +4,7 @@ import { workflowStageLabel } from "@/i18n/labels";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ProgressMessage } from "@/lib/ws";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/data";
 
@@ -39,11 +40,6 @@ export function WorkflowPanel({
       <CardContent className="p-5 space-y-4">
         <div>
           <h2 className="font-medium">{tr("workflowPanel.currentWorkflow")}</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            {workflow?.source === "snapshot"
-              ? tr("workflowPanel.thisIsTheWorkflowFromTheLatest")
-              : tr("workflowPanel.showingTheCurrentProjectConfigurationNoTask")}
-          </p>
         </div>
         <ErrorNotice error={query.error} />
         {workflow && (
@@ -52,24 +48,6 @@ export function WorkflowPanel({
               <strong>{TASKS[workflow.kind] || workflow.kind}</strong>
               <StatusBadge status={workflow.status} />
             </div>
-            <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {workflow.stages.map((stage, index) => (
-                <li
-                  key={stage.id}
-                  className={`rounded-lg border p-3 ${stage.enabled ? "bg-accent/30" : "opacity-50"}`}
-                >
-                  <div className="text-xs text-muted-foreground">
-                    {index + 1} ·{" "}
-                    {stage.enabled
-                      ? tr("common.enabled")
-                      : tr("workflowPanel.disabled")}
-                  </div>
-                  <div className="text-sm font-medium mt-1">
-                    {workflowStageLabel(stage.id, stage.label, tr)}
-                  </div>
-                </li>
-              ))}
-            </ol>
             <div role="status" className="rounded border p-3 text-sm">
               <span className="text-muted-foreground">
                 {tr("workflowPanel.latestStage")}
@@ -86,11 +64,38 @@ export function WorkflowPanel({
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {tr(
-                "workflowPanel.polishingRunsWithTranslationBatchesTheseCards",
-              )}
-            </p>
+            <Disclosure title={tr("progress.workflowDetails")}>
+              <p className="text-xs text-muted-foreground mt-1">
+                {workflow?.source === "snapshot"
+                  ? tr("workflowPanel.thisIsTheWorkflowFromTheLatest")
+                  : tr(
+                      "workflowPanel.showingTheCurrentProjectConfigurationNoTask",
+                    )}
+              </p>
+              <ol className="space-y-2">
+                {workflow.stages.map((stage, index) => (
+                  <li
+                    key={stage.id}
+                    className={`flex items-center gap-4 py-2 ${stage.enabled ? "" : "text-muted-foreground"}`}
+                  >
+                    <div className="text-xs text-muted-foreground">
+                      {index + 1} ·{" "}
+                      {stage.enabled
+                        ? tr("common.enabled")
+                        : tr("workflowPanel.disabled")}
+                    </div>
+                    <div className="text-sm font-medium mt-1">
+                      {workflowStageLabel(stage.id, stage.label, tr)}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <p className="text-xs text-muted-foreground">
+                {tr(
+                  "workflowPanel.polishingRunsWithTranslationBatchesTheseCards",
+                )}
+              </p>
+            </Disclosure>
           </>
         )}
       </CardContent>

@@ -1,4 +1,3 @@
-import { statusLabel } from "@/i18n/status";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { useParams, Link } from "react-router-dom";
@@ -11,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { Disclosure } from "@/components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { toast } from "sonner";
 
@@ -55,9 +55,8 @@ export default function ProgressPage() {
     qc.invalidateQueries({ queryKey: ["stats", pid] });
   };
   const action = useMutation({
-    mutationFn: async (
-      kind: "pause" | "resume" | "prepare" | "translate" | "assemble",
-    ) => api[kind](pid),
+    mutationFn: async (kind: "pause" | "resume" | "prepare" | "translate") =>
+      api[kind](pid),
     onSuccess: (_, kind) => {
       invalidate();
       toast.success(
@@ -99,14 +98,17 @@ export default function ProgressPage() {
         })}
         actions={
           <>
-            {!busy && !paused && project?.fmt && (
-              <Button
-                disabled={action.isPending}
-                onClick={() => action.mutate("translate")}
-              >
-                {tr("common.startTranslation")}
-              </Button>
-            )}
+            {!busy &&
+              !paused &&
+              project?.status !== "error" &&
+              project?.fmt && (
+                <Button
+                  disabled={action.isPending}
+                  onClick={() => action.mutate("translate")}
+                >
+                  {tr("common.startTranslation")}
+                </Button>
+              )}
             {busy && project?.status !== "parsing" && (
               <Button
                 variant="outline"
@@ -124,9 +126,6 @@ export default function ProgressPage() {
                 {tr("progress.resumeTask")}
               </Button>
             )}
-            <Link to={`/projects/${pid}/export`}>
-              <Button variant="outline">{tr("common.export")}</Button>
-            </Link>
           </>
         }
       />
@@ -139,136 +138,84 @@ export default function ProgressPage() {
             project?.error
           }
         />
-        <WorkflowPanel pid={pid} msg={msg} />
-        <div className="grid gap-3 md:grid-cols-4">
-          <Stat
-            label={
-              subtitle
-                ? tr("progress.subtitleTranslationProgress")
-                : tr("common.translationProgress")
-            }
-            value={`${done}/${total}`}
-          >
-            <Progress value={pct} className="mt-2" />
-          </Stat>
-          <Stat
-            label={tr("progress.currentStatus")}
-            value={
-              project ? statusLabel(project.status, tr) : tr("progress.loading")
-            }
-          />
-          <Stat
-            label={tr("progress.currentStage")}
-            value={busy ? msg?.label || tr("progress.waitingForProgress") : "—"}
-          />
-          <Stat
-            label={tr("progress.progressConnection")}
-            value={connected ? tr("progress.live") : tr("progress.polling")}
-          />
-        </div>
         <Card>
-          <CardContent className="p-4 space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {!subtitle && (
-                <Button
-                  variant="outline"
-                  disabled={busy || !project?.fmt || action.isPending}
-                  onClick={() => action.mutate("prepare")}
-                >
-                  {tr("common.preparation")}
-                </Button>
-              )}
-              {!subtitle && (
-                <Link to={`/projects/${pid}/review`}>
-                  <Button variant="outline">
-                    {tr("common.wholeBookReview")}
-                  </Button>
-                </Link>
-              )}
-              {subtitle && (
-                <Link to={`/projects/${pid}/subtitles`}>
-                  <Button variant="outline">
-                    {tr("common.subtitleEditor")}
-                  </Button>
-                </Link>
-              )}
-              <Link to={`/projects/${pid}/settings`}>
-                <Button variant="outline">
-                  {tr("common.projectSettingsModels")}
-                </Button>
-              </Link>
-              {!project?.initialized && (
-                <Link to={`/projects/new?project=${pid}`}>
-                  <Button variant="outline">
-                    {tr("progress.uploadPreviewSource")}
-                  </Button>
-                </Link>
-              )}
-              <Button
-                variant="outline"
-                disabled={done === 0 || action.isPending}
-                onClick={() => action.mutate("assemble")}
-              >
-                {tr("progress.reassembleInTheDefaultFormat")}
-              </Button>
+          <CardContent className="p-5 space-y-4">
+            <div className="flex flex-wrap justify-between items-center gap-3">
+              <h2 className="font-medium">
+                {subtitle
+                  ? tr("progress.subtitleTranslationProgress")
+                  : tr("common.translationProgress")}
+              </h2>
+              {project && <StatusBadge status={project.status} />}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {tr("progress.exportsUseAConsistentSnapshotOfSaved")}
-            </p>
+            <div className="text-sm">
+              {done} / {total}
+            </div>
+            <Progress value={pct} />
+            <div className="border-t pt-4 space-y-3">
+              <h3 className="text-sm font-medium">
+                {tr("progress.totalUsageRunTime")}
+              </h3>
+              <ErrorNotice error={stats.error} />
+              <Accounting value={stats.data} />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <h2 className="font-medium">{tr("progress.totalUsageRunTime")}</h2>
-            <ErrorNotice error={stats.error} />
-            <Accounting value={stats.data} />
-          </CardContent>
-        </Card>
+        <WorkflowPanel pid={pid} msg={msg} />
+        <p className="text-xs text-muted-foreground">
+          {tr("progress.progressConnection")}:{" "}
+          {connected ? tr("progress.live") : tr("progress.polling")}
+        </p>
+        {!project?.initialized && (
+          <Link
+            className="inline-block text-sm text-primary underline"
+            to={`/projects/new?project=${pid}`}
+          >
+            {tr("progress.uploadPreviewSource")}
+          </Link>
+        )}
         {!subtitle && (
           <>
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <h2 className="font-medium">
-                    {tr("progress.projectReport")}
-                  </h2>
-                  <Button
-                    variant="outline"
-                    disabled={regenerate.isPending || busy}
-                    onClick={() => regenerate.mutate()}
-                  >
-                    {tr("progress.updateReport")}
-                  </Button>
-                </div>
-                <ErrorNotice error={report.error || regenerate.error} />
-                <StructuredData value={report.data?.summary} />
-              </CardContent>
-            </Card>
+            <Disclosure
+              title={tr("progress.projectReport")}
+              error={report.error || regenerate.error}
+            >
+              <Button
+                variant="outline"
+                disabled={regenerate.isPending || busy}
+                onClick={() => regenerate.mutate()}
+              >
+                {tr("progress.updateReport")}
+              </Button>
+              <ErrorNotice error={report.error || regenerate.error} />
+              <StructuredData
+                value={
+                  report.data?.summary &&
+                  Object.fromEntries(
+                    Object.entries(report.data.summary).filter(
+                      ([key]) => !["usage", "timing"].includes(key),
+                    ),
+                  )
+                }
+              />
+            </Disclosure>
+            <Disclosure
+              title={tr("progress.moreActions")}
+              error={action.variables === "prepare" ? action.error : undefined}
+            >
+              <Button
+                variant="outline"
+                disabled={busy || !project?.fmt || action.isPending}
+                onClick={() => action.mutate("prepare")}
+              >
+                {tr("common.preparation")}
+              </Button>
+            </Disclosure>
             <ChapterTable pid={pid} chapters={chapters} busy={busy} />
           </>
         )}
       </PageContainer>
     </>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  children,
-}: {
-  label: string;
-  value: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="font-semibold mt-2 break-words">{value}</div>
-        {children}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -395,11 +342,6 @@ function Accounting({
   const fields: [string, string][] = [
     [tr("progress.cumulativeTokens"), numeric(totals.total_tokens)],
     [
-      tr("progress.inputOutputTokens"),
-      `${numeric(totals.prompt_tokens)} / ${numeric(totals.completion_tokens)}`,
-    ],
-    [tr("progress.modelCalls"), numeric(totals.calls)],
-    [
       tr("common.runTime"),
       typeof timing.total_seconds === "number"
         ? tr("progress.seconds", { seconds: timing.total_seconds.toFixed(2) })
@@ -408,9 +350,9 @@ function Accounting({
   ];
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="flex flex-wrap gap-x-8 gap-y-3">
         {fields.map(([label, count]) => (
-          <div key={label} className="rounded border p-3">
+          <div key={label}>
             <div className="text-xs text-muted-foreground">{label}</div>
             <div className="font-semibold mt-2">{count}</div>
           </div>

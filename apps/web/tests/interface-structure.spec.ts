@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, chapter } from "./fixtures";
+import { fakeApi, pid, chapter, project } from "./fixtures";
 
 test("chapter rows localize pending status and support search and filtering", async ({
   page,
@@ -70,4 +70,82 @@ test("review issues use searchable rows and preserve complete evidence on demand
     list.getByText("Exact source evidence", { exact: true }),
   ).toBeVisible();
   await expect(list.getByText("Pending", { exact: true })).toBeVisible();
+});
+
+test("progress keeps runtime and matching live progress visible while folding advanced sections", async ({
+  page,
+}) => {
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "error" },
+    [`/projects/${pid}/stats`]: {
+      usage: { totals: { total_tokens: 100 } },
+      timing: { total_seconds: 123.45 },
+    },
+  });
+  await page.goto(`/projects/${pid}`);
+  await expect(
+    page.getByRole("button", { name: "Resume task", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start translation", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reassemble in the default format" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("123.45 s", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Translate chapters in batches", { exact: true }),
+  ).not.toBeVisible();
+  await page.getByText("Workflow details", { exact: true }).click();
+  await expect(
+    page.getByText("Translate chapters in batches", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Update report", exact: true }),
+  ).not.toBeVisible();
+  await page.getByText("Project report", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Update report", exact: true }),
+  ).toBeVisible();
+});
+
+test("folded export options preserve edits and reveal controls after a validation failure", async ({
+  page,
+}) => {
+  await fakeApi(page);
+  let submitted: Record<string, unknown> = {};
+  await page.route(`**/api/projects/${pid}/exports`, async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: [] });
+    submitted = route.request().postDataJSON();
+    return route.fulfill({
+      status: 422,
+      json: { detail: "Invalid PDF engine" },
+    });
+  });
+  await page.goto(`/projects/${pid}/export`);
+  await page.getByRole("button", { name: "PDF", exact: true }).click();
+  await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
+  const advanced = page
+    .locator("summary")
+    .filter({ hasText: "Layout and advanced options" });
+  await expect(page.getByLabel("PDF export engine")).not.toBeVisible();
+  await advanced.click();
+  await page.getByLabel("Bilingual order").selectOption("source_first");
+  await page.getByLabel("PDF export engine").selectOption("fpdf2");
+  await page.getByLabel("Include an “About this translation” page").uncheck();
+  await advanced.click();
+  await expect(advanced).toContainText("Source first");
+  await page
+    .getByRole("button", { name: "Generate export", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Invalid PDF engine");
+  await expect(page.getByLabel("PDF export engine")).toBeVisible();
+  await expect(page.getByLabel("PDF export engine")).toHaveValue("fpdf2");
+  expect(submitted).toMatchObject({
+    format: "pdf",
+    bilingual: true,
+    order: "source_first",
+    about_page: false,
+    pdf_engine: "fpdf2",
+  });
 });

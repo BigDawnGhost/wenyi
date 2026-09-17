@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Select, Label } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { cn, formatBytes } from "@/lib/utils";
@@ -113,6 +114,7 @@ export default function ExportPage() {
                 {!subtitle && (
                   <button
                     onClick={() => setFormat("")}
+                    aria-pressed={!fmt}
                     className={cn(
                       "rounded border p-3 text-left text-sm",
                       !fmt && "border-primary ring-1 ring-primary",
@@ -128,6 +130,7 @@ export default function ExportPage() {
                   <button
                     key={f}
                     onClick={() => setFormat(f)}
+                    aria-pressed={fmt === f}
                     className={cn(
                       "rounded border p-3 text-left text-sm",
                       fmt === f && "border-primary ring-1 ring-primary",
@@ -138,28 +141,6 @@ export default function ExportPage() {
                 ))}
               </div>
             </div>
-            {fmt === "pdf" && (
-              <div>
-                <Label htmlFor="pdf-export-engine">
-                  {tr("export.pdfExportEngine")}
-                </Label>
-                <Select
-                  id="pdf-export-engine"
-                  value={pdfBackend}
-                  onChange={(e) =>
-                    setPdfBackend(e.target.value as PdfEngine | "")
-                  }
-                  className="mt-2"
-                >
-                  <option value="">{tr("export.automatic")}</option>
-                  {caps?.pdf?.export_backends?.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            )}
             <fieldset className="flex flex-wrap gap-5 items-center">
               <legend className="text-sm font-medium mb-2">
                 {tr("export.edition")}
@@ -182,43 +163,94 @@ export default function ExportPage() {
                 />
                 {tr("export.bilingual")}
               </label>
-              {bilingual && !subtitle && (
-                <Select
-                  aria-label={tr("export.bilingualOrder")}
-                  value={order}
-                  onChange={(e) =>
-                    setOrder(e.target.value as "target_first" | "source_first")
-                  }
-                  className="max-w-40"
-                >
-                  <option value="target_first">
-                    {tr("export.translationFirst")}
-                  </option>
-                  <option value="source_first">
-                    {tr("export.sourceFirst")}
-                  </option>
-                </Select>
-              )}
             </fieldset>
             {!subtitle && (
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={about}
-                  onChange={(e) => setAbout(e.target.checked)}
-                />
-                {tr("export.includeAnAboutThisTranslationPage")}
-              </label>
-            )}
-            {!subtitle && bilingual && (
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={preserveStyle}
-                  onChange={(e) => setPreserveStyle(e.target.checked)}
-                />
-                {tr("export.preserveSourceFormattingInBilingualOutput")}
-              </label>
+              <Disclosure
+                title={tr("export.advanced")}
+                error={create.error}
+                summary={[
+                  bilingual
+                    ? tr(
+                        order === "target_first"
+                          ? "export.translationFirst"
+                          : "export.sourceFirst",
+                      )
+                    : "",
+                  tr("export.aboutSummary", {
+                    value: tr(about ? "data.yes" : "data.no"),
+                  }),
+                  bilingual
+                    ? tr("export.styleSummary", {
+                        value: tr(preserveStyle ? "data.yes" : "data.no"),
+                      })
+                    : "",
+                  fmt === "pdf" ? pdfBackend || tr("export.automatic") : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              >
+                {fmt === "pdf" && (
+                  <div>
+                    <Label htmlFor="pdf-export-engine">
+                      {tr("export.pdfExportEngine")}
+                    </Label>
+                    <Select
+                      id="pdf-export-engine"
+                      value={pdfBackend}
+                      onChange={(e) =>
+                        setPdfBackend(e.target.value as PdfEngine | "")
+                      }
+                      className="mt-2"
+                    >
+                      <option value="">{tr("export.automatic")}</option>
+                      {caps?.pdf?.export_backends?.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+                {bilingual && !subtitle && (
+                  <Select
+                    aria-label={tr("export.bilingualOrder")}
+                    value={order}
+                    onChange={(e) =>
+                      setOrder(
+                        e.target.value as "target_first" | "source_first",
+                      )
+                    }
+                    className="max-w-40"
+                  >
+                    <option value="target_first">
+                      {tr("export.translationFirst")}
+                    </option>
+                    <option value="source_first">
+                      {tr("export.sourceFirst")}
+                    </option>
+                  </Select>
+                )}
+                {!subtitle && (
+                  <label className="flex gap-2 items-center text-sm">
+                    <input
+                      type="checkbox"
+                      checked={about}
+                      onChange={(e) => setAbout(e.target.checked)}
+                    />
+                    {tr("export.includeAnAboutThisTranslationPage")}
+                  </label>
+                )}
+                {!subtitle && bilingual && (
+                  <label className="flex gap-2 items-center text-sm">
+                    <input
+                      type="checkbox"
+                      checked={preserveStyle}
+                      onChange={(e) => setPreserveStyle(e.target.checked)}
+                    />
+                    {tr("export.preserveSourceFormattingInBilingualOutput")}
+                  </label>
+                )}
+              </Disclosure>
             )}
             <Button
               onClick={() => create.mutate()}

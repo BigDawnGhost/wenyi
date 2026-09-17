@@ -118,6 +118,7 @@ test("known workflow labels and language names are localized without changing AP
     page.getByLabel("Translation workflow").locator('option[value="标准翻译"]'),
   ).toContainText("Standard translation");
   await page.goto(`/projects/${pid}`);
+  await page.getByText("Workflow details", { exact: true }).click();
   await expect(
     page.getByText("Translate chapters in batches", { exact: true }),
   ).toBeVisible();
