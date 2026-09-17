@@ -1,4 +1,4 @@
-"""Offline previews, explicit conversions and prompt-fixture comparisons."""
+"""Offline model previews and explicit configuration and usage conversions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.config import Config
 from wenyi_core.llm.migration import convert_config
-from wenyi_core.llm.providers.fake import FakeProvider
 from wenyi_core.llm.usage import UsageSample, UsageTracker, convert_usage_ledger, validate_usage
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?\x07|\r")
@@ -120,65 +119,7 @@ def test_usage_conversion_preserves_totals_and_unknown_identities(tmp_path):
     assert "Converted 0" in plain_text(again.output)
 
 
-def test_comparison_records_each_model_and_its_usage(tmp_path, monkeypatch):
-    prompts = tmp_path / "messages.json"
-    prompts.write_text(json.dumps([{"role": "user", "content": "A short public test fixture."}]))
-    output = tmp_path / "comparison.json"
-    config = {
-        "llm": {
-            "preset": "fake",
-            "models": {
-                "one": {"provider": "default", "model": "model-one"},
-                "two": {"provider": "default", "model": "model-two"},
-            },
-        }
-    }
-
-    def request(self, messages, model, *, json_mode, context):
-        context.record_usage(UsageSample(prompt_tokens=5, completion_tokens=2, total_tokens=7))
-        return model.model
-
-    monkeypatch.setattr(FakeProvider, "_request", request)
-    result = _invoke(
-        tmp_path,
-        config,
-        "compare",
-        "--operation",
-        "translation.body",
-        "--model",
-        "one",
-        "--model",
-        "two",
-        "--messages",
-        str(prompts),
-        "--out",
-        str(output),
-    )
-    assert result.exit_code == 0, result.output
-    report = json.loads(output.read_text())
-    assert [row["output"] for row in report["results"]] == ["model-one", "model-two"]
-    assert report["usage"]["totals"]["total_tokens"] == 14
-    assert all(row["usage"]["totals"]["calls"] == 1 for row in report["results"])
-
-
-def test_comparison_rejects_non_string_roles_before_crashing(tmp_path):
-    prompts = tmp_path / "messages.json"
-    prompts.write_text(json.dumps([{"role": [], "content": "A short public test fixture."}]))
-    output = tmp_path / "comparison.json"
-    result = _invoke(
-        tmp_path,
-        {"llm": {"preset": "fake"}},
-        "compare",
-        "--operation",
-        "translation.body",
-        "--model",
-        "default",
-        "--messages",
-        str(prompts),
-        "--out",
-        str(output),
-    )
-    assert result.exit_code == 1
-    assert "Messages must be a nonempty array of role/content objects" in plain_text(result.output)
-    assert "Traceback" not in plain_text(result.output)
-    assert not output.exists()
+def test_model_comparison_command_is_not_available(tmp_path):
+    result = _invoke(tmp_path, {}, "compare")
+    assert result.exit_code == 2
+    assert "No such command 'compare'" in plain_text(result.output)

@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 
-import { LanguageSettings } from "./LanguageSettings";
 import { ProviderSettings } from "./ProviderSettings";
 
 const section = (config: Record<string, unknown>, key: string) =>
@@ -32,10 +31,6 @@ export default function SettingsPage() {
   const [effective, setEffective] = useState<Record<string, unknown>>({});
   const [loaded, setLoaded] = useState(false);
   const [yamlDirty, setYamlDirty] = useState(false);
-  const [comparisonId, setComparisonId] = useState<string>();
-  const [models, setModels] = useState("");
-  const [operation, setOperation] = useState("translation.body");
-  const [message, setMessage] = useState("");
   const config = useQuery({
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
@@ -53,17 +48,6 @@ export default function SettingsPage() {
     queryKey: ["models", pid],
     queryFn: () => api.modelRoutes(pid),
   });
-  const comparison = useQuery({
-    queryKey: ["comparison", pid, comparisonId],
-    queryFn: () => api.getComparison(pid, comparisonId!),
-    enabled: !!comparisonId,
-    refetchInterval: (q) =>
-      ["pending", "queued", "running"].includes(
-        String(q.state.data?.status || "pending"),
-      )
-        ? 2000
-        : false,
-  });
   const apply = (value: ProjectConfig) => {
     setDraft(value.yaml);
     setEffective(value.effective);
@@ -75,7 +59,6 @@ export default function SettingsPage() {
   }, [config.data, loaded]);
   useEffect(() => {
     setLoaded(false);
-    setComparisonId(undefined);
   }, [pid]);
   const save = useMutation({
     mutationFn: () => api.saveConfig(pid, draft),
@@ -97,21 +80,6 @@ export default function SettingsPage() {
     mutationFn: () =>
       api.checkModels(pid, project?.fmt === "srt" ? "srt" : "translate"),
   });
-  const compare = useMutation({
-    mutationFn: () =>
-      api.compareModels(pid, {
-        operation,
-        models: models
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        messages: [{ role: "user", content: message }],
-      }),
-    onSuccess: (job) => {
-      setComparisonId(job.job_id);
-      toast.success(tr("settings.modelComparisonStarted"));
-    },
-  });
   const busy =
     isProjectBusy(project?.status) ||
     (!project && config.data?.editable === false);
@@ -126,12 +94,6 @@ export default function SettingsPage() {
   };
   const formDisabled =
     busy || yamlDirty || !loaded || save.isPending || validate.isPending;
-  const activeComparison =
-    comparisonId &&
-    ["pending", "queued", "running"].includes(
-      String(comparison.data?.status || "pending"),
-    );
-
   return (
     <>
       <PageHeader
@@ -139,7 +101,6 @@ export default function SettingsPage() {
         subtitle={tr("settings.configurationIsValidatedOnTheServerAdvanced")}
       />
       <PageContainer className="max-w-5xl space-y-4">
-        <LanguageSettings />
         <ErrorNotice error={config.error || save.error || validate.error} />
         {busy && (
           <p role="status" className="rounded border p-3 text-sm">
@@ -370,71 +331,6 @@ export default function SettingsPage() {
                 <StructuredData value={check.data} />
               </div>
             )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-5 space-y-4">
-            <h2 className="font-medium">{tr("common.modelComparison")}</h2>
-            <p className="text-sm text-muted-foreground">
-              {tr("settings.runningAModelComparisonSendsTestMessages")}
-            </p>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="comparison-operation">
-                  {tr("settings.operationName")}
-                </Label>
-                <Select
-                  id="comparison-operation"
-                  value={operation}
-                  onChange={(e) => setOperation(e.target.value)}
-                  className="mt-2"
-                >
-                  {(Array.isArray(caps?.operations) ? caps.operations : []).map(
-                    (op: Record<string, unknown>) => (
-                      <option key={String(op.id)} value={String(op.id)}>
-                        {String(op.id)} —{" "}
-                        {String(op.description || op.label || "")}
-                      </option>
-                    ),
-                  )}
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="comparison-models">
-                  {tr("settings.modelIdsCommaSeparated")}
-                </Label>
-                <Input
-                  id="comparison-models"
-                  placeholder={tr("settings.useTheModelIdsConfiguredAbove")}
-                  value={models}
-                  onChange={(e) => setModels(e.target.value)}
-                  className="mt-2"
-                />
-              </div>
-            </div>
-            <Textarea
-              aria-label={tr("settings.modelComparisonTestMessage")}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder={tr("settings.enterTheSameTestMessageForAll")}
-            />
-            <Button
-              disabled={
-                !message.trim() ||
-                !models.trim() ||
-                !operation.trim() ||
-                compare.isPending ||
-                !!activeComparison ||
-                busy
-              }
-              onClick={() => compare.mutate()}
-            >
-              {activeComparison || compare.isPending
-                ? tr("settings.comparisonRunning")
-                : tr("settings.runModelComparison")}
-            </Button>
-            <ErrorNotice error={compare.error || comparison.error} />
-            {comparison.data && <StructuredData value={comparison.data} />}
           </CardContent>
         </Card>
       </PageContainer>

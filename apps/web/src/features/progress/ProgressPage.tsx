@@ -315,9 +315,7 @@ function ChapterTable({
           <tbody>
             {chapters.map((c) => (
               <tr key={c.index} className="border-b last:border-0">
-                <td className="p-3">
-                  {c.index + 1}. {c.title_translated || c.title}
-                </td>
+                <td className="p-3">{c.title_translated || c.title}</td>
                 <td className="p-3">{c.word_count}</td>
                 <td className="p-3">
                   <Badge

@@ -3,9 +3,10 @@
 [简体中文](zh/web-i18n.md) · [Web deployment](web.md)
 
 The Web interface defaults to English, regardless of the browser's preferred language.
-Open **Settings → Interface language** to choose **English** or **简体中文**. The same
-selector is available in project settings, including while a project task is running.
-The global settings page is available before creating any projects and from mobile navigation.
+Open global **Settings → Interface language** to choose **English** or **简体中文**.
+Interface language is a browser preference available only in global settings.
+The global settings page is available before creating any projects, from mobile navigation,
+and while a project task is running.
 
 The selection applies immediately, survives reloads, and synchronizes between tabs on the
 same site. It is stored in the browser under `wenyi.locale`, rather than in project

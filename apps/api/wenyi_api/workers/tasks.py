@@ -6,7 +6,6 @@ import asyncio
 import os
 import threading
 from pathlib import Path
-from time import monotonic
 from uuid import uuid4
 
 from wenyi_core.llm.limits import RequestStopped
@@ -152,62 +151,6 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
     return "done"
 
 
-def _compare(pid, storage, config, client, run_id, params, progress):
-    from wenyi_core.llm.usage import usage_delta
-
-    results = []
-    models = params["models"]
-    started_run = monotonic()
-    status = "running"
-
-    def persist():
-        storage.write_artifact(
-            f"comparisons/{run_id}.json",
-            {
-                "status": status,
-                "operation": params["operation"],
-                "results": results,
-                "usage": client.usage_summary(),
-                "elapsed_seconds": monotonic() - started_run,
-            },
-        )
-
-    try:
-        for i, model in enumerate(models):
-            progress(i, len(models), f"比较模型 {model}")
-            before = client.usage_summary()
-            started = monotonic()
-            row = {
-                "profile": model,
-                "route": client.validate_profile(model, params["operation"]).describe(),
-            }
-            try:
-                row["output"] = client.complete_profile(
-                    params["messages"],
-                    operation=params["operation"],
-                    profile=model,
-                    json_mode=params.get("json_mode", False),
-                )
-            except Exception as error:
-                row["error"] = str(error)
-            row.update(
-                seconds=monotonic() - started, usage=usage_delta(client.usage_summary(), before)
-            )
-            results.append(row)
-            persist()
-        progress(len(models), len(models), "模型比较完成")
-        status = "completed"
-        return params.get("completion_status") or "created"
-    except (KeyboardInterrupt, RequestStopped):
-        status = "interrupted"
-        raise
-    except Exception:
-        status = "failed"
-        raise
-    finally:
-        persist()
-
-
 def _record_failure(pid, run_id, error, *, status="error"):
     """A late Future or duplicate delivery may update only its own task's project."""
     job = dal.get_job_by_arq_id(run_id) if run_id else None
@@ -287,11 +230,7 @@ def _execute(
                 client = build_client(config)
                 client.set_event_sink(storage.log_event)
                 with client.interrupt_scope():
-                    if kind == "model_compare":
-                        result_status = _compare(
-                            pid, storage, config, client, run_id or uuid4().hex, params, progress
-                        )
-                    elif kind == "srt":
+                    if kind == "srt":
                         from wenyi_core.srt.translate import translate_srt
 
                         client.validate_credentials(("srt.translate",))
@@ -389,10 +328,6 @@ async def run_review(ctx, *, project_id: str, run_id: str | None = None, **param
 
 async def run_srt(ctx, *, project_id: str, run_id: str | None = None, **params):
     await _run("srt", project_id, run_id, params)
-
-
-async def run_model_compare(ctx, *, project_id: str, run_id: str | None = None, **params):
-    await _run("model_compare", project_id, run_id, params)
 
 
 def _render_export_sync(

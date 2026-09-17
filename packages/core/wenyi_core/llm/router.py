@@ -55,15 +55,6 @@ class RoutedLLMClient(LLMClient):
     def cancel(self) -> None:
         self.limits.cancel()
 
-    def validate_profile(self, profile: str, operation: str) -> ResolvedRoute:
-        """Preflight an explicit comparison profile without constructing its SDK."""
-        if profile not in self.config.models:
-            raise ValueError(f"Unknown model profile: {profile}")
-        route = model_route(self.config, operation, profile, origin="model comparison")
-        self._validate_token_reservation(route)
-        self.adapter(route.provider).validate_credentials()
-        return route
-
     def complete(
         self,
         messages: Messages,
@@ -75,13 +66,6 @@ class RoutedLLMClient(LLMClient):
         require_operation(operation)
         primary = self.routes[operation]
         return self._complete(messages, primary, json_mode=json_mode, max_tokens=max_tokens)
-
-    def complete_profile(
-        self, messages: Messages, *, operation: str, profile: str, json_mode: bool = False
-    ) -> str:
-        """Run an explicitly selected comparison profile under the same invocation budget."""
-        route = model_route(self.config, operation, profile, origin="model comparison")
-        return self._complete(messages, route, json_mode=json_mode)
 
     def _complete(
         self,

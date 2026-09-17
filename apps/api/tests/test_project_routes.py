@@ -297,48 +297,6 @@ def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
     assert must(dal.latest_resumable_job(pid))["kind"] == "prepare"
 
 
-def test_comparison_results_and_usage_survive_book_initialization(api, monkeypatch):
-    from wenyi_core.llm import factory
-    from wenyi_core.llm.router import RoutedLLMClient
-    from wenyi_core.llm.usage import UsageSample
-
-    class ComparisonClient(RoutedLLMClient):
-        def complete_profile(self, messages, *, operation, profile, json_mode=False):
-            self.usage.record(
-                "direct",
-                UsageSample(prompt_tokens=2, completion_tokens=3, total_tokens=5),
-                operation,
-            )
-            return "comparison answer"
-
-    client, _ = api
-    pid = new_project(api)
-    monkeypatch.setattr(factory, "build_client", lambda cfg: ComparisonClient(cfg.llm))
-    response = client.post(
-        f"/projects/{pid}/models/compare",
-        json={
-            "operation": "translation.body",
-            "models": ["default_strong", "default_cheap"],
-            "messages": [{"role": "user", "content": "test"}],
-        },
-    )
-    assert response.status_code == 200, response.text
-    execute_next(api)
-    endpoint = f"/projects/{pid}/models/comparisons/{response.json()['job_id']}"
-    assert client.get(endpoint).json()["status"] == "completed"
-    assert client.get(f"/projects/{pid}/stats").json()["usage"]["totals"]["calls"] == 2
-    upload(api, pid)
-    monkeypatch.setattr(
-        factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)
-    )
-    assert client.post(f"/projects/{pid}/prepare").status_code == 200
-    execute_next(api)
-    stats = client.get(f"/projects/{pid}/stats").json()
-    assert stats["usage"]["totals"]["calls"] >= 2
-    assert any(run["operation"] == "model_compare" for run in stats["timing"]["runs"])
-    assert client.get(endpoint).json()["status"] == "completed"
-
-
 def test_http_download_and_websocket_require_token(api, monkeypatch):
     from starlette.websockets import WebSocketDisconnect
     from wenyi_api import main

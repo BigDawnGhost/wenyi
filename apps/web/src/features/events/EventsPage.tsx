@@ -87,6 +87,7 @@ export default function EventsPage() {
   const { data: events, error } = useQuery({
     queryKey: ["events", pid],
     queryFn: () => api.listEvents(pid),
+    select: (items) => [...items].sort((a, b) => b.id - a.id),
     enabled: !!pid,
     refetchInterval: 5000,
   });

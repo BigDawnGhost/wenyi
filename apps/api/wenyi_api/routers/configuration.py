@@ -8,13 +8,12 @@ from dataclasses import asdict
 import yaml
 from fastapi import APIRouter, HTTPException
 from wenyi_core.i18n.languages import label, supported_languages
-from wenyi_core.llm.operations import OPERATIONS, configured_operations, require_operation
+from wenyi_core.llm.operations import OPERATIONS, configured_operations
 from wenyi_core.llm.registry import PROVIDERS
 from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import resolve_routes
 
 from .. import dal
-from ..job_service import start_job
 from ..project_service import (
     config_document,
     config_response,
@@ -27,10 +26,8 @@ from ..project_service import (
 from ..schemas import (
     Capabilities,
     ConfigInput,
-    JobEnqueued,
     ModelCheckRequest,
     ModelCheckResult,
-    ModelCompareRequest,
     ProjectConfigOut,
     ProjectStats,
     WorkflowOut,
@@ -114,52 +111,14 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
         raise HTTPException(422, str(error)) from error
 
 
-@router.post("/projects/{pid}/models/compare", response_model=JobEnqueued)
-async def compare_models(pid: str, body: ModelCompareRequest) -> dict:
-    try:
-        require_operation(body.operation)
-        client = RoutedLLMClient(effective_config(require_project(pid)).llm)
-        for model in body.models:
-            client.validate_profile(model, body.operation)
-    except (ValueError, RuntimeError) as error:
-        raise HTTPException(422, str(error)) from error
-    return await start_job(pid, "model_compare", params=body.model_dump())
-
-
-@router.get("/projects/{pid}/models/comparisons/{job_id}")
-def comparison_result(pid: str, job_id: str) -> dict:
-    require_project(pid)
-    result = storage_for(pid).read_artifact(f"comparisons/{job_id}.json")
-    if result is None:
-        job = dal.get_job_by_arq_id(job_id)
-        if not job or job["project_id"] != pid:
-            raise HTTPException(404, "comparison not found")
-        return {"status": job["status"], "error": job.get("error"), "results": []}
-    return result
-
-
 @router.get("/projects/{pid}/stats", response_model=ProjectStats)
 def project_stats(pid: str) -> dict:
     require_project(pid)
     store = storage_for(pid)
-    from wenyi_core.llm.usage import empty_usage, merge_usage_summaries
+    from wenyi_core.llm.usage import empty_usage
 
     usage = store.load_usage() or empty_usage()
     timing = store.read_artifact("timing.json") or {"runs": [], "total_seconds": 0}
-    # Comparison ledgers are independent and survive later source initialization.
-    for key in store.list_artifacts("comparisons/"):
-        comparison = store.read_artifact(key) or {}
-        usage = merge_usage_summaries(usage, comparison.get("usage") or empty_usage())
-        seconds = comparison.get("elapsed_seconds", 0)
-        timing["total_seconds"] += seconds
-        timing["runs"].append(
-            {
-                "id": key,
-                "operation": "model_compare",
-                "status": comparison.get("status"),
-                "elapsed_seconds": seconds,
-            }
-        )
     return {"usage": usage, "timing": timing}
 
 
@@ -186,8 +145,6 @@ def workflow(pid: str) -> dict:
 
     if kind == "parse":
         add("parse", "解析原文与生成预览")
-    elif kind == "model_compare":
-        add("model_compare", "模型对比")
     elif kind == "srt":
         add("srt", "分批翻译字幕并保存检查点")
         add("assemble", "组装字幕文件")

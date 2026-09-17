@@ -7,7 +7,6 @@ import {
   useParams,
 } from "react-router-dom";
 import {
-  BookOpenText,
   FolderPlus,
   LayoutDashboard,
   Languages,
@@ -22,6 +21,36 @@ import {
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+
+const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
+  .href;
+
+function Brand() {
+  const { t } = useI18n();
+  return (
+    <Link
+      to="/"
+      className="inline-flex items-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <img
+        src={emblemUrl}
+        alt=""
+        width={36}
+        height={36}
+        className="h-9 w-9 shrink-0 object-contain grayscale dark:invert"
+      />
+      <span
+        className="translate-y-0.5 text-[22px] font-normal leading-none tracking-wide"
+        style={{
+          fontFamily:
+            "Georgia, 'Times New Roman', 'Noto Serif CJK SC', 'Songti SC', SimSun, serif",
+        }}
+      >
+        {t("appLayout.wenyi")}
+      </span>
+    </Link>
+  );
+}
 
 export function AppLayout() {
   const { t: tr } = useI18n();
@@ -53,9 +82,8 @@ export function AppLayout() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <aside className="hidden md:flex w-60 shrink-0 flex-col border-r bg-card">
-        <div className="flex items-center gap-2 px-4 h-14 border-b">
-          <BookOpenText className="h-5 w-5" />
-          <span className="font-semibold">{tr("appLayout.wenyi")}</span>
+        <div className="flex items-center px-4 h-14 border-b">
+          <Brand />
         </div>
         <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
           {navItem(
@@ -134,24 +162,31 @@ export function AppLayout() {
         </nav>
       </aside>
       <main className="flex-1 min-w-0 overflow-y-auto">
-        <div className="md:hidden flex gap-3 overflow-x-auto border-b p-3 text-sm">
-          <Link to="/">{tr("appLayout.projects")}</Link>
-          <Link to="/projects/new">{tr("common.createProject")}</Link>
-          <Link to="/settings">{tr("settings.title")}</Link>
-          {pid && (
-            <>
-              <Link to={`/projects/${pid}`}>{tr("appLayout.progress")}</Link>
-              <Link
-                to={`/projects/${pid}/${project?.fmt === "srt" ? "subtitles" : "review"}`}
-              >
-                {tr("appLayout.review")}
-              </Link>
-              <Link to={`/projects/${pid}/settings`}>
-                {tr("appLayout.configuration")}
-              </Link>
-              <Link to={`/projects/${pid}/export`}>{tr("common.export")}</Link>
-            </>
-          )}
+        <div className="md:hidden border-b">
+          <div className="flex h-14 items-center px-4">
+            <Brand />
+          </div>
+          <nav className="flex gap-3 overflow-x-auto whitespace-nowrap px-4 pb-3 text-sm">
+            <Link to="/">{tr("appLayout.projects")}</Link>
+            <Link to="/projects/new">{tr("common.createProject")}</Link>
+            <Link to="/settings">{tr("settings.title")}</Link>
+            {pid && (
+              <>
+                <Link to={`/projects/${pid}`}>{tr("appLayout.progress")}</Link>
+                <Link
+                  to={`/projects/${pid}/${project?.fmt === "srt" ? "subtitles" : "review"}`}
+                >
+                  {tr("appLayout.review")}
+                </Link>
+                <Link to={`/projects/${pid}/settings`}>
+                  {tr("appLayout.configuration")}
+                </Link>
+                <Link to={`/projects/${pid}/export`}>
+                  {tr("common.export")}
+                </Link>
+              </>
+            )}
+          </nav>
         </div>
         <Outlet />
       </main>

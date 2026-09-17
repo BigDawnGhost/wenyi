@@ -593,9 +593,7 @@ def test_postgres_dal_config_job_identity_errors_and_review_summary(
     assert summary["review_status"] == "completed" and summary["review_issue_count"] == 1
 
 
-def test_postgres_initialization_preserves_matching_preview_and_comparisons(
-    pg_storage, pg_pool, tmp_path
-):
+def test_postgres_initialization_preserves_only_matching_preview(pg_storage, pg_pool, tmp_path):
     doc = document(tmp_path)
     digest = source_sha256(doc.source_path)
     with pg_pool.connection() as conn:
@@ -606,10 +604,9 @@ def test_postgres_initialization_preserves_matching_preview_and_comparisons(
         "parsed_document.json", {"source_sha256": digest, "document": doc.model_dump()}
     )
     pg_storage.write_artifact("preview.json", {"title": "Book"})
-    pg_storage.write_artifact("comparisons/test.json", {"message": "Hello"})
     pg_storage.write_artifact("reviews/review-obsolete/result.json", {"status": "failed"})
     pg_storage.begin_initialization(digest)
     assert pg_storage.read_artifact("parsed_document.json")["source_sha256"] == digest
     assert pg_storage.read_artifact("preview.json") == {"title": "Book"}
-    assert pg_storage.read_artifact("comparisons/test.json") is not None
+    assert set(pg_storage.list_artifacts()) == {"parsed_document.json", "preview.json"}
     assert pg_storage.read_artifact("reviews/review-obsolete/result.json") is None

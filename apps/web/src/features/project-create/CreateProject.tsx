@@ -4,7 +4,8 @@ import {
   workflowTemplateLabel,
   languageName,
 } from "@/i18n/labels";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen } from "lucide-react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -26,6 +27,7 @@ export default function CreateProject() {
   const [pid, setPid] = useState<string | null>(searchParams.get("project"));
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [parsing, setParsing] = useState(false);
+  const sourceFileInput = useRef<HTMLInputElement>(null);
   const { data: caps, error: capsError } = useQuery({
     queryKey: ["capabilities"],
     queryFn: api.capabilities,
@@ -247,16 +249,41 @@ export default function CreateProject() {
                   formats: caps?.input_formats.join(" / ") || "—",
                 })}
               </p>
-              <Input
+              <input
+                ref={sourceFileInput}
+                hidden
                 aria-label={tr("createProject.uploadSource")}
                 type="file"
                 accept={accepts}
                 disabled={disabled || !!preview}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) upload.mutate(file);
+                  if (file) {
+                    upload.mutate(file);
+                    e.currentTarget.value = "";
+                  }
                 }}
               />
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled={disabled || !!preview}
+                  aria-describedby="source-file-name"
+                  onClick={() => sourceFileInput.current?.click()}
+                >
+                  <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                  {tr("createProject.browseFiles")}
+                </Button>
+                <span
+                  id="source-file-name"
+                  aria-live="polite"
+                  className="min-w-0 break-all text-sm text-muted-foreground"
+                >
+                  {upload.variables?.name || tr("createProject.noFileSelected")}
+                </span>
+              </div>
               {disabled && (
                 <p role="status" className="text-sm">
                   {upload.isPending

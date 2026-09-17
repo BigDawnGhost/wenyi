@@ -138,7 +138,7 @@ const en = {
   "events.projectInitializedChapters":
     "Project initialized — chapters: {count}",
   "events.keyProjectEventsRefreshedEvery5Seconds":
-    "Key project events, refreshed every 5 seconds",
+    "Latest project events first, refreshed every 5 seconds",
   "events.noEventsYet": "No events yet.",
   "export.exportTaskSubmitted": "Export task submitted",
   "export.exportTranslation": "Export translation",
@@ -285,7 +285,6 @@ const en = {
   "workflowPanel.bookTranslation": "Book translation",
   "workflowPanel.chapterTranslation": "Chapter translation",
   "workflowPanel.subtitleTranslation": "Subtitle translation",
-  "common.modelComparison": "Model comparison",
   "workflowPanel.notStarted": "Not started",
   "common.queued": "Queued",
   "workflowPanel.currentWorkflow": "Current workflow",
@@ -320,6 +319,8 @@ const en = {
   "createProject.projectSettingsModels": "Project settings & models",
   "createProject.uploadStep": "2. Upload source",
   "createProject.uploadSource": "Upload source",
+  "createProject.browseFiles": "Browse files",
+  "createProject.noFileSelected": "No file selected",
   "createProject.uploading": "Uploading…",
   "createProject.parsingTheSourceAPreviewWillAppear":
     "Parsing the source. A preview will appear when it is ready. You can leave this page and check project progress later.",
@@ -410,7 +411,6 @@ const en = {
   "settings.projectSettingsSaved": "Project settings saved",
   "settings.configurationIsValidButNotSavedYet":
     "Configuration is valid but not saved yet",
-  "settings.modelComparisonStarted": "Model comparison started",
   "settings.configurationIsValidatedOnTheServerAdvanced":
     "Configuration is validated on the server. Advanced YAML supports providers, model tiers, operation routes, retries, concurrency and budgets.",
   "settings.settingsAreReadOnlyWhileATask":
@@ -434,17 +434,6 @@ const en = {
   "settings.validatedModelRoutes": "Validated model routes",
   "settings.savedModelRoutes": "Saved model routes",
   "settings.checkModelConfiguration": "Check model configuration",
-  "settings.runningAModelComparisonSendsTestMessages":
-    "Running a model comparison sends test messages and incurs usage. Results include output, time and token usage.",
-  "settings.operationName": "Operation name",
-  "settings.modelIdsCommaSeparated": "Model IDs (comma-separated)",
-  "settings.useTheModelIdsConfiguredAbove":
-    "Use the model IDs configured above",
-  "settings.modelComparisonTestMessage": "Model comparison test message",
-  "settings.enterTheSameTestMessageForAll":
-    "Enter the same test message for all models",
-  "settings.comparisonRunning": "Comparison running…",
-  "settings.runModelComparison": "Run model comparison",
   "settings.modelProfileModel": "Model profile / model",
   "settings.tier": "Tier",
   "settings.fallbackModels": "Fallback models",
@@ -494,7 +483,6 @@ const en = {
   "api.downloadFailed": "Download failed: {status} {detail}",
   "api.prepared": "Prepared",
   "api.reviewCompleted": "Review completed",
-  "api.comparingModels": "Comparing models",
   "api.created": "Created",
   "api.uploaded": "Uploaded",
   "api.ready": "Ready",
@@ -539,7 +527,6 @@ const en = {
   "workflow.prepare": "Prepare source and glossary",
   "workflow.export": "Export translation",
   "workflow.subtitles": "Translate subtitles",
-  "workflow.comparison": "Compare models",
   "workflow.parse": "Parse source",
 } as const;
 

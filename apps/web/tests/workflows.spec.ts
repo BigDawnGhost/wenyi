@@ -12,7 +12,7 @@ import {
 
 test("creates a multilingual project and waits for background parsing", async ({
   page,
-}) => {
+}, testInfo) => {
   await fakeApi(page, {
     [`/projects/${pid}`]: {
       ...project,
@@ -58,16 +58,37 @@ test("creates a multilingual project and waits for background parsing", async ({
   await page.getByLabel("Target language", { exact: true }).selectOption("en");
   await expect(page.getByLabel("Translation workflow")).toHaveValue("标准翻译");
   await page.getByRole("button", { name: "Create & configure" }).click();
-  await expect(page.getByLabel("Upload source")).toBeVisible();
+  const browseFiles = page.getByRole("button", {
+    name: "Browse files",
+    exact: true,
+  });
+  await expect(browseFiles).toBeVisible();
+  await expect(
+    page.getByText("No file selected", { exact: true }),
+  ).toBeVisible();
+  await browseFiles
+    .locator("..")
+    .screenshot({ path: testInfo.outputPath("upload-control-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await browseFiles
+    .locator("..")
+    .screenshot({ path: testInfo.outputPath("upload-control-mobile.png") });
+  await page.setViewportSize({ width: 1280, height: 720 });
   expect(created?.target_lang).toBe("en");
   expect(created?.strategy).toEqual({ template: "标准翻译" });
-  await page.getByLabel("Upload source").setInputFiles({
+  const chooserPromise = page.waitForEvent("filechooser");
+  await browseFiles.focus();
+  await browseFiles.press("Enter");
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
     name: "test.docx",
     mimeType:
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     buffer: Buffer.from("fixture"),
   });
   await expect(page.getByText("Document", { exact: true })).toBeVisible();
+  await expect(page.getByText("test.docx", { exact: true })).toBeVisible();
+  await expect(browseFiles).toBeDisabled();
   expect(uploaded).toBe(true);
   await page
     .getByRole("button", { name: "Start translation", exact: true })
@@ -160,45 +181,20 @@ test("subtitle projects expose timeline and only SRT exports", async ({
   ).toBeEnabled();
 });
 
-test("advanced configuration reports validation errors and comparison is explicit", async ({
+test("advanced configuration reports validation errors", async ({
   page,
 }, testInfo) => {
   await fakeApi(page);
-  let compares = 0;
   await page.route(`**/api/projects/${pid}/config/validate`, async (r) =>
     r.fulfill({
       status: 422,
       json: { detail: "Unknown pipeline option invalid_option" },
     }),
   );
-  await page.route(`**/api/projects/${pid}/models/compare`, async (r) => {
-    compares++;
-    await r.fulfill({
-      json: { job_id: "comparison-1", kind: "models_compare", project_id: pid },
-    });
-  });
-  await page.route(
-    `**/api/projects/${pid}/models/comparisons/comparison-1`,
-    async (r) =>
-      r.fulfill({
-        json: {
-          status: "completed",
-          results: [
-            {
-              model: "model-a",
-              output: "Hello",
-              total_tokens: 12,
-              elapsed_seconds: 1,
-            },
-          ],
-        },
-      }),
-  );
   await page.goto(`/projects/${pid}/settings`);
   await expect(
     page.getByText("Saved model routes", { exact: true }),
   ).toBeVisible();
-  expect(compares).toBe(0);
   await page.screenshot({
     path: testInfo.outputPath("settings.png"),
     fullPage: true,
@@ -211,13 +207,6 @@ test("advanced configuration reports validation errors and comparison is explici
     .getByRole("button", { name: "Validate configuration", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("invalid_option");
-  await page.getByLabel("Model IDs (comma-separated)").fill("model-a");
-  await page.getByLabel("Model comparison test message").fill("Say hello");
-  await page
-    .getByRole("button", { name: "Run model comparison", exact: true })
-    .click();
-  await expect(page.getByText("Hello", { exact: true })).toBeVisible();
-  expect(compares).toBe(1);
 });
 
 test("authenticates the progress socket before displaying project events", async ({

@@ -137,7 +137,7 @@ const zhCN = {
   "events.exportedFiles": "导出文件：{files}",
   "events.projectInitializedChapters": "项目初始化：{count} 章",
   "events.keyProjectEventsRefreshedEvery5Seconds":
-    "项目生命周期中的关键事件（每 5 秒刷新）",
+    "项目关键事件，最新在上（每 5 秒刷新）",
   "events.noEventsYet": "暂无事件。",
   "export.exportTaskSubmitted": "导出任务已提交",
   "export.exportTranslation": "导出译文",
@@ -277,7 +277,6 @@ const zhCN = {
   "workflowPanel.bookTranslation": "全书翻译",
   "workflowPanel.chapterTranslation": "单章翻译",
   "workflowPanel.subtitleTranslation": "字幕翻译",
-  "common.modelComparison": "模型对比",
   "workflowPanel.notStarted": "尚未开始",
   "common.queued": "排队中",
   "workflowPanel.currentWorkflow": "当前翻译流程",
@@ -311,6 +310,8 @@ const zhCN = {
   "createProject.projectSettingsModels": "项目配置与模型设置",
   "createProject.uploadStep": "2. 上传原文",
   "createProject.uploadSource": "上传原文",
+  "createProject.browseFiles": "浏览文件",
+  "createProject.noFileSelected": "未选择文件",
   "createProject.uploading": "正在上传…",
   "createProject.parsingTheSourceAPreviewWillAppear":
     "正在解析原文，完成后自动显示预览。可以离开此页，通过项目进度查看结果。",
@@ -396,7 +397,6 @@ const zhCN = {
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
   "settings.projectSettingsSaved": "项目配置已保存",
   "settings.configurationIsValidButNotSavedYet": "配置有效，尚未保存",
-  "settings.modelComparisonStarted": "模型对比已启动",
   "settings.configurationIsValidatedOnTheServerAdvanced":
     "配置校验在服务端执行；高级 YAML 支持提供商、模型档位、操作路由、重试、并发和预算",
   "settings.settingsAreReadOnlyWhileATask":
@@ -420,15 +420,6 @@ const zhCN = {
   "settings.validatedModelRoutes": "已校验配置的有效路由",
   "settings.savedModelRoutes": "已保存配置的模型路由",
   "settings.checkModelConfiguration": "检查模型配置",
-  "settings.runningAModelComparisonSendsTestMessages":
-    "点击“运行模型对比”后会发送测试消息并产生实际用量。结果展示输出、耗时与 Token 用量。",
-  "settings.operationName": "操作名称",
-  "settings.modelIdsCommaSeparated": "模型 ID（逗号分隔）",
-  "settings.useTheModelIdsConfiguredAbove": "使用上方已配置的模型 ID",
-  "settings.modelComparisonTestMessage": "模型对比测试消息",
-  "settings.enterTheSameTestMessageForAll": "输入供各模型处理的同一条测试消息",
-  "settings.comparisonRunning": "对比运行中…",
-  "settings.runModelComparison": "运行模型对比",
   "settings.modelProfileModel": "模型配置 / 模型",
   "settings.tier": "档位",
   "settings.fallbackModels": "备用模型",
@@ -477,7 +468,6 @@ const zhCN = {
   "api.downloadFailed": "下载失败：{status} {detail}",
   "api.prepared": "准备完成",
   "api.reviewCompleted": "审校完成",
-  "api.comparingModels": "模型对比中",
   "api.created": "已创建",
   "api.uploaded": "已上传",
   "api.ready": "已就绪",
@@ -519,7 +509,6 @@ const zhCN = {
   "workflow.prepare": "原文与术语准备",
   "workflow.export": "导出译文",
   "workflow.subtitles": "字幕翻译",
-  "workflow.comparison": "模型对比",
   "workflow.parse": "解析原文",
 } satisfies Messages;
 

@@ -159,11 +159,9 @@ class PostgresStorage:
             if row[1] != source_hash:
                 conn.execute("DELETE FROM events WHERE project_id=%s", (self.project_id,))
                 # Upload parsing happens before preparation. Preserve the matching
-                # source preview and comparison output, but discard mutable run state.
+                # source preview, but discard mutable run state.
                 conn.execute(
                     """DELETE FROM artifacts WHERE project_id=%s
-                    AND NOT starts_with(key,'model-comparisons/')
-                    AND NOT starts_with(key,'comparisons/')
                     AND NOT (%s AND key IN ('parsed_document.json','preview.json'))""",
                     (self.project_id, row[2] == source_hash),
                 )

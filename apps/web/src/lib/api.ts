@@ -133,22 +133,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ workflow }),
     }),
-  compareModels: (
-    pid: string,
-    body: Pick<
-      components["schemas"]["ModelCompareRequest"],
-      "operation" | "models" | "messages"
-    > &
-      Partial<components["schemas"]["ModelCompareRequest"]>,
-  ) =>
-    request<JobEnqueued>(`/projects/${pid}/models/compare`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  getComparison: (pid: string, jid: string) =>
-    request<Record<string, unknown>>(
-      `/projects/${pid}/models/comparisons/${encodeURIComponent(jid)}`,
-    ),
   getStats: (pid: string) =>
     request<Output<"ProjectStats">>(`/projects/${pid}/stats`),
   listReviewRuns: (pid: string) =>
@@ -340,7 +324,6 @@ export const ACTIVE_STATUSES = [
   "autofixing",
   "postprocessing",
   "pausing",
-  "comparing",
 ];
 export const isProjectBusy = (status?: string) =>
   ACTIVE_STATUSES.includes(status || "");

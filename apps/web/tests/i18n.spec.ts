@@ -52,7 +52,7 @@ test.describe("browser language preference", () => {
   });
 });
 
-test("project settings switch language without saving or changing project configuration", async ({
+test("interface language is available only in global settings without changing project configuration", async ({
   page,
 }) => {
   await fakeApi(page);
@@ -61,11 +61,20 @@ test("project settings switch language without saving or changing project config
     if (request.method() !== "GET") writes.push(request.url());
   });
   await page.goto(`/projects/${pid}/settings`);
+  await expect(
+    page.getByRole("button", { name: "Save configuration", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Interface language")).toHaveCount(0);
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByLabel("Interface language").selectOption("zh-CN");
+  await page.goto(`/projects/${pid}/settings`);
   await expect(
     page.getByRole("button", { name: "保存配置", exact: true }),
   ).toBeVisible();
+  await expect(page.getByLabel("界面语言")).toHaveCount(0);
+  await page.getByRole("link", { name: "设置", exact: true }).click();
   await page.getByLabel("界面语言").selectOption("en");
+  await page.goto(`/projects/${pid}/settings`);
   await expect(
     page.getByRole("button", { name: "Save configuration", exact: true }),
   ).toBeVisible();
@@ -119,6 +128,20 @@ for (const locale of ["en", "zh-CN"] as const) {
     page,
     context,
   }) => {
+    const events = [
+      {
+        id: 1,
+        type: "run_initialized",
+        payload: { chapters: 2 },
+        created_at: "2026-09-17T08:00:00Z",
+      },
+      {
+        id: 2,
+        type: "analysis_saved",
+        payload: {},
+        created_at: "2026-09-17T08:00:00Z",
+      },
+    ];
     await fakeApi(page, {
       [`/projects/${pid}/glossary/terms`]: [
         {
@@ -137,14 +160,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         },
         chapter_digests: [],
       },
-      [`/projects/${pid}/events`]: [
-        {
-          id: 1,
-          type: "run_initialized",
-          payload: { chapters: 2 },
-          created_at: "2026-09-17T08:00:00Z",
-        },
-      ],
+      [`/projects/${pid}/events`]: events,
     });
     await page.goto(`/projects/${pid}/glossary`);
     const settings = await context.newPage();
@@ -188,6 +204,22 @@ for (const locale of ["en", "zh-CN"] as const) {
         { exact: true },
       ),
     ).toBeVisible();
+    const summaries = [
+      chinese ? "风格分析完成" : "Style analysis completed",
+      chinese ? "项目初始化：2 章" : "Project initialized — chapters: 2",
+    ];
+    await expect(page.locator("summary")).toHaveText(summaries);
+    events.push({
+      id: 3,
+      type: "book_synopsis_saved",
+      payload: {},
+      created_at: "2026-09-17T08:01:00Z",
+    });
+    await page.reload();
+    await expect(page.locator("summary")).toHaveText([
+      chinese ? "生成全书概览" : "Book synopsis generated",
+      ...summaries,
+    ]);
     await page.goto(`/projects/${pid}/export`);
     await expect(
       page.getByRole("button", {

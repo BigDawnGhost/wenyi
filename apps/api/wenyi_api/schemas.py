@@ -296,18 +296,6 @@ class ModelCheckResult(BaseModel):
     operations: list[str]
 
 
-class ModelMessage(RequestModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-class ModelCompareRequest(RequestModel):
-    operation: str
-    models: list[str] = Field(min_length=1, max_length=10)
-    messages: list[ModelMessage] = Field(min_length=1)
-    json_mode: bool = False
-
-
 class ProjectStats(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     timing: dict[str, Any] = Field(default_factory=dict)

@@ -35,7 +35,6 @@ const stages: Record<string, MessageKey> = {
   assemble: "workflow.export",
   export: "workflow.export",
   srt: "workflow.subtitles",
-  model_compare: "workflow.comparison",
 };
 
 export function workflowStageLabel(
@@ -59,7 +58,6 @@ export function languageName(code: string, fallback: string, locale: Locale) {
 const projectStatuses: Record<string, MessageKey> = {
   prepared: "api.prepared",
   reviewed: "api.reviewCompleted",
-  comparing: "api.comparingModels",
   created: "api.created",
   uploaded: "api.uploaded",
   ready: "api.ready",

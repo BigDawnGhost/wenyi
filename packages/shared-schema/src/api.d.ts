@@ -296,40 +296,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{pid}/models/compare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Compare Models */
-        post: operations["compare_models_projects__pid__models_compare_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{pid}/models/comparisons/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Comparison Result */
-        get: operations["comparison_result_projects__pid__models_comparisons__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/projects/{pid}/stats": {
         parameters: {
             query?: never;
@@ -1030,30 +996,6 @@ export interface components {
             valid: boolean;
             /** Operations */
             operations: string[];
-        };
-        /** ModelCompareRequest */
-        ModelCompareRequest: {
-            /** Operation */
-            operation: string;
-            /** Models */
-            models: string[];
-            /** Messages */
-            messages: components["schemas"]["ModelMessage"][];
-            /**
-             * Json Mode
-             * @default false
-             */
-            json_mode: boolean;
-        };
-        /** ModelMessage */
-        ModelMessage: {
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "system" | "user" | "assistant";
-            /** Content */
-            content: string;
         };
         /** PDFCapabilities */
         PDFCapabilities: {
@@ -2085,75 +2027,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelCheckResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    compare_models_projects__pid__models_compare_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelCompareRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobEnqueued"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    comparison_result_projects__pid__models_comparisons__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
             /** @description Validation Error */

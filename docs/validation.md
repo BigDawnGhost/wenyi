@@ -39,7 +39,6 @@ The browser talked to a real FastAPI, PostgreSQL, Redis, and independent Arq wor
 |---|---|
 | EPUB | Create, upload, async parse, preview, project-config validate/save, model-config check, prepare, translate, polish, default Review/Autofix, and human edits all completed. |
 | Review again | A new run started after human edits; the previous run history remained readable. |
-| Model compare | The page explicitly started an Arq compare job; results, cumulative usage, and timing were readable. |
 | DOCX / EPUB export | Browser downloads succeeded; export content included human edits; the durable export job run ID matched the queue ID and status was done. |
 | SRT | Upload, parse, translate, timeline display, stats, human edits, and bilingual export completed; exports kept human translations, source text, and original timestamps. |
 | Auth | HTTP downloads required a Bearer token; WebSocket sent project data only after the first packet validated the same token. |

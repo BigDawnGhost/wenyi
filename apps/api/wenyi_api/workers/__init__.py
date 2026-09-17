@@ -56,7 +56,6 @@ from .recovery import recover_jobs  # noqa: E402
 from .tasks import (  # noqa: E402
     run_chapter_translation,
     run_export,
-    run_model_compare,
     run_parse,
     run_prepare,
     run_review,
@@ -73,7 +72,6 @@ class WorkerSettings:
         run_chapter_translation,
         run_review,
         run_srt,
-        run_model_compare,
     ]
     on_startup = startup
     on_shutdown = shutdown

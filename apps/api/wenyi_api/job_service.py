@@ -17,7 +17,6 @@ TASK_FUNCTIONS = {
     "chapter_translation": "run_chapter_translation",
     "review": "run_review",
     "srt": "run_srt",
-    "model_compare": "run_model_compare",
 }
 TASK_STATUSES = {
     "parse": "parsing",
@@ -26,7 +25,6 @@ TASK_STATUSES = {
     "chapter_translation": "translating",
     "review": "reviewing",
     "srt": "translating",
-    "model_compare": "comparing",
 }
 
 
@@ -36,10 +34,9 @@ async def start_job(pid: str, kind: str, *, params: dict | None = None) -> dict:
     params = dict(params or {})
     params.pop("config_snapshot", None)
     with project_write(pid) as (project, _storage):
-        if kind != "model_compare" and not project.get("source_path"):
+        if not project.get("source_path"):
             raise HTTPException(409, "upload a source file first")
         run_id = uuid4().hex
-        params.setdefault("completion_status", project["status"])
         try:
             snapshot = config_document(effective_config(project))
         except ValueError as error:

@@ -18,7 +18,6 @@ RUNNING_PROJECT_STATUSES = frozenset(
         "translating_subtitles",
         "parsing",
         "pausing",
-        "comparing",
     }
 )
 

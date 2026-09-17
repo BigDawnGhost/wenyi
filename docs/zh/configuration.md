@@ -181,7 +181,7 @@ uv run wenyi models migrate-usage state/BOOK/targets/zh
 
 配置转换器生成独立文件；账本转换器逐份备份，保留总量及旧档位/阶段归属，将未知提供商和模型历史标记为 `unknown`，不会处理原书。转换账本前应停止该目标的运行任务。Review 目录保留。`pipeline.review_agent_tier` 由取证、仲裁、修订的独立路由取代。
 
-`models compare --operation translation.body --model writer --model editor --messages fixture.json --out comparison.json` 会明确向每个模型发送由 `{role, content}` 对象构成的 JSON 消息数组，记录输出、延迟和实际用量。该命令消耗请求，不自动读取书籍或修改译文。选择混用配置前请用隔离的公版样本比较；支持路由不等于已经提供实测质量排序的新预设。
+选择混用配置前请用隔离的公版样本比较；支持路由不等于已经提供实测质量排序的新预设。
 
 ## 流水线
 

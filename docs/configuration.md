@@ -181,7 +181,7 @@ uv run wenyi models migrate-usage state/BOOK/targets/zh
 
 The config converter creates a separate file. The usage converter backs up each selected ledger, preserves totals and old tier/stage attribution, and assigns missing provider/model history to `unknown`. It never processes source books. Run ledger conversion while that target's workflows are stopped. Review directories are preserved. `pipeline.review_agent_tier` is replaced by the separate verification, arbitration and fix routes.
 
-`models compare --operation translation.body --model writer --model editor --messages fixture.json --out comparison.json` explicitly sends a JSON array of `{role, content}` messages to each selected profile and records outputs, latency and actual usage. It consumes requests; it does not automatically read books or change translations. Use isolated public-domain fixtures before choosing a mixed-model setup. No new quality-ranked model preset is implied by routing support.
+Use isolated public-domain fixtures before choosing a mixed-model setup. No new quality-ranked model preset is implied by routing support.
 
 ## Pipeline
 

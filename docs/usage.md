@@ -40,7 +40,7 @@ uv run wenyi models explain --operation review.fix
 uv run wenyi models check --for translate
 ```
 
-These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion, budgets and `models compare`.
+These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
 
 ## Multilingual translation (experimental)
 
