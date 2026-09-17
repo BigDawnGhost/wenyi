@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+# Optional cached variant; keep installation steps aligned with Dockerfile.web.
 # Wenyi Web: multi-stage — pnpm builds React, nginx serves static + proxies /api and /ws.
 
 # ── build stage ──
@@ -11,7 +13,8 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared-schema/package.json packages/shared-schema/package.json
 COPY apps/web/package.json apps/web/package.json
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=wenyi-pnpm-store,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store
 
 COPY packages/shared-schema packages/shared-schema
 COPY apps/web apps/web

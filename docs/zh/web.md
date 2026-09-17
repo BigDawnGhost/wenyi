@@ -11,8 +11,14 @@ Web 使用 React/Vite、FastAPI、Arq、PostgreSQL 和 Redis。普通任务与�
 ```bash
 cp .env.example deploy/.env
 # 编辑 deploy/.env，为 config.yaml 所选提供商填入密钥。
-docker compose -f deploy/docker-compose.yml --profile full up --build
+cd deploy
+docker compose up -d --build
 ```
+
+Docker 构建排除了 `.git`，安装时通过 `WENYI_VERSION` 向 `hatch-vcs` 提供版本，
+使 Core、CLI 和 API 使用相同的包版本。默认 `0.0.0+docker` 表示本地开发构建。
+构建发布镜像时，先在 `deploy/.env` 中将 `WENYI_VERSION` 设为对应的包版本。
+普通 Git 工作区安装仍从 Git 标签生成版本。
 
 | 服务 | 地址 / 用途 |
 |---|---|
@@ -22,15 +28,30 @@ docker compose -f deploy/docker-compose.yml --profile full up --build
 | `export-worker` | `wenyi:exports`：快照导出 |
 | PostgreSQL / Redis | 默认仅容器内网 |
 
-仅后端使用 `--profile server`。该模式用于自建前端或 API 客户端；本地 CLI 自己运行核心，不调用这个服务器。
+默认启动所有服务，无需选择 profile，也无需设置构建环境变量。Dockerfile 使用普通构建指令，不依赖 BuildKit 缓存挂载或外部 Dockerfile frontend；未变化的步骤仍可复用 Docker 层缓存。后续命令在 `deploy/` 中执行：
 
 ```bash
-docker compose -f deploy/docker-compose.yml --profile server up --build
-# 后台运行可加 -d；停止保留数据：
-docker compose -f deploy/docker-compose.yml --profile full down
+docker compose logs -f
+docker compose down
 ```
 
+`down` 保留数据卷。默认使用 Debian、PyPI 和 npm 官方源；如需换源，在 `deploy/.env` 中取消对应 `DEBIAN_MIRROR`、`UV_DEFAULT_INDEX` 或 `NPM_REGISTRY` 行的注释，再运行 `docker compose up -d --build`。
+
 本次数据库结构面向全新部署，不执行旧项目/策略/数据库迁移。保留旧部署时，新版使用独立 Compose project、数据库和卷，例如启动时加 `-p wenyi-new`。不要对需要保留的数据卷执行删除操作。
+
+### 可选的 Buildx 开发构建
+
+已安装 Docker Buildx 插件（可用 `docker buildx version` 检查）时，在 `deploy/` 下启用带下载缓存的 Dockerfile：
+
+```bash
+DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
+  -f docker-compose.yml -f docker-compose.buildx.yml build
+docker compose up -d --no-build
+```
+
+覆盖文件仅切换 Dockerfile，沿用相同的服务、镜像名称、凭证、换源配置和数据卷。apt、uv 和 pnpm 下载缓存可在多次构建之间复用，缓存属于所选 builder。默认 Dockerfile 仍不要求 BuildKit；修改安装步骤时需同步两个版本。运行 `docker compose up -d --build` 即可恢复普通构建。
+
+Compose 可将构建委托给 [Buildx Bake](https://docs.docker.com/guides/compose-bake/)。此可选路径需要可用的 Buildx/BuildKit 环境，普通部署不需要安装。
 
 ## 共享配置与凭证
 
@@ -45,8 +66,10 @@ API、普通 Worker、导出 Worker 都加载 `deploy/.env`，只读挂载同一
 | `DATA_DIR` | 上传原件、解析资源与导出成品目录；容器固定 `/data`。 |
 | `DATABASE_URL` / `REDIS_URL` | 本地开发连接地址；Compose 覆盖为内部服务地址。 |
 | `INSTALL_PDF_OUTPUT` | Docker 构建参数，默认 `true`，安装 WeasyPrint 和 fpdf2；`false` 省略 Python PDF 输出依赖。 |
+| `WENYI_VERSION` | Docker 构建时传入的包版本，默认 `0.0.0+docker`；发布镜像须显式设置发布版本。 |
+| `DEBIAN_MIRROR` / `UV_DEFAULT_INDEX` / `UV_IMAGE` / `NPM_REGISTRY` | 可选构建镜像源与官方 `uv` 镜像标签；默认使用官方源；需要换源时取消 `deploy/.env` 中对应行的注释。 |
 | `WENYI_API_TOKEN` | 可选静态 token；HTTP 使用 Bearer 鉴权，WebSocket 使用连接后的首个 `{"token":"…"}` 消息鉴权，前端自动发送。 |
-| `WENYI_CORS_ORIGINS` | 允许的源，逗号分隔；默认 `*`。 |
+| `WENYI_CORS_ORIGINS` | 允许的源，逗号分隔；默认 `*`。启用 token 时允许已配置来源的预检请求，鉴权错误响应也保留 CORS 响应头。 |
 
 自建 WebSocket 客户端须在连接后 10 秒内发送 JSON 首包 `{"token":"…"}`；未配置服务端 token 时也发送首包（token 可为空）。通过鉴权后才接收项目快照和实时事件。
 
@@ -65,7 +88,7 @@ BabelDOC 作为独立 HTTP bridge 部署。将 `pipeline.pdf_backend` 设为 `ba
 ```bash
 cp .env.example deploy/.env
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
-  --profile server up -d postgres redis
+  up -d postgres redis
 uv sync --all-packages --group dev
 pnpm install --frozen-lockfile
 export DATABASE_URL=postgresql://wenyi:wenyi@localhost:5432/wenyi
@@ -133,7 +156,7 @@ pnpm -C apps/web test:e2e
 - 本地连不上数据库：使用 `docker-compose.dev.yml` 开放回环端口，或连接独立安装的数据库。
 - 旧配置字段错误：按配置页校验结果移除旧 QA、回译、字符预算等字段；当前 Web 不提供旧项目自动迁移。
 
-可用 `docker compose -f deploy/docker-compose.yml logs -f api worker export-worker` 查看任务失败原因。离线/浏览器验证结果与真实模型的翻译质量评估应分别记录。
+在 `deploy/` 下可用 `docker compose logs -f api worker export-worker` 查看任务失败原因。离线/浏览器验证结果与真实模型的翻译质量评估应分别记录。
 
 ### 提供商设置与流程视图
 

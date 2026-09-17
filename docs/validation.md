@@ -2,6 +2,35 @@
 
 [简体中文](zh/validation.md)
 
+## Repository audit and CI stabilization · 2026-09-17
+
+Reviewed the pending Docker changes, API authentication and request handling, job recovery,
+export retention, and obsolete/generated code references. This was a targeted code review
+plus repository-wide automated checks, not a proof that every execution path is defect-free.
+
+- Fixed authenticated CORS preflights being rejected before reaching CORS middleware;
+  the regression failed with HTTP 401 before the fix and now checks allowed/disallowed
+  origins, protected requests, and CORS headers on authentication errors.
+- Removed a redundant OpenAPI override and stopped tracking generated TypeScript tooling
+  output. Docker workers share the API dependency image; Buildx download caches are opt-in.
+- Fixed the proofreading CI race by waiting for the editor to close after save/refresh
+  and locating the saved paragraph rather than matching text across the whole page.
+- Python 3.12: **956 passed, 3 skipped, 49 subtests passed**, including isolated PostgreSQL
+  and Redis tests. All three skips require the optional `fpdf2` dependency.
+- Final Playwright suite: **59 passed**; the repaired proofreading case also passed
+  **12 consecutive runs**. An intermediate run had a subtitle-navigation loading failure;
+  six isolated repetitions and the final full run passed without changing that test.
+  Its cause was not established.
+- TypeScript checks (including unused locals/parameters), Vite build, Ruff check/format,
+  changed E2E formatting, Dockerfile shell syntax, Compose overlay parity, and Git
+  whitespace checks passed.
+- Actual Docker image construction was stopped after apt downloads stalled; image builds
+  are **not verified**. No real model or PDF service was called. Python 3.10 and release
+  package builds were not rerun. Existing Arq deprecation and Vite chunk-size warnings remain.
+
+Temporary database/queue containers were removed; running deployment services and local
+books/state were not modified. User image edits were excluded from these commits.
+
 ## Review workbench update · 2026-09-17
 
 Recorded for implementation commit `444bd3c` (not a new validation run for later documentation edits):

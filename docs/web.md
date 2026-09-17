@@ -11,8 +11,16 @@ Requires Docker and Compose v2. From the repository root:
 ```bash
 cp .env.example deploy/.env
 # Edit deploy/.env and set credentials for providers used in config.yaml.
-docker compose -f deploy/docker-compose.yml --profile full up --build
+cd deploy
+docker compose up -d --build
 ```
+
+Docker builds exclude `.git`. They pass `WENYI_VERSION` to `hatch-vcs` during
+installation so Core, CLI, and API receive the same package version. The default
+`0.0.0+docker` identifies a local development build. For a release, set
+`WENYI_VERSION` to the corresponding package version in `deploy/.env`
+before building. Normal installations from a Git checkout still derive versions
+from Git tags.
 
 | Service | Address / role |
 |---|---|
@@ -22,15 +30,30 @@ docker compose -f deploy/docker-compose.yml --profile full up --build
 | `export-worker` | `wenyi:exports`: snapshot export |
 | PostgreSQL / Redis | Internal network only by default |
 
-Backend-only mode uses `--profile server` for a custom frontend or API client. Local CLI still runs the core itself and does not call this server.
+All services start by default, with no profile or build environment flags required. Dockerfiles use ordinary build steps without BuildKit cache mounts or an external Dockerfile frontend; unchanged steps still benefit from Docker layer caching. Run subsequent commands from `deploy/`:
 
 ```bash
-docker compose -f deploy/docker-compose.yml --profile server up --build
-# Add -d to run in the background. Stop while keeping data:
-docker compose -f deploy/docker-compose.yml --profile full down
+docker compose logs -f
+docker compose down
 ```
 
+`down` preserves data volumes. Debian, PyPI, and npm use official sources by default. To use mirrors, uncomment the desired `DEBIAN_MIRROR`, `UV_DEFAULT_INDEX`, or `NPM_REGISTRY` entries in `deploy/.env`, then run `docker compose up -d --build` again.
+
 This database schema targets fresh deployments. It does not migrate legacy Web projects, strategies, or databases. When keeping an older deployment, give the new stack a separate Compose project, database, and volumes (for example `-p wenyi-new`). Do not delete volumes that still hold data you need.
+
+### Optional Buildx development builds
+
+With the Docker Buildx plugin installed (`docker buildx version`), opt into the cached Dockerfiles from `deploy/`:
+
+```bash
+DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
+  -f docker-compose.yml -f docker-compose.buildx.yml build
+docker compose up -d --no-build
+```
+
+The overlay changes only Dockerfile selection and preserves the same services, image names, credentials, mirror settings, and volumes. It caches apt, uv, and pnpm downloads between builds; caches belong to the selected builder. Default Dockerfiles remain usable without BuildKit. Keep both variants aligned when changing installation steps. Return to ordinary builds with `docker compose up -d --build`.
+
+Compose can delegate builds to [Buildx Bake](https://docs.docker.com/guides/compose-bake/). This optional path requires a working Buildx/BuildKit installation; it is not required for deployment.
 
 ## Shared configuration and credentials
 
@@ -45,8 +68,10 @@ API, workflow worker, and export worker all load `deploy/.env`, mount the same r
 | `DATA_DIR` | Uploaded originals, parser caches, and export artifacts. Containers use `/data`. |
 | `DATABASE_URL` / `REDIS_URL` | Local development URLs; Compose overrides them to internal service addresses. |
 | `INSTALL_PDF_OUTPUT` | Docker build arg, default `true`, installs WeasyPrint and fpdf2. Set `false` to skip Python PDF output dependencies. |
+| `WENYI_VERSION` | Package version supplied during Docker builds; default `0.0.0+docker`. Set the release version explicitly for release images. |
+| `DEBIAN_MIRROR` / `UV_DEFAULT_INDEX` / `UV_IMAGE` / `NPM_REGISTRY` | Optional build mirrors and the official `uv` image tag. Official sources are the default; uncomment the corresponding entries in `deploy/.env` to use mirrors. |
 | `WENYI_API_TOKEN` | Optional static token. HTTP uses Bearer auth; WebSocket authenticates with the first post-connect `{"token":"…"}` message (the frontend sends it automatically). |
-| `WENYI_CORS_ORIGINS` | Allowed origins, comma-separated; default `*`. |
+| `WENYI_CORS_ORIGINS` | Allowed origins, comma-separated; default `*`. Allowed-origin preflights work with token authentication, and authentication errors retain CORS headers. |
 
 Custom WebSocket clients must send a JSON first packet `{"token":"…"}` within 10 seconds of connecting. Send the packet even when the server has no token configured (the token may be empty). Project snapshots and live events are delivered only after authentication succeeds.
 
@@ -54,7 +79,7 @@ PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkp
 
 ### PDF
 
-Backend images include WeasyPrint/fpdf2, required Pango libraries, Noto CJK/generic fonts, and WenQuanYi Zen Hei by default. fpdf2 only uses fonts with TrueType outlines and skips OpenType/CFF faces such as Noto CJK automatically; set `TRANS_NOVEL_PDF_FONT` to force a compatible font. Choosing an incompatible font explicitly returns an error instead of producing a broken file. WeasyPrint can use Noto CJK. MinerU is the default parse backend; parse caches are shared with upload previews.
+Backend images copy `uv`/`uvx` from the official Astral image, run a frozen `uv sync` for all workspace packages (plus PDF extras by default), and keep the venv on `PATH`, so containers start without installing extra Python dependencies. They also include WeasyPrint/fpdf2, required Pango libraries, Noto CJK/generic fonts, and WenQuanYi Zen Hei by default. fpdf2 only uses fonts with TrueType outlines and skips OpenType/CFF faces such as Noto CJK automatically; set `TRANS_NOVEL_PDF_FONT` to force a compatible font. Choosing an incompatible font explicitly returns an error instead of producing a broken file. WeasyPrint can use Noto CJK. MinerU is the default parse backend; parse caches are shared with upload previews.
 
 BabelDOC runs as a separate HTTP bridge. Set `pipeline.pdf_backend` to `babeldoc` and point `pipeline.babeldoc_bridge_url` at an address reachable from the API and both workers. `127.0.0.1` inside the bridge means that container, not the host. This Compose file does not download or start BabelDOC. The UI only exposes PDF features that match installed dependencies and configuration.
 
@@ -65,7 +90,7 @@ Requires Python 3.10+, `uv`, Node 22, pnpm 9, PostgreSQL 16, and Redis 7. Start 
 ```bash
 cp .env.example deploy/.env
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
-  --profile server up -d postgres redis
+  up -d postgres redis
 uv sync --all-packages --group dev
 pnpm install --frozen-lockfile
 export DATABASE_URL=postgresql://wenyi:wenyi@localhost:5432/wenyi
@@ -133,7 +158,7 @@ Set `WENYI_TEST_DATABASE_URL` to run real PostgreSQL integration tests. Those te
 - Local database unreachable: use `docker-compose.dev.yml` to publish loopback ports, or point at a separately installed database.
 - Errors from retired config fields: remove old QA, back-translation, or character-budget fields according to the config-page validator. Current Web does not auto-migrate legacy projects.
 
-Inspect task failures with `docker compose -f deploy/docker-compose.yml logs -f api worker export-worker`. Record offline/browser verification separately from real-model translation quality evaluation.
+From `deploy/`, inspect task failures with `docker compose logs -f api worker export-worker`. Record offline/browser verification separately from real-model translation quality evaluation.
 
 ### Provider settings and workflow view
 

@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+# Optional cached variant; keep installation steps aligned with Dockerfile.api.
 # Shared API/worker image. Targets: api | worker
 # Set INSTALL_PDF_OUTPUT=false for a smaller image without WeasyPrint/fpdf2.
 # Python deps are fully baked by `uv sync`; no pip/uv install is needed at runtime.
@@ -31,11 +33,14 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
       sed -i -E "s#https?://deb\.debian\.org#${DEBIAN_MIRROR}#g" /etc/apt/sources.list.d/debian.sources; \
     fi
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN rm -f /etc/apt/apt.conf.d/docker-clean
+
+RUN --mount=type=cache,id=wenyi-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=wenyi-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       libxml2 libxslt1.1 libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
-      fonts-noto-core fonts-noto-cjk fonts-wqy-zenhei fonts-dejavu-core fontconfig \
-    && rm -rf /var/lib/apt/lists/*
+      fonts-noto-core fonts-noto-cjk fonts-wqy-zenhei fonts-dejavu-core fontconfig
 
 COPY pyproject.toml uv.lock ./
 COPY packages/core packages/core
@@ -46,11 +51,12 @@ COPY config.yaml ./
 # The Docker context excludes Git metadata; release builds supply WENYI_VERSION.
 ARG WENYI_VERSION=0.0.0+docker
 
-RUN export SETUPTOOLS_SCM_PRETEND_VERSION="$WENYI_VERSION" \
+RUN --mount=type=cache,id=wenyi-uv-cache,target=/root/.cache/uv,sharing=locked \
+    export SETUPTOOLS_SCM_PRETEND_VERSION="$WENYI_VERSION" \
     && if [ "$INSTALL_PDF_OUTPUT" = "true" ]; then \
-      uv sync --no-cache --frozen --all-packages --no-dev --extra pdf-output --extra pdf-output-lite; \
+      uv sync --frozen --all-packages --no-dev --extra pdf-output --extra pdf-output-lite; \
     else \
-      uv sync --no-cache --frozen --all-packages --no-dev; \
+      uv sync --frozen --all-packages --no-dev; \
     fi \
     && uvicorn --version \
     && arq --version \
