@@ -56,6 +56,26 @@ def test_language_tags_preserve_script_and_region():
     assert _epub_lang("zh-TW") == "zh-Hant"
 
 
+def test_vietnamese_profile_aliases_and_prompts():
+    assert normalize_language("vi") == "vi"
+    assert normalize_language("Vietnamese") == "vi"
+    assert normalize_language("越南语") == "vi"
+    assert normalize_language("vi-VN") == "vi"
+    assert normalize_language("Tiếng Việt") == "vi"
+    config = Config.from_dict({"language": {"source": "vi_VN", "target": "en"}})
+    assert config.source_lang == "vi"
+    config = Config.from_dict({"language": {"source": "en", "target": "Vietnamese"}})
+    assert config.target_lang == "vi"
+    assert _epub_lang("vi") == "vi"
+    data = profile("vi")
+    assert data["english_name"] == "Vietnamese"
+    assert data["label"] == "Vietnamese"
+    system = render("translator_system", src="zh", tgt="vi")
+    assert "into Vietnamese" in system
+    assert "Hán-Việt" in system
+    assert "简体中文" not in system
+
+
 def test_unknown_target_is_rejected_before_work():
     with pytest.raises(ValueError, match="Unsupported"):
         Config.from_dict({"language": {"target": "not-a-language"}})
@@ -90,21 +110,24 @@ def test_book_targets_have_independent_state_and_output(target_order):
             assert translation_run_dir(str(root / "state"), "book", target) == run_dir
 
 
-@pytest.mark.parametrize("source,target", list(permutations(("zh", "en", "ja"), 2)))
+@pytest.mark.parametrize("source,target", list(permutations(("zh", "en", "ja", "vi"), 2)))
 def test_direct_translation_polishing_review_and_resume(source, target):
-    """Exercise six directions through services, persistence, export and resume; Fake does not
+    """Exercise language directions through services, persistence, export and resume; Fake does not
     prove quality.
     """
     translated = {
         "zh": "门打开了。",
         "en": 'The door opened. "Hello!"',
         "ja": "扉が開いた。「こんにちは！」",
+        "vi": "Cánh cửa mở ra. “Xin chào!”",
     }[target]
     target_label = profile(target)["label"]
 
     def handler(messages, tier, json_mode):
         system, user = messages[0]["content"], messages[-1]["content"]
         n = len(re.findall(r"^\[\d+\]", user, re.MULTILINE))
+        if "language detector" in system:
+            return json.dumps({"language": "vi-VN"})
         if "pre-translation analyst" in system:
             assert f"Suggested name in {target_label}" in system
             return json.dumps(
@@ -131,11 +154,16 @@ def test_direct_translation_polishing_review_and_resume(source, target):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         path = root / "book.txt"
-        original = {"zh": "门打开了。", "en": "The door opened.", "ja": "扉が開いた。"}[source]
+        original = {
+            "zh": "门打开了。",
+            "en": "The door opened.",
+            "ja": "扉が開いた。",
+            "vi": "Cánh cửa mở ra.",
+        }[source]
         path.write_text(f"# One\n\n{original}\n", encoding="utf-8")
         config = Config.from_dict(
             {
-                "language": {"source": source, "target": target},
+                "language": {"source": "auto" if source == "vi" else source, "target": target},
                 "paths": {"state_dir": str(root / "state")},
                 "pipeline": {
                     "review_agent_loop": False,
@@ -147,6 +175,7 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         client = FakeClient(handler=handler)
         orchestrator = Orchestrator(config, client=client)
         store = require_file_storage(orchestrator.run(str(path)))
+        assert store.load_manifest()["source_lang"] == source
         formal_before = Path(store.chapter_path(0)).read_bytes()
         assert store.load_chapter(0).text_segments[0].target == translated
         assert store.load_manifest()["prompt_fingerprint"] == prompt_fingerprint()
@@ -312,6 +341,8 @@ def test_language_list_needs_no_api_and_reads_packaged_templates():
         assert result.exit_code == 0, result.output
         assert "zh-Hant" in result.output
         assert "en-GB" in result.output
+        assert "vi" in result.output
+        assert "Vietnamese" in result.output
         validate.assert_not_called()
 
 
