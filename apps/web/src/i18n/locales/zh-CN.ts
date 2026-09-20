@@ -329,6 +329,10 @@ const zhCN = {
   "createProject.uploadStep": "2. 上传原文",
   "createProject.uploadSource": "上传原文",
   "createProject.browseFiles": "浏览文件",
+  "createProject.sourceDropZone": "原文文件选择区域",
+  "createProject.dropFileHint": "将一个原文文件拖到此处，或点击“浏览文件”。",
+  "createProject.releaseFile": "松开以选择原文文件。",
+  "createProject.singleFileOnly": "一次只能选择一个原文文件。",
   "createProject.noFileSelected": "未选择文件",
   "createProject.uploading": "正在上传…",
   "createProject.parsingTheSourceAPreviewWillAppear":

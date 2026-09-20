@@ -340,6 +340,10 @@ const en = {
   "createProject.uploadStep": "2. Upload source",
   "createProject.uploadSource": "Upload source",
   "createProject.browseFiles": "Browse files",
+  "createProject.sourceDropZone": "Source file selection",
+  "createProject.dropFileHint": "Drag a source file here, or browse files.",
+  "createProject.releaseFile": "Release to select the source file.",
+  "createProject.singleFileOnly": "Choose one source file at a time.",
   "createProject.noFileSelected": "No file selected",
   "createProject.uploading": "Uploading…",
   "createProject.parsingTheSourceAPreviewWillAppear":

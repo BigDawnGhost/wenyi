@@ -113,7 +113,7 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 ## Workflow
 
-1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
+1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection is locked during upload and after project creation. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
 2. Parsing runs as a background task after upload and then shows a preview. Matching parse results are reused during preparation.
 3. The project inherits the workflow defaults from global **Settings**; creation has no workflow selector. Use **Project settings** to adjust steps and select already registered models, and validate actual routes before starting translation.
 4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.

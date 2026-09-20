@@ -1,7 +1,6 @@
 import { useI18n } from "@/i18n";
 import { languageName } from "@/i18n/labels";
-import { useEffect, useRef, useState } from "react";
-import { FolderOpen } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
@@ -11,6 +10,7 @@ import { Input, Label, Select } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { api, isProjectBusy } from "@/lib/api";
 import { SourcePreview } from "./SourcePreview";
+import { SourceFilePicker } from "./SourceFilePicker";
 
 export default function CreateProject() {
   const { t: tr, locale } = useI18n();
@@ -24,7 +24,6 @@ export default function CreateProject() {
   const [file, setFile] = useState<File | null>(null);
   const [prepare, setPrepare] = useState(false);
   const [pdfBackend, setPdfBackend] = useState<"" | "mineru" | "babeldoc">("");
-  const sourceFileInput = useRef<HTMLInputElement>(null);
   const { data: caps, error: capsError } = useQuery({
     queryKey: ["capabilities"],
     queryFn: api.capabilities,
@@ -222,44 +221,15 @@ export default function CreateProject() {
                 formats: caps?.input_formats.join(" / ") || "—",
               })}
             </p>
-            <input
-              ref={sourceFileInput}
-              hidden
-              aria-label={tr("createProject.uploadSource")}
-              type="file"
-              accept={extensions.map((ext) => `.${ext}`).join(",")}
+            <SourceFilePicker
+              filename={typeof filename === "string" ? filename : undefined}
+              extensions={extensions}
               disabled={locked}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  setFile(file);
-                  create.reset();
-                  e.currentTarget.value = "";
-                }
+              onSelectFile={(file) => {
+                setFile(file);
+                create.reset();
               }}
             />
-            <div className="flex items-center gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                disabled={locked}
-                aria-describedby="source-file-name"
-                onClick={() => sourceFileInput.current?.click()}
-              >
-                <FolderOpen className="h-4 w-4" aria-hidden="true" />
-                {tr("createProject.browseFiles")}
-              </Button>
-              <span
-                id="source-file-name"
-                aria-live="polite"
-                className="min-w-0 break-all text-sm text-muted-foreground"
-              >
-                {typeof filename === "string"
-                  ? filename
-                  : tr("createProject.noFileSelected")}
-              </span>
-            </div>
             {!pid && extension === "pdf" && (
               <div>
                 <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
