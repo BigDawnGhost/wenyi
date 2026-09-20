@@ -66,9 +66,9 @@ export function ChapterProofreading({
       <PageHeader
         title={t("review.manualProofreading", {
           title:
-            chapter.data?.title_translated ||
-            chapter.data?.title ||
-            t("progress.loading"),
+            chapter.data?.title_translated?.trim() ||
+            chapter.data?.title.trim() ||
+            t(chapter.data ? "common.untitledChapter" : "progress.loading"),
         })}
         subtitle={t("proofreading.savedBatchesRefresh")}
         actions={
@@ -116,7 +116,7 @@ export function ChapterProofreading({
         )}
         <Card>
           <CardContent className="p-0">
-            <div className="hidden md:grid grid-cols-2 border-b p-4 text-sm font-medium">
+            <div className="hidden lg:grid grid-cols-2 border-b p-4 text-sm font-medium">
               <span>{t("common.source")}</span>
               <span>{t("common.translation")}</span>
             </div>
@@ -125,10 +125,10 @@ export function ChapterProofreading({
                 key={segment.index}
                 id={`paragraph-${segment.index}`}
                 tabIndex={-1}
-                className="grid md:grid-cols-2 border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30"
+                className="grid lg:grid-cols-2 border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30"
               >
-                <div className="min-w-0 p-4 text-sm md:border-r">
-                  <span className="mb-2 block text-xs text-muted-foreground md:hidden">
+                <div className="min-w-0 p-4 text-sm lg:border-r">
+                  <span className="mb-2 block text-xs text-muted-foreground lg:hidden">
                     {t("common.source")}
                   </span>
                   <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">

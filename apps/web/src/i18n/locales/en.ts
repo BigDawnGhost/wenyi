@@ -1,5 +1,6 @@
 /** Canonical interface messages. Keys are shared by every locale. */
 const en = {
+  "common.untitledChapter": "Untitled chapter",
   "appLayout.wenyi": "Wenyi",
   "appLayout.projects": "Projects",
   "common.createProject": "Create project",
@@ -542,7 +543,6 @@ const en = {
   "style.noCharacterDataYetEnableStyleAnalysis":
     "No character data yet. Enable style analysis and complete preparation.",
   "style.wholeBookSynopsis": "Whole-book synopsis",
-  "style.chapter": "Chapter {chapter}",
   "style.noChapterSummariesYetEnableBookUnderstanding":
     "No chapter summaries yet. Enable book understanding.",
   "style.chapterSummarySaved": "Chapter summary saved",

@@ -1,6 +1,7 @@
 import type { Messages } from "../catalog";
 
 const zhCN = {
+  "common.untitledChapter": "未命名章节",
   "appLayout.wenyi": "文译",
   "appLayout.projects": "项目列表",
   "common.createProject": "创建项目",
@@ -521,7 +522,6 @@ const zhCN = {
   "style.noCharacterDataYetEnableStyleAnalysis":
     "尚无角色数据（需开启风格分析并完成准备阶段）。",
   "style.wholeBookSynopsis": "全书概要",
-  "style.chapter": "第 {chapter} 章",
   "style.noChapterSummariesYetEnableBookUnderstanding":
     "尚无章节摘要（需开启书籍预理解）。",
   "style.chapterSummarySaved": "章节摘要已保存",

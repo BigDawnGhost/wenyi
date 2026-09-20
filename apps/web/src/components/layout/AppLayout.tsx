@@ -106,7 +106,7 @@ export function PageHeader({
 }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-4 border-b px-4 sm:px-6 py-4">
-      <div>
+      <div className="min-w-0 flex-1 basis-64 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && (
           <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>

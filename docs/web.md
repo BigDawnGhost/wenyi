@@ -122,6 +122,10 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list includes unfinished chapters. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
 
+Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
+
+In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
+
 The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
 
 The event log displays the newest entries first and refreshes every 5 seconds.
