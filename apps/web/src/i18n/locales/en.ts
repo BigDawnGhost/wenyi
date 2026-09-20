@@ -624,6 +624,8 @@ const en = {
   "export.aboutSummary": "About page: {value}",
   "export.styleSummary": "Source formatting: {value}",
   "navigation.global": "Global navigation",
+  "navigation.collapseSidebar": "Collapse sidebar",
+  "navigation.expandSidebar": "Expand sidebar",
   "navigation.project": "Project navigation",
   "settings.modelSetup": "Model setup",
   "settings.presetSummary": "Preset: {name}",

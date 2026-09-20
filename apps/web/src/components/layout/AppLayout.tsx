@@ -1,13 +1,22 @@
 import { useI18n } from "@/i18n";
+import { useState } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
-import { FolderPlus, LayoutDashboard, Settings2 } from "lucide-react";
+import {
+  FolderPlus,
+  LayoutDashboard,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { NavigationLink, ProjectNavigation } from "./Navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
   .href;
+const sidebarStorageKey = "wenyi.sidebarCollapsed";
 
 function Brand() {
   const { t } = useI18n();
@@ -39,6 +48,25 @@ function Brand() {
 export function AppLayout() {
   const { t: tr } = useI18n();
   const { pid } = useParams();
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(sidebarStorageKey) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(sidebarStorageKey, String(next));
+    } catch {
+      // Keep navigation usable when browser storage is unavailable.
+    }
+  };
+  const toggleLabel = tr(
+    collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar",
+  );
   const { data: project } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid!),
@@ -47,46 +75,89 @@ export function AppLayout() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
-      <aside className="flex min-h-0 shrink-0 flex-col border-b bg-card md:w-60 md:border-b-0 md:border-r">
-        <div className="flex h-14 shrink-0 items-center border-b px-4">
-          <Brand />
+      <aside
+        className={cn(
+          "flex min-h-0 shrink-0 flex-col border-b bg-card md:border-b-0 md:border-r",
+          collapsed ? "md:w-16" : "md:w-60",
+        )}
+      >
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
+          <div className={cn("min-w-0", collapsed && "md:hidden")}>
+            <Brand />
+          </div>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className={cn(
+              "h-8 w-8 shrink-0 text-muted-foreground",
+              collapsed && "md:mx-auto",
+            )}
+            aria-label={toggleLabel}
+            title={toggleLabel}
+            aria-expanded={!collapsed}
+            aria-controls="sidebar-navigation"
+            onClick={toggleSidebar}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+            )}
+          </Button>
         </div>
         <div
+          id="sidebar-navigation"
           className={cn(
-            "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
-            pid && "max-h-[35vh] p-3",
+            "min-h-0 md:flex md:flex-1 md:flex-col",
+            collapsed && "hidden",
           )}
         >
-          {pid && (
-            <ProjectNavigation
-              key={pid}
-              pid={pid}
-              format={project?.fmt}
-              name={project?.name}
+          <div
+            className={cn(
+              "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
+              pid && "max-h-[35vh]",
+              pid && (collapsed ? "p-2" : "p-3"),
+            )}
+          >
+            {pid && (
+              <ProjectNavigation
+                key={pid}
+                pid={pid}
+                format={project?.fmt}
+                name={project?.name}
+                collapsed={collapsed}
+              />
+            )}
+          </div>
+          <nav
+            aria-label={tr("navigation.global")}
+            className={cn(
+              "flex shrink-0 flex-wrap gap-1 border-t md:block md:space-y-1",
+              collapsed ? "p-2" : "p-3",
+            )}
+          >
+            <NavigationLink
+              to="/"
+              icon={LayoutDashboard}
+              label="appLayout.projects"
+              collapsed={collapsed}
+              end
             />
-          )}
+            <NavigationLink
+              to="/projects/new"
+              icon={FolderPlus}
+              label="common.createProject"
+              collapsed={collapsed}
+            />
+            <NavigationLink
+              to="/settings"
+              icon={Settings2}
+              label="settings.title"
+              collapsed={collapsed}
+            />
+          </nav>
         </div>
-        <nav
-          aria-label={tr("navigation.global")}
-          className="flex shrink-0 flex-wrap gap-1 border-t p-3 md:block md:space-y-1"
-        >
-          <NavigationLink
-            to="/"
-            icon={LayoutDashboard}
-            label="appLayout.projects"
-            end
-          />
-          <NavigationLink
-            to="/projects/new"
-            icon={FolderPlus}
-            label="common.createProject"
-          />
-          <NavigationLink
-            to="/settings"
-            icon={Settings2}
-            label="settings.title"
-          />
-        </nav>
       </aside>
       <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
         <Outlet />

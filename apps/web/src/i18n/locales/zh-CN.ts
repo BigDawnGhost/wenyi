@@ -600,6 +600,8 @@ const zhCN = {
   "export.aboutSummary": "说明页：{value}",
   "export.styleSummary": "原文样式：{value}",
   "navigation.global": "全局导航",
+  "navigation.collapseSidebar": "收起侧边栏",
+  "navigation.expandSidebar": "展开侧边栏",
   "navigation.project": "项目导航",
   "settings.modelSetup": "模型方案",
   "settings.presetSummary": "预设：{name}",
