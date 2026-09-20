@@ -310,13 +310,8 @@ class TestBookEvidenceIndex(unittest.TestCase):
 
 
 class TestReviewFixer(unittest.TestCase):
-    def _propose(self, payload: dict) -> ProvisionalPatch:
-        client = FakeClient(
-            handler=lambda messages, tier, json_mode: json.dumps(
-                payload,
-                ensure_ascii=False,
-            )
-        )
+    def _propose_raw(self, raw: str) -> ProvisionalPatch:
+        client = FakeClient(handler=lambda messages, tier, json_mode: raw)
         return ReviewFixer(client, _config()).propose(
             1,
             "ch0:text1:seg1",
@@ -336,6 +331,9 @@ class TestReviewFixer(unittest.TestCase):
             ],
         )
 
+    def _propose(self, payload: dict) -> ProvisionalPatch:
+        return self._propose_raw(json.dumps(payload, ensure_ascii=False))
+
     def _valid_payload(self, replacement: str = "修订后的完整译文。") -> dict:
         return {
             "segment_ref": "ch0:text1:seg1",
@@ -353,13 +351,58 @@ class TestReviewFixer(unittest.TestCase):
         self.assertEqual(patch.issue_ids, ("r1-review-00001",))
         self.assertEqual(patch.status, "provisional")
 
+    def test_complete_can_precede_other_fixer_fields(self):
+        payload = {
+            "complete": True,
+            "segment_ref": "ch0:text1:seg1",
+            "before_hash": ReviewFixer.target_hash("当前译文。"),
+            "issue_ids": ["r1-review-00001"],
+            "replacement": "修订后的完整译文。",
+        }
+
+        patch = self._propose(payload)
+
+        self.assertEqual(patch.after, "修订后的完整译文。")
+
+    def test_rejects_missing_or_non_true_completion_marker(self):
+        missing = self._valid_payload()
+        del missing["complete"]
+        non_true = self._valid_payload()
+        non_true["complete"] = False
+
+        for payload, reason in (
+            (missing, "unexpected_fields"),
+            (non_true, "completion_marker_missing"),
+        ):
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(ReviewFixerProtocolError, reason):
+                    self._propose(payload)
+
+    def test_rejects_truncated_replacement_after_completion_marker(self):
+        before_hash = ReviewFixer.target_hash("当前译文。")
+        raw = (
+            '{"complete":true,"segment_ref":"ch0:text1:seg1",'
+            f'"before_hash":"{before_hash}",'
+            '"issue_ids":["r1-review-00001"],'
+            '"replacement":"修订后的完整译文'
+        )
+
+        with self.assertRaisesRegex(ReviewFixerProtocolError, "unsafe_json_repair"):
+            self._propose_raw(raw)
+
     def test_rejects_protocol_drift_and_unchanged_replacement(self):
+        wrong_segment = self._valid_payload()
+        wrong_segment["segment_ref"] = "ch0:text1:seg2"
+        wrong_hash = self._valid_payload()
+        wrong_hash["before_hash"] = ReviewFixer.target_hash("另一版译文。")
         wrong_ids = self._valid_payload()
         wrong_ids["issue_ids"] = ["another-issue"]
         extra_field = self._valid_payload()
         extra_field["explanation"] = "不允许"
 
         for payload, reason in (
+            (wrong_segment, "segment_ref_mismatch"),
+            (wrong_hash, "before_hash_mismatch"),
             (wrong_ids, "issue_ids_mismatch"),
             (extra_field, "unexpected_fields"),
             (self._valid_payload("当前译文。"), "unchanged_replacement"),
@@ -1341,7 +1384,7 @@ class TestReviewAgentLoop(unittest.TestCase):
             self.assertEqual(saved["status"], "finished")
             self.assertEqual(len(saved["turns"]), 1)
 
-    def test_requests_selected_evidence_then_confirms_and_adds(self):
+    def test_requests_evidence_then_accepts_complete_before_decisions_and_new_issues(self):
         calls = 0
 
         def handler(messages, tier, json_mode):
@@ -1368,6 +1411,7 @@ class TestReviewAgentLoop(unittest.TestCase):
             return json.dumps(
                 {
                     "action": "final",
+                    "complete": True,
                     "decisions": [
                         {
                             "candidate_id": "ch0-base0-candidate0",
@@ -1397,7 +1441,6 @@ class TestReviewAgentLoop(unittest.TestCase):
                             "evidence_refs": [],
                         }
                     ],
-                    "complete": True,
                 },
                 ensure_ascii=False,
             )
@@ -1443,6 +1486,82 @@ class TestReviewAgentLoop(unittest.TestCase):
         self.assertIn("parsed", trace["turns"][0])
         self.assertIn("evidence_results", trace["turns"][0])
         self.assertTrue(any(event["event"] == "review_evidence_supplied" for event in events))
+
+    def test_complete_before_incomplete_decisions_still_falls_back(self):
+        def handler(messages, tier, json_mode):
+            return json.dumps(
+                {
+                    "action": "final",
+                    "complete": True,
+                    "decisions": [],
+                    "new_issues": [],
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            outcome = ReviewAgentLoop(
+                FakeClient(handler=handler),
+                _config(),
+                self._evidence(),
+                ReviewTraceStore(ReviewRunStore(directory)),
+            ).review_chunk(
+                chapter=0,
+                chunk_base=0,
+                sources=["Ann arrived."],
+                targets=["安到了。"],
+                initial_issues=[
+                    {
+                        "index": 0,
+                        "type": "missing",
+                        "detail": "候选",
+                        "suggestion": "补译",
+                    }
+                ],
+            )
+
+        self.assertIn("candidate_decisions_incomplete", outcome.fallback_reason)
+
+    def test_truncated_final_collections_after_complete_still_fall_back(self):
+        decision = {
+            "candidate_id": "ch0-base0-candidate0",
+            "verdict": "confirmed",
+            "detail": "候选",
+            "suggestion": "补译",
+            "reason": "",
+            "consistency": {},
+            "evidence_refs": [],
+        }
+        responses = {
+            "decisions": '{"action":"final","complete":true,"decisions":[',
+            "new_issues": (
+                '{"action":"final","complete":true,"decisions":'
+                + json.dumps([decision], ensure_ascii=False)
+                + ',"new_issues":['
+            ),
+        }
+        initial = {
+            "index": 0,
+            "type": "missing",
+            "detail": "候选",
+            "suggestion": "补译",
+        }
+
+        for field, raw in responses.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                outcome = ReviewAgentLoop(
+                    FakeClient(handler=lambda messages, tier, json_mode: raw),
+                    _config(),
+                    self._evidence(),
+                    ReviewTraceStore(ReviewRunStore(directory)),
+                ).review_chunk(
+                    chapter=0,
+                    chunk_base=0,
+                    sources=["Ann arrived."],
+                    targets=["安到了。"],
+                    initial_issues=[initial],
+                )
+
+            self.assertEqual(outcome.fallback_reason, "unsafe_json_repair")
 
     def test_dismissed_summary_is_self_contained_and_links_to_initial_candidate(self):
         initial = {
@@ -1712,6 +1831,7 @@ class TestReviewAgentLoop(unittest.TestCase):
             return json.dumps(
                 {
                     "action": "final",
+                    "complete": True,
                     "decisions": [
                         {
                             "candidate_id": "ch0-base0-candidate0",
@@ -1724,7 +1844,6 @@ class TestReviewAgentLoop(unittest.TestCase):
                         }
                     ],
                     "new_issues": [],
-                    "complete": True,
                 }
             )
 

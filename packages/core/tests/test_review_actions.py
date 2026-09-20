@@ -163,6 +163,31 @@ def test_protocol_fallback_is_saved_and_reused_without_repeating_requests():
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        {"action": "final", "decision": "Keep 安"},
+        {"action": "final", "complete": False, "decision": "Keep 安"},
+    ],
+)
+def test_final_requires_explicit_true_completion_marker(payload):
+    trace, evidence = MemoryTrace(), MemoryEvidence()
+    client = FakeClient(handler=lambda *args: json.dumps(payload, ensure_ascii=False))
+
+    assert _run(client, trace, evidence) == (None, "final_not_complete")
+
+
+def test_final_accepts_complete_before_canonical_result_fields():
+    trace, evidence = MemoryTrace(), MemoryEvidence()
+    payload = {"action": "final", "complete": True, "decision": "Keep 安"}
+    client = FakeClient(handler=lambda *args: json.dumps(payload, ensure_ascii=False))
+
+    assert _run(client, trace, evidence) == (
+        {"decision": "Keep 安", "refs": ["ch0:text0:seg0"]},
+        "",
+    )
+
+
+@pytest.mark.parametrize(
     ("evidence_request", "reason"),
     [
         (
