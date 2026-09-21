@@ -243,6 +243,13 @@ for (const locale of ["en", "zh-CN"] as const) {
         if (width >= 1024) {
           expect(targetBox!.y).toBe(sourceBox!.y);
           expect(targetBox!.width).toBeCloseTo(sourceBox!.width, 0);
+          for (const label of locale === "en"
+            ? ["Source", "Translation"]
+            : ["原文", "译文"]) {
+            await expect(
+              page.getByText(label, { exact: true }).filter({ visible: true }),
+            ).toHaveCount(0);
+          }
         } else {
           expect(targetBox!.y).toBeGreaterThanOrEqual(
             sourceBox!.y + sourceBox!.height,

@@ -124,7 +124,9 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 Use **Collapse sidebar** beside the logo to make more room for the page. Desktop navigation becomes an icon rail with named hover hints; on mobile, the navigation links hide while the expand button stays visible. The browser remembers this preference across pages and reloads. Project links keep their order, and global settings remain available from the navigation.
 
-Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
+Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side without a header row on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
+
+The glossary keeps the same compact rows and column widths across type filters. Long terms and readings use a single-line preview; hover over the text or open the term editor to read the full value. On narrow screens, the table scrolls horizontally within its card.
 
 In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
 

@@ -116,10 +116,6 @@ export function ChapterProofreading({
         )}
         <Card>
           <CardContent className="p-0">
-            <div className="hidden lg:grid grid-cols-2 border-b p-4 text-sm font-medium">
-              <span>{t("common.source")}</span>
-              <span>{t("common.translation")}</span>
-            </div>
             {segments.map((segment) => (
               <div
                 key={segment.index}
