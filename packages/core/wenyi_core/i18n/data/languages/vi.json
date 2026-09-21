@@ -1,0 +1,11 @@
+{
+  "label": "Vietnamese",
+  "english_name": "Vietnamese",
+  "source_guidance": "Interpret Vietnamese pronouns and forms of address (anh, chị, em, cậu, cô, bác, chú, dì, ông, bà) in their speaker and relationship context. They do not establish literal kinship by themselves. Use particles such as đã, đang and sẽ together with context to interpret time and aspect. Preserve distinctions conveyed by classifiers when relevant to meaning or tone. Do not invent gender, relative age or family relations from a form of address alone.",
+  "target_guidance": "Use natural Vietnamese prose with correct diacritics, tone marks and word spacing, preserving the source genre and register. Follow the glossary for names and forms of address. Use only evidence-backed relationships when choosing pronouns; avoid adding unsupported age, gender or kinship. Prefer established Vietnamese name forms when available, including Hán-Việt readings of Chinese names supported by original characters or an established rendering. Otherwise preserve the source name consistently rather than inventing a pronunciation. Do not drop tone marks.",
+  "punctuation_rule": "Use Vietnamese Latin punctuation and spacing. Preserve quotation marks, brackets, dashes, ellipses and symbol pairing; keep diacritics on letters. Do not apply CJK full-width punctuation rules.",
+  "title_rule": "Use conventional Vietnamese titles and section labels, for example Chương 3, Lời mở đầu and Kết.",
+  "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
+  "digest_length": "150 words",
+  "synopsis_length": "350 words"
+}

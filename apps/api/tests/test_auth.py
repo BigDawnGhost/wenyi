@@ -48,3 +48,21 @@ def test_authenticated_api_accepts_preflight_without_exposing_protected_routes(m
     )
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_chapter_title_edit_uses_api_authentication(monkeypatch):
+    monkeypatch.setattr(main, "settings", replace(main.settings, api_token="test-token"))
+    client = TestClient(main.create_app())
+    try:
+        path = "/projects/test/chapters/0/title"
+        assert client.put(path, json={}).status_code == 401
+        assert (
+            client.put(path, json={}, headers={"Authorization": "Bearer wrong"}).status_code == 401
+        )
+        # Valid credentials reach body validation without needing a database.
+        assert (
+            client.put(path, json={}, headers={"Authorization": "Bearer test-token"}).status_code
+            == 422
+        )
+    finally:
+        client.close()

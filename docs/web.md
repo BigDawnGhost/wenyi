@@ -113,7 +113,7 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 ## Workflow
 
-1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
+1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection is locked during upload and after project creation. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
 2. Parsing runs as a background task after upload and then shows a preview. Matching parse results are reused during preparation.
 3. The project inherits the workflow defaults from global **Settings**; creation has no workflow selector. Use **Project settings** to adjust steps and select already registered models, and validate actual routes before starting translation.
 4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.
@@ -121,6 +121,16 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list includes unfinished chapters. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
+
+Use **Collapse sidebar** beside the logo to make more room for the page. Desktop navigation becomes an icon rail with named hover hints; on mobile, the navigation links hide while the expand button stays visible. The browser remembers this preference across pages and reloads. Project links keep their order, and global settings remain available from the navigation.
+
+Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side without a header row on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
+
+The glossary keeps the same compact rows and column widths across type filters. Long terms and readings use a single-line preview; hover over the text or open the term editor to read the full value. On narrow screens, the table scrolls horizontally within its card.
+
+**Contents & titles** lists the existing chapter titles beside their translations. Search either column, open a chapter in proofreading, or edit a translated title with the pencil button. Saving persists the title on the server for every browser and updates the linked EPUB TOC node, including equivalent NAV/NCX entries with the same original title and destination. Future exports use the saved titles; existing export files remain unchanged. Body headings are edited separately in proofreading. Pause running tasks before editing. If another editor changes the same title, your input is retained and saving requires loading the latest title. The page currently lists chapters; editing the complete EPUB hierarchy and automatic title alignment are not included.
+
+In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
 
 The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
 

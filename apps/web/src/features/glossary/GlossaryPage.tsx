@@ -296,11 +296,19 @@ export default function GlossaryPage() {
         )}
 
         <Card>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead className="border-b text-xs text-muted-foreground">
+          <CardContent className="overflow-x-auto p-0">
+            <table className="w-full min-w-[48rem] table-fixed text-sm">
+              <colgroup>
+                <col className="w-10" />
+                <col />
+                <col />
+                <col className="w-32" />
+                <col className="w-36" />
+                <col className="w-24" />
+              </colgroup>
+              <thead className="whitespace-nowrap border-b text-xs text-muted-foreground">
                 <tr>
-                  <th className="text-left p-3 font-medium w-10">
+                  <th className="text-left p-3 font-medium">
                     <input
                       type="checkbox"
                       checked={
@@ -341,10 +349,23 @@ export default function GlossaryPage() {
                         onChange={() => toggleSelect(t.source)}
                       />
                     </td>
-                    <td className="p-3 font-medium">{t.source}</td>
-                    <td className="p-3">{t.target}</td>
+                    <td className="p-3 font-medium">
+                      <span className="block truncate" title={t.source}>
+                        {t.source}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      <span className="block truncate" title={t.target}>
+                        {t.target}
+                      </span>
+                    </td>
                     <td className="p-3 text-muted-foreground">
-                      {t.reading || "—"}
+                      <span
+                        className="block truncate"
+                        title={t.reading || undefined}
+                      >
+                        {t.reading || "—"}
+                      </span>
                     </td>
                     <td className="p-3">
                       <Badge variant="outline">
@@ -352,24 +373,28 @@ export default function GlossaryPage() {
                       </Badge>
                     </td>
                     <td className="p-3 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busy}
-                        aria-label={tr("glossary.editTerm")}
-                        onClick={() => setEditTerm(t)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busy}
-                        aria-label={tr("glossary.deleteTerm")}
-                        onClick={() => del.mutate(t.source)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          disabled={busy}
+                          aria-label={tr("glossary.editTerm")}
+                          onClick={() => setEditTerm(t)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          disabled={busy}
+                          aria-label={tr("glossary.deleteTerm")}
+                          onClick={() => del.mutate(t.source)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -221,7 +221,7 @@ Translated state directories for public-domain books may be shared through [weny
 
 ## Limitations
 
-- Multilingual translation is experimental: Chinese, English, Japanese, Korean, French, German, Spanish, Italian, Portuguese, Russian, and selected variants have built-in profiles. Real-model long-form quality still needs evaluation; the CLI and prompt instructions use English, while generated descriptive metadata follows the translation target.
+- Multilingual translation is experimental: Chinese, English, Japanese, Korean, French, German, Spanish, Italian, Portuguese, Russian, Vietnamese, and selected variants have built-in profiles. Real-model long-form quality still needs evaluation; the CLI and prompt instructions use English, while generated descriptive metadata follows the translation target.
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
 - PDF input defaults to MinerU and requires an API key for the initial conversion. The BabelDOC bridge is optional for layout-preserving PDFs.

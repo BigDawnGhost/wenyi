@@ -1,6 +1,7 @@
 import type { Messages } from "../catalog";
 
 const zhCN = {
+  "common.untitledChapter": "未命名章节",
   "appLayout.wenyi": "文译",
   "appLayout.projects": "项目列表",
   "common.createProject": "创建项目",
@@ -328,6 +329,10 @@ const zhCN = {
   "createProject.uploadStep": "2. 上传原文",
   "createProject.uploadSource": "上传原文",
   "createProject.browseFiles": "浏览文件",
+  "createProject.sourceDropZone": "原文文件选择区域",
+  "createProject.dropFileHint": "将一个原文文件拖到此处，或点击“浏览文件”。",
+  "createProject.releaseFile": "松开以选择原文文件。",
+  "createProject.singleFileOnly": "一次只能选择一个原文文件。",
   "createProject.noFileSelected": "未选择文件",
   "createProject.uploading": "正在上传…",
   "createProject.parsingTheSourceAPreviewWillAppear":
@@ -521,7 +526,6 @@ const zhCN = {
   "style.noCharacterDataYetEnableStyleAnalysis":
     "尚无角色数据（需开启风格分析并完成准备阶段）。",
   "style.wholeBookSynopsis": "全书概要",
-  "style.chapter": "第 {chapter} 章",
   "style.noChapterSummariesYetEnableBookUnderstanding":
     "尚无章节摘要（需开启书籍预理解）。",
   "style.chapterSummarySaved": "章节摘要已保存",
@@ -600,6 +604,8 @@ const zhCN = {
   "export.aboutSummary": "说明页：{value}",
   "export.styleSummary": "原文样式：{value}",
   "navigation.global": "全局导航",
+  "navigation.collapseSidebar": "收起侧边栏",
+  "navigation.expandSidebar": "展开侧边栏",
   "navigation.project": "项目导航",
   "settings.modelSetup": "模型方案",
   "settings.presetSummary": "预设：{name}",
@@ -642,6 +648,22 @@ const zhCN = {
   "settings.restoreDefaults": "恢复默认配置",
   "settings.defaultsLoaded": "默认配置已载入草稿，保存后生效。",
   "status.applied": "已应用",
+  "contents.title": "目录与标题",
+  "contents.sourceTitle": "原目录标题",
+  "contents.translatedTitle": "目录译名",
+  "contents.editTitle": "编辑标题",
+  "contents.openChapter": "跳转人工校阅",
+  "contents.notTranslated": "暂无译名",
+  "contents.noEntries": "没有匹配的条目。",
+  "contents.search": "搜索原标题或译名",
+  "contents.unavailable": "任务运行中或项目数据不可用时，标题暂为只读。",
+  "contents.changedWhileEditing":
+    "标题已被修改，当前草稿已保留，请载入最新版本后再保存。",
+  "contents.help":
+    "保存后更新章节列表及关联的 EPUB 目录，供后续导出使用。正文标题请在人工校阅中单独修改。",
+  "contents.pauseToEdit": "暂停项目后可编辑标题。",
+  "contents.loadLatest": "载入最新标题",
+  "contents.saved": "标题已保存",
 } satisfies Messages;
 
 export default zhCN;

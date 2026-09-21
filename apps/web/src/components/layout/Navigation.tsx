@@ -6,6 +6,7 @@ import {
   Languages,
   Library,
   ListChecks,
+  ListTree,
   ScrollText,
   Settings2,
   Sparkles,
@@ -19,20 +20,24 @@ export function NavigationLink({
   icon: Icon,
   label,
   end,
+  collapsed = false,
 }: {
   to: string;
   icon: LucideIcon;
   label: MessageKey;
   end?: boolean;
+  collapsed?: boolean;
 }) {
   const { t } = useI18n();
   return (
     <NavLink
       to={to}
       end={end}
+      title={collapsed ? t(label) : undefined}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+          "flex items-center rounded-md py-2 text-sm transition-colors",
+          collapsed ? "justify-center px-2" : "gap-2 px-3",
           isActive
             ? "bg-accent text-accent-foreground font-medium"
             : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
@@ -40,7 +45,7 @@ export function NavigationLink({
       }
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>{t(label)}</span>
+      <span className={collapsed ? "sr-only" : undefined}>{t(label)}</span>
     </NavLink>
   );
 }
@@ -49,10 +54,12 @@ export function ProjectNavigation({
   pid,
   format,
   name,
+  collapsed = false,
 }: {
   pid: string;
   format?: string | null;
   name?: string;
+  collapsed?: boolean;
 }) {
   const { t } = useI18n();
   const base = `/projects/${pid}`;
@@ -70,6 +77,11 @@ export function ProjectNavigation({
             icon: Languages,
             label: "common.styleSynopsis" as const,
           },
+          {
+            path: "contents",
+            icon: ListTree,
+            label: "contents.title" as const,
+          },
         ]
       : []),
     { path: "export", icon: Download, label: "common.export" as const },
@@ -83,7 +95,11 @@ export function ProjectNavigation({
   return (
     <nav aria-label={t("navigation.project")} className="space-y-1">
       <p
-        className="px-3 pb-1 text-xs text-muted-foreground truncate"
+        className={
+          collapsed
+            ? "sr-only"
+            : "px-3 pb-1 text-xs text-muted-foreground truncate"
+        }
         title={name}
       >
         {name || pid}
@@ -93,6 +109,7 @@ export function ProjectNavigation({
           to={base}
           icon={Sparkles}
           label="common.translationOverview"
+          collapsed={collapsed}
           end
         />
         {book && (
@@ -101,11 +118,13 @@ export function ProjectNavigation({
               to={`${base}/proofreading`}
               icon={BookOpenCheck}
               label="progress.manualProofreading"
+              collapsed={collapsed}
             />
             <NavigationLink
               to={`${base}/review`}
               icon={ListChecks}
               label="common.wholeBookReview"
+              collapsed={collapsed}
             />
           </>
         )}
@@ -114,6 +133,7 @@ export function ProjectNavigation({
             to={`${base}/subtitles`}
             icon={Captions}
             label="common.subtitleEditor"
+            collapsed={collapsed}
           />
         )}
         {links.map(({ path, icon, label }) => (
@@ -122,6 +142,7 @@ export function ProjectNavigation({
             to={`${base}/${path}`}
             icon={icon}
             label={label}
+            collapsed={collapsed}
           />
         ))}
       </div>

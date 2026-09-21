@@ -231,7 +231,7 @@ function ChapterTable({
     <Card>
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[44rem] text-sm">
           <thead className="border-b text-xs text-muted-foreground">
             <tr>
               {[
@@ -241,7 +241,10 @@ function ChapterTable({
                 tr("progress.reviewStatus"),
                 tr("common.actions"),
               ].map((h) => (
-                <th key={h} className="text-left p-3 font-medium">
+                <th
+                  key={h}
+                  className="whitespace-nowrap text-left p-3 font-medium"
+                >
                   {h}
                 </th>
               ))}
@@ -250,8 +253,12 @@ function ChapterTable({
           <tbody>
             {chapters.map((c) => (
               <tr key={c.index} className="border-b last:border-0">
-                <td className="p-3">{c.title_translated || c.title}</td>
-                <td className="p-3">{c.word_count}</td>
+                <td className="w-full min-w-64 max-w-0 p-3 [overflow-wrap:anywhere]">
+                  {c.title_translated?.trim() ||
+                    c.title.trim() ||
+                    tr("common.untitledChapter")}
+                </td>
+                <td className="p-3 tabular-nums">{c.word_count}</td>
                 <td className="p-3">
                   <StatusBadge status={c.status} context="chapter" />
                 </td>
@@ -273,9 +280,9 @@ function ChapterTable({
                   )}
                 </td>
                 <td className="p-3">
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-col items-start gap-2">
                     <Link
-                      className="text-primary underline"
+                      className="whitespace-nowrap text-primary underline"
                       to={`/projects/${pid}/proofreading/${c.index}`}
                     >
                       {tr("progress.manualProofreading")}

@@ -365,7 +365,8 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
     numbering_root = None
     try:
         numbering_root = docx.part.numbering_part._element  # noqa: SLF001
-    except (AttributeError, ValueError, KeyError):
+    except (AttributeError, ValueError, KeyError, NotImplementedError):
+        # Numbering is optional; python-docx cannot create a missing part on access.
         numbering_root = None
 
     book_title = os.path.splitext(os.path.basename(path))[0]
