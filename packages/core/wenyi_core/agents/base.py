@@ -6,6 +6,7 @@ propagation by the pipeline.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from ..config import Config
@@ -13,6 +14,7 @@ from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_loose
 
 _RAISE = object()  # Sentinel: propagate exceptions when the caller supplies no default.
+_LOGGER = logging.getLogger(__name__)
 
 Messages = list[dict[str, str]]
 
@@ -131,6 +133,28 @@ class Agent:
             return default
 
     @staticmethod
-    def dict_items(items: Any) -> list[dict]:
-        """Keep dictionary items from model collections such as issues and terms."""
-        return [i for i in items or [] if isinstance(i, dict)]
+    def dict_items(
+        items: Any, *, operation: str = "unknown", field: str = "collection"
+    ) -> list[dict]:
+        """Keep JSON objects, logging invalid types and counts without response content."""
+        if items is None:
+            return []
+        if not isinstance(items, list):
+            _LOGGER.warning(
+                "Ignoring invalid model collection (operation=%s, field=%s): "
+                "expected a JSON array, got %s",
+                operation,
+                field,
+                type(items).__name__,
+            )
+            return []
+        result = [item for item in items if isinstance(item, dict)]
+        discarded = len(items) - len(result)
+        if discarded:
+            _LOGGER.warning(
+                "Ignoring %d non-object items in model collection (operation=%s, field=%s)",
+                discarded,
+                operation,
+                field,
+            )
+        return result
