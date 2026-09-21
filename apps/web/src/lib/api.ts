@@ -251,6 +251,18 @@ export const api = {
 
   getReview: (pid: string, ci: number) =>
     request<ChapterSegments>(`/projects/${pid}/review/${ci}`),
+  updateChapterTitle: (
+    pid: string,
+    ci: number,
+    body: components["schemas"]["ChapterTitleUpdate"],
+  ) =>
+    request<Output<"ChapterTitleOut">>(
+      `/projects/${pid}/chapters/${ci}/title`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      },
+    ),
   segmentHistory: (pid: string, ci: number, segIdx: number) =>
     request<SegmentRevision[]>(
       `/projects/${pid}/review/${ci}/segments/${segIdx}/history`,

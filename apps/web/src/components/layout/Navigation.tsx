@@ -6,6 +6,7 @@ import {
   Languages,
   Library,
   ListChecks,
+  ListTree,
   ScrollText,
   Settings2,
   Sparkles,
@@ -75,6 +76,11 @@ export function ProjectNavigation({
             path: "style",
             icon: Languages,
             label: "common.styleSynopsis" as const,
+          },
+          {
+            path: "contents",
+            icon: ListTree,
+            label: "contents.title" as const,
           },
         ]
       : []),

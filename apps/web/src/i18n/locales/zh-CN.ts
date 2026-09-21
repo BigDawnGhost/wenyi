@@ -648,6 +648,22 @@ const zhCN = {
   "settings.restoreDefaults": "恢复默认配置",
   "settings.defaultsLoaded": "默认配置已载入草稿，保存后生效。",
   "status.applied": "已应用",
+  "contents.title": "目录与标题",
+  "contents.sourceTitle": "原目录标题",
+  "contents.translatedTitle": "目录译名",
+  "contents.editTitle": "编辑标题",
+  "contents.openChapter": "跳转人工校阅",
+  "contents.notTranslated": "暂无译名",
+  "contents.noEntries": "没有匹配的条目。",
+  "contents.search": "搜索原标题或译名",
+  "contents.unavailable": "任务运行中或项目数据不可用时，标题暂为只读。",
+  "contents.changedWhileEditing":
+    "标题已被修改，当前草稿已保留，请载入最新版本后再保存。",
+  "contents.help":
+    "保存后更新章节列表及关联的 EPUB 目录，供后续导出使用。正文标题请在人工校阅中单独修改。",
+  "contents.pauseToEdit": "暂停项目后可编辑标题。",
+  "contents.loadLatest": "载入最新标题",
+  "contents.saved": "标题已保存",
 } satisfies Messages;
 
 export default zhCN;

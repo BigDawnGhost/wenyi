@@ -44,7 +44,7 @@ for (const chinese of [false, true]) {
       expect(
         await main.evaluate((element) => element.clientWidth),
       ).toBeGreaterThan(expandedWidth + 100);
-      await expect(navigation.getByRole("link")).toHaveCount(8);
+      await expect(navigation.getByRole("link")).toHaveCount(9);
       const current = navigation.getByRole("link", {
         name: proofreadingLabel,
         exact: true,
@@ -52,7 +52,7 @@ for (const chinese of [false, true]) {
       await expect(current).toBeVisible();
       await expect(current).toHaveAttribute("aria-current", "page");
       await expect(current).toHaveAttribute("title", proofreadingLabel);
-      await expect(sidebar.getByRole("link")).toHaveCount(11);
+      await expect(sidebar.getByRole("link")).toHaveCount(12);
       for (const link of await sidebar.getByRole("link").all()) {
         await expect(link).toBeInViewport();
       }

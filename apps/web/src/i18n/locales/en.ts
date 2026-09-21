@@ -674,6 +674,23 @@ const en = {
   "settings.restoreDefaults": "Restore defaults",
   "settings.defaultsLoaded": "Defaults loaded into the draft. Save to apply.",
   "status.applied": "Applied",
+  "contents.title": "Contents & titles",
+  "contents.sourceTitle": "Original title",
+  "contents.translatedTitle": "Translated title",
+  "contents.editTitle": "Edit title",
+  "contents.openChapter": "Open in proofreading",
+  "contents.notTranslated": "No translation yet",
+  "contents.noEntries": "No matching entries.",
+  "contents.search": "Search original or translated titles",
+  "contents.unavailable":
+    "Titles are read-only while a task is running or project data is unavailable.",
+  "contents.changedWhileEditing":
+    "This title has changed. Your draft is preserved; load the latest version before saving.",
+  "contents.help":
+    "Saved titles update the chapter list and linked EPUB contents for future exports. Edit body headings separately in proofreading.",
+  "contents.pauseToEdit": "Pause the project to edit titles.",
+  "contents.loadLatest": "Load latest title",
+  "contents.saved": "Title saved",
 } as const;
 
 export default en;
