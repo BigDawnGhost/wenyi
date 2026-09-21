@@ -35,6 +35,40 @@ def _cfg():
 
 
 class TestAgentCollectionNormalization(unittest.TestCase):
+    def test_invalid_collection_logs_context_without_response_content(self):
+        for value in (0, 1.5, True, False, "private model text", {"private model text": 1}):
+            with self.subTest(value=value):
+                with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
+                    result = Agent.dict_items(value, operation="glossary.extract", field="terms")
+
+                self.assertEqual(result, [])
+                self.assertEqual(len(logs.records), 1)
+                message = logs.records[0].getMessage()
+                self.assertIn("operation=glossary.extract", message)
+                self.assertIn("field=terms", message)
+                self.assertIn(f"got {type(value).__name__}", message)
+                self.assertNotIn("private model text", message)
+
+    def test_missing_and_valid_collections_do_not_log(self):
+        with self.assertNoLogs("wenyi_core.agents.base", level="WARNING"):
+            for value in (None, [], [{"source": "a", "target": "b"}]):
+                self.assertEqual(Agent.dict_items(value), value or [])
+
+    def test_filtered_members_log_one_count_without_response_content(self):
+        valid = {"source": "private source", "target": "private translation"}
+        with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
+            result = Agent.dict_items(
+                ["private model text", 1, valid], operation="glossary.extract", field="terms"
+            )
+
+        self.assertEqual(result, [valid])
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        self.assertIn("operation=glossary.extract", message)
+        self.assertIn("field=terms", message)
+        self.assertIn("2 non-object items", message)
+        self.assertNotIn("private", message)
+
     def test_non_list_model_collections_are_rejected(self):
         for value in (None, 0, 1, 0.0, 1.5, "invalid", {}):
             with self.subTest(value=value):
@@ -120,10 +154,18 @@ class TestAnalyzer(unittest.TestCase):
         }
         client = FakeClient(handler=lambda m, t, j: json.dumps(analysis))
 
-        result = Analyzer(client, _cfg()).analyze("sample")
+        with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
+            result = Analyzer(client, _cfg()).analyze("sample")
 
         self.assertEqual(result["characters"], [])
         self.assertEqual(result["terms"], [])
+        self.assertEqual(len(logs.records), 2)
+        for record, field, actual_type in zip(
+            logs.records, ("characters", "terms"), ("int", "float")
+        ):
+            self.assertIn("operation=analysis.style", record.getMessage())
+            self.assertIn(f"field={field}", record.getMessage())
+            self.assertIn(f"got {actual_type}", record.getMessage())
 
 
 class TestExtractor(unittest.TestCase):
@@ -136,7 +178,29 @@ class TestExtractor(unittest.TestCase):
                     _cfg(),
                 )
 
-                self.assertEqual(extractor.extract("source", "target", []), [])
+                with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
+                    self.assertEqual(extractor.extract("source", "target", []), [])
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn("operation=glossary.extract", logs.records[0].getMessage())
+                self.assertIn("field=terms", logs.records[0].getMessage())
+
+    def test_invalid_history_collection_warns_and_defers_unresolved_terms(self):
+        extractor = GlossaryExtractor(
+            FakeClient(handler=lambda m, t, j: json.dumps({"terms": 3})), _cfg()
+        )
+        term = GlossaryTerm(source="term", target="candidate")
+        occurrences = {
+            "term": TranslatedSegmentEvidence(
+                chapter=0, segment=1, source="term", target="existing translation"
+            )
+        }
+        with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
+            result = extractor._align_with_first_occurrences([term], occurrences)
+
+        self.assertEqual(result, ([], 0, 1))
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("operation=glossary.align_history", logs.records[0].getMessage())
+        self.assertIn("field=terms", logs.records[0].getMessage())
 
     def test_existing_context_only_includes_terms_repeated_in_source_corpus(self):
         prompts_seen: list[str] = []
