@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from wenyi_core.agents.analyzer import Analyzer
+from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config
 from wenyi_core.glossary.extractor import (
     GlossaryExtractor,
@@ -31,6 +32,23 @@ def _cfg():
             },
         }
     )
+
+
+class TestAgentCollectionNormalization(unittest.TestCase):
+    def test_non_list_model_collections_are_rejected(self):
+        for value in (None, 0, 1, 0.0, 1.5, "invalid", {}):
+            with self.subTest(value=value):
+                self.assertEqual(Agent.dict_items(value), [])
+
+    def test_json_arrays_keep_only_dictionary_members(self):
+        valid = {"source": "a", "target": "b"}
+
+        self.assertEqual(Agent.dict_items([]), [])
+        self.assertEqual(Agent.dict_items([valid]), [valid])
+        self.assertEqual(
+            Agent.dict_items([None, 1, 1.5, "invalid", {}, valid]),
+            [{}, valid],
+        )
 
 
 class TestAnalyzer(unittest.TestCase):
@@ -94,8 +112,32 @@ class TestAnalyzer(unittest.TestCase):
             self.assertEqual(school.type, "term")
             store.close()
 
+    def test_numeric_collections_are_normalized_to_empty_lists(self):
+        analysis = {
+            "genre": "novel",
+            "characters": 3,
+            "terms": 1.5,
+        }
+        client = FakeClient(handler=lambda m, t, j: json.dumps(analysis))
+
+        result = Analyzer(client, _cfg()).analyze("sample")
+
+        self.assertEqual(result["characters"], [])
+        self.assertEqual(result["terms"], [])
+
 
 class TestExtractor(unittest.TestCase):
+    def test_numeric_terms_collection_is_ignored(self):
+        for value in (3, 1.5):
+            with self.subTest(value=value):
+                response = json.dumps({"terms": value})
+                extractor = GlossaryExtractor(
+                    FakeClient(handler=lambda m, t, j, response=response: response),
+                    _cfg(),
+                )
+
+                self.assertEqual(extractor.extract("source", "target", []), [])
+
     def test_existing_context_only_includes_terms_repeated_in_source_corpus(self):
         prompts_seen: list[str] = []
 

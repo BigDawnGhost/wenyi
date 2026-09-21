@@ -132,5 +132,7 @@ class Agent:
 
     @staticmethod
     def dict_items(items: Any) -> list[dict]:
-        """Keep dictionary items from model collections such as issues and terms."""
-        return [i for i in items or [] if isinstance(i, dict)]
+        """Keep dictionary items from model JSON arrays such as issues and terms."""
+        if not isinstance(items, list):
+            return []
+        return [item for item in items if isinstance(item, dict)]
