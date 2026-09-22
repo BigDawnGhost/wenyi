@@ -101,8 +101,10 @@ export default function ProofreadingPage() {
                     to={`/projects/${pid}/proofreading/${chapter.index}`}
                   >
                     <div className="min-w-0 space-y-1">
-                      <div className="text-sm font-medium break-words">
-                        {chapter.title_translated || chapter.title}
+                      <div className="text-sm font-medium [overflow-wrap:anywhere]">
+                        {chapter.title_translated?.trim() ||
+                          chapter.title.trim() ||
+                          t("common.untitledChapter")}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {t("proofreading.savedParagraphs", {

@@ -488,6 +488,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/chapters/{ci}/title": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Chapter Title */
+        put: operations["update_chapter_title_projects__pid__chapters__ci__title_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/chapters/{ci}/translate": {
         parameters: {
             query?: never;
@@ -942,6 +959,20 @@ export interface components {
              * @default pending
              */
             review_status: string;
+        };
+        /** ChapterTitleOut */
+        ChapterTitleOut: {
+            /** Index */
+            index: number;
+            /** Title Translated */
+            title_translated: string;
+        };
+        /** ChapterTitleUpdate */
+        ChapterTitleUpdate: {
+            /** Title Translated */
+            title_translated: string;
+            /** Expected Title Translated */
+            expected_title_translated: string | null;
         };
         /** ConfigInput */
         ConfigInput: {
@@ -2641,6 +2672,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChapterSegments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_chapter_title_projects__pid__chapters__ci__title_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChapterTitleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterTitleOut"];
                 };
             };
             /** @description Validation Error */

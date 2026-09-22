@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
+from xml.etree import ElementTree
 
 from docx import Document as DocxDocument
 from docx.shared import RGBColor
@@ -38,6 +40,24 @@ def _write_sample_docx(path: str) -> None:
     doc.save(path)
 
 
+def _strip_numbering_part(src_path: str, dest_path: str) -> None:
+    """Create a valid package without the optional numbering part or its references."""
+    with zipfile.ZipFile(src_path) as src, zipfile.ZipFile(dest_path, "w") as dest:
+        for info in src.infolist():
+            if info.filename == "word/numbering.xml":
+                continue
+            data = src.read(info.filename)
+            if info.filename in {"word/_rels/document.xml.rels", "[Content_Types].xml"}:
+                root = ElementTree.fromstring(data)
+                for child in list(root):
+                    if child.get("Type", "").endswith("/numbering") or (
+                        child.get("PartName") == "/word/numbering.xml"
+                    ):
+                        root.remove(child)
+                data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            dest.writestr(info, data)
+
+
 class TestDocxReader(unittest.TestCase):
     def test_read_headings_paragraphs_and_table(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -56,6 +76,20 @@ class TestDocxReader(unittest.TestCase):
         self.assertEqual(
             {(s.meta["row"], s.meta["col"]): s.source for s in table_segs}[(0, 0)], "A"
         )
+
+    def test_read_docx_without_numbering_part(self):
+        with tempfile.TemporaryDirectory() as directory:
+            full = os.path.join(directory, "full.docx")
+            path = os.path.join(directory, "plain.docx")
+            doc = DocxDocument()
+            doc.add_paragraph("Hello without lists.")
+            doc.save(full)
+            _strip_numbering_part(full, path)
+            with zipfile.ZipFile(path) as package:
+                self.assertNotIn("word/numbering.xml", package.namelist())
+            book = read_docx(path, "en", "zh")
+        self.assertEqual(book.chapters[0].segments[0].source, "Hello without lists.")
+        self.assertNotIn("list_num_id", book.chapters[0].segments[0].meta)
 
     def test_load_document_routes_docx(self):
         with tempfile.TemporaryDirectory() as directory:

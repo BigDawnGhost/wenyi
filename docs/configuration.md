@@ -65,8 +65,9 @@ All generated descriptive metadata, including glossary `note`, style guidance, c
 | `ja`, `ko` | Japanese, Korean |
 | `fr`, `de`, `es`, `it` | French, German, Spanish, Italian |
 | `pt`, `pt-BR`, `pt-PT`, `ru` | Portuguese, Brazilian/European Portuguese, Russian |
+| `vi` | Vietnamese |
 
-Run `uv run wenyi languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Registered aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, and `ko-KR` → `ko`. Registered script/region variants are preserved rather than truncated to two letters.
+Run `uv run wenyi languages` to list built-in profiles without an API key. `target` cannot be `auto`; unsupported codes fail configuration validation. Registered aliases include `zh-Hans` / `zh-CN` → `zh`, `zh-TW` → `zh-Hant`, `ja-JP` → `ja`, `ko-KR` → `ko`, and `vi-VN` → `vi`. Registered script/region variants are preserved rather than truncated to two letters.
 
 Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
 

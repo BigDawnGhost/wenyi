@@ -64,7 +64,7 @@ export default function StylePage() {
           </p>
         )}
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
+          <TabsList className="flex w-fit max-w-full flex-wrap [&_button]:whitespace-nowrap">
             <TabsTrigger value="style">{tr("style.styleAnalysis")}</TabsTrigger>
             <TabsTrigger value="characters">
               {tr("style.characters")}
@@ -205,48 +205,41 @@ export default function StylePage() {
           <TabsContent value="digests" className="mt-4">
             <Card>
               <CardContent className="p-0">
-                <table className="w-full text-sm">
-                  <thead className="border-b text-xs text-muted-foreground">
-                    <tr>
-                      <th className="text-left p-3 font-medium">
-                        {tr("common.chapter")}
-                      </th>
-                      <th className="text-left p-3 font-medium">
-                        {tr("common.summary")}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {digests.map((d) => (
-                      <tr key={d.index} className="border-b last:border-0">
-                        <td className="p-3 align-top whitespace-nowrap font-medium">
-                          {d.title ||
-                            tr("style.chapter", { chapter: d.index + 1 })}
-                        </td>
-                        <td className="p-3 text-muted-foreground">
-                          <DigestEditor
-                            pid={pid}
-                            index={d.index}
-                            value={d.digest || ""}
-                            disabled={busy}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                    {digests.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={2}
-                          className="p-8 text-center text-muted-foreground text-sm"
-                        >
-                          {tr(
-                            "style.noChapterSummariesYetEnableBookUnderstanding",
-                          )}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                <div
+                  aria-hidden="true"
+                  className="hidden grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b p-4 text-xs font-medium text-muted-foreground lg:grid"
+                >
+                  <span>{tr("common.chapter")}</span>
+                  <span>{tr("common.summary")}</span>
+                </div>
+                <dl
+                  aria-label={tr("style.chapterSummaries")}
+                  className="divide-y text-sm"
+                >
+                  {digests.map((d) => (
+                    <div
+                      key={d.index}
+                      className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-4"
+                    >
+                      <dt className="min-w-0 font-medium [overflow-wrap:anywhere]">
+                        {d.title?.trim() || tr("common.untitledChapter")}
+                      </dt>
+                      <dd className="min-w-0 text-muted-foreground">
+                        <DigestEditor
+                          pid={pid}
+                          index={d.index}
+                          value={d.digest || ""}
+                          disabled={busy}
+                        />
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                {digests.length === 0 && (
+                  <p className="p-8 text-center text-sm text-muted-foreground">
+                    {tr("style.noChapterSummariesYetEnableBookUnderstanding")}
+                  </p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -283,7 +276,7 @@ function DigestEditor({
     return (
       <button
         disabled={disabled}
-        className="w-full text-left whitespace-pre-wrap hover:text-foreground"
+        className="w-full text-left whitespace-pre-wrap [overflow-wrap:anywhere] hover:text-foreground"
         onClick={() => {
           setDraft(value);
           setEditing(true);
@@ -297,11 +290,12 @@ function DigestEditor({
       <ErrorNotice error={save.error} />
       <Textarea
         aria-label={tr("style.chapterSummary", { chapter: index + 1 })}
+        className="min-h-32"
         disabled={disabled || save.isPending}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
       />
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
           disabled={disabled || save.isPending}

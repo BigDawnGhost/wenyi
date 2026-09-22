@@ -93,6 +93,24 @@ class ChapterSummary(BaseModel):
     review_status: str = "pending"
 
 
+class ChapterTitleUpdate(RequestModel):
+    title_translated: str = Field(min_length=1)
+    expected_title_translated: str | None
+
+    @field_validator("title_translated")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Translated title must not be empty")
+        return value
+
+
+class ChapterTitleOut(BaseModel):
+    index: int
+    title_translated: str
+
+
 class SegmentOut(BaseModel):
     index: int
     source: str

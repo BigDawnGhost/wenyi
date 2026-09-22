@@ -50,17 +50,23 @@ export function ParagraphActions({
   }, [menu]);
   useEffect(() => {
     if (!menu) return;
+    const anchor = trigger.current?.getBoundingClientRect();
     const outside = (event: PointerEvent) => {
       if (!popup.current?.contains(event.target as Node)) setMenu(null);
     };
     const hide = () => setMenu(null);
+    const scrolled = () => {
+      const current = trigger.current?.getBoundingClientRect();
+      // Ignore delayed scroll events from bringing the trigger into view before opening.
+      if (current?.x !== anchor?.x || current?.y !== anchor?.y) hide();
+    };
     window.addEventListener("pointerdown", outside, true);
     window.addEventListener("resize", hide);
-    window.addEventListener("scroll", hide, true);
+    window.addEventListener("scroll", scrolled, true);
     return () => {
       window.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("resize", hide);
-      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("scroll", scrolled, true);
     };
   }, [menu]);
   const copy = async (text: string) => {
@@ -82,6 +88,9 @@ export function ParagraphActions({
         show(event.clientX, event.clientY);
       }}
     >
+      <span className="block px-4 pt-4 text-xs text-muted-foreground lg:hidden">
+        {t("common.translation")}
+      </span>
       <p
         ref={content}
         data-testid="translation-text"

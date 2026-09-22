@@ -9,6 +9,7 @@ import ReviewPage from "./features/review/ReviewPage";
 import ProofreadingPage from "./features/proofreading/ProofreadingPage";
 import ExportPage from "./features/export/ExportPage";
 import EventsPage from "./features/events/EventsPage";
+import ContentsPage from "./features/contents/ContentsPage";
 
 import InterfaceSettingsPage from "./features/settings/InterfaceSettingsPage";
 import SettingsPage from "./features/settings/SettingsPage";
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/projects/:pid" element={<ProgressPage />} />
         <Route path="/projects/:pid/glossary" element={<GlossaryPage />} />
         <Route path="/projects/:pid/style" element={<StylePage />} />
+        <Route path="/projects/:pid/contents" element={<ContentsPage />} />
         <Route path="/projects/:pid/review" element={<ReviewPage />} />
         <Route
           path="/projects/:pid/proofreading"

@@ -54,8 +54,9 @@ language:
 | `ja`、`ko` | 日语、韩语 |
 | `fr`、`de`、`es`、`it` | 法语、德语、西班牙语、意大利语 |
 | `pt`、`pt-BR`、`pt-PT`、`ru` | 葡萄牙语、巴西/欧洲葡萄牙语、俄语 |
+| `vi` | 越南语 |
 
-运行 `uv run wenyi languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`；已注册的地区和文字变体保留，不再截取前两个字母。
+运行 `uv run wenyi languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`、`vi-VN` → `vi`；已注册的地区和文字变体保留，不再截取前两个字母。
 
 每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
