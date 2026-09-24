@@ -1124,6 +1124,15 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** LiveStatsMetadata */
+        LiveStatsMetadata: {
+            /** Run Id */
+            run_id: string;
+            /** Updated At */
+            updated_at: string;
+            /** Valid For Seconds */
+            valid_for_seconds: number;
+        };
         /** Message */
         Message: {
             /** Message */
@@ -1307,6 +1316,7 @@ export interface components {
             timing?: {
                 [key: string]: unknown;
             };
+            live?: components["schemas"]["LiveStatsMetadata"] | null;
         };
         /** ResolveConflict */
         ResolveConflict: {

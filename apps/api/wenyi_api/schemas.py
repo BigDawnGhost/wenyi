@@ -374,9 +374,16 @@ class ModelCheckResult(BaseModel):
     operations: list[str]
 
 
+class LiveStatsMetadata(BaseModel):
+    run_id: str
+    updated_at: str
+    valid_for_seconds: float
+
+
 class ProjectStats(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     timing: dict[str, Any] = Field(default_factory=dict)
+    live: LiveStatsMetadata | None = None
 
 
 class ChapterDigest(BaseModel):

@@ -337,9 +337,7 @@ test("empty and partially reported usage shows honest empty states", async ({
   await expect(
     accounting.getByText("No usage breakdown recorded yet."),
   ).toBeVisible();
-  await expect(
-    accounting.getByText("No completed or stopped runs recorded yet."),
-  ).toBeVisible();
+  await expect(accounting.getByText("No runs recorded yet.")).toBeVisible();
   await expect(accounting).not.toContainText("NaN");
   await page.route(`**/api/projects/${pid}/stats`, (route) =>
     route.fulfill({

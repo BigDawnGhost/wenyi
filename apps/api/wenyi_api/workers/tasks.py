@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
+from contextlib import ExitStack
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +16,7 @@ from ..config import settings
 from ..db import init_pool
 from ..emitters import redis_progress_fn
 from ..export_retention import publish_export
+from ..live_statistics import LiveStatistics
 from ..project_service import effective_config
 from ..storage_pg import PostgresStorage
 
@@ -181,7 +184,7 @@ def _execute(
 
     pool = init_pool(settings.psycopg_dsn)
     storage = _pipeline_storage(pid, pool)
-    redis = redis_lib.from_url(settings.redis_url)
+    redis = redis_lib.from_url(settings.redis_url, socket_timeout=1, socket_connect_timeout=1)
     job = dal.get_job_by_arq_id(run_id) if run_id else None
     client = None
     stop = stop or threading.Event()
@@ -210,7 +213,7 @@ def _execute(
         emitter(done, total, label)
 
     try:
-        with storage.lock():
+        with storage.lock(), ExitStack() as scope:
             if run_id:
                 current = dal.get_job_by_arq_id(run_id)
                 latest = next(
@@ -225,12 +228,15 @@ def _execute(
                     return
                 job = current
                 dal.set_job_status(job["id"], "running")
+            storage.recover_usage()
+            live = scope.enter_context(LiveStatistics(redis, pid, run_id or "", storage))
             progress(0, 0, "任务启动")
             config = _build_config_for(pid, run_id)
             if kind == "parse":
                 result_status = _parse_source(pid, storage, config, progress)
             else:
                 client = build_client(config)
+                live.bind_client(client)
                 client.set_event_sink(storage.log_event)
                 with client.interrupt_scope():
                     if kind == "srt":
@@ -294,6 +300,19 @@ def _execute(
     finally:
         finished.set()
         watcher.join(timeout=1)
+        try:
+            redis.publish(
+                f"project:{pid}",
+                json.dumps(
+                    {
+                        "kind": "state",
+                        "project_id": pid,
+                        "run_id": run_id,
+                    }
+                ),
+            )
+        except Exception:
+            pass
         redis.close()
         storage.close()
 

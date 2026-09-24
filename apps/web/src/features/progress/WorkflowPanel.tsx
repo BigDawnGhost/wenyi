@@ -31,10 +31,18 @@ export function WorkflowPanel({
     refetchInterval: 2500,
   });
   const workflow = query.data;
+  const cached = workflow?.progress;
+  const cachedIsNewer =
+    typeof cached?.updated_at === "string" &&
+    !!msg?.updated_at &&
+    Date.parse(cached.updated_at) > Date.parse(msg.updated_at);
   const live =
-    msg?.run_id && msg.run_id === workflow?.run_id && msg.label
+    msg?.run_id &&
+    msg.run_id === workflow?.run_id &&
+    msg.label &&
+    !cachedIsNewer
       ? msg
-      : workflow?.progress;
+      : cached;
   return (
     <Card>
       <CardContent className="p-5 space-y-4">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -58,6 +58,11 @@ function ReviewWorkbench({ pid }: { pid: string }) {
     enabled: !!rid && !subtitle,
     refetchInterval: !historical && busy ? 3000 : false,
   });
+  useEffect(() => {
+    // A terminal status can arrive through polling while the socket is disconnected.
+    if (!busy && rid && !historical)
+      qc.invalidateQueries({ queryKey: ["review-run", pid, rid] });
+  }, [busy, historical, pid, qc, rid]);
   const progress = reviewProgress(pid, workflow.data, msg);
   const job = workflow.data;
   const active = job?.status === "running" || job?.status === "queued";
