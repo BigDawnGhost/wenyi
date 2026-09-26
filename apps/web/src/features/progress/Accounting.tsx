@@ -14,12 +14,20 @@ import {
   record,
   type Stats,
 } from "./accountingData";
+import { useLiveTiming } from "./useLiveTiming";
 
 const UsageChart = lazy(() => import("./UsageChart"));
 const RunTimeChart = lazy(() => import("./RunTimeChart"));
 
-export function Accounting({ value }: { value?: Stats }) {
+export function Accounting({
+  value,
+  running = false,
+}: {
+  value?: Stats;
+  running?: boolean;
+}) {
   const { t, locale } = useI18n();
+  const timing = useLiveTiming(value, running);
   if (!value)
     return (
       <p className="text-sm text-muted-foreground">
@@ -28,7 +36,6 @@ export function Accounting({ value }: { value?: Stats }) {
     );
   const usage = record(value.usage);
   const totals = record(usage.totals);
-  const timing = record(value.timing);
   const number = (value: unknown) =>
     amount(value)?.toLocaleString(locale) ?? "—";
   const rate = cacheRate(totals);

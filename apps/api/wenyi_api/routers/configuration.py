@@ -125,7 +125,25 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
 
 @router.get("/projects/{pid}/stats", response_model=ProjectStats)
 def project_stats(pid: str) -> dict:
-    require_project(pid)
+    project = require_project(pid)
+    if project.get("status") in dal.RUNNING_PROJECT_STATUSES:
+        from redis import Redis
+
+        from ..config import settings
+        from ..live_statistics import read_live_statistics
+
+        job = next((j for j in dal.list_jobs(pid) if j["kind"] != "export"), None)
+        if job and job.get("status") == "running":
+            try:
+                with Redis.from_url(
+                    settings.redis_url, socket_timeout=1, socket_connect_timeout=1
+                ) as redis:
+                    live = read_live_statistics(redis, pid, job)
+                if live is not None:
+                    return live
+            except Exception:
+                # Cached live telemetry is optional; canonical ledgers remain available.
+                pass
     store = storage_for(pid)
     from wenyi_core.llm.usage import empty_usage
 
