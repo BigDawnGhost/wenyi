@@ -118,10 +118,72 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "completion_footer_not_last"):
+        with self.assertRaisesRegex(ReviewOutputError, "reviewed_segments_mismatch"):
             reviewer.review(["あ"], ["甲"])
 
-    def test_reviewer_rejects_bare_issue_array_without_completion_footer(self):
+    def test_reviewer_rejects_missing_completion_marker(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    {
+                        "issues": [],
+                        "reviewed_segments": 1,
+                    }
+                )
+            ),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "completion_marker_missing"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_accepts_completion_receipt_before_issues(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    {
+                        "reviewed_segments": 1,
+                        "complete": True,
+                        "issues": [],
+                    }
+                )
+            ),
+            _cfg(),
+        )
+
+        self.assertEqual(reviewer.review(["あ"], ["甲"]), [])
+
+    def test_reviewer_rejects_non_true_completion_marker(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    {
+                        "issues": [],
+                        "reviewed_segments": 1,
+                        "complete": False,
+                    }
+                )
+            ),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "completion_marker_missing"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_rejects_truncated_issues_after_completion_marker(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: (
+                    '{"reviewed_segments":1,"complete":true,"issues":['
+                )
+            ),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "unsafe_json_repair"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_rejects_bare_issue_array_without_completion_receipt(self):
         reviewer = Reviewer(
             FakeClient(
                 handler=lambda m, t, j: json.dumps(
@@ -262,7 +324,7 @@ class TestReviewer(unittest.TestCase):
         splits = [event for event in events if event["event"] == "review_chunk_split"]
         self.assertEqual(len(splits), 3)
         self.assertTrue(all(event["chapter"] == 7 for event in splits))
-        self.assertTrue(all(event["reason"] == "completion_footer_not_last" for event in splits))
+        self.assertTrue(all(event["reason"] == "unsafe_json_repair" for event in splits))
         self.assertTrue(all("source" not in event and "target" not in event for event in events))
 
     def test_singleton_retries_then_recovers(self):

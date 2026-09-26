@@ -4,4 +4,4 @@ $glossary
 [Paragraph pairs] ($n paragraphs)
 $pairs
 
-Review all $n paragraphs and return JSON. The final two fields must be "reviewed_segments":$n followed by "complete":true. They confirm that the batch is complete and must not be emitted early.
+Review all $n paragraphs and return JSON containing "reviewed_segments":$n and "complete":true. They assert that the payload is semantically complete; JSON object field order has no meaning.
