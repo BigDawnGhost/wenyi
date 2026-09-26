@@ -174,14 +174,23 @@ test("socket events refresh saved batch counts, usage, and final state", async (
 test("expired telemetry freezes the clock and a resumed run keeps cumulative time", async ({
   page,
 }) => {
-  await page.clock.install();
+  await page.clock.install({ time: new Date("2026-09-23T00:00:00Z") });
   await fakeApi(page);
   let resumed = false;
+  let resumeRequested = false;
+  let releaseResume!: () => void;
+  const resumeResponse = new Promise<void>((resolve) => {
+    releaseResume = resolve;
+  });
   await page.route(`**/api/projects/${pid}`, (route) =>
     route.fulfill({ json: { ...project, status: "translating" } }),
   );
-  await page.route(`**/api/projects/${pid}/stats`, (route) =>
-    route.fulfill({
+  await page.route(`**/api/projects/${pid}/stats`, async (route) => {
+    if (resumed) {
+      resumeRequested = true;
+      await resumeResponse;
+    }
+    await route.fulfill({
       json: {
         timing: {
           total_seconds: resumed ? 41 : 22,
@@ -204,20 +213,34 @@ test("expired telemetry freezes the clock and a resumed run keeps cumulative tim
           valid_for_seconds: 10,
         },
       },
-    }),
-  );
+    });
+  });
   await page.goto(`/projects/${pid}`);
   const totals = page
     .getByRole("region", { name: "Total usage & run time" })
     .locator("dl");
   await expect(totals).toContainText("22 s");
-  await page.clock.runFor(12000);
+  // Let the page load normally, then expire the heartbeat and freeze real-time ticking.
+  await page.clock.pauseAt(new Date("2026-09-23T00:01:00Z"));
   await expect(totals).toContainText("32 s");
   await page.clock.runFor(12000);
   await expect(totals).toContainText("32 s");
   resumed = true;
-  await page.clock.runFor(5000);
-  await expect(totals).toContainText("41 s");
+  // Hold the new snapshot until polling has run and the clock is stationary again.
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(5000);
+      return resumeRequested;
+    })
+    .toBe(true);
+  releaseResume();
+  await expect
+    .poll(async () => {
+      // Deliver query notifications without advancing the resumed run's clock.
+      await page.clock.runFor(0);
+      return totals.textContent();
+    })
+    .toContain("41 s");
   await page.clock.runFor(3000);
   await expect(totals).toContainText("44 s");
 });
