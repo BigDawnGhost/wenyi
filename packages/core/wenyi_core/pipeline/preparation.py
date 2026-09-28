@@ -29,6 +29,14 @@ if TYPE_CHECKING:
 ProgressFn = Callable[[int, int, str], None]
 
 
+def _synopsis_complete(text: str) -> bool:
+    """A usable whole-book synopsis must be non-empty and end like finished prose."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    return cleaned[-1] in "。．.！？!?…”\"'」』）)]}"
+
+
 class PreparationService:
     """Domain service for state lookup, parsing, initialization and book understanding."""
 
@@ -417,8 +425,8 @@ class PreparationService:
         ]
 
         analysis = store.load_analysis() or {}
-        synopsis = analysis.get("book_synopsis", "")
-        if not synopsis and any(d.strip() for d in digests):
+        synopsis = str(analysis.get("book_synopsis", "") or "")
+        if not _synopsis_complete(synopsis) and any(d.strip() for d in digests):
             if progress:
                 progress(0, 0, "Generating whole-book synopsis…")
             synopsis = self._runtime.synopsizer.book_synopsis(
