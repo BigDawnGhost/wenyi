@@ -5,6 +5,11 @@ export type UsageGroup = "by_model" | "by_provider" | "by_stage";
 export type Stats = {
   usage?: Record<string, unknown>;
   timing?: Record<string, unknown>;
+  live?: {
+    run_id: string;
+    updated_at: string;
+    valid_for_seconds: number;
+  } | null;
 };
 
 export function record(value: unknown): Record<string, unknown> {

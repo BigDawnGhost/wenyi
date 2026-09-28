@@ -14,6 +14,7 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
 import { toast } from "sonner";
+import { useEffect } from "react";
 
 export default function ProgressPage() {
   const { t: tr } = useI18n();
@@ -50,6 +51,16 @@ export default function ProgressPage() {
     refetchInterval: isProjectBusy(project?.status) ? 5000 : false,
   });
   const { msg, connected } = useProjectProgress(pid);
+  useEffect(() => {
+    // Fetch the terminal totals even when the busy-only polling interval has just stopped.
+    if (project?.status) {
+      qc.invalidateQueries({ queryKey: ["stats", pid] });
+      qc.invalidateQueries({ queryKey: ["workflow", pid] });
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      qc.invalidateQueries({ queryKey: ["subtitles", pid] });
+      qc.invalidateQueries({ queryKey: ["report", pid] });
+    }
+  }, [pid, project?.status, qc]);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", pid] });
     qc.invalidateQueries({ queryKey: ["chapters", pid] });
@@ -158,7 +169,7 @@ export default function ProgressPage() {
                 {tr("progress.totalUsageRunTime")}
               </h3>
               <ErrorNotice error={stats.error} />
-              <Accounting value={stats.data} />
+              <Accounting value={stats.data} running={busy} />
             </div>
           </CardContent>
         </Card>

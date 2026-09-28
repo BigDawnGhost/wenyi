@@ -113,6 +113,8 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 
 ## Workflow
 
+The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
+
 1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection is locked during upload and after project creation. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
 2. Parsing runs as a background task after upload and then shows a preview. Matching parse results are reused during preparation.
 3. The project inherits the workflow defaults from global **Settings**; creation has no workflow selector. Use **Project settings** to adjust steps and select already registered models, and validate actual routes before starting translation.

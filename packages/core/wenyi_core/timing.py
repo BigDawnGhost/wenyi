@@ -7,11 +7,27 @@ import logging
 import os
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from types import TracebackType
 from typing import Any, Protocol
 from uuid import uuid4
+
+_observer: ContextVar[Callable[[RunTimer], None] | None] = ContextVar(
+    "timing_observer", default=None
+)
+
+
+@contextmanager
+def observe_timers(observer: Callable[[RunTimer], None]) -> Iterator[None]:
+    """Expose invocation clocks to a UI adapter without changing persisted accounting."""
+    token = _observer.set(observer)
+    try:
+        yield
+    finally:
+        _observer.reset(token)
 
 
 def format_duration(seconds: float) -> str:
@@ -70,6 +86,8 @@ class RunTimer:
         self._stopped: float | None = None
         self._started_at = datetime.now().astimezone().isoformat(timespec="seconds")
         self._id = uuid4().hex
+        self._status = "running"
+        self._finished_at: str | None = None
         # Bind only after the source identity has been validated or initialized.
         self.store: TimingStore | None = None
 
@@ -79,7 +97,21 @@ class RunTimer:
         return max(0.0, end - self._started)
 
     def __enter__(self) -> RunTimer:
+        observer = _observer.get()
+        if observer is not None:
+            observer(self)
         return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Read the same invocation identity and monotonic time used by the final ledger."""
+        return {
+            "id": self._id,
+            "operation": self.operation,
+            "started_at": self._started_at,
+            "finished_at": self._finished_at,
+            "elapsed_seconds": self.elapsed,
+            "status": self._status,
+        }
 
     def __exit__(
         self,
@@ -93,18 +125,11 @@ class RunTimer:
             status = (
                 "interrupted" if issubclass(exc_type, (KeyboardInterrupt, SystemExit)) else "failed"
             )
+        self._status = status
+        self._finished_at = datetime.now().astimezone().isoformat(timespec="seconds")
         if self.store is not None:
             try:
-                self.store.record_timing(
-                    {
-                        "id": self._id,
-                        "operation": self.operation,
-                        "started_at": self._started_at,
-                        "finished_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                        "elapsed_seconds": self.elapsed,
-                        "status": status,
-                    }
-                )
+                self.store.record_timing(self.snapshot())
             except (OSError, ValueError):
                 if exc_type is None:
                     raise
