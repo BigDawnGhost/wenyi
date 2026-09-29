@@ -76,29 +76,23 @@ class Synopsizer(Agent):
             digests=numbered,
         )
         # Thinking tokens can randomly exhaust the output budget; retry truncation.
-        return self._ask_text_retry(system, user, operation="synopsis.book")
+        return self._ask_synopsis_book(system, user)
 
-    def _ask_text_retry(
-        self,
-        system: str,
-        user: str,
-        *,
-        operation: str,
-        attempts: int = 3,
-    ) -> str:
-        last = ""
-        for _attempt in range(attempts):
+    def _ask_synopsis_book(self, system: str, user: str) -> str:
+        """Call synopsis.book with retries; truncated thinking budgets are not final answers."""
+        for _attempt in range(3):
             try:
-                text = self.client.complete(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    operation=operation,
-                )
-                return (text or "").strip()
+                return (
+                    self.client.complete(
+                        [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        operation="synopsis.book",
+                    )
+                    or ""
+                ).strip()
             except RuntimeError as error:
                 if "truncated" not in str(error).lower():
                     raise
-                last = ""
-        return last
+        return ""

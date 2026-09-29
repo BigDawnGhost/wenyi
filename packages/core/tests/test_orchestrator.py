@@ -3074,9 +3074,9 @@ class TestTierRouting(unittest.TestCase):
                         self.assertEqual(c["tier"], tier, f"{marker} 应走 {tier} 档")
                         seen.add(marker)
                         if marker == "chapter digest writer":
-                            self.assertEqual(c["max_tokens"], 600)
+                            self.assertEqual(c["max_tokens"], 2500)
                         if marker == "whole-book synopsis writer":
-                            self.assertEqual(c["max_tokens"], 1200)
+                            self.assertEqual(c["max_tokens"], 8192)
             self.assertEqual(seen, set(expect), "各类调用都应出现")
 
 
