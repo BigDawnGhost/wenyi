@@ -171,9 +171,13 @@ uv run wenyi review book.epub
 uv run wenyi review book.epub --autofix
 ```
 
-Each Review run starts from the beginning, checks chunks concurrently, and can
-selectively request cross-book evidence before resolving contradictory
-consistency suggestions. Confirmed issues can produce provisional full-segment
+Translation batches and fresh Reviewer requests receive the full glossary. Review
+reuses completed results or resumes unfinished work when content, configuration,
+and full-glossary fingerprints match; otherwise it starts a new run. It checks
+chunks concurrently and can selectively request cross-book evidence before resolving
+contradictory consistency suggestions. See [glossary and resume policy](docs/pipeline.md#glossary).
+
+Confirmed issues can produce provisional full-segment
 replacements in a run-local shadow translation. A fresh whole-book review sees
 the shadow text—but not the previous issue explanation—and validates it again.
 Review publishes to formal chapter `target` values by default. Pass

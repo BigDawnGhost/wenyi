@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
@@ -17,7 +19,7 @@ from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
-from tests.fake_llm import routing_handler
+from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.sample_data import write_sample_txt
 
 
@@ -119,6 +121,143 @@ def test_review_fingerprint_only_tracks_reachable_inference(tmp_path):
     raw["routes"]["review.scan"] = {"model": "alternate"}
     changed.llm = LLMConfig.model_validate(raw)
     assert ReviewService(PipelineRuntime(changed, FakeClient()))._review_config_snapshot() != first
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"target": "new translation"},
+        {"type": "person"},
+        {"aliases": ["another spelling"]},
+        {"reading": "new pronunciation"},
+        {"gender": "female"},
+        {"note": "new evidence"},
+        {"first_chapter": 2},
+        {"status": "conflict"},
+    ],
+)
+def test_review_glossary_fingerprint_tracks_prompt_and_evidence_fields(changes):
+    term = GlossaryTerm(source="Absent from this chapter", target="original")
+    fingerprint = ReviewService._review_glossary_fingerprint
+    assert fingerprint([term]) != fingerprint([replace(term, **changes)])
+
+
+def test_review_glossary_fingerprint_tracks_entry_order():
+    terms = [GlossaryTerm(source=source, target=source) for source in ("Zebra", "Apple")]
+    fingerprint = ReviewService._review_glossary_fingerprint
+    assert fingerprint(terms) != fingerprint(list(reversed(terms)))
+
+
+def _review_with_absent_term(tmp_path, interrupted):
+    """Persist a completed or genuinely interrupted Review with two singleton chunks."""
+    source = tmp_path / "novel.txt"
+    source.write_text(
+        "堀北は静かな部屋で長い手紙を読みました。\n\n堀北は翌日の朝に友人と話をしました。\n",
+        encoding="utf-8",
+    )
+    config = _config(tmp_path)
+    config.segment.max_tokens_per_batch = 1
+    config.pipeline.review_concurrency = 1
+    store = require_file_storage(
+        Orchestrator(config, FakeClient(handler=routing_handler)).run(str(source))
+    )
+    term = GlossaryTerm(source="Unused", target="无关术语")
+    store.upsert_term(term)
+    scans = 0
+
+    def handler(messages, tier, json_mode):
+        nonlocal scans
+        if "translation reviewer" in messages[0]["content"]:
+            scans += 1
+            assert "Unused → 无关术语" in messages[-1]["content"]
+            if interrupted and scans == 2:
+                raise KeyboardInterrupt("after the first full-glossary chunk")
+        return routing_handler(messages, tier, json_mode)
+
+    client = MeteredFakeClient(handler=handler)
+    orchestrator = Orchestrator(config, client)
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt, match="first full-glossary chunk"):
+            orchestrator.run_review(str(source))
+        result = store.load_latest_review_result()
+        assert result is not None
+        assert result["status"] == "interrupted"
+    else:
+        result = orchestrator.run_review(str(source))["review_result"]
+    assert scans == 2
+    return source, config, store, term, result["review_id"]
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_path, interrupted):
+    source, config, store, _term, review_id = _review_with_absent_term(tmp_path, interrupted)
+    initial_usage = store.load_usage()
+    assert initial_usage is not None
+    metadata = store.read_artifact(f"reviews/{review_id}/rounds/metadata.json")
+    assert isinstance(metadata, dict)
+    assert metadata["config"]["review_glossary_policy"] == "full"
+
+    client = MeteredFakeClient(handler=routing_handler)
+    resumed = Orchestrator(config, client).run_review(str(source))
+    assert resumed["review_result"]["review_id"] == review_id
+    assert len(client.calls) == (1 if interrupted else 0)
+    for call in client.calls:
+        assert call["operation"] == "review.scan"
+        assert "Unused → 无关术语" in call["messages"][-1]["content"]
+        assert "翌日" in call["messages"][-1]["content"]
+    usage = store.load_usage()
+    assert usage is not None
+    assert usage["totals"]["calls"] == initial_usage["totals"]["calls"] + len(client.calls)
+
+    # A third invocation must neither re-request cached work nor merge its usage twice.
+    cached_client = MeteredFakeClient(handler=routing_handler)
+    cached = Orchestrator(config, cached_client).run_review(str(source))
+    assert cached["review_result"]["review_id"] == review_id
+    assert cached_client.calls == []
+    assert store.load_usage() == usage
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("change", ["policy", "target", "aliases", "note", "insert", "delete"])
+def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
+    tmp_path, interrupted, change
+):
+    source, config, store, term, review_id = _review_with_absent_term(tmp_path, interrupted)
+    original_chapter = store.load_chapter(0)
+    if change == "policy":
+        key = f"reviews/{review_id}/rounds/metadata.json"
+        metadata = store.read_artifact(key)
+        assert isinstance(metadata, dict)
+        # A pre-policy run must not reuse chunks or initial traces under the new policy.
+        metadata["config"].pop("review_glossary_policy")
+        store.write_artifact(key, metadata)
+    elif change == "target":
+        store.resolve_term(term.source, "新译名")
+    elif change == "aliases":
+        store.upsert_term(replace(term, aliases=["Another absent spelling"]))
+    elif change == "note":
+        store.upsert_term(replace(term, note="Updated evidence"))
+    elif change == "insert":
+        store.upsert_term(GlossaryTerm(source="Another unused term", target="新增术语"))
+    else:
+        assert store.delete_term(term.source)
+
+    client = FakeClient(handler=routing_handler)
+    new = Orchestrator(config, client).run_review(str(source))
+    assert new["review_result"]["review_id"] != review_id
+    assert len(client.calls) == 2
+    assert {call["operation"] for call in client.calls} == {"review.scan"}
+    assert store.load_chapter(0) == original_chapter
+    for call in client.calls:
+        prompt = call["messages"][-1]["content"]
+        if change == "delete":
+            assert "Unused →" not in prompt
+        else:
+            assert f"Unused → {'新译名' if change == 'target' else '无关术语'}" in prompt
+        if change == "aliases":
+            assert "Another absent spelling" in prompt
+        if change == "insert":
+            assert "Another unused term → 新增术语" in prompt
 
 
 def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):

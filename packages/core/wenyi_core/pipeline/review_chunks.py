@@ -1,4 +1,4 @@
-"""Chapter-level Review scanning, lazy terminology, adaptive recovery and stable merging."""
+"""Chapter-level Review scanning, adaptive recovery and stable merging."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 from ..agents.review_loop import ReviewAgentLoop
 from ..agents.reviewer import Reviewer, ReviewOutputError
 from ..config import Config
-from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..glossary.store import GlossaryTerm
 from ..ingest.tokens import count_tokens
 from ..llm.base import LLMClient
 from ..review.evidence import BookEvidenceIndex
@@ -41,8 +41,8 @@ class ReviewChunkService:
         """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
         Use blocks around three translation batches to reduce calls and repeated context.
         Convert valid block-local indices by the block offset and reject invalid positions.
-        Filter the chapter glossary only when a fresh reviewer request needs it; completed
-        chunks and initial traces bypass matching. Share one snapshot across workers.
+        Supply the full glossary to every fresh reviewer request and share the same
+        snapshot across workers. Completed chunks and initial traces bypass model calls.
         Read fixed target/glossary snapshots. Recursively bisect malformed output and retry
         single paragraphs a bounded number of times. Merge results in original block order
         for determinism.
@@ -60,19 +60,6 @@ class ReviewChunkService:
 
         recovery_events: list[dict[str, Any]] = []
         recovery_lock = Lock()
-        term_snapshot: list[GlossaryTerm] | None = None
-        term_lock = Lock()
-
-        def reviewer_terms() -> list[GlossaryTerm]:
-            """Build the chapter-wide glossary once, after all reusable caches miss."""
-            nonlocal term_snapshot
-            if self._config.pipeline.glossary_scope != "chapter":
-                return terms
-            with term_lock:
-                if term_snapshot is None:
-                    source_text = "\n".join(segment.source for segment in text_segs)
-                    term_snapshot = GlossaryStore.terms_in(terms, source_text)
-                return term_snapshot
 
         def record_recovery(event: str, **data: Any) -> None:
             """Buffer recovery events under a lock; write them from the main thread after
@@ -203,7 +190,7 @@ class ReviewChunkService:
                     review_result = self._reviewer.review_result(
                         srcs,
                         tgts,
-                        reviewer_terms(),
+                        terms,
                         trace=trace if debug is not None else None,
                     )
                 except Exception as error:

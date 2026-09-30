@@ -171,8 +171,11 @@ uv run wenyi review book.epub
 uv run wenyi review book.epub --autofix
 ```
 
-每次 Review 都会从头全量运行，并发检查文本块，并可按需获取跨章证据后处理互相
-矛盾的一致性建议。确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
+翻译批次和新 Reviewer 请求始终获得全量术语表。内容、配置与全量术语指纹匹配时，
+Review 复用已完成结果或续跑未完成工作；否则新建运行。它并发检查文本块，并可按需
+获取跨章证据后处理互相矛盾的一致性建议。详见[术语及续跑策略](pipeline.md#术语库)。
+
+确认的问题可生成仅限本次运行的完整单段影子修订；下一轮从头盲审
 只会看到影子译文，不会收到上一轮的问题说明。Review 默认会写回正式章节 `target`；
 使用 `--no-autofix` 或设置 `pipeline.review_autofix: false` 可保持只读。开启 Autofix
 后，会先应用折叠后的 changes，再让剩余 issues 基于更新译文复用现有 Review Agent Loop

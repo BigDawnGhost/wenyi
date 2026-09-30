@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
@@ -65,6 +66,7 @@ class ReviewService:
             "target_lang": self._runtime.config.target_lang,
             "honorific_strategy": self._runtime.config.honorific_strategy,
             "prompt_fingerprint": prompt_fingerprint(),
+            "review_glossary_policy": "full",
             "review_output_retries": self._runtime.config.pipeline.review_output_retries,
             "review_agent_loop": self._runtime.config.pipeline.review_agent_loop,
             "inference": inference_snapshot(
@@ -90,9 +92,11 @@ class ReviewService:
 
     @staticmethod
     def _review_glossary_fingerprint(terms: list[GlossaryTerm]) -> str:
-        """Fingerprint glossary content so changed terms invalidate completed review reuse."""
-        ordered = sorted((term.source, term.target, term.type) for term in terms)
-        return hashlib.sha256(json.dumps(ordered, ensure_ascii=False).encode("utf-8")).hexdigest()
+        """Bind reuse and resume to the full ordered prompt and evidence glossary."""
+        snapshot = [asdict(term) for term in terms]
+        return hashlib.sha256(
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
 
     def _review_skip_eligible(
         self,

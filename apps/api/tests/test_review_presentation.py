@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 from wenyi_api.review_presentation import review_items
 from wenyi_core.ingest.models import Chapter, Segment
 
@@ -175,3 +176,20 @@ def test_publication_details_use_final_text_and_reason_from_persisted_location()
     location["record_ids"] = ["a-different-fix"]
     row = review_items(storage(), "review-a", result, autofix)[0]
     assert "publication" not in row["publications"][0]
+
+
+@pytest.mark.parametrize("record_id", [None, 7, ["fix-a"], {"id": "fix-a"}])
+def test_invalid_record_identity_keeps_orphan_without_linking_publication(record_id):
+    record = {"record_id": record_id, "chapter": 3, "index": 0, "status": "planned"}
+    location = {"record_ids": ["fix-a"], "chapter": 3, "index": 0, "status": "applied"}
+    rows = review_items(
+        storage(),
+        "review-a",
+        {"issues": [], "changes": []},
+        {"records": [record], "index": {"locations": [location]}},
+    )
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "publication"
+    assert rows[0]["status"] == "pending"
+    assert rows[0]["publications"] == [record]
+    assert "publication" not in record

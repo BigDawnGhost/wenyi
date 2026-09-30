@@ -38,6 +38,7 @@ segment:
 
 # Pipeline options balancing quality and cost.
 pipeline:
+  # Body translation and Reviewer requests always use the full glossary.
   review: true # Review omissions, mistranslations, terminology and references.
   autofix_severe: false # Legacy severe-issue retranslation switch; false reports issues only.
   align_retry_limit: 2
@@ -48,7 +49,6 @@ pipeline:
   book_understanding: true # Prescan the source for a book synopsis and chapter digests.
   prescan_concurrency: 4 # Concurrent chapter-digest workers; 1 runs serially.
   review_concurrency: 4 # Concurrent review workers using fixed text and glossary snapshots.
-  glossary_scope: chapter # chapter: relevant chapter terms; full: the entire glossary.
 
 # Honorific policy, primarily for Japanese source text.
 honorific:
