@@ -648,7 +648,9 @@ class TestOrchestrator(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
 
             def fail_analysis(messages, tier, json_mode):
-                raise RuntimeError("temporary model failure")
+                if "pre-translation analyst" in messages[0]["content"]:
+                    raise RuntimeError("temporary model failure")
+                return routing_handler(messages, tier, json_mode)
 
             with self.assertRaisesRegex(RuntimeError, "temporary model failure"):
                 Orchestrator(cfg, client=FakeClient(handler=fail_analysis)).prepare(txt)
@@ -969,7 +971,9 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = MeteredFakeClient(handler=failing_digest)
             orch = Orchestrator(cfg, client=client)
+            cfg.pipeline.book_understanding = False
             store = require_file_storage(orch.prepare(txt))
+            cfg.pipeline.book_understanding = True
             with self.assertRaisesRegex(ValueError, "Chapter digests.*1"):
                 orch.run(txt)
             self.assertTrue(store.load_chapter(0).meta["source_digest"])
@@ -3150,8 +3154,8 @@ class TestProgressLabels(unittest.TestCase):
             labels = [label for _, _, label in events]
             expected = [
                 "Parsing document…",
-                "Analyzing book style…",
                 "Prescanning chapter digests",
+                "Analyzing book style…",
                 "Generating whole-book synopsis…",
                 "Translating chapter titles…",
                 "Translation complete",

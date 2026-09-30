@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from unittest.mock import patch
 
+import pytest
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from typer.testing import CliRunner
@@ -23,6 +24,41 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 
 from tests.fake_llm import routing_handler
 from tests.sample_data import write_sample_epub, write_sample_txt
+
+
+@pytest.mark.parametrize("order", ["target_first", "source_first"])
+@pytest.mark.parametrize("preserve_source_style", [False, True])
+@pytest.mark.parametrize("target", [None, "", "漢字〘かんじ〙です"])
+def test_untranslated_ruby_paragraph_keeps_only_original_markup(
+    order, preserve_source_style, target
+):
+    title, segments, template = annotate_epub_resource(
+        '<html><body><p id="original" class="body-text">'
+        "<ruby>漢字<rt>かんじ</rt></ruby>です</p></body></html>",
+        0,
+        "chapter.xhtml",
+    )
+    assert segments[0].source == "漢字〘かんじ〙です"
+    segments[0].target = target
+    chapter = Chapter(index=0, title=title, segments=segments, template=template)
+
+    rendered = BeautifulSoup(
+        _render_chapter_html(
+            chapter,
+            bilingual=True,
+            order=order,
+            preserve_source_style=preserve_source_style,
+            source_lang="ja",
+        ),
+        "html.parser",
+    )
+    assert len(rendered.find_all("p")) == 1
+    assert rendered.find(class_="tn-source") is None
+    paragraph = _required_tag(rendered.find(id="original"))
+    assert paragraph.get("class") == ["body-text"]
+    assert len(paragraph.find_all("ruby")) == 1
+    assert _required_tag(paragraph.find("rt")).get_text() == "かんじ"
+    assert chapter.segments[0].target == target
 
 
 def _required_tag(value: object) -> Tag:

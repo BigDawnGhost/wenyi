@@ -7,9 +7,10 @@ Wenyi first builds a whole-book understanding and then translates chapters in or
 ```mermaid
 flowchart TD
     A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Analyze style and seed the glossary]
-    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
-    D --> E
+    B --> C[Optional parallel chapter prescan<br/>Generate chapter digests]
+    C --> D[Analyze style and seed the glossary]
+    D --> DS[Optional whole-book synopsis]
+    DS --> E
 
     subgraph T[Translate chapter by chapter]
         E[Inject context and translate a batch]
@@ -34,9 +35,9 @@ flowchart TD
     X --> M[Generate the report and assemble the selected output]
 ```
 
-When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
+When `book_understanding` is enabled, chapter digests are generated in parallel before style analysis; the whole-book synopsis follows style analysis. Style analysis still reads the existing source samples. The initialization manifest commits last, after chapter digests and style analysis: initialized runs reuse saved results, while interrupted initialization rebuilds staged state on retry. Disabling `book_understanding` skips both chapter digests and the book synopsis. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 
-With `book_understanding` enabled, every chapter containing source text must have a usable digest before body translation starts. Truncated summary responses are retried by the shared provider retry policy, respecting `max_retries`, cancellation and invocation budgets. If a chapter digest still fails, preparation stops with the affected chapter indices; successful digests and request usage remain saved for the next prepare/translate run. Empty chapters do not need digests. A failure to synthesize the whole-book synopsis logs a warning and allows translation to continue using the chapter digests. A failed group in a long book's synopsis merge invalidates the entire synopsis rather than omitting that group's chapters.
+With `book_understanding` enabled, every chapter containing source text must have a usable digest before body translation starts. Truncated summary responses are retried by the shared provider retry policy, respecting `max_retries`, cancellation and invocation budgets. If a chapter digest still fails, preparation stops with the affected chapter indices. In initialized runs, successful digests and request usage remain saved for the next prepare/translate run. Empty chapters do not need digests. A failure to synthesize the whole-book synopsis logs a warning and allows translation to continue using the chapter digests. A failed group in a long book's synopsis merge invalidates the entire synopsis rather than omitting that group's chapters.
 
 Both `synopsis.chapter` and `synopsis.book` use a default output limit of 8192 tokens. Explicit model `max_output_tokens` settings take precedence. This adds headroom for thinking tokens without changing the requested digest or synopsis length; it reduces truncation risk but can increase reasoning-token costs. Completed new digests record a completion marker. Legacy digests with unfinished endings are regenerated, and legacy book synopses without verified cache metadata are regenerated once. New book synopsis caches are reused only while chapter indices, digests, style guidance and language choices match their saved input fingerprint. Failed regeneration preserves existing analysis but does not inject a stale synopsis into translation.
 

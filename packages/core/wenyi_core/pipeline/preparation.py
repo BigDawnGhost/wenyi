@@ -1,9 +1,8 @@
-"""Preparation: state lookup, parsing, language detection, initialization, analysis and
-prescan.
+"""Preparation: state lookup, parsing, language detection, chapter prescan and style analysis.
 Own PDF conversion caches, source hashes, sample selection, initial glossary and rolling
 context. Initialize derived chapters/analysis/glossary/context first, atomically commit the
-initialized manifest last, then finish initialization. Build chapter digests and the book
-synopsis as configured. Share pure language normalization with Runtime through top-level i18n.
+initialized manifest last, then finish initialization. Build the book synopsis afterward as
+configured. Share pure language normalization with Runtime through top-level i18n.
 """
 
 from __future__ import annotations
@@ -277,6 +276,8 @@ class PreparationService:
             doc,
             source_hash=source_hash,
         )
+        if self._runtime.config.pipeline.book_understanding:
+            self._ensure_chapter_digests(store, doc.chapters, progress)
         glossary = store
         if progress:
             progress(0, 0, "Analyzing book style…")
@@ -395,11 +396,60 @@ class PreparationService:
         manifest = store.load_manifest()
         chapters = manifest.get("chapters", [])
 
+        loaded = [store.load_chapter(row.get("index", i)) for i, row in enumerate(chapters)]
+        digests = self._ensure_chapter_digests(store, loaded, progress)
+        if not digests:
+            return ""
+
+        analysis = store.load_analysis() or {}
+        style = self._runtime.analyzer.style_brief(analysis)
+        inputs = {
+            "chapters": [
+                [chapter.index, chapter.meta["source_digest"]]
+                for chapter in loaded
+                if chapter.text_segments
+            ],
+            "style": style,
+            "source_lang": self._runtime.config.source_lang,
+            "target_lang": self._runtime.config.target_lang,
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        metadata = {"version": 1, "inputs_sha256": fingerprint}
+        synopsis = analysis.get("book_synopsis", "")
+        if (
+            isinstance(synopsis, str)
+            and synopsis.strip()
+            and analysis.get("book_synopsis_meta") == metadata
+        ):
+            return synopsis
+        if progress:
+            progress(0, 0, "Generating whole-book synopsis…")
+        synopsis = self._runtime.synopsizer.book_synopsis(digests, style)
+        if synopsis:
+            analysis["book_synopsis"] = synopsis
+            analysis["book_synopsis_meta"] = metadata
+            store.save_analysis(analysis)
+            store.log_event("book_synopsis_saved", synopsis=synopsis)
+        else:
+            store.log_event("book_synopsis_failed", reason="generation_failed")
+            _LOGGER.warning(
+                "Whole-book synopsis generation failed; translation continues with chapter digests. "
+                "The synopsis will be retried on the next prepare/translate run."
+            )
+        return synopsis
+
+    def _ensure_chapter_digests(
+        self,
+        store: Storage,
+        chapters: list[Chapter],
+        progress: ProgressFn | None,
+    ) -> list[str]:
+        """Prescan staged or initialized chapters and return digests in source order."""
         # Digest chapters independently in a thread pool, but persist all results on the main thread
         # to avoid competing atomic writes and preserve incremental chapter-level resume. Skip saved digests.
-        loaded = {
-            c.get("index", i): store.load_chapter(c.get("index", i)) for i, c in enumerate(chapters)
-        }
+        loaded = {chapter.index: chapter for chapter in chapters}
         sources = {
             ci: "\n".join(s.source for s in ch.text_segments)
             for ci, ch in loaded.items()
@@ -444,41 +494,4 @@ class PreparationService:
             )
 
         # Assemble in manifest chapter order, independent of worker completion order.
-        digests = [loaded[ci].meta["source_digest"] for ci in sources]
-        if not digests:
-            return ""
-
-        analysis = store.load_analysis() or {}
-        style = self._runtime.analyzer.style_brief(analysis)
-        inputs = {
-            "chapters": [[ci, loaded[ci].meta["source_digest"]] for ci in sources],
-            "style": style,
-            "source_lang": self._runtime.config.source_lang,
-            "target_lang": self._runtime.config.target_lang,
-        }
-        fingerprint = hashlib.sha256(
-            json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        metadata = {"version": 1, "inputs_sha256": fingerprint}
-        synopsis = analysis.get("book_synopsis", "")
-        if (
-            isinstance(synopsis, str)
-            and synopsis.strip()
-            and analysis.get("book_synopsis_meta") == metadata
-        ):
-            return synopsis
-        if progress:
-            progress(0, 0, "Generating whole-book synopsis…")
-        synopsis = self._runtime.synopsizer.book_synopsis(digests, style)
-        if synopsis:
-            analysis["book_synopsis"] = synopsis
-            analysis["book_synopsis_meta"] = metadata
-            store.save_analysis(analysis)
-            store.log_event("book_synopsis_saved", synopsis=synopsis)
-        else:
-            store.log_event("book_synopsis_failed", reason="generation_failed")
-            _LOGGER.warning(
-                "Whole-book synopsis generation failed; translation continues with chapter digests. "
-                "The synopsis will be retried on the next prepare/translate run."
-            )
-        return synopsis
+        return [loaded[ci].meta["source_digest"] for ci in sources]

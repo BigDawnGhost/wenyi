@@ -132,6 +132,9 @@ def _bilingual_source(source: str, target: str) -> str:
     """
     from wenyi_core.markup.ruby import strip_ruby_markers
 
+    # Source fallbacks still include pronunciation markers, so compare before stripping them.
+    if source == target:
+        return ""
     source = strip_ruby_markers(source)
     return source if (source.strip() and source != target) else ""
 

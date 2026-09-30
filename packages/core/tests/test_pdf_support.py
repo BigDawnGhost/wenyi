@@ -26,6 +26,8 @@ from wenyi_core.pipeline.runstore import RunStore, source_sha256
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
+from tests.fake_llm import routing_handler
+
 _HTML = """\
 <!doctype html>
 <html>
@@ -221,7 +223,7 @@ class TestPdfIngest(unittest.TestCase):
                     "paths": {"state_dir": state_dir},
                 }
             )
-            orchestrator = Orchestrator(config, client=FakeClient())
+            orchestrator = Orchestrator(config, client=FakeClient(handler=routing_handler))
 
             store = require_file_storage(orchestrator.prepare(pdf_path))
             os.remove(cached_html)
@@ -261,7 +263,7 @@ class TestPdfIngest(unittest.TestCase):
                 patch.object(RunStore, "save_manifest", side_effect=OSError("disk full")),
                 self.assertRaisesRegex(OSError, "disk full"),
             ):
-                Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+                Orchestrator(config, client=FakeClient(handler=routing_handler)).prepare(pdf_path)
 
             partial_store = FileStorage(os.path.join(state_dir, "sample", "targets", "zh"))
             stale_glossary = GlossaryStore(partial_store.glossary_path)
@@ -282,7 +284,9 @@ class TestPdfIngest(unittest.TestCase):
                 side_effect=convert,
             ) as conversion:
                 store = require_file_storage(
-                    Orchestrator(config, client=FakeClient()).prepare(pdf_path)
+                    Orchestrator(config, client=FakeClient(handler=routing_handler)).prepare(
+                        pdf_path
+                    )
                 )
 
             conversion.assert_called_once()
