@@ -172,7 +172,9 @@ class RoutedLLMClient(LLMClient):
                 )
             except Exception as error:
                 emit("llm_request_failed", error_type=type(error).__name__)
-                if position == len(routes) - 1 or not is_retryable_provider_error(error):
+                if position == len(routes) - 1 or not is_retryable_provider_error(
+                    error, operation=operation
+                ):
                     raise
                 emit("llm_model_failover", next_profile=routes[position + 1].profile)
             else:
