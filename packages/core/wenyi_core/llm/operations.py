@@ -79,7 +79,7 @@ OPERATIONS = register_operations(
             "synopsis.chapter",
             "Summarize one chapter",
             "fast",
-            output_tokens=2500,
+            output_tokens=8192,
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),

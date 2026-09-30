@@ -931,6 +931,70 @@ class TestSegmentLevelResume(unittest.TestCase):
 
 
 class TestBookUnderstanding(unittest.TestCase):
+    def test_book_synopsis_failure_does_not_block_translation_or_digest_reuse(self):
+        def failing_synopsis(messages, tier, json_mode):
+            if "whole-book synopsis writer" in messages[0]["content"]:
+                raise TimeoutError("synopsis provider unavailable")
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = FakeClient(handler=failing_synopsis)
+            store = require_file_storage(Orchestrator(cfg, client=client).run(txt))
+            self.assertFalse((store.load_analysis() or {}).get("book_synopsis"))
+            for item in store.load_manifest()["chapters"]:
+                chapter = store.load_chapter(item["index"])
+                self.assertTrue(chapter.meta["source_digest"])
+                self.assertTrue(
+                    all(segment.target is not None for segment in chapter.text_segments)
+                )
+            user = self._translate_user(client.calls)
+            self.assertIn("[Whole-book synopsis]\n(none)", user)
+            self.assertIn("本章梗概", user)
+
+            resumed = FakeClient(handler=routing_handler)
+            Orchestrator(cfg, client=resumed).run(txt)
+            self.assertTrue(store.load_analysis()["book_synopsis"])
+            self.assertFalse(any(call["operation"] == "synopsis.chapter" for call in resumed.calls))
+            self.assertFalse(any(call["operation"] == "translation.body" for call in resumed.calls))
+
+    def test_required_digest_failure_saves_usage_and_resumes_without_recounting(self):
+        def failing_digest(messages, tier, json_mode):
+            if (
+                "chapter digest writer" in messages[0]["content"]
+                and "放課後" in messages[-1]["content"]
+            ):
+                raise TimeoutError("chapter digest provider unavailable")
+            return routing_handler(messages, tier, json_mode)
+
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = MeteredFakeClient(handler=failing_digest)
+            orch = Orchestrator(cfg, client=client)
+            store = require_file_storage(orch.prepare(txt))
+            with self.assertRaisesRegex(ValueError, "Chapter digests.*1"):
+                orch.run(txt)
+            self.assertTrue(store.load_chapter(0).meta["source_digest"])
+            self.assertFalse(store.load_chapter(1).meta.get("source_digest"))
+            self.assertFalse(any(call["operation"] == "translation.body" for call in client.calls))
+            self.assertEqual(store.load_usage()["totals"], client.usage_summary()["totals"])
+
+            client.handler = routing_handler
+            previous_calls = len(client.calls)
+            orch.run(txt)
+            digests = [
+                call
+                for call in client.calls[previous_calls:]
+                if call["operation"] == "synopsis.chapter"
+            ]
+            self.assertEqual(len(digests), 1)
+            self.assertIn("放課後", digests[0]["messages"][-1]["content"])
+            self.assertEqual(store.load_usage()["totals"], client.usage_summary()["totals"])
+
     def _translate_user(self, calls) -> str:
         """Return user text from the last translation.body call (not a polish continuation)."""
         for c in reversed(calls):
@@ -3074,7 +3138,7 @@ class TestTierRouting(unittest.TestCase):
                         self.assertEqual(c["tier"], tier, f"{marker} 应走 {tier} 档")
                         seen.add(marker)
                         if marker == "chapter digest writer":
-                            self.assertEqual(c["max_tokens"], 2500)
+                            self.assertEqual(c["max_tokens"], 8192)
                         if marker == "whole-book synopsis writer":
                             self.assertEqual(c["max_tokens"], 8192)
             self.assertEqual(seen, set(expect), "各类调用都应出现")

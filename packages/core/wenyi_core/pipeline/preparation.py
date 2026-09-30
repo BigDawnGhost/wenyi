@@ -8,6 +8,9 @@ synopsis as configured. Share pure language normalization with Runtime through t
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +20,7 @@ from ..i18n.languages import normalize_language
 from ..i18n.prompts import render
 from ..i18n.resources import prompt_fingerprint
 from ..ingest.epub_reader import peek_epub_title
-from ..ingest.models import Document
+from ..ingest.models import Chapter, Document
 from ..ingest.segmenter import load_document
 from ..storage.protocol import Storage
 from .context import RollingContext
@@ -27,14 +30,25 @@ if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
 ProgressFn = Callable[[int, int, str], None]
+_LOGGER = logging.getLogger(__name__)
 
 
 def _synopsis_complete(text: str) -> bool:
-    """A usable whole-book synopsis must be non-empty and end like finished prose."""
-    cleaned = (text or "").strip()
+    """Identify likely finished legacy digests without a recorded completion marker."""
+    cleaned = (text or "").strip().rstrip("”\"'」』）)]}")
     if not cleaned:
         return False
-    return cleaned[-1] in "。．.！？!?…”\"'」』）)]}"
+    return cleaned[-1] in "。．.！？!?…"
+
+
+def _digest_complete(chapter: Chapter) -> bool:
+    """Reuse complete new digests and likely finished legacy digests."""
+    digest = chapter.meta.get("source_digest")
+    return bool(
+        isinstance(digest, str)
+        and digest.strip()
+        and (chapter.meta.get("source_digest_complete") is True or _synopsis_complete(digest))
+    )
 
 
 class PreparationService:
@@ -372,8 +386,8 @@ class PreparationService:
         progress: ProgressFn | None = None,
     ) -> str:
         """Prescan source chapters into chapter.meta digests and an analysis synopsis.
-        Skip existing results for idempotent resume. Return the synopsis for translation
-        prompts, or empty when book_understanding is disabled.
+        Require digests for nonempty chapters and reuse verified synopsis caches on resume.
+        Return empty when book understanding is disabled or optional synopsis synthesis fails.
         """
         if not self._runtime.config.pipeline.book_understanding:
             store.log_event("book_understanding_skipped", reason="disabled")
@@ -386,11 +400,13 @@ class PreparationService:
         loaded = {
             c.get("index", i): store.load_chapter(c.get("index", i)) for i, c in enumerate(chapters)
         }
-        todo = [
-            (ci, "\n".join(s.source for s in ch.text_segments))
+        sources = {
+            ci: "\n".join(s.source for s in ch.text_segments)
             for ci, ch in loaded.items()
-            if not ch.meta.get("source_digest")
-        ]
+            if ch.text_segments
+        }
+        todo = [(ci, source) for ci, source in sources.items() if not _digest_complete(loaded[ci])]
+        failed: list[int] = []
         if todo:
             store.log_event(
                 "book_understanding_chapter_digest_started",
@@ -406,34 +422,63 @@ class PreparationService:
                 }
                 for n_done, fut in enumerate(as_completed(futs), 1):
                     ci = futs[fut]
-                    loaded[ci].meta["source_digest"] = (
-                        fut.result()
-                    )  # _ask_text already returns an empty fallback on failure.
-                    store.save_chapter(loaded[ci])
-                    store.log_event(
-                        "book_understanding_chapter_digest_saved",
-                        chapter=ci,
-                        digest=loaded[ci].meta["source_digest"],
-                    )
+                    digest = fut.result().strip()
+                    if digest:
+                        loaded[ci].meta["source_digest"] = digest
+                        loaded[ci].meta["source_digest_complete"] = True
+                        store.save_chapter(loaded[ci])
+                        store.log_event(
+                            "book_understanding_chapter_digest_saved", chapter=ci, digest=digest
+                        )
+                    else:
+                        failed.append(ci)
+                        store.log_event("book_understanding_chapter_digest_failed", chapter=ci)
                     if progress:
                         progress(n_done, len(todo), "Prescanning chapter digests")
 
+        if failed:
+            indices = ", ".join(str(ci) for ci in sorted(failed))
+            raise ValueError(
+                f"Chapter digests could not be generated for chapters: {indices}. "
+                "Retry prepare/translate; completed digests have been saved."
+            )
+
         # Assemble in manifest chapter order, independent of worker completion order.
-        digests = [
-            loaded[c.get("index", i)].meta.get("source_digest", "") or ""
-            for i, c in enumerate(chapters)
-        ]
+        digests = [loaded[ci].meta["source_digest"] for ci in sources]
+        if not digests:
+            return ""
 
         analysis = store.load_analysis() or {}
-        synopsis = str(analysis.get("book_synopsis", "") or "")
-        if not _synopsis_complete(synopsis) and any(d.strip() for d in digests):
-            if progress:
-                progress(0, 0, "Generating whole-book synopsis…")
-            synopsis = self._runtime.synopsizer.book_synopsis(
-                digests,
-                self._runtime.analyzer.style_brief(analysis),
-            )
+        style = self._runtime.analyzer.style_brief(analysis)
+        inputs = {
+            "chapters": [[ci, loaded[ci].meta["source_digest"]] for ci in sources],
+            "style": style,
+            "source_lang": self._runtime.config.source_lang,
+            "target_lang": self._runtime.config.target_lang,
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        metadata = {"version": 1, "inputs_sha256": fingerprint}
+        synopsis = analysis.get("book_synopsis", "")
+        if (
+            isinstance(synopsis, str)
+            and synopsis.strip()
+            and analysis.get("book_synopsis_meta") == metadata
+        ):
+            return synopsis
+        if progress:
+            progress(0, 0, "Generating whole-book synopsis…")
+        synopsis = self._runtime.synopsizer.book_synopsis(digests, style)
+        if synopsis:
             analysis["book_synopsis"] = synopsis
+            analysis["book_synopsis_meta"] = metadata
             store.save_analysis(analysis)
             store.log_event("book_synopsis_saved", synopsis=synopsis)
+        else:
+            store.log_event("book_synopsis_failed", reason="generation_failed")
+            _LOGGER.warning(
+                "Whole-book synopsis generation failed; translation continues with chapter digests. "
+                "The synopsis will be retried on the next prepare/translate run."
+            )
         return synopsis
