@@ -119,6 +119,7 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 - `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit format always takes precedence; PDF defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
+- Untranslated EPUB paragraphs appear once as the original text, retaining ruby readings and links. This also applies to Web exports and partially translated chapters; bilingual ordering and source styling do not add a second copy.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
 - Book runtime data is stored under `state/<book>/targets/<target-language>/`, including chapter intermediates, the SQLite glossary, usage data, and reports. Subtitle runs use a separate tree under `state/srt/` (see [SRT subtitles](#srt-subtitles)).
 
