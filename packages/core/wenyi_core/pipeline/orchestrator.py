@@ -117,13 +117,17 @@ class Orchestrator:
             raise ValueError(
                 f"Chapter index {only_chapter} does not exist; available range: {valid_range}"
             )
-        book_synopsis = self._preparation.ensure_understanding(store, progress=progress)
-        return self._translation.run(
-            store,
-            book_synopsis=book_synopsis,
-            only_chapter=only_chapter,
-            progress=progress,
-        )
+        try:
+            book_synopsis = self._preparation.ensure_understanding(store, progress=progress)
+            return self._translation.run(
+                store,
+                book_synopsis=book_synopsis,
+                only_chapter=only_chapter,
+                progress=progress,
+            )
+        finally:
+            # Prescan can stop before translation's own usage checkpoint is reached.
+            self._runtime.flush_usage(store, scope="translate")
 
     def run_review(
         self,

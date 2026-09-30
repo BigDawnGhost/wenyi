@@ -19,6 +19,7 @@ from wenyi_core.llm.providers.gemini import (
     extract_gemini_usage,
     get_api_key_from_env,
 )
+from wenyi_core.llm.retrying import TruncatedResponseError
 from wenyi_core.llm.router import RoutedLLMClient
 
 from tests.model_fixtures import model_config
@@ -301,6 +302,33 @@ def test_gemini_client_safety_block():
         client.complete(
             [{"role": "user", "content": "unsafe content"}], operation="translation.body"
         )
+
+
+@pytest.mark.parametrize("operation", ["translation.body", "synopsis.chapter", "synopsis.book"])
+def test_gemini_truncation_is_rejected_and_only_summary_operations_retry(operation, monkeypatch):
+    client = RoutedLLMClient(model_config(kind="gemini", max_retries=1))
+    sdk = MagicMock()
+    sdk.models.generate_content.side_effect = [
+        SimpleNamespace(
+            text="Partial output",
+            candidates=[SimpleNamespace(finish_reason="MAX_TOKENS")],
+            usage_metadata=None,
+        ),
+        SimpleNamespace(
+            text="Complete summary.",
+            candidates=[SimpleNamespace(finish_reason="STOP")],
+            usage_metadata=None,
+        ),
+    ]
+    client.adapter("default")._client = sdk
+    monkeypatch.setattr(client.limits, "wait_for_retry", lambda delay: None)
+    if operation == "translation.body":
+        with pytest.raises(TruncatedResponseError):
+            client.complete([], operation=operation)
+        assert sdk.models.generate_content.call_count == 1
+    else:
+        assert client.complete([], operation=operation) == "Complete summary."
+        assert sdk.models.generate_content.call_count == 2
 
 
 def test_factory_build_client_gemini():

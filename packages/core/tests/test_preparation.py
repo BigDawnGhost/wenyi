@@ -92,11 +92,19 @@ def test_synopsis_interrupt_resumes_without_repeating_prescan_or_style(tmp_path)
     client = FakeClient(handler=routing_handler)
     Orchestrator(config, client=client, storage=store).prepare_for_translation(str(source))
     assert [call["operation"] for call in client.calls] == ["synopsis.book"]
-    assert store.load_analysis() == {
+    resumed_analysis = store.load_analysis() or {}
+    metadata = resumed_analysis.pop("book_synopsis_meta")
+    assert metadata["version"] == 1
+    assert len(metadata["inputs_sha256"]) == 64
+    assert resumed_analysis == {
         **(analysis or {}),
         "book_synopsis": "全书概览：主线与人物关系，整体基调。",
     }
     assert [store.load_chapter(chapter.index) for chapter in chapters] == chapters
+
+    cached_client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=cached_client, storage=store).prepare_for_translation(str(source))
+    assert cached_client.calls == []
 
 
 def test_style_failure_after_prescan_keeps_initialization_uncommitted(tmp_path):
@@ -119,6 +127,28 @@ def test_style_failure_after_prescan_keeps_initialization_uncommitted(tmp_path):
     assert operations.count("synopsis.chapter") == len(store.load_manifest()["chapters"])
     assert operations.index("synopsis.chapter") < operations.index("analysis.style")
     assert store.exists()
+
+
+def test_required_prescan_failure_prevents_style_and_manifest_commit(tmp_path):
+    source, config, store = _preparation_inputs(tmp_path)
+
+    def handler(messages, tier, json_mode):
+        if (
+            "chapter digest writer" in messages[0]["content"]
+            and "放課後" in messages[-1]["content"]
+        ):
+            return ""
+        return routing_handler(messages, tier, json_mode)
+
+    client = FakeClient(handler=handler)
+    with pytest.raises(ValueError, match="Chapter digests.*1"):
+        Orchestrator(config, client=client, storage=store).prepare_for_translation(str(source))
+    assert not store.exists()
+    assert store.load_analysis() is None
+    assert store.load_chapter(0).meta["source_digest_complete"] is True
+    assert not store.load_chapter(1).meta.get("source_digest")
+    assert [call["operation"] for call in client.calls] == ["synopsis.chapter"] * 2
+    assert all(segment.target is None for segment in store.load_chapter(0).segments)
 
 
 class TestSampleText(unittest.TestCase):

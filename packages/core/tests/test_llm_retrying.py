@@ -12,6 +12,8 @@ from unittest.mock import patch
 import httpx
 import pytest
 from openai import APIConnectionError, APITimeoutError
+from wenyi_core.agents.synopsis import Synopsizer
+from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config, LLMConfig
 from wenyi_core.llm.providers.deepseek import DeepSeekClient
 from wenyi_core.llm.retrying import (
@@ -127,6 +129,76 @@ def test_empty_model_response_is_retryable():
 
     assert is_retryable_provider_error(error)
     assert retry_reason(error) == "empty_response"
+
+
+def _truncated_response():
+    response = _response("Partial output")
+    response.choices[0].finish_reason = "length"
+    response.usage = SimpleNamespace(prompt_tokens=2, completion_tokens=3, total_tokens=5)
+    return response
+
+
+@pytest.mark.parametrize("operation", ["synopsis.chapter", "synopsis.book"])
+@pytest.mark.parametrize("response_kind", ["truncated", "empty", "whitespace"])
+def test_synopsis_incomplete_response_retries_in_shared_transport(
+    operation, response_kind, monkeypatch
+):
+    client = RoutedLLMClient(_config(max_retries=1))
+    incomplete = _truncated_response()
+    if response_kind != "truncated":
+        incomplete.choices[0].finish_reason = "stop"
+        incomplete.choices[0].message.content = "" if response_kind == "empty" else " \n\t"
+    success = _response("Complete summary.")
+    success.usage = SimpleNamespace(prompt_tokens=3, completion_tokens=4, total_tokens=7)
+    stub = _ClientStub([incomplete, success])
+    client.adapter("default")._client = stub
+    monkeypatch.setattr(client.limits, "wait_for_retry", lambda delay: None)
+    events = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    assert client.complete([], operation=operation) == "Complete summary."
+    assert stub.completions.calls == 2
+    waits = [event for event in events if event["event"] == "llm_retry_wait"]
+    assert len(waits) == 1
+    assert waits[0]["reason"] == (
+        "truncated_response" if response_kind == "truncated" else "empty_response"
+    )
+    assert client.usage_summary()["totals"]["calls"] == 2
+    assert client.usage_summary()["totals"]["total_tokens"] == 12
+
+
+@pytest.mark.parametrize("method", ["digest_chapter", "book_synopsis"])
+@pytest.mark.parametrize("max_retries", [0, 1])
+def test_summary_exhaustion_respects_provider_attempt_limit(method, max_retries, monkeypatch):
+    client = RoutedLLMClient(_config(max_retries=max_retries))
+    stub = _ClientStub([_truncated_response() for _ in range(max_retries + 1)])
+    client.adapter("default")._client = stub
+    monkeypatch.setattr(client.limits, "wait_for_retry", lambda delay: None)
+    synopsizer = Synopsizer(client, Config())
+    args = ("Source chapter.",) if method == "digest_chapter" else (["Digest."], "")
+
+    assert getattr(synopsizer, method)(*args) == ""
+    assert stub.completions.calls == max_retries + 1
+    assert client.usage_summary()["totals"]["calls"] == max_retries + 1
+
+
+@pytest.mark.parametrize("truncated_attempts", [1, 2])
+def test_translation_truncation_uses_alignment_retry_and_paragraph_fallback(truncated_attempts):
+    client = RoutedLLMClient(_config(max_retries=3))
+    successes = (
+        [_response('{"translations":["First.","Second."]}')]
+        if truncated_attempts == 1
+        else [_response('{"translations":["First."]}'), _response('{"translations":["Second."]}')]
+    )
+    stub = _ClientStub([_truncated_response() for _ in range(truncated_attempts)] + successes)
+    client.adapter("default")._client = stub
+    cfg = Config()
+    cfg.pipeline.align_retry_limit = 1
+    translator = Translator(client, cfg)
+
+    assert translator.translate_batch(["First source.", "Second source."]) == ["First.", "Second."]
+    assert stub.completions.calls == truncated_attempts + len(successes)
+    assert (translator.last_batch_turn is None) == (truncated_attempts == 2)
 
 
 def test_openai_sdk_retry_is_disabled():
