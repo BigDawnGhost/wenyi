@@ -118,10 +118,68 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "completion_footer_not_last"):
+        with self.assertRaisesRegex(ReviewOutputError, "reviewed_segments_mismatch"):
             reviewer.review(["あ"], ["甲"])
 
-    def test_reviewer_rejects_bare_issue_array_without_completion_footer(self):
+    def test_reviewer_rejects_missing_completion_marker(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    {
+                        "issues": [],
+                        "reviewed_segments": 1,
+                    }
+                )
+            ),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "completion_marker_missing"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_accepts_completion_receipt_before_issues(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    {
+                        "reviewed_segments": 1,
+                        "complete": True,
+                        "issues": [],
+                    }
+                )
+            ),
+            _cfg(),
+        )
+
+        self.assertEqual(reviewer.review(["あ"], ["甲"]), [])
+
+    def test_reviewer_rejects_non_true_completion_marker(self):
+        reviewer = Reviewer(
+            FakeClient(
+                handler=lambda m, t, j: json.dumps(
+                    {
+                        "issues": [],
+                        "reviewed_segments": 1,
+                        "complete": False,
+                    }
+                )
+            ),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "completion_marker_missing"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_rejects_truncated_issues_after_completion_marker(self):
+        reviewer = Reviewer(
+            FakeClient(handler=lambda m, t, j: '{"reviewed_segments":1,"complete":true,"issues":['),
+            _cfg(),
+        )
+
+        with self.assertRaisesRegex(ReviewOutputError, "unsafe_json_repair"):
+            reviewer.review(["あ"], ["甲"])
+
+    def test_reviewer_rejects_bare_issue_array_without_completion_receipt(self):
         reviewer = Reviewer(
             FakeClient(
                 handler=lambda m, t, j: json.dumps(
@@ -262,7 +320,7 @@ class TestReviewer(unittest.TestCase):
         splits = [event for event in events if event["event"] == "review_chunk_split"]
         self.assertEqual(len(splits), 3)
         self.assertTrue(all(event["chapter"] == 7 for event in splits))
-        self.assertTrue(all(event["reason"] == "completion_footer_not_last" for event in splits))
+        self.assertTrue(all(event["reason"] == "unsafe_json_repair" for event in splits))
         self.assertTrue(all("source" not in event and "target" not in event for event in events))
 
     def test_singleton_retries_then_recovers(self):
@@ -335,62 +393,66 @@ class TestReviewer(unittest.TestCase):
         self.assertEqual([it["index"] for it in issues], [0, 1])
         self.assertEqual([it["detail"] for it in issues], ["甲", "乙"])
 
-    def test_fresh_review_blocks_share_chapter_glossary_after_cache_lookup(self):
-        """A pending block still sees terms from cached neighbors in the same chapter."""
-        for scope in ("chapter", "book"):
-            for cache_first in (False, True):
-                with self.subTest(scope=scope, cache_first=cache_first):
-                    cfg = _cfg()
-                    cfg.segment.max_tokens_per_batch = 1
-                    cfg.pipeline.review_concurrency = 2
-                    cfg.pipeline.glossary_scope = scope
-                    expected_calls = 1 if cache_first else 2
-                    barrier = threading.Barrier(expected_calls)
+    def test_review_blocks_share_full_glossary_after_cache_lookup(self):
+        """Cached blocks make no request; pending blocks include absent glossary entries."""
+        for cache_kind in ("none", "chunk", "initial", "all"):
+            with self.subTest(cache_kind=cache_kind):
+                cfg = _cfg()
+                cfg.segment.max_tokens_per_batch = 1
+                cfg.pipeline.review_concurrency = 2
+                expected_calls = {"none": 2, "chunk": 1, "initial": 1, "all": 0}[cache_kind]
+                barrier = threading.Barrier(max(1, expected_calls))
 
-                    def handler(messages, tier, json_mode):
-                        barrier.wait(timeout=2)
-                        return _review_response([], 1)
+                def handler(messages, tier, json_mode):
+                    barrier.wait(timeout=2)
+                    self.assertIn("Unused → Unused", messages[-1]["content"])
+                    return _review_response([], 1)
 
-                    orch = Orchestrator(cfg, client=FakeClient(handler=handler))
-                    # Each source is >3 tokens so review's batch*3 budget keeps them in separate blocks.
-                    segments = [
-                        Segment(index=0, source="Ann meets the council today", target="Anne"),
-                        Segment(index=1, source="Bob leaves before sunrise", target="Robert"),
-                    ]
-                    terms = [GlossaryTerm(source=s, target=s) for s in ("Ann", "Bob", "Unused")]
-                    completed = []
-                    with tempfile.TemporaryDirectory() as directory:
-                        debug = ReviewRunStore(directory)
-                        if cache_first:
+                orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+                # Each source exceeds review's batch*3 budget and gets its own block.
+                segments = [
+                    Segment(index=0, source="Ann meets the council today", target="Anne"),
+                    Segment(index=1, source="Bob leaves before sunrise", target="Robert"),
+                ]
+                terms = [GlossaryTerm(source=s, target=s) for s in ("Ann", "Bob", "Unused")]
+                completed = []
+                with tempfile.TemporaryDirectory() as directory:
+                    debug = ReviewRunStore(directory)
+                    if cache_kind in ("chunk", "all"):
+                        for base in range(2) if cache_kind == "all" else [0]:
                             debug.mark_chunk_done(
-                                "r1-ch0-base0-n1",
+                                f"r1-ch0-base{base}-n1",
                                 {"issues": [], "initial_issues": [], "dismissed": []},
                             )
-                        reviewer = orch._runtime.reviewer
-                        with (
-                            patch.object(
-                                GlossaryStore, "terms_in", wraps=GlossaryStore.terms_in
-                            ) as matching,
-                            patch.object(
-                                reviewer, "review_result", wraps=reviewer.review_result
-                            ) as reviewing,
-                        ):
-                            issues = orch._review._chunks.review_chapter(
-                                segments,
-                                terms,
-                                chapter_index=0,
-                                review_round=1,
-                                debug=debug,
-                                on_chunk_finished=completed.append,
-                            )
+                    elif cache_kind == "initial":
+                        debug.write_json(
+                            "initial/initial-r1-ch0-base0-n1-attempt1.json",
+                            {"status": "finished", "issues": []},
+                        )
+                    reviewer = orch._runtime.reviewer
+                    with (
+                        patch.object(
+                            GlossaryStore, "terms_in", wraps=GlossaryStore.terms_in
+                        ) as matching,
+                        patch.object(
+                            reviewer, "review_result", wraps=reviewer.review_result
+                        ) as reviewing,
+                    ):
+                        issues = orch._review._chunks.review_chapter(
+                            segments,
+                            terms,
+                            chapter_index=0,
+                            review_round=1,
+                            debug=debug,
+                            on_chunk_finished=completed.append,
+                        )
 
-                    self.assertEqual(issues, [])
-                    self.assertEqual(completed, [1, 1])
-                    self.assertEqual(matching.call_count, 1 if scope == "chapter" else 0)
-                    self.assertEqual(reviewing.call_count, expected_calls)
-                    expected_terms = terms[:2] if scope == "chapter" else terms
-                    for call in reviewing.call_args_list:
-                        self.assertEqual(call.args[2], expected_terms)
+                self.assertEqual(issues, [])
+                self.assertEqual(completed, [1, 1])
+                matching.assert_not_called()
+                self.assertEqual(reviewing.call_count, expected_calls)
+                for call in reviewing.call_args_list:
+                    self.assertIs(call.args[2], terms)
 
 
 class TestPolisher(unittest.TestCase):

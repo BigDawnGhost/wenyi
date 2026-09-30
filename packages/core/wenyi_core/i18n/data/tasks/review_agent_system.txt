@@ -26,6 +26,7 @@ You may decide immediately or after collecting evidence. Return only:
     "consistency":{},"evidence_refs":["References actually obtained"]}
  ],"complete":true}
 
+Set complete:true only when decisions and new_issues contain their full semantic values. JSON object field order has no meaning.
 decisions must cover every candidate ID exactly once and no other IDs. New issues must refer to integer paragraph indices in the current block, never neighboring blocks or other chapters.
 Fill consistency only for terms, pronouns or fixed expressions that require cross-block agreement. For ordinary omissions, additions or mistranslations, output an empty object {}. Do not copy placeholder type text.
 Use only evidence_refs returned by the system or already supplied for the current block. Dismiss uncertain candidates; do not retain false positives to appear thorough.

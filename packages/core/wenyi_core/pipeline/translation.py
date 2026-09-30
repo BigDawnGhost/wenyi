@@ -224,11 +224,11 @@ class TranslationService:
         if progress:
             progress(done, total, label)
         glossary_checkpoints = store.completed_batch_glossary_keys(ci)
-        # Read one glossary snapshot at chapter start and filter by source when scope is chapter.
+        # Read the full glossary in stable insertion order at chapter start.
         # Refresh lazily only if the glossary may have changed and another batch needs translation.
         # Fully checkpointed skips neither extract nor refresh. Saved translations lacking extraction
         # still extract and mark the snapshot stale, preserving resume completeness without redundant reads.
-        term_snapshot = self.chapter_term_snapshot(glossary, text_segs)
+        term_snapshot = glossary.all_terms()
         term_snapshot_stale = False
 
         # Process batches serially: render current context, translate and immediately append targets.
@@ -300,7 +300,7 @@ class TranslationService:
                 continue
 
             if term_snapshot_stale:
-                term_snapshot = self.chapter_term_snapshot(glossary, text_segs)
+                term_snapshot = glossary.all_terms()
                 term_snapshot_stale = False
 
             ctx_text = context.render(self._runtime.config.pipeline.rolling_context_segments)
@@ -410,17 +410,6 @@ class TranslationService:
             segment_count=len(text_segs),
         )
         return done
-
-    def chapter_term_snapshot(self, glossary: Storage | GlossaryStore, text_segs) -> list:
-        """Return the glossary snapshot for this chapter; call again after writes to refresh
-        it.
-        """
-        terms = glossary.all_terms()
-        if self._runtime.config.pipeline.glossary_scope != "chapter":
-            return terms
-        src_text = "\n".join(s.source for s in text_segs)
-        hit = {t.source for t in GlossaryStore.terms_in(terms, src_text)}
-        return [t for t in terms if t.source in hit]
 
     @staticmethod
     def chapter_progress_label(title: str, index: int) -> str:

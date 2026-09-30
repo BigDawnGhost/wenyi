@@ -53,10 +53,29 @@ class TestFakeClient(unittest.TestCase):
 
 class TestParseJsonLooseRepairs(unittest.TestCase):
     def test_parse_result_reports_whether_repair_was_used(self):
-        self.assertFalse(parse_json_result('{"a": 1}').repaired)
+        strict = parse_json_result('{"a": 1}')
+        self.assertFalse(strict.repaired)
+        self.assertEqual(strict.repair_kind, "none")
+        self.assertTrue(strict.safe_for_complete_payload)
         repaired = parse_json_result('{"a": 1')
         self.assertTrue(repaired.repaired)
         self.assertEqual(repaired.value, {"a": 1})
+        self.assertEqual(repaired.repair_kind, "boundary_only")
+        self.assertTrue(repaired.safe_for_complete_payload)
+
+    def test_parse_result_marks_content_synthesizing_repair_as_structural(self):
+        repaired = parse_json_result('{"complete":true,"issues":[')
+
+        self.assertTrue(repaired.repaired)
+        self.assertEqual(repaired.repair_kind, "structural")
+        self.assertFalse(repaired.safe_for_complete_payload)
+
+    def test_strict_json_fence_is_a_boundary_only_repair(self):
+        repaired = parse_json_result('```json\n{"complete":true}\n```')
+
+        self.assertEqual(repaired.value, {"complete": True})
+        self.assertEqual(repaired.repair_kind, "boundary_only")
+        self.assertTrue(repaired.safe_for_complete_payload)
 
     def test_inner_ascii_quotes_repaired(self):
         # Regression from a model response containing unescaped English quotation marks.

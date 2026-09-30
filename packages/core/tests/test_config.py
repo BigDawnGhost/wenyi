@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pydantic import ValidationError
 from wenyi_core.config import Config
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.routing import resolve_routes
@@ -66,6 +67,14 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertIn("max_tokens_per_batch: 1800", generated)
             self.assertIn("max_tokens_per_segment: 1200", generated)
             self.assertNotIn("max_chars_per_batch", generated)
+            self.assertNotIn("glossary_scope", generated)
+            self.assertNotIn("glossary_scope", cfg.pipeline.model_dump())
+
+    def test_removed_glossary_scope_is_rejected(self):
+        for scope in ("chapter", "full", None):
+            with self.subTest(scope=scope):
+                with self.assertRaisesRegex(ValidationError, "glossary_scope"):
+                    Config.from_dict({"pipeline": {"glossary_scope": scope}})
 
     def test_removed_segment_char_keys_are_rejected(self):
         with self.assertRaises(Exception):

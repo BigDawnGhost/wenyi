@@ -14,4 +14,5 @@ Return the final result as JSON only:
 {"action":"final","conflict_id":"Supplied conflict ID","status":"suggested|unresolved",
  "recommended_value":"Suggested consistent value, or empty if unresolved",
  "reason":"Decision rationale","evidence_refs":["References actually obtained"],"complete":true}
+Set complete:true only when every required field contains its full semantic value. JSON object field order has no meaning.
 For status=suggested, recommended_value must equal one supplied proposed_value. The system derives all supporting and rejected items from that value; do not enumerate issue IDs. Use status=unresolved when evidence is insufficient.

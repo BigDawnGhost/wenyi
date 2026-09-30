@@ -82,3 +82,16 @@ def test_early_argument_error_still_creates_selected_config(tmp_path):
     result = CliRunner().invoke(create_app(), ["-c", str(config_path), "unknown-command"])
     assert result.exit_code == 2
     assert config_path.is_file()
+
+
+@pytest.mark.parametrize("scope", ["chapter", "full"])
+def test_removed_glossary_scope_reports_configuration_error(tmp_path, scope):
+    config_path = tmp_path / "retired-scope.yaml"
+    content = f"llm:\n  preset: fake\npipeline:\n  glossary_scope: {scope}\n"
+    config_path.write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(create_app(), ["-c", str(config_path), "models", "list"])
+    assert result.exit_code == 1
+    assert "Configuration error" in result.output
+    assert "glossary_scope" in result.output
+    assert "Traceback" not in result.output
+    assert config_path.read_text(encoding="utf-8") == content

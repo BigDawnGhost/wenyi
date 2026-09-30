@@ -9,4 +9,4 @@ $lang_guidance
 7. Echo segment_ref, before_hash and every issue_id exactly. Return only JSON:
 {"segment_ref":"Supplied stable segment reference","before_hash":"Supplied SHA-256 of the current translation",
  "issue_ids":["Every supplied issue ID"],"replacement":"Complete revised paragraph","complete":true}
-complete must be the last field. Do not output explanations, reasoning or additional fields.
+complete:true asserts that every required field, including the entire replacement, contains its full semantic value. JSON object field order has no meaning. Do not output explanations, reasoning or additional fields.

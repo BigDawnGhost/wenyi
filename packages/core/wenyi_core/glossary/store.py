@@ -385,7 +385,7 @@ class GlossaryStore:
     @staticmethod
     def terms_in(terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         """Filter a prefetched term list by source/alias occurrences in text.
-        Use a chapter glossary snapshot without querying the database for every batch.
+        Match evidence and local revision context without querying the database per term.
         """
         out: list[GlossaryTerm] = []
         normalized_text = _match_text(text)

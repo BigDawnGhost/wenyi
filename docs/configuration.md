@@ -244,7 +244,6 @@ pipeline:
   review_fix_max_rounds: 2
   review_clean_confirmations: 2
   review_autofix: true
-  glossary_scope: chapter
   pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
   babeldoc_timeout: 600
@@ -266,7 +265,6 @@ pipeline:
 - `review_fix_max_rounds`: maximum number of provisional Fix rounds, from `0` to `4`; this is not the total number of Review passes.
 - `review_clean_confirmations`: consecutive issue-free whole-book Review passes required after shadow fixing, from `1` to `2`; the default is `2`.
 - `review_autofix`: enabled by default. After the read-only Review engine finishes, publish its folded `changes` to a working translation, run the existing bounded Review Agent Loop once more over each remaining issue against that updated text, and pass confirmed issues to the existing Review Fixer. Pass `--no-autofix` or set this to `false` to keep Review from writing formal `target` values. The resulting complete segments replace only the formal chapter `target`; the manifest and glossary remain unchanged. Full before/after chains, issue IDs, decisions, failures, and write status are kept in the Review run's `autofix/index.json` instead of adding history fields to chapter JSON.
-- `glossary_scope`: `chapter` includes terms relevant to the current chapter; `full` includes the complete glossary.
 - `pdf_backend`: default `mineru` converts PDF via MinerU HTML. Use `babeldoc` for layout-preserving export through the external AGPL HTTP bridge. PDF state created with BabelDOC defaults to PDF output for both `translate` and `assemble`; MinerU state retains EPUB output. Explicit `--format` overrides this choice, and saved state determines the default on resume.
 - `babeldoc_bridge_url`: BabelDOC bridge base URL; default `http://127.0.0.1:8765`.
 - `babeldoc_timeout`: HTTP timeout in seconds for bridge extract and fillback.
@@ -275,8 +273,14 @@ pipeline:
 The command-line flags `--polish`, `--no-polish`, `--review`, and `--no-review`
 override the corresponding configuration values for a `translate` run.
 
-Run final review independently with `wenyi review INPUT`. Each invocation
-reviews the complete translated book from the beginning. By default, Review
+Body translation and fresh Reviewer requests always receive the full glossary; there
+is no scope selector. Remove `pipeline.glossary_scope` from existing YAML or project
+configuration: the retired key is rejected, including `full`. See [glossary policy](pipeline.md#glossary)
+for snapshot refresh, resume behavior, and the prompt-size tradeoff.
+
+Run final review independently with `wenyi review INPUT`. Matching content,
+configuration, full-glossary policy, and glossary fingerprints reuse completed results
+or resume unfinished work. Otherwise, Review starts a new run. By default, Review
 publishes folded changes after the shadow loop. Use `--no-autofix` to keep that
 invocation read-only, or `--autofix` to force publishing when the config is off.
 Autofix first applies folded Review changes, then reuses the same Agent

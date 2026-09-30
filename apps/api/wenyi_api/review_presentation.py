@@ -50,7 +50,8 @@ def review_items(storage, rid: str, result: dict, autofix: dict) -> list[dict[st
     }
     records = []
     for record in _rows(autofix.get("records")):
-        published = publications.get(record.get("record_id"))
+        record_id = record.get("record_id")
+        published = publications.get(record_id) if isinstance(record_id, str) else None
         if (
             published is not None
             and published.get("chapter") == record.get("chapter")
