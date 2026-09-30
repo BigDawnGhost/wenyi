@@ -51,8 +51,12 @@ class Analyzer(Agent):
             "rhetoric",
         ):
             data[key] = _text(data.get(key))
-        data["characters"] = self.dict_items(data.get("characters"))
-        data["terms"] = self.dict_items(data.get("terms"))
+        data["characters"] = self.dict_items(
+            data.get("characters"), operation="analysis.style", field="characters"
+        )
+        data["terms"] = self.dict_items(
+            data.get("terms"), operation="analysis.style", field="terms"
+        )
         for character in data["characters"]:
             character["gender"] = normalize_gender(_text(character.get("gender")))
         for term in data["terms"]:
@@ -62,7 +66,9 @@ class Analyzer(Agent):
     def seed_glossary(self, store: Storage | GlossaryStore, analysis: dict[str, Any]) -> int:
         """Seed analyzed characters and terms into the glossary; return the entry count."""
         count = 0
-        for ch in self.dict_items(analysis.get("characters")):
+        for ch in self.dict_items(
+            analysis.get("characters"), operation="analysis.style", field="characters"
+        ):
             source = _text(ch.get("source"))
             target = _text(ch.get("target"))
             if not source or not target:
@@ -80,7 +86,7 @@ class Analyzer(Agent):
                 chapter=0,
             )
             count += 1
-        for tm in self.dict_items(analysis.get("terms")):
+        for tm in self.dict_items(analysis.get("terms"), operation="analysis.style", field="terms"):
             source = _text(tm.get("source"))
             target = _text(tm.get("target"))
             if not source or not target:
@@ -118,7 +124,9 @@ class Analyzer(Agent):
         ):
             if analysis.get(key):
                 lines.append(f"{tag}: {analysis[key]}")
-        chars = self.dict_items(analysis.get("characters"))
+        chars = self.dict_items(
+            analysis.get("characters"), operation="analysis.style", field="characters"
+        )
         if chars:
             lines.append("Characters: ")
             for c in chars:

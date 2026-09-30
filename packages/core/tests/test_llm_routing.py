@@ -198,7 +198,7 @@ def test_all_model_call_sites_use_operations():
     literal_operations = set()
     for directory in ("agents", "pipeline", "glossary", "srt"):
         for path in (root / directory).glob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text())):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                     continue
                 if node.func.attr not in {
@@ -285,7 +285,7 @@ def test_dynamic_output_hint_respects_explicit_profile_cap(monkeypatch):
     assert client.routes["annotation.align"].max_output_tokens == 256
     assert requested == [256]
     config = Config.from_dict({"llm": {"preset": "deepseek"}})
-    assert resolve_routes(config.llm)["synopsis.chapter"].max_output_tokens == 4096
+    assert resolve_routes(config.llm)["synopsis.chapter"].max_output_tokens == 8192
     with pytest.raises(ValueError, match="Thinking mode"):
         Config.from_dict(
             {
@@ -301,6 +301,31 @@ def test_dynamic_output_hint_respects_explicit_profile_cap(monkeypatch):
                 }
             }
         )
+
+
+@pytest.mark.parametrize("thinking", [False, True])
+def test_summary_headroom_is_effective_and_explicit_profile_limits_are_respected(thinking):
+    config = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "models": {
+                    "default_fast": {
+                        "provider": "default",
+                        "model": "summary-model",
+                        "options": {"thinking": thinking},
+                    }
+                },
+            }
+        }
+    )
+    for operation in ("synopsis.chapter", "synopsis.book"):
+        assert resolve_routes(config.llm)[operation].max_output_tokens == 8192
+    raw = config.llm.model_dump()
+    raw["models"]["default_fast"]["max_output_tokens"] = 4096
+    limited = LLMConfig.model_validate(raw)
+    for operation in ("synopsis.chapter", "synopsis.book"):
+        assert resolve_routes(limited)[operation].max_output_tokens == 4096
 
 
 def test_retry_releases_permit_and_records_every_returned_usage(monkeypatch):

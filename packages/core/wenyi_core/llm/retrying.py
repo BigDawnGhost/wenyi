@@ -32,6 +32,10 @@ class EmptyResponseError(RuntimeError):
     """The model returned no usable text in standard response fields."""
 
 
+class TruncatedResponseError(RuntimeError):
+    """The provider stopped generation at its output token limit."""
+
+
 def _exception_chain(error: Any) -> Iterator[Any]:
     """Walk the exception cause chain while guarding against cycles."""
     current = error
@@ -98,11 +102,12 @@ def _retry_override(error: Any) -> bool | None:
     return None
 
 
-def retry_reason(error: Any) -> str | None:
+def retry_reason(error: Any, *, operation: str | None = None) -> str | None:
     """Return a stable transient-error reason, or None for permanent failures.
     Respect x-should-retry and retry 408/409/429/5xx. Without a status code, accept only
     explicit network, remote-protocol or timeout errors. Fail immediately for malformed
-    URLs, TLS certificates and local protocol configuration errors.
+    URLs, TLS certificates and local protocol configuration errors. Empty responses are
+    retryable; truncated responses are retryable only for summary operations.
     """
     override = _retry_override(error)
     if override is not None:
@@ -115,6 +120,9 @@ def retry_reason(error: Any) -> str | None:
         return None
 
     chain = list(_exception_chain(error))
+    if any(isinstance(item, TruncatedResponseError) for item in chain):
+        # Translation owns alignment recovery; only summary operations retry this stop here.
+        return "truncated_response" if operation in {"synopsis.chapter", "synopsis.book"} else None
     if any(isinstance(item, EmptyResponseError) for item in chain):
         return "empty_response"
 
@@ -144,9 +152,9 @@ def retry_reason(error: Any) -> str | None:
     return None
 
 
-def is_retryable_provider_error(error: Any) -> bool:
+def is_retryable_provider_error(error: Any, *, operation: str | None = None) -> bool:
     """Determine whether a provider exception qualifies for automatic retry."""
-    return retry_reason(error) is not None
+    return retry_reason(error, operation=operation) is not None
 
 
 def is_resumable_provider_interrupt(error: Any) -> bool:
@@ -222,7 +230,7 @@ class RetryReporter:
     def _error_fields(self, error: Any) -> dict[str, Any]:
         """Build safe error fields excluding request bodies, response bodies and credentials."""
         return {
-            "reason": retry_reason(error) or "not_retryable",
+            "reason": retry_reason(error, operation=self.stage) or "not_retryable",
             "error_type": type(error).__name__,
             "status_code": error_status_code(error),
             "request_id": _request_id(error),
@@ -303,7 +311,9 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None):
     return retry(
         stop=stop_after_attempt(max(1, max_retries + 1)),
         wait=wait_for_provider_retry,
-        retry=retry_if_exception(is_retryable_provider_error),
+        retry=retry_if_exception(
+            lambda error: is_retryable_provider_error(error, operation=reporter.stage)
+        ),
         before_sleep=reporter.before_sleep,
         retry_error_callback=exhausted,
         **({"sleep": sleep} if sleep is not None else {}),
@@ -313,6 +323,7 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None):
 __all__ = [
     "EmptyResponseError",
     "RetryReporter",
+    "TruncatedResponseError",
     "error_status_code",
     "is_resumable_provider_interrupt",
     "is_retryable_provider_error",

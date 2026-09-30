@@ -100,7 +100,7 @@ class GlossaryExtractor(Agent):
         )
         raw = self._ask_json(system, user, operation="glossary.extract", key="terms", default=[])
         terms: list[GlossaryTerm] = []
-        for d in self.dict_items(raw):
+        for d in self.dict_items(raw, operation="glossary.extract", field="terms"):
             source = _text(d.get("source"))
             target = _text(d.get("target"))
             if not source or not target:
@@ -190,7 +190,7 @@ class GlossaryExtractor(Agent):
         )
         resolved = {
             source: target
-            for item in self.dict_items(raw)
+            for item in self.dict_items(raw, operation="glossary.align_history", field="terms")
             if (source := _text(item.get("source"))) in occurrences
             and (target := _text(item.get("target")))
         }

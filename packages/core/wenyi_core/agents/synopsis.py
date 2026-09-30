@@ -40,10 +40,14 @@ class Synopsizer(Agent):
             if len(groups) == 1:
                 return self._synth(groups[0], analysis_brief)
             # Summarize each group first, then merge those summaries in the next round.
-            items = [self._synth(g, analysis_brief) for g in groups]
-            items = [s for s in items if s.strip()]
-            if not items:
-                return ""
+            summaries = []
+            for group in groups:
+                summary = self._synth(group, analysis_brief)
+                if not summary:
+                    # Every group is required; dropping one would hide missing chapters on resume.
+                    return ""
+                summaries.append(summary)
+            items = summaries
 
     # Internal helpers.
     @staticmethod
@@ -75,5 +79,5 @@ class Synopsizer(Agent):
             analysis=analysis_brief or "(none)",
             digests=numbered,
         )
-        # Use the fast tier with a bounded output budget for the synopsis.
+        # Shared transport retries truncation; optional synopsis failures keep an empty fallback.
         return self._ask_text(system, user, operation="synopsis.book")
