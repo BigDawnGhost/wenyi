@@ -648,7 +648,9 @@ class TestOrchestrator(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
 
             def fail_analysis(messages, tier, json_mode):
-                raise RuntimeError("temporary model failure")
+                if "pre-translation analyst" in messages[0]["content"]:
+                    raise RuntimeError("temporary model failure")
+                return routing_handler(messages, tier, json_mode)
 
             with self.assertRaisesRegex(RuntimeError, "temporary model failure"):
                 Orchestrator(cfg, client=FakeClient(handler=fail_analysis)).prepare(txt)
@@ -891,26 +893,20 @@ class TestSegmentLevelResume(unittest.TestCase):
             store._batch_glossary_event_cache = None
             self.assertNotIn(first_key, store.completed_batch_glossary_keys(0))
 
-            snapshot_calls = {"n": 0}
             extract_batch_calls = {"n": 0}
-            orch = Orchestrator(cfg, client=FakeClient(handler=self._tr_handler("R2")))
-            real_snapshot = orch._translation.chapter_term_snapshot
+            orch = Orchestrator(
+                cfg, client=FakeClient(handler=self._tr_handler("R2")), storage=store
+            )
             real_extract = orch._translation.extract_batch_glossary
-
-            def counting_snapshot(glossary, text_segs):
-                snapshot_calls["n"] += 1
-                return real_snapshot(glossary, text_segs)
 
             def counting_extract(*args, **kwargs):
                 extract_batch_calls["n"] += 1
                 return real_extract(*args, **kwargs)
 
             with (
-                patch.object(
-                    orch._translation,
-                    "chapter_term_snapshot",
-                    side_effect=counting_snapshot,
-                ),
+                patch.object(store, "all_terms", wraps=store.all_terms) as snapshots,
+                # Isolate translation snapshot reads from extraction's own glossary reads.
+                patch.object(orch._runtime.extractor, "extract_and_store", return_value={}),
                 patch.object(
                     orch._translation,
                     "extract_batch_glossary",
@@ -922,7 +918,7 @@ class TestSegmentLevelResume(unittest.TestCase):
             # Extract once for the missing checkpoint and once after the final translation; chapter fallback is separate.
             self.assertEqual(extract_batch_calls["n"], 2)
             # Read at chapter start and refresh once before real translation; checkpointed skips do not refresh.
-            self.assertEqual(snapshot_calls["n"], 2)
+            self.assertEqual(snapshots.call_count, 2)
             resumed = store.load_chapter(0).text_segments
             self.assertTrue((resumed[-1].target or "").startswith("R2"))
             self.assertTrue(
@@ -975,7 +971,9 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = MeteredFakeClient(handler=failing_digest)
             orch = Orchestrator(cfg, client=client)
+            cfg.pipeline.book_understanding = False
             store = require_file_storage(orch.prepare(txt))
+            cfg.pipeline.book_understanding = True
             with self.assertRaisesRegex(ValueError, "Chapter digests.*1"):
                 orch.run(txt)
             self.assertTrue(store.load_chapter(0).meta["source_digest"])
@@ -2894,14 +2892,13 @@ class TestStyleAnalysis(unittest.TestCase):
         self.assertNotIn("Pacing:", sparse)
 
 
-class TestGlossaryScope(unittest.TestCase):
-    def _run_with_terms(self, d, scope):
+class TestFullGlossary(unittest.TestCase):
+    def _run_with_terms(self, d):
         from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 
         txt = os.path.join(d, "novel.txt")
         write_sample_txt(txt)
         cfg = _config(os.path.join(d, "state"))
-        cfg.pipeline.glossary_scope = scope
 
         orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
         store = require_file_storage(orch.prepare(txt))
@@ -2922,19 +2919,9 @@ class TestGlossaryScope(unittest.TestCase):
             if "literary translator" in c["messages"][0]["content"]
         ]
 
-    def test_chapter_scope_prunes(self):
-        """Chapter scope excludes absent entries and retains alias matches."""
+    def test_every_translation_batch_keeps_absent_terms_and_aliases(self):
         with tempfile.TemporaryDirectory() as d:
-            translate_prompts = self._run_with_terms(d, "chapter")
-            self.assertTrue(translate_prompts)
-            for p in translate_prompts:
-                self.assertNotIn("外部人物X", p)  # Absent from this chapter; exclude it.
-                self.assertNotIn("無関係用語", p)  # Absent from this chapter; exclude it.
-                self.assertIn("ホリキタ", p)  # Its alias occurs in body text; retain it.
-
-    def test_full_scope_keeps_all(self):
-        with tempfile.TemporaryDirectory() as d:
-            translate_prompts = self._run_with_terms(d, "full")
+            translate_prompts = self._run_with_terms(d)
             self.assertTrue(translate_prompts)
             for p in translate_prompts:
                 self.assertIn("外部人物X", p)
@@ -3167,8 +3154,8 @@ class TestProgressLabels(unittest.TestCase):
             labels = [label for _, _, label in events]
             expected = [
                 "Parsing document…",
-                "Analyzing book style…",
                 "Prescanning chapter digests",
+                "Analyzing book style…",
                 "Generating whole-book synopsis…",
                 "Translating chapter titles…",
                 "Translation complete",

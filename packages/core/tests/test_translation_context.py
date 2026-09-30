@@ -7,6 +7,7 @@ import pytest
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -276,3 +277,71 @@ def test_resume_after_target_save_completes_glossary_without_retranslation(
     assert store.load_chapter(0).text_segments[0] == saved
     assert store.completed_batch_glossary_keys(0)
     assert not [c for c in client.calls if c["operation"] in {"translation.body", "polish.body"}]
+
+
+@pytest.mark.parametrize("checkpoint_saved", [False, True])
+@pytest.mark.parametrize("polish", [False, True])
+def test_resume_refreshes_full_glossary_before_pending_batches(
+    tmp_path, config, monkeypatch, checkpoint_saved, polish
+):
+    """Keep saved targets and refresh the full glossary after recovering extraction."""
+    config.pipeline.polish = polish
+    source = tmp_path / "book.txt"
+    source.write_text(
+        "Alice waited by the window.\n\nThe door opened slowly.\n\nA letter arrived later.",
+        encoding="utf-8",
+    )
+
+    def handler(messages, tier, json_mode):
+        system = messages[0]["content"]
+        user = messages[-1]["content"]
+        if "terminology" in system and "extractor" in system:
+            terms = [{"source": "Alice", "target": "爱丽丝", "type": "person"}]
+            return json.dumps({"terms": terms if "Alice" in user else []}, ensure_ascii=False)
+        return routing_handler(messages, tier, json_mode)
+
+    first = Orchestrator(config, client=FakeClient(handler=handler))
+    store = first.prepare(str(source))
+    # Append in a deliberately nonalphabetical order; neither source occurs in the book.
+    store.upsert_term(GlossaryTerm(source="Zebra", target="斑马"))
+    store.upsert_term(GlossaryTerm(source="Apple", target="苹果"))
+    extract = first._translation.extract_batch_glossary
+
+    def interrupt(*args, **kwargs):
+        if checkpoint_saved:
+            extract(*args, **kwargs)
+        raise KeyboardInterrupt("after saving the first target")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(first._translation, "extract_batch_glossary", interrupt)
+        with pytest.raises(KeyboardInterrupt, match="first target"):
+            first.run(str(source))
+    saved = store.load_chapter(0).text_segments[0]
+    assert saved.target is not None
+    assert bool(store.completed_batch_glossary_keys(0)) == checkpoint_saved
+    store.upsert_term(GlossaryTerm(source="Outside", target="外部术语"))
+
+    client = FakeClient(handler=handler)
+    resumed = Orchestrator(config, client=client)
+    extracted_positions = []
+    real_extract = resumed._translation.extract_batch_glossary
+
+    def record_extraction(*args, **kwargs):
+        extracted_positions.append(args[3])
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(resumed._translation, "extract_batch_glossary", record_extraction)
+    resumed.run(str(source))
+    assert extracted_positions == ([1, 2] if checkpoint_saved else [0, 1, 2])
+    assert store.load_chapter(0).text_segments[0] == saved
+    calls = [call for call in client.calls if call["operation"] == "translation.body"]
+    assert len(calls) == 2
+    for call in calls:
+        user = call["messages"][-1]["content"]
+        assert "Alice → 爱丽丝" in user
+        assert "Outside → 外部术语" in user
+        assert user.index("Zebra → 斑马") < user.index("Apple → 苹果")
+        assert "Alice waited by the window." not in _numbered_sources(user)
+    cached_client = FakeClient(handler=handler)
+    Orchestrator(config, client=cached_client).run(str(source))
+    assert cached_client.calls == []

@@ -34,6 +34,7 @@ segment:
 
 # ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
+  # Body translation and Reviewer requests always use the full glossary.
   review: true # Run final review after whole-book translation; disable with --no-review
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
@@ -51,7 +52,6 @@ pipeline:
   review_fix_max_rounds: 2 # At most two replacement rounds; consecutive clean confirmations also affect total review rounds
   review_clean_confirmations: 2 # Require two consecutive clean rounds to accept the shadow translation
   review_autofix: true # Publish review revisions to formal chapters; use --no-autofix for recommendations only
-  glossary_scope: chapter # chapter=terms relevant to this chapter; full=entire glossary
   # PDF backend: mineru (default, supports scans) | babeldoc (optional, preserves layout via external AGPL HTTP bridge)
   pdf_backend: mineru
   babeldoc_bridge_url: http://127.0.0.1:8765
@@ -134,9 +134,6 @@ class PipelineConfig(BaseModel):
     review_fix_max_rounds: int = Field(default=2, ge=0, le=4)
     review_clean_confirmations: int = Field(default=2, ge=1, le=2)
     review_autofix: bool = True  # Publish formal translations through a separate stage after review
-    glossary_scope: str = (
-        "chapter"  # chapter=terms occurring in this chapter (saves tokens); full=entire glossary
-    )
     # PDF: mineru=HTML path for scans (default); babeldoc=external AGPL HTTP bridge (no imports)
     pdf_backend: Literal["mineru", "babeldoc"] = "mineru"
     babeldoc_bridge_url: str = "http://127.0.0.1:8765"
