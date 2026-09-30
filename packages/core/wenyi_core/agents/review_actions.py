@@ -264,8 +264,25 @@ class ReviewActionLoop:
                     and isinstance(cached_turn.get("parsed"), dict)
                 ):
                     data = cached_turn["parsed"]
+                    try:
+                        parsed = parse_json_result(raw)
+                    except ValueError as error:
+                        raise ReviewLoopProtocolError("malformed_json") from error
+                    if json.dumps(
+                        parsed.value,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ) != json.dumps(
+                        data,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ):
+                        raise ReviewLoopProtocolError("unsafe_json_repair")
                     turn["parsed"] = data
-                    turn["json_repaired"] = bool(cached_turn.get("json_repaired"))
+                    turn["json_repaired"] = parsed.repaired
+                    turn["json_repair_kind"] = parsed.repair_kind
                 else:
                     try:
                         parsed = parse_json_result(raw)
@@ -274,11 +291,12 @@ class ReviewActionLoop:
                     data = parsed.value
                     turn["parsed"] = data
                     turn["json_repaired"] = parsed.repaired
+                    turn["json_repair_kind"] = parsed.repair_kind
                 self.trace.save(agent_id, trace)
+                if not parsed.safe_for_complete_payload:
+                    raise ReviewLoopProtocolError("unsafe_json_repair")
                 if not isinstance(data, dict):
                     raise ReviewLoopProtocolError("response_not_object")
-                if not data or list(data)[-1] != "complete":
-                    raise ReviewLoopProtocolError("completion_marker_not_last")
 
                 action = data.get("action")
                 if action == "final":
