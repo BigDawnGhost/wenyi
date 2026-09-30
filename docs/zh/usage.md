@@ -284,7 +284,7 @@ uv run wenyi translate book.epub --bilingual
 uv run wenyi translate book.epub --no-mono --bilingual
 ```
 
-`prepare` 会解析书籍、识别语言、生成风格指南和初始术语表，并完成配置中启用的全书预扫，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
+`prepare` 会解析书籍、识别语言、在启用时生成逐章梗概，再生成风格指南和初始术语表，最后在启用时生成全书概览，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 
 ## 中断与续跑
 

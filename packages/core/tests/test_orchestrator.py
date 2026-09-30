@@ -3086,8 +3086,8 @@ class TestProgressLabels(unittest.TestCase):
             labels = [label for _, _, label in events]
             expected = [
                 "Parsing document…",
-                "Analyzing book style…",
                 "Prescanning chapter digests",
+                "Analyzing book style…",
                 "Generating whole-book synopsis…",
                 "Translating chapter titles…",
                 "Translation complete",

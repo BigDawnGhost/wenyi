@@ -6,8 +6,119 @@ import os
 import tempfile
 import unittest
 
+import pytest
+from wenyi_core.config import Config
 from wenyi_core.i18n.languages import normalize_language
+from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.preparation import PreparationService
+from wenyi_core.storage.file import FileStorage
+
+from tests.fake_llm import routing_handler
+from tests.sample_data import write_sample_txt
+
+
+def _preparation_inputs(tmp_path, book_understanding=True):
+    source = tmp_path / "book.txt"
+    write_sample_txt(str(source))
+    config = Config.from_dict(
+        {
+            "language": {"source": "ja", "target": "zh"},
+            "llm": {"preset": "fake"},
+            "pipeline": {
+                "book_understanding": book_understanding,
+                "prescan_concurrency": 2,
+                "review": False,
+                "polish": False,
+            },
+            "paths": {"state_dir": str(tmp_path / "state")},
+        }
+    )
+    return source, config, FileStorage(str(tmp_path / "run"))
+
+
+@pytest.mark.parametrize("entry_point", ["prepare", "prepare_for_translation", "run"])
+@pytest.mark.parametrize("book_understanding", [False, True])
+def test_chapter_prescan_finishes_before_style_analysis(tmp_path, entry_point, book_understanding):
+    source, config, store = _preparation_inputs(tmp_path, book_understanding)
+    digest = "DIGEST-ONLY-CONTENT"
+
+    def handler(messages, tier, json_mode):
+        system = messages[0]["content"]
+        if "chapter digest writer" in system:
+            return digest
+        if "pre-translation analyst" in system:
+            assert not store.exists(), "The initialization manifest must commit last"
+            chapter = store.load_chapter(0)
+            assert bool(chapter.meta.get("source_digest")) == book_understanding
+            assert digest not in messages[-1]["content"], (
+                "Style analysis still reads source samples"
+            )
+        return routing_handler(messages, tier, json_mode)
+
+    client = FakeClient(handler=handler)
+    getattr(Orchestrator(config, client=client, storage=store), entry_point)(str(source))
+    operations = [call["operation"] for call in client.calls]
+    style_position = operations.index("analysis.style")
+    chapter_calls = [i for i, operation in enumerate(operations) if operation == "synopsis.chapter"]
+    if book_understanding:
+        assert len(chapter_calls) == len(store.load_manifest()["chapters"])
+        assert max(chapter_calls) < style_position
+        if entry_point != "prepare":
+            assert style_position < operations.index("synopsis.book")
+    else:
+        assert chapter_calls == []
+        assert "synopsis.book" not in operations
+    assert store.exists()
+
+
+def test_synopsis_interrupt_resumes_without_repeating_prescan_or_style(tmp_path):
+    source, config, store = _preparation_inputs(tmp_path)
+
+    def handler(messages, tier, json_mode):
+        if "whole-book synopsis writer" in messages[0]["content"]:
+            raise KeyboardInterrupt("during book synopsis")
+        return routing_handler(messages, tier, json_mode)
+
+    with pytest.raises(KeyboardInterrupt, match="book synopsis"):
+        Orchestrator(
+            config, client=FakeClient(handler=handler), storage=store
+        ).prepare_for_translation(str(source))
+    assert store.exists()
+    analysis = store.load_analysis()
+    chapters = [store.load_chapter(row["index"]) for row in store.load_manifest()["chapters"]]
+    assert all(chapter.meta.get("source_digest") for chapter in chapters)
+
+    client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=client, storage=store).prepare_for_translation(str(source))
+    assert [call["operation"] for call in client.calls] == ["synopsis.book"]
+    assert store.load_analysis() == {
+        **(analysis or {}),
+        "book_synopsis": "全书概览：主线与人物关系，整体基调。",
+    }
+    assert [store.load_chapter(chapter.index) for chapter in chapters] == chapters
+
+
+def test_style_failure_after_prescan_keeps_initialization_uncommitted(tmp_path):
+    source, config, store = _preparation_inputs(tmp_path)
+
+    def handler(messages, tier, json_mode):
+        if "pre-translation analyst" in messages[0]["content"]:
+            assert store.load_chapter(0).meta.get("source_digest")
+            raise RuntimeError("style analysis failed")
+        return routing_handler(messages, tier, json_mode)
+
+    with pytest.raises(RuntimeError, match="style analysis failed"):
+        Orchestrator(config, client=FakeClient(handler=handler), storage=store).prepare(str(source))
+    assert not store.exists()
+    assert store.load_analysis() is None
+
+    client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=client, storage=store).prepare_for_translation(str(source))
+    operations = [call["operation"] for call in client.calls]
+    assert operations.count("synopsis.chapter") == len(store.load_manifest()["chapters"])
+    assert operations.index("synopsis.chapter") < operations.index("analysis.style")
+    assert store.exists()
 
 
 class TestSampleText(unittest.TestCase):

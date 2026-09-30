@@ -7,9 +7,10 @@ Wenyi first builds a whole-book understanding and then translates chapters in or
 ```mermaid
 flowchart TD
     A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Analyze style and seed the glossary]
-    C --> D[Optional parallel prescan<br/>Chapter digests and book synopsis]
-    D --> E
+    B --> C[Optional parallel chapter prescan<br/>Generate chapter digests]
+    C --> D[Analyze style and seed the glossary]
+    D --> DS[Optional whole-book synopsis]
+    DS --> E
 
     subgraph T[Translate chapter by chapter]
         E[Inject context and translate a batch]
@@ -34,7 +35,7 @@ flowchart TD
     X --> M[Generate the report and assemble the selected output]
 ```
 
-When enabled, the prescan runs in parallel with configurable concurrency and is idempotent — completed digests are reused across runs. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
+When `book_understanding` is enabled, chapter digests are generated in parallel before style analysis; the whole-book synopsis follows style analysis. Style analysis still reads the existing source samples. The initialization manifest commits last, after chapter digests and style analysis: initialized runs reuse saved results, while interrupted initialization rebuilds staged state on retry. Disabling `book_understanding` skips both chapter digests and the book synopsis. During translation, each batch receives the most recent glossary snapshot and translated context, keeping pronouns, terms, and tone consistent across chapters.
 The Review Fixer receives the same style brief, book synopsis, chapter digest,
 relevant glossary subset, and nearby source/translation context used to preserve
 the book's voice. Its normal Review-loop replacements remain temporary; the

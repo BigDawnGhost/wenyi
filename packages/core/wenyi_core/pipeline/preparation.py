@@ -1,9 +1,8 @@
-"""Preparation: state lookup, parsing, language detection, initialization, analysis and
-prescan.
+"""Preparation: state lookup, parsing, language detection, chapter prescan and style analysis.
 Own PDF conversion caches, source hashes, sample selection, initial glossary and rolling
 context. Initialize derived chapters/analysis/glossary/context first, atomically commit the
-initialized manifest last, then finish initialization. Build chapter digests and the book
-synopsis as configured. Share pure language normalization with Runtime through top-level i18n.
+initialized manifest last, then finish initialization. Build the book synopsis afterward as
+configured. Share pure language normalization with Runtime through top-level i18n.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from ..i18n.languages import normalize_language
 from ..i18n.prompts import render
 from ..i18n.resources import prompt_fingerprint
 from ..ingest.epub_reader import peek_epub_title
-from ..ingest.models import Document
+from ..ingest.models import Chapter, Document
 from ..ingest.segmenter import load_document
 from ..storage.protocol import Storage
 from .context import RollingContext
@@ -255,6 +254,8 @@ class PreparationService:
             doc,
             source_hash=source_hash,
         )
+        if self._runtime.config.pipeline.book_understanding:
+            self._ensure_chapter_digests(store, doc.chapters, progress)
         glossary = store
         if progress:
             progress(0, 0, "Analyzing book style…")
@@ -373,11 +374,33 @@ class PreparationService:
         manifest = store.load_manifest()
         chapters = manifest.get("chapters", [])
 
+        loaded = [store.load_chapter(row.get("index", i)) for i, row in enumerate(chapters)]
+        digests = self._ensure_chapter_digests(store, loaded, progress)
+
+        analysis = store.load_analysis() or {}
+        synopsis = analysis.get("book_synopsis", "")
+        if not synopsis and any(d.strip() for d in digests):
+            if progress:
+                progress(0, 0, "Generating whole-book synopsis…")
+            synopsis = self._runtime.synopsizer.book_synopsis(
+                digests,
+                self._runtime.analyzer.style_brief(analysis),
+            )
+            analysis["book_synopsis"] = synopsis
+            store.save_analysis(analysis)
+            store.log_event("book_synopsis_saved", synopsis=synopsis)
+        return synopsis
+
+    def _ensure_chapter_digests(
+        self,
+        store: Storage,
+        chapters: list[Chapter],
+        progress: ProgressFn | None,
+    ) -> list[str]:
+        """Prescan staged or initialized chapters and return digests in source order."""
         # Digest chapters independently in a thread pool, but persist all results on the main thread
         # to avoid competing atomic writes and preserve incremental chapter-level resume. Skip saved digests.
-        loaded = {
-            c.get("index", i): store.load_chapter(c.get("index", i)) for i, c in enumerate(chapters)
-        }
+        loaded = {chapter.index: chapter for chapter in chapters}
         todo = [
             (ci, "\n".join(s.source for s in ch.text_segments))
             for ci, ch in loaded.items()
@@ -411,21 +434,4 @@ class PreparationService:
                         progress(n_done, len(todo), "Prescanning chapter digests")
 
         # Assemble in manifest chapter order, independent of worker completion order.
-        digests = [
-            loaded[c.get("index", i)].meta.get("source_digest", "") or ""
-            for i, c in enumerate(chapters)
-        ]
-
-        analysis = store.load_analysis() or {}
-        synopsis = analysis.get("book_synopsis", "")
-        if not synopsis and any(d.strip() for d in digests):
-            if progress:
-                progress(0, 0, "Generating whole-book synopsis…")
-            synopsis = self._runtime.synopsizer.book_synopsis(
-                digests,
-                self._runtime.analyzer.style_brief(analysis),
-            )
-            analysis["book_synopsis"] = synopsis
-            store.save_analysis(analysis)
-            store.log_event("book_synopsis_saved", synopsis=synopsis)
-        return synopsis
+        return [chapter.meta.get("source_digest", "") or "" for chapter in chapters]
