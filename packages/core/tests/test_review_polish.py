@@ -172,11 +172,7 @@ class TestReviewer(unittest.TestCase):
 
     def test_reviewer_rejects_truncated_issues_after_completion_marker(self):
         reviewer = Reviewer(
-            FakeClient(
-                handler=lambda m, t, j: (
-                    '{"reviewed_segments":1,"complete":true,"issues":['
-                )
-            ),
+            FakeClient(handler=lambda m, t, j: '{"reviewed_segments":1,"complete":true,"issues":['),
             _cfg(),
         )
 
