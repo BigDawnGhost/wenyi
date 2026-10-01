@@ -10,8 +10,6 @@ from typing import Any, Literal
 
 from ..config import Config
 from ..glossary.store import GlossaryTerm
-from ..i18n import languages
-from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from . import prompts
@@ -128,6 +126,8 @@ def _glossary_text(
 class ReviewFixer(Agent):
     """Generate strictly validated complete-paragraph patches that cannot publish themselves."""
 
+    policy_phase = "review"
+
     def __init__(self, client: LLMClient, config: Config, *, operation: str = "review.fix"):
         super().__init__(client, config)
         self.operation = operation
@@ -227,17 +227,12 @@ class ReviewFixer(Agent):
 
         issue_ids, issue_payload = self._issues(issues, chapter=chapter, index=index)
         before_hash = self.target_hash(current_target)
-        system = render(
+        system = self.render(
             "review_fixer_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=languages.translate_guidance(
-                self.src,
-                self.config.honorific_strategy,
-                self.tgt,
-            ),
         )
-        user = render(
+        user = self.render(
             "review_fixer_user",
             src=self.src,
             tgt=self.tgt,

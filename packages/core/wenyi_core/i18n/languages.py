@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from .resources import read_json
 
 
@@ -29,15 +31,34 @@ def require_language(code: str, *, allow_auto: bool = False) -> str:
     return language
 
 
-def profile(code: str) -> dict[str, str]:
+def profile(code: str) -> dict[str, Any]:
+    """Resolve ancestors before children, replacing each operation binding in full."""
     language = require_language(code)
+    return _profile(language, ())
+
+
+def _profile(language: str, ancestors: tuple[str, ...]) -> dict[str, Any]:
+    if language in ancestors:
+        raise ValueError(
+            "Language profile inheritance cycle: " + " -> ".join((*ancestors, language))
+        )
     data = read_json(f"languages/{language}.json")
+    if "extends" in data and (not isinstance(data["extends"], str) or not data["extends"].strip()):
+        raise ValueError(f"Invalid parent in language profile {language}")
     parent = data.pop("extends", None)
-    if parent:
-        base = read_json(f"languages/{parent}.json")
-        base.update(data)
-        data = base
-    return data
+    base = _profile(require_language(parent), (*ancestors, language)) if parent else {}
+    policy = data.pop("policy", {})
+    from .policy.models import ProfilePolicy
+
+    policy = ProfilePolicy.model_validate(policy).model_dump(exclude_unset=True)
+    inherited = base.pop("policy", {})
+    origins = base.pop("_policy_origins", {})
+    for key, value in policy.items():
+        if not isinstance(value, dict) or any(item is None for item in value.values()):
+            raise ValueError(f"Invalid {key} policy in language profile {language}")
+        inherited[key] = {**inherited.get(key, {}), **value}
+        origins[key] = {**origins.get(key, {}), **{operation: language for operation in value}}
+    return {**base, **data, "policy": inherited, "_policy_origins": origins}
 
 
 def label(code: str) -> str:

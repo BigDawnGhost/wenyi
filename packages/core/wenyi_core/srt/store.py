@@ -14,8 +14,10 @@ from datetime import datetime
 from typing import Any
 
 from ..i18n.languages import validate_run_languages
+from ..i18n.policy.models import PolicyPlan
 from ..pipeline.runstore import source_sha256, translation_run_dir
 from ..storage.artifacts import FileArtifacts
+from ..storage.language_policies import persist_plan, verify_plan_artifact
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -31,6 +33,7 @@ class SrtRunStore:
         self.batches_dir = os.path.join(run_dir, "batches")
         self._storage = storage
         self._artifacts = storage or FileArtifacts(run_dir)
+        self.language_policy_fingerprint = ""
         if storage is None:
             os.makedirs(self.batches_dir, exist_ok=True)
 
@@ -40,6 +43,12 @@ class SrtRunStore:
 
     def load_manifest(self) -> dict[str, Any]:
         return self._read_json(self.manifest_path)
+
+    def read_artifact(self, key: str) -> Any | None:
+        return self._artifacts.read_artifact(key)
+
+    def write_artifact(self, key: str, value: Any) -> None:
+        self._artifacts.write_artifact(key, value)
 
     @classmethod
     def for_source(cls, state_dir: str, source_path: str, target_lang: str = "zh") -> "SrtRunStore":
@@ -114,17 +123,28 @@ class SrtRunStore:
         batch_size: int = 20,
         overlap_size: int = 10,
         max_concurrent: int = 100,
+        plan: PolicyPlan | None = None,
     ) -> dict[str, Any]:
         """Initialize or validate source identity, then return the manifest."""
         digest = source_sha256(source_path)
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         manifest = self.load_manifest()
+        reference = f"language-policies/{plan.fingerprint}.json" if plan is not None else ""
         if manifest:
             validate_run_languages(manifest, source_lang, target_lang)
             if manifest.get("source_sha256") != digest:
                 raise ValueError(
                     "Subtitle source does not match existing state; use a separate state directory."
                 )
+            if plan is not None:
+                if manifest.get("language_policy") != reference:
+                    manifest["language_policy"] = reference
+                    persist_plan(self, plan)
+                    self._write_json(self.manifest_path, manifest)
+                else:
+                    verify_plan_artifact(self, reference)
+                    persist_plan(self, plan)
+                self.language_policy_fingerprint = plan.fingerprint
             return manifest
         stem = os.path.splitext(os.path.basename(source_path))[0]
         manifest = {
@@ -143,6 +163,9 @@ class SrtRunStore:
             "created_at": now,
             "updated_at": now,
         }
+        if plan is not None:
+            manifest["language_policy"] = persist_plan(self, plan)
+            self.language_policy_fingerprint = plan.fingerprint
         self._write_json(self.manifest_path, manifest)
         return manifest
 
@@ -246,6 +269,11 @@ class SrtRunStore:
     def load_batch(self, batch_start: int) -> dict[str, str] | None:
         path = self.batch_path(batch_start)
         data = self._read_json(path)
+        if (
+            self.language_policy_fingerprint
+            and data.get("language_policy") != self.language_policy_fingerprint
+        ):
+            return None
         raw = data.get("translations")
         if not isinstance(raw, dict):
             return None
@@ -254,7 +282,11 @@ class SrtRunStore:
     def save_batch(self, batch_start: int, translations: dict[str, str]) -> None:
         self._write_json(
             self.batch_path(batch_start),
-            {"batch_start": batch_start, "translations": translations},
+            {
+                "batch_start": batch_start,
+                "translations": translations,
+                "language_policy": self.language_policy_fingerprint,
+            },
         )
 
     def save_usage(self, data: dict[str, Any]) -> None:

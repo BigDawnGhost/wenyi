@@ -6,6 +6,8 @@ from bs4 import BeautifulSoup
 from bs4.element import Comment, Tag
 
 from wenyi_core.assemble.writer_common import _bilingual_source
+from wenyi_core.i18n.policy.models import PolicyContext
+from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.ingest.models import KIND_HEADING
 from wenyi_core.markup.anchors import resolve_epub_href
 from wenyi_core.markup.contracts import (
@@ -46,6 +48,7 @@ def _bilingual_source_markup(
     *,
     resource_href: str,
     source_link_targets: dict[tuple[str, str], str],
+    preserve_source_ruby: bool | None = None,
 ) -> str:
     """Preserve annotation links and Japanese ruby in bilingual source text.
     Source links already have accurate positions in the original EPUB, so target placements
@@ -53,8 +56,13 @@ def _bilingual_source_markup(
     tags to clean text. Remove cloned id/name attributes to avoid duplicate anchors on the
     target side.
     """
-    normalized_lang = source_lang.strip().replace("_", "-").lower()
-    keep_ruby = normalized_lang == "ja" or normalized_lang.startswith("ja-")
+    keep_ruby = (
+        preserve_source_ruby
+        if preserve_source_ruby is not None
+        else resolve_policy(
+            PolicyContext(source_lang or "auto", "en", phase="export", format="epub")
+        ).export.preserve_source_ruby
+    )
     has_annotation = (
         element.has_attr(ANNOTATION_ID_ATTR)
         or element.find(True, attrs={ANNOTATION_ID_ATTR: True}) is not None

@@ -1,7 +1,7 @@
 """Offline regressions for complete, resumable book-understanding results."""
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 from wenyi_core.agents.synopsis import Synopsizer
@@ -157,7 +157,10 @@ def test_legacy_truncated_digest_and_unverified_synopsis_are_regenerated(tmp_pat
     store.save_chapter(chapter)
     store.save_analysis({"style_guide": "Restrained.", "book_synopsis": "Legacy synopsis."})
     assert service.ensure_understanding(store) == "Whole-book synopsis."
-    runtime.synopsizer.digest_chapter.assert_called_once_with("Opening.")
+    assert runtime.synopsizer.digest_chapter.call_count == 2
+    runtime.synopsizer.digest_chapter.assert_has_calls(
+        [call("Opening."), call("Ending.")], any_order=True
+    )
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Chapter digest.", "Legacy complete digest."], "Restrained."
+        ["Chapter digest.", "Chapter digest."], "Restrained."
     )

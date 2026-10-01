@@ -60,6 +60,7 @@ def _render_epub_resources(
     order: str,
     preserve_source_style: bool,
     source_lang: str,
+    preserve_source_ruby: bool | None = None,
 ) -> dict[str, str]:
     """Rebuild stable templates from the original EPUB and render each physical XHTML once.
     State stores only segments and resource_href; the original EPUB remains authoritative
@@ -184,6 +185,7 @@ def _render_epub_resources(
             order=order,
             preserve_source_style=preserve_source_style,
             source_lang=source_lang,
+            preserve_source_ruby=preserve_source_ruby,
             resource_href=href,
             source_ids_by_anchor=source_ids_by_resource.get(href),
             source_link_targets=source_link_targets,

@@ -12,13 +12,15 @@ from typing import Any
 from ..assemble.srt_writer import default_srt_out_paths, write_srt_outputs
 from ..config import Config
 from ..i18n.languages import require_language
+from ..i18n.policy.models import PolicyPlan
 from ..i18n.prompts import render
-from ..i18n.resources import prompt_fingerprint
 from ..ingest.srt_reader import parse_srt
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
+from ..storage.language_policies import persist_plan
 from ..timing import RunTimer
+from .policy import export_plan
 from .store import STATUS_DONE, SrtRunStore
 
 ProgressFn = Callable[[int, int, str], None]
@@ -54,11 +56,13 @@ def _translate_batch(
     *,
     target_language: str,
     source_language: str = "auto",
+    plan: PolicyPlan | None = None,
 ) -> dict[str, str] | None:
     indices = sorted(int(key) for key in batch)
     start_idx, end_idx = indices[0], indices[-1]
     user = render(
         "srt_batch_user",
+        plan=plan,
         src=source_language,
         tgt=target_language,
         start_idx=start_idx,
@@ -68,7 +72,9 @@ def _translate_batch(
     messages = [
         {
             "role": "system",
-            "content": render("srt_batch_system", src=source_language, tgt=target_language),
+            "content": render(
+                "srt_batch_system", src=source_language, tgt=target_language, plan=plan
+            ),
         },
         {"role": "user", "content": user},
     ]
@@ -88,19 +94,30 @@ def _translate_batch(
 
 
 def _translate_single(
-    client: LLMClient, text: str, *, target_language: str, source_language: str = "auto"
+    client: LLMClient,
+    text: str,
+    *,
+    target_language: str,
+    source_language: str = "auto",
+    plan: PolicyPlan | None = None,
 ) -> str:
     if not text.strip():
         return ""
     messages = [
         {
             "role": "system",
-            "content": render("srt_single_system", src=source_language, tgt=target_language),
+            "content": render(
+                "srt_single_system", src=source_language, tgt=target_language, plan=plan
+            ),
         },
         {
             "role": "user",
             "content": render(
-                "srt_single_user", src=source_language, tgt=target_language, source=repr(text)
+                "srt_single_user",
+                src=source_language,
+                tgt=target_language,
+                source=repr(text),
+                plan=plan,
             ),
         },
     ]
@@ -213,6 +230,8 @@ def _translate_srt_impl(
     with RunTimer("srt.translate") as timer:
         source_language = require_language(config.source_lang, allow_auto=True)
         target_language = require_language(config.target_lang)
+        plan = config.language_policy("translation", path="srt")
+        config.language_policy("export", path="srt", format="srt")
         if source_language == target_language:
             raise ValueError(
                 f"Source and target languages are identical ({target_language}); no translation is needed."
@@ -236,6 +255,7 @@ def _translate_srt_impl(
             batch_size=BATCH_SIZE,
             overlap_size=OVERLAP_SIZE,
             max_concurrent=MAX_CONCURRENT,
+            plan=plan,
         )
         timer.store = store
         cue_rows = store.ensure_cues([(c.index, c.timestamp, c.text) for c in cues])
@@ -257,7 +277,7 @@ def _translate_srt_impl(
             source_path=os.path.abspath(source_path),
             cue_count=len(cues),
             run_dir=store.run_dir,
-            prompt_fingerprint=prompt_fingerprint(),
+            language_policy=plan.fingerprint,
             inference=inference_snapshot(config.llm, ("srt.translate",)),
         )
 
@@ -311,7 +331,11 @@ def _translate_srt_impl(
         ) -> tuple[int, dict[str, str] | None, bool, bool]:
             start, batch, is_first, is_last = job
             result = _translate_batch(
-                llm, batch, target_language=target_language, source_language=source_language
+                llm,
+                batch,
+                target_language=target_language,
+                source_language=source_language,
+                plan=plan,
             )
             return start, result, is_first, is_last
 
@@ -362,6 +386,7 @@ def _translate_srt_impl(
                         source_map[key],
                         target_language=target_language,
                         source_language=source_language,
+                        plan=plan,
                     ): key
                     for key in missing
                 }
@@ -390,6 +415,11 @@ def _translate_srt_impl(
             bilingual=write_bilingual,
             target_lang=target_language,
         )
+        manifest = store.load_manifest()
+        for bilingual in ([False] if mono_path else []) + ([True] if bilingual_path else []):
+            persist_plan(
+                store, export_plan(config, manifest, cues, final_translations, bilingual=bilingual)
+            )
         outputs = write_srt_outputs(
             cues,
             final_translations,
