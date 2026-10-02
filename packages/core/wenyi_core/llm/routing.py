@@ -72,10 +72,10 @@ def model_route(
     options = provider.validate_model(model)
     if output_hint is not None and output_hint <= 0:
         raise ValueError("max_tokens must be positive")
-    limit = adapter.output_limit(
+    limit = provider.output_limit(
         options, output_hint or spec.output_tokens, model.max_output_tokens
     )
-    endpoint = connection.base_url or adapter.default_base_url
+    endpoint = provider.endpoint(connection)
     connection_options = adapter.connection_options.model_validate(connection.model_extra or {})
     physical_provider = {
         "kind": connection.kind,

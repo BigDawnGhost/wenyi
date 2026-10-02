@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from pydantic import ValidationError
-from wenyi_core.config import Config
+from wenyi_core.config import _DEFAULT_CONFIG_YAML, Config, replace_llm_section, write_llm_section
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.routing import resolve_routes
 
@@ -145,6 +145,49 @@ class TestConfigFileCreation(unittest.TestCase):
         extra = cfg.llm.providers["local"].model_extra
         assert extra is not None
         self.assertEqual(extra["reasoning_style"], "deepseek")
+
+
+class TestLlmSectionEditing(unittest.TestCase):
+    """Only the ``llm`` block changes; every other section keeps its text and comments."""
+
+    def test_replacement_keeps_other_sections_and_their_comments(self):
+        updated = replace_llm_section(default_config_text(), {"preset": "anthropic"})
+
+        self.assertIn("llm:\n  preset: anthropic\n", updated)
+        self.assertIn("# ── Segmentation ──", updated)
+        self.assertIn("# Split longer paragraphs at sentence boundaries", updated)
+        self.assertIn("language:\n  source: auto", default_config_text())
+        self.assertNotIn("\n\n\n", updated)
+
+    def test_replacement_drops_the_block_own_comments_only(self):
+        updated = replace_llm_section(default_config_text(), {"preset": "fake"})
+        self.assertNotIn("Add providers, models and routes", updated)
+        self.assertIn("# ── Pipeline options", updated)
+
+    def test_missing_llm_block_is_appended(self):
+        updated = replace_llm_section("language:\n  target: zh\n", {"preset": "deepseek"})
+        self.assertTrue(updated.endswith("llm:\n  preset: deepseek\n"))
+        self.assertIn("language:\n  target: zh\n", updated)
+
+    def test_write_validates_before_replacing_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.yaml"
+            path.write_text(default_config_text(), encoding="utf-8")
+            before = path.read_text(encoding="utf-8")
+
+            write_llm_section(str(path), {"preset": "fake"})
+            self.assertEqual(Config.load(str(path)).llm.preset, "fake")
+            self.assertIn("# ── Output ──", path.read_text(encoding="utf-8"))
+
+            path.write_text(before, encoding="utf-8")
+            with self.assertRaises(ValueError):
+                write_llm_section(str(path), {"preset": "no-such-provider"})
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+
+def default_config_text() -> str:
+    """Return the configuration template the CLI creates for a missing file."""
+    return _DEFAULT_CONFIG_YAML
 
 
 if __name__ == "__main__":

@@ -12,13 +12,11 @@ from ._openai_compatible import (
     base_request_kwargs,
     deep_merge,
 )
+from ._options import ReasoningStyle, WireConnectionOptions
 
-ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
 
-
-class CompatibleConnectionOptions(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-    reasoning_style: ReasoningStyle = "none"
+class CompatibleConnectionOptions(WireConnectionOptions):
+    """Connection options for the SDK-based compatible providers."""
 
 
 class OpenAICompatibleOptions(BaseModel):
@@ -32,24 +30,28 @@ class OpenAICompatibleOptions(BaseModel):
     request_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
-def _reasoning_body(
-    options: OpenAICompatibleOptions,
+def dialect_reasoning(
     reasoning_style: ReasoningStyle,
+    *,
+    thinking: bool,
+    effort: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return SDK arguments and dialect fields that require raw request-body forwarding."""
-    kwargs: dict[str, Any] = {}
+    """Return ``(top_level, extra_body)`` for one OpenAI-compatible reasoning dialect.
+
+    ``none`` adds nothing; ``deepseek`` toggles ``thinking``; ``openai`` sets a top-level
+    effort (``none`` when disabled); ``openrouter`` carries a ``reasoning`` object.
+    """
+    top_level: dict[str, Any] = {}
     extra_body: dict[str, Any] = {}
     if reasoning_style == "deepseek":
-        extra_body["thinking"] = {"type": "enabled" if options.thinking else "disabled"}
-        if options.thinking:
-            kwargs["reasoning_effort"] = options.reasoning_effort
+        extra_body["thinking"] = {"type": "enabled" if thinking else "disabled"}
+        if thinking:
+            top_level["reasoning_effort"] = effort
     elif reasoning_style == "openai":
-        kwargs["reasoning_effort"] = options.reasoning_effort if options.thinking else "none"
+        top_level["reasoning_effort"] = effort if thinking else "none"
     elif reasoning_style == "openrouter":
-        extra_body["reasoning"] = (
-            {"effort": options.reasoning_effort} if options.thinking else {"enabled": False}
-        )
-    return kwargs, extra_body
+        extra_body["reasoning"] = {"effort": effort} if thinking else {"enabled": False}
+    return top_level, extra_body
 
 
 def build_request_kwargs(
@@ -62,9 +64,10 @@ def build_request_kwargs(
 ) -> dict[str, Any]:
     """Build compatible request arguments according to the configured reasoning dialect."""
     kwargs = base_request_kwargs(model_config.model, messages, json_mode=json_mode)
-    reasoning_kwargs, extra_body = _reasoning_body(
-        model_config.options,
+    reasoning_kwargs, extra_body = dialect_reasoning(
         reasoning_style,
+        thinking=model_config.options.thinking,
+        effort=model_config.options.reasoning_effort,
     )
     kwargs.update(reasoning_kwargs)
     if model_config.options.request_overrides:

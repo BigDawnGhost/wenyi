@@ -62,6 +62,50 @@ def register_model_commands(
             )
         console.print(table)
 
+    @models.command("providers")
+    def list_providers(
+        as_json: bool = typer.Option(False, "--json", help="Print structured provider data"),
+    ):
+        """Show every registered provider, its protocol and its credential variables."""
+        from wenyi_core.llm.registry import provider_catalog
+
+        catalog = provider_catalog()
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    [
+                        {
+                            "kind": entry.kind,
+                            "display_name": entry.display_name,
+                            "wire": entry.wire,
+                            "auth": entry.auth,
+                            "credential_envs": list(entry.credential_envs),
+                            "base_url": entry.base_url,
+                            "aliases": list(entry.aliases),
+                            "sign_in": entry.sign_in,
+                            "models": list(entry.models),
+                        }
+                        for entry in catalog
+                    ],
+                    indent=2,
+                )
+            )
+            return
+        table = Table("Provider", "Protocol", "Auth", "Credentials", "Endpoint")
+        for entry in catalog:
+            table.add_row(
+                f"{entry.kind}\n{entry.display_name}",
+                entry.wire or "dedicated adapter",
+                entry.auth or "-",
+                "\n".join(entry.credential_envs) or "-",
+                entry.base_url or "set base_url",
+            )
+        console.print(table)
+        console.print(
+            "Declarative providers share one protocol adapter per wire; run "
+            "`wenyi auth list` for subscription sign-in."
+        )
+
     @models.command("explain")
     def explain(operation: str = typer.Option(..., "--operation")):
         """Explain an operation's defaults, effective request and selection origin."""

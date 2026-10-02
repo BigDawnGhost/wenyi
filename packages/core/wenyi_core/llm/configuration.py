@@ -23,6 +23,15 @@ class ProviderConfig(BaseModel):
     max_concurrency: int | None = Field(default=None, gt=0)
     quota_group: str | None = None
 
+    @field_validator("kind")
+    @classmethod
+    def normalize_kind(cls, value: str) -> str:
+        from .profiles import PROFILE_INDEX
+
+        normalized = value.strip().lower()
+        profile = PROFILE_INDEX.get(normalized)
+        return profile.kind if profile is not None else normalized
+
     @field_validator("base_url")
     @classmethod
     def validate_url(cls, value: str | None) -> str | None:
@@ -149,7 +158,7 @@ class LLMConfig(BaseModel):
             try:
                 provider = provider_spec(self.providers[model.provider].kind)
                 options = provider.validate_model(model)
-                provider.adapter_type().output_limit(options, None, model.max_output_tokens)
+                provider.output_limit(options, None, model.max_output_tokens)
             except ValueError as error:
                 raise ValueError(f"llm.models.{name}: {error}") from error
         for name, reference in self.tiers.items():

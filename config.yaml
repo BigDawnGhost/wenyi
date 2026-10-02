@@ -8,7 +8,9 @@ language:
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
   preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
+  # Choose a provider and its tier models interactively with: wenyi model
   # Add providers, models and routes to override individual operations.
+  # List provider kinds and aliases with: wenyi models providers
   # Inspect effective settings with: wenyi models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
