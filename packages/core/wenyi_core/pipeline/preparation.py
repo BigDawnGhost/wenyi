@@ -11,10 +11,10 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..i18n.languages import normalize_language
 from ..i18n.policy.models import Phase
 from ..i18n.prompts import render
@@ -29,7 +29,6 @@ from .runstore import source_sha256, translation_run_dir
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
-ProgressFn = Callable[[int, int, str], None]
 _LOGGER = logging.getLogger(__name__)
 
 

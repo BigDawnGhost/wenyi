@@ -18,6 +18,7 @@ from ..i18n.policy.models import PolicyPlan
 from ..pipeline.runstore import source_sha256, translation_run_dir
 from ..storage.artifacts import FileArtifacts
 from ..storage.language_policies import persist_plan, verify_plan_artifact
+from ..storage.locks import exclusive_file_lock
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -81,30 +82,8 @@ class SrtRunStore:
                 yield
             return
         os.makedirs(self.run_dir, exist_ok=True)
-        lock_path = os.path.join(self.run_dir, filename)
-        with open(lock_path, "a+b") as lock_file:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                lock_file.seek(0, os.SEEK_END)
-                if lock_file.tell() == 0:
-                    lock_file.write(b"\0")
-                    lock_file.flush()
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    yield
-                finally:
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(os.path.join(self.run_dir, filename)):
+            yield
 
     @contextmanager
     def event_lock(self) -> Iterator[None]:

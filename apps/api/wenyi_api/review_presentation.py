@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from wenyi_core.review.autofix_models import integer_index
+from wenyi_core.review.models import integer_index
 
 
 def _rows(value) -> list[dict]:

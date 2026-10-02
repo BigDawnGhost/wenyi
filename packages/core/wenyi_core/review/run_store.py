@@ -323,10 +323,6 @@ class ReviewRunStore:
     def load_chunk_result(self, chunk_id: str) -> dict[str, Any] | None:
         return self._read(os.path.join(self.run_dir, "chunks", f"{chunk_id}.json"))
 
-    def is_chunk_done(self, chunk_id: str) -> bool:
-        """Check whether a review block completed."""
-        return self.load_chunk_result(chunk_id) is not None
-
     def rebuild_snapshots_from_chunks(self, review_round: int) -> None:
         """Rebuild initial/dismissed snapshots from persisted chunk caches.
         On scan_done resume, review_once no longer replays aggregation calls. Restore them
@@ -465,11 +461,3 @@ class ReviewRunStore:
         ):
             raise ValueError("Invalid review directory")
         return cls._from_existing(normalized, review_id, storage=backend)
-
-    @staticmethod
-    def _read_max_seq(event_path: str) -> int:
-        backend = FileArtifacts(os.path.dirname(event_path))
-        rows = backend.read_artifact_records(os.path.basename(event_path))
-        return max(
-            (row.get("seq", 0) for row in rows if isinstance(row.get("seq"), int)), default=0
-        )

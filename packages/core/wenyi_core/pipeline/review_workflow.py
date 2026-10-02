@@ -12,10 +12,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Callable
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.evidence import BookEvidenceIndex
@@ -32,8 +32,6 @@ from .runstore import STATUS_DONE
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class ReviewService:

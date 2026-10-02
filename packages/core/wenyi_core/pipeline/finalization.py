@@ -10,10 +10,11 @@ lock to serialize output writers.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..glossary.store import GlossaryStore
 from ..storage.protocol import Storage
 from .language_policies import persist_plan
@@ -21,8 +22,6 @@ from .runstore import source_sha256
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class ReportService:

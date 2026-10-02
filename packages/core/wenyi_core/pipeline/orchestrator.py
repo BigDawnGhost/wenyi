@@ -12,10 +12,10 @@ agents/ingest/glossary/assemble/RunStore. Lower layers must never import this mo
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from ..config import Config
+from ..events import ProgressFn
 from ..storage.protocol import Storage
 from .annotations import AnnotationService
 from .finalization import AssemblyService, ReportService
@@ -24,8 +24,6 @@ from .review_autofix import ReviewAutofixService
 from .review_workflow import ReviewService
 from .runtime import LLMClient, PipelineRuntime
 from .translation import TranslationService
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class Orchestrator:

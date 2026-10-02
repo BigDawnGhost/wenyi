@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from ..review.autofix_models import text_hash
-from ..review.models import ReviewOutcome
+from ..events import ProgressFn
+from ..review.models import ReviewOutcome, integer_index, text_hash
 from ..review.run_store import ReviewRunStore
 from ..storage.protocol import Storage
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
     from .docx_styles import DocxStyleService
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class AutofixPublisher:
@@ -27,7 +24,6 @@ class AutofixPublisher:
         store: Storage,
         debug: ReviewRunStore,
         index: dict[str, Any],
-        result: dict[str, Any],
         *,
         progress: ProgressFn | None,
     ) -> None:
@@ -38,8 +34,8 @@ class AutofixPublisher:
         locations = [row for row in raw_locations or [] if isinstance(row, dict)]
         by_chapter: dict[int, list[dict[str, Any]]] = {}
         for row in locations:
-            chapter = row.get("chapter")
-            if isinstance(chapter, int) and not isinstance(chapter, bool):
+            chapter = integer_index(row.get("chapter"))
+            if chapter is not None:
                 by_chapter.setdefault(chapter, []).append(row)
 
         total = len(locations)

@@ -566,8 +566,8 @@ def test_postgres_dal_config_job_identity_errors_and_review_summary(
     dal.set_project_source(
         pid, doc.source_path, "中文书名", source_sha256=digest, source_meta={"parsed": True}
     )
-    assert dal.get_project_config(pid) == config
     project = must(dal.get_project(pid))
+    assert project["config"] == config
     assert project["initialized"] and project["source_sha256"] == digest
     assert project["source_meta"] == {"parsed": True}
     dal.set_project_status(pid, "error", error="Service failed")

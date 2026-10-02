@@ -31,13 +31,6 @@ def _target_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _boundary_map(before: str, after: str) -> list[int]:
-    """Map original character boundaries to transformed boundaries for annotation and style
-    offsets.
-    """
-    return list(boundary_map(before, after))
-
-
 def _remap_metadata_offsets(
     metadata: object, before: str, after: str, mapping: tuple[int, ...] | None = None
 ) -> None:

@@ -9,6 +9,7 @@ from typing import Any
 from ..agents.review_arbiter import ReviewConflictArbiter
 from ..agents.review_fixer import ProvisionalPatch, ReviewFixer, ReviewFixerProtocolError
 from ..config import Config
+from ..events import ProgressFn
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.base import LLMClient
 from ..review.conflicts import (
@@ -22,8 +23,6 @@ from ..review.session import ReviewRoundResult
 from . import review_results
 from .review_checkpoint import ReviewTraceStore
 from .review_chunks import ReviewChunkService
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class ReviewRoundService:

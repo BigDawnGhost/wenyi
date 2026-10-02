@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from ..config import Config
 from ..glossary.store import GlossaryTerm
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
+from ..review.models import text_hash
 from . import prompts
 from .base import Agent
 
@@ -59,11 +59,6 @@ class ProvisionalPatch:
         }
 
 
-def _sha256(text: str) -> str:
-    """Hash complete UTF-8 text with SHA-256 for optimistic shadow-patch validation."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def _dialogue_quote_pairs(text: str) -> int:
     """Count complete double-quote pairs to detect loss of existing dialogue boundaries."""
     return (
@@ -94,7 +89,7 @@ def _patch_id(
         sort_keys=True,
         separators=(",", ":"),
     )
-    return f"patch-r{round_number:02d}-{_sha256(payload)[:16]}"
+    return f"patch-r{round_number:02d}-{text_hash(payload)[:16]}"
 
 
 def _nearby_text(pairs: Sequence[tuple[str, str]]) -> str:
@@ -137,7 +132,7 @@ class ReviewFixer(Agent):
         """Return the current translation hash used by the Fixer protocol."""
         if not isinstance(target, str):
             raise ReviewFixerProtocolError("invalid_current_target")
-        return _sha256(target)
+        return text_hash(target)
 
     @staticmethod
     def _issues(

@@ -74,21 +74,6 @@ def honorific_rule(strategy: str, src: str = "ja", tgt: str = "zh") -> str:
     return rules.get(strategy, rules["keep_style"])
 
 
-def translate_guidance(src: str, honorific_strategy: str = "keep_style", tgt: str = "zh") -> str:
-    common = read_json("shared/guidance.json")
-    source = profile(src)["source_guidance"] if normalize_language(src) else common["source"]
-    target = profile(tgt)["target_guidance"]
-    return "\n".join(
-        (source, target, common["evidence"], honorific_rule(honorific_strategy, src, tgt))
-    )
-
-
-def term_guidance(src: str) -> str:
-    common = read_json("shared/guidance.json")
-    reading = profile(src)["term_guidance"] if normalize_language(src) else common["reading"]
-    return reading + common["evidence"]
-
-
 def validate_run_languages(manifest: dict, source: str, target: str) -> None:
     """Reject resuming an existing translation in a different language direction."""
     if any(

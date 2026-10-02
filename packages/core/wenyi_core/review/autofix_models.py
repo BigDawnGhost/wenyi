@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
+
+from .models import text_hash
 
 
 class _RecordFields(TypedDict):
@@ -52,16 +53,6 @@ class AutofixPlan(TypedDict):
     reviewed_content_digest: str | None
     records: list[AutofixRecord]
     locations: list[PublishLocation]
-
-
-def text_hash(text: str) -> str:
-    """Return the UTF-8 SHA-256 used by the optimistic autofix publication protocol."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def integer_index(value: Any) -> int | None:
-    """Accept integer positions excluding booleans and narrow the type explicitly."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 @dataclass

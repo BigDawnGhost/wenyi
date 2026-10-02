@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from ..assemble.srt_writer import default_srt_out_paths, write_srt_outputs
 from ..config import Config
+from ..events import ProgressFn
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyPlan
 from ..i18n.prompts import render
@@ -22,8 +22,6 @@ from ..storage.language_policies import persist_plan
 from ..timing import RunTimer
 from .policy import export_plan
 from .store import STATUS_DONE, SrtRunStore
-
-ProgressFn = Callable[[int, int, str], None]
 
 BATCH_SIZE = 20
 OVERLAP_SIZE = 10
