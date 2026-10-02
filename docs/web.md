@@ -30,7 +30,7 @@ from Git tags.
 | `export-worker` | `wenyi:exports`: snapshot export |
 | PostgreSQL / Redis | Internal network only by default |
 
-All services start by default, with no profile or build environment flags required. Dockerfiles use ordinary build steps without BuildKit cache mounts or an external Dockerfile frontend; unchanged steps still benefit from Docker layer caching. Run subsequent commands from `deploy/`:
+All services start by default, with no profile or build environment flags required. `up --build` builds images before starting containers; a build failure reports an error and returns a nonzero exit status. Dockerfiles use ordinary build steps without BuildKit cache mounts or an external Dockerfile frontend; unchanged steps still benefit from Docker layer caching. Run subsequent commands from `deploy/`:
 
 ```bash
 docker compose logs -f
@@ -39,7 +39,9 @@ docker compose down
 
 `down` preserves data volumes. Debian, PyPI, and npm use official sources by default. To use mirrors, uncomment the desired `DEBIAN_MIRROR`, `UV_DEFAULT_INDEX`, or `NPM_REGISTRY` entries in `deploy/.env`, then run `docker compose up -d --build` again.
 
-This database schema targets fresh deployments. It does not migrate legacy Web projects, strategies, or databases. When keeping an older deployment, give the new stack a separate Compose project, database, and volumes (for example `-p wenyi-new`). Do not delete volumes that still hold data you need.
+The Web proxy refreshes the `api` service address through Docker DNS for both HTTP and WebSocket requests. After recreating an API container, the proxy follows the new address without a Web restart; DNS records are cached for five seconds. The runtime image must use Nginx 1.27.3 or newer for [dynamic upstream resolution](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve). To diagnose a `502`, compare `http://localhost:8000/health` with `http://localhost:8080/api/health` and inspect `docker compose logs web api`. On an older deployment that still holds an outdated API address, `docker compose exec web nginx -s reload` refreshes it; rebuild Web to install the permanent fix.
+
+This database schema targets fresh deployments. It does not migrate legacy Web projects, strategies, or databases. When keeping an older deployment, give the new stack a separate Compose project, database, and volumes (for example `COMPOSE_PROJECT_NAME=wenyi-new docker compose up -d --build`). Do not delete volumes that still hold data you need.
 
 ### Optional Buildx development builds
 
@@ -47,11 +49,13 @@ With the Docker Buildx plugin installed (`docker buildx version`), opt into the 
 
 ```bash
 DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
-  -f docker-compose.yml -f docker-compose.buildx.yml build
-docker compose up -d --no-build
+  -f docker-compose.yml -f docker-compose.buildx.yml build &&
+  docker compose -f docker-compose.yml -f docker-compose.buildx.yml up -d --no-build
 ```
 
-The overlay changes only Dockerfile selection and preserves the same services, image names, credentials, mirror settings, and volumes. It caches apt, uv, and pnpm downloads between builds; caches belong to the selected builder. Default Dockerfiles remain usable without BuildKit. Keep both variants aligned when changing installation steps. Return to ordinary builds with `docker compose up -d --build`.
+These commands enable BuildKit/Bake and use the Buildx overlay for both build and startup. The `&&` starts containers only after a successful build. The overlay changes only Dockerfile selection and preserves the same services, image names, credentials, mirror settings, and volumes. It caches apt, uv, and pnpm downloads between builds; caches belong to the selected builder. Default Dockerfiles remain usable without BuildKit. Keep both variants aligned when changing installation steps. Return to ordinary builds with `docker compose up -d --build`.
+
+If a configured PyPI mirror returns `403 Forbidden` while resolving build dependencies such as `hatchling` or `hatch-vcs`, set `UV_DEFAULT_INDEX=https://pypi.org/simple` in `deploy/.env` and retry the build. A rejected registry request can appear as “package not found”; clearing the BuildKit cache does not fix access to the mirror. If using manual commands, connect build and startup with `&&`; a separate `up --no-build` after a failed build continues using existing images.
 
 Compose can delegate builds to [Buildx Bake](https://docs.docker.com/guides/compose-bake/). This optional path requires a working Buildx/BuildKit installation; it is not required for deployment.
 

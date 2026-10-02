@@ -28,7 +28,7 @@ Docker 构建排除了 `.git`，安装时通过 `WENYI_VERSION` 向 `hatch-vcs` 
 | `export-worker` | `wenyi:exports`：快照导出 |
 | PostgreSQL / Redis | 默认仅容器内网 |
 
-默认启动所有服务，无需选择 profile，也无需设置构建环境变量。Dockerfile 使用普通构建指令，不依赖 BuildKit 缓存挂载或外部 Dockerfile frontend；未变化的步骤仍可复用 Docker 层缓存。后续命令在 `deploy/` 中执行：
+默认启动所有服务，无需选择 profile，也无需设置构建环境变量。`up --build` 在启动前构建镜像，构建失败会报错并返回非零退出码。Dockerfile 使用普通构建指令，不依赖 BuildKit 缓存挂载或外部 Dockerfile frontend；未变化的步骤仍可复用 Docker 层缓存。后续命令在 `deploy/` 中执行：
 
 ```bash
 docker compose logs -f
@@ -37,7 +37,9 @@ docker compose down
 
 `down` 保留数据卷。默认使用 Debian、PyPI 和 npm 官方源；如需换源，在 `deploy/.env` 中取消对应 `DEBIAN_MIRROR`、`UV_DEFAULT_INDEX` 或 `NPM_REGISTRY` 行的注释，再运行 `docker compose up -d --build`。
 
-本次数据库结构面向全新部署，不执行旧项目/策略/数据库迁移。保留旧部署时，新版使用独立 Compose project、数据库和卷，例如启动时加 `-p wenyi-new`。不要对需要保留的数据卷执行删除操作。
+Web 代理通过 Docker DNS 刷新 `api` 服务地址，HTTP 与 WebSocket 均使用该地址。API 容器重建后，代理会跟随新地址，无需重启 Web；DNS 记录缓存五秒。运行镜像须使用 Nginx 1.27.3 或更新版本，以支持[动态上游解析](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve)。排查 `502` 时，对比 `http://localhost:8000/health` 和 `http://localhost:8080/api/health`，并检查 `docker compose logs web api`。旧部署若仍保留过期的 API 地址，可执行 `docker compose exec web nginx -s reload` 临时刷新；重新构建 Web 才会安装永久修复。
+
+本次数据库结构面向全新部署，不执行旧项目/策略/数据库迁移。保留旧部署时，新版使用独立 Compose project、数据库和卷，例如运行 `COMPOSE_PROJECT_NAME=wenyi-new docker compose up -d --build`。不要对需要保留的数据卷执行删除操作。
 
 ### 可选的 Buildx 开发构建
 
@@ -45,11 +47,13 @@ docker compose down
 
 ```bash
 DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
-  -f docker-compose.yml -f docker-compose.buildx.yml build
-docker compose up -d --no-build
+  -f docker-compose.yml -f docker-compose.buildx.yml build &&
+  docker compose -f docker-compose.yml -f docker-compose.buildx.yml up -d --no-build
 ```
 
-覆盖文件仅切换 Dockerfile，沿用相同的服务、镜像名称、凭证、换源配置和数据卷。apt、uv 和 pnpm 下载缓存可在多次构建之间复用，缓存属于所选 builder。默认 Dockerfile 仍不要求 BuildKit；修改安装步骤时需同步两个版本。运行 `docker compose up -d --build` 即可恢复普通构建。
+上述命令启用 BuildKit/Bake，构建和启动均使用 Buildx 覆盖文件，并用 `&&` 保证构建成功后才启动。覆盖文件仅切换 Dockerfile，沿用相同的服务、镜像名称、凭证、换源配置和数据卷。apt、uv 和 pnpm 下载缓存可在多次构建之间复用，缓存属于所选 builder。默认 Dockerfile 仍不要求 BuildKit；修改安装步骤时需同步两个版本。运行 `docker compose up -d --build` 即可恢复普通构建。
+
+若配置的 PyPI 镜像在解析 `hatchling`、`hatch-vcs` 等构建依赖时返回 `403 Forbidden`，将 `deploy/.env` 中的 `UV_DEFAULT_INDEX` 改为 `https://pypi.org/simple` 后重新构建。镜像拒绝访问可能被报告为“找不到包”，清理 BuildKit 缓存不能解决镜像访问问题。拆分构建和启动时，用 `&&` 连接；构建失败后单独执行 `up --no-build` 会继续使用已有镜像。
 
 Compose 可将构建委托给 [Buildx Bake](https://docs.docker.com/guides/compose-bake/)。此可选路径需要可用的 Buildx/BuildKit 环境，普通部署不需要安装。
 
