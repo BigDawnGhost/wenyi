@@ -8,9 +8,9 @@ formal chapter target text, enabling idempotent recovery through before/after ha
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..glossary.store import GlossaryTerm
 from ..llm.usage import validate_usage
 from ..review.models import ReviewOutcome
@@ -24,8 +24,6 @@ from .docx_styles import DocxStyleService
 if TYPE_CHECKING:
     from .annotations import AnnotationService
     from .runtime import PipelineRuntime
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class ReviewAutofixService:
@@ -167,6 +165,6 @@ class ReviewAutofixService:
         *,
         progress: ProgressFn | None,
     ) -> ReviewOutcome:
-        self._publisher.apply(store, debug, index, result, progress=progress)
+        self._publisher.apply(store, debug, index, progress=progress)
         self._save_usage_delta(store, debug, scope="review_autofix_publish")
         return self._publisher.finish(store, debug, index, result)

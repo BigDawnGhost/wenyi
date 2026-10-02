@@ -11,9 +11,9 @@ overwriting targets.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
 from ..ingest.models import Segment
@@ -27,8 +27,6 @@ from .translation_batch import BatchPlan, TranslationBatchExecutor, resume_batch
 if TYPE_CHECKING:
     from .annotations import AnnotationService
     from .runtime import PipelineRuntime
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:

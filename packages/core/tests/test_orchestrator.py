@@ -974,6 +974,7 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg.pipeline.book_understanding = False
             store = require_file_storage(orch.prepare(txt))
             cfg.pipeline.book_understanding = True
+            cfg.freeze_language_policies(store.load_manifest()["source_sha256"])
             with self.assertRaisesRegex(ValueError, "Chapter digests.*1"):
                 orch.run(txt)
             self.assertTrue(store.load_chapter(0).meta["source_digest"])

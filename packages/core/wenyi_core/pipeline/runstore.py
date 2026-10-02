@@ -11,7 +11,6 @@ autofix publication indices.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -24,7 +23,9 @@ from typing import Any
 
 from ..i18n.languages import require_language
 from ..ingest.models import Chapter, Document
+from ..ingest.source_hash import source_sha256
 from ..storage.artifacts import FileArtifacts
+from ..storage.locks import exclusive_file_lock
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -41,15 +42,6 @@ def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
     """Use the same target-isolated layout for every translation language."""
     target = require_language(target_lang)
     return os.path.join(state_dir, slugify(title), "targets", target)
-
-
-def source_sha256(path: str) -> str:
-    """Stream source SHA-256 calculation without loading the whole book into memory."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class RunStore(FileArtifacts):
@@ -70,30 +62,8 @@ class RunStore(FileArtifacts):
     def _file_lock(self, filename: str) -> Iterator[None]:
         """Serialize cross-process operations using the named lock file within state."""
         self.ensure_dirs()
-        lock_path = os.path.join(self.run_dir, filename)
-        with open(lock_path, "a+b") as lock_file:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                lock_file.seek(0, os.SEEK_END)
-                if lock_file.tell() == 0:
-                    lock_file.write(b"\0")
-                    lock_file.flush()
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    yield
-                finally:
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(os.path.join(self.run_dir, filename)):
+            yield
 
     @contextmanager
     def lock(self) -> Iterator[None]:

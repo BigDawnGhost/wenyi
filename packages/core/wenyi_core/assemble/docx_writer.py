@@ -6,10 +6,8 @@ from docx import Document as open_docx
 from docx.oxml.ns import qn
 
 from wenyi_core.assemble.docx_blocks import _add_heading, _emit_chapter_blocks
-from wenyi_core.assemble.docx_styles import _target_output_font
 from wenyi_core.assemble.writer_common import (
     _ch_title,
-    _manifest_target_lang,
 )
 from wenyi_core.ingest.models import KIND_HEADING
 
@@ -25,7 +23,9 @@ def _assemble_docx(
 ) -> str:
     """Rebuild a DOCX by chapter, restoring heading outlines, styles and tables from metadata."""
     manifest = store.load_manifest()
-    output_font = _target_output_font(_manifest_target_lang(manifest))
+    from .policy import export_options
+
+    output_font = export_options(store, "docx").target_font
     doc = open_docx()
     if doc.paragraphs:
         p0 = doc.paragraphs[0]

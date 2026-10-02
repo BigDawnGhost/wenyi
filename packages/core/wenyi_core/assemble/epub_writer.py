@@ -34,6 +34,7 @@ from wenyi_core.assemble.writer_common import (
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
 
 from .export_view import AssembleStore
+from .policy import export_options
 
 
 def _assemble_epub(
@@ -96,6 +97,7 @@ def _assemble_epub(
             order=order,
             preserve_source_style=preserve_source_style,
             source_lang=source_lang,
+            preserve_source_ruby=export_options(store, "epub").preserve_source_ruby,
         )
 
         infos = zin.infolist()
@@ -311,6 +313,7 @@ def _build_epub_from_html_templates(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            preserve_source_ruby=export_options(store, "epub").preserve_source_ruby,
         )
         rendered, assets = _package_html_resources(
             rendered,

@@ -9,7 +9,8 @@ from string import Template
 
 from bs4 import BeautifulSoup
 
-from ..i18n.languages import normalize_language
+from ..i18n.policy.models import PolicyContext
+from ..i18n.policy.resolver import resolve_policy
 from ..i18n.resources import read_text
 
 ABOUT_TITLE = "关于此翻译"
@@ -17,9 +18,14 @@ ABOUT_FILENAME = "trans-novel-about.xhtml"
 ABOUT_REPOSITORY = "https://github.com/BigDawnGhost/wenyi"
 
 
-def about_xhtml(lang: str) -> bytes:
+def about_xhtml(lang: str, *, locale: str | None = None) -> bytes:
     """Return a standalone XHTML page suitable for the EPUB spine."""
-    locale = "zh" if normalize_language(lang) == "zh" else "en"
+    locale = (
+        locale
+        or resolve_policy(
+            PolicyContext("auto", lang, phase="export", format="epub")
+        ).export.about_locale
+    )
     return (
         Template(read_text(f"export/about.{locale}.xhtml"))
         .substitute(lang=lang, title=ABOUT_TITLE, repository=ABOUT_REPOSITORY)
@@ -87,7 +93,7 @@ def append_about_to_opf(data: bytes, href: str) -> tuple[bytes, bool]:
         return data, False
 
 
-def append_about_page(epub_path: str, lang: str) -> bool:
+def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -> bool:
     """Atomically postprocess an existing EPUB to append the about page to its spine."""
     with zipfile.ZipFile(epub_path, "r") as zin:
         try:
@@ -114,7 +120,7 @@ def append_about_page(epub_path: str, lang: str) -> bool:
                     zout.writestr(info, data, zipfile.ZIP_STORED)
                 else:
                     zout.writestr(info, data)
-            zout.writestr(about_entry, about_xhtml(lang))
+            zout.writestr(about_entry, about_xhtml(lang, locale=locale))
         os.replace(tmp_path, epub_path)
     finally:
         if os.path.exists(tmp_path):

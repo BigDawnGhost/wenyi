@@ -134,14 +134,6 @@ def set_project_strategy(
         )
 
 
-def get_project_config(pid: str) -> dict[str, Any]:
-    with _conn() as c:
-        row = c.execute("SELECT config FROM projects WHERE id=%s", (pid,)).fetchone()
-    if row is None:
-        raise KeyError(f"project {pid} not found")
-    return row[0] or {}
-
-
 def set_project_config(
     pid: str, config: dict[str, Any], *, connection: Connection[Any] | None = None
 ) -> None:
@@ -254,15 +246,6 @@ def chapter_summaries(pid: str) -> list[dict]:
         }
         for r in rows
     ]
-
-
-def set_chapter_status(pid: str, chapter_index: int, status: str) -> None:
-    with _conn() as c:
-        c.execute(
-            """UPDATE chapters SET status=%s
-               WHERE project_id=%s AND seq=%s""",
-            (status, pid, chapter_index),
-        )
 
 
 def total_word_count(pid: str) -> int:

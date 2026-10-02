@@ -9,7 +9,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ..i18n.prompts import render
 from ..llm.json_parser import parse_json_result
 from . import prompts
 from .base import Agent
@@ -32,6 +31,8 @@ class ReviewResult:
 
 
 class Reviewer(Agent):
+    policy_phase = "review"
+
     def review(
         self, sources: list[str], targets: list[str], glossary_terms=None
     ) -> list[dict[str, Any]]:
@@ -49,8 +50,8 @@ class Reviewer(Agent):
         """Return issues with recovery metadata; leave service exceptions to the caller."""
         if not sources:
             return ReviewResult([])
-        system = render("reviewer_system", src=self.src, tgt=self.tgt, n=len(sources))
-        user = render(
+        system = self.render("reviewer_system", src=self.src, tgt=self.tgt, n=len(sources))
+        user = self.render(
             "reviewer_user",
             src=self.src,
             tgt=self.tgt,

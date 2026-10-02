@@ -23,7 +23,7 @@ from wenyi_core.i18n.languages import (
     validate_run_languages,
 )
 from wenyi_core.i18n.prompts import render, template
-from wenyi_core.i18n.resources import prompt_fingerprint, read_text
+from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import translation_run_dir
@@ -178,7 +178,8 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         assert store.load_manifest()["source_lang"] == source
         formal_before = Path(store.chapter_path(0)).read_bytes()
         assert store.load_chapter(0).text_segments[0].target == translated
-        assert store.load_manifest()["prompt_fingerprint"] == prompt_fingerprint()
+        reference = store.load_manifest()["language_policies"]["translation"]
+        assert store.read_artifact(reference)["fingerprint"] == config.language_policy().fingerprint
         orchestrator.run_review(str(path))
         stages = {call["stage"] for call in client.calls}
         assert {
@@ -435,7 +436,11 @@ def test_review_rechecks_when_language_resources_change():
         orchestrator.run_review(str(source))
         assert len(client.calls) == before
         with patch(
-            "wenyi_core.pipeline.review_workflow.prompt_fingerprint", return_value="new-resources"
+            "wenyi_core.i18n.policy.resolver.read_text",
+            side_effect=lambda path: (
+                read_text(path)
+                + ("\nCheck omissions carefully." if path == "tasks/reviewer_system.txt" else "")
+            ),
         ):
             orchestrator.run_review(str(source))
         assert len(client.calls) > before

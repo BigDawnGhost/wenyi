@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .models import text_hash
+
 
 @dataclass(frozen=True)
 class ReviewRoundResult:
@@ -309,10 +311,7 @@ class ReviewSessionState:
         for patch in patches:
             location = (patch["chapter"], patch["index"])
             current = current_targets.get(location)
-            if (
-                current is None
-                or hashlib.sha256(current.encode("utf-8")).hexdigest() != patch["before_hash"]
-            ):
+            if current is None or text_hash(current) != patch["before_hash"]:
                 failure = {
                     "patch_id": patch["patch_id"],
                     "issue_ids": list(patch["issue_ids"]),

@@ -56,7 +56,7 @@ language:
 
 `source: auto` asks the model to identify the source language; alternatively, select a language below. Translation runs directly between source and target without pivoting through Chinese. Multilingual quality is experimental. The default CLI, configuration comments, and prompt instructions use English independently of the translation target. The generated configuration still defaults to `target: zh`; choose `en` for English translations.
 
-All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; older Chinese enum values are no longer converted. Resuming an existing project retains its analysis and notes, so changing prompts does not automatically translate old metadata. Use a separate `paths.state_dir` for a fresh analysis and whole-book comparison.
+All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; older Chinese enum values are no longer converted. Matching policies reuse saved analysis and notes. A changed built-in semantic policy automatically rebuilds affected analysis; existing glossary notes are retained. Use a separate `paths.state_dir` for a complete new translation and quality comparison.
 
 | Codes | Languages |
 |---|---|
@@ -72,6 +72,23 @@ Run `uv run wenyi languages` to list built-in profiles without an API key. `targ
 Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
 
 See the [pipeline guide](pipeline.md) for prompt resources and state isolation, and [Web interface languages](web-i18n.md) for display-language settings. Multilingual long-form blind evaluation, native-language review and RTL/layout certification remain future work; interface language support does not certify translation quality. The CLI and prompt instructions remain English; there are no `ui_locale` or `prompt_locale` configuration fields.
+
+## Built-in language policies
+
+Language policies are implementation details defined in `packages/core/wenyi_core/i18n/policy/` and `i18n/data/languages/` / `pairs/`. Developers change these resources, operation specifications and domain implementations in source, with the corresponding tests. YAML accepts only `source` and `target` under `language`; there are no operation overrides or revision-acceptance switches, and Web settings do not display policy plans.
+
+Source markup follows the source language; target punctuation, font and metadata follow the target. Profiles inherit root-to-leaf and exact registered language-pair bindings take precedence. `zh-Hant` disables the Simplified Chinese normalizer and retains the English about-page fallback. Existing `output.punctuation_normalize`, `honorific.strategy` and workflow options remain authoritative.
+
+Developers can inspect the same built-in resolver without credentials or model calls:
+
+```bash
+uv run wenyi language-policy --source ja --format docx --backend native
+uv run wenyi language-policy --source en --subtitles --format srt
+```
+
+Diagnostics report selections, resource hashes, versions, model routes and fingerprints; they do not modify the policy. Automatic source detection remains unresolved until the source is known; use `--source` to inspect a specific direction. Unknown built-in IDs/options or unavailable handlers fail before consuming work.
+
+On resume, changed semantic policies automatically rebuild affected chapter/style/synopsis analysis before pending work continues. Missing policy identities also require rebuilding derived analysis. Completed targets and glossary remain saved; unchanged task caches are reused, and interrupted rebuilds resume safely. Rebuilding analysis may make model calls. SRT preserves completed cues and ignores incompatible pending-window caches. Font, ruby and export punctuation changes require only a fresh export; Review uses a new policy-bound session. Export fingerprints bind the actual format/backend and consistent source/target snapshot.
 
 ## Models and operation routing
 

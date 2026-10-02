@@ -334,6 +334,8 @@ read-only by default; `--autofix` may publish their final revisions.
 Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
+Language policies are built into the source code. When they change or saved state lacks a policy identity, `prepare`/`translate` automatically rebuilds affected analysis before pending work resumes; this may call models. Completed translations remain saved. Font and other export-only changes need a fresh export only. See [built-in language policies](configuration.md#built-in-language-policies) for book/SRT behavior and developer diagnostics.
+
 ## Independent stages and glossary management
 
 ```bash

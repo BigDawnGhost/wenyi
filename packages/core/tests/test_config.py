@@ -6,10 +6,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
 from pydantic import ValidationError
 from wenyi_core.config import _DEFAULT_CONFIG_YAML, Config, replace_llm_section, write_llm_section
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.routing import resolve_routes
+
+
+def _flatten_defaults(values, prefix=""):
+    """Map nested configuration onto ``section.key`` paths to compare it as a flat set."""
+    flat = {}
+    for key, value in values.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict):
+            flat.update(_flatten_defaults(value, f"{path}."))
+        else:
+            flat[path] = value
+    return flat
 
 
 class TestConfigFileCreation(unittest.TestCase):
@@ -188,6 +201,31 @@ class TestLlmSectionEditing(unittest.TestCase):
 def default_config_text() -> str:
     """Return the configuration template the CLI creates for a missing file."""
     return _DEFAULT_CONFIG_YAML
+
+
+class TestShippedDefaultConfig(unittest.TestCase):
+    """The committed config.yaml must track the generated default template."""
+
+    def test_root_config_matches_builtin_template(self):
+        root = Path(__file__).resolve().parents[3] / "config.yaml"
+        shipped = _flatten_defaults(yaml.safe_load(root.read_text(encoding="utf-8")))
+        template = _flatten_defaults(yaml.safe_load(_DEFAULT_CONFIG_YAML))
+
+        drift = {
+            "missing from config.yaml": sorted(set(template) - set(shipped)),
+            "missing from the built-in template": sorted(set(shipped) - set(template)),
+            "different value": {
+                key: (shipped[key], template[key])
+                for key in sorted(set(shipped) & set(template))
+                if shipped[key] != template[key]
+            },
+        }
+
+        self.assertEqual(
+            {kind: found for kind, found in drift.items() if found},
+            {},
+            "config.yaml at the repository root drifted from the built-in default template",
+        )
 
 
 if __name__ == "__main__":
