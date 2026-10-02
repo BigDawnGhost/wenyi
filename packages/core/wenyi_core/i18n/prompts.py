@@ -7,7 +7,11 @@ from functools import lru_cache
 from string import Template
 
 from . import languages
+from .policy.models import PolicyContext, PolicyPlan
+from .policy.resolver import resolve_policy
 from .resources import read_text
+
+PROMPT_OPERATIONS = ("prompt.language_rules",)
 
 
 @lru_cache(maxsize=None)
@@ -17,29 +21,23 @@ def template(name: str) -> Template:
     return Template(read_text(f"tasks/{name}.txt"))
 
 
-def render(name: str, *, src: str = "ja", tgt: str = "zh", **kwargs) -> str:
+def render(
+    name: str, *, src: str = "ja", tgt: str = "zh", plan: PolicyPlan | None = None, **kwargs
+) -> str:
     src = languages.require_language(src, allow_auto=True)
-    target = languages.profile(tgt)
-    kwargs.setdefault("src_label", languages.label(src))
-    kwargs.setdefault("tgt_label", target["label"])
-    kwargs.setdefault("target_language", target["english_name"])
-    kwargs.setdefault("source_language", languages.label(src))
-    kwargs.setdefault("lang_guidance", languages.translate_guidance(src, tgt=tgt))
-    kwargs.setdefault("target_guidance", target["target_guidance"])
-    kwargs.setdefault("term_guidance", languages.term_guidance(src))
-    kwargs.setdefault("punct_rule", target["punctuation_rule"])
-    kwargs.setdefault("title_rule", target["title_rule"])
-    kwargs.setdefault("digest_length", target["digest_length"])
-    kwargs.setdefault("synopsis_length", target["synopsis_length"])
-    kwargs.setdefault("review_evidence_tools", read_text("shared/review_evidence_tools.txt"))
-    kwargs.setdefault(
-        "metadata_guidance",
-        Template(read_text("shared/metadata_guidance.txt")).substitute(
-            tgt_label=target["english_name"]
-        ),
-    )
+    if plan is None:
+        plan = resolve_policy(PolicyContext(src, tgt))
+    if plan.context.source != src or plan.context.target != languages.require_language(tgt):
+        raise ValueError("Prompt language policy does not match the requested direction")
+    values = dict(plan.prompt_values)
+    if name in {"translator_system", "review_fixer_system"}:
+        values["lang_guidance"] = values.pop("configured_lang_guidance")
+    for key, value in values.items():
+        kwargs.setdefault(key, value)
+    frozen_templates = dict(plan.templates)
+    selected = Template(frozen_templates[name]) if name in frozen_templates else template(name)
     # Substitute once: literal $ and braces in content stay intact; missing arguments fail.
     try:
-        return template(name).substitute(**kwargs)
+        return selected.substitute(**kwargs)
     except KeyError as error:
         raise ValueError(f"Prompt {name} is missing argument: {error.args[0]}") from error

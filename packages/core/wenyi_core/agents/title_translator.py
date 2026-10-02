@@ -1,6 +1,5 @@
 """Translate aligned title batches without accessing book state."""
 
-from ..i18n.prompts import render
 from . import prompts
 from .base import Agent
 
@@ -22,8 +21,8 @@ class TitleTranslator(Agent):
 
     def translate(self, titles: list[str], glossary_text: str) -> list[str]:
         """Return stripped titles; empty-string fallback belongs to the title plan."""
-        system = render("title_translator_system", src=self.src, tgt=self.tgt, n=len(titles))
-        user = render(
+        system = self.render("title_translator_system", src=self.src, tgt=self.tgt, n=len(titles))
+        user = self.render(
             "title_translator_user",
             src=self.src,
             tgt=self.tgt,

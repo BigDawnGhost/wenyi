@@ -10,7 +10,6 @@ from typing import Any
 
 from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
 from ..i18n.metadata import normalize_gender, normalize_term_type
-from ..i18n.prompts import render
 from ..storage.protocol import Storage
 from .base import Agent
 
@@ -25,10 +24,12 @@ def _text(value: Any, default: str = "") -> str:
 
 
 class Analyzer(Agent):
+    policy_phase = "analysis"
+
     def analyze(self, sample_text: str) -> dict[str, Any]:
         """Analyze samples and return type-checked style, character and terminology data."""
-        system = render("analyzer_system", src=self.src, tgt=self.tgt)
-        user = render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
+        system = self.render("analyzer_system", src=self.src, tgt=self.tgt)
+        user = self.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
         data = self._ask_json(system, user, operation="analysis.style")
         if not isinstance(data, dict):

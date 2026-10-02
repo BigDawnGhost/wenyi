@@ -21,6 +21,36 @@ from .validation import (
 
 def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> None:
     @app.command(rich_help_panel="State and output")
+    def language_policy(
+        source: str | None = typer.Option(
+            None, "--source", help="Resolved source language for preview"
+        ),
+        fmt: str | None = typer.Option(None, "--format", help="Actual export format"),
+        backend: str = typer.Option(
+            "native", "--backend", help="native / weasyprint / fpdf2 / babeldoc"
+        ),
+        subtitles: bool = typer.Option(
+            False, "--subtitles", help="Preview the independent SRT path"
+        ),
+    ) -> None:
+        """Preview built-in language operations and phase fingerprints without model calls."""
+        from wenyi_core.i18n.languages import require_language
+
+        try:
+            config = context().load_config()
+            if source is not None:
+                config.source_lang = require_language(source, allow_auto=True)
+            preview = config.language_policy_preview(
+                format=fmt or ("srt" if subtitles else "epub"),
+                backend=backend,
+                path="srt" if subtitles else "book",
+            )
+        except ValueError as error:
+            context().console.print(f"[red]Error: {error}[/]")
+            raise typer.Exit(1) from None
+        context().console.print_json(data=preview)
+
+    @app.command(rich_help_panel="State and output")
     def languages() -> None:
         """List built-in translation languages (experimental) without calling a model."""
         console = context().console

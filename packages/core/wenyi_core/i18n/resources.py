@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from functools import lru_cache
 from importlib.resources import files
@@ -27,23 +26,3 @@ def read_json(path: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"Language resource must be a JSON object: {path}")
     return value
-
-
-@lru_cache(maxsize=1)
-def prompt_fingerprint() -> str:
-    """Fingerprint packaged prompts and language rules, excluding export about pages."""
-    digest = hashlib.sha256()
-
-    def visit(folder, prefix: str) -> None:
-        for entry in sorted(folder.iterdir(), key=lambda item: item.name):
-            relative = f"{prefix}{entry.name}"
-            if entry.is_dir():
-                visit(entry, relative + "/")
-            elif entry.name.endswith((".txt", ".json")):
-                digest.update(relative.encode("utf-8") + b"\0")
-                digest.update(read_text(relative).encode("utf-8") + b"\0")
-
-    root = files("wenyi_core.i18n").joinpath("data")
-    for name in ("languages", "pairs", "shared", "tasks"):
-        visit(root.joinpath(name), name + "/")
-    return digest.hexdigest()

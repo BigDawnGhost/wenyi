@@ -7,6 +7,7 @@ import json
 import threading
 from contextlib import ExitStack
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
@@ -363,18 +364,21 @@ def _render_export_sync(
     fmt: str,
     run_id: str | None = None,
     bilingual: bool = False,
-    order: str = "target_first",
+    order: Literal["target_first", "source_first"] = "target_first",
     about_page: bool = True,
     preserve_source_style: bool = False,
     punctuation_normalize: bool | None = None,
     pdf_engine: str = "weasyprint",
 ) -> int:
+    from wenyi_core.assemble.policy import export_plan
     from wenyi_core.assemble.writer import assemble
     from wenyi_core.pipeline.runstore import source_sha256
+    from wenyi_core.storage.language_policies import persist_plan
 
     pool = init_pool(settings.psycopg_dsn)
     storage = _pipeline_storage(pid, pool)
     source = _resolve_source(pid)
+    source_digest = source_sha256(source)
     config = _build_config_for(pid, run_id)
     project = dal.get_project(pid)
     if project is None:
@@ -393,23 +397,42 @@ def _render_export_sync(
             raise ValueError("Subtitle source no longer matches project state")
         from wenyi_core.assemble.srt_writer import write_srt_outputs
         from wenyi_core.ingest.srt_reader import parse_srt
+        from wenyi_core.srt.policy import export_plan as srt_export_plan
         from wenyi_core.srt.store import SrtRunStore
 
         with storage.state_lock():
             srt = SrtRunStore(storage.run_dir, storage=storage)
             rows = srt.load_cues()
             translations = srt.translations_from_cues(rows)
+            manifest = srt.load_manifest()
         if not translations:
             raise ValueError("No translated subtitles are available")
+        cues = parse_srt(source)
+        persist_plan(
+            storage, srt_export_plan(config, manifest, cues, translations, bilingual=bilingual)
+        )
         write_srt_outputs(
-            parse_srt(source),
+            cues,
             translations,
             mono_path=None if bilingual else out_path,
             bilingual_path=out_path if bilingual else None,
         )
     else:
-        snapshot = storage.create_export_snapshot(actual_sha256=source_sha256(source))
+        snapshot = storage.create_export_snapshot(actual_sha256=source_digest)
         with storage.assemble_lock():
+            plan = export_plan(
+                snapshot,
+                fmt,
+                pdf_engine=pdf_engine,
+                punctuation_normalize=config.output.punctuation_normalize
+                if punctuation_normalize is None
+                else punctuation_normalize,
+                bilingual=bilingual,
+                order=order,
+                preserve_source_style=preserve_source_style,
+                about_page=about_page,
+            )
+            persist_plan(storage, plan)
             assemble(
                 snapshot,
                 source,
@@ -424,7 +447,10 @@ def _render_export_sync(
                 else punctuation_normalize,
                 pdf_engine=pdf_engine,
                 babeldoc_timeout=config.pipeline.babeldoc_timeout,
+                language_policy=plan,
             )
+    if source_sha256(source) != source_digest:
+        raise ValueError("Source changed during export; ensure the file is stable and retry")
     publish_export(
         pool,
         pid,

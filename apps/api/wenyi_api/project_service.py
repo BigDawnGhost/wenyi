@@ -76,6 +76,12 @@ def effective_config(
             )
         if config.source_lang not in {"auto", project.get("source_lang")}:
             raise ValueError("Source language conflicts with initialized project")
+        resolved = Config.model_validate(
+            {**config.model_dump(), "source_lang": project["source_lang"]}
+        )
+    else:
+        resolved = config
+    resolved.language_policy("translation", path="srt" if project.get("fmt") == "srt" else "book")
     return config
 
 

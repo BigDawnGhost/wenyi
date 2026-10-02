@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import re
 
-from ..i18n.languages import normalize_language, require_language
+from ..i18n.languages import require_language
+from ..i18n.policy.models import PolicyContext
+from ..i18n.policy.resolver import resolve_policy
 from ..ingest.models import Chapter
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
@@ -101,10 +103,9 @@ def _epub_lang(lang: str | None) -> str:
     """Return the EPUB metadata language code; the default Chinese target is Simplified
     Chinese.
     """
-    normalized = normalize_language(lang or "zh")
-    if normalized == "zh":
-        return "zh-Hans"
-    return normalized or (lang or "zh-Hans").replace("_", "-")
+    return resolve_policy(
+        PolicyContext("auto", lang or "zh", phase="export", format="epub")
+    ).export.language_tag
 
 
 def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:

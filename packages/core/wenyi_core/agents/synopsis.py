@@ -9,7 +9,6 @@ supports cache reuse. Use grouped map-reduce merging for long books to bound pro
 
 from __future__ import annotations
 
-from ..i18n.prompts import render
 from .base import Agent
 
 # Character budget for one digest merge; group and recursively merge larger inputs.
@@ -17,14 +16,18 @@ _REDUCE_BUDGET = 12000
 
 
 class Synopsizer(Agent):
+    policy_phase = "analysis"
+
     def digest_chapter(self, source_text: str) -> str:
         """Summarize one source chapter in the target language; return empty on empty input or
         failure.
         """
         if not source_text.strip():
             return ""
-        system = render("chapter_digest_system", src=self.src, tgt=self.tgt)
-        user = render("chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000])
+        system = self.render("chapter_digest_system", src=self.src, tgt=self.tgt)
+        user = self.render(
+            "chapter_digest_user", src=self.src, tgt=self.tgt, source=source_text[:8000]
+        )
         # Use the fast tier with output headroom above the language-specific digest budget.
         return self._ask_text(system, user, operation="synopsis.chapter")
 
@@ -71,8 +74,8 @@ class Synopsizer(Agent):
     def _synth(self, digests: list[str], analysis_brief: str) -> str:
         """Merge one group of chapter digests and style analysis into a higher-level synopsis."""
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
-        system = render("book_synopsis_system", src=self.src, tgt=self.tgt)
-        user = render(
+        system = self.render("book_synopsis_system", src=self.src, tgt=self.tgt)
+        user = self.render(
             "book_synopsis_user",
             src=self.src,
             tgt=self.tgt,

@@ -3,7 +3,6 @@
 The core reports progress through ``orchestrator.run(progress=cb)`` independently
 of the UI. Adapters can wrap callbacks with a :class:`ProgressEmitter`:
 
-- ``NullEmitter`` discards events when progress is rendered locally.
 - ``RedisEmitter`` in apps/api publishes events for the WebSocket relay.
 
 The core has no Redis dependency; it invokes the injected progress callback.
@@ -11,8 +10,12 @@ The core has no Redis dependency; it invokes the injected progress callback.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
+
+ProgressFn = Callable[[int, int, str], None]
+"""Core progress callback: ``(done, total, label)``."""
 
 
 @dataclass
@@ -36,13 +39,6 @@ class ProgressEmitter(Protocol):
     """Interface for publishing progress events."""
 
     def emit(self, event: TranslationEvent) -> None: ...
-
-
-class NullEmitter:
-    """Discard events when progress is rendered directly by the local client."""
-
-    def emit(self, event: TranslationEvent) -> None:  # noqa: D401
-        return None
 
 
 def make_progress_fn(

@@ -7,9 +7,11 @@ propagation by the pipeline.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from ..config import Config
+from ..i18n.policy.models import Phase
+from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_loose
 
@@ -20,6 +22,8 @@ Messages = list[dict[str, str]]
 
 
 class Agent:
+    policy_phase: ClassVar[Phase] = "translation"
+
     def __init__(self, client: LLMClient, config: Config):
         """Store the shared client and config and cache the current source and target
         languages.
@@ -28,6 +32,13 @@ class Agent:
         self.config = config
         self.src = config.source_lang
         self.tgt = config.target_lang
+        self.language_policy = config.language_policy(self.policy_phase)
+
+    def render(self, name: str, **kwargs: Any) -> str:
+        """Use this agent's immutable resource view, including inside worker threads."""
+        kwargs.setdefault("src", self.src)
+        kwargs.setdefault("tgt", self.tgt)
+        return render(name, plan=self.language_policy, **kwargs)
 
     def _complete_json_turn(
         self,

@@ -6,6 +6,10 @@ epub_writer.
 
 from __future__ import annotations
 
+from typing import Literal
+
+from ..i18n.policy.models import PolicyContext, PolicyPlan
+from ..i18n.policy.resolver import resolve_policy
 from .about import append_about_page
 from .docx_writer import _assemble_docx
 from .epub_writer import (
@@ -21,7 +25,6 @@ from .writer_common import (
     _OUT_EXT,
     _default_out,
     _ensure_parent_dir,
-    _epub_lang,
     _manifest_target_lang,
     default_output_format,
 )
@@ -36,12 +39,13 @@ def assemble(
     out_format: str | None = None,
     *,
     bilingual: bool = False,
-    order: str = "target_first",
+    order: Literal["target_first", "source_first"] = "target_first",
     preserve_source_style: bool = False,
     about_page: bool = True,
     pdf_engine: str = "weasyprint",
     babeldoc_timeout: float = 600.0,
     punctuation_normalize: bool = False,
+    language_policy: PolicyPlan | None = None,
 ) -> str:
     """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
     EPUB input reuses the original layout and resources; template-free input produces a
@@ -56,14 +60,44 @@ def assemble(
         supported = " / ".join(_OUT_EXT)
         raise ValueError(f"Unsupported output format: {out_format} (supported: {supported})")
 
+    m = store.load_manifest()
+    if out_format is None:
+        out_format = default_output_format(m)
+    if language_policy is None:
+        language_policy = resolve_policy(
+            PolicyContext(
+                m.get("source_lang", "auto"),
+                _manifest_target_lang(m),
+                phase="export",
+                format=out_format,
+                backend="babeldoc"
+                if out_format == "pdf"
+                and (
+                    m.get("meta", {}).get("pdf_export") == "babeldoc"
+                    or m.get("meta", {}).get("babeldoc")
+                )
+                else pdf_engine
+                if out_format == "pdf"
+                else "native",
+                punctuation_normalize=punctuation_normalize,
+                source_identity=m.get("source_sha256", ""),
+                bilingual=bilingual,
+                order=order,
+                preserve_source_style=preserve_source_style,
+                about_page=about_page,
+            )
+        )
+    if language_policy.context.phase != "export" or language_policy.context.format != out_format:
+        raise ValueError("Export language policy does not match the actual output format")
     view: AssembleStore
     if isinstance(store, ExportViewStore):
         view = store
     else:
-        view = ExportViewStore(store, punctuation_normalize=punctuation_normalize)
+        view = ExportViewStore(
+            store, punctuation_normalize=punctuation_normalize, plan=language_policy
+        )
     m = view.load_manifest()
-    if out_format is None:
-        out_format = default_output_format(m)
+    view.prepare()
     target_lang = _manifest_target_lang(m)
     if out_format == "txt":
         out_path = out_path or _default_out(
@@ -144,5 +178,7 @@ def assemble(
             preserve_source_style=preserve_source_style,
         )
     if about_page:
-        append_about_page(result, _epub_lang(target_lang))
+        append_about_page(
+            result, language_policy.export.language_tag, locale=language_policy.export.about_locale
+        )
     return result

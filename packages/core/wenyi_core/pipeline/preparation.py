@@ -11,24 +11,24 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..i18n.languages import normalize_language
+from ..i18n.policy.models import Phase
 from ..i18n.prompts import render
-from ..i18n.resources import prompt_fingerprint
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.models import Chapter, Document
 from ..ingest.segmenter import load_document
 from ..storage.protocol import Storage
 from .context import RollingContext
+from .language_policies import commit_revision, initialize_policies, translation_revision
 from .runstore import source_sha256, translation_run_dir
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
-ProgressFn = Callable[[int, int, str], None]
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -268,7 +268,7 @@ class PreparationService:
                 )
             doc.source_lang = detected
             store.log_event("language_detected", source_lang=doc.source_lang)
-        self._runtime.apply_language(doc.source_lang)
+        self._runtime.apply_language(doc.source_lang, source_identity=source_hash)
         doc.source_lang = self._runtime.config.source_lang
         doc.target_lang = self._runtime.config.target_lang
 
@@ -276,6 +276,7 @@ class PreparationService:
             doc,
             source_hash=source_hash,
         )
+        manifest["language_policies"] = initialize_policies(store, self._runtime.config)
         if self._runtime.config.pipeline.book_understanding:
             self._ensure_chapter_digests(store, doc.chapters, progress)
         glossary = store
@@ -283,6 +284,10 @@ class PreparationService:
             progress(0, 0, "Analyzing book style…")
         sample = self.sample_text(doc)
         analysis = self._runtime.analyzer.analyze(sample) if sample else {}
+        analysis["language_policy"] = manifest["language_policies"]["analysis"]
+        analysis["style_policy"] = self._runtime.config.language_policy(
+            "analysis"
+        ).task_fingerprint("analyzer")
         if analysis:
             self._runtime.analyzer.seed_glossary(glossary, analysis)
         store.save_analysis(analysis)
@@ -298,7 +303,6 @@ class PreparationService:
 
         # The manifest marks successful initialization and must be committed atomically last.
         manifest["initialized"] = True
-        manifest["prompt_fingerprint"] = prompt_fingerprint()
         store.save_manifest(manifest)
         self._runtime.bind_timing(store)
         store.finish_initialization()
@@ -321,13 +325,41 @@ class PreparationService:
         )
         return store
 
-    def activate(self, store: Storage) -> dict[str, Any]:
+    def activate(self, store: Storage, *, phase: Phase | None = None) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
         store.recover_usage()
         manifest = store.load_manifest()
         self._runtime.apply_manifest_languages(manifest)
-        store.log_event("language_resources_applied", prompt_fingerprint=prompt_fingerprint())
+        if phase == "translation" and translation_revision(store, self._runtime.config):
+            self._rebuild_analysis(store, manifest)
         return manifest
+
+    def _rebuild_analysis(self, store: Storage, manifest: dict[str, Any]) -> None:
+        """Refresh built-in guidance while preserving formal targets and glossary."""
+        chapters = [store.load_chapter(row["index"]) for row in manifest["chapters"]]
+        if self._runtime.config.pipeline.book_understanding:
+            self._ensure_chapter_digests(store, chapters, None)
+        # Assemble only the source samples; formal chapters are never rewritten here.
+        document = Document(
+            title=manifest.get("title", ""),
+            source_lang=self._runtime.config.source_lang,
+            target_lang=self._runtime.config.target_lang,
+            fmt=manifest.get("fmt", "text"),
+            chapters=chapters,
+        )
+        style_policy = self._runtime.config.language_policy("analysis").task_fingerprint("analyzer")
+        analysis = store.load_analysis() or {}
+        if analysis.get("style_policy") != style_policy:
+            analysis = self._runtime.analyzer.analyze(self.sample_text(document))
+        analysis["style_policy"] = style_policy
+        analysis["language_policy"] = (
+            f"language-policies/{self._runtime.config.language_policy('analysis').fingerprint}.json"
+        )
+        store.save_analysis(analysis)
+        commit_revision(store, self._runtime.config)
+        store.log_event(
+            "language_policy_revision_refreshed", rebuild="analysis", completed_targets="preserved"
+        )
 
     def detect_language_ai(self, doc) -> str:
         """Detect the primary source language with the model; return its code or empty on
@@ -404,6 +436,9 @@ class PreparationService:
         analysis = store.load_analysis() or {}
         style = self._runtime.analyzer.style_brief(analysis)
         inputs = {
+            "language_policy": self._runtime.config.language_policy("analysis").task_fingerprint(
+                "book_synopsis"
+            ),
             "chapters": [
                 [chapter.index, chapter.meta["source_digest"]]
                 for chapter in loaded
@@ -455,7 +490,15 @@ class PreparationService:
             for ci, ch in loaded.items()
             if ch.text_segments
         }
-        todo = [(ci, source) for ci, source in sources.items() if not _digest_complete(loaded[ci])]
+        fingerprint = self._runtime.config.language_policy("analysis").task_fingerprint(
+            "chapter_digest"
+        )
+        todo = [
+            (ci, source)
+            for ci, source in sources.items()
+            if not _digest_complete(loaded[ci])
+            or loaded[ci].meta.get("source_digest_policy") != fingerprint
+        ]
         failed: list[int] = []
         if todo:
             store.log_event(
@@ -476,6 +519,7 @@ class PreparationService:
                     if digest:
                         loaded[ci].meta["source_digest"] = digest
                         loaded[ci].meta["source_digest_complete"] = True
+                        loaded[ci].meta["source_digest_policy"] = fingerprint
                         store.save_chapter(loaded[ci])
                         store.log_event(
                             "book_understanding_chapter_digest_saved", chapter=ci, digest=digest

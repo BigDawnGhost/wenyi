@@ -61,6 +61,16 @@ def normalize_value(value: str) -> str:
     return unicodedata.normalize("NFKC", value).casefold().strip()
 
 
+def text_hash(text: str) -> str:
+    """Return the UTF-8 SHA-256 of complete text for optimistic patch validation."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def integer_index(value: Any) -> int | None:
+    """Accept integer positions excluding booleans and narrow the type explicitly."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _identity_text(value: Any) -> str:
     """Normalize issue identity whitespace and compatibility forms to reduce variation across
     rounds.
