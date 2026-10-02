@@ -16,6 +16,7 @@ export function ParagraphEditor({
   segment,
   initialView,
   readOnly,
+  targetLanguage,
   onClose,
 }: {
   pid: string;
@@ -23,6 +24,7 @@ export function ParagraphEditor({
   segment: ChapterSegments["segments"][number];
   initialView: "edit" | "history";
   readOnly: boolean;
+  targetLanguage?: string;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -246,6 +248,9 @@ export function ParagraphEditor({
               <RevisionHistory
                 entries={history.data || []}
                 disabled={disabled}
+                language={targetLanguage}
+                beforePolish={segment.target_before_polish}
+                current={segment.target}
                 onUse={(value) => {
                   setDraft(value);
                   setView("edit");

@@ -452,6 +452,16 @@ const en = {
     "This paragraph has changed since you opened it. Your draft is preserved. Load the latest version before saving.",
   "proofreading.loadLatest": "Load latest translation",
   "proofreading.unsavedChanges": "Unsaved changes",
+  "proofreading.diffChanges": "Highlight changes",
+  "proofreading.diffFullText": "Full texts",
+  "proofreading.diffRemoved": "Removed",
+  "proofreading.diffAdded": "Added",
+  "proofreading.diffUnchanged": "No text changes.",
+  "proofreading.diffTooLarge":
+    "This comparison is too large or complex for inline highlighting. Showing full texts instead.",
+  "proofreading.initialCurrentComparison": "Initial translation → current version",
+  "proofreading.initialCurrentNotice":
+    "No separate polishing revision is recorded. The current version may include later manual edits or automatic fixes.",
   "review.emptyTranslation": "(Empty translation)",
   "review.proofreadByChapter": "Proofread by chapter",
   "review.manualProofreading": "Manual proofreading — {title}",

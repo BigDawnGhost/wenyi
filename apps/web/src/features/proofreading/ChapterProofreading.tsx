@@ -18,6 +18,7 @@ export function ChapterProofreading({
   busy,
   readOnly,
   error,
+  targetLanguage,
 }: {
   pid: string;
   index: number;
@@ -25,6 +26,7 @@ export function ChapterProofreading({
   busy: boolean;
   readOnly: boolean;
   error: unknown;
+  targetLanguage?: string;
 }) {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
@@ -149,6 +151,7 @@ export function ChapterProofreading({
             segment={activeSegment}
             initialView={editor.view}
             readOnly={readOnly || chapter.isError}
+            targetLanguage={targetLanguage}
             onClose={() => setEditor(null)}
           />
         )}
