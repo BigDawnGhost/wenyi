@@ -25,8 +25,7 @@ pipeline:
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
-  book_understanding:
-    true # Prescan the source for a whole-book synopsis and chapter digests; disable to save prescan cost
+  book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   annotation_alignment: true # Align links after each annotated logical paragraph; if disabled, target links fall back to paragraph ends
   annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
