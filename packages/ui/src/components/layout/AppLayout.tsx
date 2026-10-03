@@ -1,6 +1,6 @@
 import { useI18n } from "@/i18n";
 import { useState } from "react";
-import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
+import { Link, Outlet, useParams } from "react-router-dom";
 import {
   FolderPlus,
   LayoutDashboard,
@@ -200,5 +200,3 @@ export function PageContainer({
 }) {
   return <div className={cn("p-6", className)}>{children}</div>;
 }
-
-export { Link, useNavigate };

@@ -44,6 +44,9 @@ class _RecordingStore:
     def load_usage(self):
         return None
 
+    def load_manifest(self):
+        return {"chapters": [{"index": 0}, {"index": 1}]}
+
     def recover_usage(self):
         """No pending ledger transactions exist in the facade-only fixture."""
 
@@ -103,7 +106,7 @@ class TestOrchestratorContract(unittest.TestCase):
 
         self.assertIs(result, store)
         self.preparation.prepare.assert_called_once_with("novel.txt", progress=progress)
-        self.preparation.activate.assert_called_once_with(store)
+        self.preparation.activate.assert_called_once_with(store, phase="translation")
         self.preparation.ensure_understanding.assert_called_once_with(store, progress=progress)
         self.translation.run.assert_called_once_with(
             store,
@@ -125,6 +128,7 @@ class TestOrchestratorContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Chapter index 7 does not exist"):
             orch.run("novel.txt", only_chapter=7)
 
+        self.preparation.activate.assert_not_called()
         self.preparation.ensure_understanding.assert_not_called()
         self.translation.run.assert_not_called()
 

@@ -93,6 +93,7 @@ def _render_segments_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
     source_lang: str = "",
+    preserve_source_ruby: bool | None = None,
     resource_href: str = "",
     source_ids_by_anchor: dict[str, str] | None = None,
     source_link_targets: dict[tuple[str, str], str] | None = None,
@@ -145,6 +146,7 @@ def _render_segments_html(
                 source_lang,
                 resource_href=resource_href,
                 source_link_targets=source_link_targets,
+                preserve_source_ruby=preserve_source_ruby,
             )
             if src
             else ""
@@ -213,6 +215,7 @@ def _render_chapter_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
     source_lang: str = "",
+    preserve_source_ruby: bool | None = None,
 ) -> str:
     """Backfill a chapter template for HTML/PDF input and generated HTML output."""
     return _render_segments_html(
@@ -222,5 +225,6 @@ def _render_chapter_html(
         order=order,
         preserve_source_style=preserve_source_style,
         source_lang=source_lang,
+        preserve_source_ruby=preserve_source_ruby,
         resource_href=chapter.href or "",
     )

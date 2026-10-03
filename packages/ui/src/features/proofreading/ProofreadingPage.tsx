@@ -51,6 +51,7 @@ export default function ProofreadingPage() {
         busy={busy}
         readOnly={busy || !project.data || project.isError || chapters.isError}
         error={project.error || chapters.error}
+        targetLanguage={project.data?.target_lang ?? undefined}
       />
     );
   }

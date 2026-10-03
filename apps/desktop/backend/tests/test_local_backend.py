@@ -99,12 +99,12 @@ def test_catalog_transaction_rolls_back_project_and_config(backend):
 
 def test_defaults_do_not_load_cli_config_and_revision_is_optimistic(backend, tmp_path, monkeypatch):
     import yaml
-    from wenyi_backend.config_documents import config_document
+    from wenyi_backend.config_documents import global_document
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config.yaml").write_text("source_lang: invalid-cli-config", encoding="utf-8")
     initial = load_settings()
-    document = yaml.safe_dump(config_document(initial.config))
+    document = yaml.safe_dump(global_document(initial.config))
     saved = save_settings(document, initial.default_template, 0)
     assert saved.revision == 1
     with pytest.raises(HTTPException) as error:

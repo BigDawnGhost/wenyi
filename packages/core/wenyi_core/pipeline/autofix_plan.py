@@ -6,8 +6,8 @@ from typing import Any
 
 from ..ingest.models import Chapter
 from ..llm.routing import inference_snapshot
-from ..review.autofix_models import AutofixCandidates, AutofixPlan, PublishLocation, text_hash
-from ..review.models import ReviewOutcome
+from ..review.autofix_models import AutofixCandidates, AutofixPlan, PublishLocation
+from ..review.models import ReviewOutcome, text_hash
 from ..review.run_store import ReviewRunStore
 
 

@@ -15,15 +15,7 @@ export const CardTitle = React.forwardRef<HTMLDivElement, React.HTMLAttributes<H
   ({ className, ...p }, ref) => <div ref={ref} className={cn("font-semibold leading-none tracking-tight", className)} {...p} />
 );
 CardTitle.displayName = "CardTitle";
-export const CardDescription = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...p }, ref) => <div ref={ref} className={cn("text-sm text-muted-foreground", className)} {...p} />
-);
-CardDescription.displayName = "CardDescription";
 export const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...p }, ref) => <div ref={ref} className={cn("p-6 pt-0", className)} {...p} />
 );
 CardContent.displayName = "CardContent";
-export const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...p }, ref) => <div ref={ref} className={cn("flex items-center p-6 pt-0", className)} {...p} />
-);
-CardFooter.displayName = "CardFooter";

@@ -13,6 +13,25 @@ const models = {
   editor: { provider: "second", model: "editor-model" },
 };
 
+test("global workflow has no project precision controls or polishing constraint", async ({ page }) => {
+  await fakeApi(page, {
+    "/settings": {
+      ...globalConfiguration,
+      effective: {
+        ...globalConfiguration.effective,
+        pipeline: { ...globalConfiguration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+      },
+    },
+  });
+  await page.goto("/settings");
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Translation mode", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Default workflow template", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: /Quick draft|快速出稿/ })).toHaveCount(0);
+  await page.locator("summary").filter({ hasText: "Segmentation and performance" }).click();
+  await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
+});
+
 test("projects only select registered models and operation overrides", async ({
   page,
 }) => {
@@ -98,7 +117,7 @@ test("global defaults persist independently of existing project settings", async
     await route.fulfill({ json: saved });
   });
   await page.goto("/settings");
-  await chooseOption(page.getByLabel("Default workflow template"), /^Fast draft — /);
+  await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
@@ -109,9 +128,8 @@ test("global defaults persist independently of existing project settings", async
   expect(writes).toBe(1);
   expect(saved.effective.pipeline.polish).toBe(false);
   await page.reload();
-  await expect(page.getByLabel("Default workflow template")).toHaveText(
-    /^Fast draft — /,
-  );
+  await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
+  expect(saved.default_template).toBe("标准翻译");
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.screenshot({
     path: testInfo.outputPath("global-settings.png"),
@@ -132,6 +150,7 @@ test("creation uses server defaults without a workflow selector", async ({
       templateRequests.push(request.url());
   });
   await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
     const form = await new Response(
       new Uint8Array(route.request().postDataBuffer()!),
       {
@@ -154,7 +173,7 @@ test("creation uses server defaults without a workflow selector", async ({
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
-  await expect(page).toHaveURL(new RegExp(`project=${pid}`));
+  await expect(page).toHaveURL(`/projects/${pid}`);
   expect(templateRequests).toEqual([]);
 });
 

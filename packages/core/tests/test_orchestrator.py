@@ -952,7 +952,9 @@ class TestBookUnderstanding(unittest.TestCase):
 
             resumed = FakeClient(handler=routing_handler)
             Orchestrator(cfg, client=resumed).run(txt)
-            self.assertTrue(store.load_analysis()["book_synopsis"])
+            analysis = store.load_analysis()
+            assert analysis is not None
+            self.assertTrue(analysis["book_synopsis"])
             self.assertFalse(any(call["operation"] == "synopsis.chapter" for call in resumed.calls))
             self.assertFalse(any(call["operation"] == "translation.body" for call in resumed.calls))
 
@@ -974,12 +976,15 @@ class TestBookUnderstanding(unittest.TestCase):
             cfg.pipeline.book_understanding = False
             store = require_file_storage(orch.prepare(txt))
             cfg.pipeline.book_understanding = True
+            cfg.freeze_language_policies(store.load_manifest()["source_sha256"])
             with self.assertRaisesRegex(ValueError, "Chapter digests.*1"):
                 orch.run(txt)
             self.assertTrue(store.load_chapter(0).meta["source_digest"])
             self.assertFalse(store.load_chapter(1).meta.get("source_digest"))
             self.assertFalse(any(call["operation"] == "translation.body" for call in client.calls))
-            self.assertEqual(store.load_usage()["totals"], client.usage_summary()["totals"])
+            usage = store.load_usage()
+            assert usage is not None
+            self.assertEqual(usage["totals"], client.usage_summary()["totals"])
 
             client.handler = routing_handler
             previous_calls = len(client.calls)
@@ -991,7 +996,9 @@ class TestBookUnderstanding(unittest.TestCase):
             ]
             self.assertEqual(len(digests), 1)
             self.assertIn("放課後", digests[0]["messages"][-1]["content"])
-            self.assertEqual(store.load_usage()["totals"], client.usage_summary()["totals"])
+            usage = store.load_usage()
+            assert usage is not None
+            self.assertEqual(usage["totals"], client.usage_summary()["totals"])
 
     def _translate_user(self, calls) -> str:
         """Return user text from the last translation.body call (not a polish continuation)."""

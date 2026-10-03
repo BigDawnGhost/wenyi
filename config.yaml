@@ -24,9 +24,9 @@ pipeline:
   review: true # Run final review after whole-book translation; disable with --no-review
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  translation_mode: standard # standard | best_of_three; best_of_three requires polish
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
-  book_understanding:
-    true # Prescan the source for a whole-book synopsis and chapter digests; disable to save prescan cost
+  book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   annotation_alignment: true # Align links after each annotated logical paragraph; if disabled, target links fall back to paragraph ends
   annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
@@ -56,9 +56,9 @@ paths:
 
 # ── Output ───────────────────────────────────────────────────────────────────
 output:
-  mono: true            # Monolingual output in language.target
-  bilingual: false      # Bilingual output with visually muted source text
-  bilingual_order: target_first  # target_first=translation first; source_first=source first
+  mono: true # Monolingual output in language.target
+  bilingual: false # Bilingual output with visually muted source text
+  bilingual_order: target_first # target_first=translation first; source_first=source first
   bilingual_preserve_source_style: false # true=preserve original source styling; false=render source in muted gray
-  about_page: true      # Append an About This Translation page
+  about_page: true # Append an About This Translation page
   punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state

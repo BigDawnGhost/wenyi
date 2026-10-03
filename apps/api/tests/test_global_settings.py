@@ -110,7 +110,7 @@ def test_global_changes_preserve_existing_projects_and_queued_snapshots(api):
     document["pipeline"]["polish"] = False
     model_id = document["llm"]["tiers"]["strong"]
     document["llm"]["models"][model_id]["model"] = "new-model"
-    changed = client.put("/settings", json=payload(before, default_template="快速出稿"))
+    changed = client.put("/settings", json=payload(before))
     assert changed.status_code == 200, changed.text
     assert tasks._build_config_for(pid, run["arq_job_id"]).llm == original.llm
     existing = client.get(f"/projects/{pid}/config").json()
@@ -121,13 +121,13 @@ def test_global_changes_preserve_existing_projects_and_queued_snapshots(api):
         data={"project": json.dumps({"name": "New book"})},
         files={"file": ("new.txt", b"A different book.")},
     ).json()
-    assert second["strategy"]["template"] == "快速出稿"
+    assert second["strategy"]["template"] == "标准翻译"
     assert (
         client.get(f"/projects/{second['id']}/config").json()["effective"]["pipeline"]["polish"]
         is False
     )
     templates = client.get("/strategies/templates").json()
-    assert [t["name"] for t in templates if t["recommended"]] == ["快速出稿"]
+    assert [t["name"] for t in templates if t["recommended"]] == ["标准翻译"]
     assert all(t["steps"]["polish"] is False for t in templates)
     assert client.put("/settings", json=payload(before)).status_code == 409
 

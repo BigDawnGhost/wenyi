@@ -379,11 +379,11 @@ def test_non_system_keyring_is_rejected(monkeypatch):
 
 
 def test_registry_rename_and_delete_are_atomic_with_preferences(desktop_context, isolated_vault):
-    from wenyi_backend.config_documents import config_document
+    from wenyi_backend.config_documents import global_document
     from wenyi_backend.global_settings import load_settings, save_settings
 
     current = load_settings()
-    document = config_document(current.config)
+    document = global_document(current.config)
     document["llm"]["preset"] = None
     old = next(iter(document["llm"]["providers"]))
     store = local_credentials.credential_store()
@@ -452,11 +452,11 @@ def test_vault_wait_does_not_hold_catalog_writer(desktop_context, isolated_vault
 @pytest.mark.parametrize("edit", ["rename", "delete", "provider", "revision"])
 def test_vault_write_cannot_bind_to_changed_connection(desktop_context, isolated_vault, edit):
     from fastapi import HTTPException
-    from wenyi_backend.config_documents import config_document
+    from wenyi_backend.config_documents import global_document
     from wenyi_backend.global_settings import load_settings, save_settings
 
     current = load_settings()
-    document = config_document(current.config)
+    document = global_document(current.config)
     document["llm"]["preset"] = None
     name = next(iter(document["llm"]["providers"]))
     store = local_credentials.credential_store()

@@ -4,7 +4,7 @@ from contextlib import contextmanager, nullcontext
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
-from wenyi_backend.config_documents import config_document
+from wenyi_backend.config_documents import global_document
 from wenyi_backend.global_settings import GlobalSettings, validate_settings
 from wenyi_backend.model_registry import project_registry_updates
 from wenyi_core.config import Config
@@ -28,9 +28,11 @@ class PostgresSettings:
                 "SELECT document, default_template, revision FROM application_settings WHERE id=1"
             ).fetchone()
         return (
-            GlobalSettings(Config.from_dict(row[0]), row[1], row[2])
+            GlobalSettings(
+                Config.from_dict(global_document(Config.from_dict(row[0]))), "标准翻译", row[2]
+            )
             if row
-            else GlobalSettings(self.defaults())
+            else GlobalSettings(Config.from_dict(global_document(self.defaults())))
         )
 
     @contextmanager
@@ -49,7 +51,7 @@ class PostgresSettings:
 
     def save(self, value, default_template, revision, *, model_renames=None, provider_renames=None):
         config = validate_settings(value, default_template)
-        document = config_document(config)
+        document = global_document(config)
         with self.guard(exclusive=True) as conn:
             current = self.load(connection=conn)
             if revision != current.revision:

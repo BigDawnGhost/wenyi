@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -10,10 +9,9 @@ from typing import Any, Literal
 
 from ..config import Config
 from ..glossary.store import GlossaryTerm
-from ..i18n import languages
-from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
+from ..review.models import text_hash
 from . import prompts
 from .base import Agent
 
@@ -61,11 +59,6 @@ class ProvisionalPatch:
         }
 
 
-def _sha256(text: str) -> str:
-    """Hash complete UTF-8 text with SHA-256 for optimistic shadow-patch validation."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def _dialogue_quote_pairs(text: str) -> int:
     """Count complete double-quote pairs to detect loss of existing dialogue boundaries."""
     return (
@@ -96,7 +89,7 @@ def _patch_id(
         sort_keys=True,
         separators=(",", ":"),
     )
-    return f"patch-r{round_number:02d}-{_sha256(payload)[:16]}"
+    return f"patch-r{round_number:02d}-{text_hash(payload)[:16]}"
 
 
 def _nearby_text(pairs: Sequence[tuple[str, str]]) -> str:
@@ -128,6 +121,8 @@ def _glossary_text(
 class ReviewFixer(Agent):
     """Generate strictly validated complete-paragraph patches that cannot publish themselves."""
 
+    policy_phase = "review"
+
     def __init__(self, client: LLMClient, config: Config, *, operation: str = "review.fix"):
         super().__init__(client, config)
         self.operation = operation
@@ -137,7 +132,7 @@ class ReviewFixer(Agent):
         """Return the current translation hash used by the Fixer protocol."""
         if not isinstance(target, str):
             raise ReviewFixerProtocolError("invalid_current_target")
-        return _sha256(target)
+        return text_hash(target)
 
     @staticmethod
     def _issues(
@@ -227,17 +222,12 @@ class ReviewFixer(Agent):
 
         issue_ids, issue_payload = self._issues(issues, chapter=chapter, index=index)
         before_hash = self.target_hash(current_target)
-        system = render(
+        system = self.render(
             "review_fixer_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=languages.translate_guidance(
-                self.src,
-                self.config.honorific_strategy,
-                self.tgt,
-            ),
         )
-        user = render(
+        user = self.render(
             "review_fixer_user",
             src=self.src,
             tgt=self.tgt,

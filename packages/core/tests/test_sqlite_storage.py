@@ -585,7 +585,9 @@ def test_review_store_resumes_checkpoints_and_chunks_without_files(store, docume
     assert resumed is not None
     assert resumed.review_id == review.review_id
     assert resumed.load_checkpoint() == {"round": 1, "phase": "scan_done"}
-    assert resumed.is_chunk_done("r1-ch3-base0-n2")
+    assert resumed.load_chunk_result("r1-ch3-base0-n2") == {
+        "initial_issues": [{"index": 0, "note": "check"}]
+    }
     resumed.rebuild_snapshots_from_chunks(1)
     assert resumed.result_snapshots()[0][0]["note"] == "check"
     with resumed.round_scope(1):

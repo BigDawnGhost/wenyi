@@ -387,7 +387,7 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     from contextlib import ExitStack
     from threading import Barrier
 
-    from wenyi_backend.config_documents import config_document
+    from wenyi_backend.config_documents import global_document
     from wenyi_backend.context import current_context
     from wenyi_backend.global_settings import load_settings, save_settings
     from wenyi_backend.workers import tasks
@@ -425,7 +425,7 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
             stack.callback(context.repository.close)
             with use_context(context):
                 settings = load_settings()
-                document = config_document(settings.config)
+                document = global_document(settings.config)
                 document["pipeline"]["polish"] = bool(owner)
                 save_settings(json.dumps(document), settings.default_template, settings.revision)
                 name = next(iter(settings.config.llm.providers))

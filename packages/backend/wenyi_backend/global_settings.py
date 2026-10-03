@@ -7,7 +7,7 @@ from typing import Any
 
 from wenyi_core.config import Config
 
-from .config_documents import parse_yaml
+from .config_documents import PROJECT_PIPELINE_FIELDS, parse_yaml
 from .context import current_context
 from .strategies import PRESET_TEMPLATES
 
@@ -30,7 +30,14 @@ def registry_guard(*, exclusive: bool = False):
 def validate_settings(value: str, default_template: str) -> Config:
     if default_template not in {template["name"] for template in PRESET_TEMPLATES}:
         raise ValueError("Unknown default workflow template")
-    config = Config.from_dict(parse_yaml(value))
+    document = parse_yaml(value)
+    pipeline = document.get("pipeline", {})
+    if isinstance(pipeline, dict) and PROJECT_PIPELINE_FIELDS.intersection(pipeline):
+        raise ValueError(
+            "translation_mode is a project setting; choose it when creating a project. "
+            "Initial-draft concurrency is built in, not configurable."
+        )
+    config = Config.from_dict(document)
     if config.source_lang == config.target_lang:
         raise ValueError("Source and target languages are identical")
     return config

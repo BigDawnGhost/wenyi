@@ -91,31 +91,39 @@ test("Desktop bridge selects without upload, highlights/leaves and preserves sel
   expect((await calls(page)).some(call => call.command === "native_drop_upload")).toBe(false);
 });
 
-test("Desktop bridge only uploads handle on Create and refuses pending/created replacement", async ({ page }) => {
-  await setup(page);
-  const zone = page.getByRole("group", { name: "Source file selection" });
-  await nativeEvent(page, { kind: "drop", source: source("original") });
-  await page.getByRole("button", { name: "Create project", exact: true }).click();
-  await expect(zone).toHaveAttribute("aria-disabled", "true");
-  await expect.poll(() => calls(page)).toContainEqual({
-    command: "native_drop_upload",
-    args: {
-      handle: "original",
-      project: { name: "Native book", source_lang: "auto", target_lang: "zh", prepare: false, pdf_backend: null },
-    },
+for (const mode of ["standard", "best_of_three"] as const) {
+  test(`Desktop bridge uploads ${mode} on Create, refuses pending replacement and opens overview`, async ({ page }) => {
+    await setup(page);
+    await page.getByRole("radio", {
+      name: mode === "standard" ? "Standard" : "Three drafts + synthesis",
+      exact: true,
+    }).check();
+    const zone = page.getByRole("group", { name: "Source file selection" });
+    await nativeEvent(page, { kind: "drop", source: source("original") });
+    await page.getByRole("button", { name: "Create project", exact: true }).click();
+    await expect(zone).toHaveAttribute("aria-disabled", "true");
+    await expect.poll(() => calls(page)).toContainEqual({
+      command: "native_drop_upload",
+      args: {
+        handle: "original",
+        project: {
+          name: "Native book", source_lang: "auto", target_lang: "zh",
+          prepare: false, translation_mode: mode, pdf_backend: null,
+        },
+      },
+    });
+    await nativeEvent(page, { kind: "drop", source: source("pending") });
+    await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
+    await expect.poll(() => calls(page)).toContainEqual({
+      command: "native_drop_release", args: { handle: "pending" },
+    });
+    await page.evaluate(project => (window as unknown as {
+      completeNativeUpload: (value: unknown) => void;
+    }).completeNativeUpload(project), { ...project, status: "parsing" });
+    await expect(page).toHaveURL(`/projects/${pid}`);
+    await expect(zone).toHaveCount(0);
+    await expect.poll(() => calls(page)).toContainEqual({
+      command: "native_drop_release", args: { handle: "original" },
+    });
   });
-  await nativeEvent(page, { kind: "drop", source: source("pending") });
-  await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
-  await expect.poll(() => calls(page)).toContainEqual({
-    command: "native_drop_release", args: { handle: "pending" },
-  });
-  await page.evaluate(project => (window as unknown as {
-    completeNativeUpload: (value: unknown) => void;
-  }).completeNativeUpload(project), { ...project, status: "parsing" });
-  await expect(page).toHaveURL(`/projects/new?project=${pid}`);
-  await nativeEvent(page, { kind: "drop", source: source("created") });
-  await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
-  await expect.poll(() => calls(page)).toContainEqual({
-    command: "native_drop_release", args: { handle: "created" },
-  });
-});
+}

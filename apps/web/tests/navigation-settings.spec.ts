@@ -1,6 +1,38 @@
 import { test, expect } from "@playwright/test";
 import { fakeApi, pid, project, configuration, effective } from "./fixtures";
 
+test("project settings retain creation-time precision without a mode selector", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/config`]: {
+      ...configuration,
+      effective: {
+        ...effective,
+        pipeline: { ...effective.pipeline, translation_mode: "best_of_three", polish: true },
+      },
+    },
+  });
+  let submitted: Record<string, any> | undefined;
+  await page.route(`**/api/projects/${pid}/config/validate`, async (route) => {
+    submitted = JSON.parse(route.request().postDataJSON().yaml);
+    await route.fulfill({
+      json: { ...configuration, effective: submitted, yaml: JSON.stringify(submitted) },
+    });
+  });
+  await page.goto(`/projects/${pid}/settings`);
+  await expect(page.getByLabel("Translation mode", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
+  await page.locator("summary").filter({ hasText: "Segmentation and performance" }).click();
+  await expect(page.getByLabel("Parallel initial drafts (1–3)")).toHaveCount(0);
+  await page.getByLabel("Tokens per batch", { exact: true }).fill("1400");
+  await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
+  expect(submitted?.pipeline.translation_mode).toBe("best_of_three");
+  expect(submitted?.pipeline.polish).toBe(true);
+  expect(submitted?.pipeline.precision_concurrency).toBeUndefined();
+  expect(submitted?.segment.max_tokens_per_batch).toBe(1400);
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
+});
+
 for (const mobile of [false, true]) {
   test(`project navigation stays flat on ${mobile ? "mobile in Chinese" : "desktop"}`, async ({
     page,

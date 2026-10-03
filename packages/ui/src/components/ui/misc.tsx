@@ -127,36 +127,3 @@ export function TabsContent({
   if (ctx.value !== value) return null;
   return <div className={className}>{children}</div>;
 }
-
-// Table primitives.
-export const Table = React.forwardRef<
-  HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...p }, ref) => (
-  <div className="w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...p}
-    />
-  </div>
-));
-Table.displayName = "Table";
-export const THead = (p: React.HTMLAttributes<HTMLTableSectionElement>) => (
-  <thead className="[&_tr]:border-b" {...p} />
-);
-export const TBody = (p: React.HTMLAttributes<HTMLTableSectionElement>) => (
-  <tbody className="[&_tr:last-child]:border-0" {...p} />
-);
-export const TR = (p: React.HTMLAttributes<HTMLTableRowElement>) => (
-  <tr className="border-b transition-colors hover:bg-muted/50" {...p} />
-);
-export const TH = (p: React.ThHTMLAttributes<HTMLTableCellElement>) => (
-  <th
-    className="h-9 px-3 text-left align-middle font-medium text-muted-foreground"
-    {...p}
-  />
-);
-export const TD = (p: React.TdHTMLAttributes<HTMLTableCellElement>) => (
-  <td className="px-3 py-2 align-middle" {...p} />
-);

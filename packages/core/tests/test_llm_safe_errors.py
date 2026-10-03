@@ -108,6 +108,25 @@ def test_failed_event_sink_cannot_log_provider_context(caplog):
     assert SECRET not in caplog.text
 
 
+def test_scoped_capture_cannot_log_provider_context(caplog):
+    client, calls = client_with_failure()
+    events = []
+    client.set_event_sink(lambda event, **data: events.append((event, data)))
+
+    def observer(event, **data):
+        raise RuntimeError(f"Observer failed with {SECRET}")
+
+    with client.capture_events(observer), pytest.raises(ProviderRequestError):
+        client.complete([], operation="translation.body")
+    assert len(calls) == 2
+    assert "Failed to write LLM event" in caplog.text
+    assert SECRET not in caplog.text
+    assert SECRET not in json.dumps(events)
+    failure = next(data for event, data in events if event == "llm_request_failed")
+    assert failure["error_category"] == "provider_unavailable"
+    assert failure["status_code"] == 503
+
+
 @pytest.mark.parametrize("stop_type", [RequestStopped, RequestCancelled])
 def test_control_flow_errors_are_preserved(stop_type):
     client, calls = client_with_failure()

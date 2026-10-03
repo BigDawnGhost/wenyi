@@ -30,6 +30,7 @@ class ReviewConflictArbiter:
         trace: ReviewTrace,
     ):
         self.config = config
+        self.language_policy = config.language_policy("review")
         self.evidence = evidence
         self.trace = trace
         self._loop = ReviewActionLoop(client, config, evidence, trace)
@@ -136,12 +137,14 @@ class ReviewConflictArbiter:
 
         system = render(
             "review_arbiter_system",
+            plan=self.language_policy,
             src=self.config.source_lang,
             tgt=self.config.target_lang,
             max_evidence_rounds=(self.config.pipeline.review_agent_max_evidence_rounds),
         )
         user = render(
             "review_arbiter_user",
+            plan=self.language_policy,
             src=self.config.source_lang,
             tgt=self.config.target_lang,
             conflict_json=compact_json,

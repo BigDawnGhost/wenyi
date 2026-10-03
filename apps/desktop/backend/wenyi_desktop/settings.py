@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 
 from fastapi import HTTPException
-from wenyi_backend.config_documents import config_document
+from wenyi_backend.config_documents import global_document
 from wenyi_backend.global_settings import GlobalSettings, validate_settings
 from wenyi_backend.model_registry import project_registry_updates
 from wenyi_core.config import Config
@@ -23,9 +23,13 @@ class DesktopSettings:
     def load(self, *, connection=None) -> GlobalSettings:
         saved = self.backend.load_settings(connection)
         return (
-            GlobalSettings(Config.from_dict(saved["config"]), saved["template"], saved["revision"])
+            GlobalSettings(
+                Config.from_dict(global_document(Config.from_dict(saved["config"]))),
+                "标准翻译",
+                saved["revision"],
+            )
             if saved
-            else GlobalSettings(self.defaults())
+            else GlobalSettings(Config.from_dict(global_document(self.defaults())))
         )
 
     @contextmanager
@@ -40,7 +44,7 @@ class DesktopSettings:
         self, value, default_template, revision, *, model_renames=None, provider_renames=None
     ) -> GlobalSettings:
         config = validate_settings(value, default_template)
-        document = config_document(config)
+        document = global_document(config)
         store = self.credentials
         with self.guard(exclusive=True) as conn:
             current = self.load(connection=conn)

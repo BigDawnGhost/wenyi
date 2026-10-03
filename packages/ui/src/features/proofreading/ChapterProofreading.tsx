@@ -22,7 +22,7 @@ const ParagraphRow = memo(function ParagraphRow({
   source: string;
   target: string | null | undefined;
   disabled: boolean;
-  onOpen: (index: number, view: "edit" | "history") => void;
+  onOpen: (index: number, view: "edit" | "history" | "precision") => void;
 }) {
   const { t } = useI18n();
   return (
@@ -59,6 +59,7 @@ export function ChapterProofreading({
   busy,
   readOnly,
   error,
+  targetLanguage,
 }: {
   pid: string;
   index: number;
@@ -66,6 +67,7 @@ export function ChapterProofreading({
   busy: boolean;
   readOnly: boolean;
   error: unknown;
+  targetLanguage?: string;
 }) {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
@@ -73,7 +75,7 @@ export function ChapterProofreading({
   const focused = useRef<string | undefined>(undefined);
   const [editor, setEditor] = useState<{
     index: number;
-    view: "edit" | "history";
+    view: "edit" | "history" | "precision";
   } | null>(null);
   const validIndex = Number.isSafeInteger(index) && index >= 0;
   const chapter = useQuery({
@@ -89,9 +91,12 @@ export function ChapterProofreading({
     () => chapter.data?.segments.filter((s) => s.source.trim()) || [],
     [chapter.data?.segments],
   );
-  const openEditor = useCallback((index: number, view: "edit" | "history") => {
-    setEditor({ index, view });
-  }, []);
+  const openEditor = useCallback(
+    (index: number, view: "edit" | "history" | "precision") => {
+      setEditor({ index, view });
+    },
+    [],
+  );
   const paragraphs = segments.filter((s) => s.kind === "text");
   const saved = paragraphs.filter((s) => s.target != null).length;
   const activeSegment = segments.find((s) => s.index === editor?.index);
@@ -183,6 +188,8 @@ export function ChapterProofreading({
             segment={activeSegment}
             initialView={editor.view}
             readOnly={readOnly || chapter.isError}
+            busy={busy}
+            targetLanguage={targetLanguage}
             onClose={() => setEditor(null)}
           />
         )}

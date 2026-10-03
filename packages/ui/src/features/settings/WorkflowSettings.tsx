@@ -6,8 +6,25 @@ import { Select, SelectItem } from "@/components/ui/select";
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
 
+/** Update workflow settings without changing the project's creation-time translation mode. */
+export function workflowField(
+  config: Record<string, unknown>,
+  group: string,
+  key: string,
+  value: unknown,
+) {
+  return {
+    ...config,
+    [group]: {
+      ...section(config, group),
+      [key]: value,
+    },
+  };
+}
+
 export function WorkflowSettings({
   config,
+  scope,
   disabled,
   error,
   subtitles = false,
@@ -15,6 +32,7 @@ export function WorkflowSettings({
   onField,
 }: {
   config: Record<string, unknown>;
+  scope: "global" | "project";
   disabled: boolean;
   error?: unknown;
   subtitles?: boolean;
@@ -22,6 +40,9 @@ export function WorkflowSettings({
   onField: (group: string, key: string, value: unknown) => void;
 }) {
   const { t: tr } = useI18n();
+  const precision =
+    scope === "project" &&
+    section(config, "pipeline").translation_mode === "best_of_three";
   const PIPELINE: [string, string][] = [
     ["book_understanding", tr("settings.bookUnderstanding")],
     ["polish", tr("settings.polishing")],
@@ -37,6 +58,7 @@ export function WorkflowSettings({
             <label key={key} className="flex gap-2 items-center text-sm">
               <input
                 type="checkbox"
+                disabled={key === "polish" && precision}
                 checked={Boolean(section(config, "pipeline")[key])}
                 onChange={(e) => onField("pipeline", key, e.target.checked)}
               />

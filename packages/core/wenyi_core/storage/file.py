@@ -252,9 +252,6 @@ class FileStorage(FileArtifacts):
     def terms_in(self, terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         return GlossaryStore.terms_in(terms, text)
 
-    def terms_in_text(self, text: str) -> list[GlossaryTerm]:
-        return self._g.terms_in(self._g.all_terms(), text)
-
     def resolve_term(self, source: str, target: str) -> bool:
         return self._g.resolve_term(source, target)
 

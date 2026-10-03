@@ -30,7 +30,7 @@ from Git tags.
 | `export-worker` | `wenyi:exports`: snapshot export |
 | PostgreSQL / Redis | Internal network only by default |
 
-All services start by default, with no profile or build environment flags required. Dockerfiles use ordinary build steps without BuildKit cache mounts or an external Dockerfile frontend; unchanged steps still benefit from Docker layer caching. Run subsequent commands from `deploy/`:
+All services start by default, with no profile or build environment flags required. `up --build` builds images before starting containers; a build failure reports an error and returns a nonzero exit status. Dockerfiles use ordinary build steps without BuildKit cache mounts or an external Dockerfile frontend; unchanged steps still benefit from Docker layer caching. Run subsequent commands from `deploy/`:
 
 ```bash
 docker compose logs -f
@@ -39,7 +39,9 @@ docker compose down
 
 `down` preserves data volumes. Debian, PyPI, and npm use official sources by default. To use mirrors, uncomment the desired `DEBIAN_MIRROR`, `UV_DEFAULT_INDEX`, or `NPM_REGISTRY` entries in `deploy/.env`, then run `docker compose up -d --build` again.
 
-This database schema targets fresh deployments. It does not migrate legacy Web projects, strategies, or databases. When keeping an older deployment, give the new stack a separate Compose project, database, and volumes (for example `-p wenyi-new`). Do not delete volumes that still hold data you need.
+The Web proxy refreshes the `api` service address through Docker DNS for both HTTP and WebSocket requests. After recreating an API container, the proxy follows the new address without a Web restart; DNS records are cached for five seconds. The runtime image must use Nginx 1.27.3 or newer for [dynamic upstream resolution](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve). To diagnose a `502`, compare `http://localhost:8000/health` with `http://localhost:8080/api/health` and inspect `docker compose logs web api`. On an older deployment that still holds an outdated API address, `docker compose exec web nginx -s reload` refreshes it; rebuild Web to install the permanent fix.
+
+This database schema targets fresh deployments. It does not migrate legacy Web projects, strategies, or databases. When keeping an older deployment, give the new stack a separate Compose project, database, and volumes (for example `COMPOSE_PROJECT_NAME=wenyi-new docker compose up -d --build`). Do not delete volumes that still hold data you need.
 
 ### Optional Buildx development builds
 
@@ -47,11 +49,13 @@ With the Docker Buildx plugin installed (`docker buildx version`), opt into the 
 
 ```bash
 DOCKER_BUILDKIT=1 COMPOSE_BAKE=true docker compose \
-  -f docker-compose.yml -f docker-compose.buildx.yml build
-docker compose up -d --no-build
+  -f docker-compose.yml -f docker-compose.buildx.yml build &&
+  docker compose -f docker-compose.yml -f docker-compose.buildx.yml up -d --no-build
 ```
 
-The overlay changes only Dockerfile selection and preserves the same services, image names, credentials, mirror settings, and volumes. It caches apt, uv, and pnpm downloads between builds; caches belong to the selected builder. Default Dockerfiles remain usable without BuildKit. Keep both variants aligned when changing installation steps. Return to ordinary builds with `docker compose up -d --build`.
+These commands enable BuildKit/Bake and use the Buildx overlay for both build and startup. The `&&` starts containers only after a successful build. The overlay changes only Dockerfile selection and preserves the same services, image names, credentials, mirror settings, and volumes. It caches apt, uv, and pnpm downloads between builds; caches belong to the selected builder. Default Dockerfiles remain usable without BuildKit. Keep both variants aligned when changing installation steps. Return to ordinary builds with `docker compose up -d --build`.
+
+If a configured PyPI mirror returns `403 Forbidden` while resolving build dependencies such as `hatchling` or `hatch-vcs`, set `UV_DEFAULT_INDEX=https://pypi.org/simple` in `deploy/.env` and retry the build. A rejected registry request can appear as “package not found”; clearing the BuildKit cache does not fix access to the mirror. If using manual commands, connect build and startup with `&&`; a separate `up --no-build` after a failed build continues using existing images.
 
 Compose can delegate builds to [Buildx Bake](https://docs.docker.com/guides/compose-bake/). This optional path requires a working Buildx/BuildKit installation; it is not required for deployment.
 
@@ -116,13 +120,25 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
 
 1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection is locked during upload and after project creation. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
-2. Parsing runs as a background task after upload and then shows a preview. Matching parse results are reused during preparation.
-3. The project inherits the workflow defaults from global **Settings**; creation has no workflow selector. Use **Project settings** to adjust steps and select already registered models, and validate actual routes before starting translation.
+2. Successful creation immediately opens the project overview; parsing or optional preparation continues in the background. The overview refreshes task status, including queue failures and resume actions. Matching parse results are reused during preparation.
+3. The creation form separates project/languages, source upload, and translation mode. For books, choose the **Standard translation** or **Three-draft precision** card only here. The mode defaults to standard independently of global settings; precision enables polishing and uses built-in three-branch concurrency, without a concurrency option. Global and project settings have no mode/template selectors, and Quick draft is retired. Use **Project settings** to adjust other workflow steps and registered model selections, and validate actual routes before starting translation. Changing translation mode requires creating another project.
 4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.
 5. For books, edit glossary, style, and paragraphs, and inspect whole-book review history, suggestions, and published fixes. For SRT, edit subtitle cues and timestamps.
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list includes unfinished chapters. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
+
+Open a paragraph's **Precision drafts** action/tab to inspect archived T1/T2/T3 on demand.
+T1 is the before-polish comparison, not a selected winner. The final text is one synthesis
+of all three drafts. The archived synthesis and current formal translation are shown
+separately because manual edits or Review may have changed the latter. This view is
+read-only, including during translation, and switching tabs preserves unsaved edits.
+Standard projects or incomplete, conflicting, mismatched or corrupt archives show an
+explicit unavailable state; drafts are never regenerated or fabricated for inspection.
+While a task is running, an unfinished archive refreshes automatically; unavailable
+results also offer manual reload. Intentionally empty translations are labeled.
+
+Open a paragraph's **Change history** from its actions menu to compare revisions. Polishing and manual changes default to inline word-level highlights: removed text is red and struck through; added text is green and underlined. **Full texts** switches to the original before/after versions. Word boundaries follow the project's target language, with a character-level fallback in older browsers; spaces, punctuation, and line breaks remain part of the comparison. Large or complex changes fall back to full texts. Only expanded records calculate differences. Older projects without a separate polishing revision can compare **Initial translation → current version**, explicitly labeled because the current version may include later edits or automatic fixes. Comparisons are read-only; using a saved version only loads a draft until you save.
 
 Use **Collapse sidebar** beside the logo to make more room for the page. Desktop navigation becomes an icon rail with named hover hints; on mobile, the navigation links hide while the expand button stays visible. The browser remembers this preference across pages and reloads. Project links keep their order, and global settings remain available from the navigation.
 
@@ -138,7 +154,7 @@ The review page distinguishes recommendations from actual write-back; historical
 
 The event log displays the newest entries first and refreshes every 5 seconds.
 
-Standard mode enables pre-understanding, polishing, review, and Autofix by default. Fast draft turns those four off. Matching review fingerprints reuse a completed result or resume an interrupted run. Turning Autofix off keeps suggestions without publishing them to formal chapters.
+Shared defaults enable pre-understanding, polishing, review, and Autofix. Matching review fingerprints reuse a completed result or resume an interrupted run. Turning Autofix off keeps suggestions without publishing them to formal chapters.
 
 Writes in the same project are exclusive: duplicate starts or conflicting edits while a run is active return clear errors. Exports use a short consistent snapshot and can run beside translation. After a project is initialized, changing target language or source content means creating a new project.
 
@@ -174,7 +190,7 @@ From `deploy/`, inspect task failures with `docker compose logs -f api worker ex
 
 ### Provider settings and workflow view
 
-Global **Settings** owns provider connections, model registration, default tiers and operation routes, and the default workflow template. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts project workflow options; it does not register providers or models. Advanced YAML supports operation-specific routes and fallbacks.
+Global **Settings** owns provider connections, model registration, default tiers and operation routes, and shared workflow defaults—not translation modes or workflow templates. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts other project workflow options; it does not register providers/models or switch the creation-time mode. Advanced YAML supports operation-specific routes and fallbacks.
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 

@@ -3,7 +3,6 @@
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 from wenyi_backend.live_statistics import LiveStatistics, read_live_statistics
@@ -22,6 +21,11 @@ class MemoryRedis:
 
     def get(self, key):
         return self.values.get(key)
+
+    def read_json(self, key):
+        value = self.get(key)
+        assert value is not None, key
+        return json.loads(value)
 
     def publish(self, channel, value):
         self.messages.append(json.loads(value))
@@ -57,11 +61,11 @@ def test_live_usage_is_visible_before_flush_and_not_added_twice_after_flush():
     live.bind_client(client)
     client.usage.record("fast", UsageSample(4, 6, 10), "translation.body")
     live.publish()
-    assert json.loads(redis.get("project:book:stats"))["usage"]["totals"]["total_tokens"] == 15
+    assert redis.read_json("project:book:stats")["usage"]["totals"]["total_tokens"] == 15
     # A normal checkpoint writes the same calls; the live view must not add them again.
     store.usage = client.usage_summary()
     live.publish()
-    assert json.loads(redis.get("project:book:stats"))["usage"]["totals"]["total_tokens"] == 15
+    assert redis.read_json("project:book:stats")["usage"]["totals"]["total_tokens"] == 15
     assert store.usage["totals"]["total_tokens"] == 15
     assert redis.messages[-1]["run_id"] == "run"
 
@@ -75,13 +79,13 @@ def test_live_time_uses_the_core_timer_identity_and_freezes_after_exit():
             timer.store = store
             now += 7
             live.publish()
-            snapshot = json.loads(redis.get("project:book:stats"))
+            snapshot = redis.read_json("project:book:stats")
             assert snapshot["timing"]["total_seconds"] == 27
             assert snapshot["timing"]["runs"][-1]["status"] == "running"
             assert len(store.timing["runs"]) == 1
         now += 500
         live.publish()
-    assert json.loads(redis.get("project:book:stats"))["timing"]["total_seconds"] == 27
+    assert redis.read_json("project:book:stats")["timing"]["total_seconds"] == 27
     assert len(store.timing["runs"]) == 2
     # Resuming starts a new timer and excludes the paused interval.
     with observe_timers(live.observe_timer):
@@ -89,7 +93,7 @@ def test_live_time_uses_the_core_timer_identity_and_freezes_after_exit():
             resumed.store = store
             now += 3
             live.publish()
-            assert json.loads(redis.get("project:book:stats"))["timing"]["total_seconds"] == 30
+            assert redis.read_json("project:book:stats")["timing"]["total_seconds"] == 30
 
 
 @pytest.mark.parametrize(
@@ -132,8 +136,11 @@ def test_live_reader_returns_current_snapshot_without_writing_ledgers():
 
 
 def test_redis_failure_does_not_interrupt_the_workflow():
-    redis = SimpleNamespace(set=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
-    live = LiveStatistics(redis, "book", "run", MemoryStore())
+    class OfflineRedis(MemoryRedis):
+        def set(self, key, value, ex):
+            raise OSError("offline")
+
+    live = LiveStatistics(OfflineRedis(), "book", "run", MemoryStore())
     live.publish()
 
 

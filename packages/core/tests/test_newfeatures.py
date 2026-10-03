@@ -167,7 +167,11 @@ class TestPunct(unittest.TestCase):
             )
             orchestrator = Orchestrator(cfg, client=FakeClient())
 
-        self.assertFalse(orchestrator._runtime.export_punctuation_enabled())
+        self.assertFalse(
+            orchestrator.config.language_policy("export", format="epub").enabled(
+                "punctuation.zh_cn"
+            )
+        )
 
     def test_punctuation_normalization_only_changes_export_copy(self):
         with tempfile.TemporaryDirectory() as directory:

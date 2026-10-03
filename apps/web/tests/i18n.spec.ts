@@ -117,11 +117,14 @@ test("known workflow labels and language names are localized without changing AP
   await expect(page.getByRole("option", { name: "English (en)", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
+  await expect(
+    page.getByRole("radio", { name: "Standard", exact: true }),
+  ).toHaveValue("standard");
+  await expect(
+    page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }),
+  ).toHaveValue("best_of_three");
   await page.goto("/settings");
-  await expect(page.getByLabel("Default workflow template")).toHaveText("Standard translation — Use the workflow defaults from global Settings");
-  await page.getByLabel("Default workflow template").click();
-  await expect(page.getByRole("option", { name: "Standard translation — Use the workflow defaults from global Settings", exact: true })).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);
   await page.getByText("Workflow details", { exact: true }).click();
   await expect(

@@ -22,8 +22,9 @@ from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
 
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("preserve_source_style", [False, True])
+@pytest.mark.parametrize("source_changes", [False, True])
 def test_bilingual_epub_export_keeps_untranslated_ruby_once(
-    monkeypatch, tmp_path, order, preserve_source_style
+    monkeypatch, tmp_path, order, preserve_source_style, source_changes
 ):
     source = tmp_path / "source.epub"
     book = epub.EpubBook()
@@ -74,10 +75,15 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
         return snapshot
 
     closed = []
+    artifacts = {}
+    events = []
     storage = SimpleNamespace(
         create_export_snapshot=create_snapshot,
         assemble_lock=nullcontext,
         close=lambda: closed.append(True),
+        read_artifact=artifacts.get,
+        write_artifact=lambda key, value: artifacts.update({key: value}),
+        log_event=lambda event, **payload: events.append((event, payload)),
     )
     monkeypatch.setattr(tasks, "_pipeline_storage", lambda pid: storage)
     monkeypatch.setattr(tasks, "_resolve_source", lambda pid: str(source))
@@ -94,6 +100,30 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
     monkeypatch.setattr(
         current_context().exports, "publish_export", lambda pid, eid, path: published.append(path)
     )
+    if source_changes:
+        from wenyi_core.assemble import writer
+
+        original_assemble = writer.assemble
+
+        def replace_source_after_render(*args, **kwargs):
+            result = original_assemble(*args, **kwargs)
+            source.write_bytes(b"Source replaced during export")
+            return result
+
+        monkeypatch.setattr(writer, "assemble", replace_source_after_render)
+        with pytest.raises(ValueError, match="Source changed during export"):
+            tasks._render_export_sync(
+                "p",
+                export_id=1,
+                fmt="epub",
+                bilingual=True,
+                order=order,
+                preserve_source_style=preserve_source_style,
+                about_page=False,
+            )
+        assert published == []
+        assert [chapter.model_dump() for chapter in document.chapters] == before
+        return
 
     assert (
         tasks._render_export_sync(
@@ -109,6 +139,9 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
     )
     assert closed == [True]
     assert len(published) == 1
+    assert len(artifacts) == 1
+    assert next(iter(artifacts)).startswith("language-policies/")
+    assert events[0][0] == "language_policy_resolved"
     assert Path(published[0]).name == "source.en-bi.epub"
     with ZipFile(published[0]) as archive:
         first = BeautifulSoup(archive.read("EPUB/first.xhtml"), "html.parser")
