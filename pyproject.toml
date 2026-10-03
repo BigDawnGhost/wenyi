@@ -42,6 +42,7 @@ only-include = ["pyproject.toml"]
 
 [dependency-groups]
 dev = [
+    "hatch-vcs>=0.5", # Exercise the same tag-derived versioning used by package builds.
     "httpx2>=2.13", # Starlette's TestClient HTTP transport.
     "pre-commit>=3.7",
     "ruff>=0.6",

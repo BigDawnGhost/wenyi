@@ -148,6 +148,10 @@ def smoke_parse(base_url: str, token: str) -> None:
 def build() -> None:
     for module in EXCLUDED_MODULES:
         assert find_spec(module) is None, f"Build environment is not isolated: {module}"
+    expected_version = os.environ.get("WENYI_BUILD_PYTHON_VERSION")
+    if expected_version:
+        for package in ("wenyi-core", "wenyi-backend", "wenyi-desktop"):
+            assert version(package) == expected_version, f"{package} version drift"
     # Use the isolated build venv, never a developer's already-warm cache.
     cache = Path(sys.prefix) / "share/tiktoken"
     assert not cache.exists(), "Expected a clean build vocabulary cache"
@@ -221,6 +225,14 @@ def main() -> None:
                 "wenyi-desktop",
                 "--no-dev",
                 "--no-editable",
+                # Local wheel cache keys do not include every source/tag change.
+                # Always freeze the current workspace, not an earlier cached wheel.
+                "--reinstall-package",
+                "wenyi-core",
+                "--reinstall-package",
+                "wenyi-backend",
+                "--reinstall-package",
+                "wenyi-desktop",
                 "--python",
                 sys.executable,
             ],

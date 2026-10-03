@@ -64,8 +64,12 @@ The CLI uses English for help, progress, tables, and errors. Translation and gen
 
 ## Windows
 
-Windows releases provide `wenyi-windows-x64.zip`. Verify the archive against
-`SHA256SUMS.txt` before running it.
+CLI release filenames include the Git-tag version, component, platform and architecture.
+The examples below use tag `v1.2.3`; replace `1.2.3` with the version you download.
+Desktop installers are separate `wenyi-desktop-*` assets; see [Desktop](desktop.md).
+
+Windows releases provide `wenyi-cli-1.2.3-windows-x64.zip`. Verify the archive against
+`wenyi-cli-SHA256SUMS.txt`, then extract `wenyi.exe` into a directory before running it.
 
 When using a packaged `wenyi.exe`, set the API key in PowerShell:
 
@@ -85,11 +89,12 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 
 ## Linux
 
-Releases provide `wenyi-linux-x64.tar.gz` and `wenyi-linux-arm64.tar.gz`. Download
-the archive matching your processor, verify it against `SHA256SUMS.txt`, and run:
+Releases provide `wenyi-cli-1.2.3-linux-x64.zip` and `wenyi-cli-1.2.3-linux-arm64.zip`.
+Download the archive matching your processor, verify it against `wenyi-cli-SHA256SUMS.txt`,
+and run:
 
 ```bash
-tar -xzf wenyi-linux-arm64.tar.gz  # use wenyi-linux-x64.tar.gz on x64 systems
+unzip wenyi-cli-1.2.3-linux-arm64.zip  # use linux-x64 on x64 systems
 chmod +x wenyi
 export DEEPSEEK_API_KEY=sk-...
 ./wenyi translate book.epub
@@ -97,12 +102,13 @@ export DEEPSEEK_API_KEY=sk-...
 
 ## macOS
 
-Releases provide separate terminal executables for Apple Silicon (`wenyi-macos-arm64.tar.gz`)
-and Intel (`wenyi-macos-x64.tar.gz`) Macs. Download the archive matching your processor,
-verify it against `SHA256SUMS.txt`, and run:
+Releases provide separate terminal executables for Apple Silicon
+(`wenyi-cli-1.2.3-macos-arm64.zip`) and Intel (`wenyi-cli-1.2.3-macos-x64.zip`) Macs.
+Download the archive matching your processor, verify it against `wenyi-cli-SHA256SUMS.txt`,
+and run:
 
 ```bash
-tar -xzf wenyi-macos-arm64.tar.gz  # use wenyi-macos-x64.tar.gz on Intel Macs
+unzip wenyi-cli-1.2.3-macos-arm64.zip  # use macos-x64 on Intel Macs
 chmod +x wenyi
 export DEEPSEEK_API_KEY=sk-...
 ./wenyi translate book.epub

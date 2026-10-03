@@ -50,7 +50,59 @@ pnpm desktop:build
 
 The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
 
-The local Linux x86-64 preview build produced a **50.34 MiB `.deb`**, **50.35 MiB `.rpm`**, and **143.02 MiB AppImage**. The AppImage includes additional Linux runtime libraries; these are compressed package sizes, not memory usage. The native wrapper currently uses the development version `0.0.0`; these unsigned preview bundles are not a published release.
+### Versions and release downloads
+
+Python metadata continues to use `hatch-vcs`; `scripts/release_version.py` uses
+the same setuptools-scm Git source to derive the native application and asset
+version. For example, `v1.2.3` becomes `1.2.3`, and `v1.2.3rc1` becomes Python
+`1.2.3rc1` / native `1.2.3-rc.1`. Untagged commits and tracked local edits keep
+an explicit development identity, such as `1.2.4-dev.2+gabc123`. Cargo's private
+crate version is not the application version. The native executable's
+`--version` option reports `Wenyi Desktop <version>` without starting the UI.
+
+Distribution currently targets stable tags. Development/prerelease identities are
+retained for build diagnostics, but Linux package-manager upgrade ordering is not
+normalized: for example, Debian considers `1.2.4-rc.1` newer than `1.2.4`.
+Do not treat these builds as a supported prerelease update channel.
+
+Use `WENYI_BUILD_TAG=v1.2.3 pnpm desktop:build` on a clean checkout of that tag
+(PowerShell: set `$env:WENYI_BUILD_TAG = "v1.2.3"` first). An explicit tag must
+exist, point at HEAD, match the Python version, and have no tracked edits;
+untracked notes do not change setuptools-scm's dirty status. Version overrides
+are rejected. Supported release tags are numeric releases and `a`, `b`, or
+`rc` prereleases; epochs, post releases, local/dev release tags, more than three
+numeric components, and values beyond `255.255.65535` fail rather than silently
+losing identity. macOS's numeric bundle version uses the release triple while
+the application version retains prerelease/development information. Windows
+uses NSIS `.exe`, not MSI, because MSI cannot faithfully represent these
+prerelease/development identities.
+
+The **CLI packages** and **Desktop packages** workflows accept an optional
+`tag` through `workflow_dispatch`; leaving it empty builds the selected checkout.
+Their run names show the component and tag (or development ref). A published
+GitHub release builds its tag and uploads only that component's assets.
+Manual runs only produce workflow artifacts; they do not publish a release.
+
+- CLI downloads are `wenyi-cli-<version>-<platform>-<arch>.zip` on every platform.
+  ZIP entries preserve Unix executable permissions; use an extractor that honors
+  them (or run `chmod +x wenyi` after extraction).
+- Desktop downloads are `wenyi-desktop-<version>-<platform>-<arch>.<extension>`:
+  Linux AppImage (single-file application), `.deb` and `.rpm`; Windows NSIS
+  installer `.exe`; macOS `.dmg`. They are uploaded directly, without an outer
+  ZIP. After downloading an AppImage, grant execute permission (`chmod +x <file>.AppImage`).
+  The bare Rust executable is not a distributable application.
+- CI artifact downloads may be wrapped by GitHub's artifact service; the actual
+  GitHub Release assets are the files described above. Checksums are separated
+  as `wenyi-cli-SHA256SUMS.txt` and `wenyi-desktop-SHA256SUMS.txt`. Existing release
+  assets are not overwritten; a duplicate upload fails.
+
+The sidecar build rebuilds local Python packages instead of reusing their cached
+wheels, and checks their metadata against the resolved Git version before freezing.
+Installer collection requires the exact version, architecture and complete format
+set for its platform; older outputs are left untouched and never relabeled.
+
+These workflows do not sign or notarize packages. Platform signing and end-user
+installation checks remain release responsibilities.
 
 The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and closing the native window shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. Real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 

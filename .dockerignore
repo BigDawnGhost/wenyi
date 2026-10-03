@@ -7,6 +7,7 @@
 .ruff_cache
 **/dist
 build
+/release-assets
 .env
 .env.*
 deploy/.env

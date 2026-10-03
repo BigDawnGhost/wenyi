@@ -65,8 +65,8 @@ jobs:
           uv sync --locked --all-packages --group dev --extra pdf-output-lite --python 3.12
       - name: Python style and tests (offline model fixtures)
         run: |
-          uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts/desktop_entry.py scripts/desktop_sidecar.py scripts/check_backend_packages.py
-          uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts/desktop_entry.py scripts/desktop_sidecar.py scripts/check_backend_packages.py
+          uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
+          uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           uv run --no-sync pytest -q
           git diff --check
       - name: Build distributable packages and verify bundled resources
@@ -94,6 +94,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/web typecheck
       - run: pnpm -C apps/desktop/frontend typecheck
+      - run: pnpm -C apps/web typecheck:tests
+      - run: pnpm -C apps/desktop/frontend typecheck:tests
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/desktop/frontend build
       - run: pnpm test:frontend-boundaries

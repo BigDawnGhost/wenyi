@@ -58,12 +58,16 @@ fn main() {
     let data_dir = match args.as_slice() {
         [] => None,
         [flag, path] if flag == "--data-dir" => Some(std::path::PathBuf::from(path)),
+        [flag] if flag == "--version" || flag == "-V" => {
+            println!("Wenyi Desktop {}", env!("WENYI_DESKTOP_VERSION"));
+            return;
+        }
         [flag] if flag == "--help" || flag == "-h" => {
-            println!("Usage: wenyi-desktop [--data-dir <isolated-desktop-workspace>]");
+            println!("Usage: wenyi-desktop [--data-dir <isolated-desktop-workspace>] [--version]");
             return;
         }
         _ => {
-            eprintln!("Expected --data-dir <path> or --help.");
+            eprintln!("Unexpected arguments. See --help.");
             std::process::exit(2);
         }
     };
@@ -183,6 +187,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tauri_application_version_matches_native_version_report() {
+        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        assert_eq!(
+            context.package_info().version.to_string(),
+            env!("WENYI_DESKTOP_VERSION")
+        );
+    }
+
     #[test]
     fn only_packaged_navigation_can_receive_credentials() {
         for url in ["tauri://localhost/index.html", "http://tauri.localhost/"] {

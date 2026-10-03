@@ -50,7 +50,48 @@ pnpm desktop:build
 
 构建先将 Python 引擎冻结为 onedir sidecar，再与界面和原生程序一起打包。Onedir 避免每次启动都解压完整运行时。每次发行仍需验证安装包、签名和平台运行依赖；Linux 构建成功不代表 Windows/macOS 已验证。
 
-本地 Linux x86-64 预览构建产物为 **50.34 MiB `.deb`**、**50.35 MiB `.rpm`** 和 **143.02 MiB AppImage**。AppImage 额外包含 Linux 运行库；这些数字是压缩安装包大小，不是内存占用。原生外壳目前使用开发版本号 `0.0.0`；这些未签名预览包不是已发布的正式版本。
+### 版本与发行下载
+
+Python 元数据继续使用 `hatch-vcs`；`scripts/release_version.py` 使用相同的
+setuptools-scm Git 来源派生原生应用和产物版本。例如，`v1.2.3` 对应 `1.2.3`，
+`v1.2.3rc1` 对应 Python `1.2.3rc1` / 原生 `1.2.3-rc.1`。非标签提交和已跟踪
+文件的本地修改保留明确的开发身份，例如 `1.2.4-dev.2+gabc123`。Cargo 私有 crate
+的版本不代表应用版本。原生可执行文件的 `--version` 选项输出
+`Wenyi Desktop <version>`，不启动界面。
+
+当前发行面向正式稳定 tag。开发/预发行身份用于构建诊断，但尚未规范化 Linux
+包管理器的升级排序：例如 Debian 会将 `1.2.4-rc.1` 排在 `1.2.4` 之后。
+不要将这些构建视为已支持的预发行更新渠道。
+
+在对应标签的干净 checkout 上使用 `WENYI_BUILD_TAG=v1.2.3 pnpm desktop:build`
+（PowerShell 先设置 `$env:WENYI_BUILD_TAG = "v1.2.3"`）。明确指定的标签必须存在、
+指向 HEAD、与 Python 版本一致，且不能有已跟踪文件修改；未跟踪笔记不改变
+setuptools-scm 的 dirty 状态。禁止覆盖版本。发行标签支持数字版本及 `a`、`b`、
+`rc` 预发行版；epoch、post release、带 local/dev 的发行标签、超过三个数字分量
+或超出 `255.255.65535` 的版本会报错，不会静默丢失身份。macOS 数字 bundle version
+使用三段发行版本，应用版本保留预发行/开发信息。Windows 使用 NSIS `.exe`，不使用
+无法完整表达这些预发行/开发身份的 MSI。
+
+**CLI packages** 和 **Desktop packages** workflow 均支持通过 `workflow_dispatch`
+指定可选 `tag`；留空构建选定的 checkout。运行名称显示组件与标签（或开发 ref）。
+GitHub release 发布事件构建该 release 的标签，仅上传各自组件的附件。
+手动运行只生成 workflow artifact，不发布 release。
+
+- 所有平台 CLI 下载均为 `wenyi-cli-<version>-<platform>-<arch>.zip`。ZIP 条目
+  保留 Unix 可执行权限；需使用支持该权限的解压工具，或解压后执行 `chmod +x wenyi`。
+- Desktop 下载为 `wenyi-desktop-<version>-<platform>-<arch>.<extension>`：
+  Linux AppImage（单文件应用）、`.deb` 和 `.rpm`；Windows NSIS 安装程序 `.exe`；
+  macOS `.dmg`。这些文件直接上传，不额外套 ZIP。AppImage 下载后需赋予可执行权限
+  （`chmod +x <file>.AppImage`）；裸 Rust 可执行文件不是可独立发行的应用。
+- GitHub artifact 服务可能为 CI 下载额外打包；真正的 GitHub Release 附件是上述文件。
+  校验和分别为 `wenyi-cli-SHA256SUMS.txt` 与 `wenyi-desktop-SHA256SUMS.txt`。
+  不覆盖已有 release 附件，重复上传会失败。
+
+Sidecar 构建会重新构建本地 Python 包，而不是复用其缓存 wheel，并在冻结前核对
+元数据与解析出的 Git 版本一致。安装包收集严格匹配版本、架构和该平台的完整格式
+集合；旧产物原样保留，不会被改名冒充新版本。
+
+这些 workflow 不签名或公证安装包；平台签名与终端用户安装验证仍是发行前的责任。
 
 已在 KDE Wayland 下使用临时工作区和无效的开发 Python 路径启动 AppImage：包内引擎成功启动，带鉴权的 loopback 请求正常，关闭原生窗口后引擎退出并被回收。独立冻结引擎检查还覆盖了离线合成 TXT 上传、解析、预览及新旧格式事件读取。真实文件管理器拖放、系统保存对话框、Windows/macOS 运行及可移动介质行为仍需平台验收。
 

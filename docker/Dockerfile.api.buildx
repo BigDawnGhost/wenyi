@@ -41,9 +41,11 @@ ARG WENYI_VERSION=0.0.0+docker
 RUN --mount=type=cache,id=wenyi-uv-cache,target=/root/.cache/uv,sharing=locked \
     export SETUPTOOLS_SCM_PRETEND_VERSION="$WENYI_VERSION" \
     && if [ "$INSTALL_PDF_OUTPUT" = "true" ]; then \
-      uv sync --frozen --package wenyi-api --no-dev --no-editable --extra pdf-output --extra pdf-output-lite; \
+      uv sync --frozen --package wenyi-api --no-dev --no-editable --extra pdf-output --extra pdf-output-lite \
+        --reinstall-package wenyi-core --reinstall-package wenyi-backend --reinstall-package wenyi-api; \
     else \
-      uv sync --frozen --package wenyi-api --no-dev --no-editable; \
+      uv sync --frozen --package wenyi-api --no-dev --no-editable \
+        --reinstall-package wenyi-core --reinstall-package wenyi-backend --reinstall-package wenyi-api; \
     fi \
     && uvicorn --version \
     && arq --version \

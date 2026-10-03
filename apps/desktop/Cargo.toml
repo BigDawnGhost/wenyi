@@ -1,5 +1,6 @@
 [package]
 name = "wenyi-desktop"
+# Internal crate identity only. build.rs resolves the application version from Git.
 version = "0.0.0"
 description = "Local desktop application for Wenyi."
 edition = "2021"
@@ -8,6 +9,7 @@ publish = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = [] }

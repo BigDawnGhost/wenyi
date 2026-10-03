@@ -1,7 +1,15 @@
-name: Desktop
+name: Desktop packages
+run-name: Desktop · ${{ inputs.tag || github.event.release.tag_name || format('dev {0}', github.ref_name) }}
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to build (empty means development checkout)
+        type: string
+        default: ""
+  release:
+    types: [published]
   pull_request:
     paths:
       - "apps/desktop/**"
@@ -14,25 +22,47 @@ on:
       - "uv.lock"
       - "apps/web/**"
       - "scripts/desktop*"
+      - "scripts/release_version.py"
+      - "scripts/package_release.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/desktop.yml"
 
+permissions:
+  contents: read
+
 jobs:
   local-package:
+    name: Desktop · ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+            bundles: appimage,deb,rpm
+          - os: windows-latest
+            platform: windows-x64
+            bundles: nsis
+          - os: macos-15
+            platform: macos-arm64
+            bundles: dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      - name: Resolve Git version
+        id: version
+        shell: bash
+        env:
+          WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -48,5 +78,52 @@ jobs:
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
       - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
-      - run: pnpm desktop:build
-      # Build only: signing, publication and user data are intentionally excluded.
+      - run: pnpm desktop:build --bundles ${{ matrix.bundles }}
+        env:
+          WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      - name: Verify native application version
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          binary=apps/desktop/target/release/wenyi-desktop
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="${binary}.exe"; fi
+          actual="$("$binary" --version)"
+          test "$actual" = "Wenyi Desktop $EXPECTED_VERSION"
+      - name: Collect standalone installers (no extra ZIP)
+        run: >
+          uv run --no-project python scripts/package_release.py desktop
+          --version "${{ steps.version.outputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --source apps/desktop/target/release/bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish Desktop assets · ${{ github.event.release.tag_name }}
+    if: github.event_name == 'release'
+    needs: local-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wenyi-desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate Desktop checksums
+        working-directory: release-assets
+        run: sha256sum wenyi-desktop-* > wenyi-desktop-SHA256SUMS.txt
+      - name: Upload standalone assets to published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release view "$TAG" --repo "$GH_REPO" >/dev/null
+          gh release upload "$TAG" release-assets/* --repo "$GH_REPO"

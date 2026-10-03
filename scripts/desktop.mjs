@@ -21,10 +21,27 @@ function run(command, parameters, cwd = root) {
   const result = spawnSync(command, parameters, { cwd, env, stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
+const identity = spawnSync('uv', [
+  'run', '--no-project', '--with', 'hatch-vcs', 'python', 'scripts/release_version.py',
+], { cwd: root, env, encoding: 'utf8' });
+if (identity.status !== 0) {
+  console.error(identity.stderr);
+  process.exit(identity.status ?? 1);
+}
+const version = JSON.parse(identity.stdout);
+env.WENYI_DESKTOP_VERSION = version.version;
+env.WENYI_BUILD_PYTHON_VERSION = version.python;
+const versionConfig = JSON.stringify({
+  version: version.version,
+  bundle: { macOS: { bundleVersion: version.bundle_version } },
+});
+env.TAURI_CONFIG = versionConfig;
+console.log(`Wenyi Desktop ${version.version} (Python ${version.python})`);
 run('pnpm', ['-C', 'apps/desktop/frontend', 'build']);
 if (build) {
   run('uv', ['run', '--no-project', 'python', 'scripts/desktop_sidecar.py']);
-  run('pnpm', ['exec', 'tauri', 'build', '--config', 'tauri.bundle.conf.json', ...args], path.join(root, 'apps/desktop'));
+  run('pnpm', ['exec', 'tauri', 'build', '--config', 'tauri.bundle.conf.json',
+    '--config', versionConfig, ...args], path.join(root, 'apps/desktop'));
 } else {
   if (!env.WENYI_DESKTOP_PYTHON) {
     const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
