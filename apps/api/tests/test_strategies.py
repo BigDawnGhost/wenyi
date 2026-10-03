@@ -11,20 +11,48 @@ def base():
 
 
 def test_defaults_match_dev_and_preserve_language_direction():
-    assert {row["name"] for row in PRESET_TEMPLATES} == {"标准翻译", "快速出稿"}
+    assert {row["name"] for row in PRESET_TEMPLATES} == {"标准翻译"}
     cfg = strategy_to_config({"template": "标准翻译"}, base(), source_lang="zh", target_lang="en")
     assert cfg.source_lang == "zh" and cfg.target_lang == "en"
     assert all(
         getattr(cfg.pipeline, key)
         for key in ("book_understanding", "polish", "review", "review_autofix")
     )
-    quick = strategy_to_config({"template": "快速出稿"}, base())
-    assert not any(
-        getattr(quick.pipeline, key)
-        for key in ("book_understanding", "polish", "review", "review_autofix")
-    )
+    with pytest.raises(ValueError, match="template"):
+        strategy_to_config({"template": "快速出稿"}, base())
+    with pytest.raises(ValueError, match="template"):
+        strategy_to_config({"template": "快速出稿", "steps": {"polish": False}}, base())
     custom = strategy_to_config({"steps": {"review": False, "polish": True}}, base())
     assert custom.pipeline.polish and not custom.pipeline.review_autofix
+
+
+def test_explicit_project_mode_does_not_inherit_precision_defaults():
+    precision = base()
+    precision.pipeline.translation_mode = "best_of_three"
+    standard = strategy_to_config({}, precision, translation_mode="standard")
+    assert standard.pipeline.translation_mode == "standard"
+    assert precision.pipeline.translation_mode == "best_of_three"
+
+
+def test_explicit_precision_choice_enables_polish_for_the_project():
+    defaults = base()
+    defaults.pipeline.polish = False
+    precision = strategy_to_config(
+        {"steps": {"polish": False}},
+        defaults,
+        translation_mode="best_of_three",
+    )
+    assert precision.pipeline.translation_mode == "best_of_three"
+    assert precision.pipeline.polish is True
+    assert "precision_concurrency" not in precision.pipeline.model_dump()
+    assert defaults.pipeline.polish is False
+
+
+def test_precision_cannot_disable_required_polishing():
+    precision = base()
+    precision.pipeline.translation_mode = "best_of_three"
+    with pytest.raises(ValueError, match="polish"):
+        strategy_to_config({"steps": {"polish": False}}, precision)
 
 
 @pytest.mark.parametrize("step", ["backtranslate", "consistency_qa", "chapter_review", "autofix"])

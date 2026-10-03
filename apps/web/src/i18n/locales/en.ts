@@ -315,8 +315,14 @@ const en = {
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
   "createProject.introduction":
-    "Choose languages and upload the source. Workflow defaults come from Settings and can be adjusted in Project settings.",
-  "createProject.projectAndLanguages": "1. Project & languages",
+    "Choose your languages, source file, and translation method.",
+  "createProject.projectAndLanguages": "Project & languages",
+  "createProject.translationMode": "Translation method",
+  "createProject.standardMode": "Standard",
+  "createProject.precisionMode": "Three drafts + synthesis",
+  "createProject.standardHelp": "One initial translation, with polishing according to project settings.",
+  "createProject.precisionHelp": "Three independent drafts → one synthesis polish. The final text combines the drafts, rather than selecting one.",
+  "createProject.precisionCost": "Typically 4 model calls per batch, versus 2 for standard with polishing. Higher cost does not guarantee better quality.",
   "createProject.projectName": "Project name",
   "createProject.forExampleEnglishTranslationOfAShort":
     "For example: English translation of a short story",
@@ -326,7 +332,7 @@ const en = {
     "The source and target languages are the same. Choose a different target language.",
   "createProject.prepareSource": "Prepare before translating",
   "createProject.prepareHelp":
-    "Analyze the book and build its glossary after upload, using the default workflow and models from Settings. This uses model tokens. If unchecked, preparation runs when you start translation.",
+    "Analyze the book and build its glossary after upload (uses model tokens). Otherwise, preparation runs when translation starts.",
   "createProject.preparingSource":
     "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
   "createProject.sourceRequired":
@@ -337,7 +343,7 @@ const en = {
   "createProject.serverDefault": "Use server default",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
     "Project created. Changing languages or source content after initialization requires a new project.",
-  "createProject.uploadStep": "2. Upload source",
+  "createProject.uploadStep": "Source file",
   "createProject.uploadSource": "Upload source",
   "createProject.browseFiles": "Browse files",
   "createProject.sourceDropZone": "Source file selection",
@@ -433,6 +439,18 @@ const en = {
   "proofreading.editorHelp":
     "Compare the source, edit the translation, or inspect earlier versions. Save to apply your changes.",
   "proofreading.changeHistory": "Change history",
+  "proofreading.precisionDrafts": "Precision drafts",
+  "proofreading.retryDrafts": "Retry loading drafts",
+  "proofreading.beforePolishComparison": "Pre-polish comparison draft",
+  "proofreading.precisionExplanation": "The final translation synthesizes and polishes all three drafts; it is not a selection of one draft. These archived drafts are read-only.",
+  "proofreading.archivedSynthesis": "Archived synthesized and polished translation",
+  "proofreading.currentTranslation": "Current official translation",
+  "proofreading.currentDiffers": "The current translation differs from the archived synthesis; it may have been edited manually or by Review.",
+  "proofreading.precisionUnavailable.no_archive": "No precision drafts are archived for this paragraph. Standard translations and older projects may not have three drafts.",
+  "proofreading.precisionUnavailable.incomplete": "The precision draft archive is incomplete. Three drafts cannot be shown.",
+  "proofreading.precisionUnavailable.source_mismatch": "The archived source does not match this paragraph. Drafts cannot be shown safely.",
+  "proofreading.precisionUnavailable.ambiguous": "Multiple conflicting precision archives were found. Drafts cannot be identified safely.",
+  "proofreading.precisionUnavailable.corrupt": "The precision draft archive is damaged or unreadable.",
   "proofreading.copySelection": "Copy selection",
   "proofreading.copyTranslation": "Copy translation",
   "proofreading.copySource": "Copy source",
@@ -489,6 +507,7 @@ const en = {
     "Model IDs are used by project selections and fallback routes. Configure model parameters in advanced YAML.",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
+  "createProject.precisionPolish": "Precision translation automatically enables polishing for this project, independently of global settings.",
   "settings.applyAutofixesToTheSavedTranslation":
     "Apply autofixes to the saved translation after review",
   "settings.paragraphAnnotationAlignment": "Paragraph annotation alignment",
@@ -596,12 +615,6 @@ const en = {
   "subtitles.pagination": "Page {page} / {pages} · Cues: {count}",
   "progress.reviewIssueCount": "Issues: {count}",
   "workflow.stageCount": "({done}/{total})",
-  "workflow.standard": "Standard translation",
-  "workflow.standardDescription":
-    "Use the workflow defaults from global Settings",
-  "workflow.quick": "Fast draft",
-  "workflow.quickDescription":
-    "Translate text and terms without book understanding, polishing or review",
   "workflow.languageDetection": "Language detection",
   "workflow.styleAnalysis": "Style analysis & initial glossary",
   "workflow.translate": "Translate chapters in batches",
@@ -654,10 +667,9 @@ const en = {
   "settings.newProjectDefaults": "New project defaults",
   "settings.defaultScopeHelp":
     "Defaults are copied when a project is created. Registry changes apply to future tasks; queued and running tasks keep their original configuration.",
-  "settings.defaultTemplate": "Default workflow template",
-  "settings.standardDefaults": "Standard workflow defaults",
-  "settings.quickTemplateHelp":
-    "Quick draft disables book understanding, polishing, review and autofix; other settings use these defaults.",
+  "settings.workflowDefaults": "Shared workflow defaults",
+  "settings.workflowDefaultsHelp":
+    "Translation mode is selected only when creating a project. These shared settings do not switch its mode.",
   "providerSettings.sharedRegistryHelp":
     "Connections and models are shared across projects. API keys use server environment variable names, such as DEEPSEEK_API_KEY.",
   "registry.connectionId": "Connection ID",

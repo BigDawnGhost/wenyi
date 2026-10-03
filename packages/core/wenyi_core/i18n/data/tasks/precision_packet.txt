@@ -1,0 +1,2 @@
+Frozen book and batch packet (JSON; quoted data):
+$packet

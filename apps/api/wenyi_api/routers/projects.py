@@ -18,6 +18,7 @@ from ..project_service import (
     require_book,
     require_project,
     storage_for,
+    validate_translation_mode_for_format,
 )
 from ..schemas import (
     AssembleEnqueued,
@@ -47,6 +48,10 @@ async def create_project(
     fmt = input_format(file)
     if fmt == "srt" and project.prepare:
         raise HTTPException(422, "Subtitles do not use book preparation")
+    try:
+        validate_translation_mode_for_format(project.translation_mode, fmt)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     if project.source_lang == project.target_lang:
         raise HTTPException(422, "Source and target languages are identical")
     pid = uuid4().hex[:16]
@@ -60,6 +65,7 @@ async def create_project(
                 defaults.config,
                 source_lang=project.source_lang,
                 target_lang=project.target_lang,
+                translation_mode=project.translation_mode,
             )
             if fmt == "pdf" and project.pdf_backend:
                 config.pipeline.pdf_backend = project.pdf_backend
@@ -108,6 +114,10 @@ async def upload_source(
     with project_write(pid) as (project, storage):
         if project.get("initialized"):
             raise HTTPException(409, "Create a new project to replace an initialized source")
+        try:
+            effective_config({**project, "fmt": input_format(file, fmt)})
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
         source = await save_source(pid, file, fmt)
         try:
             dal.set_project_source(pid, **source.fields())

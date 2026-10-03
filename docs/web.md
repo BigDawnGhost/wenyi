@@ -120,13 +120,23 @@ The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the 
 The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
 
 1. Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file before creating the project. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection is locked during upload and after project creation. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
-2. Parsing runs as a background task after upload and then shows a preview. Matching parse results are reused during preparation.
-3. The project inherits the workflow defaults from global **Settings**; creation has no workflow selector. Use **Project settings** to adjust steps and select already registered models, and validate actual routes before starting translation.
+2. Successful creation immediately opens the project overview; parsing or optional preparation continues in the background. The overview refreshes task status, including queue failures and resume actions. Matching parse results are reused during preparation.
+3. The creation form separates project/languages, source upload, and translation mode. For books, choose the **Standard translation** or **Three-draft precision** card only here. The mode defaults to standard independently of global settings; precision enables polishing and uses built-in three-branch concurrency, without a concurrency option. Global and project settings have no mode/template selectors, and Quick draft is retired. Use **Project settings** to adjust other workflow steps and registered model selections, and validate actual routes before starting translation. Changing translation mode requires creating another project.
 4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.
 5. For books, edit glossary, style, and paragraphs, and inspect whole-book review history, suggestions, and published fixes. For SRT, edit subtitle cues and timestamps.
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list includes unfinished chapters. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
+
+Open a paragraph's **Precision drafts** action/tab to inspect archived T1/T2/T3 on demand.
+T1 is the before-polish comparison, not a selected winner. The final text is one synthesis
+of all three drafts. The archived synthesis and current formal translation are shown
+separately because manual edits or Review may have changed the latter. This view is
+read-only, including during translation, and switching tabs preserves unsaved edits.
+Standard projects or incomplete, conflicting, mismatched or corrupt archives show an
+explicit unavailable state; drafts are never regenerated or fabricated for inspection.
+While a task is running, an unfinished archive refreshes automatically; unavailable
+results also offer manual reload. Intentionally empty translations are labeled.
 
 Use **Collapse sidebar** beside the logo to make more room for the page. Desktop navigation becomes an icon rail with named hover hints; on mobile, the navigation links hide while the expand button stays visible. The browser remembers this preference across pages and reloads. Project links keep their order, and global settings remain available from the navigation.
 
@@ -142,7 +152,7 @@ The review page distinguishes recommendations from actual write-back; historical
 
 The event log displays the newest entries first and refreshes every 5 seconds.
 
-Standard mode enables pre-understanding, polishing, review, and Autofix by default. Fast draft turns those four off. Matching review fingerprints reuse a completed result or resume an interrupted run. Turning Autofix off keeps suggestions without publishing them to formal chapters.
+Shared defaults enable pre-understanding, polishing, review, and Autofix. Matching review fingerprints reuse a completed result or resume an interrupted run. Turning Autofix off keeps suggestions without publishing them to formal chapters.
 
 Writes in the same project are exclusive: duplicate starts or conflicting edits while a run is active return clear errors. Exports use a short consistent snapshot and can run beside translation. After a project is initialized, changing target language or source content means creating a new project.
 
@@ -178,7 +188,7 @@ From `deploy/`, inspect task failures with `docker compose logs -f api worker ex
 
 ### Provider settings and workflow view
 
-Global **Settings** owns provider connections, model registration, default tiers and operation routes, and the default workflow template. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts project workflow options; it does not register providers or models. Advanced YAML supports operation-specific routes and fallbacks.
+Global **Settings** owns provider connections, model registration, default tiers and operation routes, and shared workflow defaults—not translation modes or workflow templates. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts other project workflow options; it does not register providers/models or switch the creation-time mode. Advanced YAML supports operation-specific routes and fallbacks.
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 

@@ -13,9 +13,10 @@ CLI 继续读取 `config.yaml`。Web **总设置** 统一管理提供商连接�
 （默认 `config.yaml`）初始化默认值；首次保存后改从 PostgreSQL 读取，重启后保留。
 保存 Web 设置不会改写 CLI 配置文件。API Key 仍只从服务端环境变量读取，页面只填写变量名。
 
-创建项目默认选用的流程模板在这里设置。标准翻译使用配置的流程开关；快速出稿关闭
-全书预理解、润色、审校与自动修复。创建项目时会复制默认配置，之后修改默认值不会重置
-已有项目的流程和模型选择。翻译语言以创建页的选择为准。
+标准翻译或精翻仅在 Web 创建书籍项目时选择。总设置没有翻译模式或流程模板选择器，
+新请求不再支持快速出稿。创建项目时会复制通用默认配置，之后修改默认值不会重置
+已有项目的流程和模型选择。项目配置和 YAML 不能切换已保存的翻译方式，需创建新项目。
+已有历史项目和冻结任务仍保留原流程。
 
 项目仅通过 `llm.tiers`、`llm.routes` 及备用路由选用已注册的模型 ID，并可设置
 `llm.budget`。提供商连接、模型名与参数、预设和提供商配额只在总设置中管理，项目表单
@@ -44,6 +45,12 @@ language:
 ```
 
 `source: auto` 会调用模型识别源语言；也可以显式选择下表语言。源语言与目标语言可直接互译，不经中文中转。多语言质量仍属实验性。默认 CLI、配置注释和提示词指令统一使用英语，与翻译目标独立。生成的默认配置仍为 `target: zh`；需要英语译文时选择 `en`。
+
+检测请求失败与返回了不支持的语言结果会分别提示。HTTP 402 明确提示 provider 余额不足，
+需要充值或更换 provider；鉴权、限流和连接失败保留各自诊断。
+`llm_request_failed` 与 `language_detection_failed` 事件会在可用时记录 `status_code`，
+并记录 `error_category` 和安全的 `error_message`，不写入原始服务响应或凭据。
+显式设置源语言只能跳过检测，不能解决后续模型调用的账户或服务问题。
 
 所有模型生成的说明性元数据（包括术语 `note`、风格指南、人物描述及说明中的人物称呼）均明确要求使用目标语言。人物 `target` 保存翻译或音译后的姓名；`source` 和 `aliases` 保留原文拼写以供匹配，证据引用也可以包含原文。类型和性别使用英语标识符，不再转换旧中文枚举。策略匹配时复用原有分析和备注。内置语义策略变更会自动重建受影响的分析，已有术语备注继续保留。完整重译和质量比较请使用独立的 `paths.state_dir`。
 
@@ -232,8 +239,28 @@ uv run wenyi models migrate-usage state/BOOK/targets/zh
 
 ## 流水线
 
+`pipeline.translation_mode` 可选 `standard`（默认）或 `best_of_three`。
+精翻模式必须设置 `pipeline.polish: true`；包括项目 YAML 在内的无效组合会被拒绝。
+Web 在创建书籍项目时选择翻译模式；新项目默认 `standard`，不继承全局模式。
+选择精翻会自动开启本项目润色，翻译方式在创建后固定；项目配置可调整其他字段，
+但不能关闭精翻要求的润色，恢复默认配置也保留已保存的翻译方式。
+翻译模式不属于 Web 总设置，全局 YAML 会拒绝它。SRT 不支持精翻；
+项目 YAML 和换源接口也会校验这一限制，不会静默改成普通字幕翻译。
+
+精翻始终生成三份初稿，内置三分支并发，不作为用户选项。
+旧配置及冻结任务中的 `pipeline.precision_concurrency` 仍可读取，但其值会被忽略，
+新配置文档不再输出此字段，Web 新的 YAML 写入会拒绝它。随后一次综合润色对照原文，
+融合各稿有用部分并直接输出最终译文。沿用 `translation.body` 与 `polish.body`
+路由、模型配置和 provider 行为，不增加精翻专属输出 token 上限或提示。
+正常批次调用四次，标准翻译加润色调用两次。
+旧操作 ID `translation.select`、`translation.verify` 和 `translation.refine`
+不再支持；已有 `llm.routes` 中对应条目会导致校验失败。
+请手动删除这些条目，并按需显式配置 `translation.body` / `polish.body`；
+系统不会改写配置。综合润色、续跑和成本语义见[精翻流程](pipeline.md#三选一精翻)。
+
 ```yaml
 pipeline:
+  translation_mode: standard
   review: true
   polish: true
   rolling_context_segments: 6

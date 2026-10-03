@@ -297,7 +297,15 @@ def resolve_policy(
     rules = {} if context.phase == "export" else _rules(context)
     used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
     effective_rules = {key: value for key, value in rules.items() if key in used}
-    if any(task in {"translator_system", "review_fixer_system"} for task, _ in templates):
+    if any(
+        task
+        in {
+            "translator_system",
+            "review_fixer_system",
+            "precision_generation_system",
+        }
+        for task, _ in templates
+    ):
         effective_rules["configured_lang_guidance"] = rules["configured_lang_guidance"]
     resources = tuple((f"tasks/{task}.txt", content_hash(text)) for task, text in templates)
     if context.phase == "export" and context.format == "epub" and context.about_page:

@@ -20,6 +20,7 @@ class ProjectCreate(RequestModel):
     strategy: dict[str, Any] = Field(default_factory=dict)
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
+    translation_mode: Literal["standard", "best_of_three"] = "standard"
 
     @field_validator("name")
     @classmethod
@@ -126,6 +127,23 @@ class ChapterSegments(BaseModel):
     title_translated: Optional[str] = None
     segments: list[SegmentOut]
     review_issues: list[dict[str, Any]] = []
+
+
+class PrecisionCandidateOut(BaseModel):
+    id: Literal["T1", "T2", "T3"]
+    target: str
+
+
+class PrecisionDraftsOut(BaseModel):
+    chapter_index: int
+    segment_index: int
+    available: bool
+    reason: (
+        Literal["no_archive", "incomplete", "source_mismatch", "ambiguous", "corrupt"] | None
+    ) = None
+    candidates: list[PrecisionCandidateOut] = Field(default_factory=list)
+    synthesized_target: str | None = None
+    before_polish_candidate: Literal["T1"] | None = None
 
 
 # Glossary terms.
@@ -353,7 +371,7 @@ class ProjectConfigOut(BaseModel):
 
 
 class GlobalConfigInput(ConfigInput):
-    default_template: str
+    default_template: Literal["标准翻译"]
     revision: int = Field(ge=0)
     model_renames: dict[str, str] = Field(default_factory=dict)
 
@@ -361,7 +379,7 @@ class GlobalConfigInput(ConfigInput):
 class GlobalConfigOut(BaseModel):
     yaml: str
     effective: dict[str, Any]
-    default_template: str
+    default_template: Literal["标准翻译"]
     revision: int
 
 

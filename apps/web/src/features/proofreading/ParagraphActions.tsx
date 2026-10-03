@@ -14,7 +14,7 @@ export function ParagraphActions({
   source: string;
   target: string | null | undefined;
   disabled: boolean;
-  onOpen: (view: "edit" | "history") => void;
+  onOpen: (view: "edit" | "history" | "precision") => void;
 }) {
   const { t } = useI18n();
   const [menu, setMenu] = useState<{
@@ -190,6 +190,17 @@ export function ParagraphActions({
             >
               <History className="h-4 w-4" />
               {t("proofreading.changeHistory")}
+            </button>
+            <button
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                close();
+                onOpen("precision");
+              }}
+            >
+              <History className="h-4 w-4" />
+              {t("proofreading.precisionDrafts")}
             </button>
             <div role="separator" className="my-1 border-t" />
             {menu.selection && (

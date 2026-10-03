@@ -1,6 +1,5 @@
 """Offline regressions for complete, resumable book-understanding results."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock, call
 
 import pytest
@@ -10,6 +9,7 @@ from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.preparation import PreparationService
+from wenyi_core.pipeline.runtime import PipelineRuntime
 from wenyi_core.storage.file import FileStorage
 
 
@@ -31,7 +31,8 @@ def _service(tmp_path, chapters=None):
         )
     )
     store.save_analysis({"style_guide": "Restrained."})
-    runtime = SimpleNamespace(
+    runtime = Mock(
+        spec=PipelineRuntime,
         config=Config.from_dict({"llm": {"preset": "fake"}}),
         synopsizer=Mock(),
         analyzer=Mock(),
@@ -102,13 +103,17 @@ def test_book_failure_is_not_cached_and_resume_reuses_chapter_digests(tmp_path):
     service, store, runtime = _service(tmp_path)
     runtime.synopsizer.book_synopsis.return_value = ""
     assert service.ensure_understanding(store) == ""
-    assert not store.load_analysis().get("book_synopsis")
-    assert not store.load_analysis().get("book_synopsis_meta")
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert not analysis.get("book_synopsis")
+    assert not analysis.get("book_synopsis_meta")
     runtime.synopsizer.digest_chapter.reset_mock()
     runtime.synopsizer.book_synopsis.return_value = "Complete synopsis."
     assert service.ensure_understanding(store) == "Complete synopsis."
     runtime.synopsizer.digest_chapter.assert_not_called()
-    assert store.load_analysis()["style_guide"] == "Restrained."
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["style_guide"] == "Restrained."
 
 
 def test_complete_cache_is_reused_without_sentence_punctuation(tmp_path):
@@ -142,7 +147,9 @@ def test_failed_regeneration_keeps_existing_analysis_but_does_not_inject_stale_s
     runtime.analyzer.style_brief.return_value = "New style."
     runtime.synopsizer.book_synopsis.return_value = ""
     assert service.ensure_understanding(store) == ""
-    assert store.load_analysis()["book_synopsis"] == "Whole-book synopsis."
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["book_synopsis"] == "Whole-book synopsis."
     runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
     assert service.ensure_understanding(store) == "Revised synopsis."
 

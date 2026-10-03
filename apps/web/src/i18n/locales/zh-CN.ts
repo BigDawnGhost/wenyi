@@ -307,8 +307,14 @@ const zhCN = {
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "润色随翻译批次执行；以上步骤表示流程配置，完成情况以任务状态及最近步骤为准。导出任务在导出页单独查看。",
   "createProject.introduction":
-    "选择语言并上传原文，流程采用总设置默认值，可在项目配置中调整。",
-  "createProject.projectAndLanguages": "1. 项目与语言",
+    "选择语言、原文文件和翻译方式。",
+  "createProject.projectAndLanguages": "项目与语言",
+  "createProject.translationMode": "翻译方式",
+  "createProject.standardMode": "标准翻译",
+  "createProject.precisionMode": "三译合润",
+  "createProject.standardHelp": "一份初稿，按项目设置进行后续润色。",
+  "createProject.precisionHelp": "三份独立初稿 → 一次综合润色。最终译文融合三稿，不是从中选出某一稿。",
+  "createProject.precisionCost": "每批通常调用模型 4 次，标准加润色为 2 次。成本更高，不保证质量提升。",
   "createProject.projectName": "项目名称",
   "createProject.forExampleEnglishTranslationOfAShort": "例如：短篇小说英译",
   "createProject.sourceLanguage": "源语言",
@@ -317,7 +323,7 @@ const zhCN = {
     "源语言与目标语言相同，请选择不同的目标语言。",
   "createProject.prepareSource": "创建后执行译前准备",
   "createProject.prepareHelp":
-    "上传后使用总设置中的默认流程和模型分析全书、建立术语表，会消耗模型 Token。不勾选时，在开始翻译时执行准备。",
+    "上传后分析全书并建立术语表（消耗模型 Token）；不勾选则在开始翻译时执行。",
   "createProject.preparingSource":
     "正在后台分析全书并准备术语表。可以离开此页，稍后到翻译总览查看进度。",
   "createProject.sourceRequired": "请先选择原文文件，再创建项目。",
@@ -326,7 +332,7 @@ const zhCN = {
   "createProject.serverDefault": "使用服务端默认设置",
   "createProject.projectCreatedChangingLanguagesOrSourceContent":
     "项目已创建。初始化后更换语言或原文内容需新建项目。",
-  "createProject.uploadStep": "2. 上传原文",
+  "createProject.uploadStep": "原文文件",
   "createProject.uploadSource": "上传原文",
   "createProject.browseFiles": "浏览文件",
   "createProject.sourceDropZone": "原文文件选择区域",
@@ -416,6 +422,18 @@ const zhCN = {
   "proofreading.paragraphEditor": "段落编辑",
   "proofreading.editorHelp": "对照原文修改译文，或查看历史版本；保存后生效。",
   "proofreading.changeHistory": "改动记录",
+  "proofreading.precisionDrafts": "精翻初稿",
+  "proofreading.retryDrafts": "重新加载初稿",
+  "proofreading.beforePolishComparison": "润色前对照稿",
+  "proofreading.precisionExplanation": "最终译文是三稿综合润色，不是选择某一稿。归档初稿仅供只读查看。",
+  "proofreading.archivedSynthesis": "归档综合润色结果",
+  "proofreading.currentTranslation": "当前正式译文",
+  "proofreading.currentDiffers": "当前正式译文与归档综合结果不同，可能已由人工或 Review 修改。",
+  "proofreading.precisionUnavailable.no_archive": "本段没有精翻初稿归档。标准翻译及旧版本项目可能没有三份初稿。",
+  "proofreading.precisionUnavailable.incomplete": "精翻初稿归档不完整，无法展示三稿。",
+  "proofreading.precisionUnavailable.source_mismatch": "归档原文与当前段落不匹配，无法安全展示初稿。",
+  "proofreading.precisionUnavailable.ambiguous": "发现多份冲突的精翻归档，无法确定本段初稿。",
+  "proofreading.precisionUnavailable.corrupt": "精翻初稿归档已损坏或无法读取。",
   "proofreading.copySelection": "复制选中文字",
   "proofreading.copyTranslation": "复制译文",
   "proofreading.copySource": "复制原文",
@@ -470,6 +488,7 @@ const zhCN = {
     "模型 ID 用于项目选用和备用路由，模型参数可在高级 YAML 中配置。",
   "settings.bookUnderstanding": "全书预理解",
   "settings.polishing": "润色",
+  "createProject.precisionPolish": "精翻自动为本项目启用润色，不受全局设置影响。",
   "settings.applyAutofixesToTheSavedTranslation":
     "审校后自动修复并写回正式译文",
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
@@ -574,10 +593,6 @@ const zhCN = {
   "subtitles.pagination": "{page} / {pages} 页 · {count} 条",
   "progress.reviewIssueCount": "{count} 项意见",
   "workflow.stageCount": "（{done}/{total}）",
-  "workflow.standard": "标准翻译",
-  "workflow.standardDescription": "使用总设置中的默认流程配置",
-  "workflow.quick": "快速出稿",
-  "workflow.quickDescription": "关闭预理解、润色和审校，保留正文与术语翻译",
   "workflow.languageDetection": "语言检测",
   "workflow.styleAnalysis": "风格与初始术语",
   "workflow.translate": "分批翻译章节",
@@ -629,10 +644,9 @@ const zhCN = {
   "settings.newProjectDefaults": "新项目默认配置",
   "settings.defaultScopeHelp":
     "默认配置在创建项目时复制。模型库修改应用于之后启动的任务，已排队和执行中的任务保留原配置。",
-  "settings.defaultTemplate": "默认流程模板",
-  "settings.standardDefaults": "标准流程默认配置",
-  "settings.quickTemplateHelp":
-    "快速出稿会关闭预理解、润色、审校和自动修复；其他设置沿用这里的默认值。",
+  "settings.workflowDefaults": "通用流程默认配置",
+  "settings.workflowDefaultsHelp":
+    "翻译方式仅在创建项目时选择。这里的通用配置不会切换项目的翻译方式。",
   "providerSettings.sharedRegistryHelp":
     "所有项目共用连接和模型。API Key 填写服务端环境变量名称，例如 DEEPSEEK_API_KEY。",
   "registry.connectionId": "连接 ID",

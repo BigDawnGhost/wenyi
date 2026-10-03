@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.config import Config
 from wenyi_core.llm.migration import convert_config
+from wenyi_core.llm.operations import OPERATIONS
 from wenyi_core.llm.usage import UsageSample, UsageTracker, convert_usage_ledger, validate_usage
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?\x07|\r")
@@ -33,7 +34,7 @@ def test_preview_needs_no_keys_or_sdk(tmp_path, monkeypatch):
     result = _invoke(tmp_path, {"llm": {"preset": "deepseek"}}, "list", "--json")
     assert result.exit_code == 0, result.output
     routes = json.loads(result.output)
-    assert len(routes) == 17
+    assert set(routes) == set(OPERATIONS)
     assert {route["model"] for route in routes.values()} == {"deepseek-flash"}
     assert routes["synopsis.chapter"]["max_output_tokens"] == 8192
     explained = _invoke(

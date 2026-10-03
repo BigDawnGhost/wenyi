@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 from wenyi_core.config import Config
 
 from .config import settings
-from .config_documents import config_document, parse_yaml
+from .config_documents import PROJECT_PIPELINE_FIELDS, global_document, parse_yaml
 from .db import get_pool
 from .model_registry import project_registry_updates
 from .strategies import PRESET_TEMPLATES
@@ -31,8 +31,10 @@ def load_settings(*, connection: Connection[Any] | None = None) -> GlobalSetting
             "SELECT document, default_template, revision FROM application_settings WHERE id=1"
         ).fetchone()
     if row is None:
-        return GlobalSettings(Config.load(settings.config_path))
-    return GlobalSettings(Config.from_dict(row[0]), row[1], row[2])
+        config = Config.load(settings.config_path)
+        return GlobalSettings(Config.from_dict(global_document(config)))
+    config = Config.from_dict(row[0])
+    return GlobalSettings(Config.from_dict(global_document(config)), "标准翻译", row[2])
 
 
 @contextmanager
@@ -51,7 +53,14 @@ def registry_guard(*, exclusive: bool = False):
 def validate_settings(value: str, default_template: str) -> Config:
     if default_template not in {template["name"] for template in PRESET_TEMPLATES}:
         raise ValueError("Unknown default workflow template")
-    config = Config.from_dict(parse_yaml(value))
+    document = parse_yaml(value)
+    pipeline = document.get("pipeline", {})
+    if isinstance(pipeline, dict) and PROJECT_PIPELINE_FIELDS.intersection(pipeline):
+        raise ValueError(
+            "translation_mode is a project setting; choose it when creating a project. "
+            "Initial-draft concurrency is built in, not configurable."
+        )
+    config = Config.from_dict(document)
     if config.source_lang == config.target_lang:
         raise ValueError("Source and target languages are identical")
     return config
@@ -61,7 +70,7 @@ def save_settings(
     value: str, default_template: str, revision: int, *, model_renames: dict[str, str] | None = None
 ) -> GlobalSettings:
     config = validate_settings(value, default_template)
-    document = config_document(config)
+    document = global_document(config)
     with registry_guard(exclusive=True) as conn:
         current = conn.execute("SELECT revision FROM application_settings WHERE id=1").fetchone()
         if revision != (current[0] if current else 0):

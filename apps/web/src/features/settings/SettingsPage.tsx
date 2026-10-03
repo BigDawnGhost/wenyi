@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/form";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
-import { WorkflowSettings } from "./WorkflowSettings";
+import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
@@ -86,10 +86,7 @@ export default function SettingsPage() {
     (!project && config.data?.editable === false);
   const subtitles = project?.fmt === "srt";
   const setField = (group: string, key: string, value: unknown) => {
-    const next = {
-      ...effective,
-      [group]: { ...section(effective, group), [key]: value },
-    };
+    const next = workflowField(effective, group, key, value);
     setEffective(next);
     setDraft(JSON.stringify(next, null, 2));
   };
@@ -141,6 +138,7 @@ export default function SettingsPage() {
               </p>
             )}
             <WorkflowSettings
+              scope="project"
               config={effective}
               disabled={formDisabled}
               error={configurationError}

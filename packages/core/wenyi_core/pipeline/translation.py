@@ -13,16 +13,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..config import PipelineConfig
 from ..events import ProgressFn
 from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
-from ..ingest.models import Segment
+from ..ingest.models import Chapter, Segment
 from ..storage.protocol import Storage
 from .context import RollingContext
 from .docx_styles import DocxStyleService
+from .precision import PrecisionBatchExecutor, PrecisionError
 from .runstore import STATUS_DONE
 from .title_translation import TitleTranslationService
-from .translation_batch import BatchPlan, TranslationBatchExecutor, resume_batches
+from .translation_batch import BatchPlan, BatchResult, TranslationBatchExecutor, resume_batches
 
 if TYPE_CHECKING:
     from .annotations import AnnotationService
@@ -47,6 +49,7 @@ class TranslationService:
         self._docx_styles = DocxStyleService(runtime)
         self._titles = TitleTranslationService(runtime.title_translator)
         self._batches = TranslationBatchExecutor(runtime.translator, runtime.polisher)
+        self._precision = PrecisionBatchExecutor(runtime.client, runtime.config)
 
     def run(
         self,
@@ -60,6 +63,7 @@ class TranslationService:
         The caller restores languages, validates only_chapter and prepares the synopsis.
         This method performs body and title translation with restored context.
         """
+        PipelineConfig.model_validate(self._runtime.config.pipeline.model_dump())
         manifest = store.load_manifest()
         glossary = store
         context = RollingContext.from_dict(
@@ -203,7 +207,9 @@ class TranslationService:
         """Translate, polish, extract and persist one chapter; return the updated
         completed-paragraph count.
         """
-        chapter = store.load_chapter(ci)
+        with store.state_lock():
+            chapter = store.load_chapter(ci)
+            self._precision.recover_publications(store, chapter)
         text_segs = chapter.text_segments
         if not text_segs:
             store.set_chapter_status(ci, STATUS_DONE)
@@ -318,12 +324,32 @@ class TranslationService:
                 next_source,
                 allow_empty_translations=allow_empty_translations,
             )
-            result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
-            for segment, target, before_polish in zip(b, result.targets, result.before_polish):
-                segment.target = target
-                segment.target_before_polish = before_polish
-            # Persist translations incrementally so interruption resumes after this batch.
-            store.save_chapter(chapter)
+            if self._runtime.config.pipeline.translation_mode == "best_of_three":
+
+                def checkpoint_precision_usage() -> None:
+                    self._runtime.flush_usage(store, scope="precision")
+
+                result = self._precision.execute(
+                    plan,
+                    store,
+                    checkpoint=checkpoint_precision_usage,
+                    progress=(
+                        (lambda phase: progress(done, total, f"{label} · {phase}"))
+                        if progress
+                        else None
+                    ),
+                )
+                chapter = self.save_precision_batch(store, plan, result)
+                text_segs = chapter.text_segments
+                b = text_segs[batch_start : batch_start + len(b)]
+                self._precision.mark_published(store, result)
+            else:
+                result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
+                for segment, target, before_polish in zip(b, result.targets, result.before_polish):
+                    segment.target = target
+                    segment.target_before_polish = before_polish
+                # Persist translations incrementally so interruption resumes after this batch.
+                store.save_chapter(chapter)
             # Handle only annotated logical paragraphs touched by this batch, in source order.
             # If the batch contains only an initial slice of a long paragraph, wait until its final
             # continuation finishes before merging and aligning.
@@ -353,6 +379,7 @@ class TranslationService:
                 start_index=batch_start,
                 count=len(b),
                 polished=self._runtime.config.pipeline.polish,
+                translation_mode=self._runtime.config.pipeline.translation_mode,
                 segments=[
                     {
                         "index": batch_start + i,
@@ -408,6 +435,43 @@ class TranslationService:
             segment_count=len(text_segs),
         )
         return done
+
+    @staticmethod
+    def save_precision_batch(store: Storage, plan: BatchPlan, result: BatchResult) -> Chapter:
+        """Merge accepted pending segments into a fresh chapter without losing manual edits."""
+        with store.state_lock():
+            publication = PrecisionBatchExecutor.prepared_publication(store, result)
+            if (
+                publication.get("segment_indices") != list(plan.segment_indices)
+                or len(result.targets) != len(plan.sources)
+                or len(result.before_polish) != len(plan.sources)
+            ):
+                raise PrecisionError("The precision publication index is not aligned to its batch")
+            chapter = store.load_chapter(plan.chapter)
+            segments = chapter.text_segments[
+                plan.start_index : plan.start_index + len(plan.sources)
+            ]
+            if (
+                tuple(segment.index for segment in segments) != plan.segment_indices
+                or tuple(segment.source for segment in segments) != plan.sources
+            ):
+                raise PrecisionError("The precision batch source changed before publication")
+            for segment, target, before_polish in zip(
+                segments, result.targets, result.before_polish
+            ):
+                if segment.target is not None and (
+                    segment.target != target or segment.target_before_polish != before_polish
+                ):
+                    raise PrecisionError(
+                        "The precision batch was edited before publication; saved candidates are retained"
+                    )
+            for segment, target, before_polish in zip(
+                segments, result.targets, result.before_polish
+            ):
+                segment.target = target
+                segment.target_before_polish = before_polish
+            store.save_chapter(chapter)
+            return chapter
 
     @staticmethod
     def chapter_progress_label(title: str, index: int) -> str:

@@ -179,7 +179,9 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         formal_before = Path(store.chapter_path(0)).read_bytes()
         assert store.load_chapter(0).text_segments[0].target == translated
         reference = store.load_manifest()["language_policies"]["translation"]
-        assert store.read_artifact(reference)["fingerprint"] == config.language_policy().fingerprint
+        policy = store.read_artifact(reference)
+        assert policy is not None
+        assert policy["fingerprint"] == config.language_policy().fingerprint
         orchestrator.run_review(str(path))
         stages = {call["stage"] for call in client.calls}
         assert {

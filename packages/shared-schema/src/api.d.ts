@@ -488,6 +488,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/chapters/{ci}/segments/{si}/precision-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Precision Drafts
+         * @description Inspect archived drafts without editing or regenerating the formal translation.
+         */
+        get: operations["get_precision_drafts_projects__pid__chapters__ci__segments__si__precision_drafts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/chapters/{ci}/title": {
         parameters: {
             query?: never;
@@ -1076,8 +1096,11 @@ export interface components {
         GlobalConfigInput: {
             /** Yaml */
             yaml: string;
-            /** Default Template */
-            default_template: string;
+            /**
+             * Default Template
+             * @constant
+             */
+            default_template: "标准翻译";
             /** Revision */
             revision: number;
             /** Model Renames */
@@ -1093,8 +1116,11 @@ export interface components {
             effective: {
                 [key: string]: unknown;
             };
-            /** Default Template */
-            default_template: string;
+            /**
+             * Default Template
+             * @constant
+             */
+            default_template: "标准翻译";
             /** Revision */
             revision: number;
         };
@@ -1164,6 +1190,33 @@ export interface components {
             engines: string[];
             /** Export Backends */
             export_backends: string[];
+        };
+        /** PrecisionCandidateOut */
+        PrecisionCandidateOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "T1" | "T2" | "T3";
+            /** Target */
+            target: string;
+        };
+        /** PrecisionDraftsOut */
+        PrecisionDraftsOut: {
+            /** Chapter Index */
+            chapter_index: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: ("no_archive" | "incomplete" | "source_mismatch" | "ambiguous" | "corrupt") | null;
+            /** Candidates */
+            candidates?: components["schemas"]["PrecisionCandidateOut"][];
+            /** Synthesized Target */
+            synthesized_target?: string | null;
+            /** Before Polish Candidate */
+            before_polish_candidate?: "T1" | null;
         };
         /** PreviewChapter */
         PreviewChapter: {
@@ -1251,6 +1304,12 @@ export interface components {
             prepare: boolean;
             /** Pdf Backend */
             pdf_backend?: ("mineru" | "babeldoc") | null;
+            /**
+             * Translation Mode
+             * @default standard
+             * @enum {string}
+             */
+            translation_mode: "standard" | "best_of_three";
         };
         /** ProjectDetail */
         ProjectDetail: {
@@ -2682,6 +2741,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChapterSegments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_precision_drafts_projects__pid__chapters__ci__segments__si__precision_drafts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+                si: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrecisionDraftsOut"];
                 };
             };
             /** @description Validation Error */

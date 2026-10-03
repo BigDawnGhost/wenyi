@@ -3,20 +3,6 @@ import { createTranslator, type Locale, type MessageKey } from "./catalog";
 type Translator = ReturnType<typeof createTranslator>;
 
 // These names are API identifiers. Translate their presentation, never their submitted values.
-const templates: Record<string, [MessageKey, MessageKey]> = {
-  标准翻译: ["workflow.standard", "workflow.standardDescription"],
-  快速出稿: ["workflow.quick", "workflow.quickDescription"],
-};
-
-export function workflowTemplateLabel(
-  name: string,
-  description: string,
-  t: Translator,
-) {
-  const keys = templates[name];
-  return keys ? `${t(keys[0])} — ${t(keys[1])}` : `${name} — ${description}`;
-}
-
 const stages: Record<string, MessageKey> = {
   parse: "workflow.parse",
   prepare: "workflow.prepare",
