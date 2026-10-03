@@ -14,18 +14,23 @@ import {
 test("creates a multilingual project and waits for background parsing", async ({
   page,
 }, testInfo) => {
-  await fakeApi(page, {
-    [`/projects/${pid}`]: {
-      ...project,
-      fmt: "docx",
-      status: "uploaded",
-      initialized: false,
-      source_meta: { original_filename: "test.docx" },
-    },
-  });
+  await fakeApi(page);
+  let status = "parsing";
+  await page.route(`**/api/projects/${pid}`, (r) =>
+    r.fulfill({
+      json: {
+        ...project,
+        fmt: "docx",
+        status,
+        initialized: false,
+        source_meta: { original_filename: "test.docx" },
+      },
+    }),
+  );
   let created: Record<string, unknown> | undefined;
   let uploaded = false;
   await page.route("**/api/projects", async (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
     const form = await new Response(
       new Uint8Array(r.request().postDataBuffer()!),
       {
@@ -51,11 +56,13 @@ test("creates a multilingual project and waits for background parsing", async ({
       },
     }),
   );
-  await page.route(`**/api/projects/${pid}/translate`, async (r) =>
-    r.fulfill({
+  let started = false;
+  await page.route(`**/api/projects/${pid}/translate`, async (r) => {
+    started = true;
+    await r.fulfill({
       json: { job_id: "translate-1", kind: "translate", project_id: pid },
-    }),
-  );
+    });
+  });
   await page.goto("/projects/new");
   await page
     .getByLabel("Project name", { exact: true })
@@ -100,16 +107,23 @@ test("creates a multilingual project and waits for background parsing", async ({
   await expect(create).toBeEnabled();
   expect(created).toBeUndefined();
   await create.click();
-  await expect(page.getByText("Document", { exact: true })).toBeVisible();
-  await expect(page.getByText("test.docx", { exact: true })).toBeVisible();
-  await expect(browseFiles).toBeDisabled();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(
+    page.getByRole("heading", { name: "Translation overview", exact: true, level: 2 }),
+  ).toBeVisible();
+  await expect(page.getByText("Parsing", { exact: true })).toBeVisible();
+  await expect(browseFiles).toHaveCount(0);
   expect(uploaded).toBe(true);
   expect(created?.target_lang).toBe("en");
   expect(created).not.toHaveProperty("strategy");
   expect(created?.prepare).toBe(false);
-  await page
-    .getByRole("button", { name: "Start translation", exact: true })
-    .click();
+  const start = page.getByRole("button", { name: "Start translation", exact: true });
+  await expect(start).toHaveCount(0);
+  expect(started).toBe(false);
+  status = "uploaded";
+  await expect(start).toBeEnabled();
+  await start.click();
+  await expect.poll(() => started).toBe(true);
   await expect(page).toHaveURL(`/projects/${pid}`);
 });
 
