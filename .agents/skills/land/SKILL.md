@@ -39,9 +39,15 @@ at execution time. Never publish through the `local` checkout backlink.
   change global configuration, expose credentials, or bypass missing access.
   Installing system tools or changing services outside the workspace requires
   separate authorization.
+  If an existing configured email has exactly one corresponding author name in
+  repository history, use that verified name with command-scoped `git -c
+  user.name=...` when necessary; otherwise ask rather than inventing an identity.
 - Use `git` and `gh` directly; the project has no authoritative landing wrapper.
   Use non-interactive commands with explicit arguments. Prefix every `git
   commit` or `git merge` invocation with `GIT_EDITOR=true`; do not launch editors.
+  Set `GIT_TERMINAL_PROMPT=0` for Git network operations. A working `gh` login
+  does not imply Git HTTPS credentials are configured; use the command-scoped
+  credential helper shown in section 6 without changing global Git settings.
 
 Read-only preflight:
 
@@ -146,7 +152,7 @@ and `apps/web/.gitignore` identify excluded artifacts, not deletion permission.
 For the verified remote and a selected unused `$branch`, the sequence uses:
 
 ```sh
-git fetch origin
+GIT_TERMINAL_PROMPT=0 git fetch origin
 git switch -c "$branch"
 # Stage only the explicitly reviewed task paths.
 GIT_EDITOR=true git commit -m "$commit_message"
@@ -274,7 +280,9 @@ a publication blocker. Ensure the tree and recorded candidate SHA agree, then
 publish without force:
 
 ```sh
-git push --set-upstream origin "$branch"
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+  -c 'credential.helper=!gh auth git-credential' \
+  push --set-upstream origin "$branch"
 gh pr create --repo BigDawnGhost/wenyi --base dev --head "$branch" \
   --title "$pr_title" --body-file "$pr_body_file"
 ```
@@ -364,7 +372,7 @@ Finally:
 ```sh
 gh pr view "$pr" --repo BigDawnGhost/wenyi \
   --json url,state,baseRefName,headRefOid,mergeCommit,mergedAt
-git fetch origin dev
+GIT_TERMINAL_PROMPT=0 git fetch origin dev
 git merge-base --is-ancestor "$merge_sha" origin/dev
 git --no-optional-locks status --short
 ```
