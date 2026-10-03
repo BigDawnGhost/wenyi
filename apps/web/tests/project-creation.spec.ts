@@ -1,5 +1,5 @@
 import { test, expect, type Route } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { configuration, fakeApi, pid, project } from "./fixtures";
 
 const preview = {
   title: "Source preview",
@@ -19,7 +19,7 @@ async function metadata(route: Route) {
   return JSON.parse(String(form.get("project")));
 }
 
-test("preparation continues after preview and a page reload", async ({
+test("creation enters the overview while preparation continues after reload", async ({
   page,
 }) => {
   await fakeApi(page, { [`/projects/${pid}/preview`]: preview });
@@ -36,7 +36,11 @@ test("preparation continues after preview and a page reload", async ({
     }),
   );
   await page.route("**/api/projects", async (r) => {
-    selectedPreparation = (await metadata(r)).prepare;
+    if (r.request().method() !== "POST") return r.fallback();
+    const submitted = await metadata(r);
+    selectedPreparation = submitted.prepare;
+    expect(submitted.translation_mode).toBe("standard");
+    expect(submitted).not.toHaveProperty("precision_concurrency");
     await r.fulfill({ json: { ...project, status, fmt: "docx" } });
   });
   await page.goto("/projects/new");
@@ -52,19 +56,17 @@ test("preparation continues after preview and a page reload", async ({
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
-  await expect(page.getByText("Source preview", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByRole("heading", { name: "Translation overview", exact: true, level: 2 })).toBeVisible();
   expect(selectedPreparation).toBe(true);
   const start = page.getByRole("button", {
     name: "Start translation",
     exact: true,
   });
-  await expect(start).toBeDisabled();
+  await expect(start).toHaveCount(0);
   await page.reload();
-  await expect(page.getByText("book.docx", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Preparing the book and glossary", { exact: false }),
-  ).toBeVisible();
-  await expect(start).toBeDisabled();
+  await expect(page.getByText("Preparing", { exact: true })).toBeVisible();
+  await expect(start).toHaveCount(0);
   status = "prepared";
   await expect(start).toBeEnabled();
 });
@@ -75,6 +77,7 @@ test("creation rejects empty files and recovers from an upload failure without l
   await fakeApi(page);
   let requests = 0;
   await page.route("**/api/projects", (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
     requests += 1;
     return r.fulfill({ status: 503, json: { detail: "Upload unavailable" } });
   });
@@ -104,6 +107,7 @@ test("creation rejects empty files and recovers from an upload failure without l
   await create.click();
   await expect(page.getByText("503: Upload unavailable")).toBeVisible();
   await expect(page).toHaveURL("/projects/new");
+  await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("New book");
   await expect(page.getByText("book.docx", { exact: true })).toBeVisible();
   await expect(create).toBeEnabled();
   expect(requests).toBe(1);
@@ -115,6 +119,7 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await fakeApi(page);
   let submitted: Record<string, unknown> | undefined;
   await page.route("**/api/projects", async (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
     submitted = await metadata(r);
     await r.fulfill({ status: 503, json: { detail: "Upload unavailable" } });
   });
@@ -136,12 +141,17 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await expect(page.getByText("503: Upload unavailable")).toBeVisible();
   expect(submitted?.pdf_backend).toBe("babeldoc");
   expect(submitted?.prepare).toBe(true);
+  expect(submitted?.translation_mode).toBe("standard");
+  expect(submitted).not.toHaveProperty("precision_concurrency");
+  await page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }).check();
   await file.setInputFiles({
     name: "movie.srt",
     mimeType: "text/plain",
     buffer: Buffer.from("fixture"),
   });
   await expect(page.getByLabel("PDF parser", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("checkbox", { name: "Prepare before translating" }),
   ).toHaveCount(0);
@@ -151,9 +161,53 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await expect(page.getByText("503: Upload unavailable")).toBeVisible();
   expect(submitted?.pdf_backend).toBeNull();
   expect(submitted?.prepare).toBe(false);
+  expect(submitted?.translation_mode).toBe("standard");
+  expect(submitted).not.toHaveProperty("precision_concurrency");
 });
 
-test("a saved project with a failed preparation queue can retry without another upload", async ({
+test("precision creation saves multipart options and enters the overview after reload", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/preview`]: preview,
+    [`/projects/${pid}/config`]: {
+      ...configuration,
+      effective: {
+        ...configuration.effective,
+        pipeline: { ...configuration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+      },
+    },
+  });
+  let submitted: Record<string, unknown> | undefined;
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = await metadata(route);
+    await route.fulfill({ json: { ...project, fmt: "docx" } });
+  });
+  await page.goto("/projects/new");
+  const standard = page.getByRole("radio", { name: "Standard", exact: true });
+  const mode = page.getByRole("radio", { name: "Three drafts + synthesis", exact: true });
+  await expect(standard).toBeChecked();
+  await standard.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(mode).toBeChecked();
+  await expect(page.getByRole("spinbutton")).toHaveCount(0);
+  await page.getByLabel("Project name", { exact: true }).fill("Precision book");
+  await page.getByLabel("Upload source", { exact: true }).setInputFiles({
+    name: "book.docx", mimeType: "application/octet-stream", buffer: Buffer.from("fixture"),
+  });
+  const create = page.getByRole("button", { name: "Create project", exact: true });
+  await expect(create).toBeEnabled();
+  await create.click();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByRole("heading", { name: "Translation overview", exact: true, level: 2 })).toBeVisible();
+  expect(submitted?.translation_mode).toBe("best_of_three");
+  expect(submitted).not.toHaveProperty("precision_concurrency");
+  await page.reload();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByRole("heading", { name: "Translation overview", exact: true, level: 2 })).toBeVisible();
+  await expect(page.getByRole("spinbutton")).toHaveCount(0);
+});
+
+test("creation with a failed preparation queue enters the overview and retries after reload", async ({
   page,
 }) => {
   await fakeApi(page, { [`/projects/${pid}/preview`]: preview });
@@ -176,8 +230,24 @@ test("a saved project with a failed preparation queue can retry without another 
       json: { job_id: "prepare-2", kind: "prepare", project_id: pid },
     });
   });
-  await page.goto(`/projects/new?project=${pid}`);
-  await expect(page.getByText("book.docx", { exact: true })).toBeVisible();
+  await page.route("**/api/projects", (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    return r.fulfill({
+      json: { ...project, status, error: "Task queue is unavailable" },
+    });
+  });
+  await page.goto("/projects/new");
+  await page.getByLabel("Project name", { exact: true }).fill("Queue failure");
+  await page.getByLabel("Upload source", { exact: true }).setInputFiles({
+    name: "book.docx",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from("fixture"),
+  });
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByText("Task queue is unavailable", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Task queue is unavailable", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Create project", exact: true }),
   ).toHaveCount(0);
@@ -192,33 +262,30 @@ test("a saved project with a failed preparation queue can retry without another 
   ).toBeEnabled();
 });
 
-test("Chinese creation fits mobile and fetches the preview when parsing finishes", async ({
+test("Chinese creation fits mobile and enters the overview before parsing finishes", async ({
   page,
-}, testInfo) => {
+}) => {
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await page.setViewportSize({ width: 390, height: 844 });
   await fakeApi(page);
-  let previewPending = false;
   let ready = false;
-  await page.route("**/api/projects", (r) =>
-    r.fulfill({
+  await page.route("**/api/projects", (r) => {
+    if (r.request().method() !== "POST") return r.fallback();
+    return r.fulfill({
       json: {
         ...project,
         status: "parsing",
         fmt: "docx",
         source_meta: { original_filename: "原文.docx" },
       },
-    }),
-  );
+    });
+  });
   await page.route(`**/api/projects/${pid}`, (r) => {
-    ready = previewPending;
     return r.fulfill({
       json: { ...project, status: ready ? "uploaded" : "parsing", fmt: "docx" },
     });
   });
   await page.route(`**/api/projects/${pid}/preview`, (r) => {
-    if (ready) return r.fulfill({ json: preview });
-    previewPending = true;
     return r.fulfill({
       status: 409,
       json: { detail: "Source preview is not ready" },
@@ -226,6 +293,9 @@ test("Chinese creation fits mobile and fetches the preview when parsing finishes
   });
   await page.goto("/projects/new");
   await page.getByLabel("项目名称", { exact: true }).fill("新书翻译");
+  await page.getByRole("radio", { name: "三译合润", exact: true }).check();
+  await expect(page.getByRole("spinbutton")).toHaveCount(0);
+  await expect(page.getByText("精翻自动为本项目启用润色，不受全局设置影响。", { exact: false })).toBeVisible();
   await page.getByLabel("上传原文", { exact: true }).setInputFiles({
     name: "原文.docx",
     mimeType: "application/octet-stream",
@@ -237,19 +307,15 @@ test("Chinese creation fits mobile and fetches the preview when parsing finishes
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
-  await page.screenshot({
-    path: testInfo.outputPath("creation-mobile.png"),
-    fullPage: true,
-  });
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.screenshot({
-    path: testInfo.outputPath("creation-desktop.png"),
-    fullPage: true,
-  });
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByText("解析中", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始翻译", exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText("解析中", { exact: true })).toBeVisible();
+  ready = true;
   await expect(
     page.getByRole("button", { name: "开始翻译", exact: true }),
   ).toBeEnabled();
-  await expect(page.getByText("Source preview", { exact: true })).toBeVisible();
-  expect(previewPending).toBe(true);
+  await expect(page.getByText("Source preview", { exact: true })).toHaveCount(0);
 });

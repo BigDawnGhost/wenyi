@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { api, isProjectBusy } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { SourcePreview } from "./SourcePreview";
 import { SourceFilePicker } from "./SourceFilePicker";
 
@@ -16,13 +17,16 @@ export default function CreateProject() {
   const { t: tr, locale } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [name, setName] = useState("");
   const [source, setSource] = useState("auto");
   const [target, setTarget] = useState("zh");
-  const [pid, setPid] = useState<string | null>(searchParams.get("project"));
+  const [pid] = useState<string | null>(searchParams.get("project"));
   const [file, setFile] = useState<File | null>(null);
   const [prepare, setPrepare] = useState(false);
+  const [translationMode, setTranslationMode] = useState<
+    "standard" | "best_of_three"
+  >("standard");
   const [pdfBackend, setPdfBackend] = useState<"" | "mineru" | "babeldoc">("");
   const { data: caps, error: capsError } = useQuery({
     queryKey: ["capabilities"],
@@ -36,6 +40,17 @@ export default function CreateProject() {
       isProjectBusy(query.state.data?.status) ? 1500 : false,
   });
   const busy = isProjectBusy(project?.status);
+  const { data: savedConfig, error: configError } = useQuery({
+    queryKey: ["config", pid],
+    queryFn: () => api.getConfig(pid!),
+    enabled: !!pid,
+  });
+  const savedPipeline = savedConfig?.effective.pipeline as
+    | Record<string, unknown>
+    | undefined;
+  const displayedMode = pid
+    ? String(savedPipeline?.translation_mode ?? "standard")
+    : translationMode;
   const { data: preview } = useQuery({
     queryKey: ["preview", pid],
     queryFn: () => api.getPreview(pid!),
@@ -83,6 +98,7 @@ export default function CreateProject() {
           source_lang: source,
           target_lang: target,
           prepare: !subtitle && prepare,
+          translation_mode: subtitle ? "standard" : translationMode,
           pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
         },
         file,
@@ -91,8 +107,7 @@ export default function CreateProject() {
     onSuccess: (p) => {
       queryClient.setQueryData(["project", p.id], p);
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setPid(p.id);
-      setSearchParams({ project: p.id }, { replace: true });
+      navigate(`/projects/${p.id}`);
     },
   });
   const resume = useMutation({
@@ -121,6 +136,7 @@ export default function CreateProject() {
           error={
             capsError ||
             projectError ||
+            configError ||
             create.error ||
             resume.error ||
             start.error ||
@@ -248,90 +264,154 @@ export default function CreateProject() {
                 </Select>
               </div>
             )}
-            {!pid && !subtitle && (
-              <div className="flex items-start gap-3 rounded-lg border p-4">
-                <input
-                  id="prepare-source"
-                  type="checkbox"
-                  checked={prepare}
-                  disabled={locked}
-                  onChange={(e) => setPrepare(e.target.checked)}
-                  aria-describedby="prepare-help"
-                  className="mt-1 accent-primary"
-                />
-                <div>
-                  <Label htmlFor="prepare-source">
-                    {tr("createProject.prepareSource")}
-                  </Label>
-                  <p
-                    id="prepare-help"
-                    className="mt-1 text-sm text-muted-foreground"
-                  >
-                    {tr("createProject.prepareHelp")}
-                  </p>
-                </div>
-              </div>
-            )}
-            {!pid && (
-              <div className="space-y-2">
-                <Button
-                  onClick={() => create.mutate()}
-                  disabled={
-                    !name.trim() ||
-                    !file ||
-                    !!fileError ||
-                    sameLanguage ||
-                    !caps ||
-                    create.isPending
-                  }
-                >
-                  {create.isPending
-                    ? tr("createProject.uploading")
-                    : tr("common.createProject")}
-                </Button>
-                {!file && (
-                  <p className="text-xs text-muted-foreground">
-                    {tr("createProject.sourceRequired")}
-                  </p>
-                )}
-              </div>
-            )}
-            {busy && (
-              <p role="status" className="text-sm">
-                {project?.status === "preparing"
-                  ? tr("createProject.preparingSource")
-                  : tr("createProject.parsingTheSourceAPreviewWillAppear")}
-              </p>
-            )}
-            {preview && <SourcePreview preview={preview} />}
-            {pid && (
-              <div className="flex flex-wrap gap-3">
-                {interrupted ? (
-                  <Button
-                    onClick={() => resume.mutate()}
-                    disabled={resume.isPending}
-                  >
-                    {tr("progress.resumeTask")}
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => start.mutate()}
-                    disabled={!preview || busy || start.isPending}
-                  >
-                    {start.isPending
-                      ? tr("createProject.starting")
-                      : tr("common.startTranslation")}
-                  </Button>
-                )}
-                <Link to={`/projects/${pid}`}>
-                  <Button variant="outline">
-                    {tr("createProject.openProject")}
-                  </Button>
-                </Link>
-              </div>
-            )}
           </CardContent>
         </Card>
+        {!subtitle && project?.fmt !== "srt" && (!pid || savedPipeline) && (
+          <Card>
+            <CardContent className="p-5 space-y-3">
+              <fieldset disabled={locked} className="min-w-0">
+                <legend className="mb-3 font-medium">
+                  {tr("createProject.translationMode")}
+                </legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {(["standard", "best_of_three"] as const).map((mode) => (
+                    <label
+                      key={mode}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-3 rounded-lg border p-4",
+                        "transition-colors focus-within:ring-2 focus-within:ring-ring",
+                        displayedMode === mode
+                          ? "border-primary bg-primary/5"
+                          : "hover:bg-muted/50",
+                        locked && "cursor-default opacity-75",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="translation-mode"
+                        value={mode}
+                        checked={displayedMode === mode}
+                        onChange={() => setTranslationMode(mode)}
+                        aria-label={tr(
+                          mode === "standard"
+                            ? "createProject.standardMode"
+                            : "createProject.precisionMode",
+                        )}
+                        className="mt-1 shrink-0 accent-primary"
+                      />
+                      <span className="min-w-0 space-y-1">
+                        <span className="block text-sm font-medium">
+                          {tr(
+                            mode === "standard"
+                              ? "createProject.standardMode"
+                              : "createProject.precisionMode",
+                          )}
+                        </span>
+                        <span className="block text-sm text-muted-foreground">
+                          {tr(
+                            mode === "standard"
+                              ? "createProject.standardHelp"
+                              : "createProject.precisionHelp",
+                          )}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              {displayedMode === "best_of_three" && (
+                <p className="text-xs text-muted-foreground">
+                  {tr("createProject.precisionPolish")} {tr("createProject.precisionCost")}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        <div className="space-y-4">
+          {!pid && !subtitle && (
+            <div className="flex items-start gap-3">
+              <input
+                id="prepare-source"
+                type="checkbox"
+                checked={prepare}
+                disabled={locked}
+                onChange={(e) => setPrepare(e.target.checked)}
+                aria-describedby="prepare-help"
+                className="mt-1 accent-primary"
+              />
+              <div>
+                <Label htmlFor="prepare-source">
+                  {tr("createProject.prepareSource")}
+                </Label>
+                <p
+                  id="prepare-help"
+                  className="mt-1 text-sm text-muted-foreground"
+                >
+                  {tr("createProject.prepareHelp")}
+                </p>
+              </div>
+            </div>
+          )}
+          {!pid && (
+            <div className="space-y-2">
+              <Button
+                onClick={() => create.mutate()}
+                disabled={
+                  !name.trim() ||
+                  !file ||
+                  !!fileError ||
+                  sameLanguage ||
+                  !caps ||
+                  create.isPending
+                }
+                className="w-full sm:w-auto"
+              >
+                {create.isPending
+                  ? tr("createProject.uploading")
+                  : tr("common.createProject")}
+              </Button>
+              {!file && (
+                <p className="text-xs text-muted-foreground">
+                  {tr("createProject.sourceRequired")}
+                </p>
+              )}
+            </div>
+          )}
+          {busy && (
+            <p role="status" className="text-sm">
+              {project?.status === "preparing"
+                ? tr("createProject.preparingSource")
+                : tr("createProject.parsingTheSourceAPreviewWillAppear")}
+            </p>
+          )}
+          {preview && <SourcePreview preview={preview} />}
+          {pid && (
+            <div className="flex flex-wrap gap-3">
+              {interrupted ? (
+                <Button
+                  onClick={() => resume.mutate()}
+                  disabled={resume.isPending}
+                >
+                  {tr("progress.resumeTask")}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => start.mutate()}
+                  disabled={!preview || busy || start.isPending}
+                >
+                  {start.isPending
+                    ? tr("createProject.starting")
+                    : tr("common.startTranslation")}
+                </Button>
+              )}
+              <Link to={`/projects/${pid}`}>
+                <Button variant="outline">
+                  {tr("createProject.openProject")}
+                </Button>
+              </Link>
+            </div>
+          )}
+        </div>
       </PageContainer>
     </>
   );

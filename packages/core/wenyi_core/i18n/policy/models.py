@@ -169,7 +169,7 @@ class PolicyPlan:
         )
         used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
         values = {key: value for key, value in self.prompt_values if key in used}
-        if prefix in {"translator", "review_fixer"} and "lang_guidance" in used:
+        if prefix in {"translator", "review_fixer", "precision"} and "lang_guidance" in used:
             values["lang_guidance"] = dict(self.prompt_values)["configured_lang_guidance"]
         return content_hash(
             {

@@ -46,6 +46,7 @@ pipeline:
   review: true # Run final review after whole-book translation; disable with --no-review
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  translation_mode: standard # standard | best_of_three; best_of_three requires polish
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
   book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests used during translation
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
@@ -97,6 +98,22 @@ class SegmentConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    translation_mode: Literal["standard", "best_of_three"] = "standard"
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_legacy_precision_concurrency(cls, value: Any) -> Any:
+        """Read existing configurations and job snapshots without exposing a retired option."""
+        if isinstance(value, dict) and "precision_concurrency" in value:
+            return {key: item for key, item in value.items() if key != "precision_concurrency"}
+        return value
+
+    @model_validator(mode="after")
+    def validate_translation_mode(self) -> PipelineConfig:
+        if self.translation_mode == "best_of_three" and not self.polish:
+            raise ValueError("best_of_three translation mode requires pipeline.polish=true")
+        return self
 
     review: bool = True
     align_retry_limit: int = (
@@ -225,6 +242,8 @@ class Config(BaseModel):
                 else ("analyzer",)
             )
         if phase == "translation":
+            if self.pipeline.translation_mode == "best_of_three":
+                return ("precision", "title_translator", "glossary_extractor", "glossary_history")
             return ("translator", "title_translator", "glossary_extractor", "glossary_history") + (
                 ("polisher",) if self.pipeline.polish else ()
             )

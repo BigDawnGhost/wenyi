@@ -7,6 +7,7 @@ from typing import Any
 from wenyi_core.config import Config, parse_config_yaml
 
 PROJECT_LLM_FIELDS = frozenset({"tiers", "routes", "budget"})
+PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "precision_concurrency"})
 
 
 def config_document(config: Config) -> dict[str, Any]:
@@ -19,6 +20,14 @@ def config_document(config: Config) -> dict[str, Any]:
         "output": config.output.model_dump(mode="json"),
         "honorific": {"strategy": config.honorific_strategy},
     }
+
+
+def global_document(config: Config) -> dict[str, Any]:
+    """Exclude project-specific precision choices from application defaults."""
+    document = config_document(config)
+    for key in PROJECT_PIPELINE_FIELDS:
+        document["pipeline"].pop(key, None)
+    return document
 
 
 def project_document(config: Config) -> dict[str, Any]:

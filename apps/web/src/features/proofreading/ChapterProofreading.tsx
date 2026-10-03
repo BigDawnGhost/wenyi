@@ -34,7 +34,7 @@ export function ChapterProofreading({
   const focused = useRef<string | undefined>(undefined);
   const [editor, setEditor] = useState<{
     index: number;
-    view: "edit" | "history";
+    view: "edit" | "history" | "precision";
   } | null>(null);
   const validIndex = Number.isSafeInteger(index) && index >= 0;
   const chapter = useQuery({
@@ -151,6 +151,7 @@ export function ChapterProofreading({
             segment={activeSegment}
             initialView={editor.view}
             readOnly={readOnly || chapter.isError}
+            busy={busy}
             targetLanguage={targetLanguage}
             onClose={() => setEditor(null)}
           />

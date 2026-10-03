@@ -30,7 +30,11 @@ def render(
     if plan.context.source != src or plan.context.target != languages.require_language(tgt):
         raise ValueError("Prompt language policy does not match the requested direction")
     values = dict(plan.prompt_values)
-    if name in {"translator_system", "review_fixer_system"}:
+    if name in {
+        "translator_system",
+        "review_fixer_system",
+        "precision_generation_system",
+    }:
         values["lang_guidance"] = values.pop("configured_lang_guidance")
     for key, value in values.items():
         kwargs.setdefault(key, value)

@@ -6,6 +6,7 @@ creates and drops its own schema; no existing project rows are touched.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
@@ -18,10 +19,15 @@ from psycopg import sql
 from psycopg_pool import ConnectionPool
 from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
+from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import empty_usage
+from wenyi_core.pipeline.precision import PrecisionBatchExecutor
 from wenyi_core.pipeline.runstore import source_sha256
+from wenyi_core.pipeline.translation import TranslationService
+from wenyi_core.pipeline.translation_batch import BatchPlan
 from wenyi_core.storage.file import FileStorage
 
 
@@ -118,6 +124,43 @@ def initialize(storage, tmp_path):
     storage.save_manifest(manifest)
     storage.finish_initialization()
     return doc, digest
+
+
+def test_precision_candidates_and_guarded_publication_use_backend_storage(storage, tmp_path):
+    initialize(storage, tmp_path)
+    chapter = storage.load_chapter(0)
+    chapter.segments[0].target = None
+    chapter.segments[0].target_before_polish = None
+    storage.save_chapter(chapter)
+    config = Config.from_dict(
+        {
+            "language": {"source": "en", "target": "zh"},
+            "llm": {"preset": "fake"},
+            "pipeline": {"translation_mode": "best_of_three", "precision_concurrency": 1},
+        }
+    )
+    plan = BatchPlan.capture(0, 0, chapter.text_segments, [], "", "", "", "", [[]], "")
+
+    def handler(*_):
+        return json.dumps({"translations": ["确认的自然译文"]})
+
+    client = FakeClient(handler=handler)
+    executor = PrecisionBatchExecutor(client, config)
+    result = executor.execute(plan, storage)
+    assert storage.load_chapter(0).segments[0].target is None
+    assert storage.read_artifact(f"{result.precision_key}/publication.json")["status"] == "ready"
+    TranslationService.save_precision_batch(storage, plan, result)
+    executor.mark_published(storage, result)
+    saved = storage.load_chapter(0).segments[0]
+    assert saved.target == "确认的自然译文"
+    assert saved.anchor == "a"
+    assert saved.meta == {"style": {"bold": True}}
+    assert saved.resource_href == "chapter.xhtml"
+    assert executor.execute(plan, storage) == result
+    assert len(client.calls) == 4
+    assert all(call["max_tokens"] is None for call in client.calls)
+    if isinstance(storage, PostgresStorage):
+        assert not Path(storage.run_dir, "precision").exists()
 
 
 def test_initialization_marker_and_complete_metadata_round_trip(storage, tmp_path):

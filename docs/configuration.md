@@ -15,11 +15,12 @@ new-project workflow defaults. The Web server reads its initial defaults from
 PostgreSQL and survive restarts. Saving Web settings does not rewrite the CLI file.
 API keys remain server environment variables; enter only their variable names.
 
-The default creation template is selected here. Standard translation uses the configured
-workflow switches; Quick draft disables book understanding, polishing, review and
-autofix. Projects copy defaults at creation, so later default changes do not reset an
-existing project's workflow or model selections. Language choices on the creation form
-remain authoritative.
+Standard or precision translation is selected only when creating a Web book project.
+Global Settings has no translation-mode or workflow-template selector; Quick draft is
+retired for new requests. Projects copy shared defaults at creation, so later default
+changes do not reset an existing project's workflow or model selections. The saved
+mode cannot be changed in project settings or YAML; create another project to change it.
+Existing historical projects and frozen jobs retain their saved workflow.
 
 Project configuration accepts registered model IDs through `llm.tiers`, `llm.routes`
 and route fallbacks, plus `llm.budget`. Provider connections, model names/options,
@@ -55,6 +56,13 @@ language:
 ```
 
 `source: auto` asks the model to identify the source language; alternatively, select a language below. Translation runs directly between source and target without pivoting through Chinese. Multilingual quality is experimental. The default CLI, configuration comments, and prompt instructions use English independently of the translation target. The generated configuration still defaults to `target: zh`; choose `en` for English translations.
+
+Detection request failures are distinct from unsupported language results. HTTP 402 reports
+insufficient provider balance and asks you to recharge or change provider; authentication,
+rate-limit and connection failures retain their own diagnostics. `llm_request_failed` and
+`language_detection_failed` events include `status_code` when available, `error_category` and
+a safe `error_message`, without raw provider bodies or credentials. Setting an explicit
+source skips detection but does not fix a provider/account problem for later model calls.
 
 All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; older Chinese enum values are no longer converted. Matching policies reuse saved analysis and notes. A changed built-in semantic policy automatically rebuilds affected analysis; existing glossary notes are retained. Use a separate `paths.state_dir` for a complete new translation and quality comparison.
 
@@ -243,8 +251,34 @@ Use isolated public-domain fixtures before choosing a mixed-model setup. No new 
 
 ## Pipeline
 
+`pipeline.translation_mode` accepts `standard` (default) or `best_of_three`.
+Precision mode requires `pipeline.polish: true`; invalid combinations are rejected,
+including project YAML settings. In Web, choose the translation mode
+when creating a book project; new projects default to `standard`, independently of
+global settings. Selecting precision enables polishing for that project. Its mode is
+fixed at creation; project settings can adjust other fields but cannot disable the
+polishing required by precision. Restoring defaults also preserves the saved mode.
+Translation mode is not a global Web setting; global YAML rejects it. SRT does not
+support precision; project YAML and source replacement enforce this boundary.
+
+Precision always creates three drafts with built-in three-branch concurrency; it is
+not a user option. Existing configurations and frozen jobs containing the retired
+`pipeline.precision_concurrency` field remain readable, but the value is ignored
+and omitted from new configuration documents. New Web YAML writes reject it.
+One comprehensive source-aware polishing combines their useful parts and outputs
+final text directly. It uses the existing `translation.body` and `polish.body`
+routes, profiles and provider behavior, with no precision-specific output-token
+caps or hints. A normal batch uses four calls versus two for standard translation
+with polishing. The former `translation.select`, `translation.verify` and
+`translation.refine` operation IDs are no longer supported: existing explicit
+`llm.routes` entries for them fail validation. Remove those entries and configure
+`translation.body` / `polish.body` explicitly if needed; no settings are rewritten.
+See [precision workflow](pipeline.md#best-of-three-precision-translation) for
+synthesis, resume, and cost semantics.
+
 ```yaml
 pipeline:
+  translation_mode: standard
   review: true
   polish: true
   rolling_context_segments: 6

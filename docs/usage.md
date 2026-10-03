@@ -304,6 +304,29 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 `prepare` parses the book, detects its language, generates chapter digests when enabled, builds the style guide and initial glossary, and then generates the whole-book synopsis when enabled, without translating any body text. Run `translate` with the same source file to continue from the saved state.
 
+## Best-of-three precision translation
+
+Select **Three-draft precision** when creating a Web book project. The choice is
+fixed for that project and does not appear as an option in global or project settings.
+Create another project to use a different mode. For CLI, use:
+
+```bash
+uv run wenyi translate book.epub --translation-mode best_of_three --polish
+```
+
+The equivalent configuration is `pipeline.translation_mode: best_of_three`
+with `pipeline.polish: true`. `--translation-mode standard` restores the default
+workflow for pending batches. Precision with `--no-polish` is rejected; the option
+does not apply to SRT. When resuming, keep the same mode/configuration to reuse
+precision checkpoints. Existing translations are not automatically reprocessed.
+See [precision workflow](pipeline.md#best-of-three-precision-translation) for
+three independent drafts followed by one source-first synthesis, resume and
+cost/quality limitations. A normal batch uses four model calls versus two for
+standard translation with polishing, with the same routes and output limits.
+The final synthesis is structurally validated, not independently accuracy-judged.
+In comparisons, `target_before_polish` is the first initial draft, not a selected
+accurate draft. Quality improvement is not guaranteed.
+
 ## Interrupting and resuming
 
 Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:

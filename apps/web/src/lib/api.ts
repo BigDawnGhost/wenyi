@@ -81,6 +81,7 @@ export type ProjectDetail = Output<"ProjectDetail">;
 export type ChapterSummary = Output<"ChapterSummary">;
 export type ChapterSegments = Output<"ChapterSegments">;
 export type SegmentRevision = Output<"SegmentRevision">;
+export type PrecisionDrafts = Output<"PrecisionDraftsOut">;
 export type Term = Output<"TermOut">;
 export type Conflict = Output<"ConflictOut">;
 export type StrategyTemplate = Output<"StrategyTemplateOut">;
@@ -259,6 +260,10 @@ export const api = {
   segmentHistory: (pid: string, ci: number, segIdx: number) =>
     request<SegmentRevision[]>(
       `/projects/${pid}/review/${ci}/segments/${segIdx}/history`,
+    ),
+  precisionDrafts: (pid: string, ci: number, segIdx: number) =>
+    request<PrecisionDrafts>(
+      `/projects/${pid}/chapters/${ci}/segments/${segIdx}/precision-drafts`,
     ),
   editSegment: (
     pid: string,
