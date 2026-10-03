@@ -34,7 +34,7 @@ test("reading and selection do not edit; the context menu copies the selected te
   await expect(page.getByText("Copied", { exact: true })).toBeVisible();
   expect(
     await page.evaluate(
-      () => (window as Window & { copiedText: string[] }).copiedText,
+      () => (window as unknown as { copiedText: string[] }).copiedText,
     ),
   ).toEqual(["Original translation"]);
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -219,7 +219,7 @@ test("copy source works on HTTP deployments without the async clipboard API", as
   await expect(page.getByText("Copied", { exact: true })).toBeVisible();
   expect(
     await page.evaluate(
-      () => (window as Window & { copiedText: string[] }).copiedText,
+      () => (window as unknown as { copiedText: string[] }).copiedText,
     ),
   ).toEqual(["原文第一段"]);
   await expect(page.getByRole("textbox")).toHaveCount(0);

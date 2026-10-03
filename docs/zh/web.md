@@ -181,3 +181,4 @@ pnpm -C apps/web test:e2e
 ## 相关说明
 
 - [界面语言](web-i18n.md)
+- [独立本地 Desktop 应用](desktop.md)

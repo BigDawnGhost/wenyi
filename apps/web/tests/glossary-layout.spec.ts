@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid } from "./fixtures";
+import { chooseOption } from "./select-helper";
 
 const terms = [
   { source: "An", target: "安", reading: "An", type: "person" },
@@ -32,13 +33,13 @@ for (const locale of ["en", "zh-CN"] as const) {
     const rows = table.locator("tbody tr");
     for (const width of [1440, 900, 390]) {
       await page.setViewportSize({ width, height: 960 });
-      await filter.selectOption("person");
+      await chooseOption(filter, locale === "en" ? "Person" : "人物");
       await expect(rows).toHaveCount(1);
       const baseline = await rows.first().boundingBox();
       expect(baseline).not.toBeNull();
       expect(baseline!.height).toBeLessThanOrEqual(60);
 
-      await filter.selectOption("");
+      await chooseOption(filter, locale === "en" ? "All types" : "全部类型");
       await expect(rows).toHaveCount(2);
       for (const row of await rows.all()) {
         const bounds = await row.boundingBox();

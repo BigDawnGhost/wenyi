@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { chooseOption } from "./select-helper";
 import {
   fakeApi,
   globalConfiguration,
@@ -32,20 +33,20 @@ test("projects only select registered models and operation overrides", async ({
   ).toHaveCount(0);
   await expect(page.getByLabel("API provider", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(0);
-  await page.getByLabel("Quality tier").selectOption("editor");
+  await chooseOption(page.getByLabel("Quality tier"), "editor · second / editor-model");
   await page
     .locator("summary")
     .filter({ hasText: "Models by operation" })
     .click();
   await expect(
     page.getByLabel("Translate chapters in batches", { exact: true }),
-  ).toHaveValue("tier:strong");
+  ).toHaveText("Quality tier");
+  await page.getByLabel("Translate chapters in batches", { exact: true }).click();
   await expect(
     page.getByRole("option", { name: /Follow default tier/ }),
   ).toHaveCount(0);
-  await page
-    .getByLabel("Translate chapters in batches", { exact: true })
-    .selectOption("editor");
+  await page.keyboard.press("Escape");
+  await chooseOption(page.getByLabel("Translate chapters in batches", { exact: true }), "editor · second / editor-model");
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
     .click();
@@ -62,7 +63,7 @@ test("projects only select registered models and operation overrides", async ({
     "translation.body": { model: "editor", fallbacks: [] },
   });
   await page.reload();
-  await expect(page.getByLabel("Quality tier")).toHaveValue("editor");
+  await expect(page.getByLabel("Quality tier")).toHaveText("editor · second / editor-model");
   await page
     .getByRole("link", {
       name: "Manage models in global Settings",
@@ -97,7 +98,7 @@ test("global defaults persist independently of existing project settings", async
     await route.fulfill({ json: saved });
   });
   await page.goto("/settings");
-  await page.getByLabel("Default workflow template").selectOption("快速出稿");
+  await chooseOption(page.getByLabel("Default workflow template"), /^Fast draft — /);
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
@@ -108,8 +109,8 @@ test("global defaults persist independently of existing project settings", async
   expect(writes).toBe(1);
   expect(saved.effective.pipeline.polish).toBe(false);
   await page.reload();
-  await expect(page.getByLabel("Default workflow template")).toHaveValue(
-    "快速出稿",
+  await expect(page.getByLabel("Default workflow template")).toHaveText(
+    /^Fast draft — /,
   );
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.screenshot({
@@ -222,8 +223,8 @@ test("registry IDs can be renamed with references and new registrations removed"
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
   await page.getByLabel("Model ID", { exact: true }).fill("final_model");
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
-  await expect(page.getByLabel("Quality tier", { exact: true })).toHaveValue(
-    "final_model",
+  await expect(page.getByLabel("Quality tier", { exact: true })).toHaveText(
+    "final_model · my_provider / deepseek-flash",
   );
   await page
     .getByRole("button", { name: "Add API connection", exact: true })

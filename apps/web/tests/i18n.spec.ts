@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { locales, createTranslator } from "../src/i18n/catalog";
-import { statusLabel, statusTone } from "../src/i18n/status";
+import { locales, createTranslator } from "../../../packages/ui/src/i18n/catalog";
+import { statusLabel, statusTone } from "../../../packages/ui/src/i18n/status";
 import { fakeApi, pid } from "./fixtures";
+import { chooseOption } from "./select-helper";
 
 test("locale catalogs have matching keys and interpolation parameters", () => {
   const english = locales.en.messages;
@@ -38,15 +39,15 @@ test.describe("browser language preference", () => {
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
     await expect(page).toHaveTitle("Wenyi — AI translation");
     await page.getByRole("link", { name: "Settings", exact: true }).click();
-    await expect(page.getByLabel("Interface language")).toHaveValue("en");
-    await page.getByLabel("Interface language").selectOption("zh-CN");
+    await expect(page.getByLabel("Interface language")).toHaveText("English");
+    await chooseOption(page.locator("#interface-language"), "简体中文");
     await expect(
       page.getByRole("heading", { name: "设置", exact: true }),
     ).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
     await expect(page).toHaveTitle("文译 — AI 翻译");
     await page.reload();
-    await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
+    await expect(page.getByLabel("界面语言")).toHaveText("简体中文");
     await page.getByRole("link", { name: "项目列表", exact: true }).click();
     await expect(page.getByRole("heading", { name: "我的项目" })).toBeVisible();
     await expect(page.getByText("原文", { exact: true })).toBeVisible();
@@ -67,14 +68,14 @@ test("interface language is available only in global settings without changing p
   ).toBeVisible();
   await expect(page.getByLabel("Interface language")).toHaveCount(0);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Interface language").selectOption("zh-CN");
+  await chooseOption(page.locator("#interface-language"), "简体中文");
   await page.goto(`/projects/${pid}/settings`);
   await expect(
     page.getByRole("button", { name: "保存配置", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toHaveCount(0);
   await page.getByRole("link", { name: "设置", exact: true }).click();
-  await page.getByLabel("界面语言").selectOption("en");
+  await chooseOption(page.locator("#interface-language"), "English");
   await page.goto(`/projects/${pid}/settings`);
   await expect(
     page.getByRole("button", { name: "Save configuration", exact: true }),
@@ -96,14 +97,14 @@ test("language preference synchronizes between tabs and unknown locales fall bac
     localStorage.setItem("wenyi.locale", "unsupported-language"),
   );
   await page.goto("/settings");
-  await expect(page.getByLabel("Interface language")).toHaveValue("en");
+  await expect(page.getByLabel("Interface language")).toHaveText("English");
   const other = await context.newPage();
   await fakeApi(other);
   await other.goto("/settings");
-  await page.getByLabel("Interface language").selectOption("zh-CN");
-  await expect(other.getByLabel("界面语言")).toHaveValue("zh-CN");
-  await other.getByLabel("界面语言").selectOption("en");
-  await expect(page.getByLabel("Interface language")).toHaveValue("en");
+  await chooseOption(page.locator("#interface-language"), "简体中文");
+  await expect(other.getByLabel("界面语言")).toHaveText("简体中文");
+  await chooseOption(other.locator("#interface-language"), "English");
+  await expect(page.getByLabel("Interface language")).toHaveText("English");
   await other.close();
 });
 
@@ -112,19 +113,15 @@ test("known workflow labels and language names are localized without changing AP
 }) => {
   await fakeApi(page);
   await page.goto("/projects/new");
-  await expect(
-    page.getByLabel("Target language").locator('option[value="en"]'),
-  ).toHaveText("English (en)");
+  await page.getByLabel("Target language").click();
+  await expect(page.getByRole("option", { name: "English (en)", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
   await page.goto("/settings");
-  await expect(page.getByLabel("Default workflow template")).toHaveValue(
-    "标准翻译",
-  );
-  await expect(
-    page
-      .getByLabel("Default workflow template")
-      .locator('option[value="标准翻译"]'),
-  ).toContainText("Standard translation");
+  await expect(page.getByLabel("Default workflow template")).toHaveText("Standard translation — Use the workflow defaults from global Settings");
+  await page.getByLabel("Default workflow template").click();
+  await expect(page.getByRole("option", { name: "Standard translation — Use the workflow defaults from global Settings", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
   await page.goto(`/projects/${pid}`);
   await page.getByText("Workflow details", { exact: true }).click();
   await expect(
@@ -176,7 +173,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     const settings = await context.newPage();
     await fakeApi(settings);
     await settings.goto("/settings");
-    await settings.getByLabel("Interface language").selectOption(locale);
+    await chooseOption(settings.locator("#interface-language"), locale === "en" ? "English" : "简体中文");
     await settings.close();
     const chinese = locale === "zh-CN";
     await expect(
@@ -247,7 +244,7 @@ test("language settings remain accessible from mobile navigation", async ({
   await fakeApi(page);
   await page.goto("/");
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Interface language").selectOption("zh-CN");
+  await chooseOption(page.locator("#interface-language"), "简体中文");
   await expect(
     page.getByRole("heading", { name: "设置", exact: true }),
   ).toBeVisible();

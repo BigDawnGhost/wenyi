@@ -67,6 +67,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 ## Core features
 
 - **Web workspace** — English and Chinese interfaces, live translation progress, paragraph proofreading with revision history, and whole-book review with evidence and publication results.
+- **Local Desktop workspace** — an independent SQLite workspace with the shared translation engine, native import/save, and OS credential-store support; no PostgreSQL, Redis, or Docker required. See [Desktop setup](docs/desktop.md).
 - **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
 - **Multi-stage quality** — optional polishing (strong model) and an evidence-driven whole-book AI review

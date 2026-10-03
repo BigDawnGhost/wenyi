@@ -1,0 +1,52 @@
+name: Desktop
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "apps/api/**"
+      - "packages/core/**"
+      - "packages/backend/**"
+      - "packages/ui/**"
+      - "packages/shared-schema/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/web/**"
+      - "scripts/desktop*"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/desktop.yml"
+
+jobs:
+  local-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: uv sync --locked --package wenyi-desktop --group dev
+      - run: pnpm install --frozen-lockfile
+      - run: uv run --no-sync pytest -q apps/desktop/backend/tests
+      - run: pnpm -C apps/desktop/frontend typecheck
+      - run: pnpm -C apps/desktop/frontend build
+      - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
+      - run: pnpm desktop:build
+      # Build only: signing, publication and user data are intentionally excluded.

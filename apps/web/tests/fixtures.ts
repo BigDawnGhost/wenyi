@@ -98,10 +98,12 @@ export const capabilities = {
 export async function fakeApi(
   page: Page,
   overrides: Record<string, unknown> = {},
+  apiOrigin?: string,
 ) {
   await page.routeWebSocket("**/ws/**", () => {});
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname.replace("/api", "");
+  await page.route(apiOrigin ? `${apiOrigin}/**` : "**/api/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const path = apiOrigin ? pathname : pathname.replace("/api", "");
     const data: Record<string, unknown> = {
       "/capabilities": capabilities,
       "/settings": globalConfiguration,

@@ -60,7 +60,8 @@ test("creates a multilingual project and waits for background parsing", async ({
   await page
     .getByLabel("Project name", { exact: true })
     .fill("Multilingual document");
-  await page.getByLabel("Target language", { exact: true }).selectOption("en");
+  await page.getByLabel("Target language", { exact: true }).click();
+  await page.getByRole("option", { name: "English (en)", exact: true }).click();
   await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
   const create = page.getByRole("button", {
     name: "Create project",
@@ -326,7 +327,8 @@ test("global API provider form saves endpoint, model and tier changes", async ({
     .click();
   await page
     .getByLabel("API provider", { exact: true })
-    .selectOption("openai-compatible");
+    .click();
+  await page.getByRole("option", { name: "openai-compatible", exact: true }).click();
   await page.getByLabel("API base URL").fill("https://example.com/v1");
   await page.getByLabel("API key environment variable").fill("CUSTOM_API_KEY");
   await page.getByLabel("Model name", { exact: true }).fill("custom-model");

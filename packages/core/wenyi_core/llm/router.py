@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+import logging
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from threading import Lock
 from uuid import uuid4
 
 from .base import LLMClient, Messages
 from .configuration import LLMConfig
+from .credentials import CredentialRedactor, validate_credential
 from .limits import RequestLimits
 from .operations import require_operation
 from .registry import provider_spec
-from .retrying import is_retryable_provider_error
+from .retrying import is_retryable_provider_error, safe_provider_error
 from .routing import ResolvedRoute, model_route, resolve_routes
 from .transport import ProviderAdapter, RequestContext
 from .usage import UsageSample
@@ -22,19 +24,39 @@ from .usage import UsageSample
 class RoutedLLMClient(LLMClient):
     """Freeze one routing plan per invocation; adapters never own cumulative usage."""
 
-    def __init__(self, config: LLMConfig) -> None:
+    def __init__(
+        self, config: LLMConfig, *, credentials: Mapping[str, str | None] | None = None
+    ) -> None:
         super().__init__()
         self.config = LLMConfig.model_validate(config.model_dump())
+        self._credentials = dict(credentials) if credentials is not None else None
+        self._redact = None
+        if self._credentials is not None:
+            for secret in self._credentials.values():
+                validate_credential(secret)
+            self._redact = CredentialRedactor(self._credentials.values())
         self.routes = resolve_routes(self.config)
         self.limits = RequestLimits(self.config)
         self._adapters: dict[str, ProviderAdapter] = {}
         self._adapter_lock = Lock()
 
+    def _log_event_sink_error(self, event: str) -> None:
+        if self._redact is None:
+            super()._log_event_sink_error(event)
+        else:
+            # The active exception context may still hold the raw provider failure.
+            logging.getLogger(__name__).error("Failed to write LLM event: %s", event)
+
     def adapter(self, connection: str) -> ProviderAdapter:
         with self._adapter_lock:
             if connection not in self._adapters:
                 cfg = self.config.providers[connection]
-                self._adapters[connection] = provider_spec(cfg.kind).adapter_type()(cfg)
+                adapter_type = provider_spec(cfg.kind).adapter_type()
+                self._adapters[connection] = (
+                    adapter_type(cfg)
+                    if self._credentials is None
+                    else adapter_type(cfg, credentials=(self._credentials.get(connection),))
+                )
             return self._adapters[connection]
 
     def validate_credentials(self, operations: Iterable[str] | None = None) -> None:
@@ -116,7 +138,13 @@ class RoutedLLMClient(LLMClient):
             }
 
             def emit(event: str, **payload) -> None:
-                self._emit_event(event, **{**metadata, "attempt": attempt_number, **payload})
+                data = {**metadata, "attempt": attempt_number, **payload}
+                if self._redact is not None:
+                    data = {
+                        key: self._redact(value) if isinstance(value, str) else value
+                        for key, value in data.items()
+                    }
+                self._emit_event(event, **data)
 
             emit("llm_request_scheduled")
             active_reservation = None
@@ -162,7 +190,9 @@ class RoutedLLMClient(LLMClient):
                 record,
                 attempt_scope,
                 self.limits.wait_for_retry,
+                self._redact,
             )
+            safe_error = None
             try:
                 result = self.adapter(route.provider).generate(
                     [dict(message) for message in messages],
@@ -175,11 +205,19 @@ class RoutedLLMClient(LLMClient):
                 if position == len(routes) - 1 or not is_retryable_provider_error(
                     error, operation=operation
                 ):
-                    raise
-                emit("llm_model_failover", next_profile=routes[position + 1].profile)
+                    if self._credentials is None:
+                        raise
+                    safe_error = safe_provider_error(
+                        error, provider=route.provider_kind, operation=operation
+                    )
+                else:
+                    emit("llm_model_failover", next_profile=routes[position + 1].profile)
             else:
                 emit("llm_request_completed")
                 return result
+            # Raise outside the handler: do not retain even a suppressed SDK context.
+            if safe_error is not None:
+                raise safe_error from None
         raise RuntimeError("No model route was selected")
 
     def _validate_token_reservation(self, route: ResolvedRoute) -> None:

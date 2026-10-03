@@ -43,7 +43,10 @@ class LLMClient(ABC):
             try:
                 sink(event, **data)
             except Exception:  # noqa: BLE001 - Observability failures must not change model-call semantics.
-                _LOGGER.exception("Failed to write LLM event: %s", event)
+                self._log_event_sink_error(event)
+
+    def _log_event_sink_error(self, event: str) -> None:
+        _LOGGER.exception("Failed to write LLM event: %s", event)
 
     def usage_summary(self) -> dict[str, Any]:
         """Return cumulative token usage with totals, tiers and cache hit rates."""
