@@ -452,6 +452,16 @@ const zhCN = {
     "这段译文已在其他操作中更新，你的草稿仍已保留。请先载入最新版本再保存。",
   "proofreading.loadLatest": "载入最新译文",
   "proofreading.unsavedChanges": "有未保存的修改",
+  "proofreading.diffChanges": "高亮改动",
+  "proofreading.diffFullText": "前后全文",
+  "proofreading.diffRemoved": "删除",
+  "proofreading.diffAdded": "新增",
+  "proofreading.diffUnchanged": "文本未发生变化。",
+  "proofreading.diffTooLarge":
+    "本次对比的文本过长或改动过多，已改为显示前后全文。",
+  "proofreading.initialCurrentComparison": "初译 → 当前版本",
+  "proofreading.initialCurrentNotice":
+    "未记录独立的润色版本；当前版本可能包含后续人工修改或自动修复。",
   "review.emptyTranslation": "（空译文）",
   "review.proofreadByChapter": "人工逐章校阅",
   "review.manualProofreading": "人工校阅 — {title}",
