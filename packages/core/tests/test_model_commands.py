@@ -124,3 +124,28 @@ def test_model_comparison_command_is_not_available(tmp_path):
     result = _invoke(tmp_path, {}, "compare")
     assert result.exit_code == 2
     assert "No such command 'compare'" in plain_text(result.output)
+
+
+def test_provider_catalog_covers_every_registered_kind(tmp_path):
+    from wenyi_core.llm.profiles import PROFILES
+    from wenyi_core.llm.registry import PROVIDERS, provider_catalog
+
+    catalog = provider_catalog()
+    assert [entry.kind for entry in catalog] == list(PROVIDERS)
+    by_kind = {entry.kind: entry for entry in catalog}
+    for profile in PROFILES:
+        assert by_kind[profile.kind].wire == profile.wire
+        assert by_kind[profile.kind].auth == profile.auth
+    assert by_kind["openai-codex"].sign_in == "codex"
+    assert by_kind["orcarouter"].wire is None
+
+
+def test_providers_command_lists_protocols_and_credentials(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    result = _invoke(tmp_path, {"llm": {"preset": "deepseek"}}, "providers", "--json")
+    assert result.exit_code == 0, result.output
+    entries = {entry["kind"]: entry for entry in json.loads(result.output)}
+    assert entries["anthropic"]["wire"] == "anthropic_messages"
+    assert entries["anthropic"]["credential_envs"][0] == "ANTHROPIC_API_KEY"
+    assert entries["xai"]["sign_in"] == "xai"
+    assert entries["openai-compatible"]["base_url"] is None

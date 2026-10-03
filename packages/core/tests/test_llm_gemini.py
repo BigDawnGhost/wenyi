@@ -336,5 +336,5 @@ def test_factory_build_client_gemini():
     client = build_client(cfg)
     assert isinstance(client, RoutedLLMClient)
     assert isinstance(client.adapter("default"), GeminiClient)
-    with pytest.raises(ValueError, match="Unknown provider"):
-        Config.from_dict({"llm": {"preset": "google"}})
+    alias_cfg = Config.from_dict({"llm": {"preset": "google"}})
+    assert isinstance(build_client(alias_cfg).adapter("default"), GeminiClient)

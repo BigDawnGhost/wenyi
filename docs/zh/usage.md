@@ -28,15 +28,29 @@ CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
+## 交互式选择模型
+
+```bash
+uv run wenyi model                 # 先选提供商与凭据，再选所有档位共用的模型
+uv run wenyi model --status        # 只报告当前选择与密钥状态后退出
+uv run wenyi model --offline       # 只列出声明模型，不拉取在线模型列表
+uv run wenyi model --provider codex --model gpt-5-codex --yes
+```
+
+该命令先打印各档位当前使用的模型，并标注凭据变量已设置的提供商；预览确认后只改写配置文件的 `llm` 段。选定提供商后按手动配置的顺序走：提供凭据（API Key、订阅登录或导入已有凭据），自动使用内置端点，然后选一个所有档位共用的模型；下一屏可以把个别档位换成别的模型，回车选择当前高亮项。默认可选择所有已注册提供商，使用 ↑/↓ 移动、回车确认，无需输入选项数字。提供凭据之后才从已解析的端点拉取模型，菜单只显示接口返回的模型 ID；获取失败时手动输入模型 ID，不会自动改用声明默认模型。只有 `--offline` 列出声明模型，非终端输入使用完整菜单标签。`--status` 只打印当前选择后退出，`--offline` 只列出声明模型而不拉取提供商的在线目录，`--provider` 配合 `--model`（或 `--strong` / `--cheap` / `--fast` 指定单个档位）与 `--yes` 可无提示地应用选择。声明了预设的提供商会写得很短（`preset:` 加档位覆盖）；没有预设的提供商（例如 ChatGPT (Codex)）会写成显式的 `providers`、`models` 和 `tiers`。原有的 `llm.routes`、`llm.quotas`、`llm.budget` 不属于新的配置段，写入前预览会列出它们。提供商需要凭据时先运行 `wenyi auth login <登录名>`。
+
 ## 检查模型路由
+
+内置提供商和 OAuth 订阅自动使用内置端点，并保留现有地址覆盖；只有没有端点的自定义提供商才询问 URL，显式覆盖可用 `--base-url`。登录时自动打开浏览器，设备授权在系统支持时复制验证码。浏览器回调后还需交换令牌，终端确认登录完成后继续获取在线模型，包括 Antigravity 的 Cloud Code 模型。`wenyi model` 将凭据保存在配置文件旁的 `.env` 中，不回显凭据值。
 
 ```bash
 uv run wenyi models list
+uv run wenyi models providers
 uv run wenyi models explain --operation review.fix
 uv run wenyi models check --for translate
 ```
 
-这些命令只做本地预览与密钥检查，不发送请求。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)。
+这些命令只做本地预览与密钥检查，不发送请求。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)；使用 `wenyi auth` 登录而非 API Key 的提供商见[订阅登录](configuration.md#订阅登录)。
 
 ## 多语言互译（实验性）
 

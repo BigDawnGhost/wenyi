@@ -97,6 +97,8 @@ llm:
 
 该预设展开为连接 `default`、模型配置 `default_strong` / `default_cheap` / `default_fast`，以及三个档位映射。内置产品默认值为 `https://api.deepseek.com`、环境变量 `DEEPSEEK_API_KEY`；三个档位均使用 `deepseek-flash`，开启 thinking，`reasoning_effort` 为 `high`。模型 ID 与默认推理设置依据 [DeepSeek 官方 API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。档位保持独立映射，便于之后分别覆盖模型；预设不会自动查询远端能力。也支持 `preset: gemini` 和离线的 `preset: fake`。
 
+这段配置也可以不手写：`uv run wenyi model` 会报告各档位当前使用的模型、标注凭据变量已设置的提供商，然后只改写当前配置文件的 `llm` 段。选定提供商后先提供凭据（API Key、订阅登录或导入已有凭据），自动使用内置端点，再选一个所有档位共用的模型；下一屏可以把个别档位换成其他模型，回车选择当前高亮项。提供商菜单默认包含所有已注册提供商，使用 ↑/↓ 移动、回车确认，无需输入选项数字。模型列表在提供凭据之后从已解析的端点拉取，在线菜单只显示该接口实际返回的模型 ID。目录获取失败或接口不提供目录时，需要手动输入模型 ID；只有显式使用 `--offline` 才列出声明模型。非终端输入使用完整菜单标签。声明预设的提供商写成 `preset:` 加你选择的档位覆盖；没有预设的提供商（例如 ChatGPT (Codex)）写成显式的 `providers`、`models` 和 `tiers`。`--status` 只打印当前选择后退出，`--offline` 只列出声明模型而不拉取在线目录，`--provider` 配合 `--model`（或 `--strong` / `--cheap` / `--fast`）与 `--yes` 可无提示地应用选择。原有的 `llm.routes`、`llm.quotas`、`llm.budget` 会被新配置段替换，预览时会逐一列出，需要时请自行写回。
+
 例如，单独配置润色与取证模型：
 
 ```yaml
@@ -149,6 +151,47 @@ llm:
 
 兼容端点的 `reasoning_style` 支持 `none`（默认）、`deepseek`、`openai`、`openrouter`。只有明确配置 `json_response_fallback: reasoning_content`，才会从网关的该字段读取有效 JSON；默认 `none`，非 JSON 推理文本不会被当作结果。Gemini 的 thinking level 和 budget 互斥。原始扩展字典依赖具体端点；离线校验无法保证远端模型接受这些参数。
 
+### Profile 驱动的提供商
+
+上表中的适配器保留专属代码，是因为它们的协议不止一种请求形态。其余提供商都以 *profile* 声明：一条数据同时描述端点、凭据、请求头、默认请求体和推理参数位置，由对应协议的共享适配器统一执行。profile 是提供商唯一的描述来源，因此下表由注册表生成——运行 `wenyi models providers`（脚本可加 `--json`）可输出 kind、别名、协议、凭据变量和最终端点。
+
+| 协议 | 提供商 | 说明 |
+|---|---|---|
+| `openai_chat` | `actual`、`ai-gateway`、`alibaba`、`alibaba-cn`、`alibaba-coding-plan`、`alibaba-coding-plan-cn`、`alibaba-token-plan`、`alibaba-token-plan-cn`、`arcee`、`azure-foundry`、`commandcode`、`copilot`、`deepinfra`、`fireworks`、`gmi`、`huggingface`、`kilocode`、`kimi-coding`、`kimi-coding-cn`、`nebius-token-factory`、`nous`、`novita`、`nvidia`、`ollama-cloud`、`opencode-zen`、`qwen-oauth`、`stepfun`、`upstage`、`vertex`、`xiaomi`、`zai`、`zai-cn`、`zai-coding-plan`、`zai-coding-plan-cn` | Chat Completions；各 profile 按自家要求放置推理参数 |
+| `anthropic_messages` | `anthropic`、`commandcode-anthropic`、`minimax`、`minimax-cn`、`minimax-oauth` | Messages API；所有 Messages 适配器均发送 `anthropic-version` |
+| `openai_responses` | `openai-codex`、`xai`、`router`、`meta-ai` | Responses API；Codex 端点仅支持流式且拒绝 `max_output_tokens` |
+| `gemini_cloudcode` | `antigravity` | Cloud Code 信封；推理档位写在模型 ID 里，例如 `gemini-3.7-flash-high` |
+
+连接的 `providers.<id>.kind` 和 `llm.preset` 均接受 profile kind 及其已注册别名；`claude`、`grok`、`chatgpt`、`google` 等别名会归一化为规范 kind。`llm.preset: <kind>` 在提供商声明预设时展开为该提供商的档位模型。
+
+端点优先级为显式 `base_url`、提供商的端点环境变量、默认端点；配置校验、路由预览和实际请求使用相同的解析逻辑。以 `sk-kimi-` 开头的 Kimi Code 密钥选择 `https://api.kimi.com/coding` 和 Messages 协议；旧 Moonshot 密钥继续使用 Chat Completions。`KIMI_BASE_URL` / `KIMI_CN_BASE_URL` 可以覆盖自动识别结果。Copilot 对 GPT-5 及后续代际使用 Responses，但 `gpt-5-mini` 例外；Claude、Gemini 及其他模型系列使用 Chat Completions。它发送编辑器身份请求头，并使用令牌交换返回的账户专属 `endpoints.api`，显式连接端点或端点环境变量优先。
+
+Z.AI 提供 `zai`、`zai-cn`、`zai-coding-plan`、`zai-coding-plan-cn`，分别对应国际/中国的通用和 Coding Plan 端点。请选择与账户套餐一致的 profile；Wenyi 不会发送可能计费的探测请求来猜测套餐。`GLM_BASE_URL` 可以覆盖端点。
+
+Vertex 使用应用默认凭据（或 `VERTEX_CREDENTIALS_PATH` 指定的凭据）、`VERTEX_PROJECT_ID`（也接受 `VERTEX_PROJECT` 和 `GOOGLE_CLOUD_PROJECT`）及 `VERTEX_REGION`（默认 `global`）。全球端点使用无地区前缀的 `aiplatform.googleapis.com`，自动生成的 OpenAI 兼容端点采用 `/v1beta1/projects/.../endpoints/openapi`；Vertex 预设模型包含 `google/` 发布者前缀。长任务会重新获取令牌。OAuth 刷新结果、轮换后的刷新令牌以及 Copilot 交换令牌按连接在锁保护下缓存；环境变量变化会使缓存失效。凭据只保留在内存中，不回写环境变量或磁盘。
+
+### 订阅登录
+
+部分提供商使用订阅而非 API Key 认证。这类凭据是以 JSON 对象形式存放在环境变量里的；Wenyi 不写入磁盘，只在当前进程内刷新。`wenyi auth list` 列出所有登录方式及其变量是否已设置。
+
+| 登录名 | 提供商 | 凭据变量 | 授权方式 |
+|---|---|---|---|
+| `codex` | `openai-codex` | `WENYI_CODEX_OAUTH` | ChatGPT 设备码 |
+| `xai` | `xai` | `WENYI_XAI_OAUTH` | xAI 设备码 |
+| `nous` | `nous` | `WENYI_NOUS_OAUTH` | Nous Portal 设备码 |
+| `qwen` | `qwen-oauth` | `WENYI_QWEN_OAUTH` | 导入 Qwen CLI 凭据 |
+| `minimax` | `minimax-oauth` | `WENYI_MINIMAX_OAUTH` | MiniMax user code |
+| `copilot` | `copilot` | `WENYI_COPILOT_OAUTH` | GitHub 设备码 |
+| `antigravity` | `antigravity` | `WENYI_ANTIGRAVITY_OAUTH` | Google 浏览器登录（PKCE） |
+
+- 内置提供商（包括 OAuth 订阅）自动使用已声明的端点，并保留现有地址覆盖；只有未配置端点的自定义提供商才询问 URL，也可用 `--base-url` 显式覆盖。`wenyi model` 登录时自动打开浏览器；设备授权会在系统支持时复制短期验证码，复制失败则保留手动操作提示。浏览器回调接收后还需交换令牌，终端会确认登录完成并继续获取在线模型。Antigravity 使用授权项目从 Cloud Code 获取目录。凭据保存至配置文件旁的 `.env`，不回显凭据值。
+- `wenyi auth login <登录名>` 执行授权并输出需要 export 的 shell 赋值。`--port` 仅用于浏览器回调端口；`--no-browser` 禁用自动打开浏览器和复制设备验证码；`--timeout` 限制等待时间，`--json` 输出结构化数据。
+- `wenyi auth import <登录名> [文件]` 读取第一方客户端写出的凭据文件，也可指定文件；`--token` 接受粘贴的文本，`--json` 输出结构化数据。Qwen 无法脚本化登录，只能通过该方式配置。
+- `wenyi auth check [登录名]` 在本地报告变量中是否为可用凭据，包含身份、过期时间和是否可刷新；指定某个登录名且不可用时以 1 退出。
+- Antigravity 使用 Google OAuth 客户端登录，该客户端不由 Wenyi 内置。请把 Antigravity CLI 使用的客户端写入 `WENYI_ANTIGRAVITY_CLIENT_ID` 和 `WENYI_ANTIGRAVITY_CLIENT_SECRET`，例如放在配置文件旁的 `.env`；未设置时登录会中止并给出该提示。
+
+登录后运行 `wenyi model` 会把该提供商标记为可用，并按你的选择写入档位模型。
+
 SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 
 DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: false` 显式关闭思考，此时不发送推理强度。未配置输出上限且流程没有输出提示时，由服务采用默认上限：非思考模式 8K、思考模式 64K，`max` 强度下为 128K。流程提示和显式 `max_output_tokens` 仍按上述配置规则处理。详见 [DeepSeek 请求参数](https://api-docs.deepseek.com/api/create-chat-completion/)。
@@ -180,11 +223,12 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 ```bash
 uv run wenyi models list
 uv run wenyi models list --json
+uv run wenyi models providers
 uv run wenyi models explain --operation review.verify
 uv run wenyi models check --for translate
 ```
 
-`list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
+`list` 和 `explain` 无需密钥；`providers` 输出静态提供商目录，既不需要配置也不需要密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。以上命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
 
 可选本地控制示例（使用离线提供商）：
 

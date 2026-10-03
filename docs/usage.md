@@ -32,15 +32,29 @@ separate release versions.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
+## Choose models interactively
+
+```bash
+uv run wenyi model                 # pick a provider, its credential and the model every tier uses
+uv run wenyi model --status        # report the selection and credential state, then exit
+uv run wenyi model --offline       # offer the declared models instead of the live catalog
+uv run wenyi model --provider codex --model gpt-5-codex --yes
+```
+
+The command prints which model each tier currently uses, marks providers whose credential variable is already set, and rewrites only the `llm` block of the configuration file after a preview and a confirmation. Choosing a provider walks the path a manual setup would: supply its credential (an API key, a subscription sign-in or an imported credential), use the built-in endpoint without a URL prompt, then pick one model that every tier uses. Individual tiers can be pointed at other models on the next screen; pressing Enter selects the highlighted item. Every registered provider is selectable by default using ↑/↓ and Enter, without numeric options. After credentials are supplied, the model menu shows only IDs fetched from that endpoint. Catalog failures require a manual model ID rather than silently using declared defaults; only `--offline` offers declared models. Redirected input accepts exact menu labels. `--status` prints the selection and exits, `--offline` offers the declared models instead of fetching the provider's live catalog, and `--provider` with `--model` (or `--strong`/`--cheap`/`--fast` for single tiers) and `--yes` applies a selection without prompting. Providers with a declared preset stay short (`preset:` plus any tier overrides); a provider without one, such as ChatGPT (Codex), is written as explicit `providers`, `models` and `tiers`. Existing `llm.routes`, `llm.quotas` and `llm.budget` are not part of the new block, so the preview names them before anything is written. Run `wenyi auth login <sign-in>` first when a provider needs a credential.
+
 ## Inspect model routing
+
+Built-in providers and OAuth subscriptions use their endpoints automatically; existing overrides are retained, and `--base-url` sets an explicit override. Only custom providers without an endpoint prompt for a URL. Sign-in opens the browser and copies a device verification code to the clipboard when supported. Browser callbacks are received before the token exchange; the terminal confirms successful sign-in and fetches the live catalog, including Antigravity's Cloud Code models. Credentials saved by `wenyi model` stay in the `.env` beside the configuration and are not echoed.
 
 ```bash
 uv run wenyi models list
+uv run wenyi models providers
 uv run wenyi models explain --operation review.fix
 uv run wenyi models check --for translate
 ```
 
-These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
+These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets, and [subscription sign-in](configuration.md#subscription-sign-in) for providers authenticated with `wenyi auth` instead of an API key.
 
 ## Multilingual translation (experimental)
 

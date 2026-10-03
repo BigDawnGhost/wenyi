@@ -5,10 +5,12 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
+from .commands.auth import register_auth_commands
 from .commands.bootstrap import configure_windows_console, initializing_group, register_bootstrap
 from .commands.context import current_context
 from .commands.glossary import register_glossary_commands
 from .commands.inspection import register_inspection_commands
+from .commands.model_setup import register_model_setup_command
 from .commands.workflows import register_workflows_commands
 from .model_commands import register_model_commands
 
@@ -24,7 +26,14 @@ def create_app(*, console: Console | None = None) -> typer.Typer:
         help="Multilingual translation workflows for long-form fiction.",
     )
     register_bootstrap(application)
+    register_auth_commands(application, console)
     register_model_commands(application, lambda: current_context().load_config(), console)
+    register_model_setup_command(
+        application,
+        lambda: current_context().load_config(),
+        lambda: current_context().config_path,
+        console,
+    )
     register_workflows_commands(application, current_context)
     register_inspection_commands(application, current_context)
     register_glossary_commands(application, current_context)

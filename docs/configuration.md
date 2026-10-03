@@ -109,6 +109,10 @@ llm:
 
 This preset expands to connection `default`, profiles `default_strong`, `default_cheap`, and `default_fast`, and all three tier mappings. Its product defaults are `https://api.deepseek.com`, `DEEPSEEK_API_KEY`, `deepseek-flash` for all three tiers, with thinking enabled and `reasoning_effort: high`. The model ID and reasoning defaults follow the [DeepSeek API documentation](https://api-docs.deepseek.com/api/create-chat-completion/). The tiers retain independent mappings for later overrides; presets do not query remote capabilities. `preset: gemini` and `preset: fake` are also available; fake is offline.
 
+Writing this block by hand is optional: `uv run wenyi model` reports which model each tier uses, marks the providers whose credential variable is already set, and then rewrites only the `llm` block of the current configuration file. Choosing a provider supplies its credential (an API key, a subscription sign-in or an imported credential), uses the built-in endpoint without asking for a URL, and then picks one model that every tier uses; the next screen can point individual tiers at other models, and pressing Enter selects the highlighted item. The provider menu always includes every registered provider; use ↑/↓ and Enter rather than typing option numbers. Models are fetched after credentials are supplied using the resolved endpoint, and the online menu contains only the IDs returned by that endpoint. A failed or unavailable catalog requires a manually entered model ID; declared models are offered only with `--offline`. Redirected input accepts exact menu labels. A provider that declares a preset is written as `preset:` plus the tier overrides you chose; a provider without one, such as ChatGPT (Codex), becomes explicit `providers`, `models` and `tiers`. `--status` prints the selection and exits, `--offline` offers the declared models instead of the provider's live catalog, and `--provider` with `--model` (or `--strong`/`--cheap`/`--fast`) and `--yes` applies a selection without prompting. The preview names any existing `llm.routes`, `llm.quotas` or `llm.budget` that the new block replaces, so copy them back afterwards if you still need them.
+
+Built-in providers, including OAuth subscriptions, use their declared endpoints automatically. Existing endpoint overrides are retained; pass `--base-url` to change one. Only a custom provider with no endpoint prompts for a URL. Sign-in opens the browser automatically; device grants copy the short-lived verification code to the clipboard when supported, with manual instructions as a fallback. Browser grants receive their callback before exchanging the code; the terminal confirms completed sign-in and proceeds to a live model catalog. Antigravity fetches its catalog from Cloud Code using the authorized project. `wenyi model` saves credentials in the `.env` beside the configuration without displaying their values.
+
 For independent polishing and evidence verification:
 
 ```yaml
@@ -161,6 +165,46 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 
 Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `openai`, or `openrouter`. `json_response_fallback: reasoning_content` is an explicit option for gateways placing JSON there; the default is `none`, and non-JSON reasoning is never accepted. Gemini thinking level and thinking budget are mutually exclusive. Raw extension dictionaries are endpoint-specific; offline validation cannot prove a remote model supports them.
 
+### Profile-driven providers
+
+The adapters above keep dedicated code because their protocol needs more than one request shape. Every other provider is a *profile*: a single data entry declaring its endpoint, credentials, headers, default body and reasoning placement, routed through the shared adapter for its protocol. A profile is the only place a provider is described, so the catalog below is generated from the registry — run `wenyi models providers` (add `--json` for scripts) to print kinds, aliases, protocols, credential variables and resolved endpoints.
+
+| Protocol | Providers | Notes |
+|---|---|---|
+| `openai_chat` | `actual`, `ai-gateway`, `alibaba`, `alibaba-cn`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `alibaba-token-plan`, `alibaba-token-plan-cn`, `arcee`, `azure-foundry`, `commandcode`, `copilot`, `deepinfra`, `fireworks`, `gmi`, `huggingface`, `kilocode`, `kimi-coding`, `kimi-coding-cn`, `nebius-token-factory`, `nous`, `novita`, `nvidia`, `ollama-cloud`, `opencode-zen`, `qwen-oauth`, `stepfun`, `upstage`, `vertex`, `xiaomi`, `zai`, `zai-cn`, `zai-coding-plan`, `zai-coding-plan-cn` | Chat Completions; each profile places its reasoning controls where that vendor expects them |
+| `anthropic_messages` | `anthropic`, `commandcode-anthropic`, `minimax`, `minimax-cn`, `minimax-oauth` | Messages API; all Messages adapters send `anthropic-version` |
+| `openai_responses` | `openai-codex`, `xai`, `router`, `meta-ai` | Responses API; the Codex endpoint is streaming-only and rejects `max_output_tokens` |
+| `gemini_cloudcode` | `antigravity` | Cloud Code envelope; the reasoning tier is part of the model ID, for example `gemini-3.7-flash-high` |
+
+A profile kind or its registered alias can be used in `providers.<id>.kind` and `llm.preset`; aliases such as `claude`, `grok`, `chatgpt` and `google` are normalized to the canonical kind. `llm.preset: <kind>` expands to that provider's tier models where it declares presets.
+
+Endpoint precedence is explicit `base_url`, then the provider's endpoint environment variable, then its default. Validation and route previews use the same resolution as requests. Kimi Code keys starting with `sk-kimi-` select `https://api.kimi.com/coding` and the Messages protocol; legacy Moonshot keys retain Chat Completions. `KIMI_BASE_URL` / `KIMI_CN_BASE_URL` override detection. Copilot selects Responses for GPT-5 and later generations except `gpt-5-mini`; Claude, Gemini and other families use Chat Completions. It sends editor attribution headers and honors the account-specific `endpoints.api` returned by token exchange unless an explicit connection or environment endpoint overrides it.
+
+Z.AI exposes explicit `zai`, `zai-cn`, `zai-coding-plan` and `zai-coding-plan-cn` profiles for the global/China general and coding endpoints. Select the profile matching your account; Wenyi does not make billable probe requests to guess a plan. `GLM_BASE_URL` can override the endpoint.
+
+Vertex uses Application Default Credentials (or `VERTEX_CREDENTIALS_PATH`), `VERTEX_PROJECT_ID` (also accepts `VERTEX_PROJECT` and `GOOGLE_CLOUD_PROJECT`) and `VERTEX_REGION` (default `global`). The global endpoint uses `aiplatform.googleapis.com`, without a region prefix. The generated OpenAI-compatible endpoint uses `/v1beta1/projects/.../endpoints/openapi`; Vertex presets include the `google/` publisher prefix. Tokens are renewed during long runs. OAuth refresh results, including rotated refresh tokens and Copilot exchanged tokens, are cached per connection under a lock; environment changes invalidate this cache. Credentials remain in memory and are never written back to the environment or disk.
+
+### Subscription sign-in
+
+Several providers authenticate with a subscription instead of an API key. Such a credential is a JSON object in an environment variable; Wenyi never writes it to disk and refreshes it in memory for the current process only. `wenyi auth list` shows each sign-in and whether its variable is set.
+
+| Sign-in | Provider | Credential variable | Grant |
+|---|---|---|---|
+| `codex` | `openai-codex` | `WENYI_CODEX_OAUTH` | ChatGPT device code |
+| `xai` | `xai` | `WENYI_XAI_OAUTH` | xAI device code |
+| `nous` | `nous` | `WENYI_NOUS_OAUTH` | Nous Portal device code |
+| `qwen` | `qwen-oauth` | `WENYI_QWEN_OAUTH` | Import the Qwen CLI credential |
+| `minimax` | `minimax-oauth` | `WENYI_MINIMAX_OAUTH` | MiniMax user code |
+| `copilot` | `copilot` | `WENYI_COPILOT_OAUTH` | GitHub device code |
+| `antigravity` | `antigravity` | `WENYI_ANTIGRAVITY_OAUTH` | Google browser sign-in with PKCE |
+
+- `wenyi auth login <sign-in>` runs the grant and prints the shell assignment to export. `--port` selects the browser callback port; `--no-browser` disables opening the browser and copying device codes. `--timeout` bounds the wait, and `--json` prints structured data.
+- `wenyi auth import <sign-in> [file]` reads a credential file written by the first-party client, or one you name; `--token` accepts pasted text and `--json` prints structured data. Qwen has no scriptable sign-in, so this is how it is configured.
+- `wenyi auth check [sign-in]` reports locally whether a variable holds a usable credential, including identity, expiry and whether it can refresh. Naming one sign-in exits 1 when it is not usable.
+- Antigravity signs in with a Google OAuth client that Wenyi does not ship. Set `WENYI_ANTIGRAVITY_CLIENT_ID` and `WENYI_ANTIGRAVITY_CLIENT_SECRET` to the client the Antigravity CLI uses, for example in the `.env` beside the configuration file; without them the sign-in stops with that instruction.
+
+After signing in, `wenyi model` reports that provider as configured and writes the tier models you choose.
+
 Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
 
 DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. When neither a profile cap nor a workflow hint applies, the service supplies its default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. Workflow hints and explicit `max_output_tokens` still follow the configuration rules above. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
@@ -192,11 +236,12 @@ DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` ex
 ```bash
 uv run wenyi models list
 uv run wenyi models list --json
+uv run wenyi models providers
 uv run wenyi models explain --operation review.verify
 uv run wenyi models check --for translate
 ```
 
-`list` and `explain` need no keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
+`list` and `explain` need no keys. `providers` prints the static provider catalog and needs neither configuration nor keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
 
 Optional local controls, illustrated with an offline provider:
 

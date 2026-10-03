@@ -71,7 +71,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
 - **Multi-stage quality** — optional polishing (strong model) and an evidence-driven whole-book AI review
 - **Resumability** — batch-level checkpoints, chapter status tracking, and atomic state writes; interrupt at any point and resume with the same command
-- **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints; keep three convenient tiers or select models per operation, mix connections, and share request limits. See [model routing](docs/configuration.md#models-and-operation-routing).
+- **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, generic OpenAI-compatible endpoints, and shared Anthropic Messages, OpenAI Responses, Cloud Code and Chat Completions protocols; most other providers are declarative profiles, and subscription sign-in covers ChatGPT, xAI, Copilot, MiniMax, Qwen, Antigravity and Nous. Keep three convenient tiers or select models per operation, mix connections, and share request limits; `wenyi model` picks a provider, its credential and the model every tier shares interactively. See [model routing](docs/configuration.md#models-and-operation-routing).
 - **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
 - **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support
 

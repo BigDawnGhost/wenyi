@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 from typer.core import TyperGroup
 from wenyi_core.config import Config
+from wenyi_core.envfile import env_file_path, load_env_file
 
 from .context import CommandContext, current_context
 
@@ -68,6 +69,9 @@ def initializing_group(console: Console) -> type[TyperGroup]:
                 config_path, any(arg in {"--help", "-h"} for arg in cli_args), console
             )
             Config.create_default_file(config_path)
+            # Credentials chosen interactively live beside the configuration; never override
+            # the variables this shell already exported.
+            load_env_file(env_file_path(config_path))
             from wenyi_core.llm.limits import RequestStopped
 
             try:

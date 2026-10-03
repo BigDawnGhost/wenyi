@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -30,7 +34,9 @@ language:
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
   preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
+  # Choose a provider and its tier models interactively with: wenyi model
   # Add providers, models and routes to override individual operations.
+  # List provider kinds and aliases with: wenyi models providers
   # Inspect effective settings with: wenyi models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
@@ -398,3 +404,73 @@ class Config(BaseModel):
             honorific_strategy=raw.get("honorific", {}).get("strategy", "keep_style"),
             state_dir=raw.get("paths", {}).get("state_dir", "state"),
         )
+
+
+_LLM_MARKER = re.compile(r"^llm[ \t]*:", re.MULTILINE)
+_TOP_LEVEL_KEY = re.compile(r"^(?![ \t#])\S")
+_GENERATED_LLM_COMMENT = "# Selected with `wenyi model`; edit freely or rerun that command.\n"
+
+
+def replace_llm_section(text: str, section: Mapping[str, Any]) -> str:
+    """Return configuration text with only the top-level ``llm:`` block rewritten.
+
+    Other sections keep their text, comments and ordering. Blank lines and comments directly
+    above the next top-level key stay with that key rather than inside the replaced block.
+    """
+    block = _GENERATED_LLM_COMMENT + yaml.safe_dump(
+        {"llm": dict(section)}, sort_keys=False, allow_unicode=True
+    )
+    lines = text.splitlines(keepends=True)
+    start = next((index for index, line in enumerate(lines) if _LLM_MARKER.match(line)), None)
+    if start is None:
+        separator = "" if not text.strip() else ("\n" if text.endswith("\n") else "\n\n")
+        return text + separator + block
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if _TOP_LEVEL_KEY.match(lines[index]):
+            end = index
+            break
+    end = _replaced_end(lines, start, end)
+    tail = "".join(lines[end:])
+    separator = "" if not tail or tail.startswith("\n") else "\n"
+    return "".join(lines[:start]) + block + separator + tail
+
+
+def write_llm_section(path: str, section: Mapping[str, Any]) -> None:
+    """Validate the resulting configuration, then replace its ``llm:`` block atomically."""
+    target = Path(path)
+    text = target.read_text(encoding="utf-8") if target.is_file() else _DEFAULT_CONFIG_YAML
+    updated = replace_llm_section(text, section)
+    Config.from_dict(yaml.safe_load(updated))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    previous_mode = target.stat().st_mode & 0o777 if target.is_file() else None
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=target.parent, delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+        handle.write(updated)
+    try:
+        if previous_mode is not None:
+            os.chmod(temporary, previous_mode)
+        os.replace(temporary, target)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _replaced_end(lines: list[str], start: int, end: int) -> int:
+    """Shrink a block's end so the next section keeps its blank lines and header comment.
+
+    Indented comments belong to the block being replaced; comments at column zero belong to
+    the section that follows.
+    """
+    while end > start + 1:
+        line = lines[end - 1]
+        if not line.strip():
+            end -= 1
+            continue
+        if line[0].isspace() or not line.lstrip().startswith("#"):
+            break
+        end -= 1
+    return end
