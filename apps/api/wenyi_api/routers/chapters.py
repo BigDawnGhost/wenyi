@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, HTTPException
+from wenyi_core.storage.precision_drafts import read_precision_drafts
 
 from .. import dal
 from ..job_service import start_job
@@ -13,6 +16,7 @@ from ..schemas import (
     ChapterTitleOut,
     ChapterTitleUpdate,
     JobEnqueued,
+    PrecisionDraftsOut,
 )
 
 router = APIRouter(prefix="/projects/{pid}/chapters", tags=["chapters"])
@@ -69,6 +73,16 @@ def list_chapters(pid: str) -> list[dict]:
 def get_chapter(pid: str, ci: int) -> dict:
     require_book(require_project(pid))
     return chapter_payload(storage_for(pid), ci)
+
+
+@router.get("/{ci}/segments/{si}/precision-drafts", response_model=PrecisionDraftsOut)
+def get_precision_drafts(pid: str, ci: int, si: int) -> dict:
+    """Inspect archived drafts without editing or regenerating the formal translation."""
+    require_book(require_project(pid))
+    try:
+        return asdict(read_precision_drafts(storage_for(pid), ci, si))
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(404, "chapter or text segment not found") from None
 
 
 def _linked_toc_entries(manifest: dict, chapter: dict) -> list[dict]:

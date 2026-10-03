@@ -48,9 +48,11 @@ optional Autofix publisher can later reuse it to produce formal segment targets.
 
 ## Language rules and state scope
 
-Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `packages/core/wenyi_core/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Existing analysis and notes remain intact on resume; resource updates apply to new model calls.
+Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. Character references in prose use target-language names; `source` and `aliases` retain their original spelling. Task instructions use English and live in `packages/core/wenyi_core/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Matching policies reuse saved analysis; changed built-in semantic revisions automatically rebuild affected analysis while retaining glossary notes.
 
-All targets, including `zh`, own separate state under `state/<book>/targets/<target-language>/`. Completed segments still skip model calls; updated resources affect subsequent requests. Initialization records a prompt fingerprint, run events record applied resources, and Review cache identity includes languages, honorific strategy, and the resource fingerprint. Manifest-last initialization, atomic writes, domain locks, and Review/Autofix publication boundaries remain in place. See [language configuration](configuration.md) and the [usage guide](usage.md).
+All targets, including `zh`, own separate state under `state/<book>/targets/<target-language>/`. Each invocation freezes separate analysis, translation and Review plans using only the consumed templates and rules. Immutable `language-policies/<fingerprint>.json` artifacts and a phase checkpoint are persisted through Storage before initialization commits the manifest. Review cache identity includes its effective plan alongside model/content/glossary identities. Completed targets stay saved; changed built-in semantic plans or missing identities automatically rebuild affected analysis before pending model work. Task-specific fingerprints let unchanged chapter digests and style analysis reuse their caches. Interrupted rebuilds resume without prematurely committing the new checkpoint. Export-only changes compile a fresh plan without invalidating paid translation. See [built-in language policies](configuration.md#built-in-language-policies).
+
+The pure `i18n/policy/` resolver separates source and target bindings, exact pair bindings defined in source. Domain adapters execute the registered punctuation, DOCX font, Japanese source-ruby and metadata capabilities against the consistent export snapshot. Text normalization operates over a complete logical paragraph and maps it back to stable segment boundaries; annotation/style offsets are remapped once. Pending `None`, intentionally empty targets and untranslated source fallbacks keep their identities. The complete export view is validated before opening the output, so a text-handler failure cannot replace an existing artifact. Manifest-last initialization, atomic writes, domain locks and Review/Autofix publication boundaries remain in place.
 
 ## Whole-book understanding and context
 
@@ -143,13 +145,111 @@ replacement is semantically correct. Stop reasons include
 `unresolved_fixes` (a previously confirmed issue did not receive a valid patch
 even if a later Reviewer missed it).
 
+## Best-of-three precision translation
+
+The optional `best_of_three` mode processes each pending book batch through:
+three independent initial drafts → one comprehensive source-aware polishing →
+final text. Drafts share the frozen system/source/context prefix but have independent
+conversation histories and do not see their siblings. The polishing call uses the
+same prefix plus all three fallible drafts as data, combines their useful parts and
+outputs the final text array directly, preserving the existing document structure.
+Source, glossary, synopsis, recent context
+and following source remain unchanged.
+
+```mermaid
+flowchart TD
+    C["Source, glossary and full context"] --> T1["Independent draft 1"]
+    C --> T2["Independent draft 2"]
+    C --> T3["Independent draft 3"]
+    T1 --> P["One source-aware synthesis and polishing"]
+    T2 --> P
+    T3 --> P
+    C -. "Source reference" .-> P
+    P --> O["Save final translation"]
+```
+
+The synthesis policy prioritizes the source over draft consensus or fluency; it is
+not an independently verified accuracy guarantee. There is no accuracy judge,
+three-way polishing, blind acceptance, refinement round, per-paragraph competition
+or scoped alignment recovery. Minimal one-shot array count/type and protected-ID
+validation remains solely to support EPUB/DOCX backfill. Malformed results may pause
+the batch; validation makes no extra model call and never silently zips away text.
+Publication metadata means a structurally valid synthesized result, not a semantic
+acceptance gate. `target_before_polish` stores the first initial draft as a comparison
+reference, not a selected accurate draft; `target` stores the synthesized final text.
+
+Initial drafts always use built-in three-branch concurrency. Web manual proofreading
+can inspect published T1/T2/T3 and the original synthesis as read-only archives;
+inspection does not make model calls or choose a draft for publication. Draft lookup
+validates source and segment identity, hashes, and the saved T1 comparison. Unavailable
+or ambiguous archives are reported rather than guessed.
+
+Saved checkpoints allow an interrupted run with compatible source, context, policy
+and model identities to resume without recreating completed draft work. Completed
+formal targets are skipped, not reprocessed when the mode changes.
+
+### Precision archive and future benchmark replay
+
+New checkpoints separate immutable shared data from batch progress:
+
+```text
+precision/
+  shared/
+    objects/<hash>.json                 # Text, plans, terms, model metadata and result objects
+    glossary/
+      head.json                        # Current compact reference index, not formal glossary state
+      versions/<hash>.json              # Base references or incremental changes, removals and order
+  chapters/<chapter>/<start>-<count>/<fingerprint>/
+    meta.json                          # Source identity and shared plan/glossary references
+    drafts/T1.json, T2.json, T3.json     # Target and call references, not duplicate prose
+    result.json                        # One synthesized result and first-draft references
+    publication.json                   # Result reference, source hashes and ready/published state
+    calls/<stage>/<attempt-id>.json     # Every new logical model invocation
+```
+
+Glossary versions retain full term metadata and historical prompt lines. Unchanged entries
+are reused, while additions, updates, removals and ordering changes are recorded as deltas;
+periodic reference-only bases bound replay depth. This does not change the formal glossary.
+Shared request recipes reconstruct the exact historical system/user messages, including
+their original formatting, without current prompts or the current glossary. Unknown
+formatting is kept literally rather than approximated.
+
+Call records retain request parameters, declared and available client-frozen model snapshots,
+environment versions, elapsed model-call time, raw response and validated-output references.
+Scoped provider events bind retries, fallbacks and known token/cache usage to that call, without
+mixing concurrent drafts. Missing usage/model data remains explicitly unknown, not zero.
+Failed or interrupted calls remain diagnostic records; cache reuse is not recorded as a new
+model invocation. Response text is saved before local output validation.
+
+This is a replay-data foundation, not a benchmark runner: restoring inputs is deterministic,
+but another model invocation can differ because of sampling or server model revisions.
+Credentials are excluded, and required external credentials must be supplied again. Private
+source and translation text remain in the run's `Storage` artifacts, never automatically
+exported or committed. Do not share this archive unintentionally.
+
+Compatible old `inputs.json`/`synthesis.json`/`ready.json` checkpoints remain readable and are
+not deleted or re-billed; legacy calls without historical request receipts are explicitly
+marked incomplete for replay. New results are written only once. Published history is not
+automatically pruned because it is useful for future comparison and replay.
+
+Polishing is required. Whole-book Review remains a separate optional workflow,
+and SRT is unchanged. A normal body batch uses four model calls
+versus two for standard translation with polishing, excluding provider retries and
+other book tasks; this is **not a fixed 2× cost**. Precision uses the existing
+`translation.body` and `polish.body` routes with the same profiles and provider
+behavior as standard, without precision-specific output-token caps or hints.
+Shared-prefix caching and concurrency
+may reduce latency or input-token costs, but do not remove output costs. No real
+model quality comparison has been performed yet; offline tests validate contracts,
+not a guaranteed quality improvement.
+
 ## Resumability
 
 Each completed translation batch is persisted immediately. When polishing is enabled, each segment in the chapter JSON keeps the translation-stage text in `target_before_polish` and the polished final text in `target`. Running `translate` again skips completed batches and fills only missing work. A standalone `assemble` briefly freezes the persisted manifest and chapter snapshot, releases the state lock, and renders from that snapshot, so it does not wait for a full translation running in another terminal.
 
 ## Subtitle path (SRT)
 
-`.srt` files take a parallel light path under `trans_novel.srt`, not the book
+`.srt` files take a parallel light path under `wenyi_core.srt`, not the book
 Orchestrator above. There is no whole-book prescan, glossary, polishing, or
 Review. Translation uses overlapping cue windows with high concurrency on the
 strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with

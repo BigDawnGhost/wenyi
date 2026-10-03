@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from wenyi_core.config import Config
 
@@ -71,7 +71,7 @@ STEP_REGISTRY = [
 ]
 _SWITCHES = {"book_understanding", "polish", "annotation_alignment", "review", "review_autofix"}
 _STANDARD = {**dict.fromkeys(sorted(_SWITCHES), True), "punctuation_normalize": True}
-_QUICK = {
+_LEGACY_QUICK_STEPS = {
     **_STANDARD,
     "book_understanding": False,
     "polish": False,
@@ -86,13 +86,18 @@ PRESET_TEMPLATES = [
         "recommended": True,
         "steps": _STANDARD,
     },
-    {
-        "name": "快速出稿",
-        "description": "关闭预理解、润色和审校，保留正文与术语翻译",
-        "time_factor": 1,
-        "steps": _QUICK,
-    },
 ]
+
+
+def _saved_strategy_to_config(strategy: dict[str, Any], base: Config, **kwargs: Any) -> Config:
+    """Read retired project strategies without exposing them to new requests."""
+    if strategy.get("template") == "快速出稿":
+        strategy = {
+            **strategy,
+            "template": "标准翻译",
+            "steps": strategy.get("steps", _LEGACY_QUICK_STEPS),
+        }
+    return strategy_to_config(strategy, base, **kwargs)
 
 
 def builtin_template_definition(name: str) -> dict[str, Any] | None:
@@ -106,21 +111,24 @@ def builtin_template_definition(name: str) -> dict[str, Any] | None:
 
 
 def strategy_to_config(
-    strategy: dict[str, Any], base: Config, *, source_lang: str = "auto", target_lang: str = "zh"
+    strategy: dict[str, Any],
+    base: Config,
+    *,
+    source_lang: str = "auto",
+    target_lang: str = "zh",
+    translation_mode: Literal["standard", "best_of_three"] | None = None,
 ) -> Config:
     unknown = set(strategy) - {"template", "steps", "description", "time_factor"}
     if unknown:
         raise ValueError("Unknown strategy fields: " + ", ".join(sorted(unknown)))
+    if builtin_template_definition(strategy.get("template", "标准翻译")) is None:
+        raise ValueError(f"Unknown strategy template: {strategy.get('template')}")
     cfg = base.model_copy(deep=True)
     cfg.source_lang = source_lang
     cfg.target_lang = target_lang
     steps = strategy.get("steps")
     if steps is None:
-        name = strategy.get("template", "标准翻译")
-        definition = builtin_template_definition(name)
-        if definition is None:
-            raise ValueError(f"Unknown strategy template: {name}")
-        steps = {} if name == "标准翻译" else definition["steps"]
+        steps = {}
     if not isinstance(steps, dict):
         raise ValueError("Strategy steps must be an object")
     allowed = {step["id"] for step in STEP_REGISTRY}
@@ -135,6 +143,10 @@ def strategy_to_config(
             cfg.output.punctuation_normalize = value
         elif not value:
             raise ValueError(f"Required workflow step cannot be disabled: {key}")
+    if translation_mode is not None:
+        cfg.pipeline.translation_mode = translation_mode
+        if translation_mode == "best_of_three":
+            cfg.pipeline.polish = True
     if not cfg.pipeline.review:
         cfg.pipeline.review_autofix = False
     return Config.model_validate(cfg.model_dump())

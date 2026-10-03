@@ -6,10 +6,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from .i18n.languages import require_language
+from .i18n.policy.models import Phase, PolicyContext, PolicyPlan, content_hash
+from .i18n.policy.resolver import resolve_policy
 from .llm.configuration import LLMConfig
+
+
+def parse_config_yaml(text: str) -> Any:
+    """Parse CLI and Web configuration with the same safe scalar semantics."""
+    return yaml.safe_load(text)
+
 
 _DEFAULT_CONFIG_YAML = """\
 # Wenyi configuration (experimental multilingual fiction translation)
@@ -38,6 +46,7 @@ pipeline:
   review: true # Run final review after whole-book translation; disable with --no-review
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  translation_mode: standard # standard | best_of_three; best_of_three requires polish
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
   book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests used during translation
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
@@ -89,6 +98,22 @@ class SegmentConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    translation_mode: Literal["standard", "best_of_three"] = "standard"
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_legacy_precision_concurrency(cls, value: Any) -> Any:
+        """Read existing configurations and job snapshots without exposing a retired option."""
+        if isinstance(value, dict) and "precision_concurrency" in value:
+            return {key: item for key, item in value.items() if key != "precision_concurrency"}
+        return value
+
+    @model_validator(mode="after")
+    def validate_translation_mode(self) -> PipelineConfig:
+        if self.translation_mode == "best_of_three" and not self.polish:
+            raise ValueError("best_of_three translation mode requires pipeline.polish=true")
+        return self
 
     review: bool = True
     align_retry_limit: int = (
@@ -144,7 +169,7 @@ class PipelineConfig(BaseModel):
 class OutputConfig(BaseModel):
     mono: bool = True  # Generate monolingual output
     bilingual: bool = False  # Generate bilingual output
-    bilingual_order: str = (
+    bilingual_order: Literal["target_first", "source_first"] = (
         "target_first"  # target_first=translation first (default); source_first=source first
     )
     bilingual_preserve_source_style: bool = False
@@ -157,12 +182,163 @@ class OutputConfig(BaseModel):
 class Config(BaseModel):
     source_lang: str = "auto"  # auto | ja | en | … (auto uses model detection)
     target_lang: str = "zh"
+    _language_plans: dict[str, PolicyPlan] = PrivateAttr(default_factory=dict)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     honorific_strategy: str = "keep_style"
     state_dir: str = "state"
+
+    @model_validator(mode="after")
+    def validate_builtin_language_policy(self) -> Config:
+        resolve_policy(
+            PolicyContext(
+                self.source_lang,
+                self.target_lang,
+                punctuation_normalize=self.output.punctuation_normalize,
+            ),
+        )
+        return self
+
+    def language_policy(
+        self,
+        phase: Phase = "translation",
+        *,
+        path: Literal["book", "srt"] = "book",
+        format: str = "",
+        backend: str = "native",
+        source_identity: str = "",
+    ) -> PolicyPlan:
+        """Reuse the invocation's frozen semantic plan; exports resolve their snapshot."""
+        key = f"{path}:{phase}"
+        if phase != "export" and key in self._language_plans:
+            return self._language_plans[key]
+        context = PolicyContext(
+            self.source_lang,
+            self.target_lang,
+            phase=phase,
+            path=path,
+            format=format,
+            backend=backend,
+            punctuation_normalize=self.output.punctuation_normalize,
+            honorific_strategy=self.honorific_strategy,
+            source_identity=source_identity,
+            task_groups=self._policy_tasks(phase, path),
+            bilingual=self.output.bilingual,
+            order=self.output.bilingual_order,
+            preserve_source_style=self.output.bilingual_preserve_source_style,
+            about_page=self.output.about_page,
+        )
+        return resolve_policy(context)
+
+    def _policy_tasks(self, phase: Phase, path: str) -> tuple[str, ...]:
+        if path == "srt":
+            return ("srt_batch", "srt_single")
+        if phase == "analysis":
+            return (
+                ("analyzer", "chapter_digest", "book_synopsis")
+                if self.pipeline.book_understanding
+                else ("analyzer",)
+            )
+        if phase == "translation":
+            if self.pipeline.translation_mode == "best_of_three":
+                return ("precision", "title_translator", "glossary_extractor", "glossary_history")
+            return ("translator", "title_translator", "glossary_extractor", "glossary_history") + (
+                ("polisher",) if self.pipeline.polish else ()
+            )
+        if phase == "review":
+            groups = ["reviewer"]
+            if self.pipeline.review_agent_loop or self.pipeline.review_autofix:
+                groups.append("review_agent")
+            if self.pipeline.review_agent_loop and self.pipeline.review_conflict_arbitration:
+                groups.append("review_arbiter")
+            if self.pipeline.review_fix_loop or self.pipeline.review_autofix:
+                groups.append("review_fixer")
+            return tuple(groups)
+        return ()
+
+    def freeze_language_policies(self, source_identity: str = "") -> None:
+        """Freeze resources after source detection, before any consuming model call."""
+        self._language_plans.clear()
+        plans = {
+            phase: self.language_policy(phase, source_identity=source_identity)
+            for phase in ("analysis", "translation", "review")
+        }
+        self._language_plans.update({f"book:{phase}": plan for phase, plan in plans.items()})
+
+    def language_document(self) -> dict[str, Any]:
+        return {
+            "source": self.source_lang,
+            "target": self.target_lang,
+        }
+
+    def language_policy_revision(self, *, path: Literal["book", "srt"] = "book") -> str:
+        """Describe the built-in semantic revision without source-content hashes."""
+        if path == "srt":
+            return self.language_policy("translation", path=path).fingerprint
+        return content_hash(
+            {
+                phase: self.language_policy(phase).semantic_fingerprint
+                for phase in ("analysis", "translation")
+            }
+        )
+
+    def language_policy_preview(
+        self,
+        *,
+        format: str | None = None,
+        backend: str = "native",
+        path: Literal["book", "srt"] = "book",
+    ) -> dict[str, Any]:
+        """Use the execution resolver for diagnostics; auto source remains unresolved."""
+        phases = ("translation",) if path == "srt" else ("analysis", "translation", "review")
+        result = {phase: self.language_policy(phase, path=path).preview() for phase in phases}
+        result["revision"] = {"fingerprint": self.language_policy_revision(path=path)}
+        from .llm.operations import configured_operations
+        from .llm.routing import resolve_routes
+
+        routes = resolve_routes(self.llm)
+        for phase in phases:
+            workflow = (
+                "srt"
+                if path == "srt"
+                else "prepare"
+                if phase == "analysis"
+                else "review"
+                if phase == "review"
+                else "translate"
+            )
+            operations = configured_operations(self, workflow)
+            if phase == "translation" and path == "book":
+                operations = tuple(
+                    operation
+                    for operation in operations
+                    if not operation.startswith(
+                        ("language.", "analysis.", "synopsis.", "review.", "autofix.")
+                    )
+                )
+            result[phase]["model_routes"] = [
+                routes[operation].describe() for operation in operations
+            ]
+        if format is not None:
+            result["export"] = self.language_policy(
+                "export", path=path, format=format, backend=backend
+            ).preview()
+        else:
+            formats = (
+                ("srt",) if path == "srt" else ("epub", "docx", "html", "txt", "markdown", "pdf")
+            )
+            exports = {}
+            for selected in formats:
+                try:
+                    exports[selected] = self.language_policy(
+                        "export", path=path, format=selected, backend=backend
+                    ).preview()
+                except ValueError as error:
+                    exports[selected] = {"available": False, "reason": str(error)}
+            result["export"] = exports
+        return result
 
     @field_validator("source_lang")
     @classmethod
@@ -190,7 +366,7 @@ class Config(BaseModel):
     def load(cls, path: str = "config.yaml") -> Config:
         """Load YAML configuration and apply typed defaults for missing fields."""
         with open(path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+            raw = parse_config_yaml(f.read()) or {}
         return cls.from_dict(raw)
 
     @classmethod
@@ -205,6 +381,8 @@ class Config(BaseModel):
                 "Unknown configuration sections: " + ", ".join(sorted(map(str, unknown)))
             )
         lang = raw.get("language", {})
+        if not isinstance(lang, dict) or set(lang) - {"source", "target"}:
+            raise ValueError("Invalid or unknown language configuration fields")
         llm_raw = raw.get("llm", {})
         llm = LLMConfig.model_validate({} if llm_raw is None else llm_raw)
         segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})

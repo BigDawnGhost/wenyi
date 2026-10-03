@@ -412,6 +412,50 @@ def test_token_preflight_checks_fallback_caps():
         client.validate_credentials(("translation.body",))
 
 
+def test_http402_emits_one_safe_failure_without_retry_or_fallback(monkeypatch, caplog):
+    import json
+
+    import httpx
+    from openai import APIStatusError
+    from wenyi_core.llm.retrying import is_retryable_provider_error
+
+    raw = _graph(routes={"translation.body": {"model": "one", "fallbacks": ["two"]}}).model_dump()
+    raw["providers"]["a"]["max_retries"] = 3
+    client = RoutedLLMClient(LLMConfig.model_validate(raw))
+    events = []
+    calls = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+    error = APIStatusError(
+        "PRIVATE_PLACEHOLDER",
+        response=httpx.Response(402, request=httpx.Request("POST", "https://example.invalid")),
+        body={"prompt": "PRIVATE_PLACEHOLDER", "api_key": "PRIVATE_PLACEHOLDER"},
+    )
+
+    def request(self, messages, model, **kwargs):
+        calls.append(model.model)
+        raise error
+
+    monkeypatch.setattr(FakeProvider, "_request", request)
+    assert not is_retryable_provider_error(error)
+    with pytest.raises(APIStatusError) as caught:
+        client.complete([], operation="translation.body")
+    assert caught.value is error
+    assert calls == ["first"]
+    failures = [row for row in events if row["event"] == "llm_request_failed"]
+    assert len(failures) == 1
+    failure = failures[0]
+    assert failure["status_code"] == 402
+    assert failure["error_category"] == "insufficient_balance"
+    assert failure["error_type"] == "APIStatusError"
+    assert "Recharge" in failure["error_message"]
+    assert failure["operation"] == "translation.body"
+    assert failure["model"] == "first"
+    assert failure["provider"] == "fake"
+    assert len({row["call_id"] for row in events}) == 1
+    assert not any(row["event"] == "llm_retry_wait" for row in events)
+    assert "PRIVATE_PLACEHOLDER" not in json.dumps(events) + caplog.text
+
+
 def test_shared_quota_across_aliases_and_usage_releases_reservations():
     raw = _graph(
         quotas={"account": {"requests_per_minute": 1}}, budget={"max_tokens": 1000}

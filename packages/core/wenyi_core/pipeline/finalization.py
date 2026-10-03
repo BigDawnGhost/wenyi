@@ -10,18 +10,18 @@ lock to serialize output writers.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from ..events import ProgressFn
 from ..glossary.store import GlossaryStore
 from ..storage.protocol import Storage
+from .language_policies import persist_plan
 from .runstore import source_sha256
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class ReportService:
@@ -71,8 +71,10 @@ class AssemblyService:
         out_format: str,
         out_path: str | None,
         pdf_engine: str,
+        policy_store: Storage,
     ) -> list[str]:
         """Generate every configured artifact from live state or a read-only snapshot."""
+        from ..assemble.policy import export_plan
         from ..assemble.writer import assemble
         from ..assemble.writer_common import bilingual_out_path
 
@@ -82,6 +84,22 @@ class AssemblyService:
         do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
         if not do_mono and not do_bilingual:
             do_mono = True
+        plans = {}
+        for bilingual in ([False] if do_mono else []) + ([True] if do_bilingual else []):
+            plans[bilingual] = export_plan(
+                store,
+                out_format,
+                pdf_engine=pdf_engine,
+                punctuation_normalize=out_cfg.punctuation_normalize,
+                bilingual=bilingual,
+                order=out_cfg.bilingual_order if bilingual else "target_first",
+                preserve_source_style=out_cfg.bilingual_preserve_source_style
+                if bilingual
+                else False,
+                about_page=out_cfg.about_page,
+            )
+        for plan in plans.values():
+            persist_plan(policy_store, plan)
 
         outputs: list[str] = []
         if do_mono:
@@ -95,7 +113,8 @@ class AssemblyService:
                     about_page=out_cfg.about_page,
                     pdf_engine=pdf_engine,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
-                    punctuation_normalize=self._runtime.export_punctuation_enabled(),
+                    punctuation_normalize=out_cfg.punctuation_normalize,
+                    language_policy=plans[False],
                 )
             )
         if do_bilingual:
@@ -112,7 +131,8 @@ class AssemblyService:
                     about_page=out_cfg.about_page,
                     pdf_engine=pdf_engine,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
-                    punctuation_normalize=self._runtime.export_punctuation_enabled(),
+                    punctuation_normalize=out_cfg.punctuation_normalize,
+                    language_policy=plans[True],
                 )
             )
         return outputs
@@ -144,6 +164,7 @@ class AssemblyService:
                 out_format=out_format,
                 out_path=out_path,
                 pdf_engine=pdf_engine,
+                policy_store=store,
             )
             self._runtime.ensure_store_source(store, input_path)
         self._runtime.log_event(store, "assembled", outputs=outputs, out_format=out_format)
@@ -179,6 +200,7 @@ class AssemblyService:
                 out_format=out_format,
                 out_path=out_path,
                 pdf_engine=pdf_engine,
+                policy_store=store,
             )
             # The source template is an export input; validate afterward so mid-render replacement cannot succeed.
             self._runtime.ensure_store_source(store, input_path)

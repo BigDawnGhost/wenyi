@@ -79,12 +79,11 @@ type Output<Name extends keyof components["schemas"]> = Required<
 export type Project = Output<"Project">;
 export type ProjectDetail = Output<"ProjectDetail">;
 export type ChapterSummary = Output<"ChapterSummary">;
-export type SegmentOut = Output<"SegmentOut">;
 export type ChapterSegments = Output<"ChapterSegments">;
 export type SegmentRevision = Output<"SegmentRevision">;
+export type PrecisionDrafts = Output<"PrecisionDraftsOut">;
 export type Term = Output<"TermOut">;
 export type Conflict = Output<"ConflictOut">;
-export type StepDef = Output<"StepDef">;
 export type StrategyTemplate = Output<"StrategyTemplateOut">;
 export type ExportFormat = NonNullable<
   components["schemas"]["ExportRequest"]["format"]
@@ -101,7 +100,6 @@ export type ReviewRun = Output<"ReviewRun">;
 export type ReviewItem = components["schemas"]["ReviewItem"];
 export type ReviewLocation = components["schemas"]["ReviewLocation"];
 export type Workflow = Output<"WorkflowOut">;
-export type SubtitleCue = Output<"SubtitleCue">;
 export type SubtitleData = Output<"SubtitleResult">;
 export type UploadPreview = Output<"UploadPreview">;
 export type AnalysisPayload = Output<"AnalysisOut">;
@@ -202,8 +200,6 @@ export const api = {
 
   listChapters: (pid: string) =>
     request<ChapterSummary[]>(`/projects/${pid}/chapters`),
-  getChapter: (pid: string, ci: number) =>
-    request<ChapterSegments>(`/projects/${pid}/chapters/${ci}`),
   translateChapter: (pid: string, ci: number) =>
     request<JobEnqueued>(`/projects/${pid}/chapters/${ci}/translate`, {
       method: "POST",
@@ -241,8 +237,6 @@ export const api = {
       `/projects/${pid}/glossary/conflicts/${cid}/resolve`,
       { method: "POST", body: JSON.stringify(body) },
     ),
-  exportGlossaryUrl: (pid: string, format: "json" | "csv") =>
-    `${BASE}/projects/${pid}/glossary/export?format=${format}`,
   importGlossary: (pid: string, terms: Partial<Term>[]) =>
     request<{ imported: number }>(`/projects/${pid}/glossary/import`, {
       method: "POST",
@@ -266,6 +260,10 @@ export const api = {
   segmentHistory: (pid: string, ci: number, segIdx: number) =>
     request<SegmentRevision[]>(
       `/projects/${pid}/review/${ci}/segments/${segIdx}/history`,
+    ),
+  precisionDrafts: (pid: string, ci: number, segIdx: number) =>
+    request<PrecisionDrafts>(
+      `/projects/${pid}/chapters/${ci}/segments/${segIdx}/precision-drafts`,
     ),
   editSegment: (
     pid: string,
@@ -317,8 +315,6 @@ export const api = {
       `/projects/${pid}/glossary/export?format=${format}`,
       `glossary.${format}`,
     ),
-  downloadExportUrl: (pid: string, id: number) =>
-    `${BASE}/projects/${pid}/exports/${id}/download`,
 
   listEvents: (pid: string, type?: string) => {
     const s = new URLSearchParams();
@@ -326,7 +322,6 @@ export const api = {
     return request<EventOut[]>(`/projects/${pid}/events?${s}`);
   },
 
-  listSteps: () => request<StepDef[]>("/strategies/steps"),
   listTemplates: () => request<StrategyTemplate[]>("/strategies/templates"),
 };
 

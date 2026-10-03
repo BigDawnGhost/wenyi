@@ -7,5 +7,19 @@
   "title_rule": "Use concise titles following Chinese book and chapter conventions. Translate labels such as 第3章, 序章 and エピローグ by meaning as 第3章, 序章 and 尾声; do not transliterate them.",
   "term_guidance": "Leave reading empty unless there is explicit pronunciation evidence. ",
   "digest_length": "200 characters",
-  "synopsis_length": "500 characters"
+  "synopsis_length": "500 characters",
+  "policy": {
+    "target": {
+      "punctuation.zh_cn": {
+        "mode": "auto"
+      },
+      "docx.chinese_font": {
+        "mode": "auto"
+      }
+    },
+    "export": {
+      "language_tag": "zh-Hans",
+      "about_locale": "zh"
+    }
+  }
 }

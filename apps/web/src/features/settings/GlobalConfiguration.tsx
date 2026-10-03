@@ -3,15 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type GlobalConfig } from "@/lib/api";
 import { useI18n } from "@/i18n";
-import { workflowTemplateLabel } from "@/i18n/labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/data";
 import { Disclosure } from "@/components/ui/disclosure";
-import { Label, Select, Textarea } from "@/components/ui/form";
+import { Textarea } from "@/components/ui/form";
 import { ModelSelection } from "./ModelSelection";
 import { ProviderSettings } from "./ProviderSettings";
-import { WorkflowSettings } from "./WorkflowSettings";
+import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
 
 type Document = Record<string, unknown>;
@@ -28,10 +27,6 @@ export function GlobalConfiguration() {
     queryKey: ["capabilities"],
     queryFn: api.capabilities,
   });
-  const { data: templates } = useQuery({
-    queryKey: ["templates"],
-    queryFn: api.listTemplates,
-  });
   const [draft, setDraft] = useState<GlobalConfig | null>(null);
   const [yamlDirty, setYamlDirty] = useState(false);
   const [registryKey, setRegistryKey] = useState(0);
@@ -43,7 +38,7 @@ export function GlobalConfiguration() {
   const input = () => ({
     yaml: draft!.yaml,
     revision: draft!.revision,
-    default_template: draft!.default_template,
+    default_template: "标准翻译" as const,
     model_renames: renames,
   });
   const apply = (value: GlobalConfig) => {
@@ -144,46 +139,20 @@ export function GlobalConfiguration() {
             disabled={disabled}
             onChange={changeLlm}
           />
-          <div>
-            <Label htmlFor="default-template">
-              {t("settings.defaultTemplate")}
-            </Label>
-            <Select
-              id="default-template"
-              disabled={disabled}
-              value={draft?.default_template || ""}
-              onChange={(event) => {
-                if (draft)
-                  setDraft({ ...draft, default_template: event.target.value });
-              }}
-            >
-              {templates?.map((template) => (
-                <option key={template.name} value={template.name}>
-                  {workflowTemplateLabel(
-                    template.name,
-                    template.description,
-                    t,
-                  )}
-                </option>
-              ))}
-            </Select>
-          </div>
           <h3 className="text-sm font-medium">
-            {t("settings.standardDefaults")}
+            {t("settings.workflowDefaults")}
           </h3>
           <p className="text-sm text-muted-foreground">
-            {t("settings.quickTemplateHelp")}
+            {t("settings.workflowDefaultsHelp")}
           </p>
           <WorkflowSettings
+            scope="global"
             config={effective}
             disabled={disabled}
             pdf
             error={error}
             onField={(group, key, value) =>
-              change({
-                ...effective,
-                [group]: { ...object(effective[group]), [key]: value },
-              })
+              change(workflowField(effective, group, key, value))
             }
           />
         </CardContent>

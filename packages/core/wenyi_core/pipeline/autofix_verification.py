@@ -11,9 +11,8 @@ from ..agents.review_loop import ReviewAgentLoop
 from ..config import Config
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.base import LLMClient
-from ..review.autofix_models import text_hash
 from ..review.evidence import BookEvidenceIndex
-from ..review.models import ReviewOutcome, review_candidate_id
+from ..review.models import ReviewOutcome, review_candidate_id, text_hash
 from ..review.run_store import ReviewRunStore
 from .review_checkpoint import ReviewTraceStore
 

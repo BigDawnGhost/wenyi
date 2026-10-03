@@ -287,6 +287,24 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 `prepare` 会解析书籍、识别语言、在启用时生成逐章梗概，再生成风格指南和初始术语表，最后在启用时生成全书概览，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 
+## 三选一精翻
+
+仅在 Web 创建书籍项目时选择**三译合润精翻**，之后不在总设置或项目配置中提供切换选项；
+更换翻译方式需创建新项目。CLI 执行：
+
+```bash
+uv run wenyi translate book.epub --translation-mode best_of_three --polish
+```
+
+等价配置为 `pipeline.translation_mode: best_of_three` 与
+`pipeline.polish: true`。`--translation-mode standard` 将待译批次恢复为默认流程。
+精翻与 `--no-polish` 的组合会被拒绝；该选项不适用于 SRT。
+续跑时保留相同模式与配置，以复用精翻检查点。已有译文不会自动重新处理。
+三份独立初稿后一次原文优先综合润色、续跑及成本/质量限制见[精翻流程](pipeline.md#三选一精翻)。
+正常批次调用模型四次，标准翻译加润色为两次，沿用相同路由与输出限制。
+最终综合结果仅进行结构校验，不经过独立准确性评判。
+对比中的 `target_before_polish` 是第一份初稿，不是选出的准确稿；不保证质量提升。
+
 ## 中断与续跑
 
 已完成的批次会写入状态目录。中断后使用同一个源文件执行：
@@ -300,6 +318,8 @@ uv run wenyi status book.epub
 `review` 都会全量重审完整译文，并创建新的时间戳审校目录。默认保持只读；使用
 `--autofix` 时可以发布最终修订。只有需要从头翻译时
 才应使用新的状态目录或清理对应状态。
+
+语言策略内置于源码。策略变更或保存的状态缺少策略身份时，`prepare`/`translate` 会自动重建受影响的分析，再继续待完成工作；重建可能调用模型。已完成译文继续保留，字体等仅影响导出的变更只需重新导出。书籍／字幕行为和开发者诊断见[内置语言策略](configuration.md#内置语言策略)。
 
 ## 独立阶段与术语管理
 

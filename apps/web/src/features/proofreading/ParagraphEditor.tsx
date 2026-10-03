@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/data";
 import { RevisionHistory } from "./RevisionHistory";
+import { PrecisionDrafts } from "./PrecisionDrafts";
 
 export function ParagraphEditor({
   pid,
@@ -16,13 +17,17 @@ export function ParagraphEditor({
   segment,
   initialView,
   readOnly,
+  busy,
+  targetLanguage,
   onClose,
 }: {
   pid: string;
   chapterIndex: number;
   segment: ChapterSegments["segments"][number];
-  initialView: "edit" | "history";
+  initialView: "edit" | "history" | "precision";
   readOnly: boolean;
+  busy: boolean;
+  targetLanguage?: string;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -143,7 +148,7 @@ export function ParagraphEditor({
         aria-label={t("proofreading.paragraphEditor")}
         className="flex shrink-0 gap-5 border-b px-5"
       >
-        {(["edit", "history"] as const).map((tab) => (
+        {(["edit", "history", "precision"] as const).map((tab, index, tabs) => (
           <button
             key={tab}
             type="button"
@@ -163,10 +168,11 @@ export function ParagraphEditor({
                   event.key === "Home"
                     ? "edit"
                     : event.key === "End"
-                      ? "history"
-                      : view === "edit"
-                        ? "history"
-                        : "edit";
+                      ? "precision"
+                      : tabs[
+                          (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+                            tabs.length
+                        ];
                 setView(next);
                 document.getElementById(`paragraph-tab-${next}`)?.focus();
               }
@@ -174,7 +180,9 @@ export function ParagraphEditor({
           >
             {tab === "edit"
               ? t("common.translation")
-              : t("proofreading.changeHistory")}
+              : tab === "history"
+                ? t("proofreading.changeHistory")
+                : t("proofreading.precisionDrafts")}
           </button>
         ))}
       </div>
@@ -183,6 +191,7 @@ export function ParagraphEditor({
         className="min-h-0 overflow-y-auto overscroll-contain p-5"
         role="tabpanel"
         id="paragraph-panel"
+        tabIndex={0}
         aria-labelledby={`paragraph-tab-${view}`}
       >
         <ErrorNotice
@@ -213,7 +222,9 @@ export function ParagraphEditor({
             </Button>
           </div>
         )}
-        <div className="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div
+          className={`grid gap-6 ${view !== "precision" ? "md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
+        >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>
             <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
@@ -238,6 +249,16 @@ export function ParagraphEditor({
                   onChange={(event) => setDraft(event.target.value)}
                 />
               </>
+            ) : view === "precision" ? (
+              <PrecisionDrafts
+                pid={pid}
+                chapterIndex={chapterIndex}
+                segmentIndex={segment.index}
+                source={segment.source}
+                beforePolish={segment.target_before_polish}
+                target={segment.target}
+                busy={busy}
+              />
             ) : history.isPending ? (
               <p className="text-sm text-muted-foreground">
                 {t("progress.loading")}
@@ -246,6 +267,9 @@ export function ParagraphEditor({
               <RevisionHistory
                 entries={history.data || []}
                 disabled={disabled}
+                language={targetLanguage}
+                beforePolish={segment.target_before_polish}
+                current={segment.target}
                 onUse={(value) => {
                   setDraft(value);
                   setView("edit");

@@ -7,7 +7,6 @@ guidance if missing; cached HTML needs neither conversion dependency.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shutil
@@ -16,15 +15,7 @@ from pathlib import Path
 from .errors import MinerUError
 from .html_reader import read_html
 from .models import Document
-
-
-def _source_sha256(path: str) -> str:
-    """Stream the PDF content hash to bind caches for direct reader calls."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
+from .source_hash import source_sha256
 
 
 def pdf_cache_html_path(cache_dir: str, source_hash: str) -> str:
@@ -68,7 +59,7 @@ def read_pdf(
     computes it. api_token defaults to MINERU_API_KEY. Return fmt="pdf" with source_path
     pointing to the original PDF.
     """
-    digest = source_hash or _source_sha256(path)
+    digest = source_hash or source_sha256(path)
     html_path = pdf_cache_html_path(cache_dir, digest)
     os.makedirs(os.path.dirname(html_path), exist_ok=True)
 
@@ -98,7 +89,7 @@ def read_pdf(
 
     # Parse intermediate HTML with html_reader.
     doc = read_html(html_path, source_lang, target_lang)
-    if _source_sha256(path) != digest:
+    if source_sha256(path) != digest:
         if converted:
             shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)
         raise ValueError(

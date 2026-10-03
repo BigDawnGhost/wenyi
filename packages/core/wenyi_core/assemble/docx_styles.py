@@ -14,9 +14,6 @@ from wenyi_core.document_styles.docx import (
     proportional_range_placements,
 )
 
-_ZH_FONT = "宋体"
-
-
 _ALIGN_MAP = {
     "left": WD_ALIGN_PARAGRAPH.LEFT,
     "center": WD_ALIGN_PARAGRAPH.CENTER,
@@ -51,14 +48,6 @@ def _set_run_font(run, font_name: str) -> None:
         r_pr.insert(0, r_fonts)
     for attr in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
         r_fonts.set(qn(attr), name)
-
-
-def _target_output_font(target_lang: str | None) -> str | None:
-    """Return the target font: SimSun for Chinese, otherwise leave the font unspecified."""
-    normalized = (target_lang or "zh").strip().lower().replace("_", "-")
-    if normalized == "zh" or normalized.startswith("zh-"):
-        return _ZH_FONT
-    return None
 
 
 def _font_for_text(

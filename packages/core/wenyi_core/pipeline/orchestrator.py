@@ -12,10 +12,10 @@ agents/ingest/glossary/assemble/RunStore. Lower layers must never import this mo
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from ..config import Config
+from ..events import ProgressFn
 from ..storage.protocol import Storage
 from .annotations import AnnotationService
 from .finalization import AssemblyService, ReportService
@@ -24,8 +24,6 @@ from .review_autofix import ReviewAutofixService
 from .review_workflow import ReviewService
 from .runtime import LLMClient, PipelineRuntime
 from .translation import TranslationService
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class Orchestrator:
@@ -69,8 +67,8 @@ class Orchestrator:
         with self._runtime.track_workflow("prepare"):
             store = self._preparation.prepare(input_path, progress=progress)
             with store.lock():
-                self._preparation.activate(store)
                 try:
+                    self._preparation.activate(store, phase="translation")
                     self._preparation.ensure_understanding(store, progress=progress)
                     self._runtime.log_event(
                         store,
@@ -109,15 +107,16 @@ class Orchestrator:
         """Restore languages, validate chapter selection, build the synopsis and delegate
         translation.
         """
-        manifest = self._preparation.activate(store)
-        chapter_indices = {chapter.get("index") for chapter in manifest.get("chapters", [])}
-        if only_chapter is not None and only_chapter not in chapter_indices:
-            available = sorted(index for index in chapter_indices if isinstance(index, int))
-            valid_range = f"0–{available[-1]}" if available else "no translatable chapters"
-            raise ValueError(
-                f"Chapter index {only_chapter} does not exist; available range: {valid_range}"
-            )
         try:
+            manifest = store.load_manifest()
+            chapter_indices = {chapter.get("index") for chapter in manifest.get("chapters", [])}
+            if only_chapter is not None and only_chapter not in chapter_indices:
+                available = sorted(index for index in chapter_indices if isinstance(index, int))
+                valid_range = f"0–{available[-1]}" if available else "no translatable chapters"
+                raise ValueError(
+                    f"Chapter index {only_chapter} does not exist; available range: {valid_range}"
+                )
+            self._preparation.activate(store, phase="translation")
             book_synopsis = self._preparation.ensure_understanding(store, progress=progress)
             return self._translation.run(
                 store,

@@ -19,6 +19,7 @@ from wenyi_core.assemble.html_renderer import _render_chapter_html
 from ..ingest.models import KIND_HEADING
 from .export_view import AssembleStore
 from .html_resources import _materialize_html_resources, _template_resource_source
+from .policy import export_options
 from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
 
 
@@ -59,6 +60,7 @@ def _assemble_html(
                 source_lang=(
                     m.get("source_lang", "") if isinstance(m.get("source_lang"), str) else ""
                 ),
+                preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
             )
         for _resource_index, href in _epub_resource_specs(meta):
             resource_html = rendered.get(href)
@@ -83,6 +85,7 @@ def _assemble_html(
                     bilingual=bilingual,
                     order=order,
                     preserve_source_style=preserve_source_style,
+                    preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
                 )
             )
             continue

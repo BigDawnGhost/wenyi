@@ -114,7 +114,6 @@ export async function fakeApi(
           recommended: true,
           steps: {},
         },
-        { name: "快速出稿", description: "初稿", steps: {} },
       ],
       "/projects": [project],
       [`/projects/${pid}`]: project,

@@ -39,6 +39,20 @@ class PipelineRuntime:
         """Initialize the shared LLM client, usage checkpoint and pipeline agents."""
         self.storage = storage
         self.config = config
+        from ..assemble.export_view import TEXT_HANDLERS
+        from ..assemble.policy import WRITER_OPERATIONS
+        from ..i18n.policy.registry import validate_implementations
+        from ..i18n.prompts import PROMPT_OPERATIONS
+        from ..llm.operations import OPERATIONS
+
+        validate_implementations(
+            {
+                **WRITER_OPERATIONS,
+                "export.text": tuple(TEXT_HANDLERS),
+                "prompt.compose": PROMPT_OPERATIONS,
+            },
+            tuple(OPERATIONS),
+        )
         self.llm_config = config.llm.model_copy(deep=True)
         self.client = client or build_client(config)
         self._timer: RunTimer | None = None
@@ -96,13 +110,6 @@ class PipelineRuntime:
             },
         )
 
-    def export_punctuation_enabled(self) -> bool:
-        """Determine whether export copies should use Simplified Chinese punctuation
-        normalization.
-        """
-        target = (self.config.target_lang or "").lower().replace("_", "-")
-        return self.config.output.punctuation_normalize and require_language(target) == "zh"
-
     def flush_usage(self, store: Storage, *, scope: str, review=None) -> dict[str, Any]:
         """Merge the client's unpersisted usage delta into the book's usage.json."""
         store.recover_usage()
@@ -144,7 +151,7 @@ class PipelineRuntime:
         return digest
 
     # Language resolution.
-    def apply_language(self, lang: str) -> None:
+    def apply_language(self, lang: str, *, source_identity: str = "") -> None:
         """Apply detected source language to config and all agents after auto detection."""
         resolved = lang or self.config.source_lang
         source = require_language(resolved)
@@ -156,6 +163,7 @@ class PipelineRuntime:
             )
         self.config.source_lang = source
         self.config.target_lang = target
+        self.config.freeze_language_policies(source_identity)
         for ag in (
             self.analyzer,
             self.synopsizer,
@@ -168,8 +176,11 @@ class PipelineRuntime:
         ):
             ag.src = source
             ag.tgt = self.config.target_lang
+            ag.language_policy = self.config.language_policy(ag.policy_phase)
 
     def apply_manifest_languages(self, manifest: dict[str, Any]) -> None:
         """Restore saved source/target languages and propagate them to all agents."""
         validate_run_languages(manifest, self.config.source_lang, self.config.target_lang)
-        self.apply_language(manifest["source_lang"])
+        self.apply_language(
+            manifest["source_lang"], source_identity=manifest.get("source_sha256", "")
+        )

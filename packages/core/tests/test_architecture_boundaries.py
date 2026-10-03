@@ -77,6 +77,20 @@ def _imported_modules(path: pathlib.Path) -> set[str]:
 
 
 class TestArchitectureBoundaries(unittest.TestCase):
+    def test_language_policy_has_no_runtime_or_storage_dependencies(self):
+        paths = list((TRANS_NOVEL_DIR / "i18n" / "policy").rglob("*.py"))
+        self.assertTrue(paths, "The policy boundary check must inspect actual modules")
+        forbidden = ("pipeline", "agents", "glossary", "assemble", "storage", "llm")
+        for path in paths:
+            for module in _imported_modules(path):
+                self.assertFalse(
+                    any(
+                        module == f"wenyi_core.{name}" or module.startswith(f"wenyi_core.{name}.")
+                        for name in forbidden
+                    ),
+                    f"{path}: {module}",
+                )
+
     def test_command_modules_do_not_import_cli_entry_point(self):
         """Command helpers receive dependencies instead of importing application globals."""
         paths = list((CLI_DIR / "commands").rglob("*.py"))

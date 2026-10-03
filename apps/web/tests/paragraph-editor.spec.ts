@@ -135,6 +135,11 @@ test("the editor expands long text and combines polishing and manual history", a
     .click();
   await expect(dialog.getByText("Manual edit", { exact: true })).toBeVisible();
   await dialog.locator("summary").filter({ hasText: "Polishing" }).click();
+  await dialog
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: "Polishing" }) })
+    .getByRole("button", { name: "Full texts", exact: true })
+    .click();
   await expect(
     dialog.getByText("Rough draft", { exact: true }).first(),
   ).toBeVisible();

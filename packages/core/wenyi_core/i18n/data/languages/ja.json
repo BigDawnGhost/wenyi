@@ -7,5 +7,12 @@
   "title_rule": "Use conventional Japanese titles and section labels, such as 第3章, 序章 and エピローグ.",
   "term_guidance": "Fill reading with evidence-backed kana pronunciation to disambiguate transliteration. ",
   "digest_length": "200 characters",
-  "synopsis_length": "500 characters"
+  "synopsis_length": "500 characters",
+  "policy": {
+    "source": {
+      "markup.japanese_ruby": {
+        "mode": "auto"
+      }
+    }
+  }
 }

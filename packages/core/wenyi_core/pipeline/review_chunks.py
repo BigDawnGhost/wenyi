@@ -14,6 +14,7 @@ from ..glossary.store import GlossaryTerm
 from ..ingest.tokens import count_tokens
 from ..llm.base import LLMClient
 from ..review.evidence import BookEvidenceIndex
+from ..review.models import integer_index
 from ..review.run_store import ReviewRunStore
 from .review_checkpoint import ReviewTraceStore
 
@@ -211,8 +212,8 @@ class ReviewChunkService:
                     )
                 for it in review_result.issues:
                     it = dict(it)
-                    idx = it.get("index")
-                    if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(chunk):
+                    idx = integer_index(it.get("index"))
+                    if idx is not None and 0 <= idx < len(chunk):
                         it["index"] = idx
                         local_issues.append(it)
                     else:

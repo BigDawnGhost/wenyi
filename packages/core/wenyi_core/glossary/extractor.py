@@ -12,7 +12,6 @@ from dataclasses import dataclass, replace
 from ..agents import prompts
 from ..agents.base import Agent
 from ..config import Config
-from ..i18n.prompts import render
 from ..llm.base import LLMClient
 from ..storage.protocol import Storage
 from .store import (
@@ -89,8 +88,8 @@ class GlossaryExtractor(Agent):
         self, source_text: str, target_text: str, existing: list[GlossaryTerm]
     ) -> list[GlossaryTerm]:
         """Extract valid terms from source/target pairs and normalize model field types."""
-        system = render("glossary_extractor_system", src=self.src, tgt=self.tgt)
-        user = render(
+        system = self.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
+        user = self.render(
             "glossary_extractor_user",
             src=self.src,
             tgt=self.tgt,
@@ -178,8 +177,8 @@ class GlossaryExtractor(Agent):
                 }
             )
 
-        system = render("glossary_history_system", src=self.src, tgt=self.tgt)
-        user = render(
+        system = self.render("glossary_history_system", src=self.src, tgt=self.tgt)
+        user = self.render(
             "glossary_history_user",
             src=self.src,
             tgt=self.tgt,

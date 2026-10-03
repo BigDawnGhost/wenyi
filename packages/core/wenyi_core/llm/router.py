@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from contextlib import contextmanager
+from dataclasses import asdict
 from threading import Lock
+from typing import Any
 from uuid import uuid4
 
 from .base import LLMClient, Messages
 from .configuration import LLMConfig
+from .errors import describe_provider_failure
 from .limits import RequestLimits
 from .operations import require_operation
 from .registry import provider_spec
@@ -54,6 +57,35 @@ class RoutedLLMClient(LLMClient):
 
     def cancel(self) -> None:
         self.limits.cancel()
+
+    def request_snapshot(self, operation: str) -> dict[str, Any]:
+        """Describe this client's effective routes without reading credentials or emitting events."""
+        require_operation(operation)
+        primary = self.routes[operation]
+        routes = [
+            primary,
+            *(
+                model_route(self.config, operation, profile, origin="explicit fallback")
+                for profile in primary.fallbacks
+            ),
+        ]
+        connections = {}
+        protocols = {}
+        for route in routes:
+            connection = self.config.providers[route.provider]
+            adapter = provider_spec(route.provider_kind).adapter_type()
+            metadata = connection.model_dump(mode="json")
+            metadata["base_url"] = route.endpoint
+            metadata["api_key_env"] = connection.api_key_env or adapter.default_api_key_env
+            connections[route.provider] = metadata
+            protocols[route.provider] = adapter.protocol_version
+        return {
+            "operation": operation,
+            "primary": primary.describe(),
+            "fallbacks": [route.describe() for route in routes[1:]],
+            "connections": connections,
+            "adapter_protocols": protocols,
+        }
 
     def complete(
         self,
@@ -113,6 +145,10 @@ class RoutedLLMClient(LLMClient):
                 "provider": route.provider_kind,
                 "model": route.model,
                 "inference_fingerprint": route.fingerprint,
+                "max_output_tokens": route.max_output_tokens,
+                "adapter_protocol": (
+                    provider_spec(route.provider_kind).adapter_type().protocol_version
+                ),
             }
 
             def emit(event: str, **payload) -> None:
@@ -135,6 +171,8 @@ class RoutedLLMClient(LLMClient):
                         route.model_identity: f"{route.provider_kind} / {route.model}",
                     },
                 )
+                if sample is not None:
+                    emit("llm_usage", **asdict(sample))
 
             @contextmanager
             def attempt_scope():
@@ -171,7 +209,11 @@ class RoutedLLMClient(LLMClient):
                     context=context,
                 )
             except Exception as error:
-                emit("llm_request_failed", error_type=type(error).__name__)
+                emit(
+                    "llm_request_failed",
+                    error_type=type(error).__name__,
+                    **describe_provider_failure(error).log_fields(),
+                )
                 if position == len(routes) - 1 or not is_retryable_provider_error(
                     error, operation=operation
                 ):

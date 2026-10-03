@@ -116,15 +116,14 @@ test("known workflow labels and language names are localized without changing AP
     page.getByLabel("Target language").locator('option[value="en"]'),
   ).toHaveText("English (en)");
   await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
-  await page.goto("/settings");
-  await expect(page.getByLabel("Default workflow template")).toHaveValue(
-    "标准翻译",
-  );
   await expect(
-    page
-      .getByLabel("Default workflow template")
-      .locator('option[value="标准翻译"]'),
-  ).toContainText("Standard translation");
+    page.getByRole("radio", { name: "Standard", exact: true }),
+  ).toHaveValue("standard");
+  await expect(
+    page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }),
+  ).toHaveValue("best_of_three");
+  await page.goto("/settings");
+  await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);
   await page.getByText("Workflow details", { exact: true }).click();
   await expect(

@@ -787,9 +787,6 @@ class PostgresStorage:
     def terms_in(self, terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         return GlossaryStore.terms_in(terms, text)
 
-    def terms_in_text(self, text: str) -> list[GlossaryTerm]:
-        return self.terms_in(self.all_terms(), text)
-
     def mark_conflicts_resolved(self, source: str) -> None:
         with self.state_lock(), self._conn as conn:
             conn.execute(

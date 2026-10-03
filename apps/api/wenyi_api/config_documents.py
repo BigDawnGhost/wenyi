@@ -4,22 +4,30 @@ from __future__ import annotations
 
 from typing import Any
 
-import yaml
-from wenyi_core.config import Config
+from wenyi_core.config import Config, parse_config_yaml
 
 PROJECT_LLM_FIELDS = frozenset({"tiers", "routes", "budget"})
+PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "precision_concurrency"})
 
 
 def config_document(config: Config) -> dict[str, Any]:
     """Serialize all runtime settings, including resolved model definitions."""
     return {
-        "language": {"source": config.source_lang, "target": config.target_lang},
+        "language": config.language_document(),
         "llm": config.llm.model_dump(mode="json"),
         "segment": config.segment.model_dump(mode="json"),
         "pipeline": config.pipeline.model_dump(mode="json"),
         "output": config.output.model_dump(mode="json"),
         "honorific": {"strategy": config.honorific_strategy},
     }
+
+
+def global_document(config: Config) -> dict[str, Any]:
+    """Exclude project-specific precision choices from application defaults."""
+    document = config_document(config)
+    for key in PROJECT_PIPELINE_FIELDS:
+        document["pipeline"].pop(key, None)
+    return document
 
 
 def project_document(config: Config) -> dict[str, Any]:
@@ -29,7 +37,7 @@ def project_document(config: Config) -> dict[str, Any]:
 
 
 def parse_yaml(value: str) -> dict:
-    raw = yaml.safe_load(value)
+    raw = parse_config_yaml(value)
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):

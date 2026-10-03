@@ -8,16 +8,15 @@ from typing import Any
 
 from ..agents.review_fixer import ProvisionalPatch
 from ..config import Config
+from ..events import ProgressFn
 from ..glossary.store import GlossaryTerm
 from ..ingest.models import Chapter
 from ..llm.base import LLMClient
-from ..review.autofix_models import AutofixCandidates, integer_index
+from ..review.autofix_models import AutofixCandidates
 from ..review.evidence import BookEvidenceIndex
-from ..review.models import ReviewOutcome
+from ..review.models import ReviewOutcome, integer_index
 from ..review.run_store import ReviewRunStore
 from .autofix_verification import AutofixVerification
-
-ProgressFn = Callable[[int, int, str], None]
 
 
 class AutofixCandidateService:
@@ -115,13 +114,11 @@ class AutofixCandidateService:
         issues = [dict(issue) for issue in raw_issues if isinstance(issue, dict)]
         grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
         for issue in issues:
-            chapter_index = issue.get("chapter")
-            text_index = issue.get("index")
+            chapter_index = integer_index(issue.get("chapter"))
+            text_index = integer_index(issue.get("index"))
             if (
-                isinstance(chapter_index, int)
-                and not isinstance(chapter_index, bool)
-                and isinstance(text_index, int)
-                and not isinstance(text_index, bool)
+                chapter_index is not None
+                and text_index is not None
                 and chapter_index in chapters_by_index
                 and 0 <= text_index < len(chapters_by_index[chapter_index].text_segments)
             ):
@@ -129,16 +126,8 @@ class AutofixCandidateService:
                 grouped.setdefault((chapter_index, text_index), []).append(issue)
                 continue
             add_record(
-                chapter=(
-                    chapter_index
-                    if isinstance(chapter_index, int) and not isinstance(chapter_index, bool)
-                    else -1
-                ),
-                index=(
-                    text_index
-                    if isinstance(text_index, int) and not isinstance(text_index, bool)
-                    else -1
-                ),
+                chapter=chapter_index if chapter_index is not None else -1,
+                index=text_index if text_index is not None else -1,
                 segment_ref="",
                 origin="final_issue_fix",
                 before="",

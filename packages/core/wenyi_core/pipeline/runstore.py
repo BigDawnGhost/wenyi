@@ -11,7 +11,6 @@ autofix publication indices.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -20,11 +19,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
+from threading import local
 from typing import Any
 
 from ..i18n.languages import require_language
 from ..ingest.models import Chapter, Document
+from ..ingest.source_hash import source_sha256
 from ..storage.artifacts import FileArtifacts
+from ..storage.locks import exclusive_file_lock
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -43,15 +45,6 @@ def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
     return os.path.join(state_dir, slugify(title), "targets", target)
 
 
-def source_sha256(path: str) -> str:
-    """Stream source SHA-256 calculation without loading the whole book into memory."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 class RunStore(FileArtifacts):
     def __init__(self, run_dir: str, *, create: bool = True):
         """Bind a book state directory and optionally create chapter subdirectories."""
@@ -59,6 +52,7 @@ class RunStore(FileArtifacts):
         self.run_dir = run_dir
         self.chapters_dir = os.path.join(run_dir, "chapters")
         self._batch_glossary_event_cache: dict[int, set[str]] | None = None
+        self._state_local = local()
         if create:
             self.ensure_dirs()
 
@@ -70,30 +64,8 @@ class RunStore(FileArtifacts):
     def _file_lock(self, filename: str) -> Iterator[None]:
         """Serialize cross-process operations using the named lock file within state."""
         self.ensure_dirs()
-        lock_path = os.path.join(self.run_dir, filename)
-        with open(lock_path, "a+b") as lock_file:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                lock_file.seek(0, os.SEEK_END)
-                if lock_file.tell() == 0:
-                    lock_file.write(b"\0")
-                    lock_file.flush()
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    yield
-                finally:
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(os.path.join(self.run_dir, filename)):
+            yield
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -104,10 +76,18 @@ class RunStore(FileArtifacts):
     @contextmanager
     def state_lock(self) -> Iterator[None]:
         """Briefly freeze manifest and chapters for atomic persistence or a consistent
-        snapshot.
+        snapshot. Nested calls on the same store/thread reuse the outer lock; independent
+        threads and processes still acquire the OS-level lock.
         """
-        with self._file_lock(".state.lock"):
+        if getattr(self._state_local, "locked", False):
             yield
+            return
+        with self._file_lock(".state.lock"):
+            self._state_local.locked = True
+            try:
+                yield
+            finally:
+                self._state_local.locked = False
 
     @contextmanager
     def event_lock(self) -> Iterator[None]:

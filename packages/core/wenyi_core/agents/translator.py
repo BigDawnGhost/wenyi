@@ -8,8 +8,6 @@ entire paragraphs from being omitted.
 from __future__ import annotations
 
 from ..glossary.store import GlossaryTerm
-from ..i18n import languages
-from ..i18n.prompts import render
 from ..llm.json_parser import JsonParseError
 from ..llm.retrying import TruncatedResponseError
 from . import prompts
@@ -106,15 +104,12 @@ class Translator(Agent):
         Returns the translations and the three-turn transcript for optional polish continuation.
         """
         n = len(sources)
-        system = render(
+        system = self.render(
             "translator_system",
             src=self.src,
             tgt=self.tgt,
-            lang_guidance=languages.translate_guidance(
-                self.src, self.config.honorific_strategy, self.tgt
-            ),
         )
-        user = render(
+        user = self.render(
             "translator_user",
             src=self.src,
             tgt=self.tgt,

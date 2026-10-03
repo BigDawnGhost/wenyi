@@ -170,15 +170,18 @@ test("drops validate files and reject multiple files without replacing the selec
   await expect(create).toBeEnabled();
 });
 
-test("uploading and created projects reject replacement drops", async ({
+test("uploading rejects replacement drops and creation enters the overview", async ({
   page,
 }) => {
   await fakeApi(page);
+  let uploads = 0;
   let finish: () => void = () => {};
   const hold = new Promise<void>((resolve) => {
     finish = resolve;
   });
   await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    uploads += 1;
     await hold;
     await route.fulfill({ json: { ...project, status: "parsing" } });
   });
@@ -206,14 +209,43 @@ test("uploading and created projects reject replacement drops", async ({
       zone.getByText("original.docx", { exact: true }),
     ).toBeVisible();
     finish();
-    await expect(page).toHaveURL(`/projects/new?project=${pid}`);
-    await zone.dispatchEvent("drop", { dataTransfer: replacement });
-    await expect(
-      zone.getByText("original.docx", { exact: true }),
-    ).toBeVisible();
-    await expect(zone).toHaveAttribute("aria-disabled", "true");
+    await expect(page).toHaveURL(`/projects/${pid}`);
+    await expect(zone).toHaveCount(0);
+    expect(uploads).toBe(1);
   } finally {
     finish();
+    await replacement.dispose();
+  }
+});
+
+test("a legacy creation link keeps the saved source locked against drops", async ({
+  page,
+}) => {
+  await fakeApi(page, {
+    [`/projects/${pid}`]: {
+      ...project,
+      fmt: "docx",
+      status: "parsing",
+      initialized: false,
+      source_meta: { original_filename: "original.docx" },
+    },
+  });
+  let uploads = 0;
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() === "POST") uploads += 1;
+    await route.fallback();
+  });
+  await page.goto(`/projects/new?project=${pid}`);
+  const zone = page.getByRole("group", { name: "Source file selection" });
+  await expect(zone).toHaveAttribute("aria-disabled", "true");
+  await expect(zone.getByRole("button", { name: "Browse files" })).toBeDisabled();
+  await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
+  const replacement = await fileTransfer(page, [{ name: "replacement.docx" }]);
+  try {
+    await zone.dispatchEvent("drop", { dataTransfer: replacement });
+    await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
+    expect(uploads).toBe(0);
+  } finally {
     await replacement.dispose();
   }
 });

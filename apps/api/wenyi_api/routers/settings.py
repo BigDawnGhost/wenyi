@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from wenyi_core.config import Config
 
 from ..config import settings
-from ..config_documents import config_document
+from ..config_documents import global_document
 from ..db import get_pool
 from ..global_settings import GlobalSettings, load_settings, save_settings, validate_settings
 from ..model_registry import project_registry_updates
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 def response(value: GlobalSettings) -> dict:
-    document = config_document(value.config)
+    document = global_document(value.config)
     return {
         "yaml": yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
         "effective": document,
