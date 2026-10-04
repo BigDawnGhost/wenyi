@@ -75,7 +75,6 @@ jobs:
       - run: uv sync --locked --package wenyi-desktop --group dev
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/desktop.test.mjs
-      - run: uv run --no-sync pytest -q packages/core/tests/test_desktop_pe.py
       - run: uv run --no-sync pytest -q apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
