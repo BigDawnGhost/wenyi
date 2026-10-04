@@ -1107,6 +1107,10 @@ export interface components {
             model_renames?: {
                 [key: string]: string;
             };
+            /** Provider Renames */
+            provider_renames?: {
+                [key: string]: string;
+            };
         };
         /** GlobalConfigOut */
         GlobalConfigOut: {

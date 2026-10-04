@@ -9,12 +9,16 @@ from typing import Any, cast
 import pytest
 from fastapi.testclient import TestClient
 from psycopg import Connection
-from wenyi_api import main, project_service, source_upload
-from wenyi_api.config_documents import config_document, project_document
-from wenyi_api.global_settings import GlobalSettings, load_settings, validate_settings
-from wenyi_api.project_service import effective_config
-from wenyi_api.routers import configuration, projects, settings
-from wenyi_api.source_upload import UploadedSource
+from wenyi_api import main
+from wenyi_api.adapters import create_context
+from wenyi_api.global_settings import PostgresSettings
+from wenyi_backend import project_service
+from wenyi_backend.config_documents import config_document, project_document
+from wenyi_backend.context import use_context
+from wenyi_backend.global_settings import GlobalSettings, validate_settings
+from wenyi_backend.project_service import effective_config
+from wenyi_backend.routers import configuration, projects, settings
+from wenyi_backend.source_upload import UploadedSource
 from wenyi_core.config import Config
 
 
@@ -51,9 +55,7 @@ def creation_api(monkeypatch, tmp_path):
         saved[pid]["config"] = config
 
     monkeypatch.setattr(main, "settings", replace(main.settings, api_token=None))
-    monkeypatch.setattr(
-        source_upload, "settings", replace(source_upload.settings, data_dir=str(tmp_path))
-    )
+    context = create_context(replace(main.settings, data_dir=str(tmp_path)))
     monkeypatch.setattr(projects, "save_source", save_source)
     monkeypatch.setattr(projects, "registry_guard", lambda: nullcontext(object()))
     monkeypatch.setattr(projects, "load_settings", lambda **_: GlobalSettings(defaults))
@@ -71,8 +73,9 @@ def creation_api(monkeypatch, tmp_path):
     monkeypatch.setattr(configuration, "project_write", projects.project_write)
     monkeypatch.setattr(configuration, "registry_guard", lambda: nullcontext(connection))
     monkeypatch.setattr(configuration, "load_settings", projects.load_settings)
-    client = TestClient(main.create_app())
-    yield client, defaults, saved, queued, tmp_path
+    client = TestClient(main.create_app(context=context))
+    with use_context(context):
+        yield client, defaults, saved, queued, tmp_path
     client.close()
 
 
@@ -231,7 +234,7 @@ def test_legacy_global_precision_is_not_inherited_or_removed_from_saved_projects
     )
     row = (config_document(precision), "标准翻译", 7)
     connection = SimpleNamespace(execute=lambda _: SimpleNamespace(fetchone=lambda: row))
-    defaults = load_settings(connection=cast(Connection[Any], connection))
+    defaults = PostgresSettings(None, "").load(connection=cast(Connection[Any], connection))
     assert defaults.revision == 7
     assert defaults.config.pipeline.translation_mode == "standard"
     assert "precision_concurrency" not in defaults.config.pipeline.model_dump()
@@ -255,7 +258,7 @@ def test_retired_global_template_is_read_as_standard_without_rewriting():
     row = (document, "快速出稿", 8)
     before = deepcopy(row)
     connection = SimpleNamespace(execute=lambda _: SimpleNamespace(fetchone=lambda: row))
-    defaults = load_settings(connection=cast(Connection[Any], connection))
+    defaults = PostgresSettings(None, "").load(connection=cast(Connection[Any], connection))
     assert defaults.default_template == "标准翻译"
     assert defaults.revision == 8
     assert defaults.config.pipeline.polish is True

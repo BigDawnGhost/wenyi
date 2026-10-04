@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from abc import abstractmethod
 from typing import Any, Generic, TypeVar
 
@@ -98,7 +97,7 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
                 from openai import OpenAI
 
                 self.validate_credentials()
-                api_key = os.environ.get(self.api_key_env) if self.api_key_env else None
+                api_key = self.api_key()
                 self._client = OpenAI(
                     api_key=api_key or "no-key",
                     base_url=self.base_url,

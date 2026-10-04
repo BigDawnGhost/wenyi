@@ -40,6 +40,7 @@ class RequestContext:
     record_usage: Callable[[UsageSample | None], None]
     attempt_scope: Callable[..., Any]
     sleep: Callable[[float], None] | None = None
+    redact_diagnostic: Callable[[str], str] | None = None
 
 
 class ProviderAdapter(ABC):
@@ -52,11 +53,12 @@ class ProviderAdapter(ABC):
     protocol_version = 1
     connection_options: type[BaseModel] = ConnectionOptions
 
-    def __init__(self, cfg: ProviderConfig):
+    def __init__(self, cfg: ProviderConfig, *, credentials: tuple[str | None] | None = None):
         self.validate_connection(cfg)
         self.cfg = cfg
         self.base_url = cfg.base_url or self.default_base_url
         self.api_key_env = cfg.api_key_env or self.default_api_key_env
+        self._credentials = credentials
         self._client: Any = None
         self._client_lock = threading.Lock()
 
@@ -67,6 +69,10 @@ class ProviderAdapter(ABC):
             raise ValueError(f"Provider {cfg.kind} requires base_url")
 
     def validate_credentials(self) -> None:
+        if self._credentials is not None:
+            if not self.api_key() and (self.requires_api_key or self.api_key_env):
+                raise RuntimeError(f"Provider {self.cfg.kind} has no configured credential")
+            return
         if self.api_key_env:
             if not os.environ.get(self.api_key_env, "").strip():
                 raise RuntimeError(
@@ -74,6 +80,12 @@ class ProviderAdapter(ABC):
                 )
         elif self.requires_api_key:
             raise RuntimeError(f"Provider {self.cfg.kind} requires api_key_env")
+
+    def api_key(self) -> str | None:
+        """Read an injected snapshot, or retain the default environment behavior."""
+        if self._credentials is not None:
+            return self._credentials[0]
+        return os.environ.get(self.api_key_env) if self.api_key_env else None
 
     def generate(
         self, messages: Messages, model: ResolvedModel, *, json_mode: bool, context: RequestContext
@@ -84,6 +96,7 @@ class ProviderAdapter(ABC):
             stage=context.operation,
             max_attempts=self.cfg.max_retries + 1,
             emit=context.emit,
+            redact=context.redact_diagnostic,
         )
 
         @provider_retry(self.cfg.max_retries, reporter, sleep=context.sleep)

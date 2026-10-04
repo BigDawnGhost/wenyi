@@ -25,6 +25,8 @@ for (const chinese of [false, true]) {
       const sidebar = page.getByRole("complementary");
       const main = page.getByRole("main");
       const navigation = page.getByRole("navigation", { name: projectLabel });
+      // Do not measure the full-width lazy-route placeholder as the layout.
+      await expect(sidebar).toHaveCSS("width", "240px");
       const expandedWidth = await main.evaluate(
         (element) => element.clientWidth,
       );

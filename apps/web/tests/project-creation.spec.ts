@@ -131,7 +131,8 @@ test("PDF parser is selected before creation and subtitles omit book preparation
     mimeType: "application/pdf",
     buffer: Buffer.from("fixture"),
   });
-  await page.getByLabel("PDF parser", { exact: true }).selectOption("babeldoc");
+  await page.getByLabel("PDF parser", { exact: true }).click();
+  await page.getByRole("option", { name: "BabelDOC", exact: true }).click();
   await page
     .getByRole("checkbox", { name: "Prepare before translating" })
     .check();

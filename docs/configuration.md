@@ -2,11 +2,11 @@
 
 [简体中文](zh/configuration.md)
 
-Wenyi reads `config.yaml` from the current working directory. If the file is missing, running the program creates a documented default configuration.
+The Wenyi CLI reads `config.yaml` from the current working directory. If the file is missing, running the CLI creates a documented default configuration.
 
 Top-level sections are `language`, `llm`, `segment`, `pipeline`, `output`, `honorific`, and `paths`. Unknown sections are rejected; removed settings are not translated to a newer schema.
 
-## Web settings and model registration
+## Web/Desktop settings and model registration
 
 The CLI continues to read `config.yaml`. Web **Settings** manages a shared registry
 of provider connections and model profiles, default tiers and operation routes, and
@@ -15,7 +15,14 @@ new-project workflow defaults. The Web server reads its initial defaults from
 PostgreSQL and survive restarts. Saving Web settings does not rewrite the CLI file.
 API keys remain server environment variables; enter only their variable names.
 
-Standard or precision translation is selected only when creating a Web book project.
+Desktop uses the same settings workflow in an independent SQLite workspace, initialized
+from built-in defaults rather than the CLI's current-directory file. It does not import
+Web settings or projects. Desktop also accepts manually entered API keys: it automatically
+uses the OS credential store when available, otherwise keeps them only for the current
+session and clearly asks for re-entry after restart. Environment variables remain supported.
+See [Desktop credentials](desktop.md#api-keys); keys never belong in configuration YAML.
+
+Standard or precision translation is selected only when creating a Web/Desktop book project.
 Global Settings has no translation-mode or workflow-template selector; Quick draft is
 retired for new requests. Projects copy shared defaults at creation, so later default
 changes do not reset an existing project's workflow or model selections. The saved
@@ -38,9 +45,9 @@ letters, digits, underscores or hyphens. A referenced connection or model cannot
 deleted until its selections are changed. Unused registrations can be deleted.
 
 **Restore defaults** first loads a draft, and **Save configuration** applies it. Global
-Settings reloads the server configuration file and selects Standard translation as the
-creation template; project settings use current global defaults and the project's
-workflow template, preserving its translation languages. Restoring defaults cannot
+Settings reloads the server configuration file (built-in defaults in Desktop).
+Project settings use current global defaults while preserving the project's saved
+translation mode and languages. Restoring defaults cannot
 remove models still selected by other projects; change those selections first.
 Operation selectors show the effective tier directly, without a “Follow default tier”
 prefix. Selecting the operation's default tier clears its model override and preserves
@@ -143,7 +150,7 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 - `routes.<operation>` selects exactly one of `{model: profile}` or `{tier: strong}`. Unknown operations, fields and references fail before requests. There is no missing-tier fallback.
 - Preset overrides replace whole connection/profile entries by ID. Repeat required fields when replacing an entry; model options are not merged across profiles. Tier and route mappings replace individual keys.
 - An explicit `max_output_tokens` overrides static and dynamic workflow hints. Without it, synopsis and annotation hints retain their prior behavior. OpenAI-compatible thinking profiles expand hints below 4,096 to 4,096; explicit smaller caps are rejected while thinking is enabled. Actual model limits still depend on the service.
-- API keys come only from environment variables. Do not place credentials in endpoints or request overrides. Raw overrides cannot replace model identity, messages, streaming, JSON mode, credentials or output caps.
+- CLI/Web API keys come only from environment variables; Desktop additionally supports its OS credential store or session-only manual input. Do not place credentials in YAML, endpoints or request overrides. Raw overrides cannot replace model identity, messages, streaming, JSON mode, credentials or output caps.
 
 ### Provider options
 

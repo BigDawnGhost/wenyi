@@ -1,0 +1,26 @@
+[project]
+name = "wenyi-backend"
+dynamic = ["version"]
+description = "Shared HTTP contracts, routes, and services for Wenyi backends."
+requires-python = ">=3.10"
+dependencies = [
+    "wenyi-core",
+    "fastapi>=0.115",
+    "python-multipart>=0.0.9",
+]
+
+[tool.uv.sources]
+wenyi-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+root = "../.."
+
+[tool.hatch.build.targets.wheel]
+packages = ["wenyi_backend"]

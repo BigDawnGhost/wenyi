@@ -7,6 +7,7 @@
 .ruff_cache
 **/dist
 build
+/release-assets
 .env
 .env.*
 deploy/.env
@@ -14,4 +15,9 @@ deploy/.env
 /state
 /output
 .scratch
+.delta
+apps/desktop/target
+apps/desktop/sidecar
+**/test-results
+**/playwright-report
 local_references

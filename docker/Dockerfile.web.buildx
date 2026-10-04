@@ -11,12 +11,14 @@ RUN corepack enable && pnpm config set registry "$NPM_REGISTRY"
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared-schema/package.json packages/shared-schema/package.json
+COPY packages/ui/package.json packages/ui/package.json
 COPY apps/web/package.json apps/web/package.json
 
 RUN --mount=type=cache,id=wenyi-pnpm-store,target=/pnpm/store,sharing=locked \
-    pnpm install --frozen-lockfile --store-dir=/pnpm/store
+    pnpm --filter @wenyi/web... install --frozen-lockfile --store-dir=/pnpm/store
 
 COPY packages/shared-schema packages/shared-schema
+COPY packages/ui packages/ui
 COPY apps/web apps/web
 RUN pnpm -C apps/web run build
 
