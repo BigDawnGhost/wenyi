@@ -10,6 +10,8 @@ import pytest
 import test_storage_pg_integration as storage_tests
 from type_helpers import must
 from wenyi_api import dal
+from wenyi_api.adapters import postgres_repository
+from wenyi_api.telemetry import RedisTelemetry
 from wenyi_backend.context import current_context, use_context
 from wenyi_backend.workers import tasks
 from wenyi_core.config import Config
@@ -33,8 +35,10 @@ def worker_state(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(tasks, "_build_config_for", lambda *_: config)
     monkeypatch.setattr(factory, "build_client", lambda _: FakeClient())
     context = replace(current_context(), build_client=lambda cfg: factory.build_client(cfg))
-    context.repository._pool = pg_pool
-    context.telemetry.url = "redis://127.0.0.1:56379/0"
+    postgres_repository(context)._pool = pg_pool
+    telemetry = context.telemetry
+    assert isinstance(telemetry, RedisTelemetry)
+    telemetry.url = "redis://127.0.0.1:56379/0"
     with use_context(context):
         yield pg_storage
 
@@ -358,7 +362,7 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
     monkeypatch.setattr(tasks, "_pipeline_storage", lambda *_: pg_storage)
     monkeypatch.setattr(tasks.paths, "project_dir", lambda _: pg_storage.run_dir)
     monkeypatch.setattr(tasks.paths, "exports_dir", lambda _: str(tmp_path / pid / "exports"))
-    current_context().repository._pool = pg_pool
+    postgres_repository(current_context())._pool = pg_pool
     original_config = Config.from_dict(
         {
             "language": {"source": "en", "target": "zh"},
