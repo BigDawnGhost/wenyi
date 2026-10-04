@@ -53,7 +53,9 @@ test("large chapter reading, polling and editing measurements", async ({ page },
   });
   const start = Date.now();
   await page.goto(`/projects/${pid}/proofreading/0`);
-  await expect(page.locator("#paragraph-0")).toBeVisible();
+  // Measure cold startup within the existing whole-test budget, not a 5s SLA.
+  // The test's 30s deadline still bounds this wait and every subsequent action.
+  await expect(page.locator("#paragraph-0")).toBeVisible({ timeout: info.timeout });
   await expect(page.getByTestId("translation-text")).toHaveCount(count);
   const firstRenderMs = Date.now() - start;
   const initialRenders = await page.evaluate(() => (window as any).__perf.renders);

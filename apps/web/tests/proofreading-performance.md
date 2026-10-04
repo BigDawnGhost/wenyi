@@ -3,13 +3,30 @@
 Run from the repository root with the normal frontend dependencies installed:
 
 ```sh
-PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium \
-  pnpm -C apps/web test:e2e proofreading-performance.spec.ts --workers=1 --repeat-each=3
+pnpm -C apps/web test:e2e --project=performance --no-deps --repeat-each=3
 
 # Optional stress size (supported range: 1000–5000)
-PERF_PARAGRAPHS=5000 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium \
-  pnpm -C apps/web test:e2e proofreading-performance.spec.ts --workers=1
+PERF_PARAGRAPHS=5000 pnpm -C apps/web test:e2e --project=performance --no-deps
 ```
+
+The normal `test:e2e` run executes the 125 functional Web tests first, then both
+large-chapter tests in the one-worker `performance` project. `--no-deps` runs only
+the measurements locally. This prevents concurrent browser workloads from
+distorting measurements on small CI runners. Initial visibility uses the existing
+30-second whole-test budget instead of treating the default five-second assertion
+timeout as a first-render SLA. The complete cold startup remains in `firstRenderMs`;
+render-count assertions and the whole-test deadline are unchanged.
+Use Playwright's installed Chromium; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` only when
+an explicit system-browser comparison is needed. Tracing adds substantial overhead
+to the large DOM fixture and should be disabled for comparable measurements.
+
+常规 `test:e2e` 先执行 125 个 Web 功能测试，再由单 worker 的 `performance`
+项目执行两个大章节测试。局部测量可使用 `--no-deps`，避免同时运行的浏览器负载
+影响小型 CI 机器上的结果。首屏就绪等待使用已有的整条测试 30 秒预算，不把默认
+5 秒断言超时当作首屏性能门槛；完整冷启动仍计入 `firstRenderMs`，渲染次数断言
+与整条测试截止时间保持不变。默认使用 Playwright 安装的
+Chromium，仅在明确比较系统浏览器时设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`。
+Trace 对大 DOM 用例有显著开销，可比较的性能测量应关闭 Trace。
 
 The fixture generates long English/Chinese paragraphs and mocks HTTP and WebSocket
 traffic. It does not read books, start a backend, or call model services.

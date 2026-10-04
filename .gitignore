@@ -24,6 +24,8 @@ explore/
 *.azw3
 *.pdf
 *.html
+!/apps/web/tests/select-harness.html
+!/apps/desktop/frontend/tests/select-harness.html
 *.srt
 *.docx
 

@@ -179,9 +179,11 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await socket!.close();
   await page.clock.runFor(100);
   await expect(page.getByText("Progress connection: Polling")).toBeVisible();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
   const beforeFallback = total();
   await page.clock.runFor(10_000);
-  expect(total() - beforeFallback).toBeGreaterThanOrEqual(8);
+  // Drain browser-to-runner request delivery without advancing the paused clock.
+  await expect.poll(() => total() - beforeFallback).toBeGreaterThanOrEqual(8);
   console.log(`Desktop fixture: quiet healthy 10s=0 requests; disconnected 10s=${total() - beforeFallback}`);
 });
 
