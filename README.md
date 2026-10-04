@@ -99,11 +99,9 @@ Track translation progress, usage, and elapsed time, then proofread paragraphs a
 
 ## Quick start
 
-### 1. Get Desktop
+### 1. Download Desktop
 
-Desktop installers will be published on [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases). **Existing releases do not yet include Desktop installers.** Until the first Desktop release, follow the [source-run instructions](docs/desktop.md#run-from-source).
-
-When available, choose a `wenyi-desktop-<version>-<platform>-<arch>` asset matching your system:
+Open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) and choose a `wenyi-desktop-<version>-<platform>-<arch>` asset matching your system:
 
 | Platform | Package |
 |---|---|
@@ -113,7 +111,7 @@ When available, choose a `wenyi-desktop-<version>-<platform>-<arch>` asset match
 
 Desktop assets are distributed directly, without an outer ZIP. For an AppImage, allow execution in the file's permissions before opening it. Packaged releases include the translation engine: you do not need to install Python or deploy a server.
 
-Check the release notes for platform requirements and signing status.
+Check the release notes for platform requirements and signing status. To build from source instead, follow the [Desktop development guide](docs/desktop.md#run-from-source).
 
 ### 2. Connect a model
 

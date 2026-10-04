@@ -99,11 +99,9 @@
 
 ## 快速开始
 
-### 1. 获取 Desktop
+### 1. 下载 Desktop
 
-Desktop 安装包将通过 [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) 发布。**现有发行版本尚未包含 Desktop 安装包。** 首个 Desktop 版本发布前，请按[源码运行说明](desktop.md#从源码运行)启动应用。
-
-安装包发布后，选择适合系统的 `wenyi-desktop-<版本>-<平台>-<架构>` 文件：
+前往 [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases)，选择适合系统的 `wenyi-desktop-<版本>-<平台>-<架构>` 文件：
 
 | 平台 | 安装包 |
 |---|---|
@@ -113,7 +111,7 @@ Desktop 安装包将通过 [GitHub Releases](https://github.com/BigDawnGhost/wen
 
 Desktop 安装包直接提供，不再套一层 ZIP。使用 AppImage 时，先在文件属性中允许作为程序执行，再打开。发行包已包含翻译引擎，无需安装 Python 或部署服务器。
 
-平台要求和签名状态请以发行说明为准。
+平台要求和签名状态请以发行说明为准。如需从源码运行，参见 [Desktop 开发说明](desktop.md#从源码运行)。
 
 ### 2. 连接模型
 
