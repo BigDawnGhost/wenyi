@@ -7,8 +7,10 @@ import test_storage_pg_integration as storage_tests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from type_helpers import must
-from wenyi_api import dal, project_service
-from wenyi_api.routers import chapters, glossary, report, review, style, subtitles
+from wenyi_api import dal
+from wenyi_backend import project_service
+from wenyi_backend.context import ContextMiddleware, current_context
+from wenyi_backend.routers import chapters, glossary, report, review, style, subtitles
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.srt.store import SrtRunStore
@@ -24,7 +26,7 @@ def domain_client(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(project_service, "storage_for", lambda pid: pg_storage)
     for module in (chapters, glossary, report, review, style, subtitles):
         monkeypatch.setattr(module, "storage_for", lambda pid: pg_storage)
-    monkeypatch.setattr(glossary, "get_pool", lambda: pg_pool)
+    current_context().repository._pool = pg_pool
     queued = []
 
     async def start(pid, kind, *, params=None):
@@ -34,6 +36,7 @@ def domain_client(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(chapters, "start_job", start)
     monkeypatch.setattr(review, "start_job", start)
     app = FastAPI()
+    app.add_middleware(ContextMiddleware, context=current_context())
     for module in (chapters, glossary, report, review, style, subtitles):
         app.include_router(module.router)
     with TestClient(app) as client:

@@ -226,10 +226,27 @@ class GlossaryStore:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(_SCHEMA)
         self.conn.commit()
+        self._owns_connection = True
+
+    @classmethod
+    def from_connection(cls, conn: sqlite3.Connection) -> GlossaryStore:
+        """Borrow an initialized connection; the caller owns transactions and its lifetime."""
+        store = cls.__new__(cls)
+        store.conn = conn
+        store._owns_connection = False
+        return store
+
+    @staticmethod
+    def initialize_schema(conn: sqlite3.Connection) -> None:
+        """Create glossary tables without committing the caller's transaction."""
+        for statement in _SCHEMA.split(";"):
+            if statement.strip():
+                conn.execute(statement)
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
-        self.conn.close()
+        if self._owns_connection:
+            self.conn.close()
 
     @classmethod
     def load_terms_readonly(cls, db_path: str) -> list[GlossaryTerm]:
@@ -297,7 +314,8 @@ class GlossaryStore:
         """
         try:
             # Acquire the lock before reading existing so two connections cannot decide from the same old view.
-            self.conn.execute("BEGIN IMMEDIATE")
+            if self._owns_connection:
+                self.conn.execute("BEGIN IMMEDIATE")
             existing = self.get_term(term.source)
             now = time.time()
             if existing is None:
@@ -345,10 +363,12 @@ class GlossaryStore:
                     (now, term.source),
                 )
                 result = "conflict"
-            self.conn.commit()
+            if self._owns_connection:
+                self.conn.commit()
             return result
         except Exception:
-            self.conn.rollback()
+            if self._owns_connection:
+                self.conn.rollback()
             raise
 
     def _log_conflict(self, source, existing_target, proposed_target, chapter):
@@ -368,7 +388,8 @@ class GlossaryStore:
             "UPDATE glossary SET target=?, status='ok', updated_at=? WHERE source=?",
             (target, time.time(), source),
         )
-        self.conn.commit()
+        if self._owns_connection:
+            self.conn.commit()
         return cur.rowcount > 0
 
     def all_terms(self) -> list[GlossaryTerm]:
@@ -417,7 +438,8 @@ class GlossaryStore:
     def mark_conflicts_resolved(self, source: str) -> None:
         """Mark every unresolved conflict for the given source term as handled."""
         self.conn.execute("UPDATE term_conflicts SET resolved=1 WHERE source=?", (source,))
-        self.conn.commit()
+        if self._owns_connection:
+            self.conn.commit()
 
     def open_conflicts(self) -> list[dict[str, Any]]:
         """Return conflicts awaiting human resolution in occurrence order."""

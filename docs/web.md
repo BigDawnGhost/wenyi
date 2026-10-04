@@ -199,3 +199,4 @@ In **Translation overview**, expand **Workflow details** to see **Current workfl
 ## Related notes
 
 - [Interface languages](web-i18n.md)
+- [Independent local Desktop application](desktop.md)

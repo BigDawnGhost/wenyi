@@ -10,13 +10,14 @@
 
 ## 项目定位
 
-Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导出的长篇文本翻译工具。`wenyi-core` 提供共享内核；`wenyi-cli` 在本地运行，使用文件和 SQLite 保存状态；`wenyi-api` 为 Web 提供 FastAPI 接口与 Arq 任务，使用 PostgreSQL 保存状态、Redis 调度任务和传递进度。
+Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导出的长篇文本翻译工具。`wenyi-core` 提供共享内核；`wenyi-cli` 在本地运行，使用文件和 SQLite 保存状态；`wenyi-api` 为 Web 提供 PostgreSQL、Redis 与 Arq 适配；`wenyi-desktop` 在 Tauri 内使用独立 SQLite 工作区和本地任务运行器。Web/Desktop 共享 `wenyi-backend` 的 HTTP 契约和应用服务，但不互相依赖或共享项目状态。
 
 - Python：3.10+；CI 覆盖 3.10 和 3.12。
 - 包管理与命令执行：优先使用 `uv`。
 - CLI：`uv run wenyi ...`（`packages/cli`）；`wenyi_cli/cli.py` 装配应用，`wenyi_cli/commands/` 和 `model_commands.py` 注册命令。
 - Web：`apps/web`（React/Vite）；API 与 worker：`apps/api/wenyi_api`。前端使用 pnpm，Node/pnpm 版本以 CI 和 [Web 文档](docs/web.md) 为准。
-- CLI/Core/API 的发布版本由仓库 Git 标签通过 `hatch-vcs` 生成，运行时读取已安装包的元数据；根虚拟工作区和私有前端包不维护独立发布版本。包描述统一使用英语。
+- Desktop：`apps/desktop`（Tauri）、`apps/desktop/frontend`、`apps/desktop/backend/wenyi_desktop`；共享 UI 在 `packages/ui`。开发启动与打包见 [Desktop 文档](docs/desktop.md)。
+- CLI/Core/backend/API/Desktop Python 包的发布版本由仓库 Git 标签通过 `hatch-vcs` 生成，运行时读取已安装包的元数据；根虚拟工作区和私有前端包不维护独立发布版本。包描述统一使用英语。
 - 默认配置：仓库根目录 `config.yaml`；内置模板位于 `packages/core/wenyi_core/config.py` 的 `_DEFAULT_CONFIG_YAML`。
 - 主仓许可证为 MIT；BabelDOC 是独立 AGPL 服务。
 
@@ -39,26 +40,29 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 | 多语言与提示词 | `i18n/`；语言规则和任务模板统一在 `i18n/data/` | `test_i18n.py`、`test_metadata_language.py` |
 | 字幕 | `srt/` 及 SRT reader/writer | `test_srt.py` |
 
-Web 相关入口使用仓库根目录相对路径：
+Web/Desktop 相关入口使用仓库根目录相对路径：
 
-- API、任务与数据库：`apps/api/wenyi_api/` 下的 `routers/`、`workers/`、`storage_pg.py`、`db/`；测试在 `apps/api/tests/`。
-- 前端页面与进度：`apps/web/src/` 下的 `features/`、`lib/api.ts`、`lib/ws.ts`；E2E 在 `apps/web/tests/`。API 类型在 `packages/shared-schema/`，接口变更需同步检查后端 schema、共享类型与前端调用。
+- 共享 HTTP、任务用例和平台契约：`packages/backend/wenyi_backend/`；测试在 `packages/backend/tests/`。
+- Web 装配、PostgreSQL 与队列：`apps/api/wenyi_api/`；测试在 `apps/api/tests/`。Desktop SQLite、凭据和本地运行器：`apps/desktop/backend/wenyi_desktop/`；测试在 `apps/desktop/backend/tests/`。
+- 共享页面与组件：`packages/ui/`；平台入口与适配分别在 `apps/web/src/` 和 `apps/desktop/frontend/src/`，E2E 在各自 `tests/`。API 类型在 `packages/shared-schema/`，接口变更需同步检查后端 schema、共享类型与前端调用。
 
 配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，Web 部署查阅 [web](docs/web.md)，模块职责查阅 [architecture](docs/architecture.md)；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
 
-`packages/core/`、`packages/cli/` 和 `apps/` 包含产品源码；其中忽略的运行产物仍属于本地数据。`state/`、`output/`、`review-*`、Web `DATA_DIR`、缓存、构建目录和样例书籍均需保留。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
+`packages/` 和 `apps/` 包含产品源码；其中忽略的运行产物仍属于本地数据。`state/`、`output/`、`review-*`、Web `DATA_DIR`、Desktop 工作区、缓存、构建目录和样例书籍均需保留。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 
 ## 架构边界
 
 依赖方向必须保持：
 
 ```text
-CLI / Web worker → Orchestrator → Runtime / Preparation / Translation / Annotation /
+CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / Annotation /
                                   Review / ReviewAutofix / Finalization
                                → agents / ingest / glossary / assemble / Storage 接口
 ```
 
-- `wenyi_core` 不依赖 CLI、Web API 或其框架。领域服务通过 `Storage` / `ArtifactStorage` 读写运行状态；本地适配器组合 RunStore 与 SQLite，Web 注入 `PostgresStorage`，不得在领域服务中绕过接口直接写文件状态或打开 SQLite。
+- `wenyi_core` 不依赖 CLI、HTTP backend 或其框架。领域服务通过 `Storage` / `ArtifactStorage` 读写运行状态；CLI 使用文件适配，Desktop 注入 `SqliteStorage`，Web 注入 `PostgresStorage`，不得在领域服务中绕过接口直接写文件状态或打开 SQLite。
+- `wenyi_backend` 不导入 Web/Desktop 适配或 PG/Redis/Arq/keyring；平台通过显式上下文和端口注入依赖，不用进程全局开关决定当前平台。每个 app、worker 和线程回调保持正确的上下文身份。
+- 共享 UI 不反向导入 app，通过平台服务接收原生能力。Web 产物不包含 Desktop IPC、凭据库或本地运行器；Desktop 运行包不依赖 Web 数据库/队列。Docker 只安装 Web 与共享运行依赖，不安装整个 workspace。
 - `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble`、`postprocess` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
 - 下层服务不得反向导入 `orchestrator.py`。
 - `cli.py` 保持应用装配职责；命令通过显式注册和调用上下文接收依赖，不反向导入 CLI 全局对象。
@@ -74,6 +78,7 @@ CLI / Web worker → Orchestrator → Runtime / Preparation / Translation / Anno
 
 - CLI 书籍状态按 `state/<slug>/targets/<target-language>/` 隔离；派生状态先落盘，`manifest.json` 最后原子提交，作为初始化成功标志。文件 JSON 通过同目录临时文件和 `os.replace` 原子写入。
 - Web 可变状态由 PostgreSQL 按项目持久化，通过事务与 advisory lock 保持一致性；`DATA_DIR` 仅保存上传原文、解析缓存和导出产物，不另存 JSON/SQLite 状态副本。
+- Desktop 使用独立目录库和项目 SQLite 状态，不读取或迁移 CLI/Web 项目。凭据库、模型请求、压缩和文件清理等慢操作不持有目录库写事务。原生导出先选目标后入队，同目录临时文件完整写入后原子发布；取消不创建任务。
 - Artifact key 使用运行目录相对路径和 `/` 分隔符，在所有平台及后端保持一致；按前缀检索时限制扫描范围，避免遍历无关源文缓存。
 - `source_sha256` 绑定输入内容，不按相同文件名复用不同内容的状态。
 - 保持锁语义：长流程使用书级运行锁；一致状态读写使用短状态锁；事件追加与产物导出分别使用专用锁。
@@ -87,7 +92,7 @@ CLI / Web worker → Orchestrator → Runtime / Preparation / Translation / Anno
 
 ## 配置、密钥与 provider
 
-- API Key 只从环境变量读取。禁止在源码、测试、文档示例或提交中写入真实密钥。
+- CLI/Web 的 API Key 只从环境变量读取。Desktop 另支持手动输入，自动优先系统凭据库，不可用时仅当前会话内存并明确提示；禁止明文写入 SQLite、YAML/JSON、浏览器存储或日志。禁止在源码、测试、文档示例或提交中写入真实密钥。
 - 配置变更同步模型、默认模板、根目录 `config.yaml`、中英文 configuration 文档及配置/CLI 测试；LLM 配置模型位于 `llm/configuration.py`。
 - 新模型操作和 provider 使用现有注册入口，保持操作 ID、路由预览、校验与实际执行一致。
 - Provider 专属字段留在对应 provider，通用 LLM 抽象不感知私有协议。
@@ -117,14 +122,14 @@ CLI / Web worker → Orchestrator → Runtime / Preparation / Translation / Anno
 默认 `uv sync --locked` 安装本地 CLI 与 Core。完整 Python 工作区开发使用 `uv sync --locked --all-packages --group dev`；之后用 `--no-sync` 保留已安装的 API 等工作区依赖。以下命令从仓库根目录执行：
 
 ```bash
-uv run --no-sync ruff check packages/core packages/cli apps/api
-uv run --no-sync ruff format --check packages/core packages/cli apps/api
+uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
+uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
 uv run --no-sync pytest -q packages/core/tests/test_config.py
 uv run --no-sync pytest -q
 git diff --check
 ```
 
-前端安装使用 `pnpm install --frozen-lockfile`，验证使用 `pnpm -C apps/web typecheck`、`pnpm -C apps/web build` 和 `pnpm -C apps/web test:e2e`；E2E 需要 Playwright Chromium，安装与服务配置见 [Web 文档](docs/web.md) 和 CI。
+前端安装使用 `pnpm install --frozen-lockfile`。分别对 `apps/web` 和 `apps/desktop/frontend` 运行 `pnpm -C <目录> typecheck`、`build` 和 `test:e2e`；共享 UI 变更验证两端，并在两端构建后运行 `pnpm test:frontend-boundaries`。E2E 需要 Playwright Chromium，安装与服务配置见 [Web 文档](docs/web.md)、[Desktop 文档](docs/desktop.md) 和 CI。
 
 若沙箱不允许写用户级 uv 缓存，为单次命令设置 `UV_CACHE_DIR=/tmp/wenyi-uv-cache`，不要修改 `HOME`。
 

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from arq.jobs import Job, JobStatus
+from wenyi_backend.project_service import storage_for
 
 from .. import dal
 from ..db import get_pool
-from ..project_service import storage_for
 
 _REMOTE_ACTIVE = {JobStatus.queued, JobStatus.deferred, JobStatus.in_progress}
 
@@ -20,7 +20,6 @@ async def recover_jobs(ctx: dict) -> None:
             AND updated_at < now() - interval '2 minutes' ORDER BY id"""
         ).fetchall()
     for job_id, pid, arq_id, kind, params in rows:
-        storage = storage_for(pid)
         is_export = kind == "export"
         export_id = (params or {}).get("export_id") if is_export else None
         if is_export and (
@@ -35,6 +34,7 @@ async def recover_jobs(ctx: dict) -> None:
             # Validated above: export_id is a positive int.
             assert isinstance(export_id, int)
             export_id_i = export_id
+        storage = storage_for(pid)
         lock = (
             storage.export_lock(export_id_i, blocking=False)
             if export_id_i is not None
@@ -72,3 +72,5 @@ async def recover_jobs(ctx: dict) -> None:
                         storage.log_event("task_interrupted", run_id=arq_id, error=message)
         except BlockingIOError:
             continue
+        finally:
+            storage.close()

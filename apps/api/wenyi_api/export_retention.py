@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import shutil
 from pathlib import Path
 from typing import BinaryIO
 
 from psycopg import Connection
 from psycopg_pool import ConnectionPool
-
-EXPORT_LIMIT = 5
-log = logging.getLogger(__name__)
+from wenyi_backend.export_paths import EXPORT_LIMIT, export_path, log
 
 
 def export_history_lock(connection: Connection, pid: str, *, shared: bool = False) -> None:
@@ -22,22 +19,6 @@ def export_history_lock(connection: Connection, pid: str, *, shared: bool = Fals
         else "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))"
     )
     connection.execute(statement, (f"wenyi:export-history:{pid}",))
-
-
-def export_path(data_dir: str, pid: str, stored: str) -> Path | None:
-    """Reject paths and symlinks outside this project's generated export tree."""
-    root = Path(data_dir).resolve()
-    directory = root / pid / "exports"
-    candidate = root / stored
-    resolved = candidate.resolve()
-    if (
-        directory.resolve() != directory
-        or resolved != candidate.absolute()
-        or not resolved.is_relative_to(directory)
-        or resolved == directory
-    ):
-        return None
-    return resolved
 
 
 def publish_export(

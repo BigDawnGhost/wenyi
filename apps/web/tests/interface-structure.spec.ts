@@ -26,7 +26,8 @@ test("chapter rows localize pending status and support search and filtering", as
   await page.getByLabel("搜索章节").fill("Second");
   await expect(list.getByRole("listitem")).toHaveCount(1);
   await page.getByLabel("搜索章节").fill("");
-  await page.getByLabel("翻译状态筛选").selectOption("pending");
+  await page.getByLabel("翻译状态筛选").click();
+  await page.getByRole("option", { name: "待翻译", exact: true }).click();
   await expect(list).toContainText("First chapter");
   await expect(list).not.toContainText("Second chapter");
 });
@@ -185,8 +186,10 @@ test("folded export options preserve edits and reveal controls after a validatio
     .filter({ hasText: "Layout and advanced options" });
   await expect(page.getByLabel("PDF export engine")).not.toBeVisible();
   await advanced.click();
-  await page.getByLabel("Bilingual order").selectOption("source_first");
-  await page.getByLabel("PDF export engine").selectOption("fpdf2");
+  await page.getByLabel("Bilingual order").click();
+  await page.getByRole("option", { name: "Source first", exact: true }).click();
+  await page.getByLabel("PDF export engine").click();
+  await page.getByRole("option", { name: "fpdf2", exact: true }).click();
   await page.getByLabel("Normalize punctuation on export").uncheck();
   await page.getByLabel("Include an “About this translation” page").uncheck();
   await advanced.click();
@@ -196,7 +199,7 @@ test("folded export options preserve edits and reveal controls after a validatio
     .click();
   await expect(page.getByRole("alert")).toContainText("Invalid PDF engine");
   await expect(page.getByLabel("PDF export engine")).toBeVisible();
-  await expect(page.getByLabel("PDF export engine")).toHaveValue("fpdf2");
+  await expect(page.getByLabel("PDF export engine")).toHaveText("fpdf2");
   expect(submitted).toMatchObject({
     format: "pdf",
     bilingual: true,

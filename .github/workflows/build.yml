@@ -1,11 +1,20 @@
-name: Build executables
+name: CLI packages
+run-name: CLI · ${{ inputs.tag || github.event.release.tag_name || format('dev {0}', github.ref_name) }}
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to build (empty means development checkout)
+        type: string
+        default: ""
   pull_request:
     branches: [dev]
     paths:
       - .github/workflows/build.yml
+      - scripts/release_version.py
+      - scripts/package_release.py
+      - packages/core/tests/test_release_packaging.py
   release:
     types: [published]
 
@@ -14,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
+    name: CLI · ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -23,48 +32,53 @@ jobs:
           - name: Windows x64
             runner: windows-latest
             python_arch: x64
-            artifact: wenyi-windows-x64
+            platform: windows-x64
             binary: ./dist/wenyi.exe
-            archive: ./dist/wenyi-windows-x64.zip
             expected_machine: "8664"
           - name: Linux x64
             runner: ubuntu-latest
             python_arch: x64
-            artifact: wenyi-linux-x64
+            platform: linux-x64
             binary: ./dist/wenyi
-            archive: ./dist/wenyi-linux-x64.tar.gz
             expected_arch: x86-64
           - name: Linux ARM64
             runner: ubuntu-24.04-arm
             python_arch: arm64
-            artifact: wenyi-linux-arm64
+            platform: linux-arm64
             binary: ./dist/wenyi
-            archive: ./dist/wenyi-linux-arm64.tar.gz
             expected_arch: aarch64
           - name: macOS Apple Silicon
             runner: macos-15
             python_arch: arm64
-            artifact: wenyi-macos-arm64
+            platform: macos-arm64
             binary: ./dist/wenyi
-            archive: ./dist/wenyi-macos-arm64.tar.gz
             expected_arch: arm64
           - name: macOS Intel
             runner: macos-15-intel
             python_arch: x64
-            artifact: wenyi-macos-x64
+            platform: macos-x64
             binary: ./dist/wenyi
-            archive: ./dist/wenyi-macos-x64.tar.gz
             expected_arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
+
+      - name: Resolve Git version
+        id: version
+        shell: bash
+        env:
+          WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          python -m pip install hatch-vcs
+          python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
         run: python -m pip install ./packages/core ./packages/cli pyinstaller
@@ -87,6 +101,23 @@ jobs:
           ${{ matrix.binary }} --help
           ${{ matrix.binary }} --version
           ${{ matrix.binary }} languages
+
+      - name: Verify packaged CLI version
+        shell: bash
+        env:
+          CLI_EXECUTABLE: ${{ matrix.binary }}
+          EXPECTED_PYTHON_VERSION: ${{ steps.version.outputs.python }}
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          actual = subprocess.check_output(
+              [os.environ["CLI_EXECUTABLE"], "--version"], text=True
+          ).strip()
+          expected = os.environ["EXPECTED_PYTHON_VERSION"]
+          if actual != expected:
+              raise SystemExit(f"CLI version mismatch: expected {expected}, got {actual}")
+          PY
 
       - name: Verify Windows executable
         if: runner.os == 'Windows'
@@ -118,28 +149,22 @@ jobs:
           grep -q "${{ matrix.expected_arch }}" <<<"$file_output"
           codesign --verify --deep --strict "${{ matrix.binary }}"
 
-      - name: Package Windows executable
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Package CLI ZIP (including executable permissions)
         run: >
-          Compress-Archive -LiteralPath dist/wenyi.exe
-          -DestinationPath "${{ matrix.archive }}" -Force
-
-      - name: Package POSIX executable
-        if: runner.os != 'Windows'
-        shell: bash
-        run: tar -czf "${{ matrix.archive }}" -C dist wenyi
+          python scripts/package_release.py cli
+          --version "${{ steps.version.outputs.version }}"
+          --platform "${{ matrix.platform }}" --source "${{ matrix.binary }}"
 
       - name: Upload packaged executable
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.archive }}
+          name: wenyi-cli-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: release-assets/*.zip
           if-no-files-found: error
           retention-days: 14
 
   release:
-    name: Upload release assets
+    name: Publish CLI assets · ${{ github.event.release.tag_name }}
     if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
@@ -150,14 +175,14 @@ jobs:
       - name: Download packaged executables
         uses: actions/download-artifact@v4
         with:
-          pattern: wenyi-*
+          pattern: wenyi-cli-*
           path: release-assets
           merge-multiple: true
 
       - name: Generate checksums
         shell: bash
         working-directory: release-assets
-        run: sha256sum wenyi-* > SHA256SUMS.txt
+        run: sha256sum wenyi-cli-*.zip > wenyi-cli-SHA256SUMS.txt
 
       - name: Upload assets to published release
         shell: bash
@@ -168,5 +193,4 @@ jobs:
         run: |
           gh release view "$TAG" --repo "$GH_REPO" >/dev/null
           gh release upload "$TAG" release-assets/* \
-            --repo "$GH_REPO" \
-            --clobber
+            --repo "$GH_REPO"

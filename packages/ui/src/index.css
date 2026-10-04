@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.5rem;
+  }
+}
+
+/* Theme classes are runtime state, not Tailwind content to be purged. */
+.dark {
+    color-scheme: dark;
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; font-feature-settings: "rlig" 1, "calt" 1; }
+  /* Native controls: use theme foreground instead of browser default blue. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: hsl(var(--foreground));
+  }
+  :where(button, a[href], summary, [role="button"], [role="tab"]) {
+    border-radius: calc(var(--radius) - 2px);
+  }
+  input[type="checkbox"] { border-radius: 3px; }
+  input[type="radio"] { border-radius: 50%; }
+}
+
+/* Focus changes behavior, not decoration; retain ordinary component shadows. */
+body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus,
+body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: var(--tw-shadow, 0 0 #0000);
+}
+
+/* Application geometry, independent of the host browser's native widgets. */
+input:is([type="checkbox"], [type="radio"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 1rem;
+  height: 1rem;
+  line-height: 1rem;
+  flex: 0 0 1rem;
+  margin: 0;
+  vertical-align: middle;
+  border: 1px solid hsl(var(--muted-foreground));
+  background-color: hsl(var(--background));
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+input[type="checkbox"] { border-radius: 0.1875rem; }
+input[type="radio"] { border-radius: 50%; }
+input:is([type="checkbox"], [type="radio"]):checked {
+  border-color: hsl(var(--muted-foreground));
+  background-color: hsl(var(--muted-foreground));
+}
+input[type="checkbox"]:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.dark input[type="checkbox"]:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='%2318181b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+input[type="radio"]:checked {
+  background-image: radial-gradient(circle, hsl(var(--background)) 0 3px, transparent 3.5px);
+}
+input:is([type="checkbox"], [type="radio"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.disclosure-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  line-height: 1.25rem;
+  list-style: none;
+}
+.disclosure-summary::marker { content: ""; }
+.disclosure-summary::-webkit-details-marker { display: none; }
+.disclosure-chevron {
+  width: 1rem;
+  height: 1.25rem;
+  flex: 0 0 1rem;
+}
+details[open] > .disclosure-summary > .disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+/* A quiet visual gate; never delay backend shutdown for an animation. */
+.runtime-placeholder {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  animation: runtime-enter 180ms ease-out both;
+}
+@keyframes runtime-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .runtime-placeholder { animation: none; }
+}

@@ -69,11 +69,17 @@ def test_concurrent_publications_keep_five_and_open_download_survives_eviction(a
     pid, data_dir = new_project(api), tmp_path / "data"
     oldest = pending_export(pid, data_dir)
     publish(pid, oldest, data_dir)
-    stream, _ = open_export(get_pool(), pid, oldest[0], data_dir=str(data_dir))
+    pool = get_pool()
+    stream, _ = open_export(pool, pid, oldest[0], data_dir=str(data_dir))
     try:
         items = [pending_export(pid, data_dir) for _ in range(8)]
         with ThreadPoolExecutor(max_workers=4) as executor:
-            list(executor.map(lambda item: publish(pid, item, data_dir), items))
+            publications = [
+                executor.submit(publish_export, pool, pid, eid, str(path), data_dir=str(data_dir))
+                for eid, path in items
+            ]
+            for publication in publications:
+                publication.result()
         assert len(completed_ids(pid)) == 5
         assert sum(path.exists() for _, path in items) == 5
         assert not oldest[1].exists()

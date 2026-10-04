@@ -1,101 +1,72 @@
-"""Persistent shared model registry and defaults for newly created projects."""
-
-from __future__ import annotations
+"""PostgreSQL settings adapter."""
 
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
-from typing import Any
 
 from fastapi import HTTPException
-from psycopg import Connection
 from psycopg.types.json import Jsonb
+from wenyi_backend.config_documents import global_document
+from wenyi_backend.global_settings import GlobalSettings, validate_settings
+from wenyi_backend.model_registry import project_registry_updates
 from wenyi_core.config import Config
 
-from .config import settings
-from .config_documents import PROJECT_PIPELINE_FIELDS, global_document, parse_yaml
-from .db import get_pool
-from .model_registry import project_registry_updates
-from .strategies import PRESET_TEMPLATES
 
+class PostgresSettings:
+    def __init__(self, repository, config_path: str):
+        self.repository = repository
+        self.config_path = config_path
 
-@dataclass(frozen=True)
-class GlobalSettings:
-    config: Config
-    default_template: str = "标准翻译"
-    revision: int = 0
+    def defaults(self):
+        return Config.load(self.config_path)
 
-
-def load_settings(*, connection: Connection[Any] | None = None) -> GlobalSettings:
-    with nullcontext(connection) if connection is not None else get_pool().connection() as conn:
-        row = conn.execute(
-            "SELECT document, default_template, revision FROM application_settings WHERE id=1"
-        ).fetchone()
-    if row is None:
-        config = Config.load(settings.config_path)
-        return GlobalSettings(Config.from_dict(global_document(config)))
-    config = Config.from_dict(row[0])
-    return GlobalSettings(Config.from_dict(global_document(config)), "标准翻译", row[2])
-
-
-@contextmanager
-def registry_guard(*, exclusive: bool = False):
-    """Serialize registry edits against project configuration writes and creation."""
-    with get_pool().connection() as conn:
-        if exclusive:
-            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:settings',0))")
-        else:
-            conn.execute(
-                "SELECT pg_advisory_xact_lock_shared(hashtextextended('wenyi:settings',0))"
+    def load(self, *, connection=None):
+        with (
+            nullcontext(connection)
+            if connection is not None
+            else self.repository.pool.connection() as conn
+        ):
+            row = conn.execute(
+                "SELECT document, default_template, revision FROM application_settings WHERE id=1"
+            ).fetchone()
+        return (
+            GlobalSettings(
+                Config.from_dict(global_document(Config.from_dict(row[0]))), "标准翻译", row[2]
             )
-        yield conn
-
-
-def validate_settings(value: str, default_template: str) -> Config:
-    if default_template not in {template["name"] for template in PRESET_TEMPLATES}:
-        raise ValueError("Unknown default workflow template")
-    document = parse_yaml(value)
-    pipeline = document.get("pipeline", {})
-    if isinstance(pipeline, dict) and PROJECT_PIPELINE_FIELDS.intersection(pipeline):
-        raise ValueError(
-            "translation_mode is a project setting; choose it when creating a project. "
-            "Initial-draft concurrency is built in, not configurable."
+            if row
+            else GlobalSettings(Config.from_dict(global_document(self.defaults())))
         )
-    config = Config.from_dict(document)
-    if config.source_lang == config.target_lang:
-        raise ValueError("Source and target languages are identical")
-    return config
 
+    @contextmanager
+    def guard(self, *, exclusive=False):
+        with self.repository.pool.connection() as conn:
+            if exclusive:
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:settings',0))")
+            else:
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('wenyi:settings',0))"
+                )
+            yield conn
 
-def save_settings(
-    value: str, default_template: str, revision: int, *, model_renames: dict[str, str] | None = None
-) -> GlobalSettings:
-    config = validate_settings(value, default_template)
-    document = global_document(config)
-    with registry_guard(exclusive=True) as conn:
-        current = conn.execute("SELECT revision FROM application_settings WHERE id=1").fetchone()
-        if revision != (current[0] if current else 0):
-            raise HTTPException(409, "Global settings changed; reload before saving again")
-        updates = project_registry_updates(
-            conn, load_settings(connection=conn).config, config, model_renames or {}
-        )
-        for pid, project_config in updates:
+    def project_configs(self, connection):
+        return connection.execute("SELECT id, config FROM projects").fetchall()
+
+    def save(self, value, default_template, revision, *, model_renames=None, provider_renames=None):
+        config = validate_settings(value, default_template)
+        document = global_document(config)
+        with self.guard(exclusive=True) as conn:
+            current = self.load(connection=conn)
+            if revision != current.revision:
+                raise HTTPException(409, "Global settings changed; reload before saving again")
+            updates = project_registry_updates(conn, current.config, config, model_renames or {})
+            for pid, project_config in updates:
+                conn.execute(
+                    "UPDATE projects SET config=%s, updated_at=now() WHERE id=%s",
+                    (Jsonb(project_config), pid),
+                )
             conn.execute(
-                "UPDATE projects SET config=%s, updated_at=now() WHERE id=%s",
-                (Jsonb(project_config), pid),
+                """INSERT INTO application_settings(id, document, default_template, revision)
+                   VALUES(1,%s,%s,%s) ON CONFLICT(id) DO UPDATE
+                   SET document=EXCLUDED.document, default_template=EXCLUDED.default_template,
+                       revision=EXCLUDED.revision, updated_at=now()""",
+                (Jsonb(document), default_template, revision + 1),
             )
-        conn.execute(
-            """INSERT INTO application_settings(id, document, default_template, revision)
-               VALUES(1,%s,%s,%s) ON CONFLICT(id) DO UPDATE
-               SET document=EXCLUDED.document, default_template=EXCLUDED.default_template,
-                   revision=EXCLUDED.revision, updated_at=now()""",
-            (Jsonb(document), default_template, revision + 1),
-        )
-    return GlobalSettings(config, default_template, revision + 1)
-
-
-def registered_models(config: Config) -> dict[str, Any]:
-    """Expose model choices without provider credentials or connection settings."""
-    return {
-        key: {"model": profile.model, "provider": profile.provider}
-        for key, profile in config.llm.models.items()
-    }
+        return GlobalSettings(config, default_template, revision + 1)
