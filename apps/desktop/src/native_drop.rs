@@ -715,8 +715,13 @@ mod tests {
                     std::fs::write(&path, b"source").unwrap();
                 }
                 saves
-                    .protect_source(path.clone(), File::open(path).unwrap())
+                    .protect_source(path.clone(), File::open(&path).unwrap())
                     .unwrap();
+                if aliases {
+                    // The ledger retains paths after unlinking; avoid exceeding
+                    // NTFS's per-file hard-link limit while filling its alias cap.
+                    std::fs::remove_file(path).unwrap();
+                }
             }
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
@@ -741,6 +746,9 @@ mod tests {
             assert_eq!(saves.source_count(), if aliases { 1 } else { cap });
             // Already reserved identity/alias pairs remain usable at capacity.
             let known = fixture.0.join("0.txt");
+            if aliases {
+                std::fs::hard_link(&source, &known).unwrap();
+            }
             saves
                 .protect_source(known.clone(), File::open(known).unwrap())
                 .unwrap();

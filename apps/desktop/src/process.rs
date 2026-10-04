@@ -227,8 +227,9 @@ mod tests {
             command.get_program(),
             fixture.0.join("base runtime/python.exe")
         );
+        let launcher = std::path::absolute(fixture.python()).unwrap();
         assert!(command.get_envs().any(|(key, value)| {
-            key == "__PYVENV_LAUNCHER__" && value == Some(fixture.python().as_os_str())
+            key == "__PYVENV_LAUNCHER__" && value == Some(launcher.as_os_str())
         }));
 
         // CPython checks an adjacent configuration before the parent directory.
