@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts/desktop_pe.py"
+SCRIPT = Path(__file__).resolve().parents[4] / "scripts/desktop_pe.py"
 
 
 def pe_image(magic=0x20B, subsystem=2):
