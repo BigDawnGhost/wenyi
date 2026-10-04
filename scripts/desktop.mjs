@@ -1,6 +1,7 @@
 // Local-only launch/build orchestration. No system Python or services at runtime.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,7 +41,10 @@ console.log(`Wenyi Desktop ${version.version} (Python ${version.python})`);
 run('pnpm', ['-C', 'apps/desktop/frontend', 'build']);
 if (build) {
   run('uv', ['run', '--no-project', 'python', 'scripts/desktop_sidecar.py']);
-  run('pnpm', ['exec', 'tauri', 'build', '--config', 'tauri.bundle.conf.json',
+  // pnpm 9 exec changes cwd to the nearest package root, outside the native project.
+  const tauriCli = createRequire(import.meta.url).resolve('@tauri-apps/cli/tauri.js');
+  run(process.execPath, [tauriCli, 'build',
+    '--config', path.join(root, 'apps/desktop/tauri.bundle.conf.json'),
     '--config', versionConfig, ...args], path.join(root, 'apps/desktop'));
 } else {
   if (!env.WENYI_DESKTOP_PYTHON) {
