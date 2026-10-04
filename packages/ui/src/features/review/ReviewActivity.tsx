@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useI18n } from "@/i18n";
+import { useForeground } from "@/lib/runtime";
 import type { ProgressMessage } from "@/lib/ws";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Progress } from "@/components/ui/progress";
@@ -18,15 +19,16 @@ export function ReviewActivity({
   progress?: ProgressMessage;
 }) {
   const { t, locale } = useI18n();
+  const foreground = useForeground();
   const running = status === "running";
   const phase = reviewPhase(progress?.label);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!running) return;
+    if (!running || !foreground) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [running, progress?.run_id]);
+  }, [running, progress?.run_id, foreground]);
   const updated = Date.parse(progress?.updated_at || "");
   const elapsed = progress?.elapsed_seconds;
   const knownElapsed =

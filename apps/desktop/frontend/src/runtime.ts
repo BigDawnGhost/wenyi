@@ -7,6 +7,7 @@ declare global {
     __WENYI_DESKTOP_STATUS__?: "error" | "closing";
     __WENYI_DESKTOP_ERROR__?: string;
     __WENYI_DESKTOP_CLOSING__?: boolean;
+    __WENYI_DESKTOP_BACKGROUND__?: boolean;
   }
 }
 

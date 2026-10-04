@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from fastapi.testclient import TestClient
 from wenyi_api import adapters, main, workers
 from wenyi_api.config import Settings
-from wenyi_backend.context import current_context
+from wenyi_backend.context import BackendContext, current_context
 
 
 class FakePool:
@@ -80,18 +80,27 @@ def test_worker_shutdown_stops_recovery_before_closing_its_pool(monkeypatch):
     monkeypatch.setattr(workers, "recover_jobs", recover)
 
     async def exercise():
-        a, b = {"entered": asyncio.Event()}, {"entered": asyncio.Event()}
+        entered_a, entered_b = asyncio.Event(), asyncio.Event()
+        a: dict[str, object] = {"entered": entered_a}
+        b: dict[str, object] = {"entered": entered_b}
         try:
             await workers.startup(a)
             await workers.startup(b)
-            await asyncio.wait_for(asyncio.gather(a["entered"].wait(), b["entered"].wait()), 5)
-            pool_a = a["backend"].repository.pool
-            pool_b = b["backend"].repository.pool
+            await asyncio.wait_for(asyncio.gather(entered_a.wait(), entered_b.wait()), 5)
+            context_a, context_b = a["backend"], b["backend"]
+            assert isinstance(context_a, BackendContext)
+            assert isinstance(context_b, BackendContext)
+            pool_a = adapters.postgres_repository(context_a).pool
+            pool_b = adapters.postgres_repository(context_b).pool
+            assert isinstance(pool_a, FakePool)
+            assert isinstance(pool_b, FakePool)
             assert pool_a is not pool_b
             await workers.shutdown(a)
             assert stopped == [pool_a]
             assert pool_a.close_calls == 1 and pool_b.close_calls == 0
-            assert not b["recovery_task"].done()
+            recovery_task = b["recovery_task"]
+            assert isinstance(recovery_task, asyncio.Task)
+            assert not recovery_task.done()
             await workers.shutdown(b)
             assert stopped == [pool_a, pool_b]
             assert pool_b.close_calls == 1

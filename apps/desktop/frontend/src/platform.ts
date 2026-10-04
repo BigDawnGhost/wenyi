@@ -6,6 +6,7 @@ import { request, download } from "./transport";
 import { bindSourceDrop } from "./nativeDrop";
 import { saveNativeExport } from "./nativeExport";
 import { credentialQuery } from "./credentials";
+import { activity } from "./activity";
 
 const DesktopCredential = lazy(() =>
   import("./DesktopCredential").then((module) => ({ default: module.DesktopCredential })),
@@ -28,6 +29,7 @@ const progressKeys: Record<string, string[]> = {
 
 export function desktopPlatform(queryClient: QueryClient): PlatformServices {
   return {
+    activity,
     // Only non-sensitive presentation preferences may be persisted.
     preferences: {
       get: (key) => localStorage.getItem(key),

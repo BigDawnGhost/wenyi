@@ -32,8 +32,12 @@ def init_pool(dsn: str) -> ConnectionPool[Any]:
 
 
 def get_pool() -> ConnectionPool[Any]:
-    return current_context().repository.pool
+    from ..adapters import postgres_repository
+
+    return postgres_repository(current_context()).pool
 
 
 def close_pool() -> None:
-    current_context().repository.close()
+    from ..adapters import postgres_repository
+
+    postgres_repository(current_context()).close()
