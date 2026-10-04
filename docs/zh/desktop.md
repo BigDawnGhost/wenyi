@@ -50,6 +50,9 @@ pnpm desktop:build
 
 构建先将 Python 引擎冻结为 onedir sidecar，再与界面和原生程序一起打包。Onedir 避免每次启动都解压完整运行时。每次发行仍需验证安装包、签名和平台运行依赖；Linux 构建成功不代表 Windows/macOS 已验证。
 
+Windows 发行包只打开应用窗口，不弹出控制台。本地引擎也不打开控制台窗口，
+但保留内部通信管道。Debug/源码启动仍保留开发终端，便于诊断。
+
 原生包分别为 Linux、Windows 和 macOS 使用 PNG、ICO 与 ICNS 图标。
 需要从共享徽标重新生成原生图标时，在仓库根目录运行
 `pnpm exec tauri icon packages/ui/src/assets/wenyi-emblem.png --output /path/to/temporary-icons`，

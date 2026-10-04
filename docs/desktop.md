@@ -50,6 +50,10 @@ pnpm desktop:build
 
 The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
 
+Windows release builds open only the application window, not a console. The local
+engine runs without a console window while retaining its private communication pipes.
+Debug/source launches keep their development console for diagnostics.
+
 Native bundles use PNG, ICO and ICNS artwork for Linux, Windows and macOS respectively.
 To regenerate the native icons from the shared emblem, run
 `pnpm exec tauri icon packages/ui/src/assets/wenyi-emblem.png --output /path/to/temporary-icons`

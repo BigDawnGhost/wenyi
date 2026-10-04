@@ -1,3 +1,6 @@
+// Keep console diagnostics for development, but ship a Windows GUI application.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod graphics;
 mod native_drop;
 mod native_export;

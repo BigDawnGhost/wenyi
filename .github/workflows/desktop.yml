@@ -75,6 +75,7 @@ jobs:
       - run: uv sync --locked --package wenyi-desktop --group dev
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/desktop.test.mjs
+      - run: uv run --no-sync pytest -q packages/core/tests/test_desktop_pe.py
       - run: uv run --no-sync pytest -q apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
@@ -82,6 +83,9 @@ jobs:
       - run: pnpm desktop:build --bundles ${{ matrix.bundles }}
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      - name: Verify native Windows GUI subsystem
+        if: runner.os == 'Windows'
+        run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
       - name: Verify native application version
         shell: bash
         env:
