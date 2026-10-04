@@ -106,6 +106,29 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     assert book_usage["totals"]["calls"] == 1
 
 
+def test_fixer_protocol_revisions_invalidate_old_autofix_plans(tmp_path, monkeypatch):
+    from wenyi_core.llm import operations, routing
+    from wenyi_core.llm.operations import OPERATIONS
+    from wenyi_core.llm.routing import inference_snapshot
+    from wenyi_core.pipeline.autofix_plan import prepare_identity
+
+    config = _config(tmp_path)
+    assert OPERATIONS["review.fix"].protocol_version == 2
+    assert OPERATIONS["autofix.fix"].protocol_version == 2
+    debug = ReviewRunStore(str(tmp_path / "run"))
+    current = inference_snapshot(config.llm, ("autofix.verify", "autofix.fix"))
+    registry = dict(OPERATIONS)
+    registry["autofix.fix"] = replace(registry["autofix.fix"], protocol_version=1)
+    with monkeypatch.context() as context:
+        context.setattr(routing, "OPERATIONS", registry)
+        context.setattr(operations, "OPERATIONS", registry)
+        old = inference_snapshot(config.llm, ("autofix.verify", "autofix.fix"))
+    assert old != current
+    debug.write_json("autofix/plan.json", {"inference": old})
+    with pytest.raises(ValueError, match="Autofix planning models changed"):
+        prepare_identity(debug, config.llm)
+
+
 def test_review_fingerprint_only_tracks_reachable_inference(tmp_path):
     config = _config(tmp_path)
     first = ReviewService(PipelineRuntime(config, FakeClient()))._review_config_snapshot()
@@ -258,6 +281,38 @@ def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
             assert "Another absent spelling" in prompt
         if change == "insert":
             assert "Another unused term → 新增术语" in prompt
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("change", ["style", "synopsis", "digest", "character_target", "unchanged"])
+def test_review_guidance_controls_completed_and_interrupted_reuse(tmp_path, interrupted, change):
+    source, config, store, _term, review_id = _review_with_absent_term(tmp_path, interrupted)
+    analysis = store.load_analysis() or {}
+    if change == "style":
+        analysis["tone"] = "New restrained tone"
+    elif change == "synopsis":
+        analysis["book_synopsis"] = "New book context"
+    elif change == "digest":
+        chapter = store.load_chapter(0)
+        chapter.meta["source_digest"] = "New chapter context"
+        store.save_chapter(chapter)
+    elif change == "character_target":
+        # Target mappings are not effective style guidance.
+        analysis["characters"] = [{"source": "A", "gender": "male", "target": "old"}]
+        store.save_analysis(analysis)
+        # Establish the baseline with the same effective character guidance.
+        client = FakeClient(handler=routing_handler)
+        baseline = Orchestrator(config, client).run_review(str(source))
+        review_id = baseline["review_result"]["review_id"]
+        analysis["characters"][0]["target"] = "new"
+    store.save_analysis(analysis)
+
+    client = FakeClient(handler=routing_handler)
+    result = Orchestrator(config, client).run_review(str(source))["review_result"]
+    invalidated = change in {"style", "synopsis", "digest"}
+    assert (result["review_id"] != review_id) == invalidated
+    expected_calls = 2 if invalidated else int(interrupted and change != "character_target")
+    assert len(client.calls) == expected_calls
 
 
 def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):

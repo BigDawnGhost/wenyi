@@ -187,7 +187,7 @@ const en = {
   "glossary.theGlossaryIsReadOnlyWhileA":
     "The glossary is read-only while a project task is running.",
   "glossary.searchSourceTermsTranslationsOrAliases":
-    "Search source terms, translations or aliases…",
+    "Search terms, translations, aliases, readings or notes…",
   "glossary.allTypes": "All types",
   "glossary.deleteSelectedTerms": "Delete selected terms ({count})?",
   "glossary.deleteSelected": "Delete selected",
@@ -571,6 +571,7 @@ const en = {
   "style.tone": "Tone",
   "style.narration": "Narration",
   "style.pacing": "Pacing",
+  "style.register": "Register",
   "style.dialogueStyle": "Dialogue style",
   "style.rhetoric": "Rhetoric",
   "style.styleGuide": "Style guide",

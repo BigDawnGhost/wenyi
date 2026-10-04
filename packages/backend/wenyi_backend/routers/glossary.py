@@ -32,12 +32,13 @@ def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(N
         term_type = normalize_term_type(type)
         terms = [term for term in terms if term.type == term_type]
     if q:
-        needle = q.casefold()
+        needle = q.strip().casefold()
         terms = [
             term
             for term in terms
             if any(
-                needle in value.casefold() for value in [term.source, term.target, *term.aliases]
+                needle in value.casefold()
+                for value in [term.source, term.target, term.reading, term.note, *term.aliases]
             )
         ]
     return [vars(term) for term in terms]

@@ -148,6 +148,29 @@ The glossary keeps the same compact rows and column widths across type filters. 
 
 **Contents & titles** lists the existing chapter titles beside their translations. Search either column, open a chapter in proofreading, or edit a translated title with the pencil button. Saving persists the title on the server for every browser and updates the linked EPUB TOC node, including equivalent NAV/NCX entries with the same original title and destination. Future exports use the saved titles; existing export files remain unchanged. Body headings are edited separately in proofreading. Pause running tasks before editing. If another editor changes the same title, your input is retained and saving requires loading the latest title. The page currently lists chapters; editing the complete EPUB hierarchy and automatic title alignment are not included.
 
+In Web and Desktop, **Style & synopsis** lets you edit every style dimension: genre,
+tone, narration, pacing, register, dialogue style, and rhetoric. The **Save** button
+in **Style overview** saves those fields together with the **Style guide**. The
+whole-book synopsis has its own save button. Saving one section or a chapter summary
+preserves unsaved drafts in the other sections. Editing remains disabled while a task runs.
+Style and synopsis drafts also survive navigation to other pages in the same app session,
+isolated by project. They are kept only in memory; reload or close the app to discard them.
+While an analysis save is pending, those editors remain read-only even after navigating
+away and Back, preventing overlapping saves in the same app session.
+
+**Style & synopsis** has no separate character table or character-management shortcut.
+Open **Glossary** from the sidebar and select the **Person** filter to manage names,
+translations, readings, gender, notes, and aliases. Search matches source
+terms, translations, aliases, readings, and notes, ignoring case and surrounding query
+whitespace. Type filters also apply to search results.
+
+Initial style analysis seeds characters with nonempty source and target names into
+the glossary. Analysis is a preparation snapshot, not a continuously synchronized
+copy of the glossary: later edits, deletions, and analysis rebuilds can make them
+differ. Removing the table does not delete either store or restore deleted terms.
+Name mappings in model requests come from the glossary, not the character snapshot's
+old translated names; descriptive character guidance remains available.
+
 In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
 
 The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
