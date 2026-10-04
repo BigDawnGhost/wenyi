@@ -23,7 +23,8 @@
     "active": false,
     "icon": [
       "../../packages/ui/src/assets/wenyi-emblem.png",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.icns"
     ]
   }
 }

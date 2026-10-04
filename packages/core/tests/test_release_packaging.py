@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import stat
@@ -108,6 +109,29 @@ def test_release_tag_prerelease_policy(versions, repository, tag):
     else:
         with pytest.raises(ValueError, match="development/local"):
             versions.resolve(repository, tag)
+
+
+def test_desktop_bundle_includes_native_icons_for_every_platform():
+    project = ROOT / "apps/desktop"
+    config = json.loads((project / "tauri.conf.json").read_text())
+    icons = {Path(path).suffix: project / path for path in config["bundle"]["icon"]}
+    signatures = {".png": b"\x89PNG\r\n\x1a\n", ".ico": b"\x00\x00\x01\x00", ".icns": b"icns"}
+    assert signatures.keys() <= icons.keys()
+    for suffix, signature in signatures.items():
+        assert icons[suffix].read_bytes().startswith(signature)
+    # macOS needs a real icon container, including the high-resolution artwork.
+    data = icons[".icns"].read_bytes()
+    assert int.from_bytes(data[4:8], "big") == len(data)
+    cursor = 8
+    types = set()
+    while cursor < len(data):
+        kind = data[cursor : cursor + 4]
+        size = int.from_bytes(data[cursor + 4 : cursor + 8], "big")
+        assert 8 < size <= len(data) - cursor
+        types.add(kind)
+        cursor += size
+    assert cursor == len(data)
+    assert {b"ic09", b"ic10"} <= types
 
 
 def test_cli_zip_preserves_executable_mode(tmp_path):

@@ -50,6 +50,11 @@ pnpm desktop:build
 
 The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
 
+Native bundles use PNG, ICO and ICNS artwork for Linux, Windows and macOS respectively.
+To regenerate the native icons from the shared emblem, run
+`pnpm exec tauri icon packages/ui/src/assets/wenyi-emblem.png --output /path/to/temporary-icons`
+from the repository root, then copy only `icon.ico` and `icon.icns` into `apps/desktop/icons`.
+
 ### Versions and release downloads
 
 Python metadata continues to use `hatch-vcs`; `scripts/release_version.py` uses
