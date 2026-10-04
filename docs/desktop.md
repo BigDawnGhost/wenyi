@@ -26,6 +26,10 @@ Use `--data-dir <path>` to select a separate workspace, for example for testing.
 
 Install Python 3.10+, `uv`, Node 22, pnpm 9, Rust stable, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). These are development/build requirements, not additional Python requirements for packaged releases.
 
+On Debian/Ubuntu, also install `libdbus-1-dev` for the native tray availability
+checks (`sudo apt-get install libdbus-1-dev`); other Linux distributions need the
+corresponding D-Bus development package.
+
 From the repository root:
 
 ```bash
@@ -113,7 +117,7 @@ set for its platform; older outputs are left untouched and never relabeled.
 These workflows do not sign or notarize packages. Platform signing and end-user
 installation checks remain release responsibilities.
 
-The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and closing the native window shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. Real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
+The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and the previous close-to-exit lifecycle shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. The current tray lifecycle was also checked on KDE Wayland using a debug native build, production UI, source Python engine, and temporary empty workspace: minimize/restore and close-to-tray/restore kept the engine alive, and explicit tray exit reaped it. Packaged tray behavior, real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 
 ## API keys
 
@@ -155,7 +159,35 @@ the redirector. Packaged onedir engines continue to start directly, without Pyth
 or venv discovery. This single-process contract avoids needing a Windows Job
 Object and suspended-process assignment just to own a redirector's descendant.
 
-Closing Desktop stops accepting work, checkpoints/cancels local tasks, and shuts down its owned backend. Saved progress can be resumed after reopening. Save in-progress editor drafts before closing; an unsaved in-memory draft is not a persisted checkpoint.
+### Background operation
+
+- Minimizing the window keeps local tasks running. Closing the window hides it to the
+  system tray instead of exiting. Use **Show Wenyi** in the tray menu to restore it;
+  reopening from the macOS Dock also restores the window.
+- If the tray cannot be created, closing minimizes the window instead of hiding it.
+  The taskbar/Dock and the native application menu remain available.
+- Hidden windows and platform-reported minimization pause periodic UI polling,
+  progress-event refetches, and live elapsed-time timers. The progress subscription and Python engine remain
+  running; already-started requests and native saves are not canceled. Restoring
+  the window immediately reconciles saved state, including tasks completed in the
+  background. An ordinary loss of focus does not count as minimization.
+- Hiding retains the WebView, unsaved editor drafts, and session-only credentials.
+  This reduces unnecessary UI work, not the resident memory of the Python engine
+  or WebView. It does not keep the computer awake or prevent operating-system sleep.
+
+On Linux/GTK Wayland, compositor-side minimization is not reliably reported to
+the application. It still keeps tasks running, but UI polling/timers may continue.
+Use close-to-tray for reliably detected background operation; an ordinary blur
+is deliberately not treated as minimization. Restoring from the tray remaps the
+same native window to handle GTK/Wayland's deiconify limitation, without replacing
+the WebView or its drafts.
+
+Use **Quit Wenyi** in the tray or native application menu to actually exit.
+Explicit exit stops accepting work, checkpoints/cancels local tasks, and shuts
+down the owned backend. Saved progress can be resumed after reopening. Save
+editor drafts before quitting; an unsaved in-memory draft is not a persisted
+checkpoint. Background translation continues to make configured model requests
+and can incur provider usage until the task finishes or is paused.
 
 On Linux, native Wayland is preferred when available; X11 is a connection-time fallback, not a global override. For proprietary NVIDIA drivers, Desktop uses a process-local explicit-sync compatibility setting on native Wayland while keeping DMA-BUF enabled. NVIDIA/X11 and NVIDIA/Hyprland use a separate DMA-BUF fallback. Explicit user graphics environment settings take precedence.
 

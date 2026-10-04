@@ -33,6 +33,11 @@ export interface CredentialFieldProps {
 
 /** Selected once by the host before mounting React; no implicit browser fallback. */
 export interface PlatformServices {
+  /** Hosts that suspend background updates reconcile durable state on return. */
+  activity: {
+    isForeground: () => boolean;
+    subscribe: (listener: () => void) => () => void;
+  };
   preferences: {
     get: (key: "wenyi.locale" | "wenyi.sidebarCollapsed") => string | null;
     set: (key: "wenyi.locale" | "wenyi.sidebarCollapsed", value: string) => void;

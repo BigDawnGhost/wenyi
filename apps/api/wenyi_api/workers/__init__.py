@@ -17,7 +17,7 @@ from wenyi_backend.workers.tasks import (
     run_translation,
 )
 
-from ..adapters import create_context
+from ..adapters import create_context, postgres_repository
 from ..config import settings
 from ..queue import EXPORT_QUEUE, WORKFLOW_QUEUE
 
@@ -38,7 +38,7 @@ async def _recovery_loop(ctx: dict) -> None:
 
 async def startup(ctx: dict) -> None:
     context = create_context(settings)
-    context.repository.start()
+    postgres_repository(context).start()
     ctx["backend"] = context
     # Maintenance must run even while a long translation occupies every job slot.
     ctx["recovery_task"] = asyncio.create_task(_recovery_loop(ctx))
@@ -49,7 +49,7 @@ async def shutdown(ctx: dict) -> None:
     if task is not None:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-    ctx["backend"].repository.close()
+    postgres_repository(ctx["backend"]).close()
 
 
 from .recovery import recover_jobs  # noqa: E402
