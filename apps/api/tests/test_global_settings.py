@@ -13,8 +13,8 @@ from test_storage_pg_integration import pg_pool  # noqa: F401
 from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.db import get_pool
-from wenyi_api.model_registry import rename_model_references
-from wenyi_api.workers import tasks
+from wenyi_backend.model_registry import rename_model_references
+from wenyi_backend.workers import tasks
 
 
 @pytest.fixture(autouse=True)

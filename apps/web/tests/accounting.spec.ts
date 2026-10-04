@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { fakeApi, pid } from "./fixtures";
-import { cacheRate, tokenParts } from "../src/features/progress/accountingData";
+import { cacheRate, tokenParts } from "../../../packages/ui/src/features/progress/accountingData";
 
 const modelA = {
   total_tokens: 8000,

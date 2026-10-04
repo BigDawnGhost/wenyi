@@ -4,17 +4,20 @@ dynamic = ["version"]
 description = "Web API and background workers for Wenyi's translation engine."
 requires-python = ">=3.10"
 dependencies = [
-    "wenyi-core",
-    "fastapi>=0.115",
+    "wenyi-backend",
     "uvicorn[standard]>=0.30",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
     "arq>=0.26",
     "redis>=5.0",
-    "python-multipart>=0.0.9",
 ]
 
+[project.optional-dependencies]
+pdf-output = ["wenyi-core[pdf-output]"]
+pdf-output-lite = ["wenyi-core[pdf-output-lite]"]
+
 [tool.uv.sources]
+wenyi-backend = { workspace = true }
 wenyi-core = { workspace = true }
 
 [build-system]

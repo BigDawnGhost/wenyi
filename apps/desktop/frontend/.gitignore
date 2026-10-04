@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# The root ignores exported HTML, not this application's source entry.
+!index.html

@@ -5,41 +5,41 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from arq import create_pool
 from arq.connections import RedisSettings
+from wenyi_backend.context import use_context
+from wenyi_backend.workers.tasks import (
+    run_chapter_translation,
+    run_export,
+    run_parse,
+    run_prepare,
+    run_review,
+    run_srt,
+    run_translation,
+)
 
+from ..adapters import create_context
 from ..config import settings
-from ..db import close_pool, init_pool
-
-WORKFLOW_QUEUE = "wenyi:workflows"
-EXPORT_QUEUE = "wenyi:exports"
+from ..queue import EXPORT_QUEUE, WORKFLOW_QUEUE
 
 
 def _redis_settings() -> RedisSettings:
     return RedisSettings.from_dsn(settings.redis_url)
 
 
-async def enqueue(name: str, **kwargs):
-    pool = await create_pool(_redis_settings())
-    try:
-        return await pool.enqueue_job(
-            name, _queue_name=EXPORT_QUEUE if name == "run_export" else WORKFLOW_QUEUE, **kwargs
-        )
-    finally:
-        await pool.aclose()
-
-
 async def _recovery_loop(ctx: dict) -> None:
     while True:
         try:
-            await recover_jobs(ctx)
+            with use_context(ctx["backend"]):
+                await recover_jobs(ctx)
         except Exception:
             logging.getLogger(__name__).exception("Could not inspect interrupted tasks")
         await asyncio.sleep(30)
 
 
 async def startup(ctx: dict) -> None:
-    init_pool(settings.psycopg_dsn)
+    context = create_context(settings)
+    context.repository.start()
+    ctx["backend"] = context
     # Maintenance must run even while a long translation occupies every job slot.
     ctx["recovery_task"] = asyncio.create_task(_recovery_loop(ctx))
 
@@ -49,19 +49,10 @@ async def shutdown(ctx: dict) -> None:
     if task is not None:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-    close_pool()
+    ctx["backend"].repository.close()
 
 
 from .recovery import recover_jobs  # noqa: E402
-from .tasks import (  # noqa: E402
-    run_chapter_translation,
-    run_export,
-    run_parse,
-    run_prepare,
-    run_review,
-    run_srt,
-    run_translation,
-)
 
 
 class WorkerSettings:

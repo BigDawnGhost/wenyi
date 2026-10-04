@@ -5,12 +5,18 @@
   "scripts": {
     "dev:web": "pnpm -C apps/web dev",
     "build:web": "pnpm -C apps/web build",
+    "dev:desktop-ui": "pnpm -C apps/desktop/frontend dev",
+    "build:desktop-ui": "pnpm -C apps/desktop/frontend build",
+    "test:frontend-boundaries": "node --test packages/ui/tests/platform-boundaries.test.mjs",
+    "desktop": "node scripts/desktop.mjs dev",
+    "desktop:build": "node scripts/desktop.mjs build",
     "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
     "dev:worker": "uv run arq wenyi_api.workers.WorkerSettings",
     "gen:schema": "openapi-typescript http://localhost:8000/openapi.json -o packages/shared-schema/src/api.d.ts",
     "build": "pnpm build:web"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.0",
     "openapi-typescript": "^7.4.4"
   }
 }

@@ -4,24 +4,13 @@ from __future__ import annotations
 
 import uuid
 from contextlib import nullcontext
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
+from wenyi_backend.chapter_state import chapter_review_state
 
 from .db import get_pool
-
-RUNNING_PROJECT_STATUSES = frozenset(
-    {
-        "preparing",
-        "translating",
-        "reviewing",
-        "translating_subtitles",
-        "parsing",
-        "pausing",
-    }
-)
 
 
 def _conn(connection: Connection[Any] | None = None):
@@ -166,41 +155,6 @@ def set_project_source(
                 pid,
             ),
         )
-
-
-def chapter_review_state(
-    review: dict[str, Any] | None, meta: dict[str, Any], fallback_status: str = "pending"
-) -> tuple[str, bool]:
-    """Return current review status and whether AI findings still apply to the text.
-
-    Review history is immutable. A later human edit invalidates its current badges;
-    a later human completion or a new whole-book review establishes a fresh status.
-    """
-
-    def timestamp(value: Any) -> float:
-        if not isinstance(value, str):
-            return 0.0
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.timestamp()
-        except ValueError:
-            return 0.0
-
-    review = review or {}
-    reviewed = timestamp(
-        review.get("finished_at") or review.get("interrupted_at") or review.get("started_at")
-    )
-    edited = timestamp(meta.get("review_invalidated_at"))
-    manual = timestamp(meta.get("manual_reviewed_at"))
-    if edited and edited >= max(reviewed, manual):
-        return "pending", False
-    if manual and manual >= max(reviewed, edited):
-        return "completed", False
-    if review:
-        return review.get("status") or "pending", True
-    return fallback_status, False
 
 
 def chapter_summaries(pid: str) -> list[dict]:
@@ -391,3 +345,16 @@ def is_paused(pid: str) -> bool:
     with _conn() as c:
         r = c.execute("SELECT status FROM projects WHERE id=%s", (pid,)).fetchone()
     return bool(r and r[0] in {"paused", "pausing"})
+
+
+def delete_project(pid: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM projects WHERE id=%s", (pid,))
+
+
+def set_project_languages(pid, source_lang, target_lang, *, connection=None):
+    with _conn(connection) as conn:
+        conn.execute(
+            "UPDATE projects SET source_lang=%s, target_lang=%s WHERE id=%s",
+            (source_lang, target_lang, pid),
+        )

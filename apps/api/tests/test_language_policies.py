@@ -9,7 +9,7 @@ from test_project_routes import api, new_project  # noqa: F401
 from test_storage_pg_integration import pg_pool, pg_storage, storage  # noqa: F401
 from tests.fake_llm import routing_handler
 from wenyi_api import dal
-from wenyi_api.project_service import storage_for
+from wenyi_backend.project_service import storage_for
 from wenyi_core.config import Config
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient

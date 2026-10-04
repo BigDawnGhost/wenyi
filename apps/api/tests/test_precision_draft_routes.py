@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from tests.fake_llm import MeteredFakeClient
 from tests.test_precision_pipeline import Handler, _config, _plan, _store
 from wenyi_api import main
-from wenyi_api.routers import chapters
+from wenyi_backend.routers import chapters
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
 from wenyi_core.storage.precision_archive import PrecisionArchive
 

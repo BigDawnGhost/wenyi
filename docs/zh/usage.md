@@ -60,8 +60,12 @@ CLI 的帮助、进度、表格和错误提示统一使用英语。译文和模�
 
 ## Windows
 
-Windows Release 提供 `wenyi-windows-x64.zip`，运行前请使用
-`SHA256SUMS.txt` 校验文件。
+CLI 发行文件名包含 Git tag 版本、组件、平台和架构。以下示例使用 tag `v1.2.3`，
+请将 `1.2.3` 替换为下载版本。Desktop 安装包使用独立的 `wenyi-desktop-*` 名称，
+详见 [Desktop](desktop.md)。
+
+Windows Release 提供 `wenyi-cli-1.2.3-windows-x64.zip`，请使用
+`wenyi-cli-SHA256SUMS.txt` 校验文件，再将 `wenyi.exe` 解压到目录中运行。
 
 使用打包版 `wenyi.exe` 时，在 PowerShell 中设置 API Key：
 
@@ -81,11 +85,11 @@ setx DEEPSEEK_API_KEY "sk-..."
 
 ## Linux
 
-Release 提供 `wenyi-linux-x64.tar.gz` 和 `wenyi-linux-arm64.tar.gz`。请下载与
-处理器架构匹配的压缩包，使用 `SHA256SUMS.txt` 校验后执行：
+Release 提供 `wenyi-cli-1.2.3-linux-x64.zip` 和 `wenyi-cli-1.2.3-linux-arm64.zip`。
+请下载与处理器架构匹配的压缩包，使用 `wenyi-cli-SHA256SUMS.txt` 校验后执行：
 
 ```bash
-tar -xzf wenyi-linux-arm64.tar.gz  # x64 系统请改用 wenyi-linux-x64.tar.gz
+unzip wenyi-cli-1.2.3-linux-arm64.zip  # x64 系统请改用 linux-x64
 chmod +x wenyi
 export DEEPSEEK_API_KEY=sk-...
 ./wenyi translate book.epub
@@ -93,12 +97,12 @@ export DEEPSEEK_API_KEY=sk-...
 
 ## macOS
 
-Release 分别提供适用于 Apple Silicon 的 `wenyi-macos-arm64.tar.gz` 和适用于
-Intel Mac 的 `wenyi-macos-x64.tar.gz` 终端程序。下载与处理器匹配的压缩包，先用
-`SHA256SUMS.txt` 核对文件，再执行：
+Release 分别提供适用于 Apple Silicon 的 `wenyi-cli-1.2.3-macos-arm64.zip` 和适用于
+Intel Mac 的 `wenyi-cli-1.2.3-macos-x64.zip` 终端程序。下载与处理器匹配的压缩包，
+先用 `wenyi-cli-SHA256SUMS.txt` 核对文件，再执行：
 
 ```bash
-tar -xzf wenyi-macos-arm64.tar.gz  # Intel Mac 请改用 wenyi-macos-x64.tar.gz
+unzip wenyi-cli-1.2.3-macos-arm64.zip  # Intel Mac 请改用 macos-x64
 chmod +x wenyi
 export DEEPSEEK_API_KEY=sk-...
 ./wenyi translate book.epub

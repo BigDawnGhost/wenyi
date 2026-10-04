@@ -7,7 +7,9 @@ Core paths below are relative to `packages/core/wenyi_core/`.
 
 | Area | Owner |
 |---|---|
-| Entry points | `packages/cli/wenyi_cli/cli.py` assembles the CLI; `commands/` registers commands with an invocation context. Web API and workers live in `apps/api/wenyi_api/`. |
+| Entry points | `packages/cli/wenyi_cli/cli.py` assembles the CLI; `commands/` registers commands with an invocation context. Web entry points live in `apps/api/wenyi_api/`; the local Desktop entry point lives in `apps/desktop/backend/wenyi_desktop/`. |
+| HTTP applications | `packages/backend/wenyi_backend/` owns shared routes, schemas, application services and platform ports. Each app and worker receives its own backend context; platform adapters supply persistence, task scheduling, credentials and telemetry. |
+| User interface | `packages/ui/` owns shared pages, components and translations. `apps/web/` and `apps/desktop/frontend/` provide independent entries and platform services. Only Desktop includes native import/save and credential adapters. |
 | Pipeline routing | `pipeline/orchestrator.py` assembles services and owns routing and lock scopes; domain work stays in the services. |
 | Translation | `pipeline/translation.py` coordinates translation; `translation_batch.py` returns explicit batch results; `title_translation.py` handles titles. |
 | Whole-book review | `pipeline/review_workflow.py` coordinates sessions; `review_checkpoint.py`, `review_rounds.py`, `review_chunks.py`, and `review_results.py` separate recovery, decisions, execution, and result handling. |
@@ -15,12 +17,19 @@ Core paths below are relative to `packages/core/wenyi_core/`.
 | Review agents | `agents/review_*.py` owns model interactions; `review/` provides shared evidence, types, and run artifacts without depending on pipeline orchestration. |
 | EPUB / HTML | `markup/` owns shared deterministic anchors, annotations, ruby and segment handling; readers and writers remain in `ingest/` and `assemble/`. |
 | DOCX | `document_styles/docx.py` owns pure style policy; DOCX readers and writers own parsing and document emission. |
-| Persistence | Domain services use `storage/protocol.py`. `storage/file.py` adapts local RunStore/SQLite; Web injects `apps/api/wenyi_api/storage_pg.py` for PostgreSQL state. |
+| Persistence | Domain services use `storage/protocol.py`. CLI uses `storage/file.py`; Desktop injects `storage/sqlite.py` into its own workspace; Web injects `apps/api/wenyi_api/storage_pg.py` for PostgreSQL state. |
 
-Keep Core independent of CLI and Web frameworks. Agents must not depend on the pipeline
+Keep Core independent of CLI and HTTP frameworks. Agents must not depend on the pipeline
 or concrete state stores. Shared markup and style policy must not depend on LLMs or a
 particular writer. SRT remains an independent lightweight path; BabelDOC remains an
 external HTTP service.
+
+Web and Desktop share behavior, not project state or infrastructure. Web uses PostgreSQL
+and Redis/Arq; Desktop owns a SQLite catalog, per-project SQLite stores, and a local runner.
+Desktop does not read or migrate CLI/Web state. The shared backend does not import platform
+packages, and the shared UI receives native capabilities rather than importing an app.
+The Web Docker image installs only Web and shared runtime dependencies; the Desktop
+sidecar is built in a separate environment without PostgreSQL, Redis, or Arq libraries.
 
 Initialization commits the manifest last; publication uses a recoverable index before
 changing formal targets. Stable segment identities, consistent export snapshots, and
