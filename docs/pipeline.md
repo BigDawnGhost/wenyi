@@ -266,7 +266,7 @@ Orchestrator above. There is no whole-book prescan, glossary, polishing, or
 Review. Translation uses overlapping cue windows with high concurrency on the
 strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with
 `cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
-[Usage guide — SRT subtitles](usage.md#srt-subtitles).
+[CLI guide — SRT subtitles](cli.md#srt-subtitles).
 
 ## Model registration and usage
 

@@ -1,6 +1,6 @@
-# Usage guide
+# CLI guide
 
-[简体中文](zh/usage.md)
+[简体中文](zh/cli.md) · [README](../README.md)
 
 For the React/Vite + FastAPI stack, see [Web deployment](web.md).
 

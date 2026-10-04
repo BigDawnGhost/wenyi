@@ -228,7 +228,7 @@ precision/
 
 ## 字幕路径（SRT）
 
-`.srt` 走平行轻量路径 `wenyi_core.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。字幕计划及窗口缓存绑定独立的翻译策略身份，变更后自动刷新待译窗口缓存并保留已完成字幕。详见[使用指南 — SRT 字幕](usage.md#srt-字幕)。
+`.srt` 走平行轻量路径 `wenyi_core.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。字幕计划及窗口缓存绑定独立的翻译策略身份，变更后自动刷新待译窗口缓存并保留已完成字幕。详见[CLI 使用指南 — SRT 字幕](cli.md#srt-字幕)。
 
 ## 模型注册与用量
 

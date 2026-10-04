@@ -1,6 +1,6 @@
 # Web deployment and development
 
-[简体中文](zh/web.md) · [CLI usage](usage.md) · [Configuration](configuration.md)
+[简体中文](zh/web.md) · [CLI guide](cli.md) · [Configuration](configuration.md)
 
 The Web stack uses React/Vite, FastAPI, Arq, PostgreSQL, and Redis. Ordinary workflows and exports are consumed by two independent workers. Domain logic comes from `wenyi_core`; the Web path does not copy CLI file-state layouts into the database.
 
@@ -115,7 +115,25 @@ pnpm -C apps/web dev
 
 The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the API. The API initializes a fresh database schema. Starting only the ordinary worker does not consume the export queue.
 
+## Interface language
+
+The interface defaults to English, regardless of browser language. Open global
+**Settings → Interface language** to choose **English** or **简体中文**.
+This preference is available before creating a project and while tasks run; it is
+not part of project settings.
+
+The choice applies immediately, survives reloads, and synchronizes between tabs on
+the same site. It is stored under `wenyi.locale` in the browser, not in project
+configuration. An absent or unsupported saved language falls back to English.
+
+Interface language changes labels and number/date formatting, not source/target
+languages, model configuration, book content, glossary entries, or model-generated
+analysis. Server errors and live logs are shown as received. Developer instructions
+live in the shared [frontend localization guide](../packages/ui/src/i18n/README.md).
+
 ## Workflow
+
+Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
 
 The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
 
@@ -221,5 +239,4 @@ In **Translation overview**, expand **Workflow details** to see **Current workfl
 
 ## Related notes
 
-- [Interface languages](web-i18n.md)
 - [Independent local Desktop application](desktop.md)

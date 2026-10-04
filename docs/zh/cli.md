@@ -1,6 +1,6 @@
-# 使用指南
+# CLI 使用指南
 
-[English](../usage.md)
+[English](../cli.md) · [项目介绍](README.md)
 
 Web（React/Vite + FastAPI）部署与开发见 [Web 部署](web.md)。
 

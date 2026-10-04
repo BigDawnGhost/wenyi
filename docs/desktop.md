@@ -6,6 +6,52 @@ Desktop is a **local translation application**, built with Tauri, React, and the
 
 Translation still needs access to the configured model provider. Optional MinerU and BabelDOC services retain their existing requirements; “local application” does not make external model or document services offline.
 
+## Quick start
+
+[![Download Desktop](https://img.shields.io/badge/Desktop-download-D4B56A?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/releases)
+
+### 1. Download Desktop
+
+Open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) and choose a `wenyi-desktop-<version>-<platform>-<arch>` asset matching your system:
+
+| Platform | Package |
+|---|---|
+| Windows x64 | `.exe` installer |
+| Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
+| macOS Apple Silicon | `.dmg` |
+
+Desktop assets are distributed directly, without an outer ZIP. For an AppImage, allow execution in the file's permissions before opening it. Packaged releases include the translation engine: you do not need to install Python or deploy a server.
+
+Check the release notes for platform requirements and signing status. To build from source instead, follow [Run from source](#run-from-source).
+
+### 2. Connect a model
+
+Open **Settings → API providers & models**, choose a provider, configure models and any custom base URL, and save the connection. Enter and save the API key in its password field.
+
+Desktop uses the system credential store when available. If it is unavailable, the interface explains that the key is kept only for the current session and must be entered again after restart. A local workspace does not mean offline model processing: text is sent to the provider you configure, unless you use a local model service.
+
+### 3. Create a translation project
+
+Create a new project, drag in a supported book or choose it with Browse, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost.
+
+Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
+
+### 4. Proofread and save
+
+Compare the translation with the source, edit paragraphs, inspect revisions, and review reported issues. Review can publish fixes to the translation; disable automatic fixes when you want a read-only review. Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
+
+Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
+
+### Continue later
+
+Completed batches are saved in the local workspace. Reopen Desktop, open the same project, and resume from its checkpoints. Save any in-progress proofreading edits before closing. For workspace locations and backup instructions, see [Independent data](#independent-data).
+
+## Interface language
+
+The interface defaults to English. Open global **Settings → Interface language**
+to choose **English** or **简体中文**. The change applies immediately to interface
+labels, not the book's source/target languages, content, or model-generated analysis.
+
 ## Independent data
 
 Desktop does not adopt or migrate existing Web projects. It also does not read or modify the CLI's `config.yaml`, `state/`, or `output/`. CLI behavior remains unchanged.
