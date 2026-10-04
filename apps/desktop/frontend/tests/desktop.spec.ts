@@ -140,7 +140,9 @@ test("reduced motion pending gate is quiet and makes no requests across reload",
 
 test("Desktop healthy socket reduces requests, retains reconciliation and resumes polling on disconnect", async ({ page }) => {
   await desktop(page);
-  await page.clock.install();
+  // Pause before app timers exist; a fixed future time avoids sampling a running clock.
+  await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2025-01-02T00:00:00Z"));
   await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } }, origin);
   let socket: WebSocketRoute;
   let accept = true;
@@ -148,14 +150,25 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
     if (accept) socket = ws;
     else void ws.close();
   });
+  const initialResponses = new Set<string>();
+  const initialPaths = ["", "/chapters", "/report", "/stats", "/workflow"]
+    .map(path => `/projects/${pid}${path}`);
+  page.on("response", response => {
+    if (response.url().startsWith(origin)) initialResponses.add(new URL(response.url()).pathname);
+  });
   const counts: Record<string, number> = {};
   page.on("request", request => {
     if (request.url().startsWith(origin))
       counts[new URL(request.url()).pathname] = (counts[new URL(request.url()).pathname] || 0) + 1;
   });
   await page.goto(`/projects/${pid}`);
-  await expect(page.getByText("Progress connection: Live")).toBeVisible();
+  // Startup queries cross process boundaries; tick their notifications until all fixtures arrive.
+  await expect.poll(async () => {
+    await page.clock.runFor(100);
+    return initialPaths.every(path => initialResponses.has(path));
+  }).toBe(true);
   await page.clock.runFor(1000);
+  await expect(page.getByText("Progress connection: Live")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
   const total = () => Object.values(counts).reduce((a, b) => a + b, 0);
   const start = total();
@@ -179,7 +192,6 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await socket!.close();
   await page.clock.runFor(100);
   await expect(page.getByText("Progress connection: Polling")).toBeVisible();
-  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
   const beforeFallback = total();
   await page.clock.runFor(10_000);
   // Drain browser-to-runner request delivery without advancing the paused clock.
