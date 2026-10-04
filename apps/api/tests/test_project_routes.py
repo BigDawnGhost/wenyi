@@ -13,7 +13,7 @@ from test_storage_pg_integration import pg_pool  # noqa: F401
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from type_helpers import must
 from wenyi_api import dal
-from wenyi_api.adapters import create_context
+from wenyi_api.adapters import create_context, postgres_repository
 from wenyi_api.main import create_app
 from wenyi_backend import job_service
 from wenyi_backend.context import current_context, use_context
@@ -43,7 +43,7 @@ def api(monkeypatch, pg_pool, tmp_path):  # noqa: F811
         create_context(overrides),
         build_client=lambda cfg: factory.build_client(cfg),
     )
-    context.repository._pool = pg_pool
+    postgres_repository(context)._pool = pg_pool
     queue = []
 
     async def enqueue(name, **kwargs):
@@ -479,7 +479,7 @@ def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
     response = client.post(f"/projects/{pid}/prepare")
     job = must(dal.get_job_by_arq_id(response.json()["job_id"]))
     dal.set_job_status(job["id"], "running")
-    with current_context().repository.pool.connection() as conn:
+    with postgres_repository(current_context()).pool.connection() as conn:
         conn.execute(
             "UPDATE jobs SET updated_at=now()-interval '3 minutes' WHERE id=%s", (job["id"],)
         )

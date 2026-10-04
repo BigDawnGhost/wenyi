@@ -2,6 +2,7 @@
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from psycopg.types.json import Jsonb
 from wenyi_backend.context import BackendContext
@@ -18,6 +19,31 @@ from .telemetry import RedisTelemetry
 
 
 class PostgresRepository:
+    # __getattr__ returns these module functions without binding a repository argument.
+    # Keep lookup dynamic so DAL replacements remain visible to an existing context.
+    if TYPE_CHECKING:
+        create_project = staticmethod(dal.create_project)
+        get_project = staticmethod(dal.get_project)
+        list_projects = staticmethod(dal.list_projects)
+        delete_project = staticmethod(dal.delete_project)
+        set_project_status = staticmethod(dal.set_project_status)
+        set_project_strategy = staticmethod(dal.set_project_strategy)
+        set_project_config = staticmethod(dal.set_project_config)
+        set_project_languages = staticmethod(dal.set_project_languages)
+        set_project_source = staticmethod(dal.set_project_source)
+        chapter_summaries = staticmethod(dal.chapter_summaries)
+        total_word_count = staticmethod(dal.total_word_count)
+        create_job = staticmethod(dal.create_job)
+        get_job = staticmethod(dal.get_job)
+        get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
+        set_job_status = staticmethod(dal.set_job_status)
+        list_jobs = staticmethod(dal.list_jobs)
+        latest_resumable_job = staticmethod(dal.latest_resumable_job)
+        job_review_id = staticmethod(dal.job_review_id)
+        is_paused = staticmethod(dal.is_paused)
+        create_export = staticmethod(dal.create_export)
+        set_export_status = staticmethod(dal.set_export_status)
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self._pool = None
@@ -149,6 +175,13 @@ class PostgresExports:
         return publish_export(
             self.repository.pool, pid, export_id, output, data_dir=self.repository.settings.data_dir
         )
+
+
+def postgres_repository(context: BackendContext) -> PostgresRepository:
+    """Narrow platform capabilities without adding PostgreSQL to the shared port."""
+    repository = context.repository
+    assert isinstance(repository, PostgresRepository)
+    return repository
 
 
 def create_context(settings: Settings) -> BackendContext:

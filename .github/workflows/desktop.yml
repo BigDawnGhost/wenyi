@@ -71,7 +71,7 @@ jobs:
           version: "9"
       - uses: dtolnay/rust-toolchain@stable
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf
       - run: uv sync --locked --package wenyi-desktop --group dev
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/desktop.test.mjs

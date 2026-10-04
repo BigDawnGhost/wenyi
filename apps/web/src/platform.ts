@@ -66,6 +66,8 @@ function bindSourceDrop(zone: HTMLElement, callbacks: SourceDropCallbacks) {
 }
 
 export const webPlatform: PlatformServices = {
+  // Preserve browser behavior; native background policy belongs to the Desktop host.
+  activity: { isForeground: () => true, subscribe: () => () => {} },
   preferences: {
     get: (key) => localStorage.getItem(key),
     set: (key, value) => localStorage.setItem(key, value),
