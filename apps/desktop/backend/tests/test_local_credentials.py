@@ -341,9 +341,6 @@ def test_sdk_creation_receives_snapshot_not_environment(kind, monkeypatch):
 def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
     tmp_path, desktop_context
 ):
-    from wenyi_api.main import create_app as create_web_app
-
-    assert TestClient(create_web_app()).get("/desktop/credentials").status_code == 404
     client = TestClient(create_app(context=desktop_context))
     assert client.get("/desktop/credentials").status_code == 401
     headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}

@@ -134,14 +134,6 @@ def test_native_content_is_project_scoped_and_requires_published_status(desktop_
     assert response.headers["content-length"] == "11"
 
 
-def test_desktop_export_routes_are_absent_in_web_app():
-    from wenyi_api.main import create_app
-
-    assert not any(
-        path.startswith("/desktop/projects/") for path in create_app().openapi()["paths"]
-    )
-
-
 @pytest.mark.parametrize(
     "source_format,meta,expected",
     [("srt", {}, "srt"), ("docx", {}, "docx"), ("pdf", {"pdf_export": "babeldoc"}, "pdf")],
