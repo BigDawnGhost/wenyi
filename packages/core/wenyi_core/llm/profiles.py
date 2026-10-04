@@ -296,9 +296,9 @@ def _solar_reasoning(request: ReasoningRequest) -> tuple[dict[str, Any], dict[st
 def _meta_reasoning(request: ReasoningRequest) -> tuple[dict[str, Any], dict[str, Any]]:
     """Meta Muse rejects ``none``; disabled collapses to ``minimal``."""
     if not request.enabled or (request.effort or "") == "none":
-        return {}, {"reasoning_effort": "minimal"}
+        return {}, {"reasoning": {"effort": "minimal"}}
     clamped = effort.clamp_effort(request.effort, effort.META_AI_EFFORTS)
-    return {}, {"reasoning_effort": clamped or "medium"}
+    return {}, {"reasoning": {"effort": clamped or "medium"}}
 
 
 def _nebius_reasoning(request: ReasoningRequest) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -337,12 +337,15 @@ def _xai_reasoning(request: ReasoningRequest) -> tuple[dict[str, Any], dict[str,
         return {}, {}
     requested = request.effort or "medium"
     clamped = effort.clamp_effort(requested, supported)
-    return {}, {"reasoning_effort": clamped or "medium"}
+    return {}, {"reasoning": {"effort": clamped or "medium"}}
 
 
 def _router_reasoning(request: ReasoningRequest) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Ramp Router accepts the widest OpenAI-compatible vocabulary."""
-    return _top_level_effort(effort.OPENAI_COMPAT_WIRE_EFFORTS)(request)
+    """Ramp Router uses nested effort on its Responses wire."""
+    extra_body, top_level = _top_level_effort(effort.OPENAI_COMPAT_WIRE_EFFORTS)(request)
+    if "reasoning_effort" in top_level:
+        top_level = {"reasoning": {"effort": top_level["reasoning_effort"]}}
+    return extra_body, top_level
 
 
 def _codex_reasoning(request: ReasoningRequest) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -454,7 +457,7 @@ PROFILES: tuple[ProviderProfile, ...] = (
         "gemini",
         WIRE_GEMINI_NATIVE,
         "https://generativelanguage.googleapis.com",
-        ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
         display_name="Google Gemini",
         description="Google AI Studio via the google-genai SDK",
         signup_url="https://aistudio.google.com/app/apikey",

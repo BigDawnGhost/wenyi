@@ -4,8 +4,8 @@ One record per provider captures the grant, the token endpoints and the refresh 
 The CLI drives the flow; adapters only ask for a usable access token, so no protocol code
 lives in the CLI and no vendor endpoint lives in the transports.
 
-Credentials are never written to disk by Wenyi: a finished login prints a shell assignment
-that the user exports, matching how Wenyi reads every other credential.
+A finished login prints a shell assignment for the initial environment credential.
+Adapters persist refresh-token replacements through the coordinated OAuth cache.
 """
 
 from __future__ import annotations

@@ -137,7 +137,7 @@ llm:
 | `openrouter` | OpenRouter 端点；`OPENROUTER_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
 | `opencode-go` | OpenCode Go 网关（`https://opencode.ai/zen/go/v1`）；`OPENCODE_API_KEY`。会发送 `User-Agent: wenyi` 与连接级稳定的 `x-opencode-session`。无内置 preset，需自行配置模型 | `thinking`、`reasoning_effort`、`extra_body` |
 | `gemini` | 原生 Gemini API；未指定自定义变量时，从 `GEMINI_API_KEY` 回退到 `GOOGLE_API_KEY` | `thinking_level` 或 `thinking_budget`、`temperature`、`extra_body` |
-| `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
+| `openai-compatible` | `base_url` 或 `OPENAI_COMPATIBLE_BASE_URL`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`；`ORCAROUTER_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
 | `ollama`、`vllm` | `http://localhost:11434/v1`、`http://localhost:8000/v1`；可选密钥；`reasoning_style` | 同 `openai-compatible` |
 | `fake` | 无网络、无需密钥 | 无提供商选项 |
@@ -157,15 +157,19 @@ llm:
 
 连接的 `providers.<id>.kind` 和 `llm.preset` 均接受 profile kind 及其已注册别名；`claude`、`grok`、`chatgpt`、`google` 等别名会归一化为规范 kind。`llm.preset: <kind>` 在提供商声明预设时展开为该提供商的档位模型。
 
+Gemini 的模型选择、凭据替换和原生推理使用相同优先级：显式 `api_key_env`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`。`wenyi model --provider gemini --api-key ...` 更新 `GEMINI_API_KEY`，避免此前保存的值覆盖新凭据。自定义端点的选择、校验、预览和 SDK 连接均解析 `OPENAI_COMPATIBLE_BASE_URL`；显式 `base_url` 优先。
+
+Responses profile（xAI、Meta、Ramp）使用 `reasoning: {effort: ...}`，而不是 Chat Completions 的 `reasoning_effort` 字段。4,096 token 的 thinking 下限仅在 profile 或原生协议实现了思考控制时适用。Hugging Face、Alibaba、Azure Foundry 等没有推理控制的 profile 允许较小的显式输出上限和流程提示。
+
 端点优先级为显式 `base_url`、提供商的端点环境变量、默认端点；配置校验、路由预览和实际请求使用相同的解析逻辑。以 `sk-kimi-` 开头的 Kimi Code 密钥选择 `https://api.kimi.com/coding` 和 Messages 协议；旧 Moonshot 密钥继续使用 Chat Completions。`KIMI_BASE_URL` / `KIMI_CN_BASE_URL` 可以覆盖自动识别结果。Copilot 对 GPT-5 及后续代际使用 Responses，但 `gpt-5-mini` 例外；Claude、Gemini 及其他模型系列使用 Chat Completions。它发送编辑器身份请求头，并使用令牌交换返回的账户专属 `endpoints.api`，显式连接端点或端点环境变量优先。
 
 Z.AI 提供 `zai`、`zai-cn`、`zai-coding-plan`、`zai-coding-plan-cn`，分别对应国际/中国的通用和 Coding Plan 端点。请选择与账户套餐一致的 profile；Wenyi 不会发送可能计费的探测请求来猜测套餐。`GLM_BASE_URL` 可以覆盖端点。
 
-Vertex 使用应用默认凭据（或 `VERTEX_CREDENTIALS_PATH` 指定的凭据）、`VERTEX_PROJECT_ID`（也接受 `VERTEX_PROJECT` 和 `GOOGLE_CLOUD_PROJECT`）及 `VERTEX_REGION`（默认 `global`）。全球端点使用无地区前缀的 `aiplatform.googleapis.com`，自动生成的 OpenAI 兼容端点采用 `/v1beta1/projects/.../endpoints/openapi`；Vertex 预设模型包含 `google/` 发布者前缀。长任务会重新获取令牌。OAuth 刷新结果、轮换后的刷新令牌以及 Copilot 交换令牌按连接在锁保护下缓存；环境变量变化会使缓存失效。凭据只保留在内存中，不回写环境变量或磁盘。
+Vertex 使用应用默认凭据（或 `VERTEX_CREDENTIALS_PATH` 指定的凭据）、`VERTEX_PROJECT_ID`（也接受 `VERTEX_PROJECT` 和 `GOOGLE_CLOUD_PROJECT`）及 `VERTEX_REGION`（默认 `global`）。全球端点使用无地区前缀的 `aiplatform.googleapis.com`，自动生成的 OpenAI 兼容端点采用 `/v1beta1/projects/.../endpoints/openapi`；Vertex 预设模型包含 `google/` 发布者前缀。长任务会重新获取令牌。Copilot 交换令牌按连接缓存。轮换后的 OAuth 刷新令牌使用带线程锁和进程锁的共享私有缓存，因此新 adapter 或新进程即使继承了旧的 shell 凭据，也能恢复最新令牌。显式更换登录凭据会选择独立的令牌族。刷新后更新当前进程的环境变量，不修改父 shell 或原 `.env` 文件。
 
 ### 订阅登录
 
-部分提供商使用订阅而非 API Key 认证。这类凭据是以 JSON 对象形式存放在环境变量里的；Wenyi 不写入磁盘，只在当前进程内刷新。`wenyi auth list` 列出所有登录方式及其变量是否已设置。
+部分提供商使用订阅而非 API Key 认证。初始凭据以 JSON 对象形式存放在环境变量里。刷新的替换令牌原子保存到 `~/.config/wenyi/oauth/credentials.json`（设置 `XDG_CONFIG_HOME` 时使用 `$XDG_CONFIG_HOME/wenyi/oauth`）；可通过 `WENYI_OAUTH_CACHE_DIR` 指定缓存目录。POSIX 系统上目录权限为 `0700`，凭据和锁文件权限为 `0600`，仅所有者可访问。缓存含有秘密信息，不要提交或分享；容器和服务应使用私有、可写、持久化的目录。共享同一凭据的进程也必须共享该缓存及其文件系统锁。这只协调 Wenyi 进程；外部应用独立轮换导入的令牌时不会使用这些锁，若令牌因此失效，需要重新导入或登录。缓存读写失败时停止认证，不重试可能已消耗的刷新令牌。如果刷新中断且替换令牌尚未保存，需要重新登录；待完成标记会阻止重用旧令牌。`wenyi auth list` 列出所有登录方式及其变量是否已设置。
 
 | 登录名 | 提供商 | 凭据变量 | 授权方式 |
 |---|---|---|---|
@@ -177,8 +181,9 @@ Vertex 使用应用默认凭据（或 `VERTEX_CREDENTIALS_PATH` 指定的凭据�
 | `copilot` | `copilot` | `WENYI_COPILOT_OAUTH` | GitHub 设备码 |
 | `antigravity` | `antigravity` | `WENYI_ANTIGRAVITY_OAUTH` | Google 浏览器登录（PKCE） |
 
-- 内置提供商（包括 OAuth 订阅）自动使用已声明的端点，并保留现有地址覆盖；只有未配置端点的自定义提供商才询问 URL，也可用 `--base-url` 显式覆盖。`wenyi model` 登录时自动打开浏览器；设备授权会在系统支持时复制短期验证码，复制失败则保留手动操作提示。浏览器回调接收后还需交换令牌，终端会确认登录完成并继续获取在线模型。Antigravity 使用授权项目从 Cloud Code 获取目录。凭据保存至配置文件旁的 `.env`，不回显凭据值。
+- 内置提供商（包括 OAuth 订阅）自动使用已声明的端点，并保留现有地址覆盖；只有未配置端点的自定义提供商才询问 URL，也可用 `--base-url` 显式覆盖。`wenyi model` 登录时自动打开浏览器；设备授权会在系统支持时复制短期验证码，复制失败则保留手动操作提示。浏览器回调接收后还需交换令牌，终端会确认登录完成并继续获取在线模型。Antigravity 使用授权项目从 Cloud Code 获取目录。凭据保存至配置文件旁的 `.env`，不回显凭据值。带引号的 `.env` 值允许在引号后添加空白分隔的 `#` 行尾注释；引号内部的 `#` 保留为值的一部分。
 - `wenyi auth login <登录名>` 执行授权并输出需要 export 的 shell 赋值。`--port` 仅用于浏览器回调端口；`--no-browser` 禁用自动打开浏览器和复制设备验证码；`--timeout` 限制等待时间，`--json` 输出结构化数据。
+- 设备授权收到 `authorization_pending` 时继续轮询，包括 HTTP 200 响应；`slow_down` 会增大轮询间隔。拒绝授权或过期时终止登录。导出的 JSON 使用安全 shell 引用，单引号和命令替换语法保持为字面值。
 - `wenyi auth import <登录名> [文件]` 读取第一方客户端写出的凭据文件，也可指定文件；`--token` 接受粘贴的文本，`--json` 输出结构化数据。Qwen 无法脚本化登录，只能通过该方式配置。
 - `wenyi auth check [登录名]` 在本地报告变量中是否为可用凭据，包含身份、过期时间和是否可刷新；指定某个登录名且不可用时以 1 退出。
 - Antigravity 使用 Google OAuth 客户端登录，该客户端不由 Wenyi 内置。请把 Antigravity CLI 使用的客户端写入 `WENYI_ANTIGRAVITY_CLIENT_ID` 和 `WENYI_ANTIGRAVITY_CLIENT_SECRET`，例如放在配置文件旁的 `.env`；未设置时登录会中止并给出该提示。

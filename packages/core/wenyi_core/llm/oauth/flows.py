@@ -351,7 +351,17 @@ def _poll_once(
     status, body = _post(
         flow.poll_url, payload, style=flow.poll_request_style, headers=flow.headers
     )
-    if 200 <= status < 300:
+    code = _error_code(body)
+    message = _detail(body)
+    if code in {"authorization_pending", "pending", "waiting", "in_progress"}:
+        return "pending", None, message
+    if code == "slow_down":
+        return "slow-down", None, message
+    if code in {"expired_token", "expired"}:
+        return "failed", None, message or "device authorization code expired"
+    if code in {"access_denied", "denied"}:
+        return "failed", None, message or "authorization was denied"
+    if 200 <= status < 300 and not code:
         access_token = optional_text(body.get("access_token"))
         if access_token:
             credential = OAuthCredential(access_token=access_token).with_token_response(body)
@@ -367,16 +377,6 @@ def _poll_once(
             f"{flow.display_name} authorization response is incomplete: {_detail(body)}",
         )
 
-    code = _error_code(body)
-    message = _detail(body)
-    if code in {"authorization_pending", "pending", "waiting", "in_progress"}:
-        return "pending", None, message
-    if code == "slow_down":
-        return "slow-down", None, message
-    if code in {"expired_token", "expired"}:
-        return "failed", None, message or "device authorization code expired"
-    if code in {"access_denied", "denied"}:
-        return "failed", None, message or "authorization was denied"
     if status in flow.pending_statuses:
         return "pending", None, message
     if not code and flow.pending_on_unknown_error and status >= 400:

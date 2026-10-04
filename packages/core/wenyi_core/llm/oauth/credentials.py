@@ -1,8 +1,8 @@
 """Subscription OAuth credentials resolved from environment variables.
 
-Wenyi never writes credentials to disk: an OAuth credential lives in the environment
-variable named by the connection's ``api_key_env`` (or the provider default) as a JSON
-object, and refreshed tokens are kept in memory for the current process only.
+An initial OAuth credential lives in the environment variable named by the connection's
+``api_key_env`` (or the provider default) as a JSON object. Wire adapters coordinate and
+persist refresh-token replacements through the owner-only OAuth cache.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
+
+from ...envfile import export_lines
 
 EXPIRY_SKEW_SECONDS = 300.0
 TOKEN_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -51,7 +53,7 @@ class OAuthCredential:
         return deadline - skew <= (time.time() if now is None else now)
 
     def refreshable(self) -> bool:
-        """Report whether a refresh token is available for an in-memory refresh."""
+        """Report whether a refresh token is available for coordinated refresh."""
         return bool(self.refresh_token)
 
     def with_token_response(self, payload: Mapping[str, Any]) -> OAuthCredential:
@@ -178,7 +180,7 @@ def fingerprint(token: str, *, size: int = 6) -> str:
 def format_env_export(env_name: str, credential: OAuthCredential) -> str:
     """Return a shell assignment that stores the credential in the environment."""
     payload = json.dumps(credential.to_payload(), ensure_ascii=False, separators=(",", ":"))
-    return f"export {env_name}='{payload}'"
+    return export_lines({env_name: payload})
 
 
 def load_credential(env_name: str, provider: str) -> OAuthCredential:

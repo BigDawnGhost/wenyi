@@ -8,7 +8,6 @@ mapping that ``wenyi model`` writes back.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -19,7 +18,12 @@ from .configuration import LLMConfig, ProviderConfig
 from .oauth.credentials import OAuthCredentialError
 from .operations import TIERS
 from .profiles import AUTH_API_KEY, ProviderProfile, get_profile
-from .providers._credentials import candidate_env_vars, read_env_value, resolve_access_token
+from .providers._credentials import (
+    candidate_env_vars,
+    configured_base_url,
+    read_env_value,
+    resolve_access_token,
+)
 from .providers.codex import model_ids
 from .registry import PROVIDERS, provider_spec
 from .subscriptions import SUBSCRIPTIONS, SUBSCRIPTIONS_BY_KIND
@@ -340,11 +344,7 @@ def effective_base_url(kind: str) -> str | None:
     profile = _profile_for(kind)
     if profile is None:
         return None
-    if profile.base_url_env:
-        override = os.environ.get(profile.base_url_env, "").strip()
-        if override:
-            return override
-    return profile.base_url
+    return configured_base_url(profile, None)
 
 
 __all__ = [

@@ -15,6 +15,12 @@ def plain_text(value: str) -> str:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_oauth_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Keep refresh-token tests away from the user's durable credential cache."""
+    monkeypatch.setenv("WENYI_OAUTH_CACHE_DIR", str(tmp_path / "oauth-cache"))
+
+
+@pytest.fixture(autouse=True)
 def _plain_rich_console(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prefer colorless consoles in tests; Progress may still emit markup."""
     monkeypatch.setenv("NO_COLOR", "1")

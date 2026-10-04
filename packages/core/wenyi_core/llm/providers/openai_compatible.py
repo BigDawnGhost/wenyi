@@ -6,7 +6,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..configuration import ProviderConfig
+from ..profiles import get_profile
 from ..transport import Messages, ResolvedModel
+from ._credentials import configured_base_url
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
     base_request_kwargs,
@@ -84,6 +87,26 @@ def build_request_kwargs(
 
 class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleOptions]):
     connection_options = CompatibleConnectionOptions
+
+    def __init__(self, cfg: ProviderConfig):
+        super().__init__(cfg)
+        self.base_url = self.endpoint(cfg)
+
+    @classmethod
+    def endpoint(cls, cfg: ProviderConfig) -> str | None:
+        """Resolve custom endpoint overrides consistently with the provider selector."""
+        if cfg.kind == "openai-compatible":
+            return configured_base_url(get_profile(cfg.kind), cfg.base_url)
+        return cfg.base_url or cls.default_base_url
+
+    @classmethod
+    def validate_connection(cls, cfg: ProviderConfig) -> None:
+        cls.connection_options.model_validate(cfg.model_extra or {})
+        endpoint = cls.endpoint(cfg)
+        if cls.requires_base_url and not endpoint:
+            raise ValueError(f"Provider {cfg.kind} requires base_url")
+        if endpoint:
+            ProviderConfig.validate_url(endpoint)
 
     @property
     def reasoning_style(self) -> ReasoningStyle:

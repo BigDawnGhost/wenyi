@@ -1,12 +1,13 @@
 """Credential resolution shared by every profile-driven wire adapter.
 
 A credential reaches Wenyi through one environment variable: either a plain API key or a JSON
-OAuth credential. Subscription credentials are refreshed in memory when they are close to
-expiry and never written back, so a long run keeps working without touching the user's shell.
+OAuth credential. Rotating subscription credentials are persisted atomically in an owner-only
+cache and refreshed under a cross-process lock; the source shell and .env are left unchanged.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -21,6 +22,7 @@ from ..oauth.credentials import (
     OAuthCredentialError,
 )
 from ..oauth.importers import parse_credential_text
+from ..oauth.store import coordinated_credential
 from ..profiles import (
     AUTH_API_KEY,
     AUTH_COPILOT,
@@ -105,20 +107,27 @@ def resolve_credential(
             f"Environment variable {expected} is not set for provider {profile.kind}; "
             f"run `wenyi auth login {profile.kind}` or export an API key"
         )
-    credential = cached if cached is not None else parse_credential(value)
+    credential = parse_credential(value)
     if profile.auth == AUTH_COPILOT:
+        if cached is not None and cached.refresh_token == (
+            credential.refresh_token or credential.access_token
+        ):
+            credential = cached
         return _copilot_credential(credential)
-    if not credential.refresh_token and not _looks_like_subscription(profile):
-        return credential
-    if not credential.expired():
-        return credential
-    refreshed = _refresh(profile, credential, env_name)
-    if not refreshed.access_token:
-        raise OAuthCredentialError(
-            f"The {profile.display()} credential in {env_name} has no access token; "
-            f"run `wenyi auth login {profile.kind}` again"
+    if credential.refresh_token:
+        subscription = subscriptions.SUBSCRIPTIONS_BY_KIND.get(profile.kind)
+        if subscription is None and env_name:
+            subscription = subscriptions.subscription_for_env(env_name)
+        namespace = subscription.kind if subscription is not None else profile.kind
+        refreshed = coordinated_credential(
+            namespace, credential, lambda current: _refresh(profile, current, env_name)
         )
-    return refreshed
+        if env_name and os.environ.get(env_name, "").strip() == value:
+            os.environ[env_name] = json.dumps(refreshed.to_payload(), separators=(",", ":"))
+        return refreshed
+    if not _looks_like_subscription(profile) or not credential.expired():
+        return credential
+    return _refresh(profile, credential, env_name)
 
 
 def resolve_access_token(

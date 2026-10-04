@@ -161,6 +161,11 @@ class ProfileAdapter(ProviderAdapter, Generic[OptionsT]):
         thinking = profile.default_thinking if profile is not None else cls.default_thinking
         if requested is not None:
             thinking = bool(requested)
+        if profile is not None:
+            # Anthropic supplies native thinking even without a profile builder.
+            thinking = thinking and (
+                profile.reasoning is not None or profile.wire == WIRE_ANTHROPIC
+            )
         limit = explicit if explicit is not None else hint
         if limit is None:
             default = profile.default_max_tokens if profile is not None else None
@@ -186,7 +191,7 @@ class ProfileAdapter(ProviderAdapter, Generic[OptionsT]):
         return self.credential().access_token
 
     def credential(self) -> OAuthCredential:
-        """Return the usable credential; Vertex mints one and subscriptions refresh in memory."""
+        """Return a usable credential; subscription rotation uses the shared durable cache."""
         if self.profile.auth == AUTH_VERTEX:
             token, _ = self._vertex_credentials()
             return OAuthCredential(access_token=token)

@@ -224,6 +224,7 @@ def test_live_catalog_uses_the_selected_endpoint(monkeypatch):
 
 
 def test_gemini_catalog_filters_non_generation_models(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "test-token")
     _stub_http(
         monkeypatch,

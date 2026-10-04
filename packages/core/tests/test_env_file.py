@@ -32,6 +32,17 @@ def test_env_file_lives_beside_the_configuration(tmp_path):
             ("WENYI_CODEX_OAUTH", '{"access_token":"t"}'),
         ),
         ('OPENROUTER_API_KEY="quoted"', ("OPENROUTER_API_KEY", "quoted")),
+        (
+            'DEEPSEEK_API_KEY="fake-valid-key" # provider key',
+            ("DEEPSEEK_API_KEY", "fake-valid-key"),
+        ),
+        (
+            "DEEPSEEK_API_KEY='fake-valid-key' # provider key",
+            ("DEEPSEEK_API_KEY", "fake-valid-key"),
+        ),
+        ('KEY="value # literal"  # note', ("KEY", "value # literal")),
+        ("KEY='value'\t# note", ("KEY", "value")),
+        ("KEY='value'#literal", ("KEY", "value#literal")),
         ("  SPACED  =  value  ", ("SPACED", "value")),
         ("GEMINI_API_KEY=value # trailing note", ("GEMINI_API_KEY", "value")),
         ("", None),
@@ -91,7 +102,7 @@ def test_loading_never_replaces_an_exported_variable(tmp_path, monkeypatch):
     path = tmp_path / ".env"
     write_env_values(path, {"DEEPSEEK_API_KEY": "from-file", "GEMINI_API_KEY": "from-file"})
     monkeypatch.setenv("DEEPSEEK_API_KEY", "from-shell")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "")
 
     loaded = load_env_file(path)
 

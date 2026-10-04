@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from math import ceil
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..profiles import get_profile
 from ..retrying import EmptyResponseError, TruncatedResponseError
 from ..transport import Messages, ProviderAdapter, RequestContext, ResolvedModel
 from ..usage import UsageSample, make_usage_sample, read_usage_int
+from ._credentials import candidate_env_vars, read_env_value
 
 DEFAULT_API_KEY_ENV = "GEMINI_API_KEY"
 FALLBACK_API_KEY_ENV = "GOOGLE_API_KEY"
@@ -121,21 +122,9 @@ def get_api_key_from_env(custom_env: str | None = None) -> tuple[str | None, str
     """Resolve the Gemini API key from custom_env first, then GEMINI_API_KEY, then
     GOOGLE_API_KEY.
     """
-    if custom_env:
-        val = os.environ.get(custom_env, "").strip()
-        if val:
-            return val, custom_env
-
-    val_gemini = os.environ.get(DEFAULT_API_KEY_ENV, "").strip()
-    if val_gemini:
-        return val_gemini, DEFAULT_API_KEY_ENV
-
-    val_google = os.environ.get(FALLBACK_API_KEY_ENV, "").strip()
-    if val_google:
-        return val_google, FALLBACK_API_KEY_ENV
-
-    target_env = custom_env or DEFAULT_API_KEY_ENV
-    return None, target_env
+    names = candidate_env_vars(get_profile("gemini"), custom_env)
+    value, source = read_env_value(names)
+    return value or None, source or names[0]
 
 
 class GeminiClient(ProviderAdapter):

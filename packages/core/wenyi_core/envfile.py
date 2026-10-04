@@ -40,7 +40,7 @@ def parse_env_line(line: str) -> tuple[str, str] | None:
 def _unquote(raw: str) -> str:
     """Read one quoted value, including the shell concatenation form ``'a'\\''b'``.
 
-    A value that carries no quotes loses everything from a trailing `` #`` comment.
+    A trailing whitespace-separated comment is ignored only outside quotes.
     """
     if raw[:1] not in {"'", '"'}:
         return raw.split(" #", 1)[0].rstrip()
@@ -58,6 +58,8 @@ def _unquote(raw: str) -> str:
                 value.append(raw[index + 1])
                 index += 2
                 continue
+        elif char.isspace() and raw[index:].lstrip().startswith("#"):
+            break
         elif char in {"'", '"'}:
             quote = char
             index += 1
@@ -140,6 +142,9 @@ def load_env_file(path: str | os.PathLike[str], *, override: bool = False) -> tu
 
 def export_lines(values: Mapping[str, str]) -> str:
     """Return copy-pasteable ``export`` lines, without touching any file."""
+    for key in values:
+        if not _ENV_KEY.fullmatch(key):
+            raise ValueError(f"{key!r} is not an environment variable name")
     return "\n".join(f"export {key}={quote_env_value(value)}" for key, value in values.items())
 
 
