@@ -123,6 +123,7 @@ def test_finished_fixer_trace_is_only_resumed_with_identical_guidance(tmp_path, 
     assert previous is not None
     assert sum(c["operation"] == "review.fix" for c in first_client.calls) == 1
     trace = store.read_artifact(f"reviews/{previous['review_id']}/rounds/001/fixers/ch0-text0.json")
+    assert trace is not None
     assert trace["status"] == "finished"
 
     resumed, _, client = _project(tmp_path)
