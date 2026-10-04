@@ -123,6 +123,8 @@ SQLite 仅保存来源模式和不透明凭据引用。密钥不会保存到 YAM
 
 启动和关闭使用无加载文案的安静过渡。启动错误仍明确显示，并提供重试/重新加载操作。界面请求等待本地引擎就绪握手，不回退到远程端点。后端仅监听随机分配的回环端口，每次启动生成新的内存 token。
 
+Windows 的 debug Python 覆盖值必须是现有可执行文件路径，不能是 PATH 命令或包装器。对于 CPython venv，Desktop 读取 `pyvenv.cfg`，直接启动基础 `python.exe` 并设置 CPython 的 `__PYVENV_LAUNCHER__` 提示。这与 CPython venv 重定向器使用相同机制：导入环境和 `sys.executable` 仍属于 venv，但引擎本身成为原生应用持有的子进程。就绪 PID 仍必须与该子进程完全一致；就绪数据不能授权打开或终止其他 PID。venv 配置无效时启动失败，不回退到重定向器。打包后的 onedir 引擎仍直接启动，不发现或依赖外部 Python/venv。这个单进程契约避免了仅为管理重定向器后代而引入 Windows Job Object 及挂起进程分配流程。
+
 关闭 Desktop 时停止接收任务，让本地任务写入检查点/取消，然后关闭自身后端。重启后可从已保存进度续跑。关闭前请保存编辑器草稿；尚未保存的内存草稿不属于持久化检查点。
 
 Linux 有 Wayland 时优先使用原生 Wayland；X11 仅是连接阶段的回退，不是全局强制设置。针对 NVIDIA 专有驱动，原生 Wayland 使用进程级显式同步兼容设置并保持 DMA-BUF；NVIDIA/X11、NVIDIA/Hyprland 使用独立 DMA-BUF 回退。用户显式设置的图形环境变量优先。

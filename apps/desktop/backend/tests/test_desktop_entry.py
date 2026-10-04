@@ -63,6 +63,47 @@ def request(base, path, **headers):
         return error
 
 
+def owned_python(env):
+    """Mirror the native launch contract: the interpreter is the owned child."""
+    if sys.platform == "win32":
+        # The venv redirector uses exactly this CPython mechanism. Bypassing it
+        # preserves venv imports while making Popen.kill target the real engine.
+        env["__PYVENV_LAUNCHER__"] = sys.executable
+        return sys._base_executable
+    return sys.executable
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="CPython Windows venv redirector")
+def test_owned_python_preserves_venv_and_process_identity(tmp_path):
+    env = os.environ.copy()
+    executable = owned_python(env)
+    child = subprocess.Popen(
+        [
+            executable,
+            "-c",
+            "import json, os, sys; "
+            "print(json.dumps([os.getpid(), sys.executable, sys.prefix, sys.base_prefix]))",
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = child.communicate(timeout=10)
+        assert child.returncode == 0, stderr
+        pid, executable, prefix, base_prefix = json.loads(stdout)
+        assert pid == child.pid
+        assert Path(executable) == Path(sys.executable)
+        assert Path(prefix) == Path(sys.prefix)
+        assert Path(base_prefix) == Path(sys.base_prefix)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+
+
 @pytest.mark.parametrize("shutdown", ["command", "eof"])
 def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutdown):
     token = secrets.token_hex(32)
@@ -73,7 +114,7 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
     sentinel.write_text("This is not a Wenyi configuration.")
     workspace = tmp_path / "desktop"
     child = subprocess.Popen(
-        [sys.executable, "-m", "wenyi_desktop.desktop", "--data-dir", str(workspace)],
+        [owned_python(env), "-m", "wenyi_desktop.desktop", "--data-dir", str(workspace)],
         cwd=tmp_path,
         env=env,
         stdin=subprocess.PIPE,
@@ -124,7 +165,7 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
 def test_desktop_requires_parent_token(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != "WENYI_API_TOKEN"}
     result = subprocess.run(
-        [sys.executable, "-m", "wenyi_desktop.desktop", "--data-dir", str(tmp_path / "unused")],
+        [owned_python(env), "-m", "wenyi_desktop.desktop", "--data-dir", str(tmp_path / "unused")],
         env=env,
         capture_output=True,
         text=True,

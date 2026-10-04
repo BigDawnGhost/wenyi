@@ -134,6 +134,17 @@ SQLite stores only modes and opaque credential references. Keys are not saved in
 
 The UI has quiet startup/closing transitions without loading text. Startup errors remain visible with a retry/reload action. Requests wait for the local engine's ready handshake; the app never falls back to a remote endpoint. The backend listens only on a randomly allocated loopback port and uses a fresh in-memory token on every launch.
 
+On Windows, a debug Python override must name an existing executable path (not a
+PATH command or wrapper). For a CPython venv, Desktop reads `pyvenv.cfg` and starts
+its base `python.exe` directly with CPython's `__PYVENV_LAUNCHER__` hint. This is
+the same mechanism used by CPython's venv redirector: imports and `sys.executable`
+still belong to the venv, but the engine itself is the owned child. The ready PID
+must still match that child exactly; readiness never authorizes opening or killing
+another PID. Invalid venv configuration fails startup rather than falling back to
+the redirector. Packaged onedir engines continue to start directly, without Python
+or venv discovery. This single-process contract avoids needing a Windows Job
+Object and suspended-process assignment just to own a redirector's descendant.
+
 Closing Desktop stops accepting work, checkpoints/cancels local tasks, and shuts down its owned backend. Saved progress can be resumed after reopening. Save in-progress editor drafts before closing; an unsaved in-memory draft is not a persisted checkpoint.
 
 On Linux, native Wayland is preferred when available; X11 is a connection-time fallback, not a global override. For proprietary NVIDIA drivers, Desktop uses a process-local explicit-sync compatibility setting on native Wayland while keeping DMA-BUF enabled. NVIDIA/X11 and NVIDIA/Hyprland use a separate DMA-BUF fallback. Explicit user graphics environment settings take precedence.
