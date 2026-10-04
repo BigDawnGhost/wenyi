@@ -53,6 +53,11 @@ fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
     publish(app, state);
 }
 
+fn application_context() -> tauri::Context<tauri::Wry> {
+    // macOS embeds a global Info.plist symbol; expand this macro only once.
+    tauri::generate_context!()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let data_dir = match args.as_slice() {
@@ -147,7 +152,7 @@ fn main() {
             });
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(application_context())
         .expect("Could not build the Wenyi desktop window");
     app.run(move |handle, event_kind| {
         let requested = match event_kind {
@@ -189,7 +194,7 @@ mod tests {
     use super::*;
     #[test]
     fn tauri_application_version_matches_native_version_report() {
-        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let context = application_context();
         assert_eq!(
             context.package_info().version.to_string(),
             env!("WENYI_DESKTOP_VERSION")
