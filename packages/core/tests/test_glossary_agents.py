@@ -86,6 +86,26 @@ class TestAgentCollectionNormalization(unittest.TestCase):
 
 
 class TestAnalyzer(unittest.TestCase):
+    def test_style_brief_omits_snapshot_target_and_preserves_character_guidance(self):
+        analyzer = Analyzer(FakeClient(), _cfg())
+        brief = analyzer.style_brief(
+            {
+                "characters": [
+                    {
+                        "source": "H.H.",
+                        "target": "Stale snapshot name",
+                        "gender": " male ",
+                        "note": "Speaks in restrained, formal sentences.",
+                    }
+                ]
+            }
+        )
+
+        self.assertNotIn("Stale snapshot name", brief)
+        self.assertIn("H.H.", brief)
+        self.assertIn("male", brief)
+        self.assertIn("Speaks in restrained, formal sentences.", brief)
+
     def test_analyze_and_seed(self):
         analysis = {
             "genre": "校园",
@@ -122,7 +142,8 @@ class TestAnalyzer(unittest.TestCase):
             store.close()
 
         brief = a.style_brief(result)
-        self.assertIn("绫小路", brief)
+        self.assertIn("綾小路", brief)
+        self.assertNotIn("绫小路", brief)
 
     def test_malformed_collection_items_are_filtered(self):
         analysis = {

@@ -1,6 +1,6 @@
 import { useI18n, translate as tr } from "@/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, isProjectBusy, type Term } from "@/lib/api";
@@ -86,9 +86,18 @@ function parseCsv(text: string): Partial<Term>[] {
 export default function GlossaryPage() {
   const { t: tr } = useI18n();
   const { pid = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
-  const [type, setType] = useState("");
+  const requestedType = searchParams.get("type") || "";
+  const type = Object.keys(termTypes()).includes(requestedType) ? requestedType : "";
+  const setType = (value: string) =>
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value) next.set("type", value);
+      else next.delete("type");
+      return next;
+    });
   const [addOpen, setAddOpen] = useState(false);
   const [editTerm, setEditTerm] = useState<Term | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());

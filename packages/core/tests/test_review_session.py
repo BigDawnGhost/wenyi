@@ -101,3 +101,42 @@ def test_review_recovers_checkpoint_and_usage_boundaries(tmp_path, boundary, aft
     ]
     assert Path(store.chapter_path(0)).read_bytes() == formal
     assert Path(store.manifest_path).read_bytes() == manifest
+
+
+@pytest.mark.parametrize("change", ["style", "synopsis", "digest", "unchanged"])
+def test_finished_fixer_trace_is_only_resumed_with_identical_guidance(tmp_path, change):
+    orch, store, first_client = _project(tmp_path)
+    save = ReviewRunStore.save_checkpoint
+
+    def checkpoint(debug, value):
+        if value["phase"] == "round_done":
+            # The fixer trace is durable, but the overlay checkpoint is not.
+            raise KeyboardInterrupt()
+        return save(debug, value)
+
+    with (
+        patch.object(ReviewRunStore, "save_checkpoint", checkpoint),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        orch._review.run_session(store, [])
+    previous = store.load_latest_review_result()
+    assert previous is not None
+    assert sum(c["operation"] == "review.fix" for c in first_client.calls) == 1
+    trace = store.read_artifact(f"reviews/{previous['review_id']}/rounds/001/fixers/ch0-text0.json")
+    assert trace["status"] == "finished"
+
+    resumed, _, client = _project(tmp_path)
+    analysis = store.load_analysis() or {}
+    if change == "style":
+        analysis["tone"] = "Restrained"
+    elif change == "synopsis":
+        analysis["book_synopsis"] = "New synopsis"
+    elif change == "digest":
+        chapter = store.load_chapter(0)
+        chapter.meta["source_digest"] = "New digest"
+        store.save_chapter(chapter)
+    store.save_analysis(analysis)
+
+    outcome = resumed._review.run_session(store, [])
+    assert (outcome.result["review_id"] != previous["review_id"]) == (change != "unchanged")
+    assert sum(c["operation"] == "review.fix" for c in client.calls) == int(change != "unchanged")

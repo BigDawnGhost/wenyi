@@ -107,7 +107,7 @@ class Analyzer(Agent):
         return count
 
     def style_brief(self, analysis: dict[str, Any]) -> str:
-        """Condense analysis into a style and character brief for the translator."""
+        """Condense style and character guidance; name mappings belong to the glossary."""
         lines = []
         if analysis.get("genre"):
             lines.append(f"Genre: {analysis['genre']}")
@@ -134,7 +134,5 @@ class Analyzer(Agent):
                 gender = normalize_gender(_text(c.get("gender")))
                 g = f", {gender}" if gender else ""
                 note = f", {c.get('note')}" if c.get("note") else ""
-                lines.append(
-                    f"  - {c.get('target') or c.get('source', '')} ({c.get('source', '')}{g}{note})"
-                )
+                lines.append(f"  - {c.get('source', '')}{g}{note}")
         return "\n".join(lines)
