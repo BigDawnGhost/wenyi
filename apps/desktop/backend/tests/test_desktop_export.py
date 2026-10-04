@@ -249,7 +249,7 @@ def test_disconnect_closes_export_stream(desktop_exports, monkeypatch, native, f
     from wenyi_desktop.routers import desktop_export
 
     _, backend, pid = desktop_exports
-    export_id, _ = publish(backend, pid, fmt, b"translation")
+    export_id, output = publish(backend, pid, fmt, b"translation")
     opened = []
     original = backend.open_export
 
@@ -260,6 +260,11 @@ def test_disconnect_closes_export_stream(desktop_exports, monkeypatch, native, f
 
     monkeypatch.setattr(backend, "open_export", capture)
     response = (desktop_export.save_content if native else export.download_export)(pid, export_id)
+    for _ in range(5):
+        publish(backend, pid, fmt, b"newer")
+    assert all(row["id"] != export_id for row in backend.list_exports(pid))
+    if fmt == "txt":
+        assert output.exists()
 
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
@@ -274,6 +279,8 @@ def test_disconnect_closes_export_stream(desktop_exports, monkeypatch, native, f
                 {"type": "http", "method": "GET", "asgi": {"spec_version": "2.4"}}, receive, send
             )
         assert opened[0].closed
+        assert not output.exists()
+        assert backend._get("exports", export_id) is None
 
     asyncio.run(disconnected())
 

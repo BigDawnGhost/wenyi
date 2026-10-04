@@ -14,6 +14,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
@@ -33,6 +34,9 @@ class LocalBackend:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.config_path = config_path
         self.database = self.workspace / "local.sqlite3"
+        # Releasing memory must not depend on an available project directory.
+        self._export_leases_lock = Lock()
+        self._export_leases: dict[int, int] = {}
         with self.transaction() as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
@@ -610,7 +614,9 @@ class LocalBackend:
 
         root = str(self.workspace / "projects")
         for old in self._list("exports", pid=pid):
-            if old["status"] != "deleting":
+            with self._export_leases_lock:
+                leased = bool(self._export_leases.get(old["id"], 0))
+            if old["status"] != "deleting" or leased:
                 continue
             try:
                 old_file = export_path(root, pid, old["path"])
@@ -630,12 +636,31 @@ class LocalBackend:
             with self.transaction() as conn:
                 conn.execute("DELETE FROM exports WHERE id=?", (old["id"],))
 
+    def _release_export(self, pid: str, export_id: int) -> None:
+        from wenyi_backend.export_paths import log
+
+        with self._export_leases_lock:
+            count = self._export_leases.get(export_id, 0)
+            if count > 1:
+                self._export_leases[export_id] = count - 1
+            else:
+                self._export_leases.pop(export_id, None)
+        if count != 1:
+            return
+        # Never hold the memory lock while acquiring a project's filesystem lock.
+        # Cleanup is retryable and must not replace the download's response outcome.
+        try:
+            with self._export_history_lock(pid):
+                self._cleanup_exports(pid)
+        except Exception:
+            log.warning("Could not reclaim exports after closing %s", export_id, exc_info=True)
+
     def open_export(
         self, pid: str, export_id: int, *, bundle_html: bool = False
     ) -> tuple[BinaryIO, Path]:
         from wenyi_backend.export_paths import export_path
 
-        from .local_export_files import html_bundle, open_regular
+        from .local_export_files import ExportLease, html_bundle, open_regular
 
         with self._export_history_lock(pid):
             export = self._get("exports", export_id)
@@ -652,7 +677,15 @@ class LocalBackend:
             # Keep owned assets alive until bundled, without a catalog transaction.
             if bundle_html and file.suffix == ".html":
                 return html_bundle(file), file
-            return open_regular(file), file
+            stream = open_regular(file)
+            try:
+                leased = ExportLease(stream, lambda: self._release_export(pid, export_id))
+            except BaseException:
+                stream.close()
+                raise
+            with self._export_leases_lock:
+                self._export_leases[export_id] = self._export_leases.get(export_id, 0) + 1
+            return leased, file
 
     def project_configs(
         self, connection: sqlite3.Connection | None = None

@@ -145,6 +145,81 @@ def test_export_retention_and_project_ownership(backend):
     assert source.read_text() == "original"
 
 
+@pytest.mark.parametrize("retry_cleanup", [False, True])
+def test_retired_export_waits_for_last_stream_and_cleans_on_close(
+    backend, monkeypatch, retry_cleanup
+):
+    pid = new_project()
+    identity, output = _export_file(backend, pid)
+    first, _ = backend.open_export(pid, identity)
+    second, _ = backend.open_export(pid, identity)
+    original_unlink = Path.unlink
+    attempted = []
+
+    def unlink(path, *args, **kwargs):
+        if path == output:
+            attempted.append(path)
+            # Model Windows deny-delete handles on every test platform.
+            if not first.closed or not second.closed:
+                raise PermissionError("Export still has an open download")
+            if retry_cleanup and len(attempted) == 1:
+                raise PermissionError("Temporary filesystem failure after closing")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    try:
+        for _ in range(5):
+            _export_file(backend, pid)
+        assert len(backend.list_exports(pid)) == 5
+        assert backend._get("exports", identity)["status"] == "deleting"
+        with pytest.raises(FileNotFoundError):
+            backend.open_export(pid, identity)
+        assert output.exists()
+        assert attempted == []
+        first.close()
+        first.close()
+        assert output.exists()
+        assert second.read() == str(identity).encode()
+        assert attempted == []
+    finally:
+        first.close()
+        second.close()
+    assert attempted == [output]
+    if retry_cleanup:
+        assert output.exists()
+        assert backend._get("exports", identity)["status"] == "deleting"
+        backend.recover_export_cleanup(pid)
+        assert attempted == [output, output]
+    assert not output.exists()
+    assert backend._get("exports", identity) is None
+
+
+@pytest.mark.parametrize("failure", ["_export_history_lock", "_cleanup_exports"])
+def test_export_close_releases_memory_even_when_cleanup_cannot_run(backend, monkeypatch, failure):
+    pid = new_project()
+    identity, output = _export_file(backend, pid)
+    stream, _ = backend.open_export(pid, identity)
+    for _ in range(5):
+        _export_file(backend, pid)
+
+    def unavailable(*args):
+        raise OSError("Project directory or catalog is temporarily unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, failure, unavailable)
+        # Cleanup failure must neither replace the response outcome nor leave a
+        # permanent in-memory lease. Concurrent/repeated closes remain harmless.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda _: stream.close(), range(2)))
+    assert stream.closed
+    assert identity not in backend._export_leases
+    assert output.exists()
+    assert backend._get("exports", identity)["status"] == "deleting"
+    backend.recover_export_cleanup(pid)
+    assert not output.exists()
+    assert backend._get("exports", identity) is None
+
+
 def test_slow_export_cleanup_does_not_block_other_project(backend, monkeypatch):
     from threading import Event
 

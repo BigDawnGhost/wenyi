@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from fastapi import WebSocketDisconnect
 from wenyi_backend import dal
 from wenyi_backend.application import create_app as create_http_app
@@ -73,7 +74,11 @@ class DesktopServices:
                     pending.append(received)
                 for task in pending:
                     task.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
+                # An owning ASGI cancel scope may keep cancelling at each await.
+                # Drain our children without turning their cancellation into a
+                # second, unrelated CancelledError that escapes that scope.
+                with anyio.CancelScope(shield=True):
+                    await asyncio.gather(*pending, return_exceptions=True)
 
 
 def create_context(

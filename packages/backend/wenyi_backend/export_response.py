@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import BinaryIO
 
+import anyio
 from starlette.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
@@ -42,4 +43,7 @@ class ExportResponse(StreamingResponse):
             await super().__call__(scope, receive, send)
         finally:
             # ASGI 2.4 disconnect skips background tasks and can suspend the iterator.
-            self.stream.close()
+            # Releasing the last stream may also reclaim retired files; keep that
+            # blocking work off the event loop and finish it despite cancellation.
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(self.stream.close)

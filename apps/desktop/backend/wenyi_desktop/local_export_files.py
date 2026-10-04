@@ -8,8 +8,28 @@ import stat
 import tempfile
 import zipfile
 from contextlib import ExitStack, contextmanager
+from io import BufferedReader
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from threading import Lock
+from typing import BinaryIO, Callable, Iterator
+
+
+class ExportLease(BufferedReader):
+    """Release an export lease exactly once, after its file handle is closed."""
+
+    def __init__(self, stream: BinaryIO, release: Callable[[], None]):
+        self._close_lock = Lock()
+        self._release: Callable[[], None] | None = release
+        super().__init__(stream)
+
+    def close(self) -> None:
+        with self._close_lock:
+            try:
+                super().close()
+            finally:
+                if self.closed and self._release is not None:
+                    release, self._release = self._release, None
+                    release()
 
 
 def _component(name: str) -> None:

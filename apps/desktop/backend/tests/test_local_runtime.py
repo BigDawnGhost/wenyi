@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import anyio
 import pytest
 from starlette.websockets import WebSocketDisconnect
 from test_local_workflows import desktop, initialize  # noqa: F401
@@ -215,6 +216,50 @@ def test_websocket_first_frame_auth_snapshot_and_project_run_identity(desktop):
         client.app.state.backend.telemetry.connect().publish(f"project:{pid}", json.dumps(payload))
         assert ws.receive_json() == payload
     store.close()
+
+
+def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, monkeypatch):
+    from wenyi_desktop.main import DesktopServices
+
+    async def run():
+        pid = project()
+        hub = ProgressHub(catalog, asyncio.get_running_loop())
+        services = DesktopServices(catalog)
+        services.runtime = SimpleNamespace(hub=hub)
+        tasks = []
+        drained = []
+        create_task = asyncio.create_task
+
+        def track(coro, **kwargs):
+            async def child():
+                try:
+                    return await coro
+                finally:
+                    await asyncio.sleep(0)
+                    drained.append(True)
+
+            task = create_task(child(), **kwargs)
+            tasks.append(task)
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", track)
+
+        async def send_json(payload):
+            assert payload["kind"] == "snapshot"
+
+        with anyio.CancelScope() as scope:
+
+            async def receive():
+                # TestClient closes its owning AnyIO scope while relay children run.
+                scope.cancel()
+                await asyncio.Future()
+
+            await services.relay(SimpleNamespace(send_json=send_json, receive=receive), pid)
+        assert tasks and all(task.done() for task in tasks)
+        assert len(drained) == len(tasks)
+        assert hub._subscribers == {}
+
+    anyio.run(run)
 
 
 def test_workflow_cached_progress_rejects_other_project_and_old_run(desktop):
