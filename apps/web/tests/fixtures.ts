@@ -16,6 +16,40 @@ export const project = {
 };
 // Specs build their own chapter variants from this base; keep it free of
 // presentation-only fields so overrides stay fully deterministic.
+// Extra sandbox projects so sidebar recall/switching can be exercised by
+// hand: a busy book and an srt project (fewer sidebar links via audience).
+const projectNames: Record<string, string> = {
+  "book-2": "雾谷试译",
+  "book-3": "字幕样例",
+};
+const extraProjects = [
+  {
+    ...project,
+    id: "book-2",
+    name: projectNames["book-2"],
+    title: "試験稿",
+    fmt: "docx",
+    source_lang: "ja",
+    target_lang: "zh",
+    status: "translating",
+    chapter_count: 5,
+    total_word_count: 40,
+    done_chapters: 2,
+  },
+  {
+    ...project,
+    id: "book-3",
+    name: projectNames["book-3"],
+    title: "Subtitle sample",
+    fmt: "srt",
+    source_lang: "en",
+    target_lang: "zh",
+    status: "done",
+    chapter_count: 1,
+    total_word_count: 8,
+    done_chapters: 1,
+  },
+];
 export const chapter = {
   index: 0,
   title: "Chapter One",
@@ -153,7 +187,7 @@ function tableData(): Record<string, unknown> {
         steps: {},
       },
     ],
-    "/projects": [project],
+    "/projects": [project, ...extraProjects],
     [`/projects/${pid}`]: project,
     [`/projects/${pid}/chapters`]: chapters,
     [`/projects/${pid}/config`]: configuration,
@@ -325,6 +359,27 @@ export interface FixtureResponse {
   json: unknown;
 }
 
+function swapProjectId(value: unknown, subId: string): unknown {
+  if (Array.isArray(value)) return value.map((item) => swapProjectId(item, subId));
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.id === pid) {
+      return { ...record, id: subId, name: projectNames[subId] ?? record.name };
+    }
+  }
+  return value;
+}
+
+/** Any other project id reuses the book-1 fixture family with id/name swapped,
+ *  so every sandbox project page is fully explorable. */
+function familyFixture(path: string): FixtureResponse | null {
+  const match = path.match(/^\/projects\/([^/]+)(\/.*)?$/);
+  if (!match || match[1] === pid) return null;
+  const template = tableData()[`/projects/${pid}${match[2] ?? ""}`];
+  if (template === undefined) return null;
+  return { status: 200, json: swapProjectId(template, match[1]) };
+}
+
 /**
  * Method-aware fixture resolution shared by the Playwright `fakeApi` route and
  * the Vite `MOCK_API` middleware, so automated tests and the manual mock
@@ -346,6 +401,8 @@ export function resolveFixture(
   const data = { ...tableData(), ...overrides };
   if (verb === "GET" || verb === "HEAD") {
     if (path in data) return { status: 200, json: data[path] };
+    const family = familyFixture(path);
+    if (family) return family;
     return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   }
   if (path in overrides) return { status: 200, json: overrides[path] };
@@ -358,6 +415,8 @@ export function resolveFixture(
     return { status: 200, json: { imported: 0 } };
   }
   if (path in data) return { status: 200, json: data[path] };
+  const family = familyFixture(path);
+  if (family) return family;
   const project_id = path.match(/^\/projects\/([^/]+)/)?.[1];
   return {
     status: 200,
