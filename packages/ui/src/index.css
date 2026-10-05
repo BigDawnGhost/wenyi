@@ -2,11 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 梦源宋体 (DreamHan Serif CN) W11 subset — the two brand glyphs only.
+/* 梦源宋体 (DreamHan Serif CN) W13 subset — the two brand glyphs only.
    SIL Open Font License 1.1; see DreamHanSerif-LICENSE-OFL.txt. */
 @font-face {
   font-family: "DreamHanWenyi";
-  src: url("./assets/fonts/dream-han-serif-cn-w11-wenyi.woff2") format("woff2");
+  src: url("./assets/fonts/dream-han-serif-cn-w13-wenyi.woff2") format("woff2");
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -163,6 +163,37 @@ details[open] > .disclosure-summary > .disclosure-chevron {
 @keyframes runtime-enter {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+/* Button feedback toasts: fit their content, never intercept clicks, and
+   pair with the Toaster duration (1s) so confirmations pass on their own. */
+li[data-sonner-toast] {
+  width: max-content;
+  max-width: 320px;
+  pointer-events: none;
+}
+/* Sit the stack flush under the header actions: the toast right edge lines
+   up with the button column (24px page padding + scrollbar), content-sized. */
+/* Pre-mount transform only: the toast slides up into its slot from below;
+   mounted/stacked/exit states keep sonner own --y rules untouched. */
+[data-sonner-toast][data-y-position="top"]:not([data-mounted="true"]) {
+  transform: translateY(100%);
+}
+/* Top-anchored toasts exit back downward (enter from below, leave below). */
+[data-sonner-toast][data-y-position="top"][data-removed="true"][data-swipe-out="false"] {
+  --y: translateY(100%);
+}
+@media (min-width: 689px) {
+  /* Anchor to the document so the stack scrolls away with the header button. */
+  [data-sonner-toaster] {
+    position: absolute;
+  }
+  [data-sonner-toaster][data-x-position="right"] {
+    right: 24px;
+  }
+  [data-sonner-toaster][data-x-position="right"] [data-sonner-toast] {
+    left: auto;
+    right: 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .runtime-placeholder,

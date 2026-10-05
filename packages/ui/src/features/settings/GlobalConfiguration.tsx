@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api, type GlobalConfig } from "@/lib/api";
 import { platform } from "@/platform";
 import { useI18n } from "@/i18n";

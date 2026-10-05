@@ -10,6 +10,7 @@ import {
   ListChecks,
   ListTree,
   ScrollText,
+  Settings,
   Settings2,
   Sparkles,
   type LucideIcon,
@@ -118,7 +119,7 @@ export interface NavEntry {
 export const navEntries: NavEntry[] = [
   { to: "/", label: "appLayout.projects", icon: LayoutDashboard, end: true, group: "global", slot: "panel", order: 10, audience: "all", loader: loadDashboard },
   { to: "/projects/new", label: "common.createProject", icon: FolderPlus, group: "global", slot: "action", order: 20, audience: "all", loader: loadCreateProject },
-  { to: "/settings", label: "settings.title", icon: Settings2, group: "global", slot: "foot", order: 30, audience: "all", loader: loadInterfaceSettingsPage },
+  { to: "/settings", label: "settings.title", icon: Settings, group: "global", slot: "foot", order: 30, audience: "all", loader: loadInterfaceSettingsPage },
   { to: "/projects/:pid", label: "common.translationOverview", icon: Sparkles, end: true, group: "project", order: 10, audience: "all", loader: loadProgressPage },
   { to: "/projects/:pid/proofreading", label: "progress.manualProofreading", icon: BookOpenCheck, group: "project", order: 20, audience: "book", loader: loadProofreadingPage },
   { to: "/projects/:pid/review", label: "common.wholeBookReview", icon: ListChecks, group: "project", order: 30, audience: "book", loader: loadReviewPage },

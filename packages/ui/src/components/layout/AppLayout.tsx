@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { NavigationLink, ProjectNavigation } from "./Navigation";
 import { navEntries } from "@/routes/manifest";
 import { RouteGate } from "@/routes/RouteGate";
+import { Toaster } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { platform } from "@/platform";
@@ -35,7 +36,7 @@ function Brand() {
         height={36}
         className="h-9 w-9 shrink-0 object-contain grayscale dark:invert"
       />
-      <span className="brand-wordmark translate-y-0.5 text-[22px] font-normal leading-none tracking-wide">
+      <span className="brand-wordmark translate-y-0.5 text-[20px] font-normal leading-none tracking-wide">
         {t("appLayout.wenyi")}
       </span>
     </Link>
@@ -214,7 +215,18 @@ export function AppLayout() {
           </div>
         </div>
       </aside>
-      <main data-slot="content" className="flex-1 min-h-0 min-w-0 overflow-y-auto">
+      <main
+        data-slot="content"
+        className="relative flex-1 min-h-0 min-w-0 overflow-y-auto"
+      >
+        {/* Mounted inside the scrolling content so the toast stack tracks the
+            header actions instead of the viewport. */}
+        <Toaster
+          richColors
+          position="top-right"
+          offset={62}
+          toastOptions={{ duration: 1000 }}
+        />
         {/* The route gate keeps the shell mounted while a lazy chunk loads and
             confines route failures to the content area. */}
         <RouteGate>
@@ -237,16 +249,23 @@ export function PageHeader({
   return (
     <div
       data-slot="page.header"
-      className="flex flex-wrap items-start justify-between gap-4 border-b px-4 sm:px-6 py-4"
+      className="relative flex flex-wrap items-center justify-between gap-4 border-b px-4 sm:px-6 py-4"
     >
-      <div className="min-w-0 flex-1 basis-64 [overflow-wrap:anywhere]">
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]",
+          actions && "pr-48",
+        )}
+      >
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && (
-          <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
         )}
       </div>
       {actions && (
-        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        <div className="absolute inset-y-0 right-4 flex items-center gap-2 sm:right-6">
+          {actions}
+        </div>
       )}
     </div>
   );
