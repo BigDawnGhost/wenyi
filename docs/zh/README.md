@@ -49,7 +49,7 @@
 - **实时术语闭环** — 翻译中自动提取人名、地名、术语和固定表达；检测译法冲突并提示人工裁决
 - **多阶段质量保证** — 可选润色（强档模型重译）和取证式全书 AI 审校
 - **断点续跑** — 自动保存已完成批次和章节进度；重新打开应用后，可从已保存的检查点继续
-- **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点；保留三档位入口，支持按操作独立选模型、混用连接与共享限额。配置见[模型路由](configuration.md#模型与操作路由)。
+- **多种 LLM 支持** — DeepSeek、OpenAI、OpenRouter、OrcaRouter、Atlas Cloud、Google Gemini、Ollama、vLLM，以及通用 OpenAI 兼容端点；保留三档位入口，支持按操作独立选模型、混用连接与共享限额。配置见[模型路由](configuration.md#模型与操作路由)。
 - **原生 EPUB 回填** — 基于原书 XHTML 模板替换译文片段，尽量保留原书样式、图片、目录和锚点
 - **双语对照输出** — 可选原文译文对照版，原文视觉淡化，支持深色模式。
 

@@ -162,6 +162,7 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 | `opencode-go` | OpenCode Go gateway (`https://opencode.ai/zen/go/v1`); `OPENCODE_API_KEY`. Sends `User-Agent: wenyi` and a stable per-connection `x-opencode-session`. No built-in preset — configure models explicitly | `thinking`, `reasoning_effort`, `extra_body` |
 | `gemini` | Native Gemini API; `GEMINI_API_KEY`, falling back to `GOOGLE_API_KEY` when no custom variable is set | `thinking_level` or `thinking_budget`, `temperature`, `extra_body` |
 | `openai-compatible` | Explicit `base_url`; optional `api_key_env`; `reasoning_style` | `thinking`, `reasoning_effort`, `json_response_fallback`, `request_overrides` |
+| `atlascloud` | `https://api.atlascloud.ai/v1`; `ATLASCLOUD_API_KEY`; `reasoning_style`. Models that expose their reasoning put it in `reasoning_content`, so `reasoning_style: deepseek` suits those; the default `none` suits the rest | Same as `openai-compatible` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`; `ORCAROUTER_API_KEY`; `reasoning_style` | Same as `openai-compatible` |
 | `ollama`, `vllm` | `http://localhost:11434/v1`, `http://localhost:8000/v1`; optional credentials; `reasoning_style` | Same as `openai-compatible` |
 | `fake` | No network or credentials | No provider options |
