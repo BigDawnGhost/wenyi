@@ -1,5 +1,5 @@
 import { useI18n } from "@/i18n";
-import { Suspense, useState } from "react";
+import { useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
 import {
   PanelLeftClose,
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { NavigationLink, ProjectNavigation } from "./Navigation";
 import { navEntries } from "@/routes/manifest";
+import { RouteGate } from "@/routes/RouteGate";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { platform } from "@/platform";
@@ -153,19 +154,11 @@ export function AppLayout() {
         </div>
       </aside>
       <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
-        {/* Keep the shell mounted while a lazy route chunk loads; only the
-            content area waits, so a cold navigation never blanks the app. */}
-        <Suspense
-          fallback={
-            <div
-              aria-busy="true"
-              className="route-placeholder"
-              data-route-pending=""
-            />
-          }
-        >
+        {/* The route gate keeps the shell mounted while a lazy chunk loads and
+            confines route failures to the content area. */}
+        <RouteGate>
           <Outlet />
-        </Suspense>
+        </RouteGate>
       </main>
     </div>
   );

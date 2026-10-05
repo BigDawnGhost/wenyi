@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { RegistryIdField } from "./RegistryIdField";
 import { registryReferences, type RegistryGroup } from "./registryEdits";
@@ -8,6 +8,7 @@ import { Select, SelectItem } from "@/components/ui/select";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
 import { platform } from "@/platform";
+import { LazyBoundary } from "@/routes/LazyBoundary";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -235,14 +236,14 @@ export function ProviderSettings({
               {CredentialField && (
                 // The credential UI may be a lazy platform chunk; keep its slot
                 // filled with the environment field instead of blanking it.
-                <Suspense fallback={environmentField}>
+                <LazyBoundary fallback={environmentField}>
                   <CredentialField
                     connection={id}
                     saved={credentialsSaved}
                   >
                     {environmentField}
                   </CredentialField>
-                </Suspense>
+                </LazyBoundary>
               )}
             </div>
           );

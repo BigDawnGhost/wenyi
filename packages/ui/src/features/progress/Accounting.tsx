@@ -5,8 +5,9 @@ import {
   Layers,
   MessagesSquare,
 } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
 import { useI18n } from "@/i18n";
+import { LazyBoundary } from "@/routes/LazyBoundary";
 import {
   amount,
   cacheRate,
@@ -90,7 +91,7 @@ export function Accounting({
           />
           {t("accounting.details")}
         </h3>
-        <Suspense
+        <LazyBoundary
           fallback={
             <p className="mt-5 text-sm text-muted-foreground">
               {t("progress.loading")}
@@ -101,7 +102,7 @@ export function Accounting({
             <UsageChart usage={usage} />
             <RunTimeChart timing={timing} />
           </div>
-        </Suspense>
+        </LazyBoundary>
       </div>
     </section>
   );
