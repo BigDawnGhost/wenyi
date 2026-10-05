@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -36,7 +36,7 @@ test("production Web output contains no native bootstrap, IPC or vault UI", () =
   for (const file of outputs)
     assert(!nativeCode.test(readFileSync(file, "utf8")), `Native implementation found in ${file}`);
   for (const route of ["CreateProject", "ProofreadingPage", "ExportPage", "InterfaceSettingsPage"])
-    assert(outputs.some((file) => file.includes(`/${route}-`)), `${route} must remain a lazy chunk`);
+    assert(outputs.some((file) => basename(file).includes(`${route}-`)), `${route} must remain a lazy chunk`);
 });
 
 test("Desktop independently includes the native adapters and keeps routes lazy", () => {
@@ -47,5 +47,5 @@ test("Desktop independently includes the native adapters and keeps routes lazy",
   for (const marker of ["__WENYI_DESKTOP", "native_drop_upload", "native_export_save", "/desktop/credentials"])
     assert(code.includes(marker), `Desktop is missing ${marker}`);
   for (const route of ["CreateProject", "ProofreadingPage", "ExportPage", "InterfaceSettingsPage"])
-    assert(outputs.some((file) => file.includes(`/${route}-`)), `${route} must remain a lazy chunk`);
+    assert(outputs.some((file) => basename(file).includes(`${route}-`)), `${route} must remain a lazy chunk`);
 });
