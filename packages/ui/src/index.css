@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 梦源宋体 (DreamHan Serif CN) W11 subset — the two brand glyphs only.
+   SIL Open Font License 1.1; see DreamHanSerif-LICENSE-OFL.txt. */
+@font-face {
+  font-family: "DreamHanWenyi";
+  src: url("./assets/fonts/dream-han-serif-cn-w11-wenyi.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   :root {
     color-scheme: light;

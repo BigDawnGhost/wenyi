@@ -36,7 +36,7 @@ function Brand() {
         className="translate-y-0.5 text-[22px] font-normal leading-none tracking-wide"
         style={{
           fontFamily:
-            "Georgia, 'Times New Roman', 'Noto Serif CJK SC', 'Songti SC', SimSun, serif",
+            "'DreamHanWenyi', Georgia, 'Times New Roman', 'Noto Serif CJK SC', 'Songti SC', SimSun, serif",
         }}
       >
         {t("appLayout.wenyi")}
@@ -81,7 +81,7 @@ export function AppLayout() {
           collapsed ? "md:w-16" : "md:w-60",
         )}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b px-3 py-[10px]">
           <div className={cn("min-w-0", collapsed && "md:hidden")}>
             <Brand />
           </div>
