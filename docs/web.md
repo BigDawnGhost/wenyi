@@ -1,6 +1,6 @@
 # Web deployment and development
 
-[简体中文](zh/web.md) · [CLI usage](usage.md) · [Configuration](configuration.md)
+[简体中文](zh/web.md) · [CLI guide](cli.md) · [Configuration](configuration.md)
 
 The Web stack uses React/Vite, FastAPI, Arq, PostgreSQL, and Redis. Ordinary workflows and exports are consumed by two independent workers. Domain logic comes from `wenyi_core`; the Web path does not copy CLI file-state layouts into the database.
 
@@ -115,7 +115,30 @@ pnpm -C apps/web dev
 
 The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the API. The API initializes a fresh database schema. Starting only the ordinary worker does not consume the export queue.
 
+## Interface language
+
+The interface defaults to English, regardless of browser language. Open global
+**Settings → Interface language** to choose **English** or **简体中文**.
+This preference is available before creating a project and while tasks run; it is
+not part of project settings.
+
+The standalone settings page opens at Interface language (`/settings`). Use the
+floating **Settings** icon on the project list, including on mobile or with no
+projects. From a project, return using **Projects** at the bottom of its sidebar,
+then open Settings. Settings also keeps **Projects** at the bottom of its sidebar.
+
+The choice applies immediately, survives reloads, and synchronizes between tabs on
+the same site. It is stored under `wenyi.locale` in the browser, not in project
+configuration. An absent or unsupported saved language falls back to English.
+
+Interface language changes labels and number/date formatting, not source/target
+languages, model configuration, book content, glossary entries, or model-generated
+analysis. Server errors and live logs are shown as received. Developer instructions
+live in the shared [frontend localization guide](../packages/ui/src/i18n/README.md).
+
 ## Workflow
+
+Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
 
 The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
 
@@ -151,6 +174,29 @@ Long chapter titles wrap without squeezing status labels or actions; on narrow s
 The glossary keeps the same compact rows and column widths across type filters. Long terms and readings use a single-line preview; hover over the text or open the term editor to read the full value. On narrow screens, the table scrolls horizontally within its card.
 
 **Contents & titles** lists the existing chapter titles beside their translations. Search either column, open a chapter in proofreading, or edit a translated title with the pencil button. Saving persists the title on the server for every browser and updates the linked EPUB TOC node, including equivalent NAV/NCX entries with the same original title and destination. Future exports use the saved titles; existing export files remain unchanged. Body headings are edited separately in proofreading. Pause running tasks before editing. If another editor changes the same title, your input is retained and saving requires loading the latest title. The page currently lists chapters; editing the complete EPUB hierarchy and automatic title alignment are not included.
+
+In Web and Desktop, **Style & synopsis** lets you edit every style dimension: genre,
+tone, narration, pacing, register, dialogue style, and rhetoric. The **Save** button
+in **Style overview** saves those fields together with the **Style guide**. The
+whole-book synopsis has its own save button. Saving one section or a chapter summary
+preserves unsaved drafts in the other sections. Editing remains disabled while a task runs.
+Style and synopsis drafts also survive navigation to other pages in the same app session,
+isolated by project. They are kept only in memory; reload or close the app to discard them.
+While an analysis save is pending, those editors remain read-only even after navigating
+away and Back, preventing overlapping saves in the same app session.
+
+**Style & synopsis** has no separate character table or character-management shortcut.
+Open **Glossary** from the sidebar and select the **Person** filter to manage names,
+translations, readings, gender, notes, and aliases. Search matches source
+terms, translations, aliases, readings, and notes, ignoring case and surrounding query
+whitespace. Type filters also apply to search results.
+
+Initial style analysis seeds characters with nonempty source and target names into
+the glossary. Analysis is a preparation snapshot, not a continuously synchronized
+copy of the glossary: later edits, deletions, and analysis rebuilds can make them
+differ. Removing the table does not delete either store or restore deleted terms.
+Name mappings in model requests come from the glossary, not the character snapshot's
+old translated names; descriptive character guidance remains available.
 
 In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
 
@@ -202,5 +248,4 @@ In **Translation overview**, expand **Workflow details** to see **Current workfl
 
 ## Related notes
 
-- [Interface languages](web-i18n.md)
 - [Independent local Desktop application](desktop.md)

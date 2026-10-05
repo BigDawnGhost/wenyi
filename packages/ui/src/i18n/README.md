@@ -22,9 +22,18 @@ Keep lookup tables as message keys, or evaluate translations during rendering. D
 module-level constants once at import time: those values would remain stale after switching languages.
 Call `useI18n()` in each component that renders translated text so it subscribes to preference changes.
 
-Add a locale file with `satisfies Messages`, then register it in `catalog.ts`. No component changes
-are required to expose it in the selector. Unsupported saved locale codes use English. Cross-tab
-changes use the browser storage event; storage errors retain the selection in memory for the session.
+## Adding a language
+
+1. Add a locale file under `locales/`, using `locales/en.ts` as the canonical message-key list.
+2. Type the dictionary with `satisfies Messages` and preserve every interpolation name.
+3. Register its BCP 47 code, native language name, and dictionary in `catalog.ts`. The selector
+   and `Locale` type derive from this registry; no component changes are needed.
+4. Run typecheck, build, and Playwright tests for both Web and Desktop. The catalog test checks
+   matching message keys and interpolation parameters.
+
+Unsupported saved locale codes use English. Cross-tab changes use the browser storage event;
+storage errors retain the selection in memory for the session.
 
 UI language is separate from book language. Preserve user content, backend identifiers, server errors,
-and live log text. See [the user guide](../../../../docs/web-i18n.md) and `tests/i18n.spec.ts`.
+and live log text. See [Web interface language](../../../../docs/web.md#interface-language)
+and [browser localization tests](../../../../apps/web/tests/i18n.spec.ts).

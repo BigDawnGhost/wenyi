@@ -209,7 +209,8 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: chinese ? "风格 & 概要" : "Style & synopsis",
       }),
     ).toBeVisible();
-    await expect(page.getByText("原文风格", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: chinese ? "体裁" : "Genre", exact: true }))
+      .toHaveValue("原文风格");
     await page.goto(`/projects/${pid}/events`);
     await expect(
       page.getByText(

@@ -32,22 +32,34 @@ export function useProjectProgress(pid: string | undefined) {
     let refresh: ReturnType<typeof setTimeout> | undefined;
     let forceRefresh = false;
     const pending = new Set<string>();
+    const { isForeground } = platform().activity;
     const invalidate = (keys: string[], force = false) => {
+      if (!isForeground()) return;
       keys.forEach((key) => pending.add(key));
       forceRefresh ||= force;
       if (refresh !== undefined) return;
       // Coalesce bursts from concurrent batches while retaining the final event.
       refresh = setTimeout(() => {
         refresh = undefined;
-        for (const key of pending)
-          qc.invalidateQueries(
-            { queryKey: [key, pid] },
-            { cancelRefetch: forceRefresh },
-          );
+        if (isForeground())
+          for (const key of pending)
+            qc.invalidateQueries(
+              { queryKey: [key, pid] },
+              { cancelRefetch: forceRefresh },
+            );
         pending.clear();
         forceRefresh = false;
       }, 500);
     };
+    const unsubscribeActivity = platform().activity.subscribe(() => {
+      if (isForeground()) return;
+      // A brief hide/restore must not leave a pre-hide refresh competing with
+      // the host's foreground reconciliation.
+      clearTimeout(refresh);
+      refresh = undefined;
+      pending.clear();
+      forceRefresh = false;
+    });
     const all = [
       "project",
       "chapters",
@@ -72,7 +84,9 @@ export function useProjectProgress(pid: string | undefined) {
         invalidate(all, true);
       };
       ws.onmessage = (ev) => {
-        if (stopped || ws !== wsRef.current) return;
+        // Keep the subscription, but do not render or refetch for background events.
+        // The host reconciles saved snapshots when the window becomes foreground.
+        if (stopped || ws !== wsRef.current || !isForeground()) return;
         try {
           const incoming = JSON.parse(ev.data) as ProgressMessage;
           if (!incoming || typeof incoming.kind !== "string") return;
@@ -118,6 +132,7 @@ export function useProjectProgress(pid: string | undefined) {
     connect();
     return () => {
       stopped = true;
+      unsubscribeActivity();
       clearTimeout(reconnect);
       clearTimeout(refresh);
       wsRef.current?.close();

@@ -6,6 +6,52 @@ Desktop is a **local translation application**, built with Tauri, React, and the
 
 Translation still needs access to the configured model provider. Optional MinerU and BabelDOC services retain their existing requirements; “local application” does not make external model or document services offline.
 
+## Quick start
+
+[![Download Desktop](https://img.shields.io/badge/Desktop-download-D4B56A?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/releases)
+
+### 1. Download Desktop
+
+Open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) and choose a `wenyi-desktop-<version>-<platform>-<arch>` asset matching your system:
+
+| Platform | Package |
+|---|---|
+| Windows x64 | `.exe` installer |
+| Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
+| macOS Apple Silicon | `.dmg` |
+
+Desktop assets are distributed directly, without an outer ZIP. For an AppImage, allow execution in the file's permissions before opening it. Packaged releases include the translation engine: you do not need to install Python or deploy a server.
+
+Check the release notes for platform requirements and signing status. To build from source instead, follow [Run from source](#run-from-source).
+
+### 2. Connect a model
+
+Open **Settings → API providers & models**, choose a provider, configure models and any custom base URL, and save the connection. Enter and save the API key in its password field.
+
+Desktop uses the system credential store when available. If it is unavailable, the interface explains that the key is kept only for the current session and must be entered again after restart. A local workspace does not mean offline model processing: text is sent to the provider you configure, unless you use a local model service.
+
+### 3. Create a translation project
+
+Create a new project, drag in a supported book or choose it with Browse, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost.
+
+Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
+
+### 4. Proofread and save
+
+Compare the translation with the source, edit paragraphs, inspect revisions, and review reported issues. Review can publish fixes to the translation; disable automatic fixes when you want a read-only review. Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
+
+Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
+
+### Continue later
+
+Completed batches are saved in the local workspace. Reopen Desktop, open the same project, and resume from its checkpoints. Save any in-progress proofreading edits before closing. For workspace locations and backup instructions, see [Independent data](#independent-data).
+
+## Interface language
+
+The interface defaults to English. Open global **Settings → Interface language**
+to choose **English** or **简体中文**. The change applies immediately to interface
+labels, not the book's source/target languages, content, or model-generated analysis.
+
 ## Independent data
 
 Desktop does not adopt or migrate existing Web projects. It also does not read or modify the CLI's `config.yaml`, `state/`, or `output/`. CLI behavior remains unchanged.
@@ -25,6 +71,10 @@ Use `--data-dir <path>` to select a separate workspace, for example for testing.
 ## Run from source
 
 Install Python 3.10+, `uv`, Node 22, pnpm 9, Rust stable, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). These are development/build requirements, not additional Python requirements for packaged releases.
+
+On Debian/Ubuntu, also install `libdbus-1-dev` for the native tray availability
+checks (`sudo apt-get install libdbus-1-dev`); other Linux distributions need the
+corresponding D-Bus development package.
 
 From the repository root:
 
@@ -113,7 +163,7 @@ set for its platform; older outputs are left untouched and never relabeled.
 These workflows do not sign or notarize packages. Platform signing and end-user
 installation checks remain release responsibilities.
 
-The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and closing the native window shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. Real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
+The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and the previous close-to-exit lifecycle shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. The current tray lifecycle was also checked on KDE Wayland using a debug native build, production UI, source Python engine, and temporary empty workspace: minimize/restore and close-to-tray/restore kept the engine alive, and explicit tray exit reaped it. Packaged tray behavior, real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 
 ## API keys
 
@@ -159,7 +209,35 @@ the redirector. Packaged onedir engines continue to start directly, without Pyth
 or venv discovery. This single-process contract avoids needing a Windows Job
 Object and suspended-process assignment just to own a redirector's descendant.
 
-Closing Desktop stops accepting work, checkpoints/cancels local tasks, and shuts down its owned backend. Saved progress can be resumed after reopening. Save in-progress editor drafts before closing; an unsaved in-memory draft is not a persisted checkpoint.
+### Background operation
+
+- Minimizing the window keeps local tasks running. Closing the window hides it to the
+  system tray instead of exiting. Use **Show Wenyi** in the tray menu to restore it;
+  reopening from the macOS Dock also restores the window.
+- If the tray cannot be created, closing minimizes the window instead of hiding it.
+  The taskbar/Dock and the native application menu remain available.
+- Hidden windows and platform-reported minimization pause periodic UI polling,
+  progress-event refetches, and live elapsed-time timers. The progress subscription and Python engine remain
+  running; already-started requests and native saves are not canceled. Restoring
+  the window immediately reconciles saved state, including tasks completed in the
+  background. An ordinary loss of focus does not count as minimization.
+- Hiding retains the WebView, unsaved editor drafts, and session-only credentials.
+  This reduces unnecessary UI work, not the resident memory of the Python engine
+  or WebView. It does not keep the computer awake or prevent operating-system sleep.
+
+On Linux/GTK Wayland, compositor-side minimization is not reliably reported to
+the application. It still keeps tasks running, but UI polling/timers may continue.
+Use close-to-tray for reliably detected background operation; an ordinary blur
+is deliberately not treated as minimization. Restoring from the tray remaps the
+same native window to handle GTK/Wayland's deiconify limitation, without replacing
+the WebView or its drafts.
+
+Use **Quit Wenyi** in the tray or native application menu to actually exit.
+Explicit exit stops accepting work, checkpoints/cancels local tasks, and shuts
+down the owned backend. Saved progress can be resumed after reopening. Save
+editor drafts before quitting; an unsaved in-memory draft is not a persisted
+checkpoint. Background translation continues to make configured model requests
+and can incur provider usage until the task finishes or is paused.
 
 On Linux, native Wayland is preferred when available; X11 is a connection-time fallback, not a global override. For proprietary NVIDIA drivers, Desktop uses a process-local explicit-sync compatibility setting on native Wayland while keeping DMA-BUF enabled. NVIDIA/X11 and NVIDIA/Hyprland use a separate DMA-BUF fallback. Explicit user graphics environment settings take precedence.
 

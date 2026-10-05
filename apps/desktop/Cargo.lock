@@ -4522,6 +4522,7 @@ version = "0.0.0"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
+ "dbus",
  "getrandom 0.3.4",
  "libc",
  "reqwest",

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from type_helpers import must
 from wenyi_api import dal
+from wenyi_api.adapters import PostgresRepository
 from wenyi_backend import project_service
 from wenyi_backend.context import ContextMiddleware, current_context
 from wenyi_backend.routers import chapters, glossary, report, review, style, subtitles
@@ -26,7 +27,9 @@ def domain_client(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(project_service, "storage_for", lambda pid: pg_storage)
     for module in (chapters, glossary, report, review, style, subtitles):
         monkeypatch.setattr(module, "storage_for", lambda pid: pg_storage)
-    current_context().repository._pool = pg_pool
+    repository = current_context().repository
+    assert isinstance(repository, PostgresRepository)
+    repository._pool = pg_pool
     queued = []
 
     async def start(pid, kind, *, params=None):

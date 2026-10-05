@@ -10,6 +10,7 @@ import "@wenyi/ui/index.css";
 import { useRuntimeStatus } from "./runtime";
 import { useDesktopI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
+import { configureQueryActivity } from "./activity";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,6 +18,7 @@ export const queryClient = new QueryClient({
   },
 });
 configurePlatform(desktopPlatform(queryClient));
+configureQueryActivity(queryClient);
 
 function Bootstrap() {
   const status = useRuntimeStatus();
