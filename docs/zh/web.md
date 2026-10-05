@@ -113,6 +113,8 @@ pnpm -C apps/web dev
 
 Web 开发地址为 http://localhost:5173，Vite 代理 `/api` 与 `/ws` 至 API。API 初始化全新数据库结构。仅起普通 Worker 不会消费导出队列。
 
+若不想启动任何后端、只想在浏览器里点着看界面，运行 `MOCK_API=1 pnpm -C apps/web dev`。Vite 会用 Playwright 测试同一套 fixture 数据（`apps/web/tests/fixtures.ts`）应答 `/api`：所有页面都带示例数据打开，按钮操作直接在 mock 上完成，不接触真实服务。进度 WebSocket 不可用时界面自动退回轮询 mock API。不设 `MOCK_API` 时行为与平常一致，代理到真实 API。
+
 ## 界面语言
 
 界面默认使用英语，不自动跟随浏览器语言。打开全局 **设置 → 界面语言**，可选择

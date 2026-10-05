@@ -1,10 +1,42 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import { resolveFixture } from "./tests/fixtures";
+
+// MOCK_API=1 pnpm dev:web serves the same fixture data the Playwright suites
+// use, directly from the dev server — click around every page without a
+// backend. Without the variable the proxy to the real API is untouched.
+function mockApi(): Plugin {
+  const enabled = process.env.MOCK_API === "1" || process.env.MOCK_API === "true";
+  console.log("[mock-api] enabled =", enabled);
+  return {
+    name: "mock-api",
+    configureServer(server) {
+      if (!enabled) return;
+      server.middlewares.use("/api", (req, res) => {
+        const method = (req.method || "GET").toUpperCase();
+        const requestPath = (req.url || "/").split("?")[0];
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => {
+          const rawBody =
+            method === "GET" || method === "HEAD"
+              ? undefined
+              : Buffer.concat(chunks).toString("utf8");
+          const { status, json } = resolveFixture(method, requestPath, rawBody);
+          res.statusCode = status;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify(json));
+        });
+      });
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
     react(),
+    mockApi(),
     {
       name: "browser-platform-boundary",
       generateBundle(_options, bundle) {
