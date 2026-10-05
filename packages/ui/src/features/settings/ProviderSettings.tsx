@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { RegistryIdField } from "./RegistryIdField";
 import { registryReferences, type RegistryGroup } from "./registryEdits";
@@ -233,12 +233,23 @@ export function ProviderSettings({
                 </div>
               </div>
               {CredentialField && (
-                <CredentialField
-                  connection={id}
-                  saved={credentialsSaved}
+                <Suspense
+                  fallback={
+                    <div
+                      aria-busy="true"
+                      data-credential-pending=""
+                      className="min-h-32 border-t"
+                    />
+                  }
                 >
-                  {environmentField}
-                </CredentialField>
+                  {/* A lazy native field must not suspend the entire Settings page. */}
+                  <CredentialField
+                    connection={id}
+                    saved={credentialsSaved}
+                  >
+                    {environmentField}
+                  </CredentialField>
+                </Suspense>
               )}
             </div>
           );

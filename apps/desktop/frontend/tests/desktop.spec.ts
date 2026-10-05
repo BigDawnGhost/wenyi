@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, globalConfiguration, pid, project } from "./fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -68,6 +68,59 @@ test("Desktop dashboard opens standalone settings and keeps category drafts", as
   await page.goto(`/projects/${pid}`);
   await expect(nav.getByRole("link")).toHaveCount(1);
   await expect(nav.getByRole("link")).toHaveText("Projects");
+});
+
+test("lazy credentials do not blank settings after its configuration loads", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {
+    "/desktop/credentials": {
+      default: { mode: "environment", available: false, storage: "environment" },
+    },
+  }, origin);
+  let releaseConfig = () => {};
+  let releaseCredential = () => {};
+  const configGate = new Promise<void>(resolve => { releaseConfig = resolve; });
+  const credentialGate = new Promise<void>(resolve => { releaseCredential = resolve; });
+  await page.route(`${origin}/settings`, async route => {
+    await configGate;
+    await route.fulfill({ json: globalConfiguration });
+  });
+  await page.route("**/src/DesktopCredential.tsx*", async route => {
+    await credentialGate;
+    await route.continue();
+  });
+  try {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect(page.getByLabel("Interface language")).toBeVisible();
+    const requested = page.waitForRequest("**/src/DesktopCredential.tsx*");
+    releaseConfig();
+    await requested;
+    const blankFrames = await page.evaluate(async () => {
+      let blank = 0;
+      for (let frame = 0; frame < 45; frame++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!document.querySelector("main h1")?.getClientRects().length ||
+            document.querySelector("[data-route-pending]")) blank++;
+      }
+      return blank;
+    });
+    expect(blankFrames).toBe(0);
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Interface language")).toBeVisible();
+    await page.getByRole("navigation", { name: "Settings navigation" })
+      .getByRole("link", { name: "API providers & models", exact: true }).click();
+    await page.locator("summary").filter({ hasText: "API providers & models" }).click();
+    await expect(page.getByLabel("API provider", { exact: true })).toBeVisible();
+    await expect(page.locator("[data-credential-pending]")).toBeVisible();
+    releaseCredential();
+    await expect(page.locator("[data-credential-pending]")).toHaveCount(0);
+    await expect(page.locator("#credential-secret-default")).toBeVisible();
+  } finally {
+    releaseConfig();
+    releaseCredential();
+  }
 });
 
 test("pending gate waits for ready, uses memory auth for HTTP, socket and download", async ({ page }) => {
