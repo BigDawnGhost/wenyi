@@ -1,27 +1,61 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { Component, lazy, Suspense, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  type ReactNode,
+} from "react";
 import { AppLayout } from "./components/layout/AppLayout";
 import { useI18n } from "./i18n";
 
-const Dashboard = lazy(() => import("./features/dashboard/Dashboard"));
-const CreateProject = lazy(
-  () => import("./features/project-create/CreateProject"),
-);
-const ProgressPage = lazy(() => import("./features/progress/ProgressPage"));
-const GlossaryPage = lazy(() => import("./features/glossary/GlossaryPage"));
-const StylePage = lazy(() => import("./features/style/StylePage"));
-const ReviewPage = lazy(() => import("./features/review/ReviewPage"));
-const ProofreadingPage = lazy(
-  () => import("./features/proofreading/ProofreadingPage"),
-);
-const ExportPage = lazy(() => import("./features/export/ExportPage"));
-const EventsPage = lazy(() => import("./features/events/EventsPage"));
-const ContentsPage = lazy(() => import("./features/contents/ContentsPage"));
-const InterfaceSettingsPage = lazy(
-  () => import("./features/settings/InterfaceSettingsPage"),
-);
-const SettingsPage = lazy(() => import("./features/settings/SettingsPage"));
-const SubtitlesPage = lazy(() => import("./features/subtitles/SubtitlesPage"));
+const loadDashboard = () => import("./features/dashboard/Dashboard");
+const loadCreateProject = () => import("./features/project-create/CreateProject");
+const loadProgressPage = () => import("./features/progress/ProgressPage");
+const loadGlossaryPage = () => import("./features/glossary/GlossaryPage");
+const loadStylePage = () => import("./features/style/StylePage");
+const loadReviewPage = () => import("./features/review/ReviewPage");
+const loadProofreadingPage = () =>
+  import("./features/proofreading/ProofreadingPage");
+const loadExportPage = () => import("./features/export/ExportPage");
+const loadEventsPage = () => import("./features/events/EventsPage");
+const loadContentsPage = () => import("./features/contents/ContentsPage");
+const loadInterfaceSettingsPage = () =>
+  import("./features/settings/InterfaceSettingsPage");
+const loadSettingsPage = () => import("./features/settings/SettingsPage");
+const loadSubtitlesPage = () => import("./features/subtitles/SubtitlesPage");
+
+const Dashboard = lazy(loadDashboard);
+const CreateProject = lazy(loadCreateProject);
+const ProgressPage = lazy(loadProgressPage);
+const GlossaryPage = lazy(loadGlossaryPage);
+const StylePage = lazy(loadStylePage);
+const ReviewPage = lazy(loadReviewPage);
+const ProofreadingPage = lazy(loadProofreadingPage);
+const ExportPage = lazy(loadExportPage);
+const EventsPage = lazy(loadEventsPage);
+const ContentsPage = lazy(loadContentsPage);
+const InterfaceSettingsPage = lazy(loadInterfaceSettingsPage);
+const SettingsPage = lazy(loadSettingsPage);
+const SubtitlesPage = lazy(loadSubtitlesPage);
+
+// Warm every route chunk after the first commit so the first navigation after
+// startup or a page refresh does not wait on the network for its module.
+const routeLoaders = [
+  loadDashboard,
+  loadCreateProject,
+  loadProgressPage,
+  loadGlossaryPage,
+  loadStylePage,
+  loadReviewPage,
+  loadProofreadingPage,
+  loadExportPage,
+  loadEventsPage,
+  loadContentsPage,
+  loadInterfaceSettingsPage,
+  loadSettingsPage,
+  loadSubtitlesPage,
+];
 
 class RouteBoundary extends Component<
   { children: ReactNode },
@@ -49,6 +83,10 @@ function RouteError() {
 }
 
 export default function App() {
+  useEffect(() => {
+    // A warm-up failure stays quiet: the route retries when it is visited.
+    void Promise.all(routeLoaders.map((load) => load())).catch(() => {});
+  }, []);
   return (
     <RouteBoundary>
       <Suspense

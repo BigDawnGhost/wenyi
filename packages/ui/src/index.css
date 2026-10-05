@@ -133,10 +133,18 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   place-items: center;
   animation: runtime-enter 180ms ease-out both;
 }
+/* In-content variant of the gate: fills the outlet without covering the shell. */
+.route-placeholder {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  animation: runtime-enter 180ms ease-out both;
+}
 @keyframes runtime-enter {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .runtime-placeholder { animation: none; }
+  .runtime-placeholder,
+  .route-placeholder { animation: none; }
 }

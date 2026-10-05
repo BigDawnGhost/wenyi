@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { RegistryIdField } from "./RegistryIdField";
 import { registryReferences, type RegistryGroup } from "./registryEdits";
@@ -233,12 +233,16 @@ export function ProviderSettings({
                 </div>
               </div>
               {CredentialField && (
-                <CredentialField
-                  connection={id}
-                  saved={credentialsSaved}
-                >
-                  {environmentField}
-                </CredentialField>
+                // The credential UI may be a lazy platform chunk; keep its slot
+                // filled with the environment field instead of blanking it.
+                <Suspense fallback={environmentField}>
+                  <CredentialField
+                    connection={id}
+                    saved={credentialsSaved}
+                  >
+                    {environmentField}
+                  </CredentialField>
+                </Suspense>
               )}
             </div>
           );

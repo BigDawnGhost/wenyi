@@ -219,7 +219,9 @@ test("lazy route pending has no visible loading copy and reload recovers a route
   });
   await page.goto("/");
   await expect(page.locator("[data-route-pending]")).toHaveAttribute("aria-busy", "true");
-  await expect(page.locator("#root")).toHaveText("");
+  // The pending gate is quiet and covers only the content area; the shell stays.
+  await expect(page.locator("[data-route-pending]")).toHaveText("");
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
   release();
   await expect(page.getByRole("alert")).toBeVisible();
   await page.unroute("**/features/dashboard/Dashboard.tsx");
