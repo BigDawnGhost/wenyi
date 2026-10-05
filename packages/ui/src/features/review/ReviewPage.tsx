@@ -190,7 +190,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
             {t("review.generating")}
           </p>
         )}
-        {loading && (
+        {loading && !run.data && (
           <p role="status" className="text-sm text-muted-foreground">
             {t("progress.loading")}
           </p>
