@@ -1,5 +1,5 @@
 import { useI18n } from "@/i18n";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
 import {
   PanelLeftClose,
@@ -17,6 +17,9 @@ import { platform } from "@/platform";
 const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
   .href;
 const sidebarStorageKey = "wenyi.sidebarCollapsed";
+// Remembers the last opened project so the project stratum stays visible on
+// global routes; falls back to the first project when nothing is remembered.
+const lastProjectKey = "wenyi.lastProject";
 
 function Brand() {
   const { t } = useI18n();
@@ -67,10 +70,40 @@ export function AppLayout() {
   const toggleLabel = tr(
     collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar",
   );
+  const [storedPid, setStoredPid] = useState<string | null>(() => {
+    try {
+      return platform().preferences.get(lastProjectKey) || null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!pid) return;
+    setStoredPid(pid);
+    try {
+      platform().preferences.set(lastProjectKey, pid);
+    } catch {
+      // Keep recall session-only when storage is unavailable.
+    }
+  }, [pid]);
+  // On global routes the list validates the remembered project and provides
+  // the "first project" default; project routes never pay for the extra fetch.
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.listProjects,
+    enabled: !pid,
+  });
+  const recalledPid =
+    pid ??
+    (projects.data
+      ? storedPid && projects.data.some((p) => p.id === storedPid)
+        ? storedPid
+        : projects.data[0]?.id ?? null
+      : storedPid);
   const { data: project } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid!),
-    enabled: !!pid,
+    queryKey: ["project", recalledPid],
+    queryFn: () => api.getProject(recalledPid!),
+    enabled: !!recalledPid,
   });
 
   // One layered column: logo row → primary action → global panels → scrollable
@@ -106,7 +139,7 @@ export function AppLayout() {
       >
         <div
           data-slot="sidebar.logo-row"
-          className="flex min-h-14 shrink-0 items-center justify-between gap-2 px-3 py-[10px]"
+          className="flex min-h-14 shrink-0 items-center justify-between gap-2 pl-6 pr-3 pt-[10px]"
         >
           <div className={cn("min-w-0", collapsed && "md:hidden")}>
             <Brand />
@@ -163,14 +196,14 @@ export function AppLayout() {
             <div
               className={cn(
                 "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
-                pid && "max-h-[35vh]",
-                pid && (collapsed ? "p-2" : "p-3"),
+                recalledPid && "max-h-[35vh]",
+                recalledPid && (collapsed ? "p-2" : "p-3"),
               )}
             >
-              {pid && (
+              {recalledPid && (
                 <ProjectNavigation
-                  key={pid}
-                  pid={pid}
+                  key={recalledPid}
+                  pid={recalledPid}
                   format={project?.fmt}
                   name={project?.name}
                   collapsed={collapsed}
