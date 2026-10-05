@@ -656,6 +656,7 @@ const en = {
   "export.aboutSummary": "About page: {value}",
   "export.styleSummary": "Source formatting: {value}",
   "navigation.global": "Global navigation",
+  "navigation.settings": "Settings navigation",
   "navigation.collapseSidebar": "Collapse sidebar",
   "navigation.expandSidebar": "Expand sidebar",
   "navigation.project": "Project navigation",

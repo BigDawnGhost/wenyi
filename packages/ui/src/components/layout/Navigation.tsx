@@ -4,6 +4,7 @@ import {
   Captions,
   Download,
   Languages,
+  LayoutDashboard,
   Library,
   ListChecks,
   ListTree,
@@ -47,6 +48,24 @@ export function NavigationLink({
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className={collapsed ? "sr-only" : undefined}>{t(label)}</span>
     </NavLink>
+  );
+}
+
+export function ProjectListNavigation({ collapsed = false }: { collapsed?: boolean }) {
+  const { t } = useI18n();
+  return (
+    <nav
+      aria-label={t("navigation.global")}
+      className={cn("shrink-0 border-t", collapsed ? "p-2" : "p-3")}
+    >
+      <NavigationLink
+        to="/"
+        icon={LayoutDashboard}
+        label="appLayout.projects"
+        collapsed={collapsed}
+        end
+      />
+    </nav>
   );
 }
 

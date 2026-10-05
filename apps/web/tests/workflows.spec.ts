@@ -334,7 +334,7 @@ test("global API provider form saves endpoint, model and tier changes", async ({
       yaml: JSON.stringify(settings),
     },
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page
     .locator("summary")
     .filter({ hasText: "API providers & models" })

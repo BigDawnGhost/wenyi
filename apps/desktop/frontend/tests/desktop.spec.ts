@@ -29,6 +29,47 @@ async function desktop(page: Page, pending = false) {
   }, { origin, token, pending });
 }
 
+test("Desktop dashboard opens standalone settings and keeps category drafts", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  await page.goto("/");
+  await expect(page.getByRole("complementary")).toHaveCount(0);
+  const nav = page.getByRole("navigation", { name: "Global navigation" });
+  await expect(nav).toHaveCSS("position", "fixed");
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Create project", exact: true })).toHaveCount(1);
+  await expect(nav.getByRole("link").first()).toHaveAttribute("aria-label", "Create project");
+  await nav.getByRole("link", { name: "Settings", exact: true }).press("Enter");
+  await expect(page).toHaveURL("/settings");
+  const sidebar = page.getByRole("complementary");
+  await expect(sidebar.getByText("Settings", { exact: true })).toHaveCount(0);
+  const footer = sidebar.getByRole("navigation", { name: "Global navigation" });
+  await expect(footer.getByRole("link")).toHaveCount(1);
+  const sidebarBox = (await sidebar.boundingBox())!;
+  const backBox = (await footer.getByRole("link", { name: "Projects", exact: true }).boundingBox())!;
+  expect(sidebarBox.y + sidebarBox.height - backBox.y - backBox.height).toBeLessThanOrEqual(16);
+  const categories = page.getByRole("navigation", { name: "Settings navigation" });
+  await categories.getByRole("link", { name: "New project defaults", exact: true }).click();
+  await page.getByLabel("Polishing", { exact: true }).uncheck();
+  await categories.getByRole("link", { name: "API providers & models", exact: true }).click();
+  await expect(page).toHaveURL("/settings/providers");
+  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
+  await page.getByLabel("API provider", { exact: true }).click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL("/settings/defaults");
+  await expect(page.locator('[role="listbox"]')).toHaveCount(0);
+  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
+  await page.reload();
+  await expect(categories.getByRole("link", { name: "New project defaults", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await expect(page).toHaveURL("/");
+  await page.goto(`/projects/${pid}`);
+  await expect(nav.getByRole("link")).toHaveCount(1);
+  await expect(nav.getByRole("link")).toHaveText("Projects");
+});
+
 test("pending gate waits for ready, uses memory auth for HTTP, socket and download", async ({ page }) => {
   await desktop(page, true);
   await fakeApi(page, {}, origin);

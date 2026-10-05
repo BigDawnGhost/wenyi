@@ -67,6 +67,7 @@ test("interface language is available only in global settings without changing p
     page.getByRole("button", { name: "Save configuration", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Interface language")).toHaveCount(0);
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await chooseOption(page.locator("#interface-language"), "简体中文");
   await page.goto(`/projects/${pid}/settings`);
@@ -74,6 +75,7 @@ test("interface language is available only in global settings without changing p
     page.getByRole("button", { name: "保存配置", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toHaveCount(0);
+  await page.getByRole("link", { name: "项目列表", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
   await chooseOption(page.locator("#interface-language"), "English");
   await page.goto(`/projects/${pid}/settings`);

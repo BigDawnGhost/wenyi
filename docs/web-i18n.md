@@ -5,8 +5,11 @@
 The Web interface defaults to English, regardless of the browser's preferred language.
 Open global **Settings → Interface language** to choose **English** or **简体中文**.
 Interface language is a browser preference available only in global settings.
-The global settings page is available before creating any projects, from mobile navigation,
-and while a project task is running.
+The standalone settings page opens at Interface language (`/settings`). Use the bottom-right
+floating **Settings** icon on the project list, even before creating projects or on mobile;
+while a project task is running, return to the list using **Projects** at the bottom of the
+project sidebar, then open Settings. Settings also keeps **Projects** at the bottom of its
+sidebar. Configuration categories are separate from Interface language.
 
 The selection applies immediately, survives reloads, and synchronizes between tabs on the
 same site. It is stored in the browser under `wenyi.locale`, rather than in project

@@ -37,10 +37,10 @@ export function ModelSelection({
     ["fast", t("providerSettings.fastTier")],
   ];
   return (
-    <fieldset disabled={disabled} className="space-y-4 disabled:opacity-60">
-      <div className="grid sm:grid-cols-3 gap-3">
+    <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {tierNames.map(([id, label]) => (
-          <div key={id}>
+          <div key={id} className="min-w-0">
             <Label htmlFor={`tier-${id}`}>{label}</Label>
             <Select
               id={`tier-${id}`}

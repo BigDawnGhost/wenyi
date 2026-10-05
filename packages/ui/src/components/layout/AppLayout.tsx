@@ -1,16 +1,10 @@
 import { useI18n } from "@/i18n";
 import { useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
-import {
-  FolderPlus,
-  LayoutDashboard,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings2,
-} from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { NavigationLink, ProjectNavigation } from "./Navigation";
+import { ProjectListNavigation, ProjectNavigation } from "./Navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { platform } from "@/platform";
@@ -19,7 +13,7 @@ const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
   .href;
 const sidebarStorageKey = "wenyi.sidebarCollapsed";
 
-function Brand() {
+export function Brand() {
   const { t } = useI18n();
   return (
     <Link
@@ -131,33 +125,7 @@ export function AppLayout() {
               />
             )}
           </div>
-          <nav
-            aria-label={tr("navigation.global")}
-            className={cn(
-              "flex shrink-0 flex-wrap gap-1 border-t md:block md:space-y-1",
-              collapsed ? "p-2" : "p-3",
-            )}
-          >
-            <NavigationLink
-              to="/"
-              icon={LayoutDashboard}
-              label="appLayout.projects"
-              collapsed={collapsed}
-              end
-            />
-            <NavigationLink
-              to="/projects/new"
-              icon={FolderPlus}
-              label="common.createProject"
-              collapsed={collapsed}
-            />
-            <NavigationLink
-              to="/settings"
-              icon={Settings2}
-              label="settings.title"
-              collapsed={collapsed}
-            />
-          </nav>
+          <ProjectListNavigation collapsed={collapsed} />
         </div>
       </aside>
       <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
