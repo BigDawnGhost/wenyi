@@ -35,13 +35,7 @@ function Brand() {
         height={36}
         className="h-9 w-9 shrink-0 object-contain grayscale dark:invert"
       />
-      <span
-        className="translate-y-0.5 text-[22px] font-normal leading-none tracking-wide"
-        style={{
-          fontFamily:
-            "'DreamHanWenyi', Georgia, 'Times New Roman', 'Noto Serif CJK SC', 'Songti SC', SimSun, serif",
-        }}
-      >
+      <span className="brand-wordmark translate-y-0.5 text-[22px] font-normal leading-none tracking-wide">
         {t("appLayout.wenyi")}
       </span>
     </Link>
@@ -132,6 +126,7 @@ export function AppLayout() {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
       <aside
+        data-slot="sidebar"
         className={cn(
           "flex min-h-0 shrink-0 flex-col border-b bg-card md:border-b-0 md:border-r",
           collapsed ? "md:w-16" : "md:w-60",
@@ -139,7 +134,7 @@ export function AppLayout() {
       >
         <div
           data-slot="sidebar.logo-row"
-          className="flex min-h-14 shrink-0 items-center justify-between gap-2 pl-6 pr-3 pt-[10px]"
+          className="flex min-h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3 pt-[10px]"
         >
           <div className={cn("min-w-0", collapsed && "md:hidden")}>
             <Brand />
@@ -219,7 +214,7 @@ export function AppLayout() {
           </div>
         </div>
       </aside>
-      <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
+      <main data-slot="content" className="flex-1 min-h-0 min-w-0 overflow-y-auto">
         {/* The route gate keeps the shell mounted while a lazy chunk loads and
             confines route failures to the content area. */}
         <RouteGate>
@@ -240,7 +235,10 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 border-b px-4 sm:px-6 py-4">
+    <div
+      data-slot="page.header"
+      className="flex flex-wrap items-start justify-between gap-4 border-b px-4 sm:px-6 py-4"
+    >
       <div className="min-w-0 flex-1 basis-64 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && (
@@ -261,5 +259,9 @@ export function PageContainer({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={cn("p-6", className)}>{children}</div>;
+  return (
+    <div data-slot="page.container" className={cn("p-6", className)}>
+      {children}
+    </div>
+  );
 }

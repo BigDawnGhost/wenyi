@@ -308,7 +308,7 @@ export default function GlossaryPage() {
 
         <Card>
           <CardContent className="overflow-x-auto p-0">
-            <table className="w-full min-w-[48rem] table-fixed text-sm">
+            <table className="w-full min-w-[768px] table-fixed text-sm">
               <colgroup>
                 <col className="w-10" />
                 <col />

@@ -12,6 +12,12 @@
   font-display: swap;
 }
 
+/* Brand wordmark: DreamHan subset renders 文译, Georgia covers latin fallback. */
+.brand-wordmark {
+  font-family: "DreamHanWenyi", Georgia, "Times New Roman",
+    "Noto Serif CJK SC", "Songti SC", SimSun, serif;
+}
+
 @layer base {
   :root {
     color-scheme: light;
@@ -32,7 +38,7 @@
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --radius: 8px;
   }
 }
 
@@ -61,6 +67,10 @@
 @layer base {
   * { @apply border-border; }
   body { @apply bg-background text-foreground; font-feature-settings: "rlig" 1, "calt" 1; }
+  /* em-free equivalents of Tailwind preflight (px policy; see docs/design/ui-naming.md) */
+  sub { bottom: -4px; }
+  sup { top: 8px; }
+  code, kbd, samp, pre { font-size: inherit; }
   /* Native controls: use theme foreground instead of browser default blue. */
   input[type="checkbox"],
   input[type="radio"] {
@@ -87,10 +97,10 @@ input:is([type="checkbox"], [type="radio"]) {
   appearance: none;
   -webkit-appearance: none;
   box-sizing: border-box;
-  width: 1rem;
-  height: 1rem;
-  line-height: 1rem;
-  flex: 0 0 1rem;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  flex: 0 0 16px;
   margin: 0;
   vertical-align: middle;
   border: 1px solid hsl(var(--muted-foreground));
@@ -99,7 +109,7 @@ input:is([type="checkbox"], [type="radio"]) {
   background-repeat: no-repeat;
 }
 
-input[type="checkbox"] { border-radius: 0.1875rem; }
+input[type="checkbox"] { border-radius: 3px; }
 input[type="radio"] { border-radius: 50%; }
 input:is([type="checkbox"], [type="radio"]):checked {
   border-color: hsl(var(--muted-foreground));
@@ -121,16 +131,16 @@ input:is([type="checkbox"], [type="radio"]):disabled {
 .disclosure-summary {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  line-height: 1.25rem;
+  gap: 8px;
+  line-height: 20px;
   list-style: none;
 }
 .disclosure-summary::marker { content: ""; }
 .disclosure-summary::-webkit-details-marker { display: none; }
 .disclosure-chevron {
-  width: 1rem;
-  height: 1.25rem;
-  flex: 0 0 1rem;
+  width: 16px;
+  height: 20px;
+  flex: 0 0 16px;
 }
 details[open] > .disclosure-summary > .disclosure-chevron {
   transform: rotate(90deg);

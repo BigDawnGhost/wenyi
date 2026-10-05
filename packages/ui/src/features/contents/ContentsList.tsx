@@ -30,7 +30,7 @@ export function ContentsList({
       <CardContent className="p-0">
         <div
           aria-hidden="true"
-          className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem] gap-4 border-b px-4 py-3 text-xs text-muted-foreground lg:grid"
+          className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_112px] gap-4 border-b px-4 py-3 text-xs text-muted-foreground lg:grid"
         >
           <span>{t("contents.sourceTitle")}</span>
           <span>{t("contents.translatedTitle")}</span>
@@ -40,7 +40,7 @@ export function ContentsList({
           {entries.map((entry) => (
             <li
               key={entry.id}
-              className="relative grid grid-cols-1 items-start gap-x-4 gap-y-3 p-4 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem]"
+              className="relative grid grid-cols-1 items-start gap-x-4 gap-y-3 p-4 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_112px]"
             >
               <div
                 className="min-w-0 [overflow-wrap:anywhere]"

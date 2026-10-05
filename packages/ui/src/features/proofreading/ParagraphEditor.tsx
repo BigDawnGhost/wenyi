@@ -112,7 +112,7 @@ export function ParagraphEditor({
       ref={dialog}
       aria-labelledby="paragraph-editor-title"
       aria-describedby="paragraph-editor-help"
-      className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 open:flex open:flex-col"
+      className="fixed inset-0 m-auto w-[calc(100%-32px)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 open:flex open:flex-col"
       onCancel={(event) => {
         event.preventDefault();
         close();

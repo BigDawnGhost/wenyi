@@ -42,7 +42,7 @@ export function ContentsEditor({
     <dialog
       ref={dialog}
       aria-labelledby="contents-editor-title"
-      className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto rounded-xl border bg-background p-5 text-foreground shadow-xl backdrop:bg-black/30"
+      className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-32px)] max-w-2xl overflow-y-auto rounded-xl border bg-background p-5 text-foreground shadow-xl backdrop:bg-black/30"
       onCancel={(event) => {
         event.preventDefault();
         if (!save.isPending) onClose();
