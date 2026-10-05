@@ -1,19 +1,8 @@
 import { NavLink } from "react-router-dom";
-import {
-  BookOpenCheck,
-  Captions,
-  Download,
-  Languages,
-  Library,
-  ListChecks,
-  ListTree,
-  ScrollText,
-  Settings2,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
+import { type LucideIcon } from "lucide-react";
 import { useI18n, type MessageKey } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { isVisibleFor, navEntries, navPath } from "@/routes/manifest";
 
 export function NavigationLink({
   to,
@@ -62,36 +51,12 @@ export function ProjectNavigation({
   collapsed?: boolean;
 }) {
   const { t } = useI18n();
-  const base = `/projects/${pid}`;
-  const book = !!format && format !== "srt";
-  const links = [
-    ...(book
-      ? [
-          {
-            path: "glossary",
-            icon: Library,
-            label: "common.glossary" as const,
-          },
-          {
-            path: "style",
-            icon: Languages,
-            label: "common.styleSynopsis" as const,
-          },
-          {
-            path: "contents",
-            icon: ListTree,
-            label: "contents.title" as const,
-          },
-        ]
-      : []),
-    { path: "export", icon: Download, label: "common.export" as const },
-    {
-      path: "settings",
-      icon: Settings2,
-      label: "common.projectSettings" as const,
-    },
-    { path: "events", icon: ScrollText, label: "common.eventLog" as const },
-  ];
+  const links = navEntries
+    .filter(
+      (entry) =>
+        entry.group === "project" && isVisibleFor(entry.audience, format),
+    )
+    .sort((a, b) => a.order - b.order);
   return (
     <nav aria-label={t("navigation.project")} className="space-y-1">
       <p
@@ -105,44 +70,14 @@ export function ProjectNavigation({
         {name || pid}
       </p>
       <div className="flex flex-wrap md:block">
-        <NavigationLink
-          to={base}
-          icon={Sparkles}
-          label="common.translationOverview"
-          collapsed={collapsed}
-          end
-        />
-        {book && (
-          <>
-            <NavigationLink
-              to={`${base}/proofreading`}
-              icon={BookOpenCheck}
-              label="progress.manualProofreading"
-              collapsed={collapsed}
-            />
-            <NavigationLink
-              to={`${base}/review`}
-              icon={ListChecks}
-              label="common.wholeBookReview"
-              collapsed={collapsed}
-            />
-          </>
-        )}
-        {format === "srt" && (
+        {links.map((entry) => (
           <NavigationLink
-            to={`${base}/subtitles`}
-            icon={Captions}
-            label="common.subtitleEditor"
+            key={entry.to}
+            to={navPath(entry, pid)}
+            icon={entry.icon}
+            label={entry.label}
             collapsed={collapsed}
-          />
-        )}
-        {links.map(({ path, icon, label }) => (
-          <NavigationLink
-            key={path}
-            to={`${base}/${path}`}
-            icon={icon}
-            label={label}
-            collapsed={collapsed}
+            end={entry.end}
           />
         ))}
       </div>

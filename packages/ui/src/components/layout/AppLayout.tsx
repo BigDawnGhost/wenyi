@@ -2,15 +2,13 @@ import { useI18n } from "@/i18n";
 import { Suspense, useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
 import {
-  FolderPlus,
-  LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
-  Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { NavigationLink, ProjectNavigation } from "./Navigation";
+import { navEntries } from "@/routes/manifest";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { platform } from "@/platform";
@@ -138,25 +136,19 @@ export function AppLayout() {
               collapsed ? "p-2" : "p-3",
             )}
           >
-            <NavigationLink
-              to="/"
-              icon={LayoutDashboard}
-              label="appLayout.projects"
-              collapsed={collapsed}
-              end
-            />
-            <NavigationLink
-              to="/projects/new"
-              icon={FolderPlus}
-              label="common.createProject"
-              collapsed={collapsed}
-            />
-            <NavigationLink
-              to="/settings"
-              icon={Settings2}
-              label="settings.title"
-              collapsed={collapsed}
-            />
+            {navEntries
+              .filter((entry) => entry.group === "global")
+              .sort((a, b) => a.order - b.order)
+              .map((entry) => (
+                <NavigationLink
+                  key={entry.to}
+                  to={entry.to}
+                  icon={entry.icon}
+                  label={entry.label}
+                  collapsed={collapsed}
+                  end={entry.end}
+                />
+              ))}
           </nav>
         </div>
       </aside>

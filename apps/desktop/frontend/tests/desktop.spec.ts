@@ -202,7 +202,7 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
 test("lazy route failure is visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
-  await page.route("**/features/dashboard/Dashboard.tsx", route => route.abort());
+  await page.route("**/features/dashboard/Dashboard.tsx*", route => route.abort());
   await page.goto("/");
   await expect(page.getByRole("alert")).toContainText("Unable to load this page");
   await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
@@ -213,7 +213,7 @@ test("lazy route pending has no visible loading copy and reload recovers a route
   await fakeApi(page, {}, origin);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route("**/features/dashboard/Dashboard.tsx", async route => {
+  await page.route("**/features/dashboard/Dashboard.tsx*", async route => {
     await held;
     await route.abort();
   });
@@ -224,7 +224,7 @@ test("lazy route pending has no visible loading copy and reload recovers a route
   await expect(page.locator("#sidebar-navigation")).toBeVisible();
   release();
   await expect(page.getByRole("alert")).toBeVisible();
-  await page.unroute("**/features/dashboard/Dashboard.tsx");
+  await page.unroute("**/features/dashboard/Dashboard.tsx*");
   await page.getByRole("button", { name: "Reload" }).click();
   await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
 });
