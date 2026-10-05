@@ -294,24 +294,16 @@ function ChapterTable({
                   )}
                 </td>
                 <td className="p-3">
-                  <div className="flex flex-col items-start gap-2">
-                    <Link
-                      className="whitespace-nowrap text-primary underline"
-                      to={`/projects/${pid}/proofreading/${c.index}`}
+                  {c.status !== "done" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || translate.isPending}
+                      onClick={() => translate.mutate(c.index)}
                     >
-                      {tr("progress.manualProofreading")}
-                    </Link>
-                    {c.status !== "done" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy || translate.isPending}
-                        onClick={() => translate.mutate(c.index)}
-                      >
-                        {tr("progress.translateChapter")}
-                      </Button>
-                    )}
-                  </div>
+                      {tr("progress.translateChapter")}
+                    </Button>
+                  )}
                 </td>
               </tr>
             ))}
