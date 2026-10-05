@@ -69,8 +69,8 @@ for (const chinese of [false, true]) {
         .click();
       await expect(page).toHaveURL(`/projects/${pid}/settings`);
       await expect(expand).toBeVisible();
-      await page
-        .getByRole("navigation", { name: globalLabel })
+      // Settings lives in the sidebar footer stratum, outside the panels nav.
+      await sidebar
         .getByRole("link", { name: chinese ? "设置" : "Settings", exact: true })
         .click();
       await expect(page).toHaveURL("/settings");

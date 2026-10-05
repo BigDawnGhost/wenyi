@@ -90,8 +90,12 @@ test("route manifest is complete and consistent", () => {
     const audience = line.match(/audience:\s*"(all|book|srt)"/)?.[1];
     const loader = line.match(/loader:\s*(load[A-Z]\w*)/)?.[1];
     const group = line.match(/group:\s*"(global|project)"/)?.[1];
+    const slot = line.match(/slot:\s*"(action|panel|foot)"/)?.[1];
     assert(to && order && audience && loader, `incomplete nav entry: ${line.trim()}`);
     assert(paths.includes(to), `nav target ${to} has no route`);
+    if (group === "global") {
+      assert(slot, `global nav entry must declare a sidebar slot: ${line.trim()}`);
+    }
     const key = `${group}:${to}`;
     assert(!seen.has(key), `duplicate nav entry ${key}`);
     seen.add(key);

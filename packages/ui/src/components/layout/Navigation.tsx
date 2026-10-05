@@ -11,6 +11,7 @@ export function NavigationLink({
   end,
   collapsed = false,
   prefetch,
+  className,
 }: {
   to: string;
   icon: LucideIcon;
@@ -19,6 +20,8 @@ export function NavigationLink({
   collapsed?: boolean;
   /** Chunk loader warmed on hover/focus so the first click renders instantly. */
   prefetch?: () => Promise<unknown>;
+  /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
+  className?: string;
 }) {
   const { t } = useI18n();
   return (
@@ -35,6 +38,7 @@ export function NavigationLink({
           isActive
             ? "bg-accent text-accent-foreground font-medium"
             : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+          className,
         )
       }
     >

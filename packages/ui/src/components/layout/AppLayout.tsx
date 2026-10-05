@@ -73,6 +73,29 @@ export function AppLayout() {
     enabled: !!pid,
   });
 
+  // One layered column: logo row → primary action → global panels → scrollable
+  // project region → footer, instead of three bordered blocks.
+  const globalNav = navEntries
+    .filter((entry) => entry.group === "global")
+    .sort((a, b) => a.order - b.order);
+  const renderGlobal = (slot: "action" | "panel" | "foot") =>
+    globalNav
+      .filter((entry) =>
+        slot === "panel" ? !entry.slot || entry.slot === "panel" : entry.slot === slot,
+      )
+      .map((entry) => (
+        <NavigationLink
+          key={entry.to}
+          to={entry.to}
+          icon={entry.icon}
+          label={entry.label}
+          collapsed={collapsed}
+          end={entry.end}
+          prefetch={entry.loader}
+          className={slot === "action" ? "w-full border" : undefined}
+        />
+      ));
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
       <aside
@@ -81,7 +104,10 @@ export function AppLayout() {
           collapsed ? "md:w-16" : "md:w-60",
         )}
       >
-        <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b px-3 py-[10px]">
+        <div
+          data-slot="sidebar.logo-row"
+          className="flex min-h-14 shrink-0 items-center justify-between gap-2 px-3 py-[10px]"
+        >
           <div className={cn("min-w-0", collapsed && "md:hidden")}>
             <Brand />
           </div>
@@ -108,50 +134,56 @@ export function AppLayout() {
         </div>
         <div
           id="sidebar-navigation"
+          data-slot="sidebar.strata"
           className={cn(
             "min-h-0 md:flex md:flex-1 md:flex-col",
             collapsed && "hidden",
           )}
         >
           <div
-            className={cn(
-              "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
-              pid && "max-h-[35vh]",
-              pid && (collapsed ? "p-2" : "p-3"),
-            )}
+            data-slot="sidebar.action"
+            className={cn("shrink-0", collapsed ? "p-2" : "px-3 pt-3 pb-1")}
           >
-            {pid && (
-              <ProjectNavigation
-                key={pid}
-                pid={pid}
-                format={project?.fmt}
-                name={project?.name}
-                collapsed={collapsed}
-              />
-            )}
+            {renderGlobal("action")}
           </div>
           <nav
+            data-slot="sidebar.panels"
             aria-label={tr("navigation.global")}
             className={cn(
-              "flex shrink-0 flex-wrap gap-1 border-t md:block md:space-y-1",
-              collapsed ? "p-2" : "p-3",
+              "flex shrink-0 flex-wrap gap-1 md:block md:space-y-1",
+              collapsed ? "p-2" : "px-3 py-1",
             )}
           >
-            {navEntries
-              .filter((entry) => entry.group === "global")
-              .sort((a, b) => a.order - b.order)
-              .map((entry) => (
-                <NavigationLink
-                  key={entry.to}
-                  to={entry.to}
-                  icon={entry.icon}
-                  label={entry.label}
-                  collapsed={collapsed}
-                  end={entry.end}
-                  prefetch={entry.loader}
-                />
-              ))}
+            {renderGlobal("panel")}
           </nav>
+          <div
+            data-slot="sidebar.region"
+            className="relative min-h-0 md:flex md:flex-col md:flex-1"
+          >
+            <div
+              className={cn(
+                "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
+                pid && "max-h-[35vh]",
+                pid && (collapsed ? "p-2" : "p-3"),
+              )}
+            >
+              {pid && (
+                <ProjectNavigation
+                  key={pid}
+                  pid={pid}
+                  format={project?.fmt}
+                  name={project?.name}
+                  collapsed={collapsed}
+                />
+              )}
+            </div>
+          </div>
+          <div
+            data-slot="sidebar.footer"
+            className={cn("shrink-0", collapsed ? "p-2" : "px-3 pt-1 pb-3")}
+          >
+            {renderGlobal("foot")}
+          </div>
         </div>
       </aside>
       <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
