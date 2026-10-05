@@ -10,12 +10,15 @@ export function NavigationLink({
   label,
   end,
   collapsed = false,
+  prefetch,
 }: {
   to: string;
   icon: LucideIcon;
   label: MessageKey;
   end?: boolean;
   collapsed?: boolean;
+  /** Chunk loader warmed on hover/focus so the first click renders instantly. */
+  prefetch?: () => Promise<unknown>;
 }) {
   const { t } = useI18n();
   return (
@@ -23,6 +26,8 @@ export function NavigationLink({
       to={to}
       end={end}
       title={collapsed ? t(label) : undefined}
+      onPointerEnter={() => void prefetch?.()}
+      onFocus={() => void prefetch?.()}
       className={({ isActive }) =>
         cn(
           "flex items-center rounded-md py-2 text-sm transition-colors",
@@ -78,6 +83,7 @@ export function ProjectNavigation({
             label={entry.label}
             collapsed={collapsed}
             end={entry.end}
+            prefetch={entry.loader}
           />
         ))}
       </div>

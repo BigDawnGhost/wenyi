@@ -148,6 +148,7 @@ export function AppLayout() {
                   label={entry.label}
                   collapsed={collapsed}
                   end={entry.end}
+                  prefetch={entry.loader}
                 />
               ))}
           </nav>
