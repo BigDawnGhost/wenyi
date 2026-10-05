@@ -2,7 +2,7 @@ import { lazy, type ReactNode } from "react";
 import {
   BookOpenCheck,
   Captions,
-  Download,
+  FileOutput,
   FolderPlus,
   Languages,
   LayoutDashboard,
@@ -127,7 +127,7 @@ export const navEntries: NavEntry[] = [
   { to: "/projects/:pid/glossary", label: "common.glossary", icon: Library, group: "project", order: 50, audience: "book", loader: loadGlossaryPage },
   { to: "/projects/:pid/style", label: "common.styleSynopsis", icon: Languages, group: "project", order: 60, audience: "book", loader: loadStylePage },
   { to: "/projects/:pid/contents", label: "contents.title", icon: ListTree, group: "project", order: 70, audience: "book", loader: loadContentsPage },
-  { to: "/projects/:pid/export", label: "common.export", icon: Download, group: "project", order: 80, audience: "all", loader: loadExportPage },
+  { to: "/projects/:pid/export", label: "common.export", icon: FileOutput, group: "project", order: 80, audience: "all", loader: loadExportPage },
   { to: "/projects/:pid/settings", label: "common.projectSettings", icon: Settings2, group: "project", order: 90, audience: "all", loader: loadSettingsPage },
   { to: "/projects/:pid/events", label: "common.eventLog", icon: ScrollText, group: "project", order: 100, audience: "all", loader: loadEventsPage },
 ];

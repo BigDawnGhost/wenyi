@@ -99,6 +99,9 @@ export function AppLayout() {
     queryKey: ["project", recalledPid],
     queryFn: () => api.getProject(recalledPid!),
     enabled: !!recalledPid,
+    // Keep the previous project rendered while the next one loads, so the
+    // sidebar stratum swaps once instead of collapsing and re-expanding.
+    placeholderData: (previous) => previous,
   });
 
   // One layered column: logo row → primary action → global panels → scrollable
