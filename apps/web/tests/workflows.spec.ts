@@ -133,7 +133,7 @@ test("unreviewed chapters remain unreviewed and obsolete QA actions are absent",
 }) => {
   await fakeApi(page);
   await page.goto(`/projects/${pid}`);
-  await expect(page.getByText("Not reviewed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not reviewed", { exact: true }).first()).toBeVisible();
   await expect(
     page.getByText("Consistency check", { exact: true }),
   ).toHaveCount(0);
