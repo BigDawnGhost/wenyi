@@ -150,6 +150,13 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
     let show = MenuItem::with_id(app, "show-wenyi", "Show Wenyi", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit-wenyi", "Quit Wenyi", true, Some("CmdOrCtrl+Q"))?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
+    // Tray menu clicks arrive through the app-level handler, so keep it
+    // registered whether or not the tray itself can be created.
+    app.on_menu_event(|app, event| match event.id().as_ref() {
+        "show-wenyi" => restore(app),
+        "quit-wenyi" => app.exit(0),
+        _ => {}
+    });
     let result = (|| -> tauri::Result<()> {
         let mut tray = TrayIconBuilder::with_id("wenyi")
             .tooltip("Wenyi")
@@ -191,11 +198,6 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
         // host one; on Windows a permanent menu bar would duplicate the tray.
         let application = Submenu::with_items(app, "Wenyi", true, &[&show, &quit])?;
         app.set_menu(Menu::with_items(app, &[&application])?)?;
-        app.on_menu_event(|app, event| match event.id().as_ref() {
-            "show-wenyi" => restore(app),
-            "quit-wenyi" => app.exit(0),
-            _ => {}
-        });
     }
     Ok(result.is_ok())
 }
