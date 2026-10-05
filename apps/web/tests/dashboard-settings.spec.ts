@@ -43,6 +43,9 @@ for (const chinese of [false, true]) {
       await page.getByRole("link", { name: chinese ? "创建项目" : "Create project", exact: true }).focus();
       await page.keyboard.press("Enter");
       await expect(page).toHaveURL("/projects/new");
+      await expect(page.getByRole("dialog", { name: chinese ? "创建项目" : "Create project", exact: true })).toBeVisible();
+      await expect(page.getByRole("complementary", { includeHidden: true })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: chinese ? "我的项目" : "My projects", exact: true, includeHidden: true })).toBeVisible();
     });
   }
 }

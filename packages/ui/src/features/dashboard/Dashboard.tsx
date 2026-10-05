@@ -2,7 +2,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
+import { Link, Outlet } from "react-router-dom";
 import { Brand, PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -133,6 +133,7 @@ export default function Dashboard() {
         className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] right-[calc(1.5rem+env(safe-area-inset-right))] z-20 flex flex-col gap-3"
       >
         <Link
+          id="create-project-trigger"
           to="/projects/new"
           aria-label={tr("common.createProject")}
           title={tr("common.createProject")}
@@ -155,6 +156,7 @@ export default function Dashboard() {
           <Settings2 className="h-5 w-5" aria-hidden="true" />
         </Link>
       </nav>
+      <Outlet />
     </div>
   );
 }

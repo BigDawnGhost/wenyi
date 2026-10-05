@@ -1,12 +1,12 @@
 import { useI18n } from "@/i18n";
 import { languageName } from "@/i18n/labels";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/form";
+import { Dialog } from "@/components/ui/misc";
 import { Select, SelectItem } from "@/components/ui/select";
 import { ErrorNotice } from "@/components/ui/data";
 import { api, isProjectBusy } from "@/lib/api";
@@ -15,7 +15,7 @@ import { SourcePreview } from "./SourcePreview";
 import { SourceFilePicker } from "./SourceFilePicker";
 import { releaseSource, type ProjectSource } from "@/platform";
 
-export default function CreateProject() {
+export default function CreateProjectDialog() {
   const { t: tr, locale } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -25,7 +25,19 @@ export default function CreateProject() {
   const [target, setTarget] = useState("zh");
   const [pid] = useState<string | null>(searchParams.get("project"));
   const [file, setFile] = useState<ProjectSource | null>(null);
-  useEffect(() => () => releaseSource(file), [file]);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const mounted = useRef(false);
+  const uploadingSource = useRef<ProjectSource | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => () => {
+    // An in-flight upload retains its source lease until the request settles.
+    if (uploadingSource.current !== file) releaseSource(file);
+  }, [file]);
   const [prepare, setPrepare] = useState(false);
   const [translationMode, setTranslationMode] = useState<
     "standard" | "best_of_three"
@@ -92,25 +104,31 @@ export default function CreateProject() {
         ? tr("createProject.unsupportedFile")
         : null);
   const create = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!file || fileError)
         throw new Error(fileError || tr("createProject.sourceRequired"));
-      return api.createProject(
-        {
-          name: name.trim(),
-          source_lang: source,
-          target_lang: target,
-          prepare: !subtitle && prepare,
-          translation_mode: subtitle ? "standard" : translationMode,
-          pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
-        },
-        file,
-      );
+      uploadingSource.current = file;
+      try {
+        return await api.createProject(
+          {
+            name: name.trim(),
+            source_lang: source,
+            target_lang: target,
+            prepare: !subtitle && prepare,
+            translation_mode: subtitle ? "standard" : translationMode,
+            pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
+          },
+          file,
+        );
+      } finally {
+        uploadingSource.current = null;
+        if (!mounted.current) releaseSource(file);
+      }
     },
     onSuccess: (p) => {
       queryClient.setQueryData(["project", p.id], p);
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      navigate(`/projects/${p.id}`);
+      if (mounted.current) navigate(`/projects/${p.id}`);
     },
   });
   const resume = useMutation({
@@ -120,21 +138,32 @@ export default function CreateProject() {
   });
   const start = useMutation({
     mutationFn: () => api.translate(pid!),
-    onSuccess: () => navigate(`/projects/${pid}`),
+    onSuccess: () => {
+      if (mounted.current) navigate(`/projects/${pid}`);
+    },
   });
   const sameLanguage = source !== "auto" && source === target;
   const locked = !!pid || create.isPending;
   const interrupted =
     project?.status === "error" || project?.status === "paused";
   const filename = file?.name || project?.source_meta?.original_filename;
+  const pending = create.isPending || resume.isPending || start.isPending;
+  const close = () => {
+    if (!pending) navigate("/", { replace: true });
+  };
 
   return (
-    <>
-      <PageHeader
-        title={tr("common.createProject")}
-        subtitle={tr("createProject.introduction")}
-      />
-      <PageContainer className="max-w-3xl space-y-4">
+    <Dialog
+      open
+      title={tr("common.createProject")}
+      description={tr("createProject.introduction")}
+      onClose={close}
+      closeDisabled={pending}
+      initialFocus={nameRef}
+      returnFocus={() => document.getElementById("create-project-trigger")}
+      className="max-w-3xl"
+    >
+      <div className="space-y-4">
         <ErrorNotice
           error={
             capsError ||
@@ -157,6 +186,7 @@ export default function CreateProject() {
                 {tr("createProject.projectName")}
               </Label>
               <Input
+                ref={nameRef}
                 id="project-name"
                 value={name}
                 disabled={locked}
@@ -358,22 +388,27 @@ export default function CreateProject() {
           )}
           {!pid && (
             <div className="space-y-2">
-              <Button
-                onClick={() => create.mutate()}
-                disabled={
-                  !name.trim() ||
-                  !file ||
-                  !!fileError ||
-                  sameLanguage ||
-                  !caps ||
-                  create.isPending
-                }
-                className="w-full sm:w-auto"
-              >
-                {create.isPending
-                  ? tr("createProject.uploading")
-                  : tr("common.createProject")}
-              </Button>
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" disabled={pending} onClick={close}>
+                  {tr("common.cancel")}
+                </Button>
+                <Button
+                  onClick={() => create.mutate()}
+                  disabled={
+                    !name.trim() ||
+                    !file ||
+                    !!fileError ||
+                    sameLanguage ||
+                    !caps ||
+                    create.isPending
+                  }
+                  className="w-full sm:w-auto"
+                >
+                  {create.isPending
+                    ? tr("createProject.uploading")
+                    : tr("common.createProject")}
+                </Button>
+              </div>
               {!file && (
                 <p className="text-xs text-muted-foreground">
                   {tr("createProject.sourceRequired")}
@@ -416,7 +451,7 @@ export default function CreateProject() {
             </div>
           )}
         </div>
-      </PageContainer>
-    </>
+      </div>
+    </Dialog>
   );
 }

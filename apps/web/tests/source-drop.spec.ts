@@ -33,6 +33,10 @@ for (const chinese of [false, true]) {
       project: Record<string, unknown>;
     }[] = [];
     await page.route("**/api/projects", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
       const form = await new Response(
         new Uint8Array(route.request().postDataBuffer()!),
         {
@@ -87,7 +91,7 @@ for (const chinese of [false, true]) {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
       await page
-        .getByRole("main")
+        .getByRole("dialog", { name: chinese ? "创建项目" : "Create project", exact: true })
         .evaluate((element) => element.scrollWidth <= element.clientWidth),
     ).toBe(true);
     await zone.screenshot({
@@ -197,6 +201,13 @@ test("uploading rejects replacement drops and creation enters the overview", asy
   const replacement = await fileTransfer(page, [{ name: "replacement.docx" }]);
   try {
     await expect(zone).toHaveAttribute("aria-disabled", "true");
+    const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await page.mouse.click(2, 2);
+    await expect(dialog).toBeVisible();
+    await expect(page).toHaveURL("/projects/new");
     await expect(
       zone.getByRole("button", { name: "Browse files" }),
     ).toBeDisabled();
@@ -236,6 +247,7 @@ test("a legacy creation link keeps the saved source locked against drops", async
     await route.fallback();
   });
   await page.goto(`/projects/new?project=${pid}`);
+  await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();
   const zone = page.getByRole("group", { name: "Source file selection" });
   await expect(zone).toHaveAttribute("aria-disabled", "true");
   await expect(zone.getByRole("button", { name: "Browse files" })).toBeDisabled();
