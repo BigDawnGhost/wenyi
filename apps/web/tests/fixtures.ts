@@ -359,6 +359,103 @@ export interface FixtureResponse {
   json: unknown;
 }
 
+/**
+ * Dev-sandbox runtime state: only the MOCK_API middleware passes this in, so
+ * the Playwright suites keep the stateless fixture behavior. Projects start as
+ * \"ready\"; starting a translation advances them through translating to done.
+ */
+export interface SandboxState {
+  runs: Record<string, { startedAt: number | null; pausedAt: number | null }>;
+}
+export function createSandboxState(): SandboxState {
+  return { runs: {} };
+}
+
+const RUN_MS = 15_000;
+
+function runRatio(run?: { startedAt: number | null; pausedAt: number | null }): number | null {
+  if (!run?.startedAt) return null;
+  return Math.min(1, ((run.pausedAt ?? Date.now()) - run.startedAt) / RUN_MS);
+}
+
+function projectView(
+  project: Record<string, unknown>,
+  ratio: number | null,
+  paused: boolean,
+): Record<string, unknown> {
+  if (ratio === null) return { ...project, status: "ready" };
+  if (ratio >= 1) return { ...project, status: "done" };
+  return { ...project, status: paused ? "paused" : "translating" };
+}
+
+function evolveSandbox(json: unknown, path: string, state: SandboxState): unknown {
+  if (path === "/projects" && Array.isArray(json)) {
+    return json.map((entry) => {
+      const project = entry as Record<string, unknown>;
+      const run = state.runs[String(project.id)];
+      return projectView(project, runRatio(run), !!run?.pausedAt);
+    });
+  }
+  const match = path.match(/^\/projects\/([^/]+)(\/.*)?$/);
+  if (!match || !json || typeof json !== "object") return json;
+  const run = state.runs[match[1]];
+  const ratio = runRatio(run);
+  const rest = match[2] || "";
+  if (rest === "") return projectView(json as Record<string, unknown>, ratio, !!run?.pausedAt);
+  if (rest === "/chapters" && Array.isArray(json)) {
+    if (ratio === null) {
+      return json.map((entry) => ({
+        ...(entry as object),
+        status: "pending",
+        target_word_count: 0,
+      }));
+    }
+    if (ratio >= 1) return json;
+    const chapters = json as { word_count?: number }[];
+    const total = chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) || 1;
+    let cumulative = 0;
+    return chapters.map((entry) => {
+      const start = cumulative;
+      const span = (entry as { word_count?: number }).word_count || 0;
+      cumulative += span;
+      const local = Math.min(1, Math.max(0, ((ratio as number) * total - start) / (span || 1)));
+      const target = Math.round(span * local);
+      return {
+        ...(entry as object),
+        target_word_count: target,
+        status: target >= span ? "done" : target > 0 ? "translating" : "pending",
+      };
+    });
+  }
+  if (rest === "/workflow") {
+    const workflow = json as Record<string, unknown>;
+    const stages = Array.isArray(workflow.stages)
+      ? (workflow.stages as { enabled?: boolean }[])
+      : [];
+    const enabled = stages.filter((stage) => stage.enabled !== false).length || 1;
+    if (ratio === null) return { ...workflow, status: "ready", progress: null };
+    if (ratio >= 1) return { ...workflow, status: "done", progress: null };
+    if (run?.pausedAt) return { ...workflow, status: "paused" };
+    return {
+      ...workflow,
+      status: "running",
+      progress: {
+        label: "分批翻译章节",
+        done: Math.min(enabled, Math.floor((ratio as number) * (enabled + 1))),
+        total: enabled,
+        updated_at: new Date().toISOString(),
+      },
+    };
+  }
+  if (rest === "/subtitles") {
+    const subtitles = json as { completed?: number; total?: number };
+    if (ratio === null) return { ...subtitles, completed: 0 };
+    if (ratio >= 1) return subtitles;
+    return { ...subtitles, completed: Math.round((ratio as number) * (subtitles.total || 0)) };
+  }
+  return json;
+}
+
 function swapProjectId(value: unknown, subId: string): unknown {
   if (Array.isArray(value)) return value.map((item) => swapProjectId(item, subId));
   if (value && typeof value === "object") {
@@ -395,14 +492,41 @@ export function resolveFixture(
   rawPath: string,
   rawBody?: string,
   overrides: Record<string, unknown> = {},
+  sandbox?: SandboxState,
 ): FixtureResponse {
   const path = rawPath.replace(/^\/api/, "").split("?")[0];
   const verb = method.toUpperCase();
+  if (sandbox && verb === "POST") {
+    const projectAction = path.match(/^\/projects\/([^/]+)\/(translate|resume|pause)$/);
+    const chapterAction = path.match(/^\/projects\/([^/]+)\/chapters\/\d+\/translate$/);
+    const id = projectAction?.[1] ?? chapterAction?.[1];
+    if (projectAction || chapterAction) {
+      const kind = projectAction ? projectAction[2] : "translate";
+      const run = (sandbox.runs[id as string] ??= { startedAt: null, pausedAt: null });
+      if (kind === "translate") {
+        const ratio = runRatio(run);
+        // First run, or a completed run clicked again: start a fresh cycle.
+        if (!run.startedAt || (ratio !== null && ratio >= 1)) {
+          run.startedAt = Date.now();
+          run.pausedAt = null;
+        }
+      }
+      if (kind === "pause" && run.startedAt && !run.pausedAt) run.pausedAt = Date.now();
+      if (kind === "resume" && run.startedAt && run.pausedAt) {
+        run.startedAt += Date.now() - run.pausedAt;
+        run.pausedAt = null;
+      }
+    }
+  }
   const data = { ...tableData(), ...overrides };
   if (verb === "GET" || verb === "HEAD") {
-    if (path in data) return { status: 200, json: data[path] };
+    const respond = (json: unknown): FixtureResponse => ({
+      status: 200,
+      json: sandbox ? evolveSandbox(json, path, sandbox) : json,
+    });
+    if (path in data) return respond(data[path]);
     const family = familyFixture(path);
-    if (family) return family;
+    if (family) return respond(family.json);
     return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   }
   if (path in overrides) return { status: 200, json: overrides[path] };
