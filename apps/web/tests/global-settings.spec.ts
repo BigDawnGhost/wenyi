@@ -23,7 +23,7 @@ test("global workflow has no project precision controls or polishing constraint"
       },
     },
   });
-  await page.goto("/settings");
+  await page.goto("/settings/defaults");
   await expect(page.getByLabel("Polishing", { exact: true })).toBeEnabled();
   await expect(page.getByLabel("Translation mode", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Default workflow template", { exact: true })).toHaveCount(0);
@@ -116,7 +116,7 @@ test("global defaults persist independently of existing project settings", async
     }
     await route.fulfill({ json: saved });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/defaults");
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page
@@ -183,7 +183,7 @@ test("global model registration works in Chinese on mobile", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page);
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.locator("summary").filter({ hasText: "API 供应商与模型" }).click();
   await expect(
     page.getByLabel("API Key 环境变量", { exact: true }),
@@ -219,7 +219,7 @@ test("registry IDs can be renamed with references and new registrations removed"
       });
     } else await route.fulfill({ json: globalConfiguration });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page
     .locator("summary")
     .filter({ hasText: "API providers & models" })
@@ -242,9 +242,13 @@ test("registry IDs can be renamed with references and new registrations removed"
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
   await page.getByLabel("Model ID", { exact: true }).fill("final_model");
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
+  await page.getByRole("navigation", { name: "Settings navigation" })
+    .getByRole("link", { name: "New project defaults", exact: true }).click();
   await expect(page.getByLabel("Quality tier", { exact: true })).toHaveText(
     "final_model · my_provider / deepseek-flash",
   );
+  await page.getByRole("navigation", { name: "Settings navigation" })
+    .getByRole("link", { name: "API providers & models", exact: true }).click();
   await page
     .getByRole("button", { name: "Add API connection", exact: true })
     .click();
@@ -282,7 +286,7 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     if (route.request().method() === "PUT") writes++;
     await route.fulfill({ json: globalConfiguration });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page
     .locator("summary")
     .filter({ hasText: "API providers & models" })
@@ -375,7 +379,7 @@ test("adding and renaming another model preserves the original model's rename", 
       });
     } else await route.fulfill({ json: initial });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page
     .locator("summary")
     .filter({ hasText: "API providers & models" })

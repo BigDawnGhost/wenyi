@@ -37,7 +37,7 @@ test("Desktop credentials automatically fall back, never echo and explicitly cle
     };
     await route.fulfill({ json: status });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   await expect(page.getByLabel("Credential source", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Save key in")).toHaveCount(0);
@@ -82,7 +82,7 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
     reads++;
     return route.fulfill({ status: 503, json: { detail: "Credential store unavailable" } });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   await expect(page.getByRole("alert")).toContainText("Credential store unavailable");
   await page.clock.runFor(60_000);

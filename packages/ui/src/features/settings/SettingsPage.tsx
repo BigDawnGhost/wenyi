@@ -116,7 +116,7 @@ export default function SettingsPage() {
             <h2 className="font-medium">{tr("settings.modelSetup")}</h2>
             <p className="text-sm text-muted-foreground">
               {tr("settings.projectModelHelp")}{" "}
-              <Link to="/settings" className="underline underline-offset-4">
+              <Link to="/settings/providers" className="underline underline-offset-4">
                 {tr("settings.manageGlobalModels")}
               </Link>
             </p>

@@ -8,7 +8,7 @@ test("Web keeps environment-variable-only settings", async ({ page }) => {
     __WENYI_DESKTOP_STATUS__: "error",
   }));
   await fakeApi(page);
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Credential source", { exact: true })).toHaveCount(0);

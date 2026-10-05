@@ -54,7 +54,10 @@ for (const chinese of [false, true]) {
       await expect(current).toBeVisible();
       await expect(current).toHaveAttribute("aria-current", "page");
       await expect(current).toHaveAttribute("title", proofreadingLabel);
-      await expect(sidebar.getByRole("link")).toHaveCount(12);
+      await expect(sidebar.getByRole("link")).toHaveCount(10);
+      const global = page.getByRole("navigation", { name: globalLabel });
+      await expect(global.getByRole("link")).toHaveCount(1);
+      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
       for (const link of await sidebar.getByRole("link").all()) {
         await expect(link).toBeInViewport();
       }
@@ -69,12 +72,16 @@ for (const chinese of [false, true]) {
         .click();
       await expect(page).toHaveURL(`/projects/${pid}/settings`);
       await expect(expand).toBeVisible();
-      await page
-        .getByRole("navigation", { name: globalLabel })
-        .getByRole("link", { name: chinese ? "设置" : "Settings", exact: true })
-        .click();
+      await global.getByRole("link", { name: chinese ? "项目列表" : "Projects", exact: true }).click();
+      await expect(page).toHaveURL("/");
+      await expect(sidebar).toHaveCount(0);
+      await page.getByRole("link", { name: chinese ? "设置" : "Settings", exact: true }).click();
       await expect(page).toHaveURL("/settings");
       await page.reload();
+      await expect(expand).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: chinese ? "设置导航" : "Settings navigation" })).toBeVisible();
+      await expect(sidebar).toHaveCSS("width", "240px");
+      await page.goto(`/projects/${pid}/proofreading`);
       await expect(expand).toBeVisible();
       await expect(sidebar).toHaveCSS("width", "64px");
       await expand.click();
@@ -93,6 +100,8 @@ for (const chinese of [false, true]) {
       const navigation = page.getByRole("navigation", { name: projectLabel });
       const global = page.getByRole("navigation", { name: globalLabel });
       await expect(navigation).toBeVisible();
+      await expect(global.getByRole("link")).toHaveCount(1);
+      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
       const main = page.getByRole("main");
       const expandedHeight = await main.evaluate(
         (element) => element.clientHeight,
@@ -157,7 +166,7 @@ test("sidebar toggles remain usable when browser preference storage is unavailab
     };
   });
   await fakeApi(page);
-  await page.goto("/");
+  await page.goto(`/projects/${pid}/proofreading`);
   await page
     .getByRole("button", { name: "Collapse sidebar", exact: true })
     .click();

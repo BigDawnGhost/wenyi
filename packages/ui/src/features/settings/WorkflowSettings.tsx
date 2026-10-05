@@ -51,7 +51,7 @@ export function WorkflowSettings({
   ];
 
   return (
-    <fieldset disabled={disabled} className="space-y-4 disabled:opacity-60">
+    <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
       {!subtitles && (
         <div className="grid sm:grid-cols-2 gap-3">
           {PIPELINE.map(([key, label]) => (

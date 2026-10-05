@@ -167,7 +167,13 @@ The AppImage was launched on KDE Wayland with a temporary workspace and an inval
 
 ## API keys
 
+From the project list, use the bottom-right floating **Settings** icon. Settings is a standalone page with Interface language (`/settings`), API providers & models (`/settings/providers`), New project defaults (`/settings/defaults`), and Advanced YAML configuration (`/settings/advanced`); **Projects** returns to the dashboard. Category navigation does not collapse with the project sidebar, and switching categories preserves unsaved configuration drafts. Save, validate, and restore defaults remain available in all configuration categories.
+
+In both project and Settings sidebars, the only bottom entry is **Projects**. On the project list, **Create project** floats above **Settings**.
+
 Open **Settings → API providers & models**, configure the provider/model and optional base URL, then save the connection configuration. Enter the API key in its password field and save it.
+
+Native credential controls load independently, so entering Settings does not replace the page with a loading screen.
 
 - Desktop automatically uses a supported OS credential store: Keychain, Windows credentials, Secret Service, or KWallet through `keyring`.
 - If the store is unavailable or a write fails, the key stays **only in memory for this session**. The interface says that it must be entered again after restart. There is no storage-mode selector or plaintext fallback.

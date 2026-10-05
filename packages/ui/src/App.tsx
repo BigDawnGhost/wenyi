@@ -57,9 +57,9 @@ export default function App() {
         }
       >
         <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/settings/:section?" element={<InterfaceSettingsPage />} />
           <Route element={<AppLayout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/settings" element={<InterfaceSettingsPage />} />
             <Route path="/projects/new" element={<CreateProject />} />
             <Route path="/projects/:pid" element={<ProgressPage />} />
             <Route path="/projects/:pid/glossary" element={<GlossaryPage />} />
