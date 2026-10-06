@@ -135,6 +135,7 @@ export default function Dashboard() {
         <Link
           id="create-project-trigger"
           to="/projects/new"
+          state={{ fromProjectList: true }}
           aria-label={tr("common.createProject")}
           title={tr("common.createProject")}
           className={cn(

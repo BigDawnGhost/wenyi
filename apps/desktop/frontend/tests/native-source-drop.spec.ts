@@ -86,11 +86,14 @@ test("failed native upload keeps the form and allows retry with a fresh source g
   await expect(dialog.getByText("Native upload unavailable", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("Native book");
   await expect(dialog.getByText("retry.docx", { exact: true })).toBeVisible();
-  await expect(create).toBeEnabled();
+  await expect(create).toBeDisabled();
+  await expect(dialog.getByText("Select the source file again before retrying.", { exact: true })).toBeVisible();
   expect((await calls(page)).some(call => call.command === "native_drop_release")).toBe(false);
   // Native grants are single-use even after a failed upload; re-drop to retry.
   await nativeEvent(page, { kind: "drop", source: source("retry-again") });
   await expect(dialog.getByText("retry-again.docx", { exact: true })).toBeVisible();
+  await expect(create).toBeEnabled();
+  await expect(dialog.getByText("Select the source file again before retrying.", { exact: true })).toHaveCount(0);
   await expect.poll(() => calls(page)).toContainEqual({
     command: "native_drop_release", args: { handle: "retry" },
   });
@@ -130,6 +133,28 @@ async function calls(page: Page) {
 
 const source = (handle: string, name = `${handle}.docx`, size = 123) =>
   ({ kind: "native" as const, handle, name, size });
+
+test.describe("high-DPI source selection", () => {
+  test.use({ deviceScaleFactor: 2 });
+  test("physical bridge coordinates accept drops at the lower right edge of the source area", async ({ page }) => {
+    await setup(page);
+    const zone = page.getByRole("group", { name: "Source file selection" });
+    await zone.evaluate((element, source) => {
+      const rect = element.getBoundingClientRect();
+      const position = {
+        x: (rect.right - 3) * devicePixelRatio,
+        y: (rect.bottom - 3) * devicePixelRatio,
+      };
+      for (const kind of ["over", "drop"]) {
+        window.dispatchEvent(new CustomEvent("wenyi:native-drag", {
+          cancelable: true, detail: { kind, position, source: kind === "drop" ? source : undefined },
+        }));
+      }
+    }, source("scaled"));
+    await expect(zone.getByText("scaled.docx", { exact: true })).toBeVisible();
+    expect(await calls(page)).toEqual([]);
+  });
+});
 
 test("Desktop bridge selects without upload, highlights/leaves and preserves selection on rejection", async ({ page }) => {
   await setup(page);

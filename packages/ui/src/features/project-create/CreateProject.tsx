@@ -1,7 +1,7 @@
 import { useI18n } from "@/i18n";
 import { languageName } from "@/i18n/labels";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,7 @@ import { releaseSource, type ProjectSource } from "@/platform";
 export default function CreateProjectDialog() {
   const { t: tr, locale } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const [name, setName] = useState("");
@@ -25,6 +26,7 @@ export default function CreateProjectDialog() {
   const [target, setTarget] = useState("zh");
   const [pid] = useState<string | null>(searchParams.get("project"));
   const [file, setFile] = useState<ProjectSource | null>(null);
+  const [sourceConsumed, setSourceConsumed] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const mounted = useRef(false);
   const uploadingSource = useRef<ProjectSource | null>(null);
@@ -130,6 +132,10 @@ export default function CreateProjectDialog() {
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
       if (mounted.current) navigate(`/projects/${p.id}`);
     },
+    onError: () => {
+      // Opaque native grants are single-use, even when an upload fails.
+      if (file && "upload" in file) setSourceConsumed(true);
+    },
   });
   const resume = useMutation({
     mutationFn: () => api.resume(pid!),
@@ -149,7 +155,9 @@ export default function CreateProjectDialog() {
   const filename = file?.name || project?.source_meta?.original_filename;
   const pending = create.isPending || resume.isPending || start.isPending;
   const close = () => {
-    if (!pending) navigate("/", { replace: true });
+    if (pending) return;
+    if (location.state?.fromProjectList) navigate(-1);
+    else navigate("/", { replace: true });
   };
 
   return (
@@ -277,6 +285,7 @@ export default function CreateProjectDialog() {
               disabled={locked}
               onSelectFile={(file) => {
                 setFile(file);
+                setSourceConsumed(false);
                 create.reset();
               }}
             />
@@ -397,6 +406,7 @@ export default function CreateProjectDialog() {
                   disabled={
                     !name.trim() ||
                     !file ||
+                    sourceConsumed ||
                     !!fileError ||
                     sameLanguage ||
                     !caps ||
@@ -409,6 +419,11 @@ export default function CreateProjectDialog() {
                     : tr("common.createProject")}
                 </Button>
               </div>
+              {sourceConsumed && (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {tr("createProject.selectSourceAgain")}
+                </p>
+              )}
               {!file && (
                 <p className="text-xs text-muted-foreground">
                   {tr("createProject.sourceRequired")}

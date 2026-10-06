@@ -247,7 +247,9 @@ test("a legacy creation link keeps the saved source locked against drops", async
     await route.fallback();
   });
   await page.goto(`/projects/new?project=${pid}`);
-  await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
   const zone = page.getByRole("group", { name: "Source file selection" });
   await expect(zone).toHaveAttribute("aria-disabled", "true");
   await expect(zone.getByRole("button", { name: "Browse files" })).toBeDisabled();
