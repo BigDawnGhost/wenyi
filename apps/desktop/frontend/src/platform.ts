@@ -10,6 +10,9 @@ import { credentialQuery } from "./credentials";
 const DesktopCredential = lazy(() =>
   import("./DesktopCredential").then((module) => ({ default: module.DesktopCredential })),
 );
+const DesktopUpdates = lazy(() =>
+  import("./DesktopUpdates").then((module) => ({ default: module.DesktopUpdates })),
+);
 
 const progressKeys: Record<string, string[]> = {
   progress: ["workflow"],
@@ -50,6 +53,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      updates: { Section: DesktopUpdates },
       saveExport: saveNativeExport,
       credentials: {
         Field: DesktopCredential,

@@ -16,6 +16,8 @@ from .local_backend import LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
 from .local_runtime import LocalRuntime, progress_snapshot, statistics_snapshot
 from .settings import DesktopSettings
+from .updates import UpdateAdmissionMiddleware, UpdateGuard
+from .updates import router as updates_router
 
 
 class DesktopServices:
@@ -141,4 +143,9 @@ def create_app(
     app = create_http_app(context, lifespan=lifespan, origins=list(ORIGINS))
     app.include_router(credentials.router)
     app.include_router(desktop_export.router)
+    app.include_router(updates_router)
+    app.state.update_guard = UpdateGuard(services)
+    app.add_middleware(
+        UpdateAdmissionMiddleware, guard=app.state.update_guard, token=context.api_token
+    )
     return app

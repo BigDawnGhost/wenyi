@@ -209,6 +209,11 @@ class LocalRuntime:
         self._stopped = asyncio.Event()
         self.accepting = False
 
+    @property
+    def idle(self) -> bool:
+        """Inspect actual task ownership, not just possibly terminal catalog status."""
+        return not (self._submitted or self._active or self._cancelling)
+
     async def start(self) -> None:
         self.lock.acquire()
         try:

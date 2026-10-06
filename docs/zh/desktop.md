@@ -99,9 +99,87 @@ Sidecar 构建会重新构建本地 Python 包，而不是复用其缓存 wheel�
 元数据与解析出的 Git 版本一致。安装包收集严格匹配版本、架构和该平台的完整格式
 集合；旧产物原样保留，不会被改名冒充新版本。
 
-这些 workflow 不签名或公证安装包；平台签名与终端用户安装验证仍是发行前的责任。
+这些 workflow 不执行操作系统代码签名或公证；平台签名与终端用户安装验证仍是发行前的责任。
 
 已在 KDE Wayland 下使用临时工作区和无效的开发 Python 路径启动 AppImage：包内引擎成功启动，带鉴权的 loopback 请求正常，关闭原生窗口后引擎退出并被回收。独立冻结引擎检查还覆盖了离线合成 TXT 上传、解析、预览及新旧格式事件读取。真实文件管理器拖放、系统保存对话框、Windows/macOS 运行及可移动介质行为仍需平台验收。
+
+## 应用更新
+
+更新区域位于**全局设置底部**，显示由 Git 派生的当前应用版本。可手动检查新的公开发行版，
+并打开 [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases)。
+旧版用户需要先手动升级一次到包含更新器的版本。升级保留 Desktop 工作区；升级前请备份。
+
+只有已配置更新签名的正式稳定原生构建会在启动时自动检查，且不会阻塞启动。
+检查不会静默下载、强制安装或重启应用。安装需要明确确认；请先完成或取消运行中的任务，
+并保存或放弃编辑器及设置中的未保存修改。应用在安装并重启前会再次检查这些限制。
+
+已签名的 Windows NSIS、macOS 应用和 Linux **AppImage** 支持应用内安装更新。
+Linux `.deb`/`.rpm` 始终通过手动下载及包安装升级，不会用 AppImage 替换。
+开发、本地及未配置签名的构建仍可检查公开发行版并手动下载。
+网络或检查失败会明确显示，不影响继续使用 Desktop。
+应用内安装必须验证更新签名；它与 **Windows/macOS 操作系统代码签名及公证是独立机制**。
+签名还必须绑定公告中的应用版本（`requireSignedVersion`），旧的已签名产物不能冒充新版。
+
+### 维护者签名配置
+
+无需部署更新服务。原生更新器使用固定 HTTPS 端点：
+`https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json`。
+不要在仓库内生成密钥。在仓库根目录执行以下命令，将 Tauri signer 密钥写入
+**checkout 之外**的安全位置：
+
+```bash
+pnpm exec tauri signer generate --write-keys /secure/path/outside-checkout/wenyi-updater.key
+```
+
+通过交互提示输入密码，不要将真实密码放入命令历史。安全备份私钥和密码；
+禁止提交、粘贴到 issue/日志，或在 PR workflow 中使用。不同发行版应保留同一密钥：
+已安装应用信任内置公钥，更换密钥需要规划迁移或手动升级。
+
+在 GitHub Actions 仓库中配置：
+
+| 名称 | 类型 | 值 |
+| --- | --- | --- |
+| `WENYI_UPDATER_PUBLIC_KEY` | Variable | 生成的 `.pub` 文件完整内容，不是路径 |
+| `TAURI_SIGNING_PRIVATE_KEY` | Secret | 私钥文件完整内容 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | 私钥密码（有意使用无密码密钥时为空） |
+
+本地签名构建从安全环境或 secret manager 提供同名三个环境变量（公钥不是秘密），
+在对应干净标签 checkout 执行 `WENYI_BUILD_TAG=v1.2.3 pnpm desktop:build`。
+macOS 添加 `--bundles dmg,app` 以生成额外的更新归档。
+启动脚本仅为已配置的稳定签名构建启用 Tauri v2 `bundle.createUpdaterArtifacts`。
+部分配置、公钥路径/格式错误，或为开发/预发行版本签名都会明确失败。
+本地密码变量必须定义，即使值为空。普通 `cargo test`、`cargo run`、PR 构建及未签名的
+`pnpm desktop:build` 不需要签名秘密。
+
+Desktop workflow 仅向稳定 release 构建或明确开启的稳定 tag 手动签名测试提供签名秘密；
+PR、开发/预发行构建及普通手动 workflow 运行保持未签名。
+签名配置全部缺失时，稳定发行仍生成手动安装包，并明确记录**不发布 `latest.json`**。
+部分签名配置则失败，不发布误导性的更新元数据。
+
+签名发行在 Windows `.exe` 和 Linux `.AppImage` 旁增加 `.sig`；
+macOS 在现有 `.dmg` 之外增加 `.app.tar.gz` 及 `.sig`，不额外套安装包 ZIP。
+`scripts/desktop_updates.py` 校验完整三平台集合，生成正式 SemVer manifest，
+包含 `windows-x86_64`、`linux-x86_64`、`darwin-aarch64`、实际重命名后的发行 URL
+和签名内容。所有更新包及签名构建、上传成功后才**最后上传**含发行说明的 `latest.json`。
+发行上传不覆盖已有附件；同名附件已存在时重试会失败。缺失或错误签名不能发布部分 manifest。
+没有 manifest 的发行不能通过应用内更新器安装，请手动下载。
+
+### 不发布 Release 的签名测试
+
+1. 将更新器及签名测试代码合并到默认分支，为计划发行的版本推送稳定 tag，例如 `v1.2.3`。
+   tag 必须包含这些脚本；旧 tag 无法测试后来新增的代码。**不要创建 GitHub Release。**
+2. 打开 **Actions → Desktop packages → Run workflow**，工作流分支保持为仓库默认分支，
+   填写 `tag`，勾选 **Test updater signing**（`test_updater_signing`，默认关闭）。
+3. 检查三个平台构建，确认 **Verify updater payload and signed version with public key**
+   步骤通过：它使用 `WENYI_UPDATER_PUBLIC_KEY` 对更新包内容、受签名保护的元数据及版本
+   绑定进行实际密码学验证。公私钥不匹配、内容被修改或签名配置缺失时会失败，不会冒充
+   已签名测试包。
+4. 在本次运行的 **Artifacts** 下载 `wenyi-desktop-signing-test-<version>-<platform>`。
+   每个平台包含安装包、更新产物和 `.sig`，保留 14 天。
+
+此运行仅有仓库只读权限，并跳过发布任务；不创建或上传 Release，不发布或修改 `latest.json`。
+它验证签名和打包，**不验证应用内下载、安装及重启流程**；线上更新端点不会公告这些测试产物。
+此手动测试不会向普通发行流程新增验签步骤。
 
 ## API 密钥
 

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { updateCredentialSafety } from "./updateSafety";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { credentialQuery, saveCredential, type CredentialStatus } from "./credentials";
 import { useDesktopI18n } from "./i18n";
@@ -18,6 +19,11 @@ export function DesktopCredential({
   const [secret, setSecret] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
+  const [safetyId] = useState(() => Symbol());
+  useEffect(() => {
+    updateCredentialSafety(safetyId, secret.length > 0 || pending);
+    return () => updateCredentialSafety(safetyId, false);
+  }, [safetyId, secret, pending]);
   const save = async (action: "save" | "clear" | "environment") => {
     if (action === "save" && !secret.trim()) return;
     setPending(true);

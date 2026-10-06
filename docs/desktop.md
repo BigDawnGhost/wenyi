@@ -110,10 +110,110 @@ wheels, and checks their metadata against the resolved Git version before freezi
 Installer collection requires the exact version, architecture and complete format
 set for its platform; older outputs are left untouched and never relabeled.
 
-These workflows do not sign or notarize packages. Platform signing and end-user
+These workflows do not perform OS code signing or notarization. Platform signing and end-user
 installation checks remain release responsibilities.
 
 The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and closing the native window shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. Real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
+
+## Application updates
+
+The update area is at the **bottom of global Settings** and shows the current
+Git-derived application version. You can check for a newer public release and
+open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases).
+Older installations must be upgraded manually once to a release with this updater.
+The Desktop workspace is retained; back it up before upgrading.
+
+Only stable, configured native release builds check automatically at startup,
+without blocking launch. Checking never silently downloads, forces an installation,
+or restarts the application. Installation requires explicit confirmation; finish
+or cancel active tasks and save or discard unsaved editor/settings changes first.
+The application checks these guards again before installing and restarting.
+
+Signed Windows NSIS installations, macOS applications and Linux **AppImage**
+builds support integrated installation. Linux `.deb`/`.rpm` installations always
+use manual download/package installation, not AppImage replacement. Development,
+local and unconfigured builds still support public-release checks and manual
+downloads. Network/check failures remain visible and do not prevent using Desktop.
+Updater signatures are mandatory for integrated installation and are **separate
+from Windows/macOS OS code signing and notarization**.
+Signatures must also bind the advertised application version (`requireSignedVersion`):
+an older signed artifact cannot be relabeled as a newer release.
+
+### Maintainer signing setup
+
+No update service is required. The native updater uses the fixed HTTPS endpoint
+`https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json`.
+Do not generate keys in this repository. From the repository root, generate a
+Tauri signer key into a protected location **outside the checkout**:
+
+```bash
+pnpm exec tauri signer generate --write-keys /secure/path/outside-checkout/wenyi-updater.key
+```
+
+Use the interactive password prompt; never put a real password in command history.
+Keep the private key and password in a secure backup. Never commit them, paste them
+into issues/logs, or use them in PR workflows. Preserve the key across releases:
+installed applications trust the embedded public key, so changing it requires a
+planned migration/manual upgrade.
+
+Configure these GitHub Actions repository entries:
+
+| Entry | Kind | Value |
+| --- | --- | --- |
+| `WENYI_UPDATER_PUBLIC_KEY` | Variable | Full contents of the generated `.pub` file, not its path |
+| `TAURI_SIGNING_PRIVATE_KEY` | Secret | Full contents of the private key file |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Key password (empty for an intentionally passwordless key) |
+
+For a local signed build, supply the same three environment variables from a
+secure environment/secret manager (the public key is not secret), then run
+`WENYI_BUILD_TAG=v1.2.3 pnpm desktop:build` in the matching clean tagged checkout.
+On macOS, pass `--bundles dmg,app` to produce the additional updater archive.
+The launcher enables Tauri v2 `bundle.createUpdaterArtifacts` only for configured
+stable signed builds. Partial configuration, a public-key path/malformed public
+key, or signing a development/prerelease version fails explicitly. Password must
+be defined locally even when empty. Ordinary `cargo test`, `cargo run`, PR builds
+and unsigned `pnpm desktop:build` do not need signing secrets.
+
+The Desktop workflow supplies signing secrets only to stable release builds or
+explicit manual signing tests on stable tags. PRs, development/prerelease builds
+and ordinary manual workflow runs remain unsigned.
+If all signing configuration is absent, stable releases still produce manual
+installers and log that **no `latest.json` is published**. Partially configured
+signing fails instead of publishing misleading update metadata.
+
+Signed release assets add `.sig` beside Windows `.exe` and Linux `.AppImage`;
+macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg`. There are no
+extra installer ZIP wrappers. `scripts/desktop_updates.py` validates the complete
+three-platform set and produces a stable SemVer manifest with
+`windows-x86_64`, `linux-x86_64` and `darwin-aarch64` entries, the actual renamed
+release URLs, and signature contents. All payloads and signatures must build and
+upload successfully before `latest.json`, including the release notes, is uploaded
+**last**. Release uploads never overwrite existing attachments; retries with existing names fail. Missing
+or malformed signatures cannot publish a partial manifest. A release without a
+manifest cannot be installed through the integrated updater; use manual download.
+
+### Test signing without publishing a Release
+
+1. Merge the updater/signing-test code into the default branch and push a stable
+   tag for the planned release, such as `v1.2.3`. The tag must include these scripts;
+   an old tag cannot test code added after it. **Do not create a GitHub Release.**
+2. Open **Actions → Desktop packages → Run workflow**. Leave the workflow branch
+   on the repository's default branch, fill in `tag`, and enable
+   **Test updater signing** (`test_updater_signing`, off by default).
+3. Check all three platform builds. **Verify updater payload and signed version
+   with public key** must pass: it verifies payload bytes, authenticated signature
+   metadata and version binding using `WENYI_UPDATER_PUBLIC_KEY`. A wrong keypair,
+   tampered payload, or missing signing configuration fails rather than uploading
+   an unsigned test package.
+4. Download `wenyi-desktop-signing-test-<version>-<platform>` from the run's
+   **Artifacts** section. Each includes its installers, updater payload and `.sig`;
+   artifacts are retained for 14 days.
+
+This run has read-only repository permissions and skips the publishing job. It
+does not create/upload a Release or publish/change `latest.json`. It validates
+signing and packaging, **not the application’s download/install/restart flow**;
+the test artifact is not announced by the production update endpoint. This manual
+test does not add verification steps to the ordinary release workflow.
 
 ## API keys
 
