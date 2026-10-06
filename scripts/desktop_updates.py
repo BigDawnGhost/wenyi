@@ -6,6 +6,7 @@ import argparse
 import base64
 import filecmp
 import json
+import os
 import plistlib
 import re
 import shutil
@@ -25,7 +26,25 @@ def stable_version(version: str) -> None:
         raise ValueError("Updater manifests require a stable MAJOR.MINOR.PATCH version")
 
 
+def signing_key_id() -> bytes:
+    """Fail closed on missing configuration without exposing supplied key material."""
+    try:
+        value = os.environ.get("WENYI_UPDATER_PUBLIC_KEY", "").strip()
+        lines = base64.b64decode(value, validate=True).decode("utf-8").splitlines()
+        if len(lines) != 2 or not lines[0].startswith("untrusted comment:"):
+            raise ValueError("Invalid minisign public key structure")
+        packet = base64.b64decode(lines[1], validate=True)
+        if len(packet) != 42 or packet[:2] != b"Ed":
+            raise ValueError("Invalid minisign public key packet")
+    except (ValueError, UnicodeError) as error:
+        raise ValueError(
+            "WENYI_UPDATER_PUBLIC_KEY must contain a Tauri updater public key"
+        ) from error
+    return packet[2:10]
+
+
 def signature(path: Path, version: str | None = None) -> str:
+    expected_key = signing_key_id()
     if not path.is_file() or path.is_symlink():
         raise ValueError(f"Missing updater signature: {path}")
     value = path.read_text(encoding="utf-8").strip()
@@ -52,6 +71,10 @@ def signature(path: Path, version: str | None = None) -> str:
             raise ValueError("Invalid global signature")
     except (ValueError, UnicodeError) as error:
         raise ValueError(f"Malformed Tauri updater signature: {path}") from error
+    # Tauri only warns about mismatched keys; do not advertise unusable updates.
+    # The client still performs cryptographic verification before installation.
+    if packet[2:10] != expected_key:
+        raise ValueError(f"Updater signature key ID differs from the configured public key: {path}")
     return value
 
 

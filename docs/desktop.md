@@ -244,6 +244,11 @@ upload successfully before `latest.json`, including the release notes, is upload
 **last**. Release uploads never overwrite existing attachments; retries with existing names fail. Missing
 or malformed signatures cannot publish a partial manifest. A release without a
 manifest cannot be installed through the integrated updater; use manual download.
+Collection and manifest generation require `WENYI_UPDATER_PUBLIC_KEY` and reject
+signatures whose key ID differs from it. Tauri's key-mismatch warning is therefore
+a publishing failure, not a release that clients cannot install. This release
+check is not cryptographic verification; the native updater verifies the downloaded
+artifact and signed version before installation.
 
 ## API keys
 

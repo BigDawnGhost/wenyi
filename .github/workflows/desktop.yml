@@ -130,6 +130,8 @@ jobs:
           --source apps/desktop/target/release/bundle
       - name: Collect signed updater payload and signature
         if: steps.updater.outputs.signed == 'true'
+        env:
+          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
         run: >
           uv run --no-project python scripts/desktop_updates.py collect
           --version "${{ steps.version.outputs.version }}"
@@ -185,6 +187,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
           VERSION: ${{ steps.version.outputs.version }}
+          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
         run: |
           if compgen -G 'release-assets/*.sig' >/dev/null; then
             gh release view "$TAG" --repo "$GH_REPO" --json body --jq '.body' > release-notes.txt

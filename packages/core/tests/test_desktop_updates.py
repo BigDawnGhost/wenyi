@@ -45,6 +45,13 @@ def signature():
     return base64.b64encode(document.encode()).decode()
 
 
+@pytest.fixture(autouse=True)
+def configured_public_key(monkeypatch):
+    packet = base64.b64encode(b"Ed" + bytes(40)).decode()
+    document = f"untrusted comment: fixture\n{packet}\n"
+    monkeypatch.setenv("WENYI_UPDATER_PUBLIC_KEY", base64.b64encode(document.encode()).decode())
+
+
 @pytest.fixture
 def assets(tmp_path, updates, signature):
     for platform, (_, _, _, extension) in updates.PLATFORMS.items():
@@ -73,6 +80,35 @@ def test_manifest_keeps_release_notes_as_plain_text(updates, assets):
     notes = "## Changes\n\n<script>Not executable</script>\n中文发行说明\n"
     result = updates.manifest(assets, "1.2.3", "v1.2.3", "BigDawnGhost/wenyi", notes)
     assert result["notes"] == notes
+
+
+def test_mismatched_key_cannot_be_collected_or_advertised(updates, assets, monkeypatch, tmp_path):
+    packet = base64.b64encode(b"Ed" + b"otherkey" + bytes(32)).decode()
+    document = f"untrusted comment: fixture\n{packet}\n"
+    monkeypatch.setenv("WENYI_UPDATER_PUBLIC_KEY", base64.b64encode(document.encode()).decode())
+    with pytest.raises(ValueError, match="key ID differs"):
+        updates.manifest(assets, "1.2.3", "v1.2.3", "BigDawnGhost/wenyi")
+    source = tmp_path / "bundle"
+    (source / "nsis").mkdir(parents=True)
+    payload = source / "nsis/Wenyi Desktop_1.2.3_x64-setup.exe"
+    payload.write_bytes(b"offline installer")
+    Path(str(payload) + ".sig").write_text(
+        (assets / "wenyi-desktop-1.2.3-windows-x64.exe.sig").read_text()
+    )
+    output = tmp_path / "collected"
+    with pytest.raises(ValueError, match="key ID differs"):
+        updates.collect(source, output, "1.2.3", "windows-x64", "Wenyi Desktop")
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("public_key", [None, "", "not-a-public-key"])
+def test_missing_or_malformed_public_key_rejected(updates, assets, monkeypatch, public_key):
+    if public_key is None:
+        monkeypatch.delenv("WENYI_UPDATER_PUBLIC_KEY")
+    else:
+        monkeypatch.setenv("WENYI_UPDATER_PUBLIC_KEY", public_key)
+    with pytest.raises(ValueError, match="WENYI_UPDATER_PUBLIC_KEY"):
+        updates.manifest(assets, "1.2.3", "v1.2.3", "BigDawnGhost/wenyi")
 
 
 @pytest.mark.parametrize("replacement", ["", "\tversion:1.2.2", "\tversion:1.2.3\tversion:1.2.3"])
