@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 import { api, type GlobalConfig } from "@/lib/api";
 import { platform } from "@/platform";
+import { LazyBoundary } from "@/routes/LazyBoundary";
 import { useI18n } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,6 +22,9 @@ export function GlobalConfiguration() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const credentials = platform().capabilities.credentials;
+  const Updates = platform().capabilities.updates?.Section;
+  const mutations = useIsMutating();
+  const [installing, setInstalling] = useState(false);
   const query = useQuery({
     queryKey: ["globalConfig"],
     queryFn: api.getGlobalConfig,
@@ -31,6 +35,7 @@ export function GlobalConfiguration() {
   });
   const [draft, setDraft] = useState<GlobalConfig | null>(null);
   const [yamlDirty, setYamlDirty] = useState(false);
+  const [uncommitted, setUncommitted] = useState(false);
   const [registryKey, setRegistryKey] = useState(0);
   const [editingIds, setEditingIds] = useState(false);
   const [renames, setRenames] = useState<Record<string, string>>({});
@@ -53,6 +58,7 @@ export function GlobalConfiguration() {
     mutationFn: () => api.saveGlobalConfig(input()),
     onSuccess: (value) => {
       apply(value);
+      setUncommitted(false);
       setRenames({});
       setProviderRenames({});
       if (credentials) void credentials.refresh();
@@ -65,6 +71,7 @@ export function GlobalConfiguration() {
   const validate = useMutation({
     mutationFn: () => api.validateGlobalConfig(input()),
     onSuccess: (value) => {
+      setUncommitted((current) => current || draft?.yaml !== query.data?.yaml);
       apply(value);
       toast.success(t("settings.configurationIsValidButNotSavedYet"));
     },
@@ -72,6 +79,7 @@ export function GlobalConfiguration() {
   const restore = useMutation({
     mutationFn: api.getGlobalDefaults,
     onSuccess: (value) => {
+      setUncommitted(true);
       apply({ ...value, revision: draft!.revision });
       setRenames({});
       setProviderRenames({});
@@ -80,7 +88,7 @@ export function GlobalConfiguration() {
     },
   });
   const error = save.error || validate.error || restore.error;
-  const pending = save.isPending || validate.isPending || restore.isPending;
+  const pending = save.isPending || validate.isPending || restore.isPending || installing;
   const disabled = !draft || yamlDirty || pending;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
@@ -135,7 +143,7 @@ export function GlobalConfiguration() {
   return (
     <>
       <ErrorNotice error={query.error || error} />
-      <Card>
+      <Card id="provider-models">
         <CardContent className="p-5 space-y-4">
           <ProviderSettings
             key={registryKey}
@@ -181,13 +189,8 @@ export function GlobalConfiguration() {
           />
         </CardContent>
       </Card>
-      <Card>
+      <Card id="advanced-yaml">
         <CardContent className="p-5 space-y-4">
-          {yamlDirty && (
-            <p className="text-sm text-muted-foreground">
-              {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-            </p>
-          )}
           <Disclosure
             title={t("settings.advancedYamlConfiguration")}
             summary={t(
@@ -212,10 +215,25 @@ export function GlobalConfiguration() {
               }}
             />
           </Disclosure>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-5 space-y-4">
+          {yamlDirty && (
+            <a
+              href="#advanced-yaml"
+              className="block text-sm text-muted-foreground underline underline-offset-4"
+            >
+              {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
+            </a>
+          )}
           {editingIds && (
-            <p className="text-sm text-muted-foreground">
+            <a
+              href="#provider-models"
+              className="block text-sm text-muted-foreground underline underline-offset-4"
+            >
               {t("registry.finishRenaming")}
-            </p>
+            </a>
           )}
           <div className="flex flex-wrap gap-3">
             <Button
@@ -241,6 +259,16 @@ export function GlobalConfiguration() {
           </div>
         </CardContent>
       </Card>
+      {Updates && (
+        <LazyBoundary>
+          <Updates
+            blocked={!draft || !query.data || draft.yaml !== query.data.yaml ||
+              uncommitted || yamlDirty || editingIds || pending || mutations > 0 ||
+              Object.keys(renames).length > 0 || Object.keys(providerRenames).length > 0}
+            onInstalling={setInstalling}
+          />
+        </LazyBoundary>
+      )}
     </>
   );
 }

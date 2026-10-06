@@ -159,7 +159,8 @@ for (const initiallyBackground of [false, true]) {
     await page.goto("/");
     await expect.poll(async () => {
       await page.clock.runFor(100);
-      return page.getByText("Test Book", { exact: true }).count();
+      // Scope to main: the sidebar also recalls the first project by name.
+      return page.getByRole("main").getByText("Test Book", { exact: true }).count();
     }).toBe(1);
     await page.clock.runFor(1000);
     if (!initiallyBackground) {

@@ -39,8 +39,13 @@ export interface PlatformServices {
     subscribe: (listener: () => void) => () => void;
   };
   preferences: {
-    get: (key: "wenyi.locale" | "wenyi.sidebarCollapsed") => string | null;
-    set: (key: "wenyi.locale" | "wenyi.sidebarCollapsed", value: string) => void;
+    get: (
+      key: "wenyi.locale" | "wenyi.sidebarCollapsed" | "wenyi.lastProject",
+    ) => string | null;
+    set: (
+      key: "wenyi.locale" | "wenyi.sidebarCollapsed" | "wenyi.lastProject",
+      value: string,
+    ) => void;
     subscribe: (key: "wenyi.locale", listener: () => void) => () => void;
   };
   request: <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -53,6 +58,9 @@ export interface PlatformServices {
   progressKeys: (kind: string) => string[];
   bindSourceDrop: (zone: HTMLElement, callbacks: SourceDropCallbacks) => () => void;
   capabilities: {
+    updates?: {
+      Section: ComponentType<{ blocked: boolean; onInstalling: (value: boolean) => void }>;
+    };
     saveExport?: (
       project: string, options: ExportOptions, exportId?: number,
     ) => Promise<{ path: string } | null>;

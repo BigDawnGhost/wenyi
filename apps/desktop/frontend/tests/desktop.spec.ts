@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, globalConfiguration, pid, project } from "./fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -28,6 +28,92 @@ async function desktop(page: Page, pending = false) {
     };
   }, { origin, token, pending });
 }
+
+test("Desktop dashboard shares settings shell and keeps structured drafts", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  await page.goto("/");
+  await expect(page.getByRole("complementary")).toHaveCount(1);
+  const nav = page.getByRole("navigation", { name: "Global navigation" });
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Create project", exact: true })).toHaveCount(1);
+  const shell = await page.locator("#sidebar-navigation").elementHandle();
+  await page.getByRole("link", { name: "Settings", exact: true }).press("Enter");
+  await expect(page).toHaveURL("/settings");
+  const sidebar = page.getByRole("complementary");
+  await expect(sidebar).toHaveCount(1);
+  expect(await shell!.evaluate(node => node === document.querySelector("#sidebar-navigation"))).toBe(true);
+  await expect(page.getByRole("navigation", { name: "Settings navigation" })).toHaveCount(0);
+  await page.getByLabel("Polishing", { exact: true }).uncheck();
+  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
+  await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL("/settings");
+  await expect(page.locator('[role="listbox"]')).toHaveCount(0);
+  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
+  await page.reload();
+  await expect(page).toHaveURL("/settings");
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await expect(page).toHaveURL("/");
+  await page.goto(`/projects/${pid}`);
+  await expect(nav.getByRole("link")).toHaveCount(1);
+  await expect(nav.getByRole("link")).toHaveText("Projects");
+});
+
+test("lazy credentials do not blank settings after its configuration loads", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {
+    "/desktop/credentials": {
+      default: { mode: "environment", available: false, storage: "environment" },
+    },
+  }, origin);
+  let releaseConfig = () => {};
+  let releaseCredential = () => {};
+  const configGate = new Promise<void>(resolve => { releaseConfig = resolve; });
+  const credentialGate = new Promise<void>(resolve => { releaseCredential = resolve; });
+  await page.route(`${origin}/settings`, async route => {
+    await configGate;
+    await route.fulfill({ json: globalConfiguration });
+  });
+  await page.route("**/src/DesktopCredential.tsx*", async route => {
+    await credentialGate;
+    await route.continue();
+  });
+  try {
+    // Desktop warms the credential chunk during startup, before settings opens.
+    const requested = page.waitForRequest("**/src/DesktopCredential.tsx*");
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect(page.getByLabel("Interface language")).toBeVisible();
+    releaseConfig();
+    await requested;
+    const blankFrames = await page.evaluate(async () => {
+      let blank = 0;
+      for (let frame = 0; frame < 45; frame++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!document.querySelector("main h1")?.getClientRects().length ||
+            document.querySelector("[data-route-pending]")) blank++;
+      }
+      return blank;
+    });
+    expect(blankFrames).toBe(0);
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Interface language")).toBeVisible();
+    await page.locator("summary").filter({ hasText: "API providers & models" }).click();
+    await expect(page.locator("#provider-models").getByLabel("API provider", { exact: true })).toBeVisible();
+    await expect(page.locator("#key-default")).toBeVisible();
+    releaseCredential();
+    // The native field retains the environment setting in its closed Advanced section.
+    await expect(page.locator("#key-default")).toBeHidden();
+    await expect(page.locator("#credential-secret-default")).toBeVisible();
+  } finally {
+    releaseConfig();
+    releaseCredential();
+  }
+});
 
 test("pending gate waits for ready, uses memory auth for HTTP, socket and download", async ({ page }) => {
   await desktop(page, true);
@@ -202,7 +288,7 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
 test("lazy route failure is visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
-  await page.route("**/features/dashboard/Dashboard.tsx", route => route.abort());
+  await page.route("**/features/dashboard/Dashboard.tsx*", route => route.abort());
   await page.goto("/");
   await expect(page.getByRole("alert")).toContainText("Unable to load this page");
   await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
@@ -213,16 +299,18 @@ test("lazy route pending has no visible loading copy and reload recovers a route
   await fakeApi(page, {}, origin);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route("**/features/dashboard/Dashboard.tsx", async route => {
+  await page.route("**/features/dashboard/Dashboard.tsx*", async route => {
     await held;
     await route.abort();
   });
   await page.goto("/");
   await expect(page.locator("[data-route-pending]")).toHaveAttribute("aria-busy", "true");
-  await expect(page.locator("#root")).toHaveText("");
+  // The pending gate is quiet and covers only the content area; the shell stays.
+  await expect(page.locator("[data-route-pending]")).toHaveText("");
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
   release();
   await expect(page.getByRole("alert")).toBeVisible();
-  await page.unroute("**/features/dashboard/Dashboard.tsx");
+  await page.unroute("**/features/dashboard/Dashboard.tsx*");
   await page.getByRole("button", { name: "Reload" }).click();
   await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
 });
@@ -258,6 +346,27 @@ for (const kind of ["state", "final"]) {
     await expect(page.getByRole("button", { name: "Start translation", exact: true })).toBeVisible();
   });
 }
+
+test("navigating between routes keeps the sidebar shell as the same node", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  await page.goto("/");
+  await page.locator("#sidebar-navigation").waitFor();
+  await page.evaluate(() => {
+    (window as unknown as { __shellNav?: Element | null }).__shellNav =
+      document.querySelector("#sidebar-navigation");
+  });
+  await page.locator('a[href="/settings"]').click();
+  await expect(page).toHaveURL("/settings");
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { __shellNav?: Element | null }).__shellNav ===
+        document.querySelector("#sidebar-navigation"),
+    ),
+  ).toBe(true);
+});
 
 test("Desktop HTTP errors remain visible", async ({ page }) => {
   await desktop(page);

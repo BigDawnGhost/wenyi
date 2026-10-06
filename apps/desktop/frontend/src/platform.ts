@@ -8,9 +8,15 @@ import { saveNativeExport } from "./nativeExport";
 import { credentialQuery } from "./credentials";
 import { activity } from "./activity";
 
+const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
-  import("./DesktopCredential").then((module) => ({ default: module.DesktopCredential })),
+  loadDesktopCredential().then((module) => ({ default: module.DesktopCredential })),
 );
+const DesktopUpdates = lazy(() =>
+  import("./DesktopUpdates").then((module) => ({ default: module.DesktopUpdates })),
+);
+// Warm the credential chunk at startup so the settings page never waits on it.
+void loadDesktopCredential().catch(() => { /* The route retries when opened. */ });
 
 const progressKeys: Record<string, string[]> = {
   progress: ["workflow"],
@@ -52,6 +58,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      updates: { Section: DesktopUpdates },
       saveExport: saveNativeExport,
       credentials: {
         Field: DesktopCredential,
