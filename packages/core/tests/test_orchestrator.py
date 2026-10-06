@@ -11,27 +11,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wenyi_core.agents.reviewer import ReviewOutputError
-from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
-from wenyi_core.pipeline.annotations import AnnotationService
-from wenyi_core.pipeline.context import RollingContext
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.review_chunks import ReviewChunkService
-from wenyi_core.pipeline.runstore import (
-    STATUS_DONE,
-    STATUS_PENDING,
-    slugify,
-    source_sha256,
-)
+from wenyi_core.pipeline.runstore import STATUS_DONE, STATUS_PENDING
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
-from tests.sample_data import write_sample_epub, write_sample_txt
+from tests.pipeline_fixtures import fake_pipeline_config as _config
+from tests.review_fixtures import fix_json as _fix_json
+from tests.review_fixtures import review_json as _review_json
+from tests.sample_data import write_sample_txt
 
 
 def require_file_storage(store: Storage) -> FileStorage:
@@ -50,314 +44,7 @@ def _translated_para_count(calls) -> int:
     return n
 
 
-def _review_json(user: str, issues: list[dict]) -> str:
-    """Build a reviewer response with its completeness receipt."""
-    return json.dumps(
-        {
-            "issues": issues,
-            "reviewed_segments": len(re.findall(r"^\[(\d+)\]", user, re.MULTILINE)),
-            "complete": True,
-        },
-        ensure_ascii=False,
-    )
-
-
-def _fix_json(user: str, replacement: str) -> str:
-    """Echo identity fields from a fixer request into a complete temporary replacement
-    response.
-    """
-
-    def field(name: str) -> str:
-        match = re.search(rf"^{name}:\s*(.+)$", user, re.MULTILINE)
-        if match is None:
-            raise AssertionError(f"Fixer prompt missing {name}")
-        return match.group(1).strip()
-
-    return json.dumps(
-        {
-            "segment_ref": field("segment_ref"),
-            "before_hash": field("before_hash"),
-            "issue_ids": json.loads(field("issue_ids")),
-            "replacement": replacement,
-            "complete": True,
-        },
-        ensure_ascii=False,
-    )
-
-
-def _config(state_dir: str):
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
-            "segment": {"max_tokens_per_batch": 1800},
-            "pipeline": {
-                "review": True,
-                "review_autofix": False,
-                "polish": True,
-            },
-            "paths": {"state_dir": state_dir},
-        }
-    )
-
-
 class TestOrchestrator(unittest.TestCase):
-    def test_annotation_contexts_follow_continuation_offsets_and_deduplicate(self):
-        segments = [
-            Segment(
-                index=0,
-                source="abc",
-                anchor="tn0_0",
-                meta={
-                    "epub_annotations": {
-                        "version": 1,
-                        "source_length": 6,
-                        "items": [
-                            {
-                                "id": "point-boundary",
-                                "mode": "point",
-                                "source_start": 3,
-                                "source_end": 3,
-                                "source_text": "",
-                                "marker_text": "1",
-                                "target_key": "notes.xhtml#n1",
-                                "relation": "noteref",
-                            },
-                            {
-                                "id": "point-duplicate",
-                                "mode": "point",
-                                "source_start": 1,
-                                "source_end": 1,
-                                "source_text": "",
-                                "marker_text": "1",
-                                "target_key": "notes.xhtml#n1",
-                                "relation": "noteref",
-                            },
-                            {
-                                "id": "range-across-pieces",
-                                "mode": "range",
-                                "source_start": 2,
-                                "source_end": 5,
-                                "source_text": "cde",
-                                "marker_text": "",
-                                "target_key": "notes.xhtml#n2",
-                                "relation": "noteref",
-                            },
-                            {
-                                "id": "ordinary-link",
-                                "mode": "range",
-                                "source_start": 0,
-                                "source_end": 3,
-                                "source_text": "abc",
-                                "marker_text": "",
-                                "target_key": "chapter.xhtml#part-2",
-                                "relation": "internal_link",
-                            },
-                        ],
-                    }
-                },
-            ),
-            Segment(index=1, source="def", cont=True),
-        ]
-        registry = {
-            "version": 1,
-            "contexts": {
-                "notes.xhtml#n1": {"source_blocks": ["First note."]},
-                "notes.xhtml#n2": {"source_blocks": ["Second", "note."]},
-                "chapter.xhtml#part-2": {"source_blocks": ["Not a note."]},
-            },
-        }
-
-        contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
-
-        self.assertEqual(
-            [item["target_key"] for item in contexts[0]],
-            ["notes.xhtml#n1", "notes.xhtml#n2"],
-        )
-        self.assertEqual(
-            [item["target_key"] for item in contexts[1]],
-            ["notes.xhtml#n2"],
-        )
-        self.assertEqual(contexts[0][1]["source"], "Second\n\nnote.")
-
-    def test_annotation_context_points_cover_logical_ends_and_reject_stale_length(self):
-        metadata = {
-            "version": 1,
-            "source_length": 4,
-            "items": [
-                {
-                    "id": "at-start",
-                    "mode": "point",
-                    "source_start": 0,
-                    "source_end": 0,
-                    "target_key": "notes.xhtml#start",
-                    "relation": "noteref",
-                },
-                {
-                    "id": "at-end",
-                    "mode": "point",
-                    "source_start": 4,
-                    "source_end": 4,
-                    "target_key": "notes.xhtml#end",
-                    "relation": "noteref",
-                },
-            ],
-        }
-        segments = [
-            Segment(
-                index=0,
-                source="ab",
-                anchor="tn0_0",
-                meta={"epub_annotations": metadata},
-            ),
-            Segment(index=1, source="cd", cont=True),
-        ]
-        registry = {
-            "version": 1,
-            "contexts": {
-                "notes.xhtml#start": {"source_blocks": ["Start note"]},
-                "notes.xhtml#end": {"source_blocks": ["End note"]},
-            },
-        }
-
-        contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
-
-        self.assertEqual(
-            [[item["target_key"] for item in piece] for piece in contexts],
-            [["notes.xhtml#start"], ["notes.xhtml#end"]],
-        )
-        metadata["source_length"] = 5
-        self.assertEqual(
-            AnnotationService.annotation_contexts_for_segments(segments, registry),
-            [[], []],
-        )
-
-    def test_resume_batch_from_continuation_receives_absolute_annotation_slice(self):
-        with tempfile.TemporaryDirectory() as directory:
-            cfg = _config(os.path.join(directory, "state"))
-            cfg.pipeline.polish = False
-            cfg.pipeline.annotation_alignment = False
-            cfg.segment.max_tokens_per_batch = 6
-            chapter = Chapter(
-                index=0,
-                segments=[
-                    Segment(
-                        index=0,
-                        source="aa",
-                        target="既译",
-                        anchor="tn0_0",
-                        meta={
-                            "epub_annotations": {
-                                "version": 1,
-                                "source_length": 6,
-                                "items": [
-                                    {
-                                        "id": "second-piece",
-                                        "mode": "point",
-                                        "source_start": 3,
-                                        "source_end": 3,
-                                        "target_key": "notes.xhtml#n2",
-                                        "relation": "noteref",
-                                    },
-                                    {
-                                        "id": "third-piece",
-                                        "mode": "point",
-                                        "source_start": 5,
-                                        "source_end": 5,
-                                        "target_key": "notes.xhtml#n3",
-                                        "relation": "noteref",
-                                    },
-                                ],
-                            }
-                        },
-                    ),
-                    Segment(index=1, source="bb", cont=True),
-                    Segment(index=2, source="cc", cont=True),
-                ],
-            )
-            registry = {
-                "version": 1,
-                "contexts": {
-                    "notes.xhtml#n2": {"source_blocks": ["Note two"]},
-                    "notes.xhtml#n3": {"source_blocks": ["Note three"]},
-                },
-            }
-            store = FileStorage(os.path.join(directory, "state", "book"))
-            store.save_chapter(chapter)
-            store.save_manifest(
-                {
-                    "title": "Book",
-                    "fmt": "epub",
-                    "source_lang": "en",
-                    "target_lang": "zh",
-                    "chapters": [{"index": 0, "title": "", "status": "pending"}],
-                }
-            )
-            glossary = GlossaryStore(store.glossary_path)
-            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
-            captured: list[list[list[dict[str, str]]]] = []
-
-            def process(plan, **kwargs):
-                from wenyi_core.pipeline.translation_batch import BatchResult
-
-                captured.append(plan.annotation_contexts)
-                return BatchResult(
-                    tuple(f"译{source}" for source in plan.sources), (None,) * len(plan.sources)
-                )
-
-            try:
-                with (
-                    patch.object(orch._translation._batches, "execute", side_effect=process),
-                    patch.object(
-                        orch._translation,
-                        "extract_batch_glossary",
-                        return_value={
-                            "inserted": 0,
-                            "conflict": 0,
-                            "unchanged": 0,
-                            "updated": 0,
-                        },
-                    ),
-                    patch.object(
-                        orch._runtime.extractor,
-                        "extract_and_store",
-                        return_value={
-                            "inserted": 0,
-                            "conflict": 0,
-                            "unchanged": 0,
-                            "updated": 0,
-                        },
-                    ),
-                ):
-                    orch._translation.translate_chapter(
-                        0,
-                        store,
-                        glossary,
-                        RollingContext(),
-                        "",
-                        translation_history={},
-                        source_corpus="aabbcc",
-                        annotation_context_registry=registry,
-                    )
-            finally:
-                glossary.close()
-
-            self.assertEqual(
-                captured,
-                [
-                    [
-                        [{"target_key": "notes.xhtml#n2", "source": "Note two"}],
-                        [{"target_key": "notes.xhtml#n3", "source": "Note three"}],
-                    ]
-                ],
-            )
-
     def test_annotation_alignment_merges_continuations_and_persists_offsets(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg = _config(os.path.join(directory, "state"))
@@ -1622,51 +1309,6 @@ class TestReviewReporting(unittest.TestCase):
             second = orch2.run_review(txt)
             self.assertNotEqual(first["review_dir"], second["review_dir"])
 
-    def test_try_cached_subchunks_partial_hit_does_not_record(self):
-        """A partially cached subtree must not write initial snapshots before its parent
-        reruns.
-        """
-        from wenyi_core.review.run_store import ReviewRunStore
-
-        with tempfile.TemporaryDirectory() as d:
-            debug = ReviewRunStore(d)
-            debug.start(
-                reviewed_content_digest="digest",
-                metadata={"config": {}, "glossary_fingerprint": "g"},
-            )
-            # Cache only the left half; the parent and right half remain absent.
-            debug.mark_chunk_done(
-                "r1-ch0-base0-n2",
-                {
-                    "issues": [{"index": 0, "type": "mistranslation"}],
-                    "initial_issues": [{"index": 0, "type": "mistranslation"}],
-                    "dismissed": [],
-                },
-            )
-            pieces = [object(), object(), object(), object()]
-            with debug.round_scope(1):
-                missed = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
-            self.assertIsNone(missed)
-            initial, dismissed = debug.result_snapshots(1)
-            self.assertEqual(initial, [])
-            self.assertEqual(dismissed, [])
-
-            debug.mark_chunk_done(
-                "r1-ch0-base2-n2",
-                {
-                    "issues": [{"index": 0, "type": "missing"}],
-                    "initial_issues": [{"index": 0, "type": "missing"}],
-                    "dismissed": [],
-                },
-            )
-            with debug.round_scope(1):
-                hit = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
-            self.assertIsNotNone(hit)
-            assert hit is not None
-            self.assertEqual(len(hit), 2)
-            initial, _dismissed = debug.result_snapshots(1)
-            self.assertEqual(len(initial), 2)
-
     def test_review_resume_reuses_initial_and_agent_traces(self):
         """After deleting a chunk cache, reuse initial and agent traces without new model
         calls.
@@ -2872,33 +2514,6 @@ class TestReviewReporting(unittest.TestCase):
         self.assertEqual(result["review_result"]["termination"], "cycle_detected")
 
 
-class TestStyleAnalysis(unittest.TestCase):
-    def test_style_brief_new_fields(self):
-        """Render supported style dimensions and omit dimensions without evidence."""
-        from wenyi_core.agents.analyzer import Analyzer
-        from wenyi_core.llm.providers.fake import FakeClient as FC
-
-        cfg = _config("state")
-        ana = Analyzer(FC(), cfg)
-        brief = ana.style_brief(
-            {
-                "genre": "校园",
-                "pacing": "短句为主",
-                "register": "口语",
-                "dialogue_style": "语气词丰富",
-                "narration": "第一人称",
-            }
-        )
-        self.assertIn("Pacing: 短句为主", brief)
-        self.assertIn("Register: 口语", brief)
-        self.assertIn("Dialogue style: 语气词丰富", brief)
-        self.assertIn("Narration: 第一人称", brief)
-        # Sparse model output can omit unsupported dimensions.
-        sparse = ana.style_brief({"genre": "校园", "tone": "冷峻"})
-        self.assertIn("Genre: 校园", sparse)
-        self.assertNotIn("Pacing:", sparse)
-
-
 class TestFullGlossary(unittest.TestCase):
     def _run_with_terms(self, d):
         from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
@@ -3139,11 +2754,6 @@ class TestTierRouting(unittest.TestCase):
 
 
 class TestProgressLabels(unittest.TestCase):
-    def test_progress_label_prefers_real_title(self):
-        self.assertEqual(TranslationService.chapter_progress_label("引言", 0), "引言")
-        self.assertEqual(TranslationService.chapter_progress_label("第一章", 1), "第一章")
-        self.assertEqual(TranslationService.chapter_progress_label("", 1), "Chapter 2")
-
     def test_progress_covers_preparation_and_output_stages(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
@@ -3172,41 +2782,6 @@ class TestProgressLabels(unittest.TestCase):
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
             self.assertIn((0, 0, "Generating whole-book synopsis…"), events)
-
-
-class TestLocateExistingStore(unittest.TestCase):
-    def test_epub_locate_uses_peek_title_without_load_document(self):
-        """Locate EPUB state through OPF title only, avoiding repeated full-book annotation."""
-        with tempfile.TemporaryDirectory() as directory:
-            epub = os.path.join(directory, "sample.epub")
-            write_sample_epub(epub)
-            digest = source_sha256(epub)
-            # Use the same slug rule for the sample EPUB's OPF title as preparation does.
-            store = FileStorage(
-                os.path.join(directory, "state", slugify("サンプル小説"), "targets", "zh"),
-            )
-            store.save_manifest(
-                {
-                    "title": "サンプル小説",
-                    "fmt": "epub",
-                    "source_path": epub,
-                    "source_sha256": digest,
-                    "source_lang": "ja",
-                    "target_lang": "zh",
-                    "chapters": [],
-                }
-            )
-            cfg = _config(os.path.join(directory, "state"))
-            orch = Orchestrator(cfg, client=FakeClient())
-
-            with patch(
-                "wenyi_core.pipeline.preparation.load_document",
-                side_effect=AssertionError("locate 不应调用 load_document"),
-            ):
-                located = orch._preparation.locate_existing(epub)
-
-            self.assertEqual(located.run_dir, store.run_dir)
-            self.assertTrue(located.exists())
 
 
 if __name__ == "__main__":

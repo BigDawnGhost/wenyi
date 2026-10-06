@@ -10,62 +10,23 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
+from tests.review_fixtures import autofix_config as _config
+from tests.review_fixtures import autofix_store as _store
+from tests.review_fixtures import fix_json as _fix_json
 
 
 def require_file_storage(store: Storage) -> FileStorage:
     """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
     if not isinstance(store, FileStorage):
         raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
-
-
-def _config(state_dir: str) -> Config:
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {"default_strong": {"provider": "default", "model": "p"}},
-            },
-            "pipeline": {
-                "review_autofix": True,
-                "review_concurrency": 1,
-            },
-            "output": {"punctuation_normalize": False},
-            "paths": {"state_dir": state_dir},
-        }
-    )
-
-
-def _store(directory: str, target: str = "正式译文。") -> FileStorage:
-    store = FileStorage(str(Path(directory, "state", "book")))
-    store.save_chapter(
-        Chapter(
-            index=0,
-            title="第一章",
-            segments=[Segment(index=0, source="原文。", target=target)],
-        )
-    )
-    store.save_manifest(
-        {
-            "title": "book",
-            "source_lang": "ja",
-            "target_lang": "zh",
-            "source_sha256": "0" * 64,
-            "chapters": [{"index": 0, "status": STATUS_DONE}],
-        }
-    )
     return store
 
 
@@ -115,25 +76,6 @@ def _agent_final(user: str) -> str:
                 for candidate_id in candidate_ids
             ],
             "new_issues": [],
-            "complete": True,
-        },
-        ensure_ascii=False,
-    )
-
-
-def _fix_json(user: str, replacement: str) -> str:
-    def field(name: str) -> str:
-        match = re.search(rf"^{name}:\s*(.+)$", user, re.MULTILINE)
-        if match is None:
-            raise AssertionError(f"Fixer prompt missing {name}")
-        return match.group(1).strip()
-
-    return json.dumps(
-        {
-            "segment_ref": field("segment_ref"),
-            "before_hash": field("before_hash"),
-            "issue_ids": json.loads(field("issue_ids")),
-            "replacement": replacement,
             "complete": True,
         },
         ensure_ascii=False,

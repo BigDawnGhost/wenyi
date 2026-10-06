@@ -1,5 +1,6 @@
 """Desktop catalog uses isolated temporary workspaces and no external services."""
 
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from contextvars import copy_context
@@ -44,6 +45,19 @@ def backend(tmp_path, monkeypatch):
 
 def new_project():
     return dal.create_project("Sample", "en", "zh", {"template": "标准翻译"})
+
+
+def test_strategy_and_admission_calls_match_repository(backend):
+    inspect.signature(backend.set_project_strategy).bind("project", {"steps": {}}, connection=None)
+    inspect.signature(backend.admit_job).bind(
+        "project",
+        "translation",
+        "job",
+        project_status="translating",
+        params={},
+        config_snapshot={},
+        run_id="run",
+    )
 
 
 def test_catalog_durability_and_workspace_isolation(backend, tmp_path):

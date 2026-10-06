@@ -5,62 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
+from api_test_support import new_project
 from fastapi.testclient import TestClient
-from test_storage_pg_integration import pg_pool  # noqa: F401
-from tests.fake_llm import MeteredFakeClient, routing_handler
+from tests.fake_llm import MeteredFakeClient
 from type_helpers import must
 from wenyi_api import dal
-from wenyi_api.adapters import create_context, postgres_repository
+from wenyi_api.adapters import postgres_repository
 from wenyi_api.main import create_app
 from wenyi_backend import job_service
-from wenyi_backend.context import current_context, use_context
+from wenyi_backend.context import current_context
 from wenyi_backend.project_service import storage_for
-from wenyi_backend.routers import export
 from wenyi_backend.workers import tasks
-
-
-@pytest.fixture
-def api(monkeypatch, pg_pool, tmp_path):  # noqa: F811
-    from wenyi_api.config import settings
-    from wenyi_core.llm import factory
-
-    config = tmp_path / "config.yaml"
-    config.write_text("llm:\n  preset: fake\n", encoding="utf-8")
-    overrides = replace(
-        settings,
-        data_dir=str(tmp_path / "data"),
-        config_path=str(config),
-        api_token=None,
-        redis_url="redis://127.0.0.1:56379/0",
-    )
-    monkeypatch.setattr(
-        factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)
-    )
-    context = replace(
-        create_context(overrides),
-        build_client=lambda cfg: factory.build_client(cfg),
-    )
-    postgres_repository(context)._pool = pg_pool
-    queue = []
-
-    async def enqueue(name, **kwargs):
-        queue.append((name, kwargs))
-        return SimpleNamespace(job_id=kwargs["_job_id"])
-
-    monkeypatch.setattr(job_service, "enqueue", enqueue)
-    monkeypatch.setattr(export, "enqueue", enqueue)
-    client = TestClient(create_app(context=context))
-    with use_context(context):
-        yield client, queue
-    client.close()
-
-
-def new_project(api, source="en", target="zh"):
-    # Seed existing projects for endpoint tests; public creation requires a source.
-    return dal.create_project("Book", source, target, {"template": "标准翻译"})
 
 
 def test_creation_requires_an_uploaded_source(api):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pytest
 from wenyi_core.config import Config
@@ -12,10 +13,47 @@ from wenyi_core.i18n.languages import normalize_language
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.preparation import PreparationService
+from wenyi_core.pipeline.runstore import slugify, source_sha256
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler
-from tests.sample_data import write_sample_txt
+from tests.pipeline_fixtures import fake_pipeline_config
+from tests.sample_data import write_sample_epub, write_sample_txt
+
+
+class TestLocateExistingStore(unittest.TestCase):
+    def test_epub_locate_uses_peek_title_without_load_document(self):
+        """Locate EPUB state through OPF title only, avoiding repeated full-book annotation."""
+        with tempfile.TemporaryDirectory() as directory:
+            epub = os.path.join(directory, "sample.epub")
+            write_sample_epub(epub)
+            digest = source_sha256(epub)
+            # Use the same slug rule for the sample EPUB's OPF title as preparation does.
+            store = FileStorage(
+                os.path.join(directory, "state", slugify("サンプル小説"), "targets", "zh"),
+            )
+            store.save_manifest(
+                {
+                    "title": "サンプル小説",
+                    "fmt": "epub",
+                    "source_path": epub,
+                    "source_sha256": digest,
+                    "source_lang": "ja",
+                    "target_lang": "zh",
+                    "chapters": [],
+                }
+            )
+            cfg = fake_pipeline_config(os.path.join(directory, "state"))
+            orch = Orchestrator(cfg, client=FakeClient())
+
+            with patch(
+                "wenyi_core.pipeline.preparation.load_document",
+                side_effect=AssertionError("locate 不应调用 load_document"),
+            ):
+                located = orch._preparation.locate_existing(epub)
+
+            self.assertEqual(located.run_dir, store.run_dir)
+            self.assertTrue(located.exists())
 
 
 def _preparation_inputs(tmp_path, book_understanding=True):

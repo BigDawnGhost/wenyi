@@ -1,8 +1,10 @@
 """Offline regressions for complete, resumable book-understanding results."""
 
+import unittest
 from unittest.mock import Mock, call
 
 import pytest
+from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.config import Config
 from wenyi_core.ingest.models import Chapter, Document, Segment
@@ -11,6 +13,32 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.preparation import PreparationService
 from wenyi_core.pipeline.runtime import PipelineRuntime
 from wenyi_core.storage.file import FileStorage
+
+from tests.pipeline_fixtures import fake_pipeline_config
+
+
+class TestStyleAnalysis(unittest.TestCase):
+    def test_style_brief_new_fields(self):
+        """Render supported style dimensions and omit dimensions without evidence."""
+        cfg = fake_pipeline_config("state")
+        ana = Analyzer(FakeClient(), cfg)
+        brief = ana.style_brief(
+            {
+                "genre": "校园",
+                "pacing": "短句为主",
+                "register": "口语",
+                "dialogue_style": "语气词丰富",
+                "narration": "第一人称",
+            }
+        )
+        self.assertIn("Pacing: 短句为主", brief)
+        self.assertIn("Register: 口语", brief)
+        self.assertIn("Dialogue style: 语气词丰富", brief)
+        self.assertIn("Narration: 第一人称", brief)
+        # Sparse model output can omit unsupported dimensions.
+        sparse = ana.style_brief({"genre": "校园", "tone": "冷峻"})
+        self.assertIn("Genre: 校园", sparse)
+        self.assertNotIn("Pacing:", sparse)
 
 
 def _service(tmp_path, chapters=None):
