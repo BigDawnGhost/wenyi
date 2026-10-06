@@ -1,8 +1,9 @@
-import { Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { api, type GlobalConfig } from "@/lib/api";
 import { platform } from "@/platform";
+import { LazyBoundary } from "@/routes/LazyBoundary";
 import { useI18n } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -261,14 +262,14 @@ export function GlobalConfiguration() {
       </Card>
       </fieldset>
       {Updates && (
-        <Suspense fallback={null}>
+        <LazyBoundary>
           <Updates
             blocked={!draft || !query.data || draft.yaml !== query.data.yaml ||
               uncommitted || yamlDirty || editingIds || pending || mutations > 0 ||
               Object.keys(renames).length > 0 || Object.keys(providerRenames).length > 0}
             onInstalling={setInstalling}
           />
-        </Suspense>
+        </LazyBoundary>
       )}
     </>
   );
