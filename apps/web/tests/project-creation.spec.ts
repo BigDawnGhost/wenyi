@@ -79,6 +79,7 @@ test("creation rejects empty files and recovers from an upload failure without l
   await page.route("**/api/projects", (r) => {
     if (r.request().method() !== "POST") return r.fallback();
     requests += 1;
+    if (requests === 2) return r.fulfill({ json: { ...project, status: "parsing" } });
     return r.fulfill({ status: 503, json: { detail: "Upload unavailable" } });
   });
   await page.goto("/projects/new");
@@ -111,6 +112,11 @@ test("creation rejects empty files and recovers from an upload failure without l
   await expect(page.getByText("book.docx", { exact: true })).toBeVisible();
   await expect(create).toBeEnabled();
   expect(requests).toBe(1);
+  await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();
+  await create.click();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(requests).toBe(2);
 });
 
 test("PDF parser is selected before creation and subtitles omit book preparation", async ({

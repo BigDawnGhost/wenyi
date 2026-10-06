@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useI18n } from "@/i18n";
 import { api, type ChapterSegments } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -112,7 +112,7 @@ export function ParagraphEditor({
       ref={dialog}
       aria-labelledby="paragraph-editor-title"
       aria-describedby="paragraph-editor-help"
-      className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 open:flex open:flex-col"
+      className="fixed inset-0 m-auto w-[calc(100%-32px)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 backdrop:backdrop-blur-[2px] open:flex open:flex-col"
       onCancel={(event) => {
         event.preventDefault();
         close();

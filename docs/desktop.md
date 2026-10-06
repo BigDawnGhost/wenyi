@@ -32,7 +32,11 @@ Desktop uses the system credential store when available. If it is unavailable, t
 
 ### 3. Create a translation project
 
-Create a new project, drag in a supported book or choose it with Browse, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost.
+Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project and restores focus to the sidebar entry. Browser Back also leaves the dialog. Closing releases any selected native source resource; reopening starts a clean form. On narrow screens the form scrolls while the close header stays visible.
+
+Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement and dialog dismissal are disabled; this is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
+
+Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
 
 Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
 
@@ -160,14 +164,101 @@ wheels, and checks their metadata against the resolved Git version before freezi
 Installer collection requires the exact version, architecture and complete format
 set for its platform; older outputs are left untouched and never relabeled.
 
-These workflows do not sign or notarize packages. Platform signing and end-user
+These workflows do not perform OS code signing or notarization. Platform signing and end-user
 installation checks remain release responsibilities.
 
 The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and the previous close-to-exit lifecycle shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. The current tray lifecycle was also checked on KDE Wayland using a debug native build, production UI, source Python engine, and temporary empty workspace: minimize/restore and close-to-tray/restore kept the engine alive, and explicit tray exit reaped it. Packaged tray behavior, real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 
+## Application updates
+
+The update area is at the **bottom of global Settings** and shows the current
+Git-derived application version. You can check for a newer public release and
+open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases).
+Older installations must be upgraded manually once to a release with this updater.
+The Desktop workspace is retained; back it up before upgrading.
+
+Only stable, configured native release builds check automatically at startup,
+without blocking launch. Checking never silently downloads, forces an installation,
+or restarts the application. Installation requires explicit confirmation; finish
+or cancel active tasks and save or discard unsaved editor/settings changes first.
+The application checks these guards again before installing and restarting.
+
+Signed Windows NSIS installations, macOS applications and Linux **AppImage**
+builds support integrated installation. Linux `.deb`/`.rpm` installations always
+use manual download/package installation, not AppImage replacement. Development,
+local and unconfigured builds still support public-release checks and manual
+downloads. Network/check failures remain visible and do not prevent using Desktop.
+Updater signatures are mandatory for integrated installation and are **separate
+from Windows/macOS OS code signing and notarization**.
+Signatures must also bind the advertised application version (`requireSignedVersion`):
+an older signed artifact cannot be relabeled as a newer release.
+
+### Maintainer signing setup
+
+No update service is required. The native updater uses the fixed HTTPS endpoint
+`https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json`.
+Do not generate keys in this repository. From the repository root, generate a
+Tauri signer key into a protected location **outside the checkout**:
+
+```bash
+pnpm exec tauri signer generate --write-keys /secure/path/outside-checkout/wenyi-updater.key
+```
+
+Use the interactive password prompt; never put a real password in command history.
+Keep the private key and password in a secure backup. Never commit them, paste them
+into issues/logs, or use them in PR workflows. Preserve the key across releases:
+installed applications trust the embedded public key, so changing it requires a
+planned migration/manual upgrade.
+
+Configure these GitHub Actions repository entries:
+
+| Entry | Kind | Value |
+| --- | --- | --- |
+| `WENYI_UPDATER_PUBLIC_KEY` | Variable | Full contents of the generated `.pub` file, not its path |
+| `TAURI_SIGNING_PRIVATE_KEY` | Secret | Full contents of the private key file |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Key password (empty for an intentionally passwordless key) |
+
+For a local signed build, supply the same three environment variables from a
+secure environment/secret manager (the public key is not secret), then run
+`WENYI_BUILD_TAG=v1.2.3 pnpm desktop:build` in the matching clean tagged checkout.
+On macOS, pass `--bundles dmg,app` to produce the additional updater archive.
+The launcher enables Tauri v2 `bundle.createUpdaterArtifacts` only for configured
+stable signed builds. Partial configuration, a public-key path/malformed public
+key, or signing a development/prerelease version fails explicitly. Password must
+be defined locally even when empty. Ordinary `cargo test`, `cargo run`, PR builds
+and unsigned `pnpm desktop:build` do not need signing secrets.
+
+The Desktop workflow supplies signing secrets only to stable release builds;
+PRs, development/prerelease builds and manual workflow runs remain unsigned.
+If all signing configuration is absent, stable releases still produce manual
+installers and log that **no `latest.json` is published**. Partially configured
+signing fails instead of publishing misleading update metadata.
+
+Signed release assets add `.sig` beside Windows `.exe` and Linux `.AppImage`;
+macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg`. There are no
+extra installer ZIP wrappers. `scripts/desktop_updates.py` validates the complete
+three-platform set and produces a stable SemVer manifest with
+`windows-x86_64`, `linux-x86_64` and `darwin-aarch64` entries, the actual renamed
+release URLs, and signature contents. All payloads and signatures must build and
+upload successfully before `latest.json`, including the release notes, is uploaded
+**last**. Release uploads never overwrite existing attachments; retries with existing names fail. Missing
+or malformed signatures cannot publish a partial manifest. A release without a
+manifest cannot be installed through the integrated updater; use manual download.
+Collection and manifest generation require `WENYI_UPDATER_PUBLIC_KEY` and reject
+signatures whose key ID differs from it. Tauri's key-mismatch warning is therefore
+a publishing failure, not a release that clients cannot install. This release
+check is not cryptographic verification; the native updater verifies the downloaded
+artifact and signed version before installation.
+
 ## API keys
 
+Use **Settings** in the shared sidebar footer. `/settings` contains Interface language, API providers & models, New project defaults, and Advanced YAML configuration together, with save, validate, and restore defaults. There is no separate settings layout or category navigation. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
+
+The project list, projects, and Settings share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. There are no floating dashboard actions. Same-page history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
+
 Open **Settings → API providers & models**, configure the provider/model and optional base URL, then save the connection configuration. Enter the API key in its password field and save it.
+
+Native credential controls load independently, so entering Settings does not replace the page with a loading screen.
 
 - Desktop automatically uses a supported OS credential store: Keychain, Windows credentials, Secret Service, or KWallet through `keyring`.
 - If the store is unavailable or a write fails, the key stays **only in memory for this session**. The interface says that it must be entered again after restart. There is no storage-mode selector or plaintext fallback.
@@ -183,7 +274,8 @@ SQLite stores only modes and opaque credential references. Keys are not saved in
 
 ## Import and save
 
-- Drop a supported file from the file manager onto the new-project page, or use Browse. Dropping only selects the file; **Create** starts the upload. A native selection is a short-lived, single-use grant, not a general filesystem permission. Re-drop the file after an expired or failed native upload.
+- Drop a supported file from the file manager into the **Create project** dialog's source area, or use **Browse files**. Dropping only selects the file; **Create project** starts the upload. A native selection is a short-lived, single-use grant, not a general filesystem permission. Re-drop the file after an expired or failed native upload; the form retains its values and disables creation until a fresh file is selected.
+- Native drag-event and high-DPI position fixes require restarting the updated native executable. Reloading the frontend alone does not update the Rust event handler.
 - Desktop export opens a native destination picker **before** creating an export task. Canceling the picker creates no task and writes no output.
 - Completed history entries offer **Save as…**. Saving streams through a temporary file in the destination directory and publishes only after completion. Existing files require confirmation; transfer failures leave the existing destination intact.
 - Export history keeps the latest five completed entries. An older entry disappears from history immediately; already-open saves remain readable. File downloads defer deletion until their last stream closes, including on cancellation or disconnect; an HTML ZIP uses its own temporary archive. Failed cleanup remains retryable on later export publication or restart.
@@ -211,7 +303,7 @@ Object and suspended-process assignment just to own a redirector's descendant.
   system tray instead of exiting. Use **Show Wenyi** in the tray menu to restore it;
   reopening from the macOS Dock also restores the window.
 - If the tray cannot be created, closing minimizes the window instead of hiding it.
-  The taskbar/Dock and the native application menu remain available.
+  The taskbar/Dock remains available.
 - Hidden windows and platform-reported minimization pause periodic UI polling,
   progress-event refetches, and live elapsed-time timers. The progress subscription and Python engine remain
   running; already-started requests and native saves are not canceled. Restoring
@@ -228,7 +320,13 @@ is deliberately not treated as minimization. Restoring from the tray remaps the
 same native window to handle GTK/Wayland's deiconify limitation, without replacing
 the WebView or its drafts.
 
-Use **Quit Wenyi** in the tray or native application menu to actually exit.
+Linux and Windows hide the native top window menu bar while keeping its menu
+events and **Ctrl+Q** quit accelerator registered, even without a usable tray.
+macOS retains its system application menu and **Cmd+Q**. Tray **Show Wenyi** and
+**Quit Wenyi** remain available when a tray host is present.
+
+Use **Quit Wenyi** in the tray, the macOS application menu, or the quit shortcut
+to actually exit.
 Explicit exit stops accepting work, checkpoints/cancels local tasks, and shuts
 down the owned backend. Saved progress can be resumed after reopening. Save
 editor drafts before quitting; an unsaved in-memory draft is not a persisted

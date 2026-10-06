@@ -379,6 +379,21 @@ pub async fn native_drop_upload(
     .map_err(|_| "Local upload failed.")?
 }
 
+fn physical_drag_position(
+    position: &tauri::PhysicalPosition<f64>,
+    platform: &str,
+    scale_factor: f64,
+) -> tauri::PhysicalPosition<f64> {
+    // Wry 0.57 supplies GTK widget/Cocoa point coordinates, but physical
+    // WebView2 coordinates. Normalize once before the frontend divides by DPR.
+    let scale = if matches!(platform, "linux" | "macos") {
+        scale_factor
+    } else {
+        1.0
+    };
+    tauri::PhysicalPosition::new(position.x * scale, position.y * scale)
+}
+
 pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
     if trusted_window(window).is_err() {
         return;
@@ -391,7 +406,14 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
     {
         return;
     }
-    let position = |p: &tauri::PhysicalPosition<f64>| serde_json::json!({"x": p.x, "y": p.y});
+    let position = |p: &tauri::PhysicalPosition<f64>| {
+        let p = physical_drag_position(
+            p,
+            std::env::consts::OS,
+            window.scale_factor().unwrap_or(1.0),
+        );
+        serde_json::json!({"x": p.x, "y": p.y})
+    };
     let detail = match event {
         tauri::DragDropEvent::Enter { position: p, .. } => {
             serde_json::json!({"kind": "enter", "position": position(p)})
@@ -421,6 +443,19 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
 mod tests {
     use super::*;
     use std::{io::Write, net::TcpListener, thread};
+
+    #[test]
+    fn native_drag_positions_use_one_physical_pixel_contract() {
+        let position = tauri::PhysicalPosition::new(320.0, 180.0);
+        for platform in ["linux", "macos"] {
+            assert_eq!(physical_drag_position(&position, platform, 1.0), position);
+            assert_eq!(
+                physical_drag_position(&position, platform, 2.0),
+                tauri::PhysicalPosition::new(640.0, 360.0)
+            );
+        }
+        assert_eq!(physical_drag_position(&position, "windows", 2.0), position);
+    }
 
     struct Fixture(PathBuf);
     impl Fixture {

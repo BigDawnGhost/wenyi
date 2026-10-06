@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Copy, History, MoreHorizontal, Pencil } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useI18n } from "@/i18n";
 import { copyText } from "./clipboard";
 

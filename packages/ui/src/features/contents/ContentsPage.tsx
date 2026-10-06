@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useI18n } from "@/i18n";
 import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";

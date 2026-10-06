@@ -2,7 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
 import App from "@wenyi/ui/App";
 import { DocumentLanguage } from "@wenyi/ui/i18n/DocumentLanguage";
 import { configurePlatform } from "@wenyi/ui/platform";
@@ -48,10 +47,7 @@ function Bootstrap() {
       </main>
     );
   return (
-    <>
-      <App />
-      <Toaster richColors position="top-right" />
-    </>
+    <App />
   );
 }
 

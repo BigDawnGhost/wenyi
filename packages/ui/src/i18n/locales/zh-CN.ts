@@ -332,6 +332,7 @@ const zhCN = {
   "createProject.preparingSource":
     "正在后台分析全书并准备术语表。可以离开此页，稍后到翻译总览查看进度。",
   "createProject.sourceRequired": "请先选择原文文件，再创建项目。",
+  "createProject.selectSourceAgain": "请重新选择原文文件后重试。",
   "createProject.emptyFile": "原文文件为空，请选择有内容的文件。",
   "createProject.unsupportedFile": "不支持此文件格式。",
   "createProject.serverDefault": "使用服务端默认设置",
@@ -635,6 +636,7 @@ const zhCN = {
   "export.aboutSummary": "说明页：{value}",
   "export.styleSummary": "原文样式：{value}",
   "navigation.global": "全局导航",
+  "navigation.settings": "设置导航",
   "navigation.collapseSidebar": "收起侧边栏",
   "navigation.expandSidebar": "展开侧边栏",
   "navigation.project": "项目导航",

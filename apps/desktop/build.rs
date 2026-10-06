@@ -1,6 +1,7 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=WENYI_DESKTOP_VERSION");
     println!("cargo:rerun-if-env-changed=WENYI_BUILD_TAG");
+    println!("cargo:rerun-if-env-changed=WENYI_UPDATER_PUBLIC_KEY");
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
     // Direct cargo run/test must use the same identity as the packaging launcher.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -56,6 +57,13 @@ fn main() {
     let mut config: serde_json::Value =
         serde_json::from_str(&std::env::var("TAURI_CONFIG").unwrap_or_else(|_| "{}".into()))
             .expect("Invalid TAURI_CONFIG");
+    let public_key = std::env::var("WENYI_UPDATER_PUBLIC_KEY").unwrap_or_default();
+    let public_key = public_key.trim();
+    assert!(
+        !public_key.contains(['\r', '\n']),
+        "WENYI_UPDATER_PUBLIC_KEY must be the single-line Tauri public key content"
+    );
+    println!("cargo:rustc-env=WENYI_UPDATER_PUBLIC_KEY={public_key}");
     println!("cargo:rustc-env=WENYI_DESKTOP_VERSION={version}");
     config["version"] = version.into();
     let config = config.to_string();

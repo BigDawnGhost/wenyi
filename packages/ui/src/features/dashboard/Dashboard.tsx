@@ -1,14 +1,15 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { Link } from "react-router-dom";
+import { toast } from "@/lib/toast";
+import { Link, Outlet } from "react-router-dom";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
+import { LazyBoundary } from "@/routes/LazyBoundary";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/data";
 import { api, type Project } from "@/lib/api";
-import { LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { LoaderCircle, Trash2 } from "lucide-react";
 
 export default function Dashboard() {
   const { t: tr, locale } = useI18n();
@@ -49,14 +50,6 @@ export default function Dashboard() {
       <PageHeader
         title={tr("dashboard.myProjects")}
         subtitle={tr("dashboard.openAProjectToViewItsProgress")}
-        actions={
-          <Link to="/projects/new">
-            <Button>
-              <Plus className="h-4 w-4" />
-              {tr("common.createProject")}
-            </Button>
-          </Link>
-        }
       />
       <PageContainer>
         <ErrorNotice error={error} />
@@ -65,17 +58,9 @@ export default function Dashboard() {
             {tr("dashboard.loading")}
           </p>
         ) : !projects?.length ? (
-          <Card>
-            <CardContent className="py-16 text-center text-muted-foreground">
-              <p>{tr("dashboard.noProjectsYet")}</p>
-              <Link to="/projects/new" className="inline-block mt-3">
-                <Button>
-                  <Plus className="h-4 w-4" />
-                  {tr("dashboard.createYourFirstProject")}
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
+          <p className="py-24 text-center text-sm text-muted-foreground">
+            {tr("dashboard.noProjectsYet")}
+          </p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
@@ -136,6 +121,9 @@ export default function Dashboard() {
           </div>
         )}
       </PageContainer>
+      <LazyBoundary fallback={null}>
+        <Outlet />
+      </LazyBoundary>
     </>
   );
 }

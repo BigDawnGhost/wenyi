@@ -9,10 +9,11 @@ use std::{
 
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::{ambient_authority, fs::Dir};
-use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Manager;
+
+use crate::local_connection::Connection;
 
 type Result<T> = std::result::Result<T, String>;
 const CHUNK: usize = 64 * 1024;
@@ -104,6 +105,7 @@ fn same_alias(left: &Path, right: &Path) -> bool {
 struct Activity {
     closing: bool,
     active: usize,
+    pending: usize,
     sources: Vec<SourceIdentity>,
     aliases: Vec<PathBuf>,
 }
@@ -150,6 +152,20 @@ impl Saves {
         self.0 .0.lock().unwrap().closing = true;
     }
 
+    /// Updating must not interrupt a native dialog, transfer or atomic publish.
+    pub fn close_if_idle(&self) -> bool {
+        let mut state = self.0 .0.lock().unwrap();
+        if state.closing || state.active != 0 || state.pending != 0 {
+            return false;
+        }
+        state.closing = true;
+        true
+    }
+
+    pub fn reopen(&self) {
+        self.0 .0.lock().unwrap().closing = false;
+    }
+
     pub fn wait(&self) {
         let mut state = self.0 .0.lock().unwrap();
         while state.active != 0 {
@@ -172,6 +188,17 @@ impl Saves {
         }
         state.active += 1;
         Ok(Active(self.clone()))
+    }
+
+    /// Dialogs/planning block installation, but normal quit may cancel them.
+    /// Only transfers/publishes need to be drained by `wait`.
+    fn reserve(&self) -> Result<Pending> {
+        let mut state = self.0 .0.lock().unwrap();
+        if state.closing {
+            return Err("Wenyi is closing.".into());
+        }
+        state.pending += 1;
+        Ok(Pending(self.clone()))
     }
 
     fn protect(&self, path: &Path, roots: &[PathBuf]) -> Result<()> {
@@ -216,6 +243,13 @@ impl Drop for Active {
     }
 }
 
+struct Pending(Saves);
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.0 .0 .0.lock().unwrap().pending -= 1;
+    }
+}
+
 #[derive(Deserialize)]
 struct Plan {
     filename: String,
@@ -252,48 +286,7 @@ pub struct Saved {
     path: String,
 }
 
-#[derive(Clone)]
-struct Connection {
-    client: Client,
-    base: String,
-    token: String,
-}
-
 impl Connection {
-    fn new(raw: &str) -> Result<Self> {
-        let value: Value = serde_json::from_str(raw).map_err(|_| "Local engine unavailable.")?;
-        let base = value["apiBase"]
-            .as_str()
-            .ok_or("Local engine unavailable.")?;
-        let url = reqwest::Url::parse(base).map_err(|_| "Invalid local engine address.")?;
-        if url.scheme() != "http"
-            || url.host_str() != Some("127.0.0.1")
-            || url.port().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.path() != "/"
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            return Err("Invalid local engine address.".into());
-        }
-        let client = Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|_| "Cannot start native save transport.")?;
-        Ok(Self {
-            client,
-            base: base.trim_end_matches('/').into(),
-            token: value["token"]
-                .as_str()
-                .ok_or("Local engine unavailable.")?
-                .into(),
-        })
-    }
-
     fn request(&self, path: &str, body: Option<&Value>) -> Result<reqwest::blocking::Response> {
         let url = format!("{}{path}", self.base);
         let request = match body {
@@ -768,7 +761,7 @@ fn run(
     export_id: Option<u64>,
     dialog: &impl Dialog,
 ) -> Result<Option<Saved>> {
-    saves.check()?;
+    let _pending = saves.reserve()?;
     if pid.is_empty()
         || !pid
             .bytes()
@@ -895,6 +888,31 @@ pub async fn native_export_save(
 mod tests {
     use super::*;
     use std::{io, net::TcpListener, thread};
+
+    #[test]
+    fn updates_reserve_idle_saves_without_interrupting_active_operations() {
+        let saves = Saves::default();
+        let active = saves.begin().unwrap();
+        assert!(!saves.close_if_idle());
+        assert!(saves.check().is_ok());
+        drop(active);
+        assert!(saves.close_if_idle());
+        assert!(saves.begin().is_err());
+        assert!(saves.check().is_err());
+        saves.reopen();
+        assert!(saves.begin().is_ok());
+    }
+
+    #[test]
+    fn quit_can_cancel_planning_without_waiting_for_a_dialog() {
+        let saves = Saves::default();
+        let pending = saves.reserve().unwrap();
+        assert!(!saves.close_if_idle());
+        saves.close();
+        saves.wait();
+        assert!(saves.begin().is_err());
+        drop(pending);
+    }
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -1034,6 +1052,53 @@ mod tests {
             assert_eq!(std::fs::read(&old).unwrap(), b"old");
             fixture.clean();
         }
+    }
+
+    #[test]
+    fn open_native_dialog_prevents_update_installation() {
+        struct HeldDialog {
+            opened: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl Dialog for HeldDialog {
+            fn choose(&self, _: &Plan) -> Option<PathBuf> {
+                self.opened.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(5)).unwrap();
+                None
+            }
+            fn replace(&self, _: &Path) -> bool {
+                unreachable!()
+            }
+        }
+        let protected = Fixture::new();
+        let (connection, server) = server(vec![response("200 OK", &plan(&protected.0), "")]);
+        let saves = Saves::default();
+        let worker_saves = saves.clone();
+        let (opened, visible) = mpsc::channel();
+        let (release, dismissed) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            run(
+                connection,
+                worker_saves,
+                "project-1".into(),
+                serde_json::json!({}),
+                None,
+                &HeldDialog {
+                    opened,
+                    release: dismissed,
+                },
+            )
+        });
+        visible.recv_timeout(Duration::from_secs(5)).unwrap();
+        let install_allowed = saves.close_if_idle();
+        release.send(()).unwrap();
+        assert!(worker.join().unwrap().unwrap().is_none());
+        assert_eq!(server.join().unwrap().len(), 1);
+        assert!(
+            !install_allowed,
+            "An open native save dialog must block updates"
+        );
+        assert!(saves.close_if_idle());
     }
 
     #[test]
