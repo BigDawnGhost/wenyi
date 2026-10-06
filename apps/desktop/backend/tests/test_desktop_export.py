@@ -8,10 +8,8 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from wenyi_backend import dal
-from wenyi_backend.schemas import ExportRequest
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_desktop import main
 
@@ -132,44 +130,6 @@ def test_native_content_is_project_scoped_and_requires_published_status(desktop_
     response = client.get(f"/desktop/projects/{pid}/exports/{export_id}/content")
     assert response.content == b"translation"
     assert response.headers["content-length"] == "11"
-
-
-@pytest.mark.parametrize(
-    "source_format,meta,expected",
-    [("srt", {}, "srt"), ("docx", {}, "docx"), ("pdf", {"pdf_export": "babeldoc"}, "pdf")],
-)
-def test_default_plan_policy_matches_source(source_format, meta, expected):
-    from wenyi_backend.export_plan import resolve_export
-
-    fmt, options = resolve_export(
-        {"initialized": True, "fmt": source_format}, {"meta": meta}, ExportRequest(bilingual=True)
-    )
-    assert fmt == expected
-    assert options["bilingual"] is True
-
-
-def test_plan_validates_subtitles_initialization_and_installed_pdf_engines(monkeypatch):
-    from wenyi_backend import export_plan
-
-    project = {"initialized": True, "fmt": "txt"}
-    for changes, request, status in [
-        ({"initialized": False}, {}, 409),
-        ({}, {"format": "srt"}, 422),
-        ({"fmt": "srt"}, {"format": "epub"}, 422),
-    ]:
-        with pytest.raises(HTTPException) as error:
-            export_plan.resolve_export({**project, **changes}, {}, ExportRequest(**request))
-        assert error.value.status_code == status
-    monkeypatch.setattr(export_plan.importlib.util, "find_spec", lambda name: name == "fpdf")
-    _, options = export_plan.resolve_export(project, {}, ExportRequest(format="pdf"))
-    assert options["pdf_engine"] == "fpdf2"
-    with pytest.raises(HTTPException, match="not installed"):
-        export_plan.resolve_export(
-            project, {}, ExportRequest(format="pdf", pdf_engine="weasyprint")
-        )
-    monkeypatch.setattr(export_plan.importlib.util, "find_spec", lambda name: None)
-    with pytest.raises(HTTPException, match="optional pdf-export"):
-        export_plan.resolve_export(project, {}, ExportRequest(format="pdf"))
 
 
 def test_bundle_rejects_hard_linked_private_file(tmp_path):

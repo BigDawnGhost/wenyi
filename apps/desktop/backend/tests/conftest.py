@@ -1,8 +1,11 @@
 """Offline guards and explicit Desktop application contexts."""
 
+from dataclasses import replace
 from importlib.util import find_spec
 
 import pytest
+from fastapi.testclient import TestClient
+from tests.fake_llm import MeteredFakeClient, routing_handler
 from wenyi_backend.context import use_context
 from wenyi_desktop import main
 from wenyi_desktop.local_credentials import CredentialStore
@@ -50,3 +53,24 @@ def desktop_context(tmp_path):
     finally:
         context.settings_store.credentials.clear_session()
         context.repository.close()
+
+
+@pytest.fixture
+def desktop(tmp_path):
+    fake = MeteredFakeClient(routing_handler)
+    context = replace(
+        main.create_context(tmp_path / "desktop", api_token="offline-test-token"),
+        build_client=lambda config: fake,
+    )
+    backend = context.repository
+    try:
+        with (
+            use_context(context),
+            TestClient(
+                main.create_app(context=context),
+                headers={"Authorization": "Bearer offline-test-token"},
+            ) as client,
+        ):
+            yield client, backend, fake
+    finally:
+        backend.close()

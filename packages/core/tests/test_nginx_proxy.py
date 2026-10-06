@@ -12,10 +12,13 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("WENYI_TEST_DOCKER") != "1",
-    reason="Set WENYI_TEST_DOCKER=1 to enable isolated Docker proxy tests",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("WENYI_TEST_DOCKER") != "1",
+        reason="Set WENYI_TEST_DOCKER=1 to enable isolated Docker proxy tests",
+    ),
+]
 
 NGINX_CONFIG = Path(__file__).resolve().parents[3] / "docker" / "nginx.conf"
 

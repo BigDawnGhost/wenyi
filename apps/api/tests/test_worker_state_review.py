@@ -7,7 +7,7 @@ from contextvars import copy_context
 from dataclasses import replace
 
 import pytest
-import test_storage_pg_integration as storage_tests
+from api_test_support import initialize
 from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.adapters import postgres_repository
@@ -17,9 +17,6 @@ from wenyi_backend.workers import tasks
 from wenyi_core.config import Config
 from wenyi_core.llm.limits import RequestLimits, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
-
-pg_pool = storage_tests.pg_pool
-pg_storage = storage_tests.pg_storage
 
 
 @pytest.fixture
@@ -356,7 +353,7 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
     from wenyi_backend.project_service import config_document
     from wenyi_core.assemble import writer
 
-    storage_tests.initialize(pg_storage, tmp_path)
+    initialize(pg_storage, tmp_path)
     pid = pg_storage.project_id
     monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
     monkeypatch.setattr(tasks, "_pipeline_storage", lambda *_: pg_storage)
