@@ -1,16 +1,14 @@
 import { useI18n } from "@/i18n";
 import { useEffect, useState } from "react";
-import { Link, Outlet, useParams } from "react-router-dom";
-import {
-  PanelLeftClose,
-  PanelLeftOpen,
-} from "lucide-react";
+import { Link, Outlet, useLocation, useParams } from "react-router-dom";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { SelectDismissScope } from "@/components/ui/select";
 import { NavigationLink, ProjectNavigation } from "./Navigation";
 import { navEntries } from "@/routes/manifest";
 import { RouteGate } from "@/routes/RouteGate";
-import { Toaster } from "sonner";
+import { NotificationToaster } from "@/components/NotificationToaster";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { platform } from "@/platform";
@@ -22,7 +20,7 @@ const sidebarStorageKey = "wenyi.sidebarCollapsed";
 // global routes; falls back to the first project when nothing is remembered.
 const lastProjectKey = "wenyi.lastProject";
 
-function Brand() {
+export function Brand() {
   const { t } = useI18n();
   return (
     <Link
@@ -46,6 +44,7 @@ function Brand() {
 export function AppLayout() {
   const { t: tr } = useI18n();
   const { pid } = useParams();
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return platform().preferences.get(sidebarStorageKey) === "true";
@@ -95,14 +94,14 @@ export function AppLayout() {
         ? storedPid
         : projects.data[0]?.id ?? null
       : storedPid);
-  const { data: project } = useQuery({
+  const { data: projectDetails } = useQuery({
     queryKey: ["project", recalledPid],
     queryFn: () => api.getProject(recalledPid!),
     enabled: !!recalledPid,
-    // Keep the previous project rendered while the next one loads, so the
-    // sidebar stratum swaps once instead of collapsing and re-expanding.
-    placeholderData: (previous) => previous,
   });
+  // Only use metadata for this identity; retaining the previous project's
+  // format would build the wrong menu for the newly selected project.
+  const project = projectDetails ?? projects.data?.find((item) => item.id === recalledPid);
 
   // One layered column: logo row → primary action → global panels → scrollable
   // project region → footer, instead of three bordered blocks.
@@ -123,12 +122,14 @@ export function AppLayout() {
           collapsed={collapsed}
           end={entry.end}
           prefetch={entry.loader}
+          id={slot === "action" ? "create-project-trigger" : undefined}
+          state={slot === "action" ? { fromAppNavigation: true } : undefined}
           className={slot === "action" ? "w-full border" : undefined}
         />
       ));
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
+    <div className="flex h-dvh w-full flex-col overflow-hidden md:flex-row">
       <aside
         data-slot="sidebar"
         className={cn(
@@ -218,22 +219,17 @@ export function AppLayout() {
           </div>
         </div>
       </aside>
+      <NotificationToaster />
       <main
         data-slot="content"
         className="relative flex-1 min-h-0 min-w-0 overflow-y-auto"
       >
-        {/* Mounted inside the scrolling content so the toast stack tracks the
-            header actions instead of the viewport. */}
-        <Toaster
-          richColors
-          position="top-right"
-          offset={62}
-          toastOptions={{ duration: 1000 }}
-        />
         {/* The route gate keeps the shell mounted while a lazy chunk loads and
             confines route failures to the content area. */}
         <RouteGate>
-          <Outlet />
+          <SelectDismissScope dismissKey={`${location.key}:${location.hash}`}>
+            <Outlet />
+          </SelectDismissScope>
         </RouteGate>
       </main>
     </div>
@@ -254,19 +250,14 @@ export function PageHeader({
       data-slot="page.header"
       className="relative flex flex-wrap items-center justify-between gap-4 border-b px-4 sm:px-6 py-4"
     >
-      <div
-        className={cn(
-          "flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]",
-          actions && "pr-48",
-        )}
-      >
+      <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && (
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         )}
       </div>
       {actions && (
-        <div className="absolute inset-y-0 right-4 flex items-center gap-2 sm:right-6">
+        <div className="flex max-w-full flex-wrap items-center gap-2">
           {actions}
         </div>
       )}

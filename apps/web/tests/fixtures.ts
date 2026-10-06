@@ -461,7 +461,11 @@ function swapProjectId(value: unknown, subId: string): unknown {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     if (record.id === pid) {
-      return { ...record, id: subId, name: projectNames[subId] ?? record.name };
+      const project = extraProjects.find((item) => item.id === subId);
+      return {
+        ...record,
+        ...(project ?? { id: subId, name: projectNames[subId] ?? record.name }),
+      };
     }
   }
   return value;

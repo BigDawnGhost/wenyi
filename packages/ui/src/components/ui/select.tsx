@@ -7,6 +7,23 @@ import { cn } from "@/lib/utils";
 // Radix's reserved empty placeholder. FormData still receives the original value.
 const encode = (value: string) => `value:${value}`;
 
+const DismissKeyContext = React.createContext<string | null>(null);
+
+/** Dismiss portaled listboxes on view changes without resetting their field values. */
+export function SelectDismissScope({
+  dismissKey,
+  children,
+}: {
+  dismissKey: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <DismissKeyContext.Provider value={dismissKey}>
+      {children}
+    </DismissKeyContext.Provider>
+  );
+}
+
 type SelectProps = Omit<
   React.ComponentPropsWithoutRef<typeof Primitive.Trigger>,
   "value" | "defaultValue" | "onChange" | "children"
@@ -31,6 +48,11 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
     const [open, setOpen] = React.useState(false);
     const triggerRef = React.useRef<HTMLButtonElement>(null);
     const tabDirection = React.useRef(0);
+    const dismissKey = React.useContext(DismissKeyContext);
+    React.useEffect(() => {
+      setOpen(false);
+      tabDirection.current = 0;
+    }, [dismissKey]);
     const current = value ?? internalValue;
     return (
       <Primitive.Root

@@ -2,7 +2,15 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useEffect } from "react";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AppErrorBoundary } from "./routes/AppErrorBoundary";
-import { pageLoaders, routeEntries } from "./routes/manifest";
+import { pageLoaders, routeEntries, type RouteEntry } from "./routes/manifest";
+
+function renderRoute({ path, element, children }: RouteEntry) {
+  return (
+    <Route key={path} path={path} element={element}>
+      {children?.map(renderRoute)}
+    </Route>
+  );
+}
 
 export default function App() {
   useEffect(() => {
@@ -13,9 +21,7 @@ export default function App() {
     <AppErrorBoundary>
       <Routes>
         <Route element={<AppLayout />}>
-          {routeEntries.map(({ path, element }) => (
-            <Route key={path} path={path} element={element} />
-          ))}
+          {routeEntries.map(renderRoute)}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

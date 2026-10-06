@@ -114,7 +114,7 @@ export function ProviderSettings({
     );
   };
   return (
-    <fieldset disabled={disabled} className="space-y-5 disabled:opacity-60">
+    <fieldset disabled={disabled} className="min-w-0 space-y-5 disabled:opacity-60">
       <div>
         <h2 className="font-medium">{tr("settings.registeredModels")}</h2>
         <p className="mt-2 text-sm text-muted-foreground">

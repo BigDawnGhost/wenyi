@@ -55,6 +55,9 @@ for (const chinese of [false, true]) {
       await expect(current).toHaveAttribute("aria-current", "page");
       await expect(current).toHaveAttribute("title", proofreadingLabel);
       await expect(sidebar.getByRole("link")).toHaveCount(12);
+      const global = page.getByRole("navigation", { name: globalLabel });
+      await expect(global.getByRole("link")).toHaveCount(1);
+      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
       for (const link of await sidebar.getByRole("link").all()) {
         await expect(link).toBeInViewport();
       }
@@ -76,6 +79,10 @@ for (const chinese of [false, true]) {
       await expect(page).toHaveURL("/settings");
       await page.reload();
       await expect(expand).toBeVisible();
+      await expect(page.getByLabel(chinese ? "界面语言" : "Interface language")).toBeVisible();
+      await expect(sidebar).toHaveCSS("width", "64px");
+      await page.goto(`/projects/${pid}/proofreading`);
+      await expect(expand).toBeVisible();
       await expect(sidebar).toHaveCSS("width", "64px");
       await expand.click();
       await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -93,6 +100,8 @@ for (const chinese of [false, true]) {
       const navigation = page.getByRole("navigation", { name: projectLabel });
       const global = page.getByRole("navigation", { name: globalLabel });
       await expect(navigation).toBeVisible();
+      await expect(global.getByRole("link")).toHaveCount(1);
+      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
       const main = page.getByRole("main");
       const expandedHeight = await main.evaluate(
         (element) => element.clientHeight,
@@ -157,7 +166,7 @@ test("sidebar toggles remain usable when browser preference storage is unavailab
     };
   });
   await fakeApi(page);
-  await page.goto("/");
+  await page.goto(`/projects/${pid}/proofreading`);
   await page
     .getByRole("button", { name: "Collapse sidebar", exact: true })
     .click();

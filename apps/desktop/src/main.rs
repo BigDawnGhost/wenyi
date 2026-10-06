@@ -117,8 +117,9 @@ fn main() {
             native_drop::native_drop_upload,
             native_export::native_export_save,
         ])
-        .on_webview_event(|window, event| {
-            if let tauri::WebviewEvent::DragDrop(event) = event {
+        .on_window_event(|window, event| {
+            // A WebviewWindow's native drops are emitted as window events.
+            if let tauri::WindowEvent::DragDrop(event) = event {
                 if let Some(window) = window.app_handle().get_webview_window(window.label()) {
                     native_drop::event(&window, event);
                 }

@@ -183,8 +183,10 @@ export default function ProgressPage() {
         </p>
         {!project?.initialized && (
           <Link
+            id="project-source-trigger"
             className="inline-block text-sm text-primary underline"
             to={`/projects/new?project=${pid}`}
+            state={{ fromAppNavigation: true, returnFocusId: "project-source-trigger" }}
           >
             {tr("progress.uploadPreviewSource")}
           </Link>

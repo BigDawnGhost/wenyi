@@ -202,7 +202,7 @@ export default function GlossaryPage() {
         title={tr("common.glossary")}
         subtitle={tr("glossary.manageNamesAppellationsAndFixedExpressionsAnd")}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="relative" ref={exportRef} onBlur={handleExportBlur}>
               <Button
                 variant="outline"
@@ -541,9 +541,17 @@ function AddTermDialog({
         tr("glossary.couldNotAddTerm", { error: (e as Error).message }),
       ),
   });
+  const resetMutation = m.reset;
+  useEffect(() => {
+    if (open) resetMutation();
+  }, [open, resetMutation]);
   return (
-    <Dialog open={open} onClose={onClose}>
-      <div className="text-lg font-semibold mb-4">{tr("glossary.addTerm")}</div>
+    <Dialog open={open} onClose={onClose} title={tr("glossary.addTerm")}>
+      {m.error && (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          {tr("glossary.couldNotAddTerm", { error: m.error.message })}
+        </p>
+      )}
       <div className="space-y-3">
         <div>
           <Label>{tr("glossary.requiredSourceTerm")}</Label>
@@ -661,13 +669,20 @@ function EditTermDialog({
       ),
   });
 
+  const resetMutation = m.reset;
+  useEffect(() => {
+    resetMutation();
+  }, [term, resetMutation]);
+
   if (!term) return null;
 
   return (
-    <Dialog open={!!term} onClose={onClose}>
-      <div className="text-lg font-semibold mb-4">
-        {tr("glossary.editTerm")}
-      </div>
+    <Dialog open={!!term} onClose={onClose} title={tr("glossary.editTerm")}>
+      {m.error && (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          {tr("glossary.couldNotUpdateTerm", { error: m.error.message })}
+        </p>
+      )}
       <div className="space-y-3">
         <div>
           <Label>{tr("glossary.requiredSourceTerm")}</Label>
@@ -891,15 +906,12 @@ function ImportDialog({
   return (
     <Dialog
       open={open}
+      title={tr("glossary.importTerms")}
       onClose={() => {
         reset();
         onClose();
       }}
     >
-      <div className="text-lg font-semibold mb-4">
-        {tr("glossary.importTerms")}
-      </div>
-
       {step === "upload" && (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">

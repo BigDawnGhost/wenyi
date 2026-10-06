@@ -12,6 +12,8 @@ export function NavigationLink({
   collapsed = false,
   prefetch,
   className,
+  id,
+  state,
 }: {
   to: string;
   icon: LucideIcon;
@@ -22,15 +24,19 @@ export function NavigationLink({
   prefetch?: () => Promise<unknown>;
   /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
   className?: string;
+  id?: string;
+  state?: Record<string, unknown>;
 }) {
   const { t } = useI18n();
   return (
     <NavLink
+      id={id}
       to={to}
+      state={state}
       end={end}
       title={collapsed ? t(label) : undefined}
-      onPointerEnter={() => void prefetch?.()}
-      onFocus={() => void prefetch?.()}
+      onPointerEnter={() => void prefetch?.().catch(() => {})}
+      onFocus={() => void prefetch?.().catch(() => {})}
       className={({ isActive }) =>
         cn(
           "flex items-center rounded-md py-2 text-sm transition-colors",

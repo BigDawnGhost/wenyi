@@ -340,12 +340,13 @@ test("global API provider form saves endpoint, model and tier changes", async ({
     .filter({ hasText: "API providers & models" })
     .click();
   await page
+    .locator("#provider-models")
     .getByLabel("API provider", { exact: true })
     .click();
   await page.getByRole("option", { name: "openai-compatible", exact: true }).click();
   await page.getByLabel("API base URL").fill("https://example.com/v1");
   await page.getByLabel("API key environment variable").fill("CUSTOM_API_KEY");
-  await page.getByLabel("Model name", { exact: true }).fill("custom-model");
+  await page.locator("#provider-models").getByLabel("Model name", { exact: true }).fill("custom-model");
   const request = page.waitForRequest(
     (r) => r.method() === "PUT" && r.url().endsWith("/settings"),
   );

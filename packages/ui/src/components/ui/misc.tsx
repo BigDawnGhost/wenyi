@@ -1,65 +1,92 @@
 import { useI18n } from "@/i18n";
 import * as React from "react";
-import { createPortal } from "react-dom";
+import * as Primitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
-// Lightweight dialog component. Portaled to the body and rendered as a native
-// modal dialog so page-container spacing (space-y margins) never offsets it.
 export function Dialog({
   open,
   onClose,
+  title,
+  description,
+  closeDisabled = false,
+  initialFocus,
+  returnFocus,
   children,
   className,
 }: {
   open: boolean;
   onClose: () => void;
+  title: string;
+  description?: string;
+  closeDisabled?: boolean;
+  initialFocus?: React.RefObject<HTMLElement | null>;
+  returnFocus?: () => HTMLElement | null;
   children: React.ReactNode;
   className?: string;
 }) {
   const { t } = useI18n();
-  const dialogRef = React.useRef<HTMLDialogElement>(null);
-  React.useEffect(() => {
-    if (!open) return;
-    const element = dialogRef.current;
-    element?.showModal();
-    return () => element?.close();
-  }, [open]);
-  if (!open) return null;
-  return createPortal(
-    <dialog
-      ref={dialogRef}
-      className={cn(
-        "fixed inset-0 m-auto w-[calc(100%-32px)] max-w-lg max-h-[85vh] overflow-auto rounded-lg border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/50 backdrop:backdrop-blur-[2px]",
-        className,
-      )}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      onClick={(event) => {
-        if (event.target !== event.currentTarget) return;
-        const rect = event.currentTarget.getBoundingClientRect();
-        if (
-          event.clientX < rect.left ||
-          event.clientX > rect.right ||
-          event.clientY < rect.top ||
-          event.clientY > rect.bottom
-        ) {
-          onClose();
-        }
+  const opener = React.useRef<HTMLElement | null>(null);
+  return (
+    <Primitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !closeDisabled) onClose();
       }}
     >
-      <button
-        aria-label={t("common.close")}
-        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        onClick={onClose}
-      >
-        <X className="h-4 w-4" aria-hidden="true" />
-      </button>
-      {children}
-    </dialog>,
-    document.body,
+      <Primitive.Portal>
+        <Primitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]" />
+        <Primitive.Content
+          {...(!description ? { "aria-describedby": undefined } : {})}
+          className={cn(
+            "fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border bg-background shadow-lg",
+            className,
+          )}
+          onOpenAutoFocus={(event) => {
+            opener.current = document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
+            if (initialFocus?.current && !initialFocus.current.matches(":disabled")) {
+              event.preventDefault();
+              initialFocus.current.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = returnFocus?.() ?? opener.current;
+            if (target?.isConnected) target.focus();
+          }}
+          onEscapeKeyDown={(event) => {
+            if (closeDisabled) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            // Dismissing a notification must not also dismiss the active form.
+            const target = event.target;
+            if (closeDisabled || (
+              target instanceof Element && target.closest("[data-sonner-toaster]")
+            )) event.preventDefault();
+          }}
+        >
+          <div className="shrink-0 border-b px-4 py-4 pr-14 sm:px-6 sm:pr-14">
+            <Primitive.Title className="text-lg font-semibold">{title}</Primitive.Title>
+            {description && (
+              <Primitive.Description className="mt-0.5 text-sm text-muted-foreground">
+                {description}
+              </Primitive.Description>
+            )}
+            <Primitive.Close
+              type="button"
+              disabled={closeDisabled}
+              aria-label={t("common.close")}
+              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Primitive.Close>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</div>
+        </Primitive.Content>
+      </Primitive.Portal>
+    </Primitive.Root>
   );
 }
 
