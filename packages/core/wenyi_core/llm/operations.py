@@ -143,6 +143,7 @@ OPERATIONS = register_operations(
             workflows=("translate", "review"),
             flags=("review_fix_loop",),
             review=True,
+            protocol_version=2,
         ),
         OperationSpec(
             "autofix.verify",
@@ -160,6 +161,7 @@ OPERATIONS = register_operations(
             workflows=("translate", "review"),
             flags=("review_autofix",),
             review=True,
+            protocol_version=2,
         ),
         OperationSpec("srt.translate", "Translate subtitle cues", "strong", workflows=("srt",)),
     )

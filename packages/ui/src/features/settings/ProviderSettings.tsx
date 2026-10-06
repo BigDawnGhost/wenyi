@@ -8,6 +8,7 @@ import { Select, SelectItem } from "@/components/ui/select";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
 import { platform } from "@/platform";
+import { LazyBoundary } from "@/routes/LazyBoundary";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -113,7 +114,7 @@ export function ProviderSettings({
     );
   };
   return (
-    <fieldset disabled={disabled} className="space-y-5 disabled:opacity-60">
+    <fieldset disabled={disabled} className="min-w-0 space-y-5 disabled:opacity-60">
       <div>
         <h2 className="font-medium">{tr("settings.registeredModels")}</h2>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -233,12 +234,16 @@ export function ProviderSettings({
                 </div>
               </div>
               {CredentialField && (
-                <CredentialField
-                  connection={id}
-                  saved={credentialsSaved}
-                >
-                  {environmentField}
-                </CredentialField>
+                // The credential UI may be a lazy platform chunk; keep its slot
+                // filled with the environment field instead of blanking it.
+                <LazyBoundary fallback={environmentField}>
+                  <CredentialField
+                    connection={id}
+                    saved={credentialsSaved}
+                  >
+                    {environmentField}
+                  </CredentialField>
+                </LazyBoundary>
               )}
             </div>
           );

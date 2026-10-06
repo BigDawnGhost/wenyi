@@ -6,6 +6,56 @@ Desktop is a **local translation application**, built with Tauri, React, and the
 
 Translation still needs access to the configured model provider. Optional MinerU and BabelDOC services retain their existing requirements; “local application” does not make external model or document services offline.
 
+## Quick start
+
+[![Download Desktop](https://img.shields.io/badge/Desktop-download-D4B56A?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/releases)
+
+### 1. Download Desktop
+
+Open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) and choose a `wenyi-desktop-<version>-<platform>-<arch>` asset matching your system:
+
+| Platform | Package |
+|---|---|
+| Windows x64 | `.exe` installer |
+| Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
+| macOS Apple Silicon | `.dmg` |
+
+Desktop assets are distributed directly, without an outer ZIP. For an AppImage, allow execution in the file's permissions before opening it. Packaged releases include the translation engine: you do not need to install Python or deploy a server.
+
+Check the release notes for platform requirements and signing status. To build from source instead, follow [Run from source](#run-from-source).
+
+### 2. Connect a model
+
+Open **Settings → API providers & models**, choose a provider, configure models and any custom base URL, and save the connection. Enter and save the API key in its password field.
+
+Desktop uses the system credential store when available. If it is unavailable, the interface explains that the key is kept only for the current session and must be entered again after restart. A local workspace does not mean offline model processing: text is sent to the provider you configure, unless you use a local model service.
+
+### 3. Create a translation project
+
+Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project and restores focus to the sidebar entry. Browser Back also leaves the dialog. Closing releases any selected native source resource; reopening starts a clean form. On narrow screens the form scrolls while the close header stays visible.
+
+Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement and dialog dismissal are disabled; this is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
+
+Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
+
+Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
+
+### 4. Proofread and save
+
+Compare the translation with the source, edit paragraphs, inspect revisions, and review reported issues. Review can publish fixes to the translation; disable automatic fixes when you want a read-only review. Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
+
+Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
+
+### Continue later
+
+Completed batches are saved in the local workspace. Reopen Desktop, open the same project, and resume from its checkpoints. Save any in-progress proofreading edits before closing. For workspace locations and backup instructions, see [Independent data](#independent-data).
+
+## Interface language
+
+The interface defaults to English. Open global **Settings → Interface language**
+to choose **English** or **简体中文**. The change applies immediately to interface
+labels, not the book's source/target languages, content, or model-generated analysis.
+
 ## Independent data
 
 Desktop does not adopt or migrate existing Web projects. It also does not read or modify the CLI's `config.yaml`, `state/`, or `output/`. CLI behavior remains unchanged.
@@ -25,6 +75,10 @@ Use `--data-dir <path>` to select a separate workspace, for example for testing.
 ## Run from source
 
 Install Python 3.10+, `uv`, Node 22, pnpm 9, Rust stable, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). These are development/build requirements, not additional Python requirements for packaged releases.
+
+On Debian/Ubuntu, also install `libdbus-1-dev` for the native tray availability
+checks (`sudo apt-get install libdbus-1-dev`); other Linux distributions need the
+corresponding D-Bus development package.
 
 From the repository root:
 
@@ -113,7 +167,7 @@ set for its platform; older outputs are left untouched and never relabeled.
 These workflows do not perform OS code signing or notarization. Platform signing and end-user
 installation checks remain release responsibilities.
 
-The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and closing the native window shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. Real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
+The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and the previous close-to-exit lifecycle shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. The current tray lifecycle was also checked on KDE Wayland using a debug native build, production UI, source Python engine, and temporary empty workspace: minimize/restore and close-to-tray/restore kept the engine alive, and explicit tray exit reaped it. Packaged tray behavior, real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 
 ## Application updates
 
@@ -174,9 +228,8 @@ key, or signing a development/prerelease version fails explicitly. Password must
 be defined locally even when empty. Ordinary `cargo test`, `cargo run`, PR builds
 and unsigned `pnpm desktop:build` do not need signing secrets.
 
-The Desktop workflow supplies signing secrets only to stable release builds or
-explicit manual signing tests on stable tags. PRs, development/prerelease builds
-and ordinary manual workflow runs remain unsigned.
+The Desktop workflow supplies signing secrets only to stable release builds;
+PRs, development/prerelease builds and manual workflow runs remain unsigned.
 If all signing configuration is absent, stable releases still produce manual
 installers and log that **no `latest.json` is published**. Partially configured
 signing fails instead of publishing misleading update metadata.
@@ -192,32 +245,15 @@ upload successfully before `latest.json`, including the release notes, is upload
 or malformed signatures cannot publish a partial manifest. A release without a
 manifest cannot be installed through the integrated updater; use manual download.
 
-### Test signing without publishing a Release
-
-1. Merge the updater/signing-test code into the default branch and push a stable
-   tag for the planned release, such as `v1.2.3`. The tag must include these scripts;
-   an old tag cannot test code added after it. **Do not create a GitHub Release.**
-2. Open **Actions → Desktop packages → Run workflow**. Leave the workflow branch
-   on the repository's default branch, fill in `tag`, and enable
-   **Test updater signing** (`test_updater_signing`, off by default).
-3. Check all three platform builds. **Verify updater payload and signed version
-   with public key** must pass: it verifies payload bytes, authenticated signature
-   metadata and version binding using `WENYI_UPDATER_PUBLIC_KEY`. A wrong keypair,
-   tampered payload, or missing signing configuration fails rather than uploading
-   an unsigned test package.
-4. Download `wenyi-desktop-signing-test-<version>-<platform>` from the run's
-   **Artifacts** section. Each includes its installers, updater payload and `.sig`;
-   artifacts are retained for 14 days.
-
-This run has read-only repository permissions and skips the publishing job. It
-does not create/upload a Release or publish/change `latest.json`. It validates
-signing and packaging, **not the application’s download/install/restart flow**;
-the test artifact is not announced by the production update endpoint. This manual
-test does not add verification steps to the ordinary release workflow.
-
 ## API keys
 
+Use **Settings** in the shared sidebar footer. `/settings` contains Interface language, API providers & models, New project defaults, and Advanced YAML configuration together, with save, validate, and restore defaults. There is no separate settings layout or category navigation. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
+
+The project list, projects, and Settings share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. There are no floating dashboard actions. Same-page history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
+
 Open **Settings → API providers & models**, configure the provider/model and optional base URL, then save the connection configuration. Enter the API key in its password field and save it.
+
+Native credential controls load independently, so entering Settings does not replace the page with a loading screen.
 
 - Desktop automatically uses a supported OS credential store: Keychain, Windows credentials, Secret Service, or KWallet through `keyring`.
 - If the store is unavailable or a write fails, the key stays **only in memory for this session**. The interface says that it must be entered again after restart. There is no storage-mode selector or plaintext fallback.
@@ -233,7 +269,8 @@ SQLite stores only modes and opaque credential references. Keys are not saved in
 
 ## Import and save
 
-- Drop a supported file from the file manager onto the new-project page, or use Browse. Dropping only selects the file; **Create** starts the upload. A native selection is a short-lived, single-use grant, not a general filesystem permission. Re-drop the file after an expired or failed native upload.
+- Drop a supported file from the file manager into the **Create project** dialog's source area, or use **Browse files**. Dropping only selects the file; **Create project** starts the upload. A native selection is a short-lived, single-use grant, not a general filesystem permission. Re-drop the file after an expired or failed native upload; the form retains its values and disables creation until a fresh file is selected.
+- Native drag-event and high-DPI position fixes require restarting the updated native executable. Reloading the frontend alone does not update the Rust event handler.
 - Desktop export opens a native destination picker **before** creating an export task. Canceling the picker creates no task and writes no output.
 - Completed history entries offer **Save as…**. Saving streams through a temporary file in the destination directory and publishes only after completion. Existing files require confirmation; transfer failures leave the existing destination intact.
 - Export history keeps the latest five completed entries. An older entry disappears from history immediately; already-open saves remain readable. File downloads defer deletion until their last stream closes, including on cancellation or disconnect; an HTML ZIP uses its own temporary archive. Failed cleanup remains retryable on later export publication or restart.
@@ -255,7 +292,41 @@ the redirector. Packaged onedir engines continue to start directly, without Pyth
 or venv discovery. This single-process contract avoids needing a Windows Job
 Object and suspended-process assignment just to own a redirector's descendant.
 
-Closing Desktop stops accepting work, checkpoints/cancels local tasks, and shuts down its owned backend. Saved progress can be resumed after reopening. Save in-progress editor drafts before closing; an unsaved in-memory draft is not a persisted checkpoint.
+### Background operation
+
+- Minimizing the window keeps local tasks running. Closing the window hides it to the
+  system tray instead of exiting. Use **Show Wenyi** in the tray menu to restore it;
+  reopening from the macOS Dock also restores the window.
+- If the tray cannot be created, closing minimizes the window instead of hiding it.
+  The taskbar/Dock remains available.
+- Hidden windows and platform-reported minimization pause periodic UI polling,
+  progress-event refetches, and live elapsed-time timers. The progress subscription and Python engine remain
+  running; already-started requests and native saves are not canceled. Restoring
+  the window immediately reconciles saved state, including tasks completed in the
+  background. An ordinary loss of focus does not count as minimization.
+- Hiding retains the WebView, unsaved editor drafts, and session-only credentials.
+  This reduces unnecessary UI work, not the resident memory of the Python engine
+  or WebView. It does not keep the computer awake or prevent operating-system sleep.
+
+On Linux/GTK Wayland, compositor-side minimization is not reliably reported to
+the application. It still keeps tasks running, but UI polling/timers may continue.
+Use close-to-tray for reliably detected background operation; an ordinary blur
+is deliberately not treated as minimization. Restoring from the tray remaps the
+same native window to handle GTK/Wayland's deiconify limitation, without replacing
+the WebView or its drafts.
+
+Linux and Windows hide the native top window menu bar while keeping its menu
+events and **Ctrl+Q** quit accelerator registered, even without a usable tray.
+macOS retains its system application menu and **Cmd+Q**. Tray **Show Wenyi** and
+**Quit Wenyi** remain available when a tray host is present.
+
+Use **Quit Wenyi** in the tray, the macOS application menu, or the quit shortcut
+to actually exit.
+Explicit exit stops accepting work, checkpoints/cancels local tasks, and shuts
+down the owned backend. Saved progress can be resumed after reopening. Save
+editor drafts before quitting; an unsaved in-memory draft is not a persisted
+checkpoint. Background translation continues to make configured model requests
+and can incur provider usage until the task finishes or is paused.
 
 On Linux, native Wayland is preferred when available; X11 is a connection-time fallback, not a global override. For proprietary NVIDIA drivers, Desktop uses a process-local explicit-sync compatibility setting on native Wayland while keeping DMA-BUF enabled. NVIDIA/X11 and NVIDIA/Hyprland use a separate DMA-BUF fallback. Explicit user graphics environment settings take precedence.
 

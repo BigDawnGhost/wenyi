@@ -1,5 +1,5 @@
 name: Desktop packages
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.test_updater_signing && 'Desktop signing test' || 'Desktop' }} · ${{ inputs.tag || github.event.release.tag_name || format('dev {0}', github.ref_name) }}
+run-name: Desktop · ${{ inputs.tag || github.event.release.tag_name || format('dev {0}', github.ref_name) }}
 
 on:
   workflow_dispatch:
@@ -8,10 +8,6 @@ on:
         description: Git tag to build (empty means development checkout)
         type: string
         default: ""
-      test_updater_signing:
-        description: Test updater signing on a stable tag (Actions artifacts only, no Release upload)
-        type: boolean
-        default: false
   release:
     types: [published]
   pull_request:
@@ -54,42 +50,10 @@ jobs:
             bundles: dmg
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Validate manual signing test request
-        id: signing_request
-        if: github.event_name == 'workflow_dispatch' && inputs.test_updater_signing
-        shell: bash
-        env:
-          BUILD_TAG: ${{ inputs.tag }}
-          WORKFLOW_REF: ${{ github.ref }}
-          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
-        run: |
-          if [[ "$WORKFLOW_REF" != "$DEFAULT_REF" ]]; then
-            echo "::error::Run signing tests from the repository's default workflow branch."
-            exit 1
-          fi
-          if [[ ! "$BUILD_TAG" =~ ^v?(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){0,2}$ ]]; then
-            echo "::error::Signing tests require an explicit stable Git tag; no Release is required."
-            exit 1
-          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
-      - name: Validate manual signing test source
-        id: signing_source
-        if: github.event_name == 'workflow_dispatch' && inputs.test_updater_signing
-        shell: bash
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$DEFAULT_BRANCH"; then
-            echo "::error::The signing test tag must point to code already merged into the default branch."
-            exit 1
-          fi
-          if [[ ! -f scripts/desktop_verify_updates.mjs ]]; then
-            echo "::error::The signing test tag must include the updater and signing-test scripts."
-            exit 1
-          fi
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
@@ -99,22 +63,17 @@ jobs:
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
-      - name: Configure stable updater signing
+      - name: Configure stable release updater signing
         id: updater
-        if: (github.event_name == 'release' && !github.event.release.prerelease) || (github.event_name == 'workflow_dispatch' && inputs.test_updater_signing)
+        if: github.event_name == 'release' && !github.event.release.prerelease
         shell: bash
         env:
           PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
           PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           PRIVATE_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VERSION: ${{ steps.version.outputs.version }}
-          SIGNING_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test_updater_signing }}
         run: |
           if [[ -z "$PUBLIC_KEY" && -z "$PRIVATE_KEY" && -z "$PRIVATE_PASSWORD" ]]; then
-            if [[ "$SIGNING_TEST" == "true" ]]; then
-              echo "::error::Signing test requested, but updater signing keys are not configured."
-              exit 1
-            fi
             echo "::notice::Updater signing absent: manual installers only; no latest.json will be published."
             echo "signed=false" >> "$GITHUB_OUTPUT"
           elif [[ -z "$PUBLIC_KEY" || -z "$PRIVATE_KEY" ]]; then
@@ -134,7 +93,7 @@ jobs:
           version: "9"
       - uses: dtolnay/rust-toolchain@stable
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf
       # Packaging tests need the root dev group and CLI console fixtures.
       # The sidecar is still built in its separate desktop-only environment.
       - run: uv sync --locked --all-packages --group dev
@@ -176,19 +135,9 @@ jobs:
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
           --source apps/desktop/target/release/bundle
-      - name: Verify updater payload and signed version with public key
-        id: verify_updater
-        if: github.event_name == 'workflow_dispatch' && inputs.test_updater_signing && steps.updater.outputs.signed == 'true'
-        env:
-          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
-        run: >
-          node scripts/desktop_verify_updates.mjs
-          --version "${{ steps.version.outputs.version }}"
-          --platform "${{ matrix.platform }}"
-          --source release-assets
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event_name == 'workflow_dispatch' && inputs.test_updater_signing && 'wenyi-desktop-signing-test' || 'wenyi-desktop' }}-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14

@@ -1,6 +1,7 @@
 // Keep console diagnostics for development, but ship a Windows GUI application.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod background;
 mod graphics;
 mod local_connection;
 mod native_drop;
@@ -29,6 +30,7 @@ struct State {
     connection: Option<String>,
     error: Option<&'static str>,
     closing: bool,
+    background: bool,
 }
 
 impl State {
@@ -38,8 +40,12 @@ impl State {
         self.error = None;
     }
 
+    fn background_script(&self) -> String {
+        format!("window.__WENYI_DESKTOP_BACKGROUND__={};window.dispatchEvent(new Event('wenyi:desktop-visibility'));", self.background)
+    }
+
     fn script(&self) -> String {
-        if self.closing {
+        let status: String = if self.closing {
             "window.__WENYI_DESKTOP_CLOSING__=true;window.dispatchEvent(new Event('wenyi:desktop-closing'));".into()
         } else if let Some(error) = self.error {
             format!("window.__WENYI_DESKTOP_ERROR__={};window.dispatchEvent(new CustomEvent('wenyi:desktop-error',{{detail:window.__WENYI_DESKTOP_ERROR__}}));", serde_json::to_string(error).unwrap())
@@ -47,7 +53,8 @@ impl State {
             format!("window.__WENYI_DESKTOP_CLOSING__=false;window.__WENYI_DESKTOP_ERROR__=undefined;window.__WENYI_DESKTOP_STATUS__=undefined;window.__WENYI_DESKTOP__={connection};window.dispatchEvent(new Event('wenyi:desktop-ready'));")
         } else {
             "window.__WENYI_DESKTOP_PENDING__=true;".into()
-        }
+        };
+        format!("{}{status}", self.background_script())
     }
 }
 
@@ -84,15 +91,27 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
             if let Some(mut backend) = engine.child.lock().unwrap().take() {
                 backend.shutdown();
             }
-            Err("The local engine did not become ready. Close and reopen Wenyi to retry.")
+            Err("The local engine did not become ready. Quit and reopen Wenyi to retry.")
         }
     }
+}
+
+fn begin_shutdown(explicit_quit: bool, closing: &AtomicBool) -> bool {
+    explicit_quit && !closing.swap(true, Ordering::SeqCst)
 }
 
 fn publish(app: &tauri::AppHandle, state: &Mutex<State>) {
     if let Some(window) = app.get_webview_window("main") {
         if window.url().is_ok_and(|url| trusted(&url)) {
             let _ = window.eval(state.lock().unwrap().script());
+        }
+    }
+}
+
+fn publish_background(app: &tauri::AppHandle, state: &Mutex<State>) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.url().is_ok_and(|url| trusted(&url)) {
+            let _ = window.eval(state.lock().unwrap().background_script());
         }
     }
 }
@@ -138,6 +157,8 @@ fn main() {
     };
     let startup_engine = engine.clone();
     let startup_state = state.clone();
+    let tray_available = Arc::new(AtomicBool::new(false));
+    let setup_tray = tray_available.clone();
     let app = tauri::Builder::default()
         .manage(state.clone())
         .manage(engine)
@@ -157,8 +178,9 @@ fn main() {
             updates::desktop_update_install,
             updates::desktop_update_open_release,
         ])
-        .on_webview_event(|window, event| {
-            if let tauri::WebviewEvent::DragDrop(event) = event {
+        .on_window_event(|window, event| {
+            // A WebviewWindow's native drops are emitted as window events.
+            if let tauri::WindowEvent::DragDrop(event) = event {
                 if let Some(window) = window.app_handle().get_webview_window(window.label()) {
                     native_drop::event(&window, event);
                 }
@@ -169,18 +191,49 @@ fn main() {
             let reload_state = startup_state.clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(800.0, 600.0)
-                .initialization_script("window.__WENYI_DESKTOP_PENDING__=true;")
+                .initialization_script(startup_state.lock().unwrap().script())
                 .on_navigation(trusted)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .on_page_load(move |window, payload| {
                     if trusted(payload.url()) {
                         window.state::<native_drop::Grants>().clear();
+                        background::refresh(window.app_handle());
                         let _ = window.eval(reload_state.lock().unwrap().script());
                     }
                 })
                 .build()?;
+            setup_tray.store(background::install(app.handle())?, Ordering::SeqCst);
             let handle = app.handle().clone();
             updates::check_on_startup(&handle);
+            let monitor_handle = handle.clone();
+            let monitor_engine = startup_engine.clone();
+            let monitor_state = startup_state.clone();
+            // Keep the existing health cadence alive even during startup or after
+            // engine failure, so minimize-only platforms still report visibility.
+            std::thread::spawn(move || {
+                let mut reported_exit = false;
+                let mut health_ticks = 0;
+                while !monitor_engine.closed.load(Ordering::SeqCst) {
+                    // Updates temporarily own closing and can restore this same engine.
+                    if monitor_engine.closing.load(Ordering::SeqCst) {
+                        reported_exit = false;
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        continue;
+                    }
+                    let visibility_handle = monitor_handle.clone();
+                    let _ = monitor_handle.run_on_main_thread(move || background::refresh(&visibility_handle));
+                    health_ticks += 1;
+                    if health_ticks == 8 {
+                        health_ticks = 0;
+                        background::recover_if_unreachable(&monitor_handle);
+                    }
+                    if !reported_exit && monitor_engine.child.lock().unwrap().as_mut().is_some_and(|backend| backend.exited()) {
+                        reported_exit = true;
+                        fail(&monitor_handle, &monitor_state, "The local engine stopped unexpectedly. Quit and reopen Wenyi to recover saved work.");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            });
             std::thread::spawn(move || {
                 // Serialize spawning with close so quit never outruns child ownership.
                 if startup_engine.closing.load(Ordering::SeqCst) { return; }
@@ -189,15 +242,6 @@ fn main() {
                     return;
                 }
                 publish(&handle, &startup_state);
-                while !startup_engine.closed.load(Ordering::SeqCst) {
-                    let exited = !startup_engine.closing.load(Ordering::SeqCst)
-                        && startup_engine.child.lock().unwrap().as_mut().is_some_and(|backend| backend.exited());
-                    if exited {
-                        fail(&handle, &startup_state, "The local engine stopped unexpectedly. Close and reopen Wenyi to recover saved work.");
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
             });
             Ok(())
         })
@@ -206,19 +250,32 @@ fn main() {
     app.run(move |handle, event_kind| {
         let requested = match event_kind {
             tauri::RunEvent::WindowEvent {
+                label,
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
-            } => {
+            } if label == "main" => {
                 api.prevent_close();
-                true
+                if !closing.load(Ordering::SeqCst) {
+                    background::close(handle, tray_available.load(Ordering::SeqCst));
+                }
+                false
             }
             tauri::RunEvent::ExitRequested { api, .. } if !closed.load(Ordering::SeqCst) => {
                 api.prevent_exit();
                 true
             }
+            tauri::RunEvent::WindowEvent { .. } => {
+                background::refresh(handle);
+                false
+            }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                background::restore(handle);
+                false
+            }
             _ => false,
         };
-        if requested && !closing.swap(true, Ordering::SeqCst) {
+        if begin_shutdown(requested, &closing) {
             handle.state::<native_drop::Grants>().clear();
             handle.state::<native_export::Saves>().close();
             state.lock().unwrap().closing = true;
@@ -284,11 +341,50 @@ mod tests {
     fn late_ready_does_not_reopen_a_closing_application() {
         let mut state = State {
             closing: true,
+            background: true,
             ..Default::default()
         };
         state.connected("secret".into());
         assert!(state.closing);
         assert!(state.script().contains("__WENYI_DESKTOP_CLOSING__"));
         assert!(!state.script().contains("secret"));
+        // Recovery publishes new credentials only after lifecycle admission reopens.
+        state.closing = false;
+        assert!(state.script().contains("secret"));
+        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
+    }
+
+    #[test]
+    fn close_does_not_shutdown_and_explicit_quit_starts_only_once() {
+        let closing = AtomicBool::new(false);
+        assert!(!begin_shutdown(false, &closing));
+        assert!(!closing.load(Ordering::SeqCst));
+        assert!(begin_shutdown(true, &closing));
+        assert!(!begin_shutdown(true, &closing));
+    }
+
+    #[test]
+    fn reload_replays_latest_background_in_every_state() {
+        let mut state = State::default();
+        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=false;"));
+        state.background = true;
+        for status in 0..4 {
+            state.connection = (status == 1).then(|| "{}".into());
+            state.error = (status == 2).then_some("Safe failure");
+            state.closing = status == 3;
+            assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
+            assert!(state.script().contains("wenyi:desktop-visibility"));
+        }
+    }
+
+    #[test]
+    fn visibility_changes_do_not_replay_connection_or_closing_events() {
+        let state = State {
+            connection: Some("secret".into()),
+            closing: true,
+            background: true,
+            ..Default::default()
+        };
+        assert_eq!(state.background_script(), "window.__WENYI_DESKTOP_BACKGROUND__=true;window.dispatchEvent(new Event('wenyi:desktop-visibility'));");
     }
 }

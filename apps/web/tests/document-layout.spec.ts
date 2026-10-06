@@ -64,7 +64,10 @@ for (const locale of ["en", "zh-CN"] as const) {
             first.getByRole("cell").nth(cell).locator("span"),
           );
         }
-        await expectSingleLine(first.getByRole("link"));
+        // The actions cell only keeps the translate button for pending rows.
+        await expectSingleLine(
+          table.locator("tbody tr").nth(1).getByRole("button"),
+        );
         await expectNoHorizontalOverflow(first.getByRole("cell").first());
         await expectNoHorizontalOverflow(
           table.locator("tbody tr").nth(2).getByRole("cell").first(),

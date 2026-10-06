@@ -2,7 +2,7 @@
 
 [简体中文](zh/architecture.md) · [Pipeline](pipeline.md) · [Web development](web.md)
 
-This is a map of the implemented boundaries, replacing the completed refactoring plans.
+This is a map of the implemented module responsibilities and boundaries.
 Core paths below are relative to `packages/core/wenyi_core/`.
 
 | Area | Owner |
@@ -36,4 +36,4 @@ changing formal targets. Stable segment identities, consistent export snapshots,
 once-only usage accounting remain contracts across storage backends. See the
 [repository guide](../AGENTS.md) for the full constraints and required verification.
 
-`i18n/policy/` provides the pure typed language-operation registry and deterministic resolver. Profiles keep source and target roles separate; plans freeze the consumed prompt resources and selected export capabilities. Agents consume prompt plans, export adapters execute text and writer operations, and pipeline services persist phase identities through Storage. CLI and Web execution share this resolver; only read-only developer CLI diagnostics expose its plans. Policy bindings and options are defined in source, without YAML switches. Semantic checkpoints and export snapshots have separate identities, so layout changes do not invalidate paid translation. See [Composable language policies and operation injection](design/language-policies.md) for the implemented first edition and deferred extensions.
+`i18n/policy/` provides the pure typed language-operation registry and deterministic resolver. Profiles keep source and target roles separate; plans freeze the consumed prompt resources and selected export capabilities. Agents consume prompt plans, export adapters execute text and writer operations, and pipeline services persist phase identities through Storage. CLI and Web execution share this resolver; only read-only developer CLI diagnostics expose its plans. Policy bindings and options are defined in source, without YAML switches. Semantic checkpoints and export snapshots have separate identities, so layout changes do not invalidate paid translation. See [built-in language policies](configuration.md#built-in-language-policies) for supported behavior and developer diagnostics.

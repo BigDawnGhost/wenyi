@@ -13,7 +13,7 @@ import { ErrorNotice, StructuredData } from "@/components/ui/data";
 import { Disclosure } from "@/components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useEffect } from "react";
 import { progressInterval } from "@/lib/runtime";
 
@@ -183,8 +183,10 @@ export default function ProgressPage() {
         </p>
         {!project?.initialized && (
           <Link
+            id="project-source-trigger"
             className="inline-block text-sm text-primary underline"
             to={`/projects/new?project=${pid}`}
+            state={{ fromAppNavigation: true, returnFocusId: "project-source-trigger" }}
           >
             {tr("progress.uploadPreviewSource")}
           </Link>
@@ -245,7 +247,7 @@ function ChapterTable({
     <Card>
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
-        <table className="w-full min-w-[44rem] text-sm">
+        <table className="w-full min-w-[704px] text-sm">
           <thead className="border-b text-xs text-muted-foreground">
             <tr>
               {[
@@ -294,24 +296,16 @@ function ChapterTable({
                   )}
                 </td>
                 <td className="p-3">
-                  <div className="flex flex-col items-start gap-2">
-                    <Link
-                      className="whitespace-nowrap text-primary underline"
-                      to={`/projects/${pid}/proofreading/${c.index}`}
+                  {c.status !== "done" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || translate.isPending}
+                      onClick={() => translate.mutate(c.index)}
                     >
-                      {tr("progress.manualProofreading")}
-                    </Link>
-                    {c.status !== "done" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy || translate.isPending}
-                        onClick={() => translate.mutate(c.index)}
-                      >
-                        {tr("progress.translateChapter")}
-                      </Button>
-                    )}
-                  </div>
+                      {tr("progress.translateChapter")}
+                    </Button>
+                  )}
                 </td>
               </tr>
             ))}

@@ -6,7 +6,15 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "outDir": "node_modules/.config-emit",
+    "tsBuildInfoFile": "node_modules/.config-emit/tsconfig.node.tsbuildinfo"
   },
-  "include": ["vite.config.ts", "playwright.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "playwright.config.ts",
+    "tests/fixtures.ts"
+  ]
 }

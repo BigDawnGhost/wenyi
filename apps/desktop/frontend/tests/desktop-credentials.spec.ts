@@ -94,6 +94,14 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
   });
   await page.clock.runFor(60_000);
   expect(reads).toBe(1);
+  await page.evaluate(() => {
+    Object.assign(window, { __WENYI_DESKTOP_BACKGROUND__: true });
+    window.dispatchEvent(new Event("wenyi:desktop-visibility"));
+    Object.assign(window, { __WENYI_DESKTOP_BACKGROUND__: false });
+    window.dispatchEvent(new Event("wenyi:desktop-visibility"));
+  });
+  await page.clock.runFor(1000);
+  expect(reads).toBe(1);
   await page.getByText("Advanced: environment variable", { exact: true }).click();
   await page.getByRole("button", { name: "Check local availability" }).click();
   await expect.poll(() => reads).toBe(2);

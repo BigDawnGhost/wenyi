@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
+from typing import Protocol, runtime_checkable
+
 from arq.jobs import Job, JobStatus
 from wenyi_backend.project_service import storage_for
+from wenyi_core.storage.protocol import Storage
 
 from .. import dal
 from ..db import get_pool
 
 _REMOTE_ACTIVE = {JobStatus.queued, JobStatus.deferred, JobStatus.in_progress}
+
+
+@runtime_checkable
+class RecoveryStorage(Storage, Protocol):
+    """Session-lock capabilities shared by PostgreSQL and local SQLite recovery."""
+
+    def lock(self, *, blocking: bool = True) -> AbstractContextManager[None]: ...
+    def export_lock(
+        self, export_id: int, *, blocking: bool = True
+    ) -> AbstractContextManager[None]: ...
 
 
 async def recover_jobs(ctx: dict) -> None:
@@ -35,6 +49,7 @@ async def recover_jobs(ctx: dict) -> None:
             assert isinstance(export_id, int)
             export_id_i = export_id
         storage = storage_for(pid)
+        assert isinstance(storage, RecoveryStorage)
         lock = (
             storage.export_lock(export_id_i, blocking=False)
             if export_id_i is not None

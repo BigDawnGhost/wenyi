@@ -68,6 +68,12 @@ Alignment retries retain the reference. Single-paragraph fallback uses that para
 
 The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. Every body-translation batch receives the full current glossary, including entries absent from the current chapter. Fresh Reviewer requests share the complete final glossary snapshot across chapters and workers. Entries retain insertion order, and new entries append at the end to preserve stable prompt prefixes. After extraction changes the glossary, translation refreshes its snapshot before the next pending batch; completed batches keep their saved targets. If interruption occurs after targets are saved but before extraction is checkpointed, resume completes extraction before translating the next batch. Checkpointed batches skip both translation and extraction.
 
+The glossary owns character name mappings. The style brief retains source identities,
+gender, and descriptive character notes, but does not repeat translated names from the
+analysis snapshot, which may be stale after glossary edits. Free-form notes and style text
+are preserved verbatim, so outdated names embedded in that prose still require manual review.
+This reduces conflicting structured guidance without rewriting completed translations.
+
 This policy provides cross-chapter terminology context at the cost of larger prompts and potentially higher token usage. It does not guarantee provider prefix-cache hits or improved translation quality. Selective evidence queries and segment Fixer requests still use relevant terms. `pipeline.glossary_scope` has been removed; configuration containing that key is rejected and must be edited explicitly.
 
 If analysis, glossary extraction, or historical term alignment returns a collection with an invalid type, Wenyi ignores that collection and logs a warning with the operation, field, and actual type. Arrays retain object members and log the number of discarded non-object members. Missing or null fields and valid empty arrays do not produce warnings. These diagnostics use the CLI/worker's standard Python logs, exclude source text and model response content, and help identify missing candidates without interrupting translation.
@@ -107,6 +113,12 @@ requests use the same full glossary snapshot. Review reuse and resume compare th
 full-glossary policy marker and every glossary field, including aliases, pronunciation,
 gender, notes, and entry order. Any mismatch starts a new Review; caches created before
 this policy are preserved but not reused. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
+The run's configuration identity also includes the effective style brief, whole-book
+synopsis, and chapter digests. Editing that guidance starts a new Review instead of
+reusing completed results or old run-scoped fixer traces. Older caches without this
+guidance identity remain available for inspection but are not reused. The revised
+character guidance also advances the Review/Autofix Fixer request protocols, so a
+subsequent run may require new model calls; previously completed translations are unchanged.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
 Elapsed time measures the entire current workflow and never resets at stage or round
 boundaries. It continues advancing while model requests are pending, even after a stage
@@ -254,7 +266,7 @@ Orchestrator above. There is no whole-book prescan, glossary, polishing, or
 Review. Translation uses overlapping cue windows with high concurrency on the
 strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with
 `cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
-[Usage guide — SRT subtitles](usage.md#srt-subtitles).
+[CLI guide — SRT subtitles](cli.md#srt-subtitles).
 
 ## Model registration and usage
 

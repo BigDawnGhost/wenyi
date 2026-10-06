@@ -187,7 +187,7 @@ const en = {
   "glossary.theGlossaryIsReadOnlyWhileA":
     "The glossary is read-only while a project task is running.",
   "glossary.searchSourceTermsTranslationsOrAliases":
-    "Search source terms, translations or aliases…",
+    "Search terms, translations, aliases, readings or notes…",
   "glossary.allTypes": "All types",
   "glossary.deleteSelectedTerms": "Delete selected terms ({count})?",
   "glossary.deleteSelected": "Delete selected",
@@ -342,6 +342,8 @@ const en = {
     "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
   "createProject.sourceRequired":
     "Choose a source file before creating the project.",
+  "createProject.selectSourceAgain":
+    "Select the source file again before retrying.",
   "createProject.emptyFile":
     "The source file is empty. Choose a file with content.",
   "createProject.unsupportedFile": "This file format is not supported.",
@@ -571,6 +573,7 @@ const en = {
   "style.tone": "Tone",
   "style.narration": "Narration",
   "style.pacing": "Pacing",
+  "style.register": "Register",
   "style.dialogueStyle": "Dialogue style",
   "style.rhetoric": "Rhetoric",
   "style.styleGuide": "Style guide",
@@ -656,6 +659,7 @@ const en = {
   "export.aboutSummary": "About page: {value}",
   "export.styleSummary": "Source formatting: {value}",
   "navigation.global": "Global navigation",
+  "navigation.settings": "Settings navigation",
   "navigation.collapseSidebar": "Collapse sidebar",
   "navigation.expandSidebar": "Expand sidebar",
   "navigation.project": "Project navigation",

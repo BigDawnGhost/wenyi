@@ -7,7 +7,7 @@ from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
 
 from . import __version__
-from .adapters import create_context
+from .adapters import create_context, postgres_repository
 from .config import Settings, settings
 
 
@@ -17,11 +17,12 @@ def create_app(config: Settings | None = None, *, context: BackendContext | None
     @asynccontextmanager
     async def lifespan(app):
         with use_context(context):
-            context.repository.start()
+            repository = postgres_repository(context)
+            repository.start()
             try:
                 yield
             finally:
-                context.repository.close()
+                repository.close()
 
     application = create_http_app(
         context,

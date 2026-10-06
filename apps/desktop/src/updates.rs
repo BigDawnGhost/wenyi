@@ -375,6 +375,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
         return Err("busy");
     }
     state.lock().unwrap().closing = true;
+    crate::publish(app, &state);
     if let Err(error) = prepare_engine(&connection) {
         // A timed-out response may still have closed admission on the engine.
         cancel_prepare(&connection);
@@ -390,14 +391,19 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     }
     if update.install(bytes.as_slice()).is_err() {
         // Preserve verified download for a retry, but restore the engine first.
-        state.lock().unwrap().closing = false;
-        if let Err(error) = crate::start_backend(app, &engine, true) {
-            crate::fail(app, &state, error);
-        } else {
-            crate::publish(app, &state);
+        // Do not publish stale credentials or reopen the UI during recovery.
+        state.lock().unwrap().connection = None;
+        let recovery = crate::start_backend(app, &engine, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.closing = false;
+            if let Err(error) = recovery {
+                state.error = Some(error);
+            }
         }
         saves.reopen();
         engine.closing.store(false, Ordering::SeqCst);
+        crate::publish(app, &state);
         return Err("install_failed");
     }
     engine.closed.store(true, Ordering::SeqCst);

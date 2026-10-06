@@ -67,6 +67,7 @@ test("interface language is available only in global settings without changing p
     page.getByRole("button", { name: "Save configuration", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Interface language")).toHaveCount(0);
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await chooseOption(page.locator("#interface-language"), "简体中文");
   await page.goto(`/projects/${pid}/settings`);
@@ -74,6 +75,7 @@ test("interface language is available only in global settings without changing p
     page.getByRole("button", { name: "保存配置", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toHaveCount(0);
+  await page.getByRole("link", { name: "项目列表", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
   await chooseOption(page.locator("#interface-language"), "English");
   await page.goto(`/projects/${pid}/settings`);
@@ -127,10 +129,12 @@ test("known workflow labels and language names are localized without changing AP
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);
   await page.getByText("Workflow details", { exact: true }).click();
+  // Scope to the opened disclosure: run-history rows reuse the same label.
+  const stages = page.locator("details[open]");
   await expect(
-    page.getByText("Translate chapters in batches", { exact: true }),
+    stages.getByText("Translate chapters in batches", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("分批翻译章节", { exact: true })).toHaveCount(0);
+  await expect(stages.getByText("分批翻译章节", { exact: true })).toHaveCount(0);
 });
 
 for (const locale of ["en", "zh-CN"] as const) {
@@ -207,7 +211,8 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: chinese ? "风格 & 概要" : "Style & synopsis",
       }),
     ).toBeVisible();
-    await expect(page.getByText("原文风格", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: chinese ? "体裁" : "Genre", exact: true }))
+      .toHaveValue("原文风格");
     await page.goto(`/projects/${pid}/events`);
     await expect(
       page.getByText(

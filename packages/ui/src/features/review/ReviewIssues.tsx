@@ -43,7 +43,7 @@ export function ReviewIssues({
           );
         })}
       </div>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem]">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_208px]">
         <div className="space-y-2">
           <Label htmlFor="issue-search">{t("review.searchIssues")}</Label>
           <Input

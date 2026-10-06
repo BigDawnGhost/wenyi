@@ -47,6 +47,7 @@ export function bindSourceDrop(zone: HTMLElement, callbacks: SourceDropCallbacks
   const drag = (event: Event) => {
     const detail = (event as CustomEvent<NativeDrag>).detail;
     const rect = zone.getBoundingClientRect();
+    // The native bridge normalizes all platforms to WebView-relative physical pixels.
     const ratio = window.devicePixelRatio || 1;
     const x = (detail.position?.x ?? -1) / ratio;
     const y = (detail.position?.y ?? -1) / ratio;
