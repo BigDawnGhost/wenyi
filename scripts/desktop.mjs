@@ -9,6 +9,27 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const build = process.argv[2] === 'build';
 const args = process.argv.slice(3);
 const env = { ...process.env };
+export function updaterConfigured(environment, version) {
+  const publicKey = environment.WENYI_UPDATER_PUBLIC_KEY?.trim();
+  const privateKey = environment.TAURI_SIGNING_PRIVATE_KEY?.trim();
+  const password = environment.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
+  if ((!publicKey && !privateKey && !password)) return false;
+  if (!publicKey || !privateKey || password === undefined) {
+    throw new Error('Updater signing requires WENYI_UPDATER_PUBLIC_KEY, TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD (which may be empty).');
+  }
+  const decoded = Buffer.from(publicKey, 'base64').toString('utf8');
+  const lines = decoded.trim().split(/\r?\n/);
+  const packet = Buffer.from(lines[1] ?? '', 'base64');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(publicKey)
+    || lines.length !== 2 || !lines[0].startsWith('untrusted comment:')
+    || packet.length !== 42 || !['Ed', 'ED'].includes(packet.subarray(0, 2).toString())) {
+    throw new Error('WENYI_UPDATER_PUBLIC_KEY must contain the Tauri minisign public key content, not a path.');
+  }
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error('Updater signing is supported only for stable release versions.');
+  }
+  return true;
+}
 // A workspace-local Rust toolchain is optional; never change global defaults.
 if (!env.RUSTUP_HOME && existsSync(path.join(root, '.scratch/rustup/toolchains'))) {
   env.RUSTUP_HOME = path.join(root, '.scratch/rustup');
@@ -39,11 +60,15 @@ if (identity.status !== 0) {
   process.exit(identity.status ?? 1);
 }
 const version = JSON.parse(identity.stdout);
+const signedUpdater = build && updaterConfigured(env, version.version);
+if (build && !signedUpdater) console.log('Updater signing is not configured; building manual installers only (no latest.json).');
 env.WENYI_DESKTOP_VERSION = version.version;
 env.WENYI_BUILD_PYTHON_VERSION = version.python;
 const versionConfig = JSON.stringify({
   version: version.version,
-  bundle: { macOS: { bundleVersion: version.bundle_version } },
+  bundle: { macOS: { bundleVersion: version.bundle_version }, createUpdaterArtifacts: signedUpdater },
+  // Tauri's bundler needs the same public key as the native runtime to sign updates.
+  plugins: { updater: { pubkey: env.WENYI_UPDATER_PUBLIC_KEY?.trim() || '' } },
 });
 env.TAURI_CONFIG = versionConfig;
 console.log(`Wenyi Desktop ${version.version} (Python ${version.python})`);

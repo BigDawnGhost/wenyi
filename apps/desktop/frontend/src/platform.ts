@@ -12,6 +12,9 @@ const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
   loadDesktopCredential().then((module) => ({ default: module.DesktopCredential })),
 );
+const DesktopUpdates = lazy(() =>
+  import("./DesktopUpdates").then((module) => ({ default: module.DesktopUpdates })),
+);
 // Warm the credential chunk at startup so the settings page never waits on it.
 void loadDesktopCredential().catch(() => { /* The route retries when opened. */ });
 
@@ -55,6 +58,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      updates: { Section: DesktopUpdates },
       saveExport: saveNativeExport,
       credentials: {
         Field: DesktopCredential,

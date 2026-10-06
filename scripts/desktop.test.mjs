@@ -21,6 +21,11 @@ test('Tauri runs in the native project without pnpm changing its working directo
   const calls = [];
   const argv = process.argv;
   const npmExecPath = process.env.npm_execpath;
+  const signingNames = [
+    'WENYI_UPDATER_PUBLIC_KEY', 'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
+  ];
+  const originalSigning = Object.fromEntries(signingNames.map(name => [name, process.env[name]]));
+  for (const name of signingNames) delete process.env[name];
   const identity = { python: '1.2.3', version: '1.2.3', bundle_version: '1.2.3' };
   mock.method(childProcess, 'spawnSync', (command, parameters, options) => {
     calls.push({ command, parameters, options });
@@ -31,7 +36,28 @@ test('Tauri runs in the native project without pnpm changing its working directo
   // pnpm 9 exec resolves a package root, not necessarily the supplied cwd.
   process.env.npm_execpath = path.join(root, 'mock pnpm', 'pnpm.cjs');
   try {
-    await import('./desktop.mjs');
+    const { updaterConfigured } = await import('./desktop.mjs');
+    assert.equal(updaterConfigured({}, '1.2.3'), false);
+    const publicKey = Buffer.from(`untrusted comment: offline fixture\n${Buffer.concat([
+      Buffer.from('Ed'), Buffer.alloc(40),
+    ]).toString('base64')}\n`).toString('base64');
+    const signing = {
+      WENYI_UPDATER_PUBLIC_KEY: publicKey,
+      TAURI_SIGNING_PRIVATE_KEY: 'offline mock; never used to sign',
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: '',
+    };
+    assert.equal(updaterConfigured(signing, '1.2.3'), true);
+    for (const partial of [
+      { WENYI_UPDATER_PUBLIC_KEY: publicKey },
+      { TAURI_SIGNING_PRIVATE_KEY: 'offline mock' },
+      { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: 'offline mock' },
+      { ...signing, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: undefined },
+      { ...signing, WENYI_UPDATER_PUBLIC_KEY: '/outside/repository/key.pub' },
+      { ...signing, WENYI_UPDATER_PUBLIC_KEY: Buffer.from('bad').toString('base64') },
+    ]) assert.throws(() => updaterConfigured(partial, '1.2.3'));
+    for (const version of ['1.2.3-rc.1', '1.2.3-dev.0+g123', '01.2.3', '1.2.3+local']) {
+      assert.throws(() => updaterConfigured(signing, version), /stable/);
+    }
     assert.equal(calls.length, 4);
     const build = calls[3];
     assert.equal(build.command, process.execPath);
@@ -41,17 +67,30 @@ test('Tauri runs in the native project without pnpm changing its working directo
       '--config', path.join(root, 'apps/desktop/tauri.bundle.conf.json'),
       '--config', JSON.stringify({
         version: identity.version,
-        bundle: { macOS: { bundleVersion: identity.bundle_version } },
+        bundle: { macOS: { bundleVersion: identity.bundle_version }, createUpdaterArtifacts: false },
+        plugins: { updater: { pubkey: '' } },
       }),
       '--bundles', 'appimage',
     ]);
     assert.equal(build.options.cwd, path.join(root, 'apps/desktop'));
     assert.equal(build.options.env.WENYI_DESKTOP_VERSION, identity.version);
     assert.equal(build.options.env.WENYI_BUILD_PYTHON_VERSION, identity.python);
+    Object.assign(process.env, signing);
+    calls.length = 0;
+    await import('./desktop.mjs?signed-build-test');
+    const signedBuild = calls[3];
+    const config = JSON.parse(signedBuild.parameters[5]);
+    assert.equal(config.bundle.createUpdaterArtifacts, true);
+    assert.equal(config.plugins?.updater?.pubkey, publicKey);
+    assert.equal(signedBuild.options.env.WENYI_UPDATER_PUBLIC_KEY, publicKey);
   } finally {
     process.argv = argv;
     if (npmExecPath === undefined) delete process.env.npm_execpath;
     else process.env.npm_execpath = npmExecPath;
+    for (const [name, value] of Object.entries(originalSigning)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     mock.restoreAll();
     syncBuiltinESMExports();
   }

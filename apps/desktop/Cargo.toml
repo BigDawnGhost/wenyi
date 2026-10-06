@@ -16,11 +16,14 @@ tauri = { version = "2", features = ["tray-icon"] }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json", "rustls"] }
 same-file = "1"
 cap-std = "3"
 cap-fs-ext = "3"
 rfd = "0.15"
+semver = "1"
+open = "5"
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

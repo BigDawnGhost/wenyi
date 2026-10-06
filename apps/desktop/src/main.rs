@@ -3,9 +3,11 @@
 
 mod background;
 mod graphics;
+mod local_connection;
 mod native_drop;
 mod native_export;
 mod process;
+mod updates;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -32,6 +34,12 @@ struct State {
 }
 
 impl State {
+    fn connected(&mut self, connection: String) {
+        // A late startup ready signal must not cancel an already requested close.
+        self.connection = Some(connection);
+        self.error = None;
+    }
+
     fn background_script(&self) -> String {
         format!("window.__WENYI_DESKTOP_BACKGROUND__={};window.dispatchEvent(new Event('wenyi:desktop-visibility'));", self.background)
     }
@@ -42,11 +50,49 @@ impl State {
         } else if let Some(error) = self.error {
             format!("window.__WENYI_DESKTOP_ERROR__={};window.dispatchEvent(new CustomEvent('wenyi:desktop-error',{{detail:window.__WENYI_DESKTOP_ERROR__}}));", serde_json::to_string(error).unwrap())
         } else if let Some(connection) = &self.connection {
-            format!("window.__WENYI_DESKTOP__={connection};window.dispatchEvent(new Event('wenyi:desktop-ready'));")
+            format!("window.__WENYI_DESKTOP_CLOSING__=false;window.__WENYI_DESKTOP_ERROR__=undefined;window.__WENYI_DESKTOP_STATUS__=undefined;window.__WENYI_DESKTOP__={connection};window.dispatchEvent(new Event('wenyi:desktop-ready'));")
         } else {
             "window.__WENYI_DESKTOP_PENDING__=true;".into()
         };
         format!("{}{status}", self.background_script())
+    }
+}
+
+#[derive(Clone)]
+struct Engine {
+    child: Arc<Mutex<Option<process::Backend>>>,
+    workspace: Option<std::path::PathBuf>,
+    closing: Arc<AtomicBool>,
+    closed: Arc<AtomicBool>,
+}
+
+/// The same launch path is used at startup and to recover a failed installation.
+fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), &'static str> {
+    let resources = app.path().resource_dir().map_err(|_| "Local resources unavailable.")?;
+    let ready = {
+        let mut owner = engine.child.lock().unwrap();
+        if engine.closed.load(Ordering::SeqCst)
+            || (!recovery && engine.closing.load(Ordering::SeqCst))
+        {
+            return Err("Wenyi is closing.");
+        }
+        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref())?;
+        *owner = Some(backend);
+        ready
+    };
+    match ready.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(Ok(connection)) => {
+            let state = app.state::<Arc<Mutex<State>>>();
+            let mut state = state.lock().unwrap();
+            state.connected(connection);
+            Ok(())
+        }
+        _ => {
+            if let Some(mut backend) = engine.child.lock().unwrap().take() {
+                backend.shutdown();
+            }
+            Err("The local engine did not become ready. Quit and reopen Wenyi to retry.")
+        }
     }
 }
 
@@ -103,19 +149,34 @@ fn main() {
     let closing = Arc::new(AtomicBool::new(false));
     let closed = Arc::new(AtomicBool::new(false));
     let child = Arc::new(Mutex::new(None::<process::Backend>));
-    let startup_child = child.clone();
-    let startup_closing = closing.clone();
+    let engine = Engine {
+        child: child.clone(),
+        workspace: data_dir,
+        closing: closing.clone(),
+        closed: closed.clone(),
+    };
+    let startup_engine = engine.clone();
     let startup_state = state.clone();
     let tray_available = Arc::new(AtomicBool::new(false));
     let setup_tray = tray_available.clone();
     let app = tauri::Builder::default()
         .manage(state.clone())
+        .manage(engine)
+        .manage(updates::Updates::new())
+        .plugin(tauri_plugin_updater::Builder::new()
+            .pubkey(env!("WENYI_UPDATER_PUBLIC_KEY"))
+            .build())
         .manage(native_drop::Grants::default())
         .manage(native_export::Saves::default())
         .invoke_handler(tauri::generate_handler![
             native_drop::native_drop_release,
             native_drop::native_drop_upload,
             native_export::native_export_save,
+            updates::desktop_update_status,
+            updates::desktop_update_check,
+            updates::desktop_update_download,
+            updates::desktop_update_install,
+            updates::desktop_update_open_release,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
@@ -143,17 +204,22 @@ fn main() {
                 .build()?;
             setup_tray.store(background::install(app.handle())?, Ordering::SeqCst);
             let handle = app.handle().clone();
-            let resources = app.path().resource_dir()?;
+            updates::check_on_startup(&handle);
             let monitor_handle = handle.clone();
-            let monitor_child = startup_child.clone();
-            let monitor_closing = startup_closing.clone();
+            let monitor_engine = startup_engine.clone();
             let monitor_state = startup_state.clone();
             // Keep the existing health cadence alive even during startup or after
             // engine failure, so minimize-only platforms still report visibility.
             std::thread::spawn(move || {
                 let mut reported_exit = false;
                 let mut health_ticks = 0;
-                while !monitor_closing.load(Ordering::SeqCst) {
+                while !monitor_engine.closed.load(Ordering::SeqCst) {
+                    // Updates temporarily own closing and can restore this same engine.
+                    if monitor_engine.closing.load(Ordering::SeqCst) {
+                        reported_exit = false;
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        continue;
+                    }
                     let visibility_handle = monitor_handle.clone();
                     let _ = monitor_handle.run_on_main_thread(move || background::refresh(&visibility_handle));
                     health_ticks += 1;
@@ -161,7 +227,7 @@ fn main() {
                         health_ticks = 0;
                         background::recover_if_unreachable(&monitor_handle);
                     }
-                    if !reported_exit && monitor_child.lock().unwrap().as_mut().is_some_and(|backend| backend.exited()) {
+                    if !reported_exit && monitor_engine.child.lock().unwrap().as_mut().is_some_and(|backend| backend.exited()) {
                         reported_exit = true;
                         fail(&monitor_handle, &monitor_state, "The local engine stopped unexpectedly. Quit and reopen Wenyi to recover saved work.");
                     }
@@ -170,28 +236,12 @@ fn main() {
             });
             std::thread::spawn(move || {
                 // Serialize spawning with close so quit never outruns child ownership.
-                let ready = {
-                    let mut owner = startup_child.lock().unwrap();
-                    if startup_closing.load(Ordering::SeqCst) { return; }
-                    match process::Backend::spawn(&resources, data_dir.as_deref()) {
-                        Ok((backend, ready)) => { *owner = Some(backend); ready }
-                        Err(_) => {
-                            fail(&handle, &startup_state, "The local engine could not start. Quit and reopen Wenyi to retry.");
-                            return;
-                        }
-                    }
-                };
-                match ready.recv_timeout(std::time::Duration::from_secs(60)) {
-                    Ok(Ok(connection)) => {
-                        startup_state.lock().unwrap().connection = Some(connection);
-                        publish(&handle, &startup_state);
-                    }
-                    _ => {
-                        fail(&handle, &startup_state, "The local engine did not become ready. Quit and reopen Wenyi to retry.");
-                        if let Some(mut backend) = startup_child.lock().unwrap().take() { backend.shutdown(); }
-                        return;
-                    }
+                if startup_engine.closing.load(Ordering::SeqCst) { return; }
+                if let Err(error) = start_backend(&handle, &startup_engine, false) {
+                    fail(&handle, &startup_state, error);
+                    return;
                 }
+                publish(&handle, &startup_state);
             });
             Ok(())
         })
@@ -285,6 +335,23 @@ mod tests {
         state.closing = true;
         assert!(state.script().contains("__WENYI_DESKTOP_CLOSING__"));
         assert!(!state.script().contains("secret"));
+    }
+
+    #[test]
+    fn late_ready_does_not_reopen_a_closing_application() {
+        let mut state = State {
+            closing: true,
+            background: true,
+            ..Default::default()
+        };
+        state.connected("secret".into());
+        assert!(state.closing);
+        assert!(state.script().contains("__WENYI_DESKTOP_CLOSING__"));
+        assert!(!state.script().contains("secret"));
+        // Recovery publishes new credentials only after lifecycle admission reopens.
+        state.closing = false;
+        assert!(state.script().contains("secret"));
+        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
     }
 
     #[test]

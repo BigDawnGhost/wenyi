@@ -84,7 +84,7 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
   });
   await page.goto("/settings");
   await page.locator("summary").filter({ hasText: "API providers & models" }).click();
-  await expect(page.getByRole("alert")).toContainText("Credential store unavailable");
+  await expect(page.getByRole("alert").filter({ hasText: "Credential store unavailable" })).toBeVisible();
   await page.clock.runFor(60_000);
   await page.evaluate(() => {
     window.dispatchEvent(new Event("offline"));

@@ -58,6 +58,9 @@ export interface PlatformServices {
   progressKeys: (kind: string) => string[];
   bindSourceDrop: (zone: HTMLElement, callbacks: SourceDropCallbacks) => () => void;
   capabilities: {
+    updates?: {
+      Section: ComponentType<{ blocked: boolean; onInstalling: (value: boolean) => void }>;
+    };
     saveExport?: (
       project: string, options: ExportOptions, exportId?: number,
     ) => Promise<{ path: string } | null>;

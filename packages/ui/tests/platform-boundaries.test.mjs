@@ -10,7 +10,7 @@ function files(directory) {
     entry.isDirectory() ? files(resolve(directory, entry.name)) : [resolve(directory, entry.name)],
   );
 }
-const nativeCode = /__TAURI|__WENYI_DESKTOP|isDesktop|native_drop_|native_export_|\/desktop\/credentials|System credential store|系统凭据库/;
+const nativeCode = /__TAURI|__WENYI_DESKTOP|isDesktop|native_drop_|native_export_|desktop_update_|Desktop updates|桌面端更新|\/desktop\/credentials|System credential store|系统凭据库/;
 // One lazy chunk per route in packages/ui/src/App.tsx; keep in sync with the route manifest.
 const routeChunks = [
   "Dashboard",
@@ -60,7 +60,7 @@ test("Desktop independently includes the native adapters and keeps routes lazy",
   assert(artifacts.some((file) => /wenyi-emblem-.*\.png$/.test(file)), "Desktop must emit the shared brand asset");
   const outputs = artifacts.filter((file) => /\.js$/.test(file));
   const code = outputs.map((file) => readFileSync(file, "utf8")).join("\n");
-  for (const marker of ["__WENYI_DESKTOP", "native_drop_upload", "native_export_save", "/desktop/credentials"])
+  for (const marker of ["__WENYI_DESKTOP", "native_drop_upload", "native_export_save", "/desktop/credentials", "desktop_update_status", "Desktop updates", "桌面端更新"])
     assert(code.includes(marker), `Desktop is missing ${marker}`);
   for (const route of routeChunks)
     assert(outputs.some((file) => basename(file).includes(`${route}-`)), `${route} must remain a lazy chunk`);
