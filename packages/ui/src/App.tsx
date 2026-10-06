@@ -4,7 +4,7 @@ import { AppLayout } from "./components/layout/AppLayout";
 import { useI18n } from "./i18n";
 
 const Dashboard = lazy(() => import("./features/dashboard/Dashboard"));
-const CreateProject = lazy(
+const CreateProjectDialog = lazy(
   () => import("./features/project-create/CreateProject"),
 );
 const ProgressPage = lazy(() => import("./features/progress/ProgressPage"));
@@ -57,10 +57,11 @@ export default function App() {
         }
       >
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Dashboard />}>
+            <Route path="projects/new" element={<CreateProjectDialog />} />
+          </Route>
           <Route path="/settings/:section?" element={<InterfaceSettingsPage />} />
           <Route element={<AppLayout />}>
-            <Route path="/projects/new" element={<CreateProject />} />
             <Route path="/projects/:pid" element={<ProgressPage />} />
             <Route path="/projects/:pid/glossary" element={<GlossaryPage />} />
             <Route path="/projects/:pid/style" element={<StylePage />} />

@@ -542,8 +542,7 @@ function AddTermDialog({
       ),
   });
   return (
-    <Dialog open={open} onClose={onClose}>
-      <div className="text-lg font-semibold mb-4">{tr("glossary.addTerm")}</div>
+    <Dialog open={open} onClose={onClose} title={tr("glossary.addTerm")}>
       <div className="space-y-3">
         <div>
           <Label>{tr("glossary.requiredSourceTerm")}</Label>
@@ -664,10 +663,7 @@ function EditTermDialog({
   if (!term) return null;
 
   return (
-    <Dialog open={!!term} onClose={onClose}>
-      <div className="text-lg font-semibold mb-4">
-        {tr("glossary.editTerm")}
-      </div>
+    <Dialog open={!!term} onClose={onClose} title={tr("glossary.editTerm")}>
       <div className="space-y-3">
         <div>
           <Label>{tr("glossary.requiredSourceTerm")}</Label>
@@ -891,15 +887,12 @@ function ImportDialog({
   return (
     <Dialog
       open={open}
+      title={tr("glossary.importTerms")}
       onClose={() => {
         reset();
         onClose();
       }}
     >
-      <div className="text-lg font-semibold mb-4">
-        {tr("glossary.importTerms")}
-      </div>
-
       {step === "upload" && (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">

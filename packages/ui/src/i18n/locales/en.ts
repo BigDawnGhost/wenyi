@@ -342,6 +342,8 @@ const en = {
     "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
   "createProject.sourceRequired":
     "Choose a source file before creating the project.",
+  "createProject.selectSourceAgain":
+    "Select the source file again before retrying.",
   "createProject.emptyFile":
     "The source file is empty. Choose a file with content.",
   "createProject.unsupportedFile": "This file format is not supported.",
