@@ -143,7 +143,6 @@ export function GlobalConfiguration() {
   return (
     <>
       <ErrorNotice error={query.error || error} />
-      <fieldset disabled={installing} className="contents">
       <Card id="provider-models">
         <CardContent className="p-5 space-y-4">
           <ProviderSettings
@@ -260,7 +259,6 @@ export function GlobalConfiguration() {
           </div>
         </CardContent>
       </Card>
-      </fieldset>
       {Updates && (
         <LazyBoundary>
           <Updates
