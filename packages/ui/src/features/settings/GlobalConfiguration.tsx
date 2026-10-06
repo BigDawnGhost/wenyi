@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api, type GlobalConfig } from "@/lib/api";
 import { platform } from "@/platform";
 import { useI18n } from "@/i18n";
@@ -18,11 +17,7 @@ import { renameRegistryId, type RegistryGroup } from "./registryEdits";
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
 
-export function GlobalConfiguration({
-  section,
-}: {
-  section: "interface" | "providers" | "defaults" | "advanced";
-}) {
+export function GlobalConfiguration() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const credentials = platform().capabilities.credentials;
@@ -140,7 +135,7 @@ export function GlobalConfiguration({
   return (
     <>
       <ErrorNotice error={query.error || error} />
-      <Card hidden={section !== "providers"}>
+      <Card id="provider-models">
         <CardContent className="p-5 space-y-4">
           <ProviderSettings
             key={registryKey}
@@ -155,7 +150,7 @@ export function GlobalConfiguration({
           />
         </CardContent>
       </Card>
-      <Card hidden={section !== "defaults"}>
+      <Card>
         <CardContent className="p-5 space-y-4">
           <h2 className="font-medium">{t("settings.newProjectDefaults")}</h2>
           <p className="text-sm text-muted-foreground">
@@ -186,7 +181,7 @@ export function GlobalConfiguration({
           />
         </CardContent>
       </Card>
-      <Card hidden={section !== "advanced"}>
+      <Card id="advanced-yaml">
         <CardContent className="p-5 space-y-4">
           <Disclosure
             title={t("settings.advancedYamlConfiguration")}
@@ -217,20 +212,20 @@ export function GlobalConfiguration({
       <Card>
         <CardContent className="p-5 space-y-4">
           {yamlDirty && (
-            <Link
-              to="/settings/advanced"
+            <a
+              href="#advanced-yaml"
               className="block text-sm text-muted-foreground underline underline-offset-4"
             >
               {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-            </Link>
+            </a>
           )}
           {editingIds && (
-            <Link
-              to="/settings/providers"
+            <a
+              href="#provider-models"
               className="block text-sm text-muted-foreground underline underline-offset-4"
             >
               {t("registry.finishRenaming")}
-            </Link>
+            </a>
           )}
           <div className="flex flex-wrap gap-3">
             <Button

@@ -129,10 +129,12 @@ test("known workflow labels and language names are localized without changing AP
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);
   await page.getByText("Workflow details", { exact: true }).click();
+  // Scope to the opened disclosure: run-history rows reuse the same label.
+  const stages = page.locator("details[open]");
   await expect(
-    page.getByText("Translate chapters in batches", { exact: true }),
+    stages.getByText("Translate chapters in batches", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("分批翻译章节", { exact: true })).toHaveCount(0);
+  await expect(stages.getByText("分批翻译章节", { exact: true })).toHaveCount(0);
 });
 
 for (const locale of ["en", "zh-CN"] as const) {

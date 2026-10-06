@@ -2,7 +2,7 @@ import { useI18n } from "@/i18n";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api, isProjectBusy, type ProjectConfig } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Disclosure } from "@/components/ui/disclosure";
@@ -116,7 +116,7 @@ export default function SettingsPage() {
             <h2 className="font-medium">{tr("settings.modelSetup")}</h2>
             <p className="text-sm text-muted-foreground">
               {tr("settings.projectModelHelp")}{" "}
-              <Link to="/settings/providers" className="underline underline-offset-4">
+              <Link to="/settings" className="underline underline-offset-4">
                 {tr("settings.manageGlobalModels")}
               </Link>
             </p>

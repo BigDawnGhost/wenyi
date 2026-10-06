@@ -154,13 +154,13 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
     let show = MenuItem::with_id(app, "show-wenyi", "Show Wenyi", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit-wenyi", "Quit Wenyi", true, Some("CmdOrCtrl+Q"))?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
-    // Keep the menu installed for keyboard quit even when the optional tray fails.
+    // Always install the application menu and its keyboard quit accelerator.
     let application = Submenu::with_items(app, "Wenyi", true, &[&show, &quit])?;
     app.set_menu(Menu::with_items(app, &[&application])?)?;
     if hide_window_menu_on(std::env::consts::OS) {
         if let Some(window) = app.get_webview_window("main") {
-            // Hide only the embedded bar, retaining its accelerators and tray actions.
-            // macOS keeps its standard system application menu.
+            // Hide the embedded bar without unregistering the Quit accelerator.
+            // macOS keeps its system application menu.
             window.hide_menu()?;
         }
     }
@@ -215,7 +215,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_menu_is_hidden_but_macos_system_menu_is_preserved() {
+    fn embedded_menu_stays_hidden_independently_of_tray_availability() {
+        // Hiding is an OS policy, not conditional on tray creation or its host.
         assert!(hide_window_menu_on("linux"));
         assert!(hide_window_menu_on("windows"));
         assert!(!hide_window_menu_on("macos"));

@@ -38,7 +38,7 @@ for (const chinese of [false, true]) {
       await expect(dashboardHeading).toBeVisible();
       await expect(card).toBeVisible();
       await expect(page.getByRole("heading", { name: headingName, exact: true })).toHaveCount(0);
-      await expect(page.getByRole("complementary", { includeHidden: true })).toHaveCount(0);
+      await expect(page.getByRole("complementary", { includeHidden: true })).toHaveCount(1);
       expect(await page.evaluate(() => {
         const watch = (window as unknown as { dashboardWatch: { running: boolean; blankFrames: number } }).dashboardWatch;
         watch.running = false;
@@ -73,9 +73,10 @@ test("loading the creation module never blanks the dashboard", async ({ page }) 
     await route.continue();
   });
   try {
+    // The manifest warms this chunk on mount, before a navigation click.
+    const requested = page.waitForRequest("**/features/project-create/CreateProject.tsx*");
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
-    const requested = page.waitForRequest("**/features/project-create/CreateProject.tsx*");
     await page.locator("#create-project-trigger").click();
     await requested;
     const blankFrames = await page.evaluate(async () => {

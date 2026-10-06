@@ -156,7 +156,8 @@ export default function CreateProjectDialog() {
   const pending = create.isPending || resume.isPending || start.isPending;
   const close = () => {
     if (pending) return;
-    if (location.state?.fromProjectList) navigate(-1);
+    if (location.state?.fromAppNavigation || location.state?.fromProjectList)
+      navigate(-1);
     else navigate("/", { replace: true });
   };
 
@@ -168,7 +169,9 @@ export default function CreateProjectDialog() {
       onClose={close}
       closeDisabled={pending}
       initialFocus={nameRef}
-      returnFocus={() => document.getElementById("create-project-trigger")}
+      returnFocus={() =>
+        document.getElementById(location.state?.returnFocusId || "create-project-trigger")
+      }
       className="max-w-3xl"
     >
       <div className="space-y-4">

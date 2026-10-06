@@ -54,7 +54,7 @@ for (const chinese of [false, true]) {
       await expect(current).toBeVisible();
       await expect(current).toHaveAttribute("aria-current", "page");
       await expect(current).toHaveAttribute("title", proofreadingLabel);
-      await expect(sidebar.getByRole("link")).toHaveCount(10);
+      await expect(sidebar.getByRole("link")).toHaveCount(12);
       const global = page.getByRole("navigation", { name: globalLabel });
       await expect(global.getByRole("link")).toHaveCount(1);
       await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
@@ -72,15 +72,15 @@ for (const chinese of [false, true]) {
         .click();
       await expect(page).toHaveURL(`/projects/${pid}/settings`);
       await expect(expand).toBeVisible();
-      await global.getByRole("link", { name: chinese ? "项目列表" : "Projects", exact: true }).click();
-      await expect(page).toHaveURL("/");
-      await expect(sidebar).toHaveCount(0);
-      await page.getByRole("link", { name: chinese ? "设置" : "Settings", exact: true }).click();
+      // Settings lives in the sidebar footer stratum, outside the panels nav.
+      await sidebar
+        .getByRole("link", { name: chinese ? "设置" : "Settings", exact: true })
+        .click();
       await expect(page).toHaveURL("/settings");
       await page.reload();
-      await expect(expand).toHaveCount(0);
-      await expect(page.getByRole("navigation", { name: chinese ? "设置导航" : "Settings navigation" })).toBeVisible();
-      await expect(sidebar).toHaveCSS("width", "240px");
+      await expect(expand).toBeVisible();
+      await expect(page.getByLabel(chinese ? "界面语言" : "Interface language")).toBeVisible();
+      await expect(sidebar).toHaveCSS("width", "64px");
       await page.goto(`/projects/${pid}/proofreading`);
       await expect(expand).toBeVisible();
       await expect(sidebar).toHaveCSS("width", "64px");

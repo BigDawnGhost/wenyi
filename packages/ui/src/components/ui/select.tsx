@@ -121,7 +121,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
               (controls[index + tabDirection.current] ?? triggerRef.current)?.focus();
               tabDirection.current = 0;
             }}
-            className="z-[100] max-h-[min(20rem,var(--radix-select-content-available-height))] w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-1rem)] overflow-hidden rounded-md border bg-background text-foreground shadow-lg"
+            className="z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border bg-background text-foreground shadow-lg"
           >
             <Primitive.ScrollUpButton className="flex justify-center py-1">
               <ChevronUp className="h-4 w-4" />

@@ -15,11 +15,20 @@ if (!env.RUSTUP_HOME && existsSync(path.join(root, '.scratch/rustup/toolchains')
   env.CARGO_HOME = path.join(root, '.scratch/cargo');
 }
 function run(command, parameters, cwd = root) {
+  let shell = false;
   if (command === 'pnpm' && env.npm_execpath) {
-    parameters = [env.npm_execpath, ...parameters];
-    command = process.execPath;
+    if (env.npm_execpath.endsWith('.exe')) {
+      // Native pnpm binary; Node cannot load it as a module.
+      command = env.npm_execpath;
+    } else {
+      parameters = [env.npm_execpath, ...parameters];
+      command = process.execPath;
+    }
+  } else if (command === 'pnpm' && process.platform === 'win32') {
+    // No npm_execpath (direct node invocation): pnpm may exist only as a .cmd shim.
+    shell = true;
   }
-  const result = spawnSync(command, parameters, { cwd, env, stdio: 'inherit' });
+  const result = spawnSync(command, parameters, { cwd, env, stdio: 'inherit', shell });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 const identity = spawnSync('uv', [

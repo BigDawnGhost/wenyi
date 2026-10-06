@@ -35,7 +35,7 @@ export function Dialog({
       }}
     >
       <Primitive.Portal>
-        <Primitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <Primitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]" />
         <Primitive.Content
           {...(!description ? { "aria-describedby": undefined } : {})}
           className={cn(
@@ -60,7 +60,11 @@ export function Dialog({
             if (closeDisabled) event.preventDefault();
           }}
           onPointerDownOutside={(event) => {
-            if (closeDisabled) event.preventDefault();
+            // Dismissing a notification must not also dismiss the active form.
+            const target = event.target;
+            if (closeDisabled || (
+              target instanceof Element && target.closest("[data-sonner-toaster]")
+            )) event.preventDefault();
           }}
         >
           <div className="shrink-0 border-b px-4 py-4 pr-14 sm:px-6 sm:pr-14">

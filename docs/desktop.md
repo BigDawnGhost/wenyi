@@ -32,7 +32,7 @@ Desktop uses the system credential store when available. If it is unavailable, t
 
 ### 3. Create a translation project
 
-Click the floating **+** above **Settings** on the project list to open the centered **Create project** dialog. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, Escape, or browser Back returns to the list without creating a project and restores focus to **+**. Closing releases any selected native source resource; reopening starts a clean form. On narrow screens the form scrolls while the close header stays visible.
+Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project and restores focus to the sidebar entry. Browser Back also leaves the dialog. Closing releases any selected native source resource; reopening starts a clean form. On narrow screens the form scrolls while the close header stays visible.
 
 Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement and dialog dismissal are disabled; this is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
 
@@ -171,9 +171,9 @@ The AppImage was launched on KDE Wayland with a temporary workspace and an inval
 
 ## API keys
 
-From the project list, use the bottom-right floating **Settings** icon. Settings is a standalone page with Interface language (`/settings`), API providers & models (`/settings/providers`), New project defaults (`/settings/defaults`), and Advanced YAML configuration (`/settings/advanced`); **Projects** returns to the dashboard. Category navigation does not collapse with the project sidebar, and switching categories preserves unsaved configuration drafts. Save, validate, and restore defaults remain available in all configuration categories.
+Use **Settings** in the shared sidebar footer. `/settings` contains Interface language, API providers & models, New project defaults, and Advanced YAML configuration together, with save, validate, and restore defaults. There is no separate settings layout or category navigation. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
 
-In both project and Settings sidebars, the only bottom entry is **Projects**. On the project list, **Create project** floats above **Settings**.
+The project list, projects, and Settings share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. There are no floating dashboard actions. Same-page history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
 
 Open **Settings → API providers & models**, configure the provider/model and optional base URL, then save the connection configuration. Enter the API key in its password field and save it.
 
@@ -239,9 +239,10 @@ is deliberately not treated as minimization. Restoring from the tray remaps the
 same native window to handle GTK/Wayland's deiconify limitation, without replacing
 the WebView or its drafts.
 
-Linux and Windows hide the native top window menu bar; macOS retains its system
-application menu. This policy takes effect on application restart. Tray **Show Wenyi**
-and **Quit Wenyi** actions and quit shortcuts remain registered.
+Linux and Windows hide the native top window menu bar while keeping its menu
+events and **Ctrl+Q** quit accelerator registered, even without a usable tray.
+macOS retains its system application menu and **Cmd+Q**. Tray **Show Wenyi** and
+**Quit Wenyi** remain available when a tray host is present.
 
 Use **Quit Wenyi** in the tray, the macOS application menu, or the quit shortcut
 to actually exit.

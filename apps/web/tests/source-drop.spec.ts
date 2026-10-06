@@ -33,10 +33,8 @@ for (const chinese of [false, true]) {
       project: Record<string, unknown>;
     }[] = [];
     await page.route("**/api/projects", async (route) => {
-      if (route.request().method() !== "POST") {
-        await route.fallback();
-        return;
-      }
+      // The sidebar also reads the project list from this path.
+      if (route.request().method() !== "POST") return route.fallback();
       const form = await new Response(
         new Uint8Array(route.request().postDataBuffer()!),
         {

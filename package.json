@@ -7,7 +7,7 @@
     "build:web": "pnpm -C apps/web build",
     "dev:desktop-ui": "pnpm -C apps/desktop/frontend dev",
     "build:desktop-ui": "pnpm -C apps/desktop/frontend build",
-    "test:frontend-boundaries": "node --test packages/ui/tests/platform-boundaries.test.mjs",
+    "test:frontend-boundaries": "node --test \"packages/ui/tests/*.test.mjs\"",
     "desktop": "node scripts/desktop.mjs dev",
     "desktop:build": "node scripts/desktop.mjs build",
     "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
