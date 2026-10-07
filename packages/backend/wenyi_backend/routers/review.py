@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from ..job_service import start_job
-from ..project_service import project_write, require_book, require_project, storage_for
+from ..project_service import (
+    project_write,
+    read_storage_for,
+    require_book,
+    require_project,
+    storage_for,
+)
 from ..review_presentation import review_items
 from ..schemas import (
     ChapterSegments,
@@ -82,14 +88,21 @@ def get_run(pid: str, rid: str) -> dict:
 
 @router.get("/{ci}", response_model=ChapterSegments)
 def get_chapter_for_review(pid: str, ci: int) -> dict:
-    require_book(require_project(pid))
-    return chapter_payload(storage_for(pid), ci)
+    project = require_project(pid)
+    require_book(project)
+    storage = read_storage_for(pid)
+    try:
+        return chapter_payload(storage, ci, project=project)
+    finally:
+        storage.close()
 
 
 @router.put("/{ci}/segments/{seg_idx}")
 def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
     with project_write(pid) as (project, storage):
         require_book(project)
+        if not storage.exists():
+            raise HTTPException(409, "Prepare the book before editing translations")
         try:
             chapter = storage.load_chapter(ci)
         except KeyError:
@@ -123,17 +136,25 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
 
 @router.get("/{ci}/segments/{seg_idx}/history", response_model=list[SegmentRevision])
 def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
-    require_book(require_project(pid))
+    project = require_project(pid)
+    require_book(project)
+    if not project.get("initialized"):
+        raise HTTPException(409, "Prepare the book before inspecting translation history")
+    storage = read_storage_for(pid)
     try:
-        return storage_for(pid).load_segment_history(ci, seg_idx)
+        return storage.load_segment_history(ci, seg_idx)
     except KeyError:
         raise HTTPException(404, "segment not found") from None
+    finally:
+        storage.close()
 
 
 @router.post("/{ci}/complete")
 def mark_reviewed(pid: str, ci: int) -> dict:
     with project_write(pid) as (project, storage):
         require_book(project)
+        if not storage.exists():
+            raise HTTPException(409, "Prepare the book before marking review complete")
         try:
             chapter = storage.load_chapter(ci)
         except KeyError:

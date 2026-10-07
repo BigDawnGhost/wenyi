@@ -19,6 +19,7 @@ from ..context import current_context, use_context
 from ..emitters import redis_progress_fn
 from ..live_statistics import LiveStatistics
 from ..project_service import effective_config, storage_for
+from ..source_view import book_preview
 
 
 class PauseRequested(KeyboardInterrupt):
@@ -70,7 +71,7 @@ def _build_config_for(pid: str, run_id: str | None = None):
 
 
 def _parse_source(pid, storage, config, progress):
-    from wenyi_core.pipeline.preparation import PreparationService
+    from wenyi_core.pipeline.input_preparation import parse_document
 
     source = _resolve_source(pid)
     project = dal.get_project(pid)
@@ -94,50 +95,8 @@ def _parse_source(pid, storage, config, progress):
             "chapters": [],
         }
     else:
-        from wenyi_core.ingest.segmenter import load_document
-        from wenyi_core.pipeline.runstore import source_sha256
-
-        digest = source_sha256(source)
-        doc = PreparationService.load_parsed_document(storage, source, config, actual_sha256=digest)
-        if doc is None:
-            doc = load_document(
-                source,
-                config.source_lang,
-                config.target_lang,
-                split_segments=config.segment.max_tokens_per_segment,
-                cache_dir=storage.source_dir,
-                source_hash=digest,
-                pdf_backend=config.pipeline.pdf_backend,
-                babeldoc_bridge_url=config.pipeline.babeldoc_bridge_url,
-                babeldoc_pages=config.pipeline.babeldoc_pages,
-                babeldoc_timeout=config.pipeline.babeldoc_timeout,
-            )
-            if source_sha256(source) != digest:
-                raise ValueError("Source changed while generating preview")
-            storage.write_artifact(
-                "parsed_document.json",
-                {
-                    "source_sha256": digest,
-                    "ingest_config": PreparationService.ingest_config(config),
-                    "document": doc.model_dump(mode="json"),
-                },
-            )
-        chapters = [
-            {
-                "index": chapter.index,
-                "title": chapter.title,
-                "word_count": len(chapter.text_segments),
-            }
-            for chapter in doc.chapters
-        ]
-        preview = {
-            "title": doc.title,
-            "fmt": project["fmt"],
-            "chapter_count": len(chapters),
-            "total_word_count": sum(row["word_count"] for row in chapters),
-            "source_lang": doc.source_lang,
-            "chapters": chapters,
-        }
+        doc = parse_document(storage, source, config)
+        preview = book_preview(doc, project["fmt"])
     storage.write_artifact("preview.json", preview)
     progress(1, 1, "原文预览已就绪")
     return "uploaded"
@@ -151,8 +110,6 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
     orch = Orchestrator(config, client=client, storage=storage)
     source = _resolve_source(pid)
     if kind == "prepare":
-        if params.get("preview"):
-            _parse_source(pid, storage, config, progress)
         orch.prepare_for_translation(source, progress=progress)
         return "prepared"
     if kind == "chapter_translation":
@@ -250,6 +207,9 @@ def _execute(
             if kind == "parse":
                 result_status = _parse_source(pid, storage, config, progress)
             else:
+                if kind == "prepare" and not storage.exists():
+                    # Source inspection must survive missing credentials or failed AI preparation.
+                    _parse_source(pid, storage, config, progress)
                 client = context.build_client(config)
                 live.bind_client(client)
                 client.set_event_sink(storage.log_event)

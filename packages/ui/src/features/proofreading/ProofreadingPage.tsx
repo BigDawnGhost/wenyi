@@ -49,7 +49,10 @@ export default function ProofreadingPage() {
         index={Number(ci)}
         chapters={chapters.data || []}
         busy={busy}
-        readOnly={busy || !project.data || project.isError || chapters.isError}
+        sourceOnly={project.data?.initialized !== true}
+        readOnly={
+          busy || !project.data?.initialized || project.isError || chapters.isError
+        }
         error={project.error || chapters.error}
         targetLanguage={project.data?.target_lang ?? undefined}
       />
@@ -59,7 +62,11 @@ export default function ProofreadingPage() {
     <>
       <PageHeader
         title={t("progress.manualProofreading")}
-        subtitle={t("proofreading.savedBatchesRefresh")}
+        subtitle={t(
+          project.data?.initialized
+            ? "proofreading.savedBatchesRefresh"
+            : "proofreading.parsedSourceHelp",
+        )}
       />
       <PageContainer className="space-y-4">
         <ErrorNotice error={project.error || chapters.error} />
@@ -131,7 +138,7 @@ export default function ProofreadingPage() {
               <p className="text-sm text-muted-foreground">
                 {project.isPending || chapters.isFetching
                   ? t("progress.loading")
-                  : t("proofreading.chaptersAppearAfterPreparation")}
+                  : t("progress.chaptersWillAppearAfterParsing")}
               </p>
             )}
           </CardContent>

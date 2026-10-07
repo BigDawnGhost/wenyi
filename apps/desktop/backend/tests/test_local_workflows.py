@@ -10,6 +10,7 @@ from desktop_test_support import initialize, wait_job
 from fastapi.testclient import TestClient
 from wenyi_backend import dal
 from wenyi_backend.context import use_context
+from wenyi_core.ingest.models import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
 
@@ -112,6 +113,135 @@ def test_upload_parse_preview_and_workflow_use_sqlite(desktop):
     assert not list(backend.workspace.rglob("preview.json"))
     assert not list(backend.workspace.rglob("manifest.json"))
     store.close()
+
+
+@pytest.mark.parametrize("name,fmt", [("book.txt", "text"), ("book.md", "markdown")])
+def test_parsed_book_exposes_read_only_chapters_before_preparation(desktop, name, fmt):
+    client, backend, fake = desktop
+    pid = upload(client, name=name, content=b"# First\n\nSource one.\n\n# Second\n\nSource two.\n")
+    root = f"/projects/{pid}"
+    store = backend.storage_for(pid)
+    parsed = store.read_artifact("parsed_document.json")
+    assert not store.exists()
+    assert fake.calls == []
+    assert client.get(root + "/preview").json()["fmt"] == fmt
+    detail = client.get(root).json()
+    assert detail["initialized"] is False
+    assert detail["chapter_count"] == 2
+    assert detail["done_chapters"] == 0
+    chapters = client.get(root + "/chapters").json()
+    assert [chapter["title"] for chapter in chapters] == ["First", "Second"]
+    assert all(chapter["target_word_count"] == 0 for chapter in chapters)
+    for route in ("chapters/0", "review/0"):
+        response = client.get(f"{root}/{route}")
+        assert response.status_code == 200, response.text
+        assert any("Source one." in segment["source"] for segment in response.json()["segments"])
+        assert all(segment["target"] is None for segment in response.json()["segments"])
+    assert client.get(root + "/chapters/99").status_code == 404
+    response = client.put(
+        root + "/review/0/segments/0", json={"target": "译文", "expected_target": None}
+    )
+    assert response.status_code == 409
+    assert client.post(root + "/review/0/complete").status_code == 409
+    response = client.put(
+        root + "/chapters/0/title",
+        json={"title_translated": "标题", "expected_title_translated": None},
+    )
+    assert response.status_code == 409
+    assert store.read_artifact("parsed_document.json") == parsed
+    assert not store.exists()
+    store.close()
+
+
+def test_initialization_keeps_parsed_source_visible_without_exposing_staged_targets(desktop):
+    client, backend, _ = desktop
+    pid = upload(client)
+    root = f"/projects/{pid}"
+    store = backend.storage_for(pid)
+    parsed = store.read_artifact("parsed_document.json")
+    preview = store.read_artifact("preview.json")
+    store.begin_initialization(parsed["source_sha256"])
+    document = Document.model_validate(parsed["document"])
+    document.chapters[0].segments[0].target = "Uncommitted derived state"
+    store.stage_document(document, source_hash=parsed["source_sha256"])
+    for status in ("preparing", "error"):
+        backend.set_project_status(pid, status)
+        assert client.get(root).json()["initialized"] is False
+        response = client.get(root + "/chapters/0")
+        assert response.status_code == 200, response.text
+        assert all(segment["target"] is None for segment in response.json()["segments"])
+        assert client.get(root + "/preview").json() == preview
+    response = client.put(
+        root + "/review/0/segments/0",
+        json={"target": "Do not edit staged state", "expected_target": "Uncommitted derived state"},
+    )
+    assert response.status_code == 409
+    assert store.read_artifact("parsed_document.json") == parsed
+    store.close()
+
+
+def test_create_and_prepare_parses_before_model_credentials_fail(desktop, monkeypatch):
+    client, backend, fake = desktop
+
+    def reject_credentials(*args, **kwargs):
+        raise ValueError("No model credentials")
+
+    monkeypatch.setattr(fake, "validate_credentials", reject_credentials)
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps({"name": "Offline", "source_lang": "en", "prepare": True})},
+        files={"file": ("book.txt", b"A readable source paragraph.\n")},
+    )
+    assert response.status_code == 201, response.text
+    pid = response.json()["id"]
+    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "error"
+    assert fake.calls == []
+    detail = client.get(f"/projects/{pid}").json()
+    assert detail["initialized"] is False
+    assert detail["chapter_count"] == 1
+    response = client.get(f"/projects/{pid}/chapters/0")
+    assert response.status_code == 200, response.text
+    assert response.json()["segments"][0]["source"] == "A readable source paragraph."
+
+
+@pytest.mark.parametrize("mismatch", ["source", "config"])
+def test_source_view_rejects_stale_parse_identity(desktop, mismatch):
+    client, backend, _ = desktop
+    pid = upload(client)
+    store = backend.storage_for(pid)
+    parsed = store.read_artifact("parsed_document.json")
+    if mismatch == "source":
+        parsed["source_sha256"] = "0" * 64
+    else:
+        parsed["ingest_config"]["max_tokens_per_segment"] += 1
+    store.write_artifact("parsed_document.json", parsed)
+    root = f"/projects/{pid}"
+    assert client.get(root + "/chapters").json() == []
+    assert client.get(root).json()["chapter_count"] == 0
+    assert client.get(root + "/chapters/0").status_code == 404
+    assert client.get(root + "/preview").status_code == 409
+    store.close()
+
+
+def test_parse_then_prepare_keeps_source_identity_and_enables_formal_edits(desktop):
+    client, backend, _ = desktop
+    pid = upload(client)
+    root = f"/projects/{pid}"
+    before = client.get(root + "/chapters/0")
+    assert before.status_code == 200, before.text
+    response = client.post(root + "/prepare")
+    assert response.status_code == 200, response.text
+    job = wait_job(response.json()["job_id"])
+    assert job["status"] == "done", job
+    assert client.get(root).json()["initialized"] is True
+    after = client.get(root + "/chapters/0").json()
+    assert after["segments"] == before.json()["segments"]
+    response = client.put(
+        root + "/review/0/segments/0", json={"target": "人工译文", "expected_target": None}
+    )
+    assert response.status_code == 200
+    assert client.get(root + "/chapters/0").json()["segments"][0]["target"] == "人工译文"
+    assert backend.storage_for(pid).read_artifact("parsed_document.json") is not None
 
 
 def test_desktop_does_not_use_or_modify_cli_state(desktop, tmp_path, monkeypatch):

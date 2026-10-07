@@ -50,6 +50,23 @@ def test_creation_uploads_source_and_runs_selected_setup(api, prepare):
         "prepared" if prepare else "uploaded"
     )
     assert all(ch["status"] != "done" for ch in dal.chapter_summaries(pid))
+    detail = client.get(f"/projects/{pid}").json()
+    chapters = client.get(f"/projects/{pid}/chapters").json()
+    assert detail["chapter_count"] == len(chapters) > 0
+    assert detail["initialized"] is prepare
+    for chapter in chapters:
+        for route in ("chapters", "review"):
+            response = client.get(f"/projects/{pid}/{route}/{chapter['index']}")
+            assert response.status_code == 200, response.text
+            assert all(segment["target"] is None for segment in response.json()["segments"])
+    if not prepare:
+        assert dal.chapter_summaries(pid) == [], "Parsing must not initialize formal chapters"
+        ci = chapters[0]["index"]
+        response = client.put(
+            f"/projects/{pid}/review/{ci}/segments/0",
+            json={"target": "Must remain read-only", "expected_target": None},
+        )
+        assert response.status_code == 409
 
 
 @pytest.mark.parametrize(

@@ -27,10 +27,10 @@ def draft_api(monkeypatch, tmp_path):
         segment.target, segment.target_before_polish = target, before
     store.save_chapter(chapter)
     PrecisionBatchExecutor.mark_published(store, result)
-    project = {"id": "draft-test", "fmt": "text"}
+    project = {"id": "draft-test", "fmt": "text", "initialized": store.exists()}
     monkeypatch.setattr(main, "settings", replace(main.settings, api_token=None))
     monkeypatch.setattr(chapters, "require_project", lambda _: project)
-    monkeypatch.setattr(chapters, "storage_for", lambda _: store)
+    monkeypatch.setattr(chapters, "read_storage_for", lambda _: store)
     http = TestClient(main.create_app())
     yield http, store, result, client, project, tmp_path
     http.close()

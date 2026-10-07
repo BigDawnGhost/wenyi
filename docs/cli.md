@@ -291,6 +291,9 @@ Manifests bind input content with `source_sha256`. A different file with the sam
 ## Common commands
 
 ```bash
+# Parse and list the source chapters without model calls
+uv run wenyi parse book.epub
+
 # Run the complete workflow, translate one chapter, or prepare without translating
 uv run wenyi translate book.epub
 uv run wenyi translate book.epub --chapter 3
@@ -307,6 +310,10 @@ uv run wenyi translate book.epub --no-polish --no-review
 uv run wenyi translate book.epub --bilingual
 uv run wenyi translate book.epub --no-mono --bilingual
 ```
+
+`parse` lists zero-based chapter indices, source titles and paragraph counts, and saves the source document in `parsed_document.json` under the printed target-language state directory. It does not require LLM credentials, detect language with a model, generate digests/style/terms, or mark translation state initialized. `language.source: auto` remains unresolved until preparation. PDF parsing still needs the configured MinerU/BabelDOC service. SRT uses the independent subtitle workflow, not this book command.
+
+Use `prepare` or `translate` afterward with the same source and configuration. Matching cached parsing is reused, including PDF conversion; changed content or parsing options invalidate it. An existing initialized run rejects different source content and keeps saved translations, analysis and usage unchanged.
 
 `prepare` parses the book, detects its language, generates chapter digests when enabled, builds the style guide and initial glossary, and then generates the whole-book synopsis when enabled, without translating any body text. Run `translate` with the same source file to continue from the saved state.
 

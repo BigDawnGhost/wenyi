@@ -279,6 +279,13 @@ def test_plan_and_project_reads_never_create_missing_domain_state(desktop_contex
         assert project.status_code == 200
         assert project.json()["initialized"] is False
         assert client.get("/projects").status_code == 200
+        for route, status in (
+            ("chapters", 200),
+            ("chapters/0", 404),
+            ("review/0", 404),
+            ("preview", 409),
+        ):
+            assert client.get(f"/projects/{pid}/{route}").status_code == status
         response = client.post(f"/desktop/projects/{pid}/exports/plan", json={"format": "txt"})
         assert response.status_code == 409
         assert not root.exists()

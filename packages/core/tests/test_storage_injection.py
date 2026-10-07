@@ -131,7 +131,7 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
     def unexpected_parse(*args, **kwargs):
         raise AssertionError("Preparation re-parsed a matching upload preview")
 
-    monkeypatch.setattr("wenyi_core.pipeline.preparation.load_document", unexpected_parse)
+    monkeypatch.setattr("wenyi_core.pipeline.input_preparation.load_document", unexpected_parse)
     result = Orchestrator(
         config, client=MeteredFakeClient(handler=routing_handler), storage=store
     ).prepare(str(source))
