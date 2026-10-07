@@ -435,8 +435,10 @@ const en = {
   "proofreading.savedBatchesRefresh":
     "Saved paragraphs refresh every 3 seconds, including unfinished chapters.",
   "proofreading.savedParagraphs": "{done} / {total} paragraphs saved",
-  "proofreading.chaptersAppearAfterPreparation":
-    "Chapters appear as the book is prepared. You can open them before translation finishes.",
+  "proofreading.parsedSourceHelp":
+    "Read-only source preview. AI preparation is not complete; title and translation editing will be available after preparation.",
+  "contents.readSource": "Read source",
+  "contents.readContentsSource": "Read contents & source",
   "proofreading.waitingForTranslation": "Waiting for translation",
   "proofreading.pauseToEdit":
     "A project task is running. Saved translations refresh automatically; pause the task before editing.",

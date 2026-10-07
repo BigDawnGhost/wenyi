@@ -63,7 +63,7 @@ def pdf_project(tmp_path, monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        "wenyi_core.pipeline.preparation.load_document",
+        "wenyi_core.pipeline.input_preparation.load_document",
         lambda *a, **kw: document.model_copy(deep=True),
     )
     monkeypatch.setattr(

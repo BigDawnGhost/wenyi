@@ -34,6 +34,11 @@ def storage_for(pid: str) -> Storage:
     return current_context().storage_for(pid)
 
 
+def read_storage_for(pid: str) -> Storage:
+    """Open project state for inspection without creating a missing state store."""
+    return current_context().read_storage_for(pid)
+
+
 def busy(project: dict) -> bool:
     return project.get("status") in dal.RUNNING_PROJECT_STATUSES
 

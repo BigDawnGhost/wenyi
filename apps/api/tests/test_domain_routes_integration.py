@@ -25,8 +25,10 @@ initialize = storage_tests.initialize
 def domain_client(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
     monkeypatch.setattr(project_service, "storage_for", lambda pid: pg_storage)
-    for module in (chapters, glossary, report, review, style, subtitles):
+    for module in (glossary, report, review, style, subtitles):
         monkeypatch.setattr(module, "storage_for", lambda pid: pg_storage)
+    for module in (chapters, review):
+        monkeypatch.setattr(module, "read_storage_for", lambda pid: pg_storage)
     repository = current_context().repository
     assert isinstance(repository, PostgresRepository)
     repository._pool = pg_pool

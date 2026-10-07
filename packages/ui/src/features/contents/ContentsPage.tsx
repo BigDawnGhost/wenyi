@@ -33,6 +33,7 @@ export default function ContentsPage() {
       loading={project.isPending || chapters.isPending}
       error={project.error || chapters.error}
       busy={isProjectBusy(project.data?.status)}
+      initialized={project.data?.initialized === true}
     />
   );
 }
@@ -43,12 +44,14 @@ function ContentsWorkspace({
   loading,
   error,
   busy,
+  initialized,
 }: {
   pid: string;
   chapters: ChapterSummary[];
   loading: boolean;
   error: unknown;
   busy: boolean;
+  initialized: boolean;
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -72,13 +75,16 @@ function ContentsWorkspace({
       .toLocaleLowerCase()
       .includes(query),
   );
-  const readOnly = busy || !!error || loading;
+  const readOnly = !initialized || busy || !!error || loading;
   return (
     <>
-      <PageHeader title={t("contents.title")} subtitle={t("contents.help")} />
+      <PageHeader
+        title={t("contents.title")}
+        subtitle={t(initialized ? "contents.help" : "proofreading.parsedSourceHelp")}
+      />
       <PageContainer className="space-y-4">
         <ErrorNotice error={error} />
-        {busy && (
+        {initialized && busy && (
           <p role="status" className="text-sm text-muted-foreground">
             {t("contents.pauseToEdit")}
           </p>
@@ -99,6 +105,12 @@ function ContentsWorkspace({
             pid={pid}
             entries={visible}
             readOnly={readOnly}
+            sourceOnly={!initialized}
+            empty={
+              chapters.length
+                ? undefined
+                : t("progress.chaptersWillAppearAfterParsing")
+            }
             onEdit={setEditing}
           />
         )}

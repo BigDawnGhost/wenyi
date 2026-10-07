@@ -23,6 +23,7 @@ def backend_context(tmp_path):
             release=lambda cache: None,
         ),
         storage_for=Mock(),
+        read_storage_for=Mock(),
         build_client=lambda config: FakeClient(),
         enqueue=Mock(),
         data_dir=str(tmp_path),

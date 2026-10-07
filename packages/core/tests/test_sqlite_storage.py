@@ -180,6 +180,26 @@ def test_stage_manifest_last_and_all_major_state(store, document):
     }
 
 
+@pytest.mark.parametrize("matching_source", [True, False])
+def test_initialization_preserves_only_matching_source_preview(store, document, matching_source):
+    digest = source_sha256(document.source_path)
+    parsed = {
+        "source_sha256": digest if matching_source else "0" * 64,
+        "document": document.model_dump(mode="json"),
+    }
+    store.write_artifact("parsed_document.json", parsed)
+    store.write_artifact("preview.json", {"title": document.title})
+    store.write_artifact("analysis.json", {"stale": True})
+    for _attempt in range(2):
+        store.begin_initialization(digest)
+        assert store.read_artifact("parsed_document.json") == (parsed if matching_source else None)
+        assert store.read_artifact("preview.json") == (
+            {"title": document.title} if matching_source else None
+        )
+        assert store.load_analysis() is None
+        assert not store.exists()
+
+
 def test_initialization_failure_retry_and_source_isolation(store, document, monkeypatch):
     digest = source_sha256(document.source_path)
     store.begin_initialization(digest)

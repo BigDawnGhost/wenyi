@@ -99,6 +99,7 @@ def create_context(
         exports=backend,
         telemetry=services,
         storage_for=backend.storage_for,
+        read_storage_for=lambda pid: backend.storage_for(pid, create=False),
         build_client=lambda config: build_local_client(config, credentials),
         enqueue=services.enqueue,
         data_dir=str(backend.workspace / "projects"),

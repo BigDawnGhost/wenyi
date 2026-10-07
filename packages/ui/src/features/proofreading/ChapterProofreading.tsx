@@ -16,12 +16,14 @@ const ParagraphRow = memo(function ParagraphRow({
   source,
   target,
   disabled,
+  sourceOnly,
   onOpen,
 }: {
   index: number;
   source: string;
   target: string | null | undefined;
   disabled: boolean;
+  sourceOnly: boolean;
   onOpen: (index: number, view: "edit" | "history" | "precision") => void;
 }) {
   const { t } = useI18n();
@@ -29,7 +31,7 @@ const ParagraphRow = memo(function ParagraphRow({
     <div
       id={`paragraph-${index}`}
       tabIndex={-1}
-      className="grid lg:grid-cols-2 border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30"
+      className={`grid ${sourceOnly ? "" : "lg:grid-cols-2"} border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
       // Keep every paragraph searchable/selectable and addressable by deep links.
       // Unlike virtualization, auto only skips offscreen layout and painting.
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 280px" }}
@@ -42,12 +44,14 @@ const ParagraphRow = memo(function ParagraphRow({
           {source}
         </p>
       </div>
-      <ParagraphActions
-        source={source}
-        target={target}
-        disabled={disabled}
-        onOpen={(view) => onOpen(index, view)}
-      />
+      {!sourceOnly && (
+        <ParagraphActions
+          source={source}
+          target={target}
+          disabled={disabled}
+          onOpen={(view) => onOpen(index, view)}
+        />
+      )}
     </div>
   );
 });
@@ -58,6 +62,7 @@ export function ChapterProofreading({
   chapters,
   busy,
   readOnly,
+  sourceOnly,
   error,
   targetLanguage,
 }: {
@@ -66,6 +71,7 @@ export function ChapterProofreading({
   chapters: ChapterSummary[];
   busy: boolean;
   readOnly: boolean;
+  sourceOnly: boolean;
   error: unknown;
   targetLanguage?: string;
 }) {
@@ -122,7 +128,11 @@ export function ChapterProofreading({
             chapter.data?.title.trim() ||
             t(chapter.data ? "common.untitledChapter" : "progress.loading"),
         })}
-        subtitle={t("proofreading.savedBatchesRefresh")}
+        subtitle={t(
+          sourceOnly
+            ? "proofreading.parsedSourceHelp"
+            : "proofreading.savedBatchesRefresh",
+        )}
         actions={
           <>
             <Link to={`/projects/${pid}/proofreading`}>
@@ -153,12 +163,12 @@ export function ChapterProofreading({
               : undefined)
           }
         />
-        {busy && (
+        {!sourceOnly && busy && (
           <p role="status" className="rounded border p-3 text-sm">
             {t("proofreading.pauseToEdit")}
           </p>
         )}
-        {chapter.data && (
+        {!sourceOnly && chapter.data && (
           <p className="text-sm text-muted-foreground">
             {t("proofreading.savedParagraphs", {
               done: saved,
@@ -175,12 +185,13 @@ export function ChapterProofreading({
                 source={segment.source}
                 target={segment.target}
                 disabled={readOnly || chapter.isError}
+                sourceOnly={sourceOnly}
                 onOpen={openEditor}
               />
             ))}
           </CardContent>
         </Card>
-        {editor && activeSegment && (
+        {!sourceOnly && editor && activeSegment && (
           <ParagraphEditor
             key={activeSegment.index}
             pid={pid}
@@ -193,12 +204,14 @@ export function ChapterProofreading({
             onClose={() => setEditor(null)}
           />
         )}
-        <Disclosure title={t("review.recordedReviewNotesForThisChapter")}>
-          <StructuredData
-            value={chapter.data?.review_issues}
-            empty={t("review.noNotesRecordedCheckTheWholeBook")}
-          />
-        </Disclosure>
+        {!sourceOnly && (
+          <Disclosure title={t("review.recordedReviewNotesForThisChapter")}>
+            <StructuredData
+              value={chapter.data?.review_issues}
+              empty={t("review.noNotesRecordedCheckTheWholeBook")}
+            />
+          </Disclosure>
+        )}
       </PageContainer>
     </>
   );

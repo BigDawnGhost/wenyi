@@ -28,6 +28,40 @@ class TranslationMode(str, Enum):
 
 
 def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> None:
+    @app.command(rich_help_panel="Main workflow")
+    def parse(
+        input_path: str = typer.Argument(..., help="Source book to parse without AI"),
+    ) -> None:
+        """Parse source chapters and list the contents without AI initialization."""
+        from rich.table import Table
+        from wenyi_core.pipeline.input_preparation import (
+            locate_input_storage,
+            parse_document,
+        )
+        from wenyi_core.storage.file import FileStorage
+
+        console = context().console
+        try:
+            require_input_file(input_path, console=console)
+            config = context().load_config()
+            store, digest = locate_input_storage(input_path, config, FileStorage)
+            try:
+                with store.lock():
+                    document = parse_document(store, input_path, config, expected_sha256=digest)
+                table = Table("Chapter", "Title", "Paragraphs")
+                for chapter in document.chapters:
+                    table.add_row(
+                        str(chapter.index), chapter.title, str(len(chapter.text_segments))
+                    )
+                console.print(table)
+                console.print(f"State directory: {store.run_dir}", markup=False)
+                console.print("Source parsed. AI preparation has not been run by this command.")
+            finally:
+                store.close()
+        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+            console.print(f"[red]Error: {error}[/]")
+            raise typer.Exit(1) from None
+
     def _translate_impl(
         input_path: str,
         *,
