@@ -33,13 +33,16 @@ class BookEvidenceIndex:
         terms: list[GlossaryTerm],
         analysis: dict[str, Any],
         *,
+        source_lang: str = "auto",
         target_overrides: Mapping[tuple[int, int], str] | None = None,
     ):
         """Build the read-only whole-book evidence index.
         target_overrides maps chapter.index/text_index pairs to shadow translations visible
         only in this index. Uncovered locations use formal chapter targets, preserving
-        ordinary calls and persisted data.
+        ordinary calls and persisted data. Only a resolved Japanese source exposes readings;
+        legacy callers without source_lang omit them rather than guessing from the target.
         """
+        self.source_lang = source_lang
         flattened: list[SegmentRef] = []
         by_location: dict[tuple[int, int], int] = {}
         chapter_digests: dict[int, str] = {}
@@ -210,14 +213,13 @@ class BookEvidenceIndex:
             "invalid_selectors": invalid,
         }
 
-    @staticmethod
-    def _term_evidence(term: GlossaryTerm) -> dict[str, Any]:
+    def _term_evidence(self, term: GlossaryTerm) -> dict[str, Any]:
         """Condense one glossary term into citable read-only evidence."""
         return {
             "ref": _glossary_ref(term.source),
             "source": _clip(term.source, 256),
             "target": _clip(term.target, 256),
-            "reading": _clip(term.reading, 256),
+            **({"reading": _clip(term.reading, 256)} if self.source_lang == "ja" else {}),
             "type": _clip(term.type, 64),
             "gender": _clip(term.gender, 64),
             "aliases": [_clip(alias, 256) for alias in term.aliases[:16]],

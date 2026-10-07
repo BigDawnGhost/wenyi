@@ -60,8 +60,12 @@ class Analyzer(Agent):
         )
         for character in data["characters"]:
             character["gender"] = normalize_gender(_text(character.get("gender")))
+            if self.src != "ja":
+                character.pop("reading", None)
         for term in data["terms"]:
             term["type"] = normalize_term_type(_text(term.get("type")))
+            if self.src != "ja":
+                term.pop("reading", None)
         return data
 
     def seed_glossary(self, store: Storage | GlossaryStore, analysis: dict[str, Any]) -> int:
@@ -78,7 +82,7 @@ class Analyzer(Agent):
                 GlossaryTerm(
                     source=source,
                     target=target,
-                    reading=_text(ch.get("reading")),
+                    reading=_text(ch.get("reading")) if self.src == "ja" else "",
                     type=TYPE_PERSON,
                     gender=_text(ch.get("gender")),
                     note=_text(ch.get("note")),
@@ -96,7 +100,7 @@ class Analyzer(Agent):
                 GlossaryTerm(
                     source=source,
                     target=target,
-                    reading=_text(tm.get("reading")),
+                    reading=_text(tm.get("reading")) if self.src == "ja" else "",
                     type=normalize_term_type(_text(tm.get("type"))),
                     note=_text(tm.get("note")),
                     first_chapter=0,

@@ -177,3 +177,106 @@ def test_missing_publication_result_is_not_silently_skipped(tmp_path, monkeypatc
         Orchestrator(config, later)._translation.run(store, book_synopsis="synopsis")
     assert not later.calls
     assert store.load_manifest()["chapters"][0]["status"] == "pending"
+
+
+@pytest.mark.parametrize("boundary", ["drafts", "ready"])
+def test_old_reading_policy_checkpoints_are_preserved_but_not_continued(
+    tmp_path, monkeypatch, boundary
+):
+    from wenyi_core.agents import prompts
+
+    store, config = _store(tmp_path), _config(tmp_path)
+    term = GlossaryTerm("one", "一", reading="OLD_READING")
+    plan = replace(_plan(store), terms=(term,))
+    old_client = MeteredFakeClient(handler=Handler())
+    old = _PrecisionRun(old_client, config, plan, store, checkpoint=None, progress=None)
+    # Recreate the pre-filter identity and renderer without altering any stored raw term.
+    old.fingerprint = identity(
+        {key: value for key, value in old.binding.items() if key != "glossary_reading_source"}
+    )
+    old.key = f"precision/chapters/0/0-2/{old.fingerprint}"
+    render = prompts.render_glossary
+    write = old.write
+
+    def stop_after_draft(name, payload):
+        write(name, payload)
+        if name.startswith("drafts/"):
+            raise RuntimeError("old draft interrupted")
+
+    if boundary == "drafts":
+        monkeypatch.setattr(old, "write", stop_after_draft)
+    with monkeypatch.context() as context:
+        context.setattr(
+            prompts,
+            "render_glossary",
+            lambda terms, **_: render(terms, source_lang="ja"),
+        )
+        if boundary == "drafts":
+            with pytest.raises(RuntimeError, match="old draft"):
+                old.execute()
+        else:
+            old.execute()
+    meta_key = f"{old.key}/meta.json"
+    metadata = _artifact(store, meta_key)
+    metadata.pop("glossary_reading_source", None)
+    store.write_artifact(meta_key, metadata)
+    old_artifacts = {key: store.read_artifact(key) for key in store.list_artifacts(old.key + "/")}
+    old_calls = [key for key in old_artifacts if "/calls/" in key and key.endswith(".json")]
+    assert old_calls
+    historical = [load_precision_call(store, key) for key in old_calls]
+    assert all("OLD_READING" in json.dumps(call["messages"]) for call in historical)
+
+    new_client = MeteredFakeClient(handler=Handler())
+    result = PrecisionBatchExecutor(new_client, config).execute(plan, store)
+    assert result.precision_key != old.key
+    assert len(new_client.calls) == 4
+    metadata = _artifact(store, f"{result.precision_key}/meta.json")
+    assert metadata["glossary_reading_source"] == "ja"
+    assert all("OLD_READING" not in json.dumps(call["messages"]) for call in new_client.calls)
+    assert all(store.read_artifact(key) == value for key, value in old_artifacts.items())
+    assert [load_precision_call(store, key) for key in old_calls] == historical
+    assert PrecisionArchive(store).load_glossary(
+        _artifact(store, meta_key)["plan"]["glossary_ref"]
+    ) == (term,)
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
+
+
+def test_published_chapter_is_not_retranslated_after_reading_policy_change(tmp_path, monkeypatch):
+    from wenyi_core.agents import prompts
+    from wenyi_core.pipeline import precision
+    from wenyi_core.pipeline.orchestrator import Orchestrator
+
+    store, config = _store(tmp_path), _config(tmp_path)
+    store.upsert_term(GlossaryTerm("one", "一", reading="OLD_READING"))
+    render = prompts.render_glossary
+
+    def old_identity(value):
+        if isinstance(value, dict):
+            value = {key: item for key, item in value.items() if key != "glossary_reading_source"}
+        return identity(value)
+
+    with monkeypatch.context() as context:
+        context.setattr(precision, "identity", old_identity)
+        context.setattr(
+            prompts, "render_glossary", lambda terms, **_: render(terms, source_lang="ja")
+        )
+        Orchestrator(config, MeteredFakeClient(handler=Handler()))._translation.run(
+            store, book_synopsis="synopsis"
+        )
+    assert store.load_manifest()["chapters"][0]["status"] == "done"
+    chapter = store.load_chapter(0)
+    old_keys = store.list_artifacts("precision/chapters/0/")
+    for key in old_keys:
+        if key.endswith("/meta.json"):
+            metadata = _artifact(store, key)
+            metadata.pop("glossary_reading_source", None)
+            store.write_artifact(key, metadata)
+    artifacts = {key: store.read_artifact(key) for key in old_keys}
+    client = MeteredFakeClient(handler=Handler())
+    Orchestrator(config, client)._translation.run(store, book_synopsis="synopsis")
+    assert not [
+        call for call in client.calls if call["operation"] in {"translation.body", "polish.body"}
+    ]
+    assert store.load_chapter(0) == chapter
+    assert store.list_artifacts("precision/chapters/0/") == old_keys
+    assert all(store.read_artifact(key) == value for key, value in artifacts.items())

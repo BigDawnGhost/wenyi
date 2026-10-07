@@ -65,6 +65,7 @@ class ReviewService:
             "honorific_strategy": self._runtime.config.honorific_strategy,
             "language_policy": self._runtime.config.language_policy("review").fingerprint,
             "review_glossary_policy": "full",
+            "review_glossary_reading_source": "ja",
             "review_output_retries": self._runtime.config.pipeline.review_output_retries,
             "review_agent_loop": self._runtime.config.pipeline.review_agent_loop,
             "inference": inference_snapshot(
@@ -270,6 +271,7 @@ class ReviewService:
                     loaded,
                     all_terms,
                     analysis,
+                    source_lang=self._runtime.config.source_lang,
                     target_overrides=state.target_overrides,
                 )
                 with debug.round_scope(review_round):

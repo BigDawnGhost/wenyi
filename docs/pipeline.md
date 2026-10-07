@@ -78,6 +78,23 @@ analysis snapshot, which may be stale after glossary edits. Free-form notes and 
 are preserved verbatim, so outdated names embedded in that prose still require manual review.
 This reduces conflicting structured guidance without rewriting completed translations.
 
+Glossary `reading` is Japanese source metadata, not a target-language transliteration.
+Analysis and extraction prompts require copying only kana explicitly provided for the term
+in the original, such as furigana or a reading explanation, and leaving the field empty
+without that evidence.
+Japanese-source projects retain this field regardless of the translation language.
+Other source languages omit it from the model's output schema, structured glossary context,
+and Review evidence responses, even when translating into Japanese. Unexpected readings
+returned by the model are ignored for non-Japanese sources. Existing and manually edited
+glossary readings remain stored; this change does not delete them or rewrite completed text.
+Internal callers supplying preformatted Fixer glossary text remain responsible for its
+contents; automatic filtering applies to structured entries.
+The stricter prompts follow the usual language-policy cache invalidation rules.
+Review reuse and unfinished best-of-three checkpoints also bind the glossary reading policy,
+so older cached work may require fresh model calls; historical artifacts remain available.
+This trades inferred reading coverage for less unsupported pronunciation guidance;
+offline tests do not establish model quality.
+
 This policy provides cross-chapter terminology context at the cost of larger prompts and potentially higher token usage. It does not guarantee provider prefix-cache hits or improved translation quality. Selective evidence queries and segment Fixer requests still use relevant terms. `pipeline.glossary_scope` has been removed; configuration containing that key is rejected and must be edited explicitly.
 
 If analysis, glossary extraction, or historical term alignment returns a collection with an invalid type, Wenyi ignores that collection and logs a warning with the operation, field, and actual type. Arrays retain object members and log the number of discarded non-object members. Missing or null fields and valid empty arrays do not produce warnings. These diagnostics use the CLI/worker's standard Python logs, exclude source text and model response content, and help identify missing candidates without interrupting translation.
