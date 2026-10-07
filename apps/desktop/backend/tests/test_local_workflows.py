@@ -10,6 +10,7 @@ from desktop_test_support import initialize, wait_job
 from fastapi.testclient import TestClient
 from wenyi_backend import dal
 from wenyi_backend.context import use_context
+from wenyi_core.ingest.models import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
 

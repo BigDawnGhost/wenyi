@@ -46,6 +46,7 @@ def test_cli_parse_without_credentials_or_orchestrator(tmp_path, monkeypatch):
     assert not store.exists()
     assert store.load_analysis() is None
     parsed = store.read_artifact("parsed_document.json")
+    assert parsed is not None
     assert parsed["source_sha256"]
     assert parsed["ingest_config"]["source_lang"] == "auto"
     assert any(
