@@ -10,7 +10,7 @@ from wenyi_core.storage.precision_drafts import read_precision_drafts
 from .. import dal
 from ..chapter_state import chapter_review_state
 from ..job_service import start_job
-from ..project_service import project_write, require_book, require_project, storage_for
+from ..project_service import project_write, read_storage_for, require_book, require_project
 from ..schemas import (
     ChapterSegments,
     ChapterSummary,
@@ -19,16 +19,28 @@ from ..schemas import (
     JobEnqueued,
     PrecisionDraftsOut,
 )
+from ..source_view import chapter_summaries, parsed_source
 
 router = APIRouter(prefix="/projects/{pid}/chapters", tags=["chapters"])
 
 
-def chapter_payload(storage, ci: int) -> dict:
-    try:
-        chapter = storage.load_chapter(ci)
-    except KeyError:
-        raise HTTPException(404, "chapter not found") from None
-    review = storage.load_latest_review_result() or {}
+def chapter_payload(storage, ci: int, *, project: dict) -> dict:
+    if project.get("initialized"):
+        try:
+            chapter = storage.load_chapter(ci)
+        except (KeyError, FileNotFoundError):
+            raise HTTPException(404, "chapter not found") from None
+        review = storage.load_latest_review_result() or {}
+    else:
+        document = parsed_source(project, storage)
+        chapter = (
+            next((chapter for chapter in document.chapters if chapter.index == ci), None)
+            if document is not None
+            else None
+        )
+        if chapter is None:
+            raise HTTPException(404, "chapter not found")
+        review = {}
     text_segments = chapter.text_segments
     issues = []
     current_review = chapter_review_state(review, chapter.meta)[1]
@@ -66,24 +78,36 @@ def chapter_payload(storage, ci: int) -> dict:
 
 @router.get("", response_model=list[ChapterSummary])
 def list_chapters(pid: str) -> list[dict]:
-    require_book(require_project(pid))
-    return dal.chapter_summaries(pid)
+    project = require_project(pid)
+    require_book(project)
+    return chapter_summaries(project)
 
 
 @router.get("/{ci}", response_model=ChapterSegments)
 def get_chapter(pid: str, ci: int) -> dict:
-    require_book(require_project(pid))
-    return chapter_payload(storage_for(pid), ci)
+    project = require_project(pid)
+    require_book(project)
+    storage = read_storage_for(pid)
+    try:
+        return chapter_payload(storage, ci, project=project)
+    finally:
+        storage.close()
 
 
 @router.get("/{ci}/segments/{si}/precision-drafts", response_model=PrecisionDraftsOut)
 def get_precision_drafts(pid: str, ci: int, si: int) -> dict:
     """Inspect archived drafts without editing or regenerating the formal translation."""
-    require_book(require_project(pid))
+    project = require_project(pid)
+    require_book(project)
+    if not project.get("initialized"):
+        raise HTTPException(409, "Prepare the book before inspecting translation drafts")
+    storage = read_storage_for(pid)
     try:
-        return asdict(read_precision_drafts(storage_for(pid), ci, si))
+        return asdict(read_precision_drafts(storage, ci, si))
     except (KeyError, FileNotFoundError):
         raise HTTPException(404, "chapter or text segment not found") from None
+    finally:
+        storage.close()
 
 
 def _linked_toc_entries(manifest: dict, chapter: dict) -> list[dict]:

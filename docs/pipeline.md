@@ -4,10 +4,14 @@
 
 Wenyi first builds a whole-book understanding and then translates chapters in order. Optional stages can be disabled in `config.yaml` to reduce cost or runtime.
 
+Source parsing is a separate, model-free stage. `wenyi parse` and the Web/Desktop upload task save a content- and configuration-bound source snapshot before AI preparation. The UI can show its table of contents and original paragraphs read-only immediately after parsing, including while preparation runs or after it fails. Parsing does not commit an initialized manifest, expose partially staged targets, or enable translation editing. Matching source snapshots survive initialization retries; changed source identities are not reused.
+
 ```mermaid
 flowchart TD
-    A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Optional parallel chapter prescan<br/>Generate chapter digests]
+    A[Input file] --> B["Parse chapters and save source"]
+    B --> BV["Read-only source and table of contents"]
+    B --> BL["AI language detection"]
+    BL --> C["Optional parallel chapter prescan and digests"]
     C --> D[Analyze style and seed the glossary]
     D --> DS[Optional whole-book synopsis]
     DS --> E

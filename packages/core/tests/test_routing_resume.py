@@ -318,7 +318,7 @@ def test_review_guidance_controls_completed_and_interrupted_reuse(tmp_path, inte
 def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
     from wenyi_core.agents.review_actions import ReviewActionLoop
 
-    from tests.test_review_agent import TestReviewAgentLoop
+    from tests.review_fixtures import review_evidence
 
     config = _config(tmp_path)
     debug = ReviewRunStore(str(tmp_path / "run"))
@@ -332,21 +332,15 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
         "allowed_refs": set(),
         "validate_final": lambda value, refs: value,
     }
-    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
-    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
     config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
         update={"model": "different-verifier"}
     )
     second = FakeClient(handler=lambda *args: response, config=config.llm)
-    ReviewActionLoop(
-        second, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)
-    ).run(**arguments)
+    ReviewActionLoop(second, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(second.calls) == 1
     assert second.calls[0]["model"] == "different-verifier"
 

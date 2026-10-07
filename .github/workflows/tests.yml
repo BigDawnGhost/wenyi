@@ -63,12 +63,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-wqy-zenhei fonts-noto-cjk poppler-utils
           uv sync --locked --all-packages --group dev --extra pdf-output-lite --python 3.12
-      - name: Python style and tests (offline model fixtures)
+      - name: Prepare token-budget vocabulary
+        run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+      - name: Python style
         run: |
           uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
-          uv run --no-sync pytest -q
           git diff --check
+      - name: Offline Python regression tests
+        run: uv run --no-sync pytest -q -m "not integration"
+      - name: Service integration tests (PostgreSQL and Redis enabled)
+        run: uv run --no-sync pytest -q -m integration
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'
         run: |

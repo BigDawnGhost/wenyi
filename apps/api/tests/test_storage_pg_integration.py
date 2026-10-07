@@ -7,123 +7,22 @@ creates and drops its own schema; no existing project rows are touched.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, cast
 
-import psycopg
 import pytest
-from psycopg import sql
-from psycopg_pool import ConnectionPool
+from api_test_support import document, initialize
 from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import empty_usage
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
 from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.pipeline.translation_batch import BatchPlan
-from wenyi_core.storage.file import FileStorage
-
-
-@pytest.fixture(scope="module")
-def pg_pool():
-    dsn = os.environ.get("WENYI_TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("Set WENYI_TEST_DATABASE_URL for real PostgreSQL storage tests")
-    schema = "test_wenyi_" + uuid.uuid4().hex
-    with psycopg.connect(dsn, autocommit=True) as admin:
-        admin.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
-        admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    pool = ConnectionPool(
-        dsn,
-        min_size=1,
-        max_size=8,
-        open=True,
-        kwargs={"options": f"-c search_path={schema},public", "client_encoding": "UTF8"},
-    )
-    pool.wait()
-    try:
-        schema_sql = Path(__file__).parents[1] / "wenyi_api" / "db" / "schema.sql"
-        with pool.connection() as conn:
-            conn.execute(cast(Any, schema_sql.read_text(encoding="utf-8")))
-        yield pool
-    finally:
-        pool.close()
-        with psycopg.connect(dsn, autocommit=True) as admin:
-            admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
-
-
-@pytest.fixture
-def pg_storage(pg_pool, tmp_path):
-    pid = uuid.uuid4().hex
-    with pg_pool.connection() as conn:
-        conn.execute(
-            "INSERT INTO projects(id,name,source_lang,target_lang) VALUES(%s,'test','en','zh')",
-            (pid,),
-        )
-    return PostgresStorage(pid, pg_pool, run_dir=str(tmp_path / "resources"))
-
-
-@pytest.fixture(params=["file", "postgres"])
-def storage(request, tmp_path):
-    if request.param == "postgres":
-        result = request.getfixturevalue("pg_storage")
-    else:
-        result = FileStorage(str(tmp_path / "file-state"))
-    yield result
-    result.close()
-
-
-def document(tmp_path):
-    source = tmp_path / "source.txt"
-    source.write_text("Book\nOriginal paragraph", encoding="utf-8")
-    return Document(
-        title="Book",
-        fmt="text",
-        source_lang="en",
-        target_lang="zh",
-        source_path=str(source),
-        meta={
-            "format_metadata": {"nested": [1, 2]},
-            "epub_annotation_contexts": {"note": {"source": "Original note"}},
-        },
-        chapters=[
-            Chapter(
-                index=0,
-                title="Chapter",
-                href="chapter.xhtml",
-                template="<p id='a'></p>",
-                meta={"toc_entry_id": "toc-a"},
-                segments=[
-                    Segment(
-                        index=0,
-                        source="Original paragraph",
-                        target="润色译文",
-                        target_before_polish="原始译文",
-                        anchor="a",
-                        resource_href="chapter.xhtml",
-                        meta={"style": {"bold": True}},
-                    )
-                ],
-            )
-        ],
-    )
-
-
-def initialize(storage, tmp_path):
-    doc = document(tmp_path)
-    digest = source_sha256(doc.source_path)
-    storage.begin_initialization(digest)
-    manifest = storage.stage_document(doc, source_hash=digest)
-    storage.save_manifest(manifest)
-    storage.finish_initialization()
-    return doc, digest
 
 
 def test_precision_candidates_and_guarded_publication_use_backend_storage(storage, tmp_path):

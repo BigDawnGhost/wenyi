@@ -5,8 +5,7 @@
 import json
 
 import pytest
-from test_project_routes import api, new_project  # noqa: F401
-from test_storage_pg_integration import pg_pool, pg_storage, storage  # noqa: F401
+from api_test_support import new_project
 from tests.fake_llm import routing_handler
 from wenyi_api import dal
 from wenyi_backend.project_service import storage_for

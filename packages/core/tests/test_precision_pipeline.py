@@ -1,114 +1,24 @@
 """Four-call precision execution, durable resume and guarded final publication."""
 
-import json
 import signal
-from collections import Counter
 from dataclasses import replace
 from threading import Event, Lock
 
 import pytest
 from wenyi_core.agents.precision import PrecisionError
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
-from wenyi_core.pipeline.runstore import STATUS_PENDING
 from wenyi_core.pipeline.translation import TranslationService
-from wenyi_core.pipeline.translation_batch import BatchPlan
-from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
-from tests.fake_llm import MeteredFakeClient, routing_handler
-
-
-def _config(tmp_path):
-    return Config.from_dict(
-        {
-            "language": {"source": "en", "target": "zh"},
-            "llm": {"preset": "fake"},
-            "pipeline": {
-                "translation_mode": "best_of_three",
-                "review": False,
-                "book_understanding": False,
-                "annotation_alignment": False,
-            },
-            "paths": {"state_dir": str(tmp_path)},
-        }
-    )
-
-
-def _store(tmp_path, sources=("one", "two")):
-    store = FileStorage(str(tmp_path / "book"))
-    store.save_chapter(
-        Chapter(
-            index=0,
-            segments=[Segment(index=i + 10, source=source) for i, source in enumerate(sources)],
-        )
-    )
-    store.save_manifest(
-        {
-            "title": "book",
-            "source_lang": "en",
-            "target_lang": "zh",
-            "source_sha256": "0" * 64,
-            "chapters": [{"index": 0, "status": STATUS_PENDING}],
-        }
-    )
-    return store
-
-
-def _artifact(store: FileStorage, key: str) -> dict:
-    value = store.read_artifact(key)
-    assert isinstance(value, dict), f"Expected a JSON object at {key}"
-    return value
-
-
-def _plan(store, allow_empty=False):
-    segments = store.load_chapter(0).text_segments
-    return BatchPlan.capture(
-        0,
-        0,
-        segments,
-        [],
-        "prior",
-        "style",
-        "synopsis",
-        "digest",
-        [[] for _ in segments],
-        "following",
-        allow_empty_translations=allow_empty,
-    )
-
-
-class Handler:
-    def __init__(self, invalid=False, blank=False):
-        self.counts, self.lock = Counter(), Lock()
-        self.invalid, self.blank = invalid, blank
-
-    def __call__(self, messages, tier, json_mode):
-        if "Task (JSON):\n" not in messages[-1]["content"]:
-            return routing_handler(messages, tier, json_mode)
-        sources = json.loads(messages[1]["content"].split("\n", 1)[1])["sources"]
-        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
-        kind = "synthesis" if "drafts" in task else "translate"
-        with self.lock:
-            self.counts[kind] += 1
-            sample = self.counts[kind]
-        if kind == "synthesis" and self.invalid:
-            return '{"translations":[]}'
-        return json.dumps(
-            {
-                "translations": [
-                    source
-                    if not any(character.isalpha() for character in source)
-                    else ""
-                    if self.blank
-                    else f"{'润' if kind == 'synthesis' else '译'}{sample}:{i}"
-                    for i, source in enumerate(sources)
-                ]
-            }
-        )
+from tests.fake_llm import MeteredFakeClient
+from tests.precision_fixtures import PrecisionHandler as Handler
+from tests.precision_fixtures import artifact as _artifact
+from tests.precision_fixtures import precision_config as _config
+from tests.precision_fixtures import precision_plan as _plan
+from tests.precision_fixtures import precision_store as _store
 
 
 def test_four_calls_produce_synthesis_directly_and_keep_first_draft_for_comparison(tmp_path):

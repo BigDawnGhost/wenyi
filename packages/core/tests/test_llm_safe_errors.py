@@ -193,7 +193,8 @@ def test_fallback_still_sees_original_provider_classification():
 def test_review_persists_only_safe_errors(tmp_path, caplog):
     from wenyi_core.pipeline.orchestrator import Orchestrator
 
-    from tests.test_review_autofix import _config, _store
+    from tests.review_fixtures import autofix_config as _config
+    from tests.review_fixtures import autofix_store as _store
 
     client, calls = client_with_failure()
     config = _config(str(tmp_path / "state"))

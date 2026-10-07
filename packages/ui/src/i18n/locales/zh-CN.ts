@@ -418,8 +418,10 @@ const zhCN = {
   "proofreading.savedBatchesRefresh":
     "每 3 秒更新已落盘的段落，无需等待整章翻译完成。",
   "proofreading.savedParagraphs": "已保存 {done} / {total} 段",
-  "proofreading.chaptersAppearAfterPreparation":
-    "章节在书籍准备过程中显示，可在翻译完成前打开查看。",
+  "proofreading.parsedSourceHelp":
+    "原文只读预览。AI 预处理尚未完成；完成预处理后才可编辑标题和译文。",
+  "contents.readSource": "查看原文",
+  "contents.readContentsSource": "查看目录与原文",
   "proofreading.waitingForTranslation": "等待译文落盘",
   "proofreading.pauseToEdit":
     "项目任务正在运行，已落盘的译文会自动刷新；暂停任务后可编辑。",

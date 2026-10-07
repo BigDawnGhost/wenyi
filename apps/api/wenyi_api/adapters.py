@@ -198,6 +198,7 @@ def create_context(settings: Settings) -> BackendContext:
         exports=PostgresExports(repository),
         telemetry=RedisTelemetry(settings.redis_url),
         storage_for=repository.storage_for,
+        read_storage_for=repository.storage_for,
         build_client=build_client,
         enqueue=submit,
         data_dir=settings.data_dir,

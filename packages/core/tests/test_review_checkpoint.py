@@ -1,9 +1,12 @@
 """Check the trace adapter against existing round-scoped files and events."""
 
 import json
+import tempfile
+import unittest
 from pathlib import Path
 
 from wenyi_core.pipeline.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
+from wenyi_core.pipeline.review_chunks import ReviewChunkService
 from wenyi_core.review.contracts import ReviewTrace
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.review.session import ReviewRoundResult, ReviewSessionState
@@ -70,3 +73,48 @@ def test_checkpoint_phase_fields_and_history_identity(tmp_path):
         "clean_streak",
         "fix_rounds",
     }
+
+
+class TestReviewChunkCheckpoint(unittest.TestCase):
+    def test_try_cached_subchunks_partial_hit_does_not_record(self):
+        """A partially cached subtree must not write initial snapshots before its parent
+        reruns.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            debug = ReviewRunStore(d)
+            debug.start(
+                reviewed_content_digest="digest",
+                metadata={"config": {}, "glossary_fingerprint": "g"},
+            )
+            # Cache only the left half; the parent and right half remain absent.
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n2",
+                {
+                    "issues": [{"index": 0, "type": "mistranslation"}],
+                    "initial_issues": [{"index": 0, "type": "mistranslation"}],
+                    "dismissed": [],
+                },
+            )
+            pieces = [object(), object(), object(), object()]
+            with debug.round_scope(1):
+                missed = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNone(missed)
+            initial, dismissed = debug.result_snapshots(1)
+            self.assertEqual(initial, [])
+            self.assertEqual(dismissed, [])
+
+            debug.mark_chunk_done(
+                "r1-ch0-base2-n2",
+                {
+                    "issues": [{"index": 0, "type": "missing"}],
+                    "initial_issues": [{"index": 0, "type": "missing"}],
+                    "dismissed": [],
+                },
+            )
+            with debug.round_scope(1):
+                hit = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(len(hit), 2)
+            initial, _dismissed = debug.result_snapshots(1)
+            self.assertEqual(len(initial), 2)

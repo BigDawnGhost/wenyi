@@ -76,8 +76,6 @@ def test_legacy_quick_project_read_preserves_saved_configuration():
 def test_workflow_keeps_frozen_quick_snapshot_independent(monkeypatch):
     from copy import deepcopy
 
-    from redis import Redis
-
     snapshot = {
         "pipeline": dict.fromkeys(
             ("book_understanding", "polish", "review", "review_autofix"), False
@@ -92,7 +90,6 @@ def test_workflow_keeps_frozen_quick_snapshot_independent(monkeypatch):
             {"kind": "translation", "status": "queued", "params": {"config_snapshot": snapshot}}
         ],
     )
-    monkeypatch.setattr(Redis, "get", lambda *_: None)
     result = configuration.workflow("legacy")
     assert result["source"] == "snapshot"
     assert all(

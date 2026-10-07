@@ -3,8 +3,7 @@
 # ruff: noqa: F811
 
 import pytest
-from test_domain_routes_integration import domain_client, initialize  # noqa: F401
-from test_storage_pg_integration import pg_pool, pg_storage  # noqa: F401
+from api_test_support import initialize
 from wenyi_core.ingest.models import Chapter, Segment
 
 

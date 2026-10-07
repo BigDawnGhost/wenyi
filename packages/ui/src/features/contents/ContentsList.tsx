@@ -17,11 +17,15 @@ export function ContentsList({
   pid,
   entries,
   readOnly,
+  sourceOnly = false,
+  empty,
   onEdit,
 }: {
   pid: string;
   entries: ContentsEntry[];
   readOnly: boolean;
+  sourceOnly?: boolean;
+  empty?: string;
   onEdit: (id: string) => void;
 }) {
   const { t } = useI18n();
@@ -69,8 +73,12 @@ export function ContentsList({
                 {entry.chapter_index !== null && (
                   <Link
                     to={`/projects/${pid}/proofreading/${entry.chapter_index}${entry.segment_index !== null ? `?segment=${entry.segment_index}` : ""}`}
-                    aria-label={t("contents.openChapter")}
-                    title={t("contents.openChapter")}
+                    aria-label={t(
+                      sourceOnly ? "contents.readSource" : "contents.openChapter",
+                    )}
+                    title={t(
+                      sourceOnly ? "contents.readSource" : "contents.openChapter",
+                    )}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <BookOpen className="h-4 w-4" aria-hidden="true" />
@@ -93,7 +101,7 @@ export function ContentsList({
         </ul>
         {entries.length === 0 && (
           <p className="p-6 text-sm text-muted-foreground">
-            {t("contents.noEntries")}
+            {empty ?? t("contents.noEntries")}
           </p>
         )}
       </CardContent>

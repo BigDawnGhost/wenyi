@@ -97,6 +97,8 @@ jobs:
       # Packaging tests need the root dev group and CLI console fixtures.
       # The sidecar is still built in its separate desktop-only environment.
       - run: uv sync --locked --all-packages --group dev
+      - name: Prepare token-budget vocabulary
+        run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/desktop.test.mjs
       - run: uv run --no-sync pytest -q packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py

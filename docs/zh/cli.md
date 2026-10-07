@@ -272,6 +272,9 @@ manifest 通过 `source_sha256` 绑定输入内容。同名文件内容不同或
 ## 常用命令
 
 ```bash
+# Parse and list the source chapters without model calls
+uv run wenyi parse book.epub
+
 # 一键完整翻译、只翻指定章节，或只准备而不翻译
 uv run wenyi translate book.epub
 uv run wenyi translate book.epub --chapter 3
@@ -288,6 +291,10 @@ uv run wenyi translate book.epub --no-polish --no-review
 uv run wenyi translate book.epub --bilingual
 uv run wenyi translate book.epub --no-mono --bilingual
 ```
+
+`parse` 列出从零开始的章节编号、原文标题与段落数，并将完整解析原文保存到所显示目标语言状态目录的 `parsed_document.json`。它不需要 LLM 凭据，不调用模型识别语言，不生成梗概、风格或术语，也不把翻译状态标记为初始化成功。`language.source: auto` 留到预处理时识别。PDF 解析仍需要配置的 MinerU/BabelDOC 服务；SRT 使用独立字幕流程，不经过此书籍命令。
+
+之后对同一源文件和配置运行 `prepare` 或 `translate`。匹配的解析缓存会复用，包括 PDF 转换；内容或解析参数变化会使缓存失效。已有初始化状态会拒绝不同源内容，保留已保存译文、分析和用量。
 
 `prepare` 会解析书籍、识别语言、在启用时生成逐章梗概，再生成风格指南和初始术语表，最后在启用时生成全书概览，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 

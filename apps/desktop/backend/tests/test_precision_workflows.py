@@ -2,17 +2,17 @@
 
 import json
 
-from test_local_workflows import desktop, wait_job  # noqa: F401
-from tests.test_precision_pipeline import Handler
+from desktop_test_support import wait_job
+from tests.precision_fixtures import PrecisionHandler
 from wenyi_backend import dal
 from wenyi_backend.config_documents import config_document
 from wenyi_core.config import Config
 from wenyi_core.pipeline.language_policies import CHECKPOINT
 
 
-def test_precision_creation_translation_drafts_edit_and_export(desktop):  # noqa: F811
+def test_precision_creation_translation_drafts_edit_and_export(desktop):
     client, backend, fake = desktop
-    handler = Handler()
+    handler = PrecisionHandler()
     fake.handler = handler
     created = client.post(
         "/projects",
@@ -104,7 +104,7 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):  # noqa
         reopened.close()
 
 
-def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):  # noqa: F811
+def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):
     client, backend, _ = desktop
     legacy = Config.from_dict(
         {"llm": {"preset": "fake"}, "pipeline": {"translation_mode": "best_of_three"}}
