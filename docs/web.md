@@ -174,7 +174,9 @@ Same-page history navigation closes open dropdowns without resetting configurati
 
 Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side without a header row on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
 
-The glossary keeps the same compact rows and column widths across type filters. Long terms and readings use a single-line preview; hover over the text or open the term editor to read the full value. On narrow screens, the table scrolls horizontally within its card.
+The glossary keeps the same compact rows and column widths across type filters. Long source and translated terms use a single-line preview; hover over the text or open the term editor to read the full value. On narrow screens, the table scrolls horizontally within its card.
+
+In Web and Desktop, readings have no separate table column. Japanese-source projects show the reading field in the add/edit term details and include readings in the search hint. Other source languages hide that field and hint, even when translating into Japanese. An undetected `auto` source keeps the field hidden until Japanese is detected. Hiding a field does not delete a saved reading or clear it when editing other term fields.
 
 **Contents & titles** lists the existing chapter titles beside their translations. Search either column, open a chapter in proofreading, or edit a translated title with the pencil button. Saving persists the title on the server for every browser and updates the linked EPUB TOC node, including equivalent NAV/NCX entries with the same original title and destination. Future exports use the saved titles; existing export files remain unchanged. Body headings are edited separately in proofreading. Pause running tasks before editing. If another editor changes the same title, your input is retained and saving requires loading the latest title. The page currently lists chapters; editing the complete EPUB hierarchy and automatic title alignment are not included.
 
@@ -190,7 +192,7 @@ away and Back, preventing overlapping saves in the same app session.
 
 **Style & synopsis** has no separate character table or character-management shortcut.
 Open **Glossary** from the sidebar and select the **Person** filter to manage names,
-translations, readings, gender, notes, and aliases. Search matches source
+translations, gender, notes, and aliases, plus readings for Japanese-source projects. Search matches source
 terms, translations, aliases, readings, and notes, ignoring case and surrounding query
 whitespace. Type filters also apply to search results.
 

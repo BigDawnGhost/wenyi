@@ -165,6 +165,7 @@ class _PrecisionRun:
             "source_sha256": source_hash,
             "plan": asdict(plan),
             "policy": config.language_policy("translation").task_fingerprint("precision"),
+            "glossary_reading_source": "ja",
             "inference": inference_snapshot(config.llm, _OPERATIONS),
         }
         self.fingerprint = identity(self.binding)
@@ -172,7 +173,7 @@ class _PrecisionRun:
             f"precision/chapters/{plan.chapter}/"
             f"{plan.start_index}-{len(plan.sources)}/{self.fingerprint}"
         )
-        self.archive = PrecisionArchive(store)
+        self.archive = PrecisionArchive(store, source_lang=config.source_lang)
         self.records: PrecisionRecords | None = None
 
     def agent(self, stage: str) -> PrecisionAgent:
@@ -194,7 +195,7 @@ class _PrecisionRun:
             self.prepare_publication(result)
             PrecisionBatchExecutor.prepared_publication(self.store, result)
             return result
-        # Preserve the existing semantic fingerprint: compatible old paid outputs stay reusable.
+        # Compatible paid outputs remain reusable within this semantic fingerprint.
         legacy = self.read("ready") or self.read("synthesis")
         self.prepare_metadata(legacy is not None)
         if legacy is not None:
@@ -257,6 +258,7 @@ class _PrecisionRun:
                 "fingerprint": self.fingerprint,
                 "source_sha256": self.binding["source_sha256"],
                 "policy": self.binding["policy"],
+                "glossary_reading_source": self.binding["glossary_reading_source"],
                 "inference": self.binding["inference"],
                 "plan": plan_refs,
                 "legacy_unrecorded_requests": legacy,

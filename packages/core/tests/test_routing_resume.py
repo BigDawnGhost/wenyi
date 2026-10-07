@@ -219,6 +219,7 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
     metadata = store.read_artifact(f"reviews/{review_id}/rounds/metadata.json")
     assert isinstance(metadata, dict)
     assert metadata["config"]["review_glossary_policy"] == "full"
+    assert metadata["config"]["review_glossary_reading_source"] == "ja"
 
     client = MeteredFakeClient(handler=routing_handler)
     resumed = Orchestrator(config, client).run_review(str(source))
@@ -241,18 +242,26 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
 
 
 @pytest.mark.parametrize("interrupted", [False, True])
-@pytest.mark.parametrize("change", ["policy", "target", "aliases", "note", "insert", "delete"])
+@pytest.mark.parametrize(
+    "change",
+    ["policy", "reading_missing", "reading_old", "target", "aliases", "note", "insert", "delete"],
+)
 def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     tmp_path, interrupted, change
 ):
     source, config, store, term, review_id = _review_with_absent_term(tmp_path, interrupted)
     original_chapter = store.load_chapter(0)
-    if change == "policy":
+    if change in {"policy", "reading_missing", "reading_old"}:
         key = f"reviews/{review_id}/rounds/metadata.json"
         metadata = store.read_artifact(key)
         assert isinstance(metadata, dict)
         # A pre-policy run must not reuse chunks or initial traces under the new policy.
-        metadata["config"].pop("review_glossary_policy")
+        if change == "policy":
+            metadata["config"].pop("review_glossary_policy")
+        elif change == "reading_missing":
+            metadata["config"].pop("review_glossary_reading_source", None)
+        else:
+            metadata["config"]["review_glossary_reading_source"] = "all"
         store.write_artifact(key, metadata)
     elif change == "target":
         store.resolve_term(term.source, "新译名")
@@ -270,6 +279,7 @@ def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     assert new["review_result"]["review_id"] != review_id
     assert len(client.calls) == 2
     assert {call["operation"] for call in client.calls} == {"review.scan"}
+    assert store.read_artifact(f"reviews/{review_id}/rounds/metadata.json") is not None
     assert store.load_chapter(0) == original_chapter
     for call in client.calls:
         prompt = call["messages"][-1]["content"]

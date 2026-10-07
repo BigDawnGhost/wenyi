@@ -49,8 +49,11 @@ def _copy(value: Any) -> Any:
 
 
 class PrecisionArchive:
-    def __init__(self, store: ArtifactStorage):
+    """Capture source-filtered prompt lines while replaying historical records verbatim."""
+
+    def __init__(self, store: ArtifactStorage, *, source_lang: str = "auto"):
         self.store = store
+        self.source_lang = source_lang
         self._capture_depth = 0
         self._terms: dict[str, dict] = {}
         self._revisions: dict[str, tuple[list[str], int]] = {}
@@ -206,7 +209,7 @@ class PrecisionArchive:
             value = {
                 "kind": "term",
                 "raw": asdict(term),
-                "prompt_line": prompts.render_glossary([term]),
+                "prompt_line": prompts.render_glossary([term], source_lang=self.source_lang),
             }
             ref = self.put(value)
             self._terms[ref] = _copy(value)

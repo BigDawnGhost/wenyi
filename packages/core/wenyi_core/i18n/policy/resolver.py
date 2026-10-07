@@ -109,7 +109,8 @@ def _rules(context: PolicyContext) -> dict[str, str]:
             )
         ),
         "target_guidance": target_guidance,
-        "term_guidance": source.get("term_guidance", common["reading"]) + common["evidence"],
+        "term_guidance": source.get("term_guidance", "") + common["evidence"],
+        "reading_field": source.get("reading_field", ""),
         "punct_rule": target["punctuation_rule"],
         "title_rule": target["title_rule"],
         "digest_length": target["digest_length"],
