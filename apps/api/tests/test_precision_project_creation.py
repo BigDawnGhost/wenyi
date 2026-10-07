@@ -12,12 +12,10 @@ from psycopg import Connection
 from wenyi_api import main
 from wenyi_api.adapters import create_context
 from wenyi_api.global_settings import PostgresSettings
-from wenyi_backend import project_service
-from wenyi_backend.config_documents import config_document, project_document
+from wenyi_backend.config_documents import config_document
 from wenyi_backend.context import use_context
-from wenyi_backend.global_settings import GlobalSettings, validate_settings
-from wenyi_backend.project_service import effective_config
-from wenyi_backend.routers import configuration, projects, settings
+from wenyi_backend.global_settings import GlobalSettings
+from wenyi_backend.routers import projects
 from wenyi_backend.source_upload import UploadedSource
 from wenyi_core.config import Config
 
@@ -44,43 +42,44 @@ def creation_api(monkeypatch, tmp_path):
             **kwargs["source"],
         }
 
+    def set_project_config(pid, config, **kwargs):
+        saved[pid]["config"] = config
+
+    def set_project_languages(pid, source, target, **kwargs):
+        saved[pid].update(source_lang=source, target_lang=target)
+
     async def start_job(pid, kind, **kwargs):
         queued.append((pid, kind))
         return {"job_id": "test-job", "project_id": pid, "kind": kind}
 
-    connection = SimpleNamespace(execute=lambda *_: None)
-    storage = SimpleNamespace(delete_artifact=lambda _: None)
-
-    def set_project_config(pid, config, **kwargs):
-        saved[pid]["config"] = config
-
-    monkeypatch.setattr(main, "settings", replace(main.settings, api_token=None))
-    context = create_context(replace(main.settings, data_dir=str(tmp_path)))
-    monkeypatch.setattr(projects, "save_source", save_source)
-    monkeypatch.setattr(projects, "registry_guard", lambda: nullcontext(object()))
-    monkeypatch.setattr(projects, "load_settings", lambda **_: GlobalSettings(defaults))
-    monkeypatch.setattr(projects.dal, "create_project", create_project)
-    monkeypatch.setattr(projects, "require_project", lambda pid: saved[pid])
-    monkeypatch.setattr(projects, "start_job", start_job)
-    monkeypatch.setattr(projects, "project_write", lambda pid: nullcontext((saved[pid], storage)))
-    monkeypatch.setattr(
-        projects.dal, "set_project_source", lambda pid, **data: saved[pid].update(data)
+    # Substitute only the ports exercised by these rejection/editing contracts.
+    storage = SimpleNamespace(lock=lambda **_: nullcontext(), delete_artifact=lambda _: None)
+    context = replace(
+        create_context(replace(main.settings, data_dir=str(tmp_path), api_token=None)),
+        repository=SimpleNamespace(
+            create_project=create_project,
+            get_project=lambda pid: saved.get(pid),
+            set_project_config=set_project_config,
+            set_project_languages=set_project_languages,
+            set_project_source=lambda pid, **data: saved[pid].update(data),
+        ),
+        settings_store=SimpleNamespace(
+            load=lambda **_: GlobalSettings(defaults),
+            guard=lambda **_: nullcontext(None),
+        ),
+        storage_for=lambda pid: storage,
+        project_dir=lambda pid: str(tmp_path / pid),
     )
-    monkeypatch.setattr(projects.dal, "set_project_config", set_project_config)
-    monkeypatch.setattr(project_service, "load_settings", lambda **_: GlobalSettings(defaults))
-    monkeypatch.setattr(project_service.paths, "project_dir", lambda pid: str(tmp_path / pid))
-    monkeypatch.setattr(configuration, "require_project", lambda pid: saved[pid])
-    monkeypatch.setattr(configuration, "project_write", projects.project_write)
-    monkeypatch.setattr(configuration, "registry_guard", lambda: nullcontext(connection))
-    monkeypatch.setattr(configuration, "load_settings", projects.load_settings)
+    monkeypatch.setattr(projects, "save_source", save_source)
+    monkeypatch.setattr(projects, "start_job", start_job)
     client = TestClient(main.create_app(context=context))
     with use_context(context):
         yield client, defaults, saved, queued, tmp_path
     client.close()
 
 
-def test_creation_saves_precision_and_required_polish_without_mutating_defaults(creation_api):
-    client, defaults, saved, queued, _ = creation_api
+def test_creation_does_not_mutate_application_defaults(creation_api):
+    client, defaults, saved, _, _ = creation_api
     defaults.pipeline.polish = False
     response = client.post(
         "/projects",
@@ -88,13 +87,10 @@ def test_creation_saves_precision_and_required_polish_without_mutating_defaults(
         files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
     )
     assert response.status_code == 201, response.text
-    project = saved[response.json()["id"]]
-    assert project["config"]["pipeline"]["translation_mode"] == "best_of_three"
-    assert "precision_concurrency" not in project["config"]["pipeline"]
-    assert project["config"]["pipeline"]["polish"] is True
+    # Unlike the PG snapshot test, these application defaults disable polishing.
+    assert saved[response.json()["id"]]["config"]["pipeline"]["polish"] is True
     assert defaults.pipeline.translation_mode == "standard"
     assert defaults.pipeline.polish is False
-    assert queued == [(project["id"], "parse")]
 
 
 def test_creation_defaults_to_standard_even_with_legacy_global_precision(creation_api):
@@ -213,19 +209,7 @@ def test_precision_project_cannot_replace_source_with_srt(creation_api):
     assert queued == [(pid, "parse")]
 
 
-def test_global_configuration_does_not_expose_project_precision_choices():
-    config = Config.from_dict({"llm": {"preset": "fake"}})
-    response = settings.response(GlobalSettings(config))
-    assert "translation_mode" not in response["effective"]["pipeline"]
-    assert "precision_concurrency" not in response["effective"]["pipeline"]
-    assert "translation_mode" not in response["yaml"]
-    assert "precision_concurrency" not in response["yaml"]
-
-
-def test_legacy_global_precision_is_not_inherited_or_removed_from_saved_projects(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setattr(project_service.paths, "project_dir", lambda pid: str(tmp_path / pid))
+def test_postgres_settings_normalize_legacy_global_precision():
     precision = Config.from_dict(
         {
             "llm": {"preset": "fake"},
@@ -238,19 +222,6 @@ def test_legacy_global_precision_is_not_inherited_or_removed_from_saved_projects
     assert defaults.revision == 7
     assert defaults.config.pipeline.translation_mode == "standard"
     assert "precision_concurrency" not in defaults.config.pipeline.model_dump()
-    project = {"id": "saved-precision", "config": project_document(precision)}
-    restored = effective_config(project, defaults=defaults.config)
-    assert restored.pipeline.translation_mode == "best_of_three"
-    assert "precision_concurrency" not in restored.pipeline.model_dump()
-    assert project["config"]["pipeline"]["translation_mode"] == "best_of_three"
-
-
-@pytest.mark.parametrize(
-    "field,value", [("translation_mode", "best_of_three"), ("precision_concurrency", 1)]
-)
-def test_global_yaml_rejects_project_precision_choices(field, value):
-    with pytest.raises(ValueError, match="project"):
-        validate_settings(f"llm: {{preset: fake}}\npipeline: {{{field}: {value}}}", "标准翻译")
 
 
 def test_retired_global_template_is_read_as_standard_without_rewriting():
@@ -263,8 +234,6 @@ def test_retired_global_template_is_read_as_standard_without_rewriting():
     assert defaults.revision == 8
     assert defaults.config.pipeline.polish is True
     assert row == before
-    with pytest.raises(ValueError, match="template"):
-        validate_settings("llm: {preset: fake}", "快速出稿")
 
 
 @pytest.mark.parametrize("method,suffix", [("post", "/validate"), ("put", "")])

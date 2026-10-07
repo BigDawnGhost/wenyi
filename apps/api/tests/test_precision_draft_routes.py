@@ -5,7 +5,12 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 from tests.fake_llm import MeteredFakeClient
-from tests.test_precision_pipeline import Handler, _config, _plan, _store
+from tests.precision_fixtures import (
+    PrecisionHandler,
+    precision_config,
+    precision_plan,
+    precision_store,
+)
 from wenyi_api import main
 from wenyi_backend.routers import chapters
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
@@ -14,10 +19,9 @@ from wenyi_core.storage.precision_archive import PrecisionArchive
 
 @pytest.fixture
 def draft_api(monkeypatch, tmp_path):
-    store = _store(tmp_path)
-    config = _config(tmp_path)
-    client = MeteredFakeClient(handler=Handler())
-    result = PrecisionBatchExecutor(client, config).execute(_plan(store), store)
+    store, config = precision_store(tmp_path), precision_config(tmp_path)
+    client = MeteredFakeClient(handler=PrecisionHandler())
+    result = PrecisionBatchExecutor(client, config).execute(precision_plan(store), store)
     chapter = store.load_chapter(0)
     for segment, target, before in zip(chapter.text_segments, result.targets, result.before_polish):
         segment.target, segment.target_before_polish = target, before

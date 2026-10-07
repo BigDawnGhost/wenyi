@@ -60,6 +60,10 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "packages/backend/tests", "apps/api/tests", "apps/desktop/backend/tests"]
 pythonpath = ["packages/core", "packages/cli"]
+addopts = "--strict-markers"
+markers = [
+    "integration: requires isolated PostgreSQL/Redis or opt-in Docker test services",
+]
 filterwarnings = [
     "error:Using `httpx` with `starlette.testclient` is deprecated",
 ]

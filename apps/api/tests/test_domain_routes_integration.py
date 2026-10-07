@@ -2,50 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-import test_storage_pg_integration as storage_tests
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from api_test_support import initialize
 from type_helpers import must
 from wenyi_api import dal
-from wenyi_api.adapters import PostgresRepository
-from wenyi_backend import project_service
-from wenyi_backend.context import ContextMiddleware, current_context
-from wenyi_backend.routers import chapters, glossary, report, review, style, subtitles
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.srt.store import SrtRunStore
-
-pg_pool = storage_tests.pg_pool
-pg_storage = storage_tests.pg_storage
-initialize = storage_tests.initialize
-
-
-@pytest.fixture
-def domain_client(pg_storage, pg_pool, monkeypatch):
-    monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
-    monkeypatch.setattr(project_service, "storage_for", lambda pid: pg_storage)
-    for module in (glossary, report, review, style, subtitles):
-        monkeypatch.setattr(module, "storage_for", lambda pid: pg_storage)
-    for module in (chapters, review):
-        monkeypatch.setattr(module, "read_storage_for", lambda pid: pg_storage)
-    repository = current_context().repository
-    assert isinstance(repository, PostgresRepository)
-    repository._pool = pg_pool
-    queued = []
-
-    async def start(pid, kind, *, params=None):
-        queued.append({"pid": pid, "kind": kind, "params": params})
-        return {"job_id": "queued-task", "project_id": pid, "kind": kind}
-
-    monkeypatch.setattr(chapters, "start_job", start)
-    monkeypatch.setattr(review, "start_job", start)
-    app = FastAPI()
-    app.add_middleware(ContextMiddleware, context=current_context())
-    for module in (chapters, glossary, report, review, style, subtitles):
-        app.include_router(module.router)
-    with TestClient(app) as client:
-        yield client, pg_storage, queued
 
 
 def test_review_run_listing_and_sparse_segment_mapping(domain_client, tmp_path):
