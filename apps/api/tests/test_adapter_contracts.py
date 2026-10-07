@@ -1,5 +1,6 @@
 """Offline checks for the API's concrete adapter contracts."""
 
+import inspect
 from contextlib import contextmanager
 
 import pytest
@@ -23,6 +24,22 @@ def test_repository_contract_retains_dynamic_dal_lookup(monkeypatch):
     monkeypatch.setattr(dal, "get_project", lambda pid: second)
     assert repository.get_project("project") is second
     assert postgres_repository(current_context()) is current_context().repository
+
+
+def test_strategy_and_admission_calls_match_repository():
+    repository: Repository = PostgresRepository(Settings())
+    inspect.signature(repository.set_project_strategy).bind(
+        "project", {"steps": {}}, connection=None
+    )
+    inspect.signature(repository.admit_job).bind(
+        "project",
+        "translation",
+        "job",
+        project_status="translating",
+        params={},
+        config_snapshot={},
+        run_id="run",
+    )
 
 
 @pytest.mark.parametrize(

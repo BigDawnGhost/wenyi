@@ -15,9 +15,9 @@ from ..job_service import start_job
 from ..project_service import (
     effective_config,
     project_write,
+    read_storage_for,
     require_book,
     require_project,
-    storage_for,
     validate_translation_mode_for_format,
 )
 from ..schemas import (
@@ -31,6 +31,7 @@ from ..schemas import (
     UploadPreview,
 )
 from ..source_upload import input_format, save_source
+from ..source_view import book_preview, chapter_summaries, parsed_source
 from ..strategies import strategy_to_config
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -98,10 +99,10 @@ async def create_project(
 @router.get("/{pid}", response_model=ProjectDetail)
 def get_project(pid: str) -> dict:
     project = require_project(pid)
-    summaries = dal.chapter_summaries(pid)
+    summaries = chapter_summaries(project)
     project.update(
         chapter_count=len(summaries),
-        total_word_count=dal.total_word_count(pid),
+        total_word_count=sum(ch["word_count"] for ch in summaries),
         done_chapters=sum(ch["status"] == "done" for ch in summaries),
     )
     return project
@@ -133,7 +134,15 @@ async def upload_source(
 @router.get("/{pid}/preview", response_model=UploadPreview)
 def preview(pid: str) -> dict:
     project = require_project(pid)
-    result = storage_for(pid).read_artifact("preview.json")
+    storage = read_storage_for(pid)
+    try:
+        if project.get("fmt") != "srt" and not project.get("initialized"):
+            document = parsed_source(project, storage)
+            result = book_preview(document, project["fmt"]) if document is not None else None
+        else:
+            result = storage.read_artifact("preview.json")
+    finally:
+        storage.close()
     if result is None:
         raise HTTPException(409, project.get("error") or "Source preview is not ready")
     return result

@@ -5,12 +5,16 @@
 This is a map of the implemented module responsibilities and boundaries.
 Core paths below are relative to `packages/core/wenyi_core/`.
 
+For the proposed next steps, see the [component decoupling and directory plan](design/component-decoupling.md).
+That plan is not a description of completed migrations.
+
 | Area | Owner |
 |---|---|
 | Entry points | `packages/cli/wenyi_cli/cli.py` assembles the CLI; `commands/` registers commands with an invocation context. Web entry points live in `apps/api/wenyi_api/`; the local Desktop entry point lives in `apps/desktop/backend/wenyi_desktop/`. |
 | HTTP applications | `packages/backend/wenyi_backend/` owns shared routes, schemas, application services and platform ports. Each app and worker receives its own backend context; platform adapters supply persistence, task scheduling, credentials and telemetry. |
 | User interface | `packages/ui/` owns shared pages, components and translations. `apps/web/` and `apps/desktop/frontend/` provide independent entries and platform services. Only Desktop includes native import/save and credential adapters. |
 | Pipeline routing | `pipeline/orchestrator.py` assembles services and owns routing and lock scopes; domain work stays in the services. |
+| Source preparation | `pipeline/input_preparation.py` owns model-free parsing, source/config identity and source snapshots; CLI `parse`, Backend previews and `PreparationService` share it. `packages/backend/wenyi_backend/source_view.py` projects uninitialized source chapters read-only; model-assisted initialization remains in `pipeline/preparation.py`. |
 | Translation | `pipeline/translation.py` coordinates translation; `translation_batch.py` returns explicit batch results; `title_translation.py` handles titles. |
 | Whole-book review | `pipeline/review_workflow.py` coordinates sessions; `review_checkpoint.py`, `review_rounds.py`, `review_chunks.py`, and `review_results.py` separate recovery, decisions, execution, and result handling. |
 | Autofix | `pipeline/review_autofix.py` coordinates the separate publication service; `autofix_candidates.py`, `autofix_plan.py`, and `autofix_publish.py` separate candidates, the recoverable index, and writes to formal translations. |

@@ -8,8 +8,7 @@ import json
 from copy import deepcopy
 
 import pytest
-from test_project_routes import api, new_project  # noqa: F401
-from test_storage_pg_integration import pg_pool  # noqa: F401
+from api_test_support import new_project
 from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.db import get_pool

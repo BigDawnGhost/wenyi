@@ -11,7 +11,11 @@ from wenyi_core.pipeline.precision_records import load_precision_call
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 from tests.fake_llm import MeteredFakeClient
-from tests.test_precision_pipeline import Handler, _artifact, _config, _plan, _store
+from tests.precision_fixtures import PrecisionHandler as Handler
+from tests.precision_fixtures import artifact as _artifact
+from tests.precision_fixtures import precision_config as _config
+from tests.precision_fixtures import precision_plan as _plan
+from tests.precision_fixtures import precision_store as _store
 
 
 def calls(store, result):

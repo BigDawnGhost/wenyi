@@ -149,6 +149,7 @@ class BackendContext:
     exports: ExportStore
     telemetry: Telemetry
     storage_for: Callable[[str], Storage]
+    read_storage_for: Callable[[str], Storage]
     build_client: Callable[[Config], LLMClient]
     enqueue: Callable[..., Awaitable[Any]]
     data_dir: str

@@ -191,6 +191,21 @@ export default function ProgressPage() {
             {tr("progress.uploadPreviewSource")}
           </Link>
         )}
+        {!subtitle && chapters.length > 0 && (
+          <div className="space-y-2">
+            <Link
+              className="text-sm text-primary underline"
+              to={`/projects/${pid}/contents`}
+            >
+              {tr("contents.readContentsSource")}
+            </Link>
+            {!project?.initialized && (
+              <p className="text-sm text-muted-foreground">
+                {tr("proofreading.parsedSourceHelp")}
+              </p>
+            )}
+          </div>
+        )}
         {!subtitle && (
           <>
             <Disclosure
@@ -199,7 +214,7 @@ export default function ProgressPage() {
             >
               <Button
                 variant="outline"
-                disabled={regenerate.isPending || busy}
+                disabled={regenerate.isPending || busy || !project?.initialized}
                 onClick={() => regenerate.mutate()}
               >
                 {tr("progress.updateReport")}
@@ -216,7 +231,11 @@ export default function ProgressPage() {
                 }
               />
             </Disclosure>
-            <ChapterTable pid={pid} chapters={chapters} busy={busy} />
+            <ChapterTable
+              pid={pid}
+              chapters={chapters}
+              busy={busy || !project?.initialized}
+            />
           </>
         )}
       </PageContainer>

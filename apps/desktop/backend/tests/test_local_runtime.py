@@ -1,7 +1,5 @@
 """Local runtime ownership, bounded scheduling and durable restart contracts."""
 
-# ruff: noqa: F811
-
 from __future__ import annotations
 
 import asyncio
@@ -11,8 +9,8 @@ from types import SimpleNamespace
 
 import anyio
 import pytest
+from desktop_test_support import initialize
 from starlette.websockets import WebSocketDisconnect
-from test_local_workflows import desktop, initialize  # noqa: F401
 from wenyi_backend import dal
 from wenyi_backend.context import current_context, use_context
 from wenyi_desktop import local_runtime

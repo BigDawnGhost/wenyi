@@ -9,8 +9,11 @@ from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
-from tests.test_orchestrator import MeteredFakeClient, _fix_json, _review_json
-from tests.test_review_autofix import _config, _store
+from tests.fake_llm import MeteredFakeClient
+from tests.review_fixtures import autofix_config as _config
+from tests.review_fixtures import autofix_store as _store
+from tests.review_fixtures import fix_json as _fix_json
+from tests.review_fixtures import review_json as _review_json
 
 
 def require_file_storage(store: Storage) -> FileStorage:
