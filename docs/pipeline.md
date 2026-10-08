@@ -204,9 +204,22 @@ flowchart TD
 The synthesis policy prioritizes the source over draft consensus or fluency; it is
 not an independently verified accuracy guarantee. There is no accuracy judge,
 three-way polishing, blind acceptance, refinement round, per-paragraph competition
-or scoped alignment recovery. Minimal one-shot array count/type and protected-ID
-validation remains solely to support EPUB/DOCX backfill. Malformed results may pause
-the batch; validation makes no extra model call and never silently zips away text.
+or scoped alignment recovery. Structural validation supports EPUB/DOCX backfill and
+never silently zips away text. Draft and synthesis model-output failures share
+`pipeline.align_retry_limit`: one initial request plus at most N retries (default N=2).
+Malformed JSON, missing or invalid translation arrays/counts/types, forbidden blank
+translations and truncated responses retry only the failing candidate or synthesis,
+with unchanged messages, context and output limits. There is no automatic paragraph
+splitting or single-paragraph fallback. Provider transport/credential failures and
+storage/recording failures propagate without a nested provider retry loop.
+Exhaustion pauses the batch; completed drafts and paid completed receipts remain
+reusable, and manual resume gives missing stages a new bounded retry budget.
+Each attempt retains its raw response, receipt and actual available usage; failed
+receipts stay failed, without migration or revalidation of historical failures.
+Segments that need no translation, such as numbers, punctuation, empty text and
+whitespace-only text, are copied directly from the source in every draft and the
+synthesis. Generated text at those positions is ignored, including changed spacing
+or blank outputs; array count and string-type checks still apply.
 Publication metadata means a structurally valid synthesized result, not a semantic
 acceptance gate. `target_before_polish` stores the first initial draft as a comparison
 reference, not a selected accurate draft; `target` stores the synthesized final text.
@@ -267,8 +280,9 @@ automatically pruned because it is useful for future comparison and replay.
 
 Polishing is required. Whole-book Review remains a separate optional workflow,
 and SRT is unchanged. A normal body batch uses four model calls
-versus two for standard translation with polishing, excluding provider retries and
-other book tasks; this is **not a fixed 2× cost**. Precision uses the existing
+versus two for standard translation with polishing; structural retries add billed
+attempts. Provider retries and other book tasks are accounted for separately;
+this is **not a fixed 2× cost**. Precision uses the existing
 `translation.body` and `polish.body` routes with the same profiles and provider
 behavior as standard, without precision-specific output-token caps or hints.
 Shared-prefix caching and concurrency

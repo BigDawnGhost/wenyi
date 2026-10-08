@@ -170,6 +170,15 @@ Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `open
 
 Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
 
+The global **MinerU PDF parsing** settings card is separate from model connections.
+Web and CLI use `MINERU_API_KEY` from the deployment/process environment. Desktop checks
+the same variable first and, when absent, uses the manual key saved in that card through
+the OS credential store or session-only memory. The Desktop card has one input and one
+Save button; both are disabled when the environment key is active. Saving does not change
+configuration YAML or model registrations. Credentials are resolved only when an uncached
+PDF needs MinerU conversion; existing converted HTML and non-PDF inputs require no MinerU
+key. The key never enters project/job snapshots, manifests, or parser caches.
+
 DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. When neither a profile cap nor a workflow hint applies, the service supplies its default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. Workflow hints and explicit `max_output_tokens` still follow the configuration rules above. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
 
 ### Registered operations
@@ -287,6 +296,7 @@ synthesis, resume, and cost semantics.
 pipeline:
   translation_mode: standard
   review: true
+  align_retry_limit: 2
   polish: true
   rolling_context_segments: 6
   book_understanding: true
@@ -308,6 +318,7 @@ pipeline:
 ```
 
 - `review`: enabled by default; automatically run the evidence-driven whole-book review after the complete book has been translated. Pass `--no-review` or set this to `false` to skip it in the one-command workflow. The explicit `wenyi review` command remains available.
+- `align_retry_limit`: additional attempts for invalid model-output structure; the default `2` allows three attempts including the initial request, and `0` disables these retries. Standard translation falls back to individual paragraphs after exhaustion. Precision uses the same budget for each initial draft and synthesis, retries only the failing stage with unchanged context, and pauses after exhaustion without paragraph splitting. Actual requests, including failed attempts, incur provider usage; transport retries remain separate.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch. Translation and polishing also receive one following source segment from the same chapter as a read-only reference, including when this setting is zero. This built-in lookahead does not change output counts or saved translation context; see [whole-book context](pipeline.md#whole-book-understanding-and-context).
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis. Chapters with source text require a usable digest before body translation; synopsis synthesis failures allow translation to continue. Failed digests are retried on the next prepare/translate run. See [Pipeline](pipeline.md) for retry and cache behavior.

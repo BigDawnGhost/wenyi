@@ -1,5 +1,6 @@
 """Four-call precision execution, durable resume and guarded final publication."""
 
+import json
 import signal
 from dataclasses import replace
 from threading import Event, Lock
@@ -10,6 +11,7 @@ from wenyi_core.config import Config
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.precision_records import load_precision_call
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
@@ -63,13 +65,61 @@ def test_invalid_synthesis_is_not_published_and_drafts_are_not_regenerated(tmp_p
     executor = PrecisionBatchExecutor(client, config)
     with pytest.raises(PrecisionError):
         executor.execute(_plan(store), store)
-    assert len(client.calls) == 4
+    attempts = 1 + config.pipeline.align_retry_limit
+    assert len(client.calls) == 3 + attempts
     handler.invalid = False
     result = executor.execute(_plan(store), store)
-    assert len(client.calls) == 5
+    assert len(client.calls) == 4 + attempts
     assert handler.counts["translate"] == 3
-    assert result.targets == ("润2:0", "润2:1")
+    assert result.targets == (f"润{attempts + 1}:0", f"润{attempts + 1}:1")
     assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
+
+
+@pytest.mark.parametrize("stage", ["translate", "synthesis"])
+def test_structural_retry_repeats_only_failed_request_and_reuses_success(tmp_path, stage):
+    store, config, handler = _store(tmp_path), _config(tmp_path), Handler()
+    lock = Lock()
+    failed_messages = []
+
+    def fail_once(messages, tier, json_mode):
+        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        kind = "synthesis" if "drafts" in task else "translate"
+        response = handler(messages, tier, json_mode)
+        with lock:
+            if kind == stage and not failed_messages:
+                failed_messages.append(messages)
+                return '{"translations":[]}'
+        return response
+
+    client = MeteredFakeClient(handler=fail_once)
+    executor = PrecisionBatchExecutor(client, config)
+    result = executor.execute(_plan(store), store)
+    assert len(client.calls) == 5
+    assert handler.counts == {
+        "translate": 3 + (stage == "translate"),
+        "synthesis": 1 + (stage == "synthesis"),
+    }
+    operation = "translation.body" if stage == "translate" else "polish.body"
+    requests = [call for call in client.calls if call["operation"] == operation]
+    assert sum(call["messages"] == failed_messages[0] for call in requests) >= 2
+    assert all(call["max_tokens"] is None for call in requests)
+    records = [
+        load_precision_call(store, key)
+        for key in store.list_artifacts(f"{result.precision_key}/calls/")
+        if key.endswith(".json")
+    ]
+    assert len(records) == 5
+    failed = [record for record in records if record["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_category"] == "invalid_output"
+    assert json.loads(failed[0]["raw_response"]) == {"translations": []}
+    assert sum(record["status"] == "completed" for record in records) == 4
+    assert executor.execute(_plan(store), store) == result
+    assert len(client.calls) == 5
+    usage = client.usage_summary()
+    assert usage["totals"]["calls"] == 5
+    assert usage["totals"]["total_tokens"] == 40
+    assert usage["by_stage"][operation]["calls"] == len(requests)
 
 
 @pytest.mark.parametrize("change", ["source", "context", "route"])
@@ -166,6 +216,65 @@ def test_intentional_blanks_and_numeric_only_batches(tmp_path):
         "---",
     )
     assert not client.calls
+
+
+@pytest.mark.parametrize("boundary", [1, 4])
+def test_protected_sources_survive_generation_archive_and_resume(tmp_path, boundary):
+    source = "10\u2005\u20059\u2005\u20058"
+    store, config, handler = _store(tmp_path, ("one", source)), _config(tmp_path), Handler()
+
+    def normalize_spaces(messages, tier, json_mode):
+        response = json.loads(handler(messages, tier, json_mode))
+        response["translations"][1] = source.replace("\u2005", " ")
+        return json.dumps(response)
+
+    client = MeteredFakeClient(handler=normalize_spaces)
+    executor, plan = PrecisionBatchExecutor(client, config), _plan(store)
+    writes = 0
+
+    def interrupt():
+        nonlocal writes
+        writes += 1
+        if writes == boundary:
+            raise RuntimeError("interrupted")
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        executor.execute(plan, store, checkpoint=interrupt)
+    result = executor.execute(plan, store)
+    assert result.targets == ("润1:0", source)
+    assert result.before_polish[1] == source
+    assert len(client.calls) == 4
+    keys = [
+        key
+        for key in store.list_artifacts(f"{result.precision_key}/calls/")
+        if key.endswith(".json")
+    ]
+    assert len(keys) == 4
+    for key in keys:
+        record = load_precision_call(store, key)
+        assert record["status"] == "completed"
+        assert record["targets"][1] == source
+        assert json.loads(record["raw_response"])["translations"][1] == source.replace(
+            "\u2005", " "
+        )
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
+
+
+def test_cached_targets_restore_protected_sources(tmp_path):
+    source = "10\u2005\u20059\u2005\u20058"
+    store, config = _store(tmp_path, ("one", source)), _config(tmp_path)
+    run = precision_module._PrecisionRun(
+        MeteredFakeClient(handler=Handler()),
+        config,
+        _plan(store),
+        store,
+        checkpoint=None,
+        progress=None,
+    )
+    assert run.targets(["译文", ""]) == ["译文", source]
+    assert run.targets(["译文", "10 9 8"]) == ["译文", source]
+    with pytest.raises(PrecisionError):
+        run.targets(["", source])
 
 
 def test_guarded_publication_keeps_manual_edits_and_recovers_marker(tmp_path, monkeypatch):

@@ -314,14 +314,7 @@ class _PrecisionRun:
             or any(not isinstance(text, str) for text in value)
         ):
             raise PrecisionError("Invalid precision output structure")
-        output = [strip_ruby_markers(text) for text in value]
-        for source, target in zip(self.plan.sources, output):
-            if not any(character.isalpha() for character in source):
-                if target != source:
-                    raise PrecisionError("A precision output changed a protected source segment")
-            elif not self.plan.allow_empty_translations and not target.strip():
-                raise PrecisionError("A precision output contains an empty translation")
-        return output
+        return PrecisionAgent._targets(self.inputs, [strip_ruby_markers(text) for text in value])
 
     def read(self, stage: str) -> dict[str, Any] | None:
         record = self.store.read_artifact(f"{self.key}/{stage}.json")

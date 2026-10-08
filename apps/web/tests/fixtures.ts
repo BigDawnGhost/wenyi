@@ -179,6 +179,10 @@ function tableData(): Record<string, unknown> {
     "/settings": globalConfiguration,
     "/settings/defaults": globalConfiguration,
     "/settings/validate": globalConfiguration,
+    "/desktop/external-credentials/mineru": {
+      mode: "manual", storage: null, available: false, environment: "MINERU_API_KEY",
+      system_storage_available: false, requires_key: true,
+    },
     "/strategies/templates": [
       {
         name: "标准翻译",

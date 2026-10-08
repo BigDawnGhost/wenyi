@@ -79,6 +79,11 @@ class CredentialStore:
                 "CREATE TABLE IF NOT EXISTS desktop_credentials "
                 "(connection TEXT PRIMARY KEY, document TEXT NOT NULL)"
             )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS desktop_external_credentials "
+                "(service TEXT PRIMARY KEY, mode TEXT NOT NULL, reference TEXT, storage TEXT, "
+                "revision INTEGER NOT NULL)"
+            )
 
     @property
     def vault(self):
@@ -116,6 +121,114 @@ class CredentialStore:
                 "INSERT INTO desktop_credentials VALUES (?, ?)",
                 [(name, json.dumps(record)) for name, record in records.items()],
             )
+
+    def _mineru_source(self, connection=None) -> tuple[dict, int]:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT mode, reference, storage, revision FROM desktop_external_credentials "
+                "WHERE service = 'mineru'"
+            ).fetchone()
+        if row is None:
+            return {}, 0
+        mode, reference, storage, revision = row
+        record = {"mode": mode}
+        if reference is not None:
+            record.update(reference=reference, storage=storage)
+        return record, revision
+
+    @staticmethod
+    def _validate_mineru_token(secret: str) -> None:
+        # MinerU uses a plaintext HTTP bearer token, not an OAuth credential document.
+        if not secret or any(not 33 <= ord(char) <= 126 for char in secret):
+            raise ValueError("Enter a nonblank, header-safe plaintext MinerU API key")
+        if any(char in secret for char in '{}[]"'):
+            raise ValueError("Enter a plaintext MinerU API key, not an OAuth document")
+
+    def save_mineru(
+        self,
+        *,
+        secret: str | None = None,
+        clear: bool = False,
+        storage: Literal["auto", "system", "session"] = "auto",
+    ) -> dict:
+        """Stage vault I/O, then compare and commit only the service source revision."""
+        if clear == (secret is not None) or storage not in {"auto", "system", "session"}:
+            raise ValueError("Provide a MinerU API key or Clear")
+        if secret is not None:
+            self._validate_mineru_token(secret)
+        previous, revision = self._mineru_source()
+        change = self.prepare(previous, mode="manual", secret=secret, clear=clear, storage=storage)
+        try:
+            with self._connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if self._mineru_source(conn) != (previous, revision):
+                    raise CredentialConflict("MinerU credential changed; reload before saving")
+                conn.execute(
+                    "INSERT INTO desktop_external_credentials "
+                    "(service, mode, reference, storage, revision) VALUES ('mineru', ?, ?, ?, ?) "
+                    "ON CONFLICT(service) DO UPDATE SET mode=excluded.mode, "
+                    "reference=excluded.reference, storage=excluded.storage, "
+                    "revision=excluded.revision",
+                    (
+                        change.record["mode"],
+                        change.record.get("reference"),
+                        change.record.get("storage"),
+                        revision + 1,
+                    ),
+                )
+        except Exception:
+            self.abort(change)
+            raise
+        self.finish(change)
+        return self.mineru_status()
+
+    def mineru_status(self) -> dict:
+        """Report locally usable credentials without revealing secrets or vault errors."""
+        system_available = self.vault is not None
+        record, secret = self._mineru_snapshot()
+        available = secret is not None
+        if available:
+            try:
+                self._validate_mineru_token(secret)
+            except ValueError:
+                available = False
+        return {
+            "mode": record.get("mode", "manual"),
+            "storage": record.get("storage"),
+            "available": available,
+            "environment": "MINERU_API_KEY",
+            "system_storage_available": system_available,
+            "requires_key": True,
+        }
+
+    def resolve_mineru_token(self) -> str | None:
+        """Capture an invocation's env-first token without mutating process environment."""
+        _, secret = self._mineru_snapshot()
+        if secret is not None:
+            self._validate_mineru_token(secret)
+        return secret
+
+    def _mineru_snapshot(self) -> tuple[dict, str | None]:
+        """Read secrets outside SQL, accepting only a revision-stable source."""
+        environment = os.environ.get("MINERU_API_KEY", "").strip()
+        if environment:
+            return {"mode": "environment"}, environment
+        for _ in range(3):
+            record, revision = self._mineru_source()
+            reference = record.get("reference")
+            secret = None
+            if reference:
+                if record.get("storage") == "session":
+                    with self._lock:
+                        secret = self._session.get(reference)
+                elif self.vault is not None:
+                    try:
+                        secret = self.vault.get_password(SERVICE, reference)
+                    except Exception:
+                        secret = None
+            if self._mineru_source() == (record, revision):
+                return record, secret
+        raise CredentialConflict("MinerU credential changed; reload before reading")
 
     def prepare(
         self,

@@ -57,6 +57,7 @@ def parse_document(
     *,
     expected_sha256: str | None = None,
     progress: ProgressFn | None = None,
+    mineru_token_resolver: Callable[[], str | None] | None = None,
 ) -> Document:
     """Parse or reuse source chapters; the caller holds the book run lock."""
     if os.path.splitext(input_path)[1].lower() == ".srt":
@@ -84,6 +85,7 @@ def parse_document(
             babeldoc_bridge_url=pipeline.babeldoc_bridge_url,
             babeldoc_pages=pipeline.babeldoc_pages,
             babeldoc_timeout=pipeline.babeldoc_timeout,
+            mineru_token_resolver=mineru_token_resolver,
         )
     if source_sha256(input_path) != digest:
         raise ValueError("Source changed during parsing; ensure the file is stable and retry.")

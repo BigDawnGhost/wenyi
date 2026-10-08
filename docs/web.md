@@ -249,6 +249,10 @@ Global **Settings** owns provider connections, model registration, default tiers
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 
+The **MinerU PDF parsing** card provides deployment guidance only. Set `MINERU_API_KEY`
+for the API and workers when using MinerU; this is independent of model API keys. Web
+does not expose Desktop's manual MinerU credential input or storage endpoints.
+
 In **Translation overview**, expand **Workflow details** to see **Current workflow**. It shows enabled and disabled steps for the latest non-export task using that task's configuration snapshot, with separate plans for books, subtitles, preparation, and review. Before the first task it shows the project's configured translation plan. Step cards describe the plan, not individual completion checkpoints; polishing still runs inside translation batches. The latest progress callback is cached in Redis for seven days and associated with the run ID, so reloading restores progress without showing an older run. Export jobs remain on the export page.
 
 ## Related notes

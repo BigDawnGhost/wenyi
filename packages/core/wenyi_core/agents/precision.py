@@ -1,4 +1,4 @@
-"""Three independent drafts and one source-aware synthesis, without extra model rounds."""
+"""Three independent drafts and one source-aware synthesis with bounded output retries."""
 
 from __future__ import annotations
 
@@ -91,27 +91,40 @@ class PrecisionAgent(Agent):
                 inputs, data.get("translations") if isinstance(data, dict) else None
             )
 
-        try:
-            if self._recorder:
-                targets, self.last_call_ref = self._recorder(operation, messages, invoke, validate)
-                return targets
-            return validate(invoke())
-        except (JsonParseError, TruncatedResponseError) as error:
-            raise PrecisionError(f"{operation}: invalid or truncated precision response") from error
+        retries_remaining = self.config.pipeline.align_retry_limit
+        while True:
+            try:
+                if self._recorder:
+                    targets, self.last_call_ref = self._recorder(
+                        operation, messages, invoke, validate
+                    )
+                    return targets
+                return validate(invoke())
+            except (PrecisionError, JsonParseError, TruncatedResponseError) as error:
+                # Output recovery is separate from provider transport retries and archival failures.
+                if retries_remaining <= 0:
+                    if isinstance(error, PrecisionError):
+                        raise
+                    raise PrecisionError(
+                        f"{operation}: invalid or truncated precision response"
+                    ) from error
+                retries_remaining -= 1
 
     @staticmethod
     def _targets(inputs: PrecisionInputs, targets: object) -> list[str]:
-        """Check structure once for backfill; never retry or split model requests."""
+        """Validate structure and restore protected sources without splitting."""
         if not isinstance(targets, list) or len(targets) != len(inputs.sources):
             raise PrecisionError("Precision output count does not match the document segments")
+        output: list[str] = []
         for index, (source, target) in enumerate(zip(inputs.sources, targets)):
             if not isinstance(target, str):
                 raise PrecisionError(f"Precision output {index} must be a string")
-            if not inputs.allow_empty_translations and source.strip() and not target.strip():
+            if not Translator._needs_translation(source):
+                target = source
+            elif not inputs.allow_empty_translations and not target.strip():
                 raise PrecisionError(f"Precision output {index} must not be blank")
-            if not Translator._needs_translation(source) and target != source:
-                raise PrecisionError(f"Precision output changed protected segment {index}")
-        return targets
+            output.append(target)
+        return output
 
     def translate(self, inputs: PrecisionInputs) -> list[str]:
         return self._call(
@@ -124,8 +137,7 @@ class PrecisionAgent(Agent):
     def synthesize(self, inputs: PrecisionInputs, drafts: list[list[str]]) -> list[str]:
         if len(drafts) != 3:
             raise PrecisionError("Precision synthesis requires three initial drafts")
-        for draft in drafts:
-            self._targets(inputs, draft)
+        drafts = [self._targets(inputs, draft) for draft in drafts]
         # Keep all draws in checkpoints; identical text is not additional evidence.
         distinct = [list(draft) for draft in dict.fromkeys(tuple(draft) for draft in drafts)]
         return self._call(
