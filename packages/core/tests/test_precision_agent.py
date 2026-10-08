@@ -95,6 +95,38 @@ def test_protected_positions_and_intentional_blank_targets():
     assert len(client.calls) == 2
 
 
+@pytest.mark.parametrize("allow_empty", [False, True])
+@pytest.mark.parametrize(
+    ("source", "generated"),
+    [
+        ("10\u2005\u20059\u2005\u20058", "10 9 8"),
+        ("10\u2005\u20059\u2005\u20058", ""),
+        ("123", "一二三"),
+        ("---", "separator"),
+        ("\t\u2005\n", "added text"),
+        ("", "added text"),
+    ],
+)
+def test_protected_outputs_use_source_in_drafts_and_synthesis(source, generated, allow_empty):
+    worker, client = agent({"translations": ["译文", generated]})
+    packet = inputs("source", source, allow_empty=allow_empty)
+    assert worker.translate(packet) == ["译文", source]
+    drafts = [["甲稿", generated], ["乙稿", "changed"], ["丙稿", ""]]
+    assert worker.synthesize(packet, drafts) == ["译文", source]
+    task = json.loads(client.calls[-1]["messages"][-1]["content"].split("Task (JSON):\n")[1])
+    assert task["drafts"] == [["甲稿", source], ["乙稿", source], ["丙稿", source]]
+    assert drafts == [["甲稿", generated], ["乙稿", "changed"], ["丙稿", ""]]
+    assert len(client.calls) == 2
+
+
+@pytest.mark.parametrize("targets", [["译文"], ["译文", "123", "extra"], ["译文", None]])
+def test_protected_outputs_still_require_matching_count_and_string_types(targets):
+    worker, client = agent({"translations": targets})
+    with pytest.raises(PrecisionError):
+        worker.translate(inputs("source", "123"))
+    assert len(client.calls) == 1
+
+
 def test_book_prefix_is_stable_before_batch_context():
     worker, client = agent({"translations": ["二"]})
     packet = inputs("two")

@@ -104,6 +104,64 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):
         reopened.close()
 
 
+def test_precision_keeps_protected_source_when_model_changes_spacing(desktop):
+    client, backend, fake = desktop
+    source = "10\u2005\u20059\u2005\u20058"
+    handler = PrecisionHandler()
+
+    def normalize_spaces(messages, tier, json_mode):
+        response = handler(messages, tier, json_mode)
+        if "Task (JSON):\n" not in messages[-1]["content"]:
+            return response
+        data = json.loads(response)
+        data["translations"][1] = "10 9 8"
+        return json.dumps(data)
+
+    fake.handler = normalize_spaces
+    created = client.post(
+        "/projects",
+        data={
+            "project": json.dumps(
+                {
+                    "name": "Protected spacing",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "translation_mode": "best_of_three",
+                }
+            )
+        },
+        files={"file": ("book.txt", f"The traveler crossed the bridge.\n\n{source}\n".encode())},
+    )
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    root = f"/projects/{pid}"
+    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    configured = client.put(
+        root + "/config",
+        json={"yaml": "pipeline: {review: false, book_understanding: false}"},
+    )
+    assert configured.status_code == 200, configured.text
+    translated = client.post(root + "/translate")
+    assert translated.status_code == 200, translated.text
+    job = wait_job(translated.json()["job_id"])
+    assert job["status"] == "done", job
+    assert handler.counts == {"translate": 3, "synthesis": 1}
+    segments = client.get(root + "/chapters/0").json()["segments"]
+    assert segments[1]["source"] == source
+    assert segments[1]["target"] == source
+    assert segments[1]["target_before_polish"] == source
+    calls = len(fake.calls)
+    resumed = client.post(root + "/translate")
+    assert resumed.status_code == 200, resumed.text
+    assert wait_job(resumed.json()["job_id"])["status"] == "done"
+    assert len(fake.calls) == calls
+    reopened = backend.storage_for(pid)
+    try:
+        assert reopened.load_chapter(0).text_segments[1].target == source
+    finally:
+        reopened.close()
+
+
 def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):
     client, backend, _ = desktop
     legacy = Config.from_dict(
