@@ -27,6 +27,25 @@ Whole-book understanding · Consistent terminology · Evidence-based review
 
 ---
 
+## Sponsors
+
+Thank you to PackyCode for sponsoring Wenyi.
+
+<table>
+  <tr>
+    <td align="center" width="200">
+      <a href="https://www.packyapi.ai/register?aff=KIzj">
+        <img src="docs/images/packycode-logo-transparent.png" alt="PackyCode logo" width="160">
+      </a>
+    </td>
+    <td>
+      PackyCode provides access to leading AI models through one API endpoint and one API key, with automatic failover and dedicated routes for Codex and Claude Code.
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Why Wenyi
 
 | Typical approach | Wenyi |
@@ -147,20 +166,6 @@ Public-domain translation examples are shared through [wenyi-bookcase](https://g
 - QQ group: 1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
-
----
-
-## Support
-
-If this project has been helpful, tips are welcome.
-
-<p align="center">
-  <img src="docs/images/tip-wechat.jpg" alt="WeChat Pay tip QR code" width="220">
-  &nbsp;&nbsp;
-  <img src="docs/images/tip-alipay.jpg" alt="Alipay tip QR code" width="220">
-  <br>
-  <sub>WeChat Pay · Alipay</sub>
-</p>
 
 ---
 

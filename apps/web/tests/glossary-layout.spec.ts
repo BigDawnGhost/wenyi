@@ -66,9 +66,9 @@ for (const locale of ["en", "zh-CN"] as const) {
 
     await page.setViewportSize({ width: 1440, height: 960 });
     const expression = rows.nth(1);
-    for (const [index, field] of (
-      ["source", "target", "reading"] as const
-    ).entries()) {
+    await expect(table.getByRole("columnheader")).toHaveCount(5);
+    await expect(table).not.toContainText(terms[1].reading.trim());
+    for (const [index, field] of (["source", "target"] as const).entries()) {
       await expect(expression.getByRole("cell").nth(index + 1)).toHaveText(
         terms[1][field].trim(),
       );

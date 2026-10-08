@@ -106,6 +106,7 @@ class AutofixCandidateService:
             chapters,
             all_terms,
             analysis,
+            source_lang=self.config.source_lang,
             target_overrides=overrides,
         )
         raw_issues = debug.load_json("rounds/final/unresolved_issues.json")

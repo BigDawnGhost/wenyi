@@ -8,8 +8,77 @@ from wenyi_cli.cli import app
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, term_match_sources
+from wenyi_core.i18n.languages import supported_languages
 from wenyi_core.i18n.prompts import render
 from wenyi_core.llm.providers.fake import FakeClient
+
+
+@pytest.mark.parametrize("source", [*supported_languages(), "auto"])
+@pytest.mark.parametrize("target", ["en", "ja"])
+@pytest.mark.parametrize("task", ["analyzer_system", "glossary_extractor_system"])
+def test_glossary_reading_schema_depends_on_source_not_target(task, source, target):
+    prompt = render(task, src=source, tgt=target)
+    schema = json.loads(prompt[prompt.index("\n{") :])
+    entries = schema.get("characters", []) + schema["terms"]
+    assert all(("reading" in entry) == (source == "ja") for entry in entries)
+    if source == "ja":
+        assert '"reading":' in prompt
+        assert "furigana" in prompt
+        assert "Do not infer a reading" in prompt
+        assert "Leave reading empty when the source provides no reading" in prompt
+    else:
+        assert '"reading":' not in prompt
+        assert "pronunciation" not in prompt
+        assert "reading records" not in prompt
+
+
+@pytest.mark.parametrize("source", ["ja", "en", "ru", "zh", "auto"])
+def test_analysis_only_accepts_japanese_source_readings(tmp_path, source):
+    data = {
+        "characters": [{"source": "綾小路", "target": "Ayanokoji", "reading": "あやのこうじ"}],
+        "terms": [{"source": "学校", "target": "School", "reading": "がっこう"}],
+    }
+    analyzer = Analyzer(
+        FakeClient(handler=lambda *_: json.dumps(data)),
+        Config.from_dict({"language": {"source": source, "target": "en"}}),
+    )
+    result = analyzer.analyze("綾小路〘あやのこうじ〙は学校〘がっこう〙に行った。")
+    expected = {"綾小路": "あやのこうじ", "学校": "がっこう"} if source == "ja" else {}
+    for entry in result["characters"] + result["terms"]:
+        assert entry.get("reading", "") == expected.get(entry["source"], "")
+
+    store = GlossaryStore(str(tmp_path / "glossary.db"))
+    try:
+        # Also guard seeding from an older, unnormalized analysis snapshot.
+        assert analyzer.seed_glossary(store, data) == 2
+        for term in store.all_terms():
+            assert term.reading == expected.get(term.source, "")
+    finally:
+        store.close()
+
+
+def test_non_japanese_analysis_does_not_erase_manually_saved_readings(tmp_path):
+    analyzer = Analyzer(
+        FakeClient(), Config.from_dict({"language": {"source": "en", "target": "ja"}})
+    )
+    store = GlossaryStore(str(tmp_path / "glossary.db"))
+    try:
+        store.upsert_term(
+            GlossaryTerm(source="Alice", target="アリス", reading="Manual pronunciation")
+        )
+        analyzer.seed_glossary(
+            store,
+            {
+                "characters": [
+                    {"source": "Alice", "target": "アリス", "reading": "Unexpected model reading"}
+                ]
+            },
+        )
+        term = store.get_term("Alice")
+        assert term is not None
+        assert term.reading == "Manual pronunciation"
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize(
