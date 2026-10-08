@@ -1,5 +1,6 @@
 """Four-call precision execution, durable resume and guarded final publication."""
 
+import json
 import signal
 from dataclasses import replace
 from threading import Event, Lock
@@ -10,6 +11,7 @@ from wenyi_core.config import Config
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.precision_records import load_precision_call
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
@@ -166,6 +168,65 @@ def test_intentional_blanks_and_numeric_only_batches(tmp_path):
         "---",
     )
     assert not client.calls
+
+
+@pytest.mark.parametrize("boundary", [1, 4])
+def test_protected_sources_survive_generation_archive_and_resume(tmp_path, boundary):
+    source = "10\u2005\u20059\u2005\u20058"
+    store, config, handler = _store(tmp_path, ("one", source)), _config(tmp_path), Handler()
+
+    def normalize_spaces(messages, tier, json_mode):
+        response = json.loads(handler(messages, tier, json_mode))
+        response["translations"][1] = source.replace("\u2005", " ")
+        return json.dumps(response)
+
+    client = MeteredFakeClient(handler=normalize_spaces)
+    executor, plan = PrecisionBatchExecutor(client, config), _plan(store)
+    writes = 0
+
+    def interrupt():
+        nonlocal writes
+        writes += 1
+        if writes == boundary:
+            raise RuntimeError("interrupted")
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        executor.execute(plan, store, checkpoint=interrupt)
+    result = executor.execute(plan, store)
+    assert result.targets == ("润1:0", source)
+    assert result.before_polish[1] == source
+    assert len(client.calls) == 4
+    keys = [
+        key
+        for key in store.list_artifacts(f"{result.precision_key}/calls/")
+        if key.endswith(".json")
+    ]
+    assert len(keys) == 4
+    for key in keys:
+        record = load_precision_call(store, key)
+        assert record["status"] == "completed"
+        assert record["targets"][1] == source
+        assert json.loads(record["raw_response"])["translations"][1] == source.replace(
+            "\u2005", " "
+        )
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
+
+
+def test_cached_targets_restore_protected_sources(tmp_path):
+    source = "10\u2005\u20059\u2005\u20058"
+    store, config = _store(tmp_path, ("one", source)), _config(tmp_path)
+    run = precision_module._PrecisionRun(
+        MeteredFakeClient(handler=Handler()),
+        config,
+        _plan(store),
+        store,
+        checkpoint=None,
+        progress=None,
+    )
+    assert run.targets(["译文", ""]) == ["译文", source]
+    assert run.targets(["译文", "10 9 8"]) == ["译文", source]
+    with pytest.raises(PrecisionError):
+        run.targets(["", source])
 
 
 def test_guarded_publication_keeps_manual_edits_and_recovers_marker(tmp_path, monkeypatch):

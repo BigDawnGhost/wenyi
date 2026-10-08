@@ -207,6 +207,10 @@ three-way polishing, blind acceptance, refinement round, per-paragraph competiti
 or scoped alignment recovery. Minimal one-shot array count/type and protected-ID
 validation remains solely to support EPUB/DOCX backfill. Malformed results may pause
 the batch; validation makes no extra model call and never silently zips away text.
+Segments that need no translation, such as numbers, punctuation, empty text and
+whitespace-only text, are copied directly from the source in every draft and the
+synthesis. Generated text at those positions is ignored, including changed spacing
+or blank outputs; array count and string-type checks still apply.
 Publication metadata means a structurally valid synthesized result, not a semantic
 acceptance gate. `target_before_polish` stores the first initial draft as a comparison
 reference, not a selected accurate draft; `target` stores the synthesized final text.
