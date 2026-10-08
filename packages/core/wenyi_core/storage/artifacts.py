@@ -18,27 +18,58 @@ class FileArtifacts:
         self._artifact_lock = RLock()
 
     def _artifact_path(self, key: str) -> Path:
+        root = Path(self._artifact_root).resolve()
         path = Path(self._artifact_root, key).resolve()
-        if not path.is_relative_to(Path(self._artifact_root).resolve()):
+
+        # On Windows, resolve() returns an extended-length path with a ``\?\``
+        # prefix once the path is long enough, while the shorter root keeps the
+        # plain form. Comparing the raw parts then reports a false escape for a
+        # perfectly valid key. Normalise both sides before checking containment.
+        def _norm(p: Path) -> str:
+            value = os.path.normcase(str(p))
+            if value.startswith("\\\\?\\"):
+                value = value[4:]
+            return value.rstrip("/\\")
+
+        root_s, path_s = _norm(root), _norm(path)
+        if path_s != root_s and not path_s.startswith(root_s + os.sep):
             raise ValueError("Artifact key must remain within the run")
         return path
 
+    @staticmethod
+    def _io_path(path: Path) -> str:
+        """Return a string the Win32 API can open even past MAX_PATH.
+
+        Precision drafts live under a 64-char source hash, so a deep state
+        directory can push ``<draft>.json.tmp`` past the 260-character limit and
+        Windows then reports a bare "No such file or directory". The ``\\\\?\\``
+        prefix switches to the NT namespace, which has no such limit.
+        """
+        text = str(path)
+        if os.name != "nt" or text.startswith("\\\\?\\"):
+            return text
+        return "\\\\?\\" + os.path.abspath(text)
+
     def read_artifact(self, key: str) -> Any | None:
         try:
-            return json.loads(self._artifact_path(key).read_text(encoding="utf-8"))
+            return json.loads(
+                Path(self._io_path(self._artifact_path(key))).read_text(encoding="utf-8")
+            )
         except (OSError, json.JSONDecodeError):
             return None
 
     def write_artifact(self, key: str, value: Any) -> None:
         path = self._artifact_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        os.makedirs(self._io_path(path.parent), exist_ok=True)
         with self._artifact_lock:
             tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(tmp, path)
+            Path(self._io_path(tmp)).write_text(
+                json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            os.replace(self._io_path(tmp), self._io_path(path))
 
     def delete_artifact(self, key: str) -> None:
-        self._artifact_path(key).unlink(missing_ok=True)
+        Path(self._io_path(self._artifact_path(key))).unlink(missing_ok=True)
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
         base = Path(self._artifact_root).resolve()
@@ -52,13 +83,17 @@ class FileArtifacts:
 
     def append_artifact_record(self, key: str, record: dict) -> None:
         path = self._artifact_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._artifact_lock, path.open("a", encoding="utf-8") as handle:
+        os.makedirs(self._io_path(path.parent), exist_ok=True)
+        with self._artifact_lock, open(self._io_path(path), "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
     def read_artifact_records(self, key: str) -> list[dict]:
         try:
-            lines = self._artifact_path(key).read_text(encoding="utf-8").splitlines()
+            lines = (
+                Path(self._io_path(self._artifact_path(key)))
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
         except OSError:
             return []
         rows = []
