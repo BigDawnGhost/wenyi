@@ -157,6 +157,7 @@ class BackendContext:
     health: Callable[[], None]
     update_term: Callable[..., None]
     api_token: str | None = None
+    mineru_token_resolver: Callable[[], str | None] | None = None
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

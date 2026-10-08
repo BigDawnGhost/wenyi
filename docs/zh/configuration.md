@@ -156,6 +156,13 @@ llm:
 
 SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 
+总设置中的 **MinerU PDF 解析**卡片独立于模型连接。Web 和 CLI 从部署/进程环境变量
+`MINERU_API_KEY` 读取密钥。Desktop 优先读取同一变量，缺失时使用该卡片手动保存的
+系统凭据库或仅会话内存密钥。Desktop 卡片仅提供一个输入框和一个保存按钮；
+环境密钥存在时两者均禁用。保存不会改变配置 YAML 或模型注册。
+仅当未缓存的 PDF 需要 MinerU 转换时才解析凭据；已有转换 HTML 与非 PDF 输入无需密钥。
+密钥不会进入项目/任务快照、manifest 或解析缓存。
+
 DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: false` 显式关闭思考，此时不发送推理强度。未配置输出上限且流程没有输出提示时，由服务采用默认上限：非思考模式 8K、思考模式 64K，`max` 强度下为 128K。流程提示和显式 `max_output_tokens` 仍按上述配置规则处理。详见 [DeepSeek 请求参数](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
 ### 已注册操作

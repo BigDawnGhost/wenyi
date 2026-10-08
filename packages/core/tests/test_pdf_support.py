@@ -64,6 +64,12 @@ def _initialize_test_store(store: FileStorage, document: Document) -> None:
 
 
 class TestPdfIngest(unittest.TestCase):
+    def setUp(self):
+        # Converter calls are mocked; use a synthetic credential independent of the host.
+        environment = patch.dict(os.environ, {"MINERU_API_KEY": "fake-offline-mineru-token"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_pdf_reuses_state_html_without_api_call(self):
         with tempfile.TemporaryDirectory() as directory:
             pdf_path = os.path.join(directory, "sample.pdf")
@@ -116,7 +122,8 @@ class TestPdfIngest(unittest.TestCase):
                     pdf_backend="mineru",
                 )
 
-        self.assertIsInstance(raised.exception.__cause__, RuntimeError)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
 
     def test_pdf_failed_conversion_cannot_leave_a_reusable_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:

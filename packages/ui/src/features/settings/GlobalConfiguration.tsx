@@ -12,6 +12,7 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { Textarea } from "@/components/ui/form";
 import { ModelSelection } from "./ModelSelection";
 import { ProviderSettings } from "./ProviderSettings";
+import { MinerUSettings } from "./MinerUSettings";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
 
@@ -158,6 +159,7 @@ export function GlobalConfiguration() {
           />
         </CardContent>
       </Card>
+      <MinerUSettings />
       <Card>
         <CardContent className="p-5 space-y-4">
           <h2 className="font-medium">{t("settings.newProjectDefaults")}</h2>

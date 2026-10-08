@@ -1,6 +1,16 @@
 import { useI18n } from "@wenyi/ui/i18n";
 
 const en = {
+  "mineru.credential": "MinerU credential",
+  "mineru.key": "MinerU API key",
+  "mineru.save": "Save MinerU key",
+  "mineru.placeholder": "Enter API key",
+  "mineru.savedPlaceholder": "Key saved · enter to replace",
+  "mineru.environmentPlaceholder": "Uses MINERU_API_KEY",
+  "mineru.saved": "MinerU key saved.",
+  "mineru.sessionWarning": "Stored for this session only.",
+  "mineru.failed": "MinerU credential could not be checked or saved. Please retry.",
+  "mineru.environmentInvalid": "MINERU_API_KEY is not a valid key. Correct it and restart Desktop.",
   "updates.title": "Desktop updates",
   "updates.currentVersion": "Current version: {version}",
   "updates.version": "Available version: {version}",
@@ -54,6 +64,16 @@ const en = {
   "credentials.saveConnection": "Save the connection configuration first, then configure its credential.",
 };
 const zhCN: Record<keyof typeof en, string> = {
+  "mineru.credential": "MinerU 凭据",
+  "mineru.key": "MinerU API 密钥",
+  "mineru.save": "保存 MinerU 密钥",
+  "mineru.placeholder": "输入 API 密钥",
+  "mineru.savedPlaceholder": "密钥已保存，可输入新密钥替换",
+  "mineru.environmentPlaceholder": "使用 MINERU_API_KEY",
+  "mineru.saved": "MinerU 密钥已保存。",
+  "mineru.sessionWarning": "仅在当前会话中保存。",
+  "mineru.failed": "无法检查或保存 MinerU 凭据，请重试。",
+  "mineru.environmentInvalid": "MINERU_API_KEY 格式无效，请修正后重启 Desktop。",
   "updates.title": "桌面端更新",
   "updates.currentVersion": "当前版本：{version}",
   "updates.version": "可用版本：{version}",

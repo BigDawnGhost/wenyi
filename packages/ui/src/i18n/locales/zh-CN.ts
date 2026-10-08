@@ -1,6 +1,9 @@
 import type { Messages } from "../catalog";
 
 const zhCN = {
+  "settings.mineruTitle": "MinerU PDF 解析凭据",
+  "settings.mineruHelp": "MinerU 用于解析 PDF 文档，其 API 密钥独立于模型提供商，不保存到配置 YAML。",
+  "settings.mineruDeployment": "请在服务器部署环境中配置 MINERU_API_KEY。Web 应用不接受手动密钥或登录。",
   "runtime.loadingPage": "正在加载页面…",
   "runtime.pageFailed": "无法加载此页面。",
   "runtime.reload": "重新加载",
