@@ -102,6 +102,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/desktop.test.mjs
       - run: uv run --no-sync pytest -q packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
+      - name: Test Windows local state and artifact paths
+        if: runner.os == 'Windows'
+        run: >
+          uv run --no-sync pytest -q
+          packages/core/tests/test_file_artifacts.py
+          packages/core/tests/test_file_storage.py
+          packages/core/tests/test_precision_pipeline.py
+          packages/core/tests/test_orchestrator.py
       - run: uv run --no-sync pytest -q apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
