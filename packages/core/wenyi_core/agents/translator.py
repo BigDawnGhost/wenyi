@@ -115,7 +115,7 @@ class Translator(Agent):
             tgt=self.tgt,
             style=style or "(none)",
             book_synopsis=book_synopsis or "(none)",
-            glossary=prompts.render_glossary(glossary_terms),
+            glossary=prompts.render_glossary(glossary_terms, source_lang=self.src),
             annotation_contexts=prompts.render_annotation_contexts(
                 annotation_contexts or [[] for _ in sources]
             ),

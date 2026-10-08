@@ -30,7 +30,7 @@ class Polisher(Agent):
             "polisher_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(glossary_terms or [], source_lang=self.src),
             style=style or "(none)",
             n=n,
             numbered_target=prompts.numbered(targets),
