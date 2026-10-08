@@ -212,7 +212,8 @@ def test_prefix_scan_does_not_traverse_source_files(tmp_path, monkeypatch, prefi
 
     monkeypatch.setattr(native_path, "rglob", record_scan)
     assert storage.list_artifacts(prefix) == ["reviews/review-a/chunks/ch0.json"]
-    assert scans == [tmp_path / prefix.rpartition("/")[0]]
+    expected_directory = Path(storage._io_path(tmp_path / prefix.rpartition("/")[0])).resolve()
+    assert scans == [expected_directory]
 
 
 def test_artifact_listing_keeps_prefix_semantics(tmp_path):
