@@ -5,9 +5,10 @@ from dataclasses import asdict, replace
 
 import pytest
 from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.llm.retrying import TruncatedResponseError
 from wenyi_core.llm.routing import identity
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor, _PrecisionRun
-from wenyi_core.pipeline.precision_records import load_precision_call
+from wenyi_core.pipeline.precision_records import PrecisionRecords, load_precision_call
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 from tests.fake_llm import MeteredFakeClient
@@ -64,25 +65,86 @@ def test_historical_calls_reconstruct_messages_outputs_and_share_results(tmp_pat
     assert archive.get(saved["targets_ref"]) == list(result.targets)
 
 
-def test_failed_output_keeps_response_and_retry_only_adds_one_new_call(tmp_path):
+@pytest.mark.parametrize("retry_limit", [0, 2])
+def test_failed_output_keeps_each_response_and_resume_adds_only_missing_call(tmp_path, retry_limit):
     store, config, handler = _store(tmp_path), _config(tmp_path), Handler(invalid=True)
+    config.pipeline.align_retry_limit = retry_limit
     client = MeteredFakeClient(handler=handler)
     executor = PrecisionBatchExecutor(client, config)
     with pytest.raises(ValueError):
         executor.execute(_plan(store), store)
-    key = next(
+    keys = [
         key for key in store.list_artifacts("precision/chapters/0/") if "/calls/synthesis/" in key
-    )
-    failed = load_precision_call(store, key)
-    assert failed["status"] == "failed"
-    assert failed["error_category"] == "invalid_output"
-    assert json.loads(failed["raw_response"]) == {"translations": []}
-    assert "targets" not in failed
+    ]
+    assert len(keys) == 1 + config.pipeline.align_retry_limit
+    failures = {key: load_precision_call(store, key) for key in keys}
+    for failed in failures.values():
+        assert failed["status"] == "failed"
+        assert failed["error_category"] == "invalid_output"
+        assert json.loads(failed["raw_response"]) == {"translations": []}
+        assert "targets" not in failed
+    with pytest.raises(ValueError):
+        executor.execute(_plan(store), store)
+    keys = [
+        key for key in store.list_artifacts("precision/chapters/0/") if "/calls/synthesis/" in key
+    ]
+    assert len(keys) == 2 * (1 + config.pipeline.align_retry_limit)
+    assert {key: load_precision_call(store, key) for key in failures} == failures
+    failures = {key: load_precision_call(store, key) for key in keys}
     handler.invalid = False
     result = executor.execute(_plan(store), store)
-    assert len(client.calls) == 5
-    assert len(calls(store, result)) == 5
-    assert load_precision_call(store, key)["status"] == "failed"
+    assert len(client.calls) == 4 + len(keys)
+    assert len(calls(store, result)) == 4 + len(keys)
+    assert handler.counts["translate"] == 3
+    assert {key: load_precision_call(store, key) for key in keys} == failures
+    assert client.usage_summary()["totals"]["total_tokens"] == 8 * (4 + len(keys))
+
+
+@pytest.mark.parametrize("failure", ["invalid_output", "truncated", "interrupt"])
+def test_failure_receipt_storage_error_blocks_retries_but_preserves_interrupts(
+    tmp_path, monkeypatch, failure
+):
+    store, config, handler = _store(tmp_path), _config(tmp_path), Handler()
+
+    def respond(messages, tier, json_mode):
+        response = handler(messages, tier, json_mode)
+        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        if "drafts" in task:
+            if failure == "invalid_output":
+                return '{"translations":[]}'
+            if failure == "truncated":
+                raise TruncatedResponseError("provider output ended")
+            raise KeyboardInterrupt
+        return response
+
+    storage_error = OSError("failure receipt storage unavailable")
+    save = PrecisionRecords.save
+
+    def fail_receipt(self, key, record):
+        if record["status"] in {"failed", "interrupted"}:
+            raise storage_error
+        return save(self, key, record)
+
+    monkeypatch.setattr(PrecisionRecords, "save", fail_receipt)
+    client = MeteredFakeClient(handler=respond)
+    executor = PrecisionBatchExecutor(client, config)
+    expected_error = KeyboardInterrupt if failure == "interrupt" else OSError
+    with pytest.raises(expected_error) as caught:
+        executor.execute(_plan(store), store)
+    if failure != "interrupt":
+        assert caught.value is storage_error
+    assert len(client.calls) == 4
+    assert handler.counts == {"translate": 3, "synthesis": 1}
+    keys = [
+        key for key in store.list_artifacts("precision/chapters/0/") if "/calls/synthesis/" in key
+    ]
+    assert len(keys) == 1
+    record = load_precision_call(store, keys[0])
+    assert record["status"] == ("received" if failure == "invalid_output" else "started")
+    assert "targets" not in record
+    if failure == "invalid_output":
+        assert json.loads(record["raw_response"]) == {"translations": []}
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
 
 
 def test_compatible_legacy_ready_is_upgraded_without_new_model_calls_or_deleted_data(tmp_path):
@@ -130,9 +192,25 @@ def test_changed_call_record_fails_integrity_validation(tmp_path):
 
 
 @pytest.mark.parametrize("stage", ["drafts/T1", "result"])
-def test_completed_paid_receipt_recovers_gap_before_stage_checkpoint(tmp_path, monkeypatch, stage):
+@pytest.mark.parametrize("invalid_first", [False, True])
+def test_completed_paid_receipt_recovers_gap_before_stage_checkpoint(
+    tmp_path, monkeypatch, stage, invalid_first
+):
     store, config = _store(tmp_path), _config(tmp_path)
-    client = MeteredFakeClient(handler=Handler())
+    handler = Handler()
+    invalid = invalid_first
+
+    def respond(messages, tier, json_mode):
+        nonlocal invalid
+        response = handler(messages, tier, json_mode)
+        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        with handler.lock:
+            if invalid and "drafts" in task:
+                invalid = False
+                return '{"translations":[]}'
+        return response
+
+    client = MeteredFakeClient(handler=respond)
     executor = PrecisionBatchExecutor(client, config)
     original = _PrecisionRun.write
     failed = False
@@ -148,8 +226,9 @@ def test_completed_paid_receipt_recovers_gap_before_stage_checkpoint(tmp_path, m
     with pytest.raises(RuntimeError, match="gap"):
         executor.execute(_plan(store), store)
     result = executor.execute(_plan(store), store)
-    assert len(client.calls) == 4
-    assert len(calls(store, result)) == 4
+    assert len(client.calls) == 4 + invalid_first
+    assert len(calls(store, result)) == 4 + invalid_first
+    assert client.usage_summary()["totals"]["total_tokens"] == 8 * (4 + invalid_first)
 
 
 def test_missing_publication_result_is_not_silently_skipped(tmp_path, monkeypatch):

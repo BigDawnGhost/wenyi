@@ -138,10 +138,13 @@ class PrecisionRecords:
                 with self.store.state_lock():
                     self.save(key, record)
             except Exception as storage_error:
-                # Never replace the original model failure or print its response/credentials.
+                # Log only the type; failed persistence must stop further paid attempts.
                 _LOGGER.error(
                     "Could not persist precision call failure: %s", type(storage_error).__name__
                 )
+                if isinstance(error, Exception):
+                    raise
+                # Keep cancellation and process-interruption semantics even if recording fails.
             raise
 
     def save(self, key: str, record: dict[str, Any]) -> None:

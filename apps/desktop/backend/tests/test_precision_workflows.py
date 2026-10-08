@@ -2,12 +2,103 @@
 
 import json
 
+import pytest
 from desktop_test_support import wait_job
 from tests.precision_fixtures import PrecisionHandler
 from wenyi_backend import dal
 from wenyi_backend.config_documents import config_document
 from wenyi_core.config import Config
 from wenyi_core.pipeline.language_policies import CHECKPOINT
+from wenyi_core.pipeline.precision_records import load_precision_call
+
+
+@pytest.mark.parametrize("stage", ["translate", "synthesis"])
+def test_precision_structural_retry_finishes_without_manual_resume(desktop, stage):
+    client, backend, fake = desktop
+    handler = PrecisionHandler()
+    failed = False
+
+    def fail_once(messages, tier, json_mode):
+        nonlocal failed
+        response = handler(messages, tier, json_mode)
+        if "Task (JSON):\n" not in messages[-1]["content"]:
+            return response
+        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        kind = "synthesis" if "drafts" in task else "translate"
+        # The handler's lock also serializes selection of the single failing draft.
+        with handler.lock:
+            if kind == stage and not failed:
+                failed = True
+                return '{"translations":[]}'
+        return response
+
+    fake.handler = fail_once
+    created = client.post(
+        "/projects",
+        data={
+            "project": json.dumps(
+                {
+                    "name": "Structural retry",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "translation_mode": "best_of_three",
+                }
+            )
+        },
+        files={"file": ("book.txt", b"The traveler crossed the bridge.\n")},
+    )
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    root = f"/projects/{pid}"
+    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    configured = client.put(
+        root + "/config",
+        json={"yaml": "pipeline: {review: false, book_understanding: false, align_retry_limit: 2}"},
+    )
+    assert configured.status_code == 200, configured.text
+    translated = client.post(root + "/translate")
+    assert translated.status_code == 200, translated.text
+    job = wait_job(translated.json()["job_id"])
+    assert job["status"] == "done", job
+    assert handler.counts == {
+        "translate": 3 + (stage == "translate"),
+        "synthesis": 1 + (stage == "synthesis"),
+    }
+    segment = client.get(root + "/chapters/0").json()["segments"][0]
+    assert segment["target"].startswith("润")
+    response = client.get(root + f"/chapters/0/segments/{segment['index']}/precision-drafts")
+    assert response.status_code == 200, response.text
+    drafts = response.json()
+    assert [candidate["id"] for candidate in drafts["candidates"]] == ["T1", "T2", "T3"]
+    assert drafts["synthesized_target"] == segment["target"]
+    assert drafts["candidates"][0]["target"] == segment["target_before_polish"]
+    store = backend.storage_for(pid)
+    try:
+        archived = {key: store.read_artifact(key) for key in store.list_artifacts("precision/")}
+        records = [
+            load_precision_call(store, key)
+            for key in archived
+            if "/calls/" in key and key.endswith(".json")
+        ]
+        assert len(records) == 5
+        failures = [record for record in records if record["status"] == "failed"]
+        assert len(failures) == 1
+        assert json.loads(failures[0]["raw_response"]) == {"translations": []}
+        assert sum(record["status"] == "completed" for record in records) == 4
+    finally:
+        store.close()
+    calls = len(fake.calls)
+    resumed = client.post(root + "/translate")
+    assert resumed.status_code == 200, resumed.text
+    assert wait_job(resumed.json()["job_id"])["status"] == "done"
+    assert len(fake.calls) == calls
+    reopened = backend.storage_for(pid)
+    try:
+        assert {
+            key: reopened.read_artifact(key) for key in reopened.list_artifacts("precision/")
+        } == archived
+    finally:
+        reopened.close()
 
 
 def test_precision_creation_translation_drafts_edit_and_export(desktop):
