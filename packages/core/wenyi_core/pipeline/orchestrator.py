@@ -12,6 +12,7 @@ agents/ingest/glossary/assemble/RunStore. Lower layers must never import this mo
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from ..config import Config
@@ -33,13 +34,20 @@ class Orchestrator:
     ALL_STEPS = ("translate", "review", "report", "assemble")
 
     def __init__(
-        self, config: Config, client: LLMClient | None = None, storage: Storage | None = None
+        self,
+        config: Config,
+        client: LLMClient | None = None,
+        storage: Storage | None = None,
+        *,
+        mineru_token_resolver: Callable[[], str | None] | None = None,
     ):
         """Assemble shared runtime and domain services without domain I/O."""
         self.config = config
         self._runtime = PipelineRuntime(config, client=client, storage=storage)
         self.client = self._runtime.client
-        self._preparation = PreparationService(self._runtime)
+        self._preparation = PreparationService(
+            self._runtime, mineru_token_resolver=mineru_token_resolver
+        )
         self._annotations = AnnotationService(self._runtime)
         self._translation = TranslationService(self._runtime, self._annotations)
         self._review = ReviewService(self._runtime)

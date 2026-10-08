@@ -170,6 +170,15 @@ Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `open
 
 Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
 
+The global **MinerU PDF parsing** settings card is separate from model connections.
+Web and CLI use `MINERU_API_KEY` from the deployment/process environment. Desktop checks
+the same variable first and, when absent, uses the manual key saved in that card through
+the OS credential store or session-only memory. The Desktop card has one input and one
+Save button; both are disabled when the environment key is active. Saving does not change
+configuration YAML or model registrations. Credentials are resolved only when an uncached
+PDF needs MinerU conversion; existing converted HTML and non-PDF inputs require no MinerU
+key. The key never enters project/job snapshots, manifests, or parser caches.
+
 DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. When neither a profile cap nor a workflow hint applies, the service supplies its default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. Workflow hints and explicit `max_output_tokens` still follow the configuration rules above. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
 
 ### Registered operations

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from .errors import MinerUError
@@ -50,14 +51,17 @@ def read_pdf(
     cache_dir: str,
     source_hash: str | None = None,
     api_token: str | None = None,
+    mineru_token_resolver: Callable[[], str | None] | None = None,
 ) -> Document:
     """Convert PDF to HTML and parse it into a Document.
     Cache the intermediate at source/<source_sha256>/converted.html within book state for
     inspection and API-free reuse.
     path is the PDF file; source_lang/target_lang identify languages; cache_dir is the
     preprocessing cache. source_hash may supply a precomputed SHA-256, otherwise the reader
-    computes it. api_token defaults to MINERU_API_KEY. Return fmt="pdf" with source_path
-    pointing to the original PDF.
+    computes it. api_token defaults to MINERU_API_KEY. An optional resolver overrides
+    api_token only on a conversion cache miss; a resolved None means explicitly unavailable
+    and never falls back to ambient environment. Return fmt="pdf" with source_path pointing
+    to the original PDF.
     """
     digest = source_hash or source_sha256(path)
     html_path = pdf_cache_html_path(cache_dir, digest)
@@ -69,6 +73,19 @@ def read_pdf(
         _check_deps()
         from .pdf_to_html import convert_pdf_to_html
 
+        resolution_failed = False
+        if mineru_token_resolver is not None:
+            try:
+                api_token = mineru_token_resolver() or ""
+            except Exception:
+                resolution_failed = True
+        elif api_token is None:
+            api_token = os.getenv("MINERU_API_KEY")
+        # Raise outside exception handlers so even inspected contexts contain no secrets.
+        if resolution_failed:
+            raise MinerUError("MinerU credential resolution failed") from None
+        if not api_token:
+            raise MinerUError("API token not provided and MINERU_API_KEY not set") from None
         temporary_html_path = f"{html_path}.tmp"
         try:
             os.remove(temporary_html_path)
@@ -78,14 +95,15 @@ def read_pdf(
             convert_pdf_to_html(path, temporary_html_path, api_token=api_token)
             os.replace(temporary_html_path, html_path)
             converted = True
-        except MinerUError:
+        except Exception:
             shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)
-            raise
-        except Exception as error:
-            shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)
-            # Wrap HTTP, PDF parsing, ZIP extraction and filesystem failures as input-layer errors.
-            # Retain the original exception as the cause for debugging.
-            raise MinerUError(f"PDF conversion failed: {error}") from error
+        if not converted:
+            # Converter errors can echo credentials, including escaped header bytes.
+            # Fixed text is safer than redaction; discard both message and exception chain.
+            raise MinerUError(
+                "PDF conversion failed. Check MinerU credentials, service availability, "
+                "and the input PDF, then retry."
+            ) from None
 
     # Parse intermediate HTML with html_reader.
     doc = read_html(html_path, source_lang, target_lang)

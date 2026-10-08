@@ -101,6 +101,7 @@ def create_context(
         storage_for=backend.storage_for,
         read_storage_for=lambda pid: backend.storage_for(pid, create=False),
         build_client=lambda config: build_local_client(config, credentials),
+        mineru_token_resolver=credentials.resolve_mineru_token,
         enqueue=services.enqueue,
         data_dir=str(backend.workspace / "projects"),
         project_dir=lambda pid: str(backend.project_dir(pid)),
@@ -117,7 +118,7 @@ def create_app(
     api_token: str | None = None,
 ):
     from .desktop import ORIGINS
-    from .routers import credentials, desktop_export
+    from .routers import credentials, desktop_export, external_credentials
 
     if context is None:
         if workspace is None:
@@ -144,6 +145,7 @@ def create_app(
     app = create_http_app(context, lifespan=lifespan, origins=list(ORIGINS))
     app.include_router(credentials.router)
     app.include_router(desktop_export.router)
+    app.include_router(external_credentials.router)
     app.include_router(updates_router)
     app.state.update_guard = UpdateGuard(services)
     app.add_middleware(

@@ -95,7 +95,9 @@ def _parse_source(pid, storage, config, progress):
             "chapters": [],
         }
     else:
-        doc = parse_document(storage, source, config)
+        doc = parse_document(
+            storage, source, config, mineru_token_resolver=current_context().mineru_token_resolver
+        )
         preview = book_preview(doc, project["fmt"])
     storage.write_artifact("preview.json", preview)
     progress(1, 1, "原文预览已就绪")
@@ -107,7 +109,12 @@ def _book_operation(kind, pid, storage, config, client, progress, params):
 
     if params.get("autofix") is not None:
         config.pipeline.review_autofix = params["autofix"]
-    orch = Orchestrator(config, client=client, storage=storage)
+    orch = Orchestrator(
+        config,
+        client=client,
+        storage=storage,
+        mineru_token_resolver=current_context().mineru_token_resolver,
+    )
     source = _resolve_source(pid)
     if kind == "prepare":
         orch.prepare_for_translation(source, progress=progress)

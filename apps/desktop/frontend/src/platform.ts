@@ -16,6 +16,9 @@ const DesktopUpdates = lazy(() =>
   import("./DesktopUpdates").then((module) => ({ default: module.DesktopUpdates })),
 );
 // Warm the credential chunk at startup so the settings page never waits on it.
+const MinerUCredential = lazy(() =>
+  import("./MinerUCredential").then((module) => ({ default: module.MinerUCredential })),
+);
 void loadDesktopCredential().catch(() => { /* The route retries when opened. */ });
 
 const progressKeys: Record<string, string[]> = {
@@ -58,6 +61,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      externalCredentials: { MinerU: MinerUCredential },
       updates: { Section: DesktopUpdates },
       saveExport: saveNativeExport,
       credentials: {

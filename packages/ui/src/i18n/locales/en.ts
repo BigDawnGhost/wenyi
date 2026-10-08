@@ -1,5 +1,8 @@
 /** Canonical interface messages. Keys are shared by every locale. */
 const en = {
+  "settings.mineruTitle": "MinerU PDF parser credential",
+  "settings.mineruHelp": "MinerU parses PDF documents. Its API key is independent of model providers and is not saved in configuration YAML.",
+  "settings.mineruDeployment": "Configure MINERU_API_KEY in the server deployment environment. This Web application does not accept manual keys or logins.",
   "runtime.loadingPage": "Loading page…",
   "runtime.pageFailed": "Unable to load this page.",
   "runtime.reload": "Reload",

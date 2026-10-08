@@ -274,6 +274,23 @@ SQLite stores only modes and opaque credential references. Keys are not saved in
 
 **Check local availability** checks local configuration; it does not contact the provider or validate the key with a model request.
 
+### MinerU PDF parsing key
+
+Settings includes a separate **MinerU PDF parsing** card. This key authorizes PDF parsing,
+not model inference. The card contains one password input and one **Save MinerU key** button.
+Desktop automatically prefers `MINERU_API_KEY`; when present, the input indicates that
+source and both controls are disabled. Otherwise, enter or replace the key and save.
+Saving takes effect independently of model/configuration saves and uses the OS credential
+store or, when unavailable, only the current session with a warning. Saved keys never echo.
+Provider renames, deletion, or restoring model defaults do not remove this key.
+An invalid environment key does not fall back to a manual key; correct it and restart Desktop.
+
+The engine resolves the key at execution time for a new MinerU conversion; cached PDF HTML
+and other input formats do not read it. The key is never stored in YAML, project state, task
+parameters, browser storage, or parser artifacts. Saving does not upload a document or
+make a billable parser request.
+Restart Desktop after changing its inherited environment externally.
+
 ## Import and save
 
 - Drop a supported file from the file manager into the **Create project** dialog's source area, or use **Browse files**. Dropping only selects the file; **Create project** starts the upload. A native selection is a short-lived, single-use grant, not a general filesystem permission. Re-drop the file after an expired or failed native upload; the form retains its values and disables creation until a fresh file is selected.
