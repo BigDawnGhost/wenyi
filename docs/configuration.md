@@ -287,6 +287,7 @@ synthesis, resume, and cost semantics.
 pipeline:
   translation_mode: standard
   review: true
+  align_retry_limit: 2
   polish: true
   rolling_context_segments: 6
   book_understanding: true
@@ -308,6 +309,7 @@ pipeline:
 ```
 
 - `review`: enabled by default; automatically run the evidence-driven whole-book review after the complete book has been translated. Pass `--no-review` or set this to `false` to skip it in the one-command workflow. The explicit `wenyi review` command remains available.
+- `align_retry_limit`: additional attempts for invalid model-output structure; the default `2` allows three attempts including the initial request, and `0` disables these retries. Standard translation falls back to individual paragraphs after exhaustion. Precision uses the same budget for each initial draft and synthesis, retries only the failing stage with unchanged context, and pauses after exhaustion without paragraph splitting. Actual requests, including failed attempts, incur provider usage; transport retries remain separate.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch. Translation and polishing also receive one following source segment from the same chapter as a read-only reference, including when this setting is zero. This built-in lookahead does not change output counts or saved translation context; see [whole-book context](pipeline.md#whole-book-understanding-and-context).
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis. Chapters with source text require a usable digest before body translation; synopsis synthesis failures allow translation to continue. Failed digests are retried on the next prepare/translate run. See [Pipeline](pipeline.md) for retry and cache behavior.

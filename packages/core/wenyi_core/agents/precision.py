@@ -1,4 +1,4 @@
-"""Three independent drafts and one source-aware synthesis, without extra model rounds."""
+"""Three independent drafts and one source-aware synthesis with bounded output retries."""
 
 from __future__ import annotations
 
@@ -91,17 +91,28 @@ class PrecisionAgent(Agent):
                 inputs, data.get("translations") if isinstance(data, dict) else None
             )
 
-        try:
-            if self._recorder:
-                targets, self.last_call_ref = self._recorder(operation, messages, invoke, validate)
-                return targets
-            return validate(invoke())
-        except (JsonParseError, TruncatedResponseError) as error:
-            raise PrecisionError(f"{operation}: invalid or truncated precision response") from error
+        retries_remaining = self.config.pipeline.align_retry_limit
+        while True:
+            try:
+                if self._recorder:
+                    targets, self.last_call_ref = self._recorder(
+                        operation, messages, invoke, validate
+                    )
+                    return targets
+                return validate(invoke())
+            except (PrecisionError, JsonParseError, TruncatedResponseError) as error:
+                # Output recovery is separate from provider transport retries and archival failures.
+                if retries_remaining <= 0:
+                    if isinstance(error, PrecisionError):
+                        raise
+                    raise PrecisionError(
+                        f"{operation}: invalid or truncated precision response"
+                    ) from error
+                retries_remaining -= 1
 
     @staticmethod
     def _targets(inputs: PrecisionInputs, targets: object) -> list[str]:
-        """Validate structure and restore protected sources without retries or splitting."""
+        """Validate structure and restore protected sources without splitting."""
         if not isinstance(targets, list) or len(targets) != len(inputs.sources):
             raise PrecisionError("Precision output count does not match the document segments")
         output: list[str] = []
