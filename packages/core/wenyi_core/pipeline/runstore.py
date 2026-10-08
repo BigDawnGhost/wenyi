@@ -170,16 +170,17 @@ class RunStore(FileArtifacts):
     @staticmethod
     def _write_json(path: str, data) -> None:
         """Write formatted JSON atomically through a temporary file in the same directory."""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(RunStore._io_path(os.path.dirname(path)), exist_ok=True)
         tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(RunStore._io_path(tmp), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)  # Atomic replacement prevents partial files after interruption.
+        # Atomic replacement prevents partial files after interruption.
+        os.replace(RunStore._io_path(tmp), RunStore._io_path(path))
 
     @staticmethod
     def _read_json(path: str):
         """Read and parse UTF-8 JSON."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(RunStore._io_path(path), "r", encoding="utf-8") as f:
             return json.load(f)
 
     def exists(self) -> bool:

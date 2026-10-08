@@ -240,6 +240,8 @@ precision/
 
 每个完成批次都会立即写入状态目录。开启润色时，章节 JSON 中每个段落的 `target_before_polish` 保留翻译阶段的译文，`target` 保留润色后的最终译文。再次运行 `translate` 会跳过已有译文，仅补齐未完成部分。独立运行 `assemble` 时会短暂冻结当时已经落盘的 manifest 和章节快照，随后释放状态锁并在锁外导出，因此不必等待另一个终端中的整本翻译结束。
 
+在 Windows 上，本地 JSON 状态读写与产物访问使用扩展长度的盘符路径和 UNC 路径。产物键仍相对于运行目录，列举与续跑操作保留可移植的 `/` 分隔键。这不保证所有 CLI 操作或依赖都支持任意长度的路径。
+
 ## 字幕路径（SRT）
 
 `.srt` 走平行轻量路径 `wenyi_core.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。字幕计划及窗口缓存绑定独立的翻译策略身份，变更后自动刷新待译窗口缓存并保留已完成字幕。详见[CLI 使用指南 — SRT 字幕](cli.md#srt-字幕)。

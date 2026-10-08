@@ -280,6 +280,8 @@ not a guaranteed quality improvement.
 
 Each completed translation batch is persisted immediately. When polishing is enabled, each segment in the chapter JSON keeps the translation-stage text in `target_before_polish` and the polished final text in `target`. Running `translate` again skips completed batches and fills only missing work. A standalone `assemble` briefly freezes the persisted manifest and chapter snapshot, releases the state lock, and renders from that snapshot, so it does not wait for a full translation running in another terminal.
 
+On Windows, local JSON state reads/writes and artifact access use extended-length drive and UNC paths. Artifact keys remain relative to the run directory, and listings and resume operations retain portable `/`-separated keys. This does not guarantee arbitrarily long path support across all CLI operations or dependencies.
+
 ## Subtitle path (SRT)
 
 `.srt` files take a parallel light path under `wenyi_core.srt`, not the book

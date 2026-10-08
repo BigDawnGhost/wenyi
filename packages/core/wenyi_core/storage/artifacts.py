@@ -18,10 +18,25 @@ class FileArtifacts:
         self._artifact_lock = RLock()
 
     def _artifact_path(self, key: str) -> Path:
-        path = Path(self._artifact_root, key).resolve()
-        if not path.is_relative_to(Path(self._artifact_root).resolve()):
+        # Resolve both paths in the same Windows namespace, even for a short root.
+        root = Path(self._io_path(self._artifact_root)).resolve()
+        path = Path(self._io_path(Path(self._artifact_root, key))).resolve()
+        if not path.is_relative_to(root):
             raise ValueError("Artifact key must remain within the run")
         return path
+
+    @staticmethod
+    def _io_path(path: str | Path) -> str:
+        """Use absolute extended-length drive/UNC paths on Windows; leave POSIX unchanged."""
+        text = str(path)
+        if os.name != "nt":
+            return text
+        text = os.path.abspath(text)
+        if text.startswith("\\\\?\\"):
+            return text
+        if text.startswith("\\\\"):
+            return "\\\\?\\UNC\\" + text[2:]
+        return "\\\\?\\" + text
 
     def read_artifact(self, key: str) -> Any | None:
         try:
@@ -41,7 +56,7 @@ class FileArtifacts:
         self._artifact_path(key).unlink(missing_ok=True)
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
-        base = Path(self._artifact_root).resolve()
+        base = self._artifact_path("")
         directory = self._artifact_path(prefix.rpartition("/")[0])
         if not directory.is_dir():
             return []
