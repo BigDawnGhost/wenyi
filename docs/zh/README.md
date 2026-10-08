@@ -39,7 +39,9 @@
       </a>
     </td>
     <td>
-      PackyCode 是一家 API 中转服务商，通过统一入口和密钥接入主流大模型，提供自动容灾切换，以及 Codex 和 Claude Code 专属通道。
+      <a href="https://www.packyapi.ai/register?aff=KIzj">
+        PackyCode 是一家 API 中转服务商，通过统一入口和密钥接入主流大模型，提供自动容灾切换，以及 Codex 和 Claude Code 专属通道。
+      </a>
     </td>
   </tr>
 </table>

@@ -39,7 +39,9 @@ Thank you to PackyCode for sponsoring Wenyi.
       </a>
     </td>
     <td>
-      PackyCode provides access to leading AI models through one API endpoint and one API key, with automatic failover and dedicated routes for Codex and Claude Code.
+      <a href="https://www.packyapi.ai/register?aff=KIzj">
+        PackyCode provides access to leading AI models through one API endpoint and one API key, with automatic failover and dedicated routes for Codex and Claude Code.
+      </a>
     </td>
   </tr>
 </table>
