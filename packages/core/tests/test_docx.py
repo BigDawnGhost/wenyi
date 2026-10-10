@@ -381,6 +381,60 @@ class TestDocxStyles(unittest.TestCase):
 
 
 class TestDocxAssemble(unittest.TestCase):
+    def test_markdown_heading_levels_survive_chapter_only_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "headings.md")
+            with open(path, "w", encoding="utf-8") as source:
+                source.write(
+                    "\n\n".join(
+                        f"{'#' * level} Title {level}\n\nBody {level}." for level in range(1, 7)
+                    )
+                )
+            book = load_document(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "headings"))
+            store.save_manifest(
+                {
+                    "title": "headings",
+                    "fmt": book.fmt,
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {"index": chapter.index, "title": chapter.title, "status": STATUS_DONE}
+                        for chapter in book.chapters
+                    ],
+                }
+            )
+            for level, chapter in enumerate(book.chapters, start=1):
+                self.assertEqual(chapter.meta["heading_level"], level)
+                for segment in chapter.segments:
+                    self.assertIsNone(segment.target)
+                    if segment.kind == KIND_HEADING:
+                        segment.meta.pop("heading_level", None)
+                store.save_chapter(chapter)
+
+            written = assemble(
+                store, path, out_format="docx", out_path=os.path.join(directory, "out.docx")
+            )
+            paragraphs = [p for p in DocxDocument(written).paragraphs if p.text.strip()]
+            actual = []
+            for paragraph in paragraphs:
+                style = paragraph.style
+                assert style is not None
+                actual.append((paragraph.text, style.name))
+            self.assertEqual(
+                actual,
+                [
+                    item
+                    for level in range(1, 7)
+                    for item in [
+                        (f"Title {level}", f"Heading {level}"),
+                        (f"Body {level}.", "Normal"),
+                    ]
+                ],
+            )
+
     def test_assemble_rebuilds_headings_and_table(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "sample.docx")

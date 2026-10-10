@@ -13,7 +13,7 @@ import re
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 # Markdown headings.
-_MD_HEADING = re.compile(r"^(#{1,3})\s+(.*\S)\s*$")
+_MD_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 # Japanese chapter labels at the start of a line.
 _JA_CHAPTER = re.compile(
     r"^\s*(?:"

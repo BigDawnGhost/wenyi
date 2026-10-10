@@ -121,6 +121,8 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 ## Input and output
 
 - Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX, and SRT.
+- For Markdown input, headings starting with `#` through `######`, followed by whitespace and title text, start new chapters. Their original levels are recorded during import; plain-text contents lists with page numbers remain body text.
+- Markdown heading levels are preserved in EPUB body headings, the generated EPUB navigation tree, and DOCX outline styles. Navigation nests each heading under the nearest preceding heading with a smaller level number; skipped levels do not create synthetic entries. Existing state with correct chapter divisions and stored heading levels only needs a fresh export, not retranslation.
 - Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx`, and BabelDOC PDF state defaults to `<book-name>.zh.pdf`). The bilingual `*.zh-bi.*` edition is optional.
 - `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit format always takes precedence; PDF defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.

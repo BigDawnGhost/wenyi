@@ -27,11 +27,13 @@ from wenyi_core.assemble.writer_common import (
     _ch_title,
     _epub_lang,
     _export_book_title,
+    _heading_level,
     _manifest_target_lang,
     _merged_paragraphs,
     _sanitize_filename,
 )
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
+from wenyi_core.ingest.models import KIND_HEADING
 
 from .export_view import AssembleStore
 from .policy import export_options
@@ -179,6 +181,7 @@ def _build_epub_from_chapters(
 
     spine: list = ["nav"]
     toc: list = []
+    toc_stack: list[tuple[int, list]] = []
     chapter_filenames: set[str] = set()
     image_hrefs: dict[str, str] = {}
     raw_meta = m.get("meta")
@@ -229,7 +232,7 @@ def _build_epub_from_chapters(
                     images_by_position.setdefault(position, []).append(href)
 
         paragraphs = _merged_paragraphs(ch)
-        for position, (kind, target, source) in enumerate(paragraphs):
+        for position, (kind, target, source, level) in enumerate(paragraphs):
             body_parts.extend(
                 f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
                 for href in images_by_position.get(position, [])
@@ -242,6 +245,7 @@ def _build_epub_from_chapters(
                     bilingual=bilingual,
                     order=order,
                     preserve_source_style=preserve_source_style,
+                    heading_level=min(level, 6),
                 )
             )
         body_parts.extend(
@@ -258,9 +262,33 @@ def _build_epub_from_chapters(
         )
         book.add_item(item)
         spine.append(item)
-        toc.append(item)
+        children: list = []
+        entry = (item, children)
+        heading = next(
+            (
+                segment
+                for segment in ch.segments
+                if segment.kind == KIND_HEADING and not segment.cont and segment.source.strip()
+            ),
+            None,
+        )
+        if heading is None:
+            # Untitled prefaces are navigation entries, not parents of later headings.
+            toc.append(entry)
+            toc_stack.clear()
+            continue
+        level = _heading_level(ch, heading)
+        while toc_stack and toc_stack[-1][0] >= level:
+            toc_stack.pop()
+        siblings = toc_stack[-1][1] if toc_stack else toc
+        siblings.append(entry)
+        toc_stack.append((level, children))
 
-    book.toc = toc
+    def toc_items(entries: list) -> list:
+        """Use plain items for leaves so NAV does not contain empty nested lists."""
+        return [(item, toc_items(children)) if children else item for item, children in entries]
+
+    book.toc = toc_items(toc)
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = spine
