@@ -4,7 +4,9 @@
 
 状态：首版第 1–3 步已实施，第 4 步调整为仅源码维护的开发者定义 · 2026-10-01。第 5 步仍为后续工作。下文保留设计依据；当前支持的配置和命令见[配置说明](../configuration.md#内置语言策略)。
 
-实现位于 `i18n/policy/`，领域适配位于 `assemble/policy.py`、`postprocess/export_text.py` 和 `pipeline/language_policies.py`。内置操作为 `prompt.language_rules`、`punctuation.zh_cn`、`docx.chinese_font`、`markup.japanese_ruby` 和 `export.language_metadata`。CLI 与 Web 执行共享解析器，策略定义仅通过源码维护，CLI 提供只读开发者诊断。语义修订变更自动刷新派生分析；导出指纹在实际导出时绑定一致快照。首版未启用候选译文检查、亲属关系证据、翻译记忆或第三方可执行操作。
+实现位于 `i18n/policy/`，领域适配位于 `assemble/policy.py`、`postprocess/export_text.py` 和 `pipeline/language_policies.py`。内置操作包括 `prompt.language_rules`、`punctuation.zh_cn`、`docx.chinese_font`、`markup.japanese_ruby` 和 `export.language_metadata`。CLI 与 Web 执行共享解析器，策略定义仅通过源码维护，CLI 提供只读开发者诊断。语义修订变更自动刷新派生分析；导出指纹在实际导出时绑定一致快照。
+
+仅 CLI 可用的实验性全书术语功能在 `evidence.prepare` 接入唯一操作 `terminology.context`，领域实现位于 `pipeline/terminology.py`。`pipeline.terminology_context` 默认 `false`，不开放任意用户 `language.operations` YAML。CLI `prepare` 和 `translate` 显式授予本次操作 `allow_terminology_context=True`；Orchestrator/PipelineRuntime 默认 `False`，普通调用方和 API 不能仅靠 YAML 开关生产证据。Review、assemble 和 report 可以消费已有备注，无需生产权限。API 存储和 Web/UI 未改动，SRT 不适用。发现只返回 `terms`；知识只返回 `note`、`reading`、`gender`、`aliases`、`evidence_refs`。合并时别名为空，由程序保留并集。既有译名和原文身份保持权威。这是对单一原文／单一主译名术语表的补充，不是真正的义项模型或逐次出现的译名选择器。模型操作为 `terminology.discover`、`terminology.evidence` 和 `terminology.merge`（默认 `strong`）。全书取证增加上下文、调用和启动延迟；离线 FakeClient 测试不是实际 LLM 质量证明，公版长书前后对比仍待执行。详见[当前流程、缓存和诊断](../pipeline.md#可选全书术语证据)。候选译文检查、翻译记忆和第三方可执行操作仍未实现；下文历史方案不代表当前能力清单。
 
 ## 1. 推荐方案
 
@@ -12,7 +14,7 @@
 
 采用少量具有明确类型的扩展点。提示词片段、候选译文检查、导出文本变换和排版选项拥有不同的输入与权限，不提供通用的 `hook(runtime, store)`，也不允许 YAML 指定任意 Python 导入路径。翻译、润色、对齐、审校和发布之间的顺序仍由工作流负责。
 
-首版先集中现有行为。亲属关系取证、翻译记忆、更稳健的风格分析以后可以复用这套选择机制，但仍需分别实现领域逻辑并评估质量。
+首版先集中现有行为。翻译记忆、更稳健的风格分析以后可以复用这套选择机制，但仍需分别实现领域逻辑并评估质量。
 
 ## 2. 当前代码接入点
 
@@ -185,9 +187,9 @@ class ExportTextResult:
 
 ## 8. 如何注入一个真正的新模型操作
 
-以未来的“英译中亲属关系证据”举例：它可能需要的不只是一句提示词，应这样接入：
+全书术语证据需要的不只是一句提示词，其领域接入遵循以下边界：
 
-1. 新增证据领域服务/Agent，在 `llm/operations.py` 注册 `evidence.kinship` 这样的模型操作，声明默认档位、流程可达性、协议版本与预算语义。
+1. 新增证据领域服务/Agent，在 `llm/operations.py` 注册 `terminology.evidence` 这样的模型操作，声明默认档位、流程可达性、协议版本与预算语义。
 2. 注册依赖它的语言策略操作，限定在书籍准备阶段，输出有类型的证据；完成评测前保持显式选用。
 3. 准备服务在源语言检测后、翻译使用证据前执行被选中的证据工作，负责带原文引用的产物检查点与中断恢复。
 4. `prompt.compose` 根据稳定引用读取经过校验、受预算约束的证据；`candidate.validate` 或 Review 可以报告无依据的细化，不能静默改写已有译文，也不能把不确定关系变成事实。
@@ -195,7 +197,7 @@ class ExportTextResult:
 
 模型策略选择必须进入实际执行使用的路由预览、凭据校验与预算规划。扩展 `configured_operations`/流程可达性，让它纳入计划声明的模型操作，不另建 provider 工厂。`source: auto` 时先校验语言检测路径，检测后立即校验新选中的模型路由，再开始调用。重试、并发、取消、用量只记一次仍由现有 LLM 和领域基础设施保证。
 
-翻译记忆、亲属取证、风格分析仍是可独立测试的领域服务。语言计划决定何时适用，不负责实现这些算法。P06/P08/P09 不是首轮迁移的前置依赖。
+翻译记忆、术语取证、风格分析仍是可独立测试的领域服务。语言计划决定何时适用，不负责实现这些算法。独立领域方案不是首轮迁移的前置依赖。
 
 ## 9. 内置策略定义与可观察性
 
@@ -250,7 +252,7 @@ class ExportTextResult:
 - 续跑/缓存：manifest 前、批次保存后、证据处理中、Review 中中断；同策略复用、相关策略变化失效、无关语言/字体变化不触发付费工作；文件与 PostgreSQL 后端都覆盖。
 - 接入：复用 `test_i18n.py`、`test_translation*.py`、`test_bilingual.py`、`test_docx.py`、`test_assemble.py`、架构/Orchestrator 契约与存储测试，增加解析器测试和相关 CLI/API/Web 用例；使用 FakeClient 和临时数据。
 
-保持行为的迁移需要输出/提示词对比，不需要重新进行付费长篇翻译。新增语义指导、亲属推断、翻译记忆复用时，按 CONTRIBUTING 单独开展公版文本质量评估；离线测试不能证明文学翻译质量，完成前这些语义操作保持显式选用。
+保持行为的迁移需要输出/提示词对比，不需要重新进行付费长篇翻译。新增语义指导、翻译记忆复用时，按 CONTRIBUTING 单独开展公版文本质量评估；离线测试不能证明文学翻译质量，完成前这些语义操作保持显式选用。
 
 ## 12. 首版验证记录
 

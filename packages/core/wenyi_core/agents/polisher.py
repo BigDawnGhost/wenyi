@@ -20,6 +20,7 @@ class Polisher(Agent):
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
         next_source: str = "",
+        sources: list[str] | None = None,
     ) -> list[str]:
         """Polish an aligned list in a fresh conversation; return input unchanged on failure."""
         if not targets:
@@ -30,7 +31,18 @@ class Polisher(Agent):
             "polisher_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(
+                glossary_terms or [],
+                note_source=(
+                    "\n".join(sources or []) if self.config.pipeline.terminology_context else None
+                ),
+            ),
+            source_context=(
+                "[Current source paragraphs: reference only, not additional output items]\n"
+                + prompts.numbered(sources)
+                if sources and self.config.pipeline.terminology_context
+                else ""
+            ),
             style=style or "(none)",
             n=n,
             numbered_target=prompts.numbered(targets),

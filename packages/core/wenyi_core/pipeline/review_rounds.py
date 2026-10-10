@@ -271,7 +271,12 @@ class ReviewRoundService:
         fix_total = len(jobs)
         if progress:
             progress(0, fix_total, fix_label)
-        style = self._style_brief(analysis)
+        # The opt-in note channel replaces legacy global character guidance only when enabled.
+        style = self._style_brief(
+            {**analysis, "characters": []}
+            if self._config.pipeline.terminology_context
+            else analysis
+        )
         book_synopsis = str(analysis.get("book_synopsis", "") or "")
         fixer = ReviewFixer(self._client, self._config)
 

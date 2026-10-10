@@ -32,6 +32,8 @@ separate release versions.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
+API keys are read only from environment variables. Supply them in your local process environment, or load them into that environment from a private key file outside the shared workspace/session. Do not put real keys in configuration, shared files, or conversations. The CLI does not automatically load a repository-root `.env` file. Key values in examples are placeholders, not credentials.
+
 ## Inspect model routing
 
 ```bash
@@ -304,6 +306,33 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 `prepare` parses the book, detects its language, generates chapter digests when enabled, builds the style guide and initial glossary, and then generates the whole-book synopsis when enabled, without translating any body text. Run `translate` with the same source file to continue from the saved state.
 
+### Enable whole-book terminology evidence
+
+This CLI-only experimental feature defaults to `false`. Merge this fragment into your configuration, retaining existing model settings:
+
+```yaml
+language:
+  source: en
+  target: zh
+pipeline:
+  terminology_context: true
+```
+
+```bash
+uv run wenyi --config config.yaml models explain --operation terminology.evidence
+uv run wenyi --config config.yaml models check --for translate
+uv run wenyi --config config.yaml prepare book.epub
+uv run wenyi --config config.yaml translate book.epub
+```
+
+`terminology_context` checks initial glossary seeds and candidates discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. It keeps the full glossary mappings, preserves existing term translations and protected manual fields, and records differing translations as conflicts. `prepare` can perform this initial evidence work without translating body text.
+
+Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review, assemble and report may consume existing notes without generating evidence. SRT does not use this path.
+
+The glossary still stores one source identity and one main target per term. Whole-book notes can explain context and uncertainty, but there is no real sense model or per-occurrence target selection. Notes are source-grounded, supplementary and read-only, not permission to add future plot details or overwrite the authoritative target. Model adherence to these constraints is not guaranteed.
+
+The `terminology.discover`, `terminology.evidence`, and `terminology.merge` operations default to `strong`. Expect additional context, calls, and first-batch latency. FakeClient tests are not quality evidence; public-domain long-book before/after evaluation with real models remains pending. See [pipeline details](pipeline.md#optional-whole-book-terminology-evidence).
+
 ## Interrupting and resuming
 
 Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:
@@ -321,6 +350,8 @@ Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
 Language policies are built into the source code. When they change or saved state lacks a policy identity, `prepare`/`translate` automatically rebuilds affected analysis before pending work resumes; this may call models. Completed translations remain saved. Font and other export-only changes need a fresh export only. See [built-in language policies](configuration.md#built-in-language-policies) for book/SRT behavior and developer diagnostics.
+
+Chapter digests now cover the complete source in chunks. Their v2 source-hash and policy identity invalidates older caches, so the first resume after upgrading may regenerate analysis. Digests retain source-language character identities; translated names come from the current glossary. With terminology evidence enabled, retry reuses cached discoveries and successful evidence groups after a failure, completes missing admission work, and keeps already translated body text. No partial group result is published as complete knowledge.
 
 ## Independent stages and glossary management
 

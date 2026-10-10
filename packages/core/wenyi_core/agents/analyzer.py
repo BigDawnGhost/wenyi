@@ -6,6 +6,7 @@ reference for the book.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
@@ -26,10 +27,13 @@ def _text(value: Any, default: str = "") -> str:
 class Analyzer(Agent):
     policy_phase = "analysis"
 
-    def analyze(self, sample_text: str) -> dict[str, Any]:
+    def analyze(self, sample_text: str, chapter_digests: list[str] | None = None) -> dict[str, Any]:
         """Analyze samples and return type-checked style, character and terminology data."""
         system = self.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = self.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
+        if chapter_digests and self.language_policy.enabled("terminology.context"):
+            user += "\n\n[Draft chapter digests: factual context, not naming authority]\n"
+            user += "\n".join(f"[{i}] {digest}" for i, digest in enumerate(chapter_digests))
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
         data = self._ask_json(system, user, operation="analysis.style")
         if not isinstance(data, dict):
@@ -64,8 +68,15 @@ class Analyzer(Agent):
             term["type"] = normalize_term_type(_text(term.get("type")))
         return data
 
-    def seed_glossary(self, store: Storage | GlossaryStore, analysis: dict[str, Any]) -> int:
+    def seed_glossary(
+        self,
+        store: Storage | GlossaryStore,
+        analysis: dict[str, Any],
+        *,
+        admit: Callable[[GlossaryTerm, int | None], str] | None = None,
+    ) -> int:
         """Seed analyzed characters and terms into the glossary; return the entry count."""
+        save = admit or (lambda term, chapter: store.upsert_term(term, chapter=chapter))
         count = 0
         for ch in self.dict_items(
             analysis.get("characters"), operation="analysis.style", field="characters"
@@ -74,7 +85,7 @@ class Analyzer(Agent):
             target = _text(ch.get("target"))
             if not source or not target:
                 continue
-            store.upsert_term(
+            save(
                 GlossaryTerm(
                     source=source,
                     target=target,
@@ -92,7 +103,7 @@ class Analyzer(Agent):
             target = _text(tm.get("target"))
             if not source or not target:
                 continue
-            store.upsert_term(
+            save(
                 GlossaryTerm(
                     source=source,
                     target=target,
@@ -106,8 +117,10 @@ class Analyzer(Agent):
             count += 1
         return count
 
-    def style_brief(self, analysis: dict[str, Any]) -> str:
+    def style_brief(self, analysis: dict[str, Any], terms: list[GlossaryTerm] | None = None) -> str:
         """Condense analysis into a style and character brief for the translator."""
+        if not self.language_policy.enabled("terminology.context"):
+            terms = None
         lines = []
         if analysis.get("genre"):
             lines.append(f"Genre: {analysis['genre']}")
@@ -125,8 +138,22 @@ class Analyzer(Agent):
         ):
             if analysis.get(key):
                 lines.append(f"{tag}: {analysis[key]}")
-        chars = self.dict_items(
-            analysis.get("characters"), operation="analysis.style", field="characters"
+        chars = (
+            [
+                {
+                    "source": term.source,
+                    "target": term.target,
+                    "gender": term.gender,
+                    # Notes belong in the bounded, source-scoped glossary evidence,
+                    # never in the global style prefix.
+                }
+                for term in terms
+                if term.type == TYPE_PERSON
+            ]
+            if terms is not None
+            else self.dict_items(
+                analysis.get("characters"), operation="analysis.style", field="characters"
+            )
         )
         if chars:
             lines.append("Characters: ")

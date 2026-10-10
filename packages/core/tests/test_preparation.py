@@ -51,9 +51,10 @@ def test_chapter_prescan_finishes_before_style_analysis(tmp_path, entry_point, b
             assert not store.exists(), "The initialization manifest must commit last"
             chapter = store.load_chapter(0)
             assert bool(chapter.meta.get("source_digest")) == book_understanding
-            assert digest not in messages[-1]["content"], (
-                "Style analysis still reads source samples"
-            )
+            prompt = messages[-1]["content"]
+            assert digest not in prompt
+            assert chapter.text_segments[0].source in prompt, "Keep original prose evidence"
+            assert "[Source samples" in prompt
         return routing_handler(messages, tier, json_mode)
 
     client = FakeClient(handler=handler)

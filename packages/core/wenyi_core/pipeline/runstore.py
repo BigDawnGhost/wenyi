@@ -179,7 +179,9 @@ class RunStore(FileArtifacts):
     def begin_initialization(self, source_hash: str) -> None:
         """Clear incomplete derived state and record the current source identity.
         Preserve expensive, hash-isolated PDF conversion caches under source/, plus failed
-        events for the same source. Rebuild mutable chapters, glossary and analysis
+        events and cumulative usage for the same verified source. Recover its pending usage
+        commit under the caller's run lock before rebuilding derived state.
+        Rebuild mutable chapters, glossary and analysis
         so data left before a failed manifest commit cannot contaminate a new task.
         """
         if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
@@ -194,6 +196,16 @@ class RunStore(FileArtifacts):
             if isinstance(marker, dict) and isinstance(marker.get("source_sha256"), str):
                 previous_hash = marker["source_sha256"]
 
+        if previous_hash == source_hash:
+            self.recover_usage()
+        else:
+            # Discard the old journal first so interruption cannot replay it into a new run.
+            for path in (os.path.join(self.run_dir, "usage-pending.json"), self.usage_path):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+
         shutil.rmtree(self.chapters_dir, ignore_errors=True)
         os.makedirs(self.chapters_dir, exist_ok=True)
         for path in (
@@ -205,7 +217,6 @@ class RunStore(FileArtifacts):
             f"{self.glossary_path}-shm",
             f"{self.glossary_path}-journal",
             self.report_path,
-            self.usage_path,
             f"{self.manifest_path}.tmp",
         ):
             try:

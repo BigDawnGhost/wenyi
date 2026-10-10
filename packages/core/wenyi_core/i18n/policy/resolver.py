@@ -121,15 +121,26 @@ def _rules(context: PolicyContext) -> dict[str, str]:
     }
 
 
-def _templates(context: PolicyContext) -> tuple[tuple[str, str], ...]:
+def _template_path(task: str, *, terminology: bool) -> str:
+    """Resolve selected variants while retaining the public task names."""
+    if terminology and task in {"analyzer_system", "chapter_digest_system", "book_synopsis_system"}:
+        return f"tasks/{task.removesuffix('_system')}_terminology_system.txt"
+    return f"tasks/{task}.txt"
+
+
+def _templates(context: PolicyContext, *, terminology: bool) -> tuple[tuple[str, str], ...]:
     if context.phase == "export":
         return ()
     groups = context.task_groups or TASK_GROUPS["srt" if context.path == "srt" else context.phase]
+    if not terminology:
+        groups = tuple(group for group in groups if not group.startswith("terminology_"))
+    if terminology and context.phase in {"analysis", "translation"}:
+        groups += ("terminology_discover", "terminology_evidence", "terminology_merge")
     # Explicit filenames keep registry selection independent of filesystem enumeration.
     from .tasks import TASKS
 
     return tuple(
-        (task, read_text(f"tasks/{task}.txt"))
+        (task, read_text(_template_path(task, terminology=terminology)))
         for task in TASKS
         if any(task.startswith(group + "_") for group in groups)
     )
@@ -163,6 +174,7 @@ def resolve_policy(
     bindings: dict[str, tuple[OperationBinding, tuple[str, ...]]] = {
         "prompt.language_rules": (OperationBinding(), ("common",)),
         "export.language_metadata": (OperationBinding(), ("common",)),
+        "terminology.context": (OperationBinding(), ("pipeline.terminology_context",)),
     }
     metadata: dict[str, str] = {"language_tag": context.target, "about_locale": "en"}
     conflicts: set[str] = set()
@@ -235,6 +247,8 @@ def resolve_policy(
             spec.point.startswith("export.")
             if context.phase == "export"
             else spec.point == "prompt.compose"
+            or spec.point == "evidence.prepare"
+            and context.phase in {"analysis", "translation"}
         )
         if not phase_matches:
             # An invocation has separate semantic/export plans. Explicit on is validated
@@ -250,6 +264,8 @@ def resolve_policy(
             reasons.append("unsupported backend")
         if key == "punctuation.zh_cn" and not context.punctuation_normalize:
             reasons.append("output.punctuation_normalize is disabled")
+        if key == "terminology.context" and not context.terminology_context:
+            reasons.append("pipeline.terminology_context is disabled")
         if binding.mode == "on" and reasons:
             raise ValueError(f"Language operation {key} is unavailable: {'; '.join(reasons)}")
         enabled = binding.mode != "off" and not reasons
@@ -293,13 +309,17 @@ def resolve_policy(
         font,
         "markup.japanese_ruby" in enabled_ids,
     )
-    templates = _templates(context)
+    terminology = "terminology.context" in enabled_ids and context.path == "book"
+    templates = _templates(context, terminology=terminology)
     rules = {} if context.phase == "export" else _rules(context)
     used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
     effective_rules = {key: value for key, value in rules.items() if key in used}
     if any(task in {"translator_system", "review_fixer_system"} for task, _ in templates):
         effective_rules["configured_lang_guidance"] = rules["configured_lang_guidance"]
-    resources = tuple((f"tasks/{task}.txt", content_hash(text)) for task, text in templates)
+    resources = tuple(
+        (_template_path(task, terminology=terminology), content_hash(text))
+        for task, text in templates
+    )
     if context.phase == "export" and context.format == "epub" and context.about_page:
         resources += (
             (

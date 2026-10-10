@@ -4,7 +4,9 @@
 
 Status: first edition, steps 1–3 implemented; step 4 revised to source-only developer definitions · 2026-10-01. Step 5 remains future work. The sections below retain the design rationale; supported configuration and commands are documented in [configuration](../configuration.md#built-in-language-policies).
 
-The implementation lives in `i18n/policy/`, with domain adapters in `assemble/policy.py`, `postprocess/export_text.py` and `pipeline/language_policies.py`. Built-in IDs are `prompt.language_rules`, `punctuation.zh_cn`, `docx.chinese_font`, `markup.japanese_ruby` and `export.language_metadata`. CLI and Web execution share the resolver; policy definitions are edited in source, with read-only CLI developer diagnostics. Changed semantic revisions refresh derived analysis automatically; exports resolve fingerprints against their actual snapshot. Candidate checks, kinship evidence, translation memory and third-party executable operations are not enabled by this edition.
+The implementation lives in `i18n/policy/`, with domain adapters in `assemble/policy.py`, `postprocess/export_text.py` and `pipeline/language_policies.py`. Built-in IDs include `prompt.language_rules`, `punctuation.zh_cn`, `docx.chinese_font`, `markup.japanese_ruby` and `export.language_metadata`. CLI and Web execution share the resolver; policy definitions are edited in source, with read-only CLI developer diagnostics. Changed semantic revisions refresh derived analysis automatically; exports resolve fingerprints against their actual snapshot.
+
+The CLI-only experimental whole-book terminology feature adds `terminology.context` as the sole operation at `evidence.prepare`, backed by `pipeline/terminology.py`. `pipeline.terminology_context` defaults to `false`; there is no arbitrary user `language.operations` YAML. CLI `prepare` and `translate` explicitly grant operation-scoped `allow_terminology_context=True`; Orchestrator/PipelineRuntime default to `False`, so ordinary callers and the API cannot produce evidence from the YAML flag alone. Review, assemble and report may consume saved notes without production permission. API storage and Web/UI are unchanged, and SRT is excluded. Discovery returns only `terms`; knowledge returns only `note`, `reading`, `gender`, `aliases`, and `evidence_refs`. Merge aliases stay empty while code retains their union. Existing targets and source identities remain authoritative. This supplements a single-source/single-main-target glossary; it is not a real sense model or per-occurrence target selector. The routed operations are `terminology.discover`, `terminology.evidence`, and `terminology.merge` (default `strong`). Whole-book evidence adds context, calls, and startup latency; offline FakeClient tests are not real-LLM quality proof, and public-domain long-book before/after evaluation remains pending. See [current pipeline behavior, caches and diagnostics](../pipeline.md#optional-whole-book-terminology-evidence). Candidate checks, translation memory, and third-party executable operations remain unimplemented; the historical proposals below are not a list of current capabilities.
 
 ## 1. Recommended approach
 
@@ -12,7 +14,7 @@ Language profiles select operations; a registry declares their contracts; the ow
 
 Use a small set of typed extension points. Prompt fragments, candidate checks, export text transformations and writer options have different inputs and permissions. Do not expose a universal `hook(runtime, store)` or arbitrary Python import paths in YAML. The workflow still owns ordering between translation, polishing, alignment, review and publication.
 
-The first implementation should consolidate existing behavior. Evidence-based kinship resolution, translation memory and stronger style analysis can later use the same selection mechanism, but each still needs its own domain implementation and quality evaluation.
+The first implementation should consolidate existing behavior. Translation memory and stronger style analysis can later use the same selection mechanism, but each still needs its own domain implementation and quality evaluation.
 
 ## 2. Starting points in this repository
 
@@ -185,9 +187,9 @@ The resolver must use the actual export format and backend after default-format 
 
 ## 8. Injecting a genuinely new model operation
 
-For example, English → Chinese kinship evidence may eventually need more than a prompt sentence. Integrate it as follows:
+Whole-book terminology evidence needs more than a prompt sentence. Its domain integration follows these boundaries:
 
-1. Add an evidence domain service/agent and register a model operation such as `evidence.kinship` in `llm/operations.py`, with its default tier, workflow reachability, protocol version and budget semantics.
+1. Add an evidence domain service/agent and register model operations such as `terminology.evidence` in `llm/operations.py`, with default tiers, workflow reachability, protocol versions and budget semantics.
 2. Declare a language-policy operation that requires that model operation, with an explicit book-only preparation stage and typed evidence output. Keep it opt-in until evaluated.
 3. The preparation service executes selected evidence work after source-language detection and before consuming it in translation. It owns source-referenced artifact checkpoints and interruption recovery.
 4. `prompt.compose` consumes bounded, validated evidence by stable reference. `candidate.validate` or Review may report unsupported specificity. Neither may silently rewrite an existing target or turn an uncertain relationship into a fact.
@@ -195,7 +197,7 @@ For example, English → Chinese kinship evidence may eventually need more than 
 
 Model policy selection must feed the same route preview, credential validation and budget planning used for execution. Extend `configured_operations`/workflow reachability to include the selected plan's declared model operations; do not add an independent provider factory. With `source: auto`, validate the detection path first and validate newly selected model routes immediately after detection, before their first call. Retry, concurrency, cancellation and once-only usage stay in the existing LLM/domain infrastructure.
 
-Translation memory, kinship evidence and style analysis remain independently testable domain services. The language plan decides applicability; it does not implement their algorithms. The P06/P08/P09 proposals are not prerequisites for the first migration.
+Translation memory, terminology evidence and style analysis remain independently testable domain services. The language plan decides applicability; it does not implement their algorithms. Separate domain proposals are not prerequisites for the first migration.
 
 ## 9. Built-in policy definitions and observability
 
@@ -250,7 +252,7 @@ Verification should include:
 - Resume/cache: a crash before manifest, after a batch save, during evidence work and during review; unchanged plans reuse results, changed relevant plans invalidate them, unrelated language/font changes do not trigger paid work. Check both file and PostgreSQL adapters.
 - Integration: existing `test_i18n.py`, `test_translation*.py`, `test_bilingual.py`, `test_docx.py`, `test_assemble.py`, architecture/orchestrator contracts and storage tests, plus new resolver tests and the relevant CLI/API/Web cases. Use FakeClient and temporary data.
 
-The behavior-preserving migration needs output/prompt comparisons, not a new paid translation campaign. New semantic guidance, kinship inference or memory reuse requires separate public-domain quality evaluation under CONTRIBUTING; offline tests do not establish literary quality. Keep new semantic operations opt-in until that work is complete.
+The behavior-preserving migration needs output/prompt comparisons, not a new paid translation campaign. New semantic guidance or memory reuse requires separate public-domain quality evaluation under CONTRIBUTING; offline tests do not establish literary quality. Keep new semantic operations opt-in until that work is complete.
 
 ## 12. First-edition verification
 

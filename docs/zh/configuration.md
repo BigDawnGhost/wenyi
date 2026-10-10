@@ -238,6 +238,7 @@ pipeline:
   polish: true
   rolling_context_segments: 6
   book_understanding: true
+  terminology_context: false
   prescan_concurrency: 4
   annotation_alignment: true
   annotation_alignment_concurrency: 4
@@ -260,6 +261,7 @@ pipeline:
 - `rolling_context_segments`：每批翻译附带的前文译文段数。翻译与润色还会内置附带同章下一条原文片段作为只读参考，此值为零时也保留后文参考；它不改变输出段数，也不写入滚动译文上下文。详见[全书理解与上下文](pipeline.md#全书理解与上下文)。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。有原文内容的章节必须具备可用梗概才能开始正文翻译；全书概览合成失败时翻译继续。失败的章节梗概会在下次 prepare/translate 时补齐。重试与缓存行为见[流程文档](pipeline.md)。
 - `prescan_concurrency`：预扫章节梗概的并发数。
+- `terminology_context`：仅 CLI 可用的实验性全书原文证据与译前新词处理，默认关闭，避免旧任务隐性增加模型费用。只有 CLI `prepare` 和 `translate` 显式允许生产证据；仅开启 YAML 设置不授权普通 Orchestrator/Runtime 调用方或 API 生产证据。Review、assemble 和 report 可以消费已有备注，但不生产证据。仅适用于书籍，不适用于 SRT；Web/UI 未适配。`terminology.discover`、`terminology.evidence`、`terminology.merge` 模型操作复用常规 LLM 路由配置。词条仍为单一原文身份、单一主译名，不是真正的义项模型；参见[限制和缓存行为](pipeline.md#可选全书术语证据)。
 - `annotation_alignment`：默认开启。EPUB 中存在脚注、尾注等内部链接时，每个含注释的逻辑段在翻译和润色后立即针对正式译文串行调用一次模型定位。开启导出标点规范化时，导出层会在规范化内存副本的同时重映射已保存的偏移。超长续段会先重新合并，不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。该选项只控制链接定位；已经解析出的原语言注释正文始终会自动提供给对应翻译段落。
 - `annotation_alignment_concurrency`：当一个逻辑段内注释数超过一条时，不再用一次模型调用要求同时摆对所有标记（一条出错就会连累整段全部标记回退），而是给每条注释单独发起一次并发请求；该项限制同一段内这些逐条请求可同时并发的上限。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。

@@ -111,11 +111,13 @@ def _nearby_text(pairs: Sequence[tuple[str, str]]) -> str:
 
 def _glossary_text(
     relevant_glossary: Sequence[GlossaryTerm] | str,
+    *,
+    note_source: str | None = None,
 ) -> str:
     """Render relevant terms, or accept prelocalized read-only text from the pipeline."""
     if isinstance(relevant_glossary, str):
         return relevant_glossary.strip() or "(none)"
-    return prompts.render_glossary(list(relevant_glossary))
+    return prompts.render_glossary(list(relevant_glossary), note_source=note_source)
 
 
 class ReviewFixer(Agent):
@@ -242,7 +244,10 @@ class ReviewFixer(Agent):
                 if isinstance(chapter_digest, str) and chapter_digest.strip()
                 else "(none)"
             ),
-            glossary=_glossary_text(relevant_glossary),
+            glossary=_glossary_text(
+                relevant_glossary,
+                note_source=source if self.config.pipeline.terminology_context else None,
+            ),
             nearby_pairs=_nearby_text(nearby_pairs),
             issues_json=json.dumps(issue_payload, ensure_ascii=False, indent=2),
             segment_ref=segment_ref,

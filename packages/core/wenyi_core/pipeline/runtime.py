@@ -16,6 +16,7 @@ from ..agents.annotation_aligner import AnnotationAligner
 from ..agents.polisher import Polisher
 from ..agents.reviewer import Reviewer
 from ..agents.synopsis import Synopsizer
+from ..agents.terminology import TerminologyAgent
 from ..agents.title_translator import TitleTranslator
 from ..agents.translator import Translator
 from ..config import Config
@@ -34,22 +35,30 @@ class PipelineRuntime:
     """Shared pipeline clients, agents, accounting, languages and source identity."""
 
     def __init__(
-        self, config: Config, client: LLMClient | None = None, storage: Storage | None = None
+        self,
+        config: Config,
+        client: LLMClient | None = None,
+        storage: Storage | None = None,
+        *,
+        allow_terminology_context: bool = False,
     ):
         """Initialize the shared LLM client, usage checkpoint and pipeline agents."""
         self.storage = storage
         self.config = config
+        self._allow_terminology_context = allow_terminology_context
         from ..assemble.export_view import TEXT_HANDLERS
         from ..assemble.policy import WRITER_OPERATIONS
         from ..i18n.policy.registry import validate_implementations
         from ..i18n.prompts import PROMPT_OPERATIONS
         from ..llm.operations import OPERATIONS
+        from .terminology import EVIDENCE_OPERATIONS
 
         validate_implementations(
             {
                 **WRITER_OPERATIONS,
                 "export.text": tuple(TEXT_HANDLERS),
                 "prompt.compose": PROMPT_OPERATIONS,
+                "evidence.prepare": EVIDENCE_OPERATIONS,
             },
             tuple(OPERATIONS),
         )
@@ -66,6 +75,15 @@ class PipelineRuntime:
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
         self.annotation_aligner = AnnotationAligner(self.client, config)
+        self.terminology_agent = TerminologyAgent(self.client, config)
+
+    def require_terminology_context_access(self) -> None:
+        """Check generation permission, independently of consuming saved glossary notes."""
+        if self.config.pipeline.terminology_context and not self._allow_terminology_context:
+            raise ValueError(
+                "Whole-book terminology evidence is supported only by CLI prepare/translate. "
+                "Disable pipeline.terminology_context for this entry point."
+            )
 
     def get_store(self, run_dir: str, *, create: bool = True) -> Storage:
         """Bind injected Web storage or construct CLI file storage at the boundary."""
@@ -173,6 +191,7 @@ class PipelineRuntime:
             self.polisher,
             self.extractor,
             self.annotation_aligner,
+            self.terminology_agent,
         ):
             ag.src = source
             ag.tgt = self.config.target_lang

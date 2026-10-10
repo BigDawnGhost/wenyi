@@ -33,11 +33,21 @@ class Orchestrator:
     ALL_STEPS = ("translate", "review", "report", "assemble")
 
     def __init__(
-        self, config: Config, client: LLMClient | None = None, storage: Storage | None = None
+        self,
+        config: Config,
+        client: LLMClient | None = None,
+        storage: Storage | None = None,
+        *,
+        allow_terminology_context: bool = False,
     ):
         """Assemble shared runtime and domain services without domain I/O."""
         self.config = config
-        self._runtime = PipelineRuntime(config, client=client, storage=storage)
+        self._runtime = PipelineRuntime(
+            config,
+            client=client,
+            storage=storage,
+            allow_terminology_context=allow_terminology_context,
+        )
         self.client = self._runtime.client
         self._preparation = PreparationService(self._runtime)
         self._annotations = AnnotationService(self._runtime)

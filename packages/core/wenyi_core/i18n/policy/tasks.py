@@ -29,6 +29,12 @@ TASKS = (
     "srt_single_user",
     "title_translator_system",
     "title_translator_user",
+    "terminology_discover_system",
+    "terminology_discover_user",
+    "terminology_evidence_system",
+    "terminology_evidence_user",
+    "terminology_merge_system",
+    "terminology_merge_user",
     "translator_system",
     "translator_user",
 )

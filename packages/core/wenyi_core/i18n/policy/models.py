@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Point = Literal[
     "prompt.compose",
+    "evidence.prepare",
     "candidate.validate",
     "export.text",
     "export.source_markup",
@@ -100,6 +101,7 @@ class PolicyContext:
     order: Literal["target_first", "source_first"] = "target_first"
     preserve_source_style: bool = False
     about_page: bool = True
+    terminology_context: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,7 +184,7 @@ class PolicyPlan:
                 "operations": [
                     (op.id, op.implementation_version, op.contract_version, op.options)
                     for op in self.operations
-                    if op.point == "prompt.compose"
+                    if op.point == "prompt.compose" or op.point == "evidence.prepare" and op.enabled
                 ],
             }
         )

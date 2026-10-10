@@ -28,6 +28,8 @@ CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
+API Key 只从环境变量读取。请在本机进程环境中设置，或从共享工作区／会话之外的私有密钥文件加载到环境；不要把真实密钥写入配置、共享文件或对话。CLI 不会自动加载仓库根目录的 `.env` 文件。下方密钥值均为占位符，不是真实凭据。
+
 ## 检查模型路由
 
 ```bash
@@ -287,6 +289,33 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 `prepare` 会解析书籍、识别语言、在启用时生成逐章梗概，再生成风格指南和初始术语表，最后在启用时生成全书概览，但不翻译任何正文。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 
+### 启用全书术语证据
+
+此功能仅 CLI 可用，属于实验功能，默认 `false`。将此片段合并到配置文件，保留现有模型设置：
+
+```yaml
+language:
+  source: en
+  target: zh
+pipeline:
+  terminology_context: true
+```
+
+```bash
+uv run wenyi --config config.yaml models explain --operation terminology.evidence
+uv run wenyi --config config.yaml models check --for translate
+uv run wenyi --config config.yaml prepare book.epub
+uv run wenyi --config config.yaml translate book.epub
+```
+
+`terminology_context` 会对初始术语种子、译前发现和译后补漏候选，检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。全量术语映射不变，既有译名和受保护的人工字段保留，不同译名建议记录为冲突。`prepare` 可先完成初始取证，不翻译正文。
+
+只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review、assemble 和 report 可以消费已有备注，不生产证据。SRT 不使用此路径。
+
+术语表仍按词条保存单一原文身份、单一主译名。全书备注可以解释上下文和不确定性，但没有真正的义项模型或逐次出现的译名选择。备注基于原文，只是只读补充，不授权添加后文剧情或覆盖权威译名；无法保证模型始终遵守这些约束。
+
+`terminology.discover`、`terminology.evidence` 和 `terminology.merge` 默认使用 `strong`，会增加上下文、调用次数和首批延迟。FakeClient 测试不是质量证明；真实模型的公版长书前后对比仍待执行。详见[流程说明](pipeline.md#可选全书术语证据)。
+
 ## 中断与续跑
 
 已完成的批次会写入状态目录。中断后使用同一个源文件执行：
@@ -302,6 +331,8 @@ uv run wenyi status book.epub
 才应使用新的状态目录或清理对应状态。
 
 语言策略内置于源码。策略变更或保存的状态缺少策略身份时，`prepare`/`translate` 会自动重建受影响的分析，再继续待完成工作；重建可能调用模型。已完成译文继续保留，字体等仅影响导出的变更只需重新导出。书籍／字幕行为和开发者诊断见[内置语言策略](configuration.md#内置语言策略)。
+
+章节梗概现完整分块覆盖原文，v2 原文哈希与策略身份会令旧缓存失效，因此升级后首次续跑可能重新生成分析。梗概人物保留原文身份，译名来自当前术语表。开启术语证据后，失败重试复用缓存的发现结果和成功证据组，补齐未完成准入，保留已译正文；不会把局部分组结果作为完整知识发布。
 
 ## 独立阶段与术语管理
 

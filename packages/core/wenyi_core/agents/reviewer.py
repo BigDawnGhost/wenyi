@@ -55,7 +55,12 @@ class Reviewer(Agent):
             "reviewer_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(
+                glossary_terms or [],
+                note_source="\n".join(sources)
+                if self.config.pipeline.terminology_context
+                else None,
+            ),
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )

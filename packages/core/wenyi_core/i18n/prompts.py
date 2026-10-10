@@ -34,6 +34,7 @@ def render(
         values["lang_guidance"] = values.pop("configured_lang_guidance")
     for key, value in values.items():
         kwargs.setdefault(key, value)
+    kwargs.setdefault("source_context", "")
     frozen_templates = dict(plan.templates)
     selected = Template(frozen_templates[name]) if name in frozen_templates else template(name)
     # Substitute once: literal $ and braces in content stay intact; missing arguments fail.

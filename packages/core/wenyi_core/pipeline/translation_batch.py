@@ -98,7 +98,9 @@ class TranslationBatchExecutor:
             if turn is not None and indices is not None:
                 # Continue the translation conversation and restore filtered source positions.
                 continued = self._polisher.polish_continue(
-                    turn, n=len(indices), next_source=plan.next_source
+                    turn,
+                    n=len(indices),
+                    next_source=plan.next_source,
                 )
                 if continued is not None and len(continued) == len(indices):
                     polished = list(targets)
@@ -106,7 +108,11 @@ class TranslationBatchExecutor:
                         polished[index] = strip_ruby_markers(text)
             if polished is None:
                 polished = self._polisher.polish(
-                    targets, glossary_terms=terms, style=plan.style, next_source=plan.next_source
+                    targets,
+                    glossary_terms=terms,
+                    style=plan.style,
+                    next_source=plan.next_source,
+                    sources=list(plan.sources),
                 )
             if len(polished) == len(targets):
                 targets = polished

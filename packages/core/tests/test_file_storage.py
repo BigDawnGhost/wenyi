@@ -6,7 +6,45 @@ from pathlib import Path
 
 import pytest
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
+from wenyi_core.llm.usage import UsageSample, UsageTracker
 from wenyi_core.storage.file import FileStorage
+
+
+@pytest.mark.parametrize("marker", [None, "{invalid", "{}", '{"source_sha256": 1}'])
+def test_initialization_without_verified_identity_discards_usage(tmp_path, marker):
+    storage = FileStorage(str(tmp_path))
+    tracker = UsageTracker()
+    tracker.record("fast", UsageSample(10, 5, 15), stage="terminology")
+    with storage.lock():
+        storage.save_usage(tracker.summary())
+        tracker.record("fast", UsageSample(20, 10, 30), stage="terminology")
+        storage.prepare_usage_commit({"usage.json": tracker.summary()})
+        if marker is not None:
+            (tmp_path / ".initializing.json").write_text(marker, encoding="utf-8")
+        storage.begin_initialization("a" * 64)
+        storage.recover_usage()
+        assert storage.load_usage() is None
+        assert storage.read_artifact("usage-pending.json") is None
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_initialization_retry_recovers_first_usage_commit(tmp_path, published):
+    storage = FileStorage(str(tmp_path))
+    tracker = UsageTracker()
+    tracker.record("fast", UsageSample(10, 5, 15), stage="terminology")
+    ledger = tracker.summary()
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+        storage.prepare_usage_commit({"usage.json": ledger})
+        if published:
+            storage.save_usage(ledger)
+    # Reopen the adapter to exercise recovery without relying on in-memory state.
+    storage = FileStorage(str(tmp_path))
+    with storage.lock():
+        for _ in range(3):
+            storage.begin_initialization("a" * 64)
+            assert storage.load_usage() == ledger
+            assert storage.read_artifact("usage-pending.json") is None
 
 
 @pytest.mark.parametrize("interrupted", [False, True])

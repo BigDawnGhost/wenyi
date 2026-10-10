@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..events import ProgressFn
 from ..i18n.languages import normalize_language
-from ..i18n.policy.models import Phase
+from ..i18n.policy.models import Phase, content_hash
 from ..i18n.prompts import render
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.models import Chapter, Document
@@ -25,28 +25,33 @@ from ..storage.protocol import Storage
 from .context import RollingContext
 from .language_policies import commit_revision, initialize_policies, translation_revision
 from .runstore import source_sha256, translation_run_dir
+from .terminology import TerminologyService
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
 _LOGGER = logging.getLogger(__name__)
+_DIGEST_VERSION = 2
 
 
 def _synopsis_complete(text: str) -> bool:
-    """Identify likely finished legacy digests without a recorded completion marker."""
+    """Identify likely finished legacy digests without a completion marker."""
     cleaned = (text or "").strip().rstrip("”\"'」』）)]}")
-    if not cleaned:
-        return False
-    return cleaned[-1] in "。．.！？!?…"
+    return bool(cleaned) and cleaned[-1] in "。．.！？!?…"
 
 
-def _digest_complete(chapter: Chapter) -> bool:
-    """Reuse complete new digests and likely finished legacy digests."""
+def _digest_complete(chapter: Chapter, *, full_coverage: bool = False) -> bool:
+    """Use legacy completion checks unless full-source coverage is selected."""
     digest = chapter.meta.get("source_digest")
     return bool(
         isinstance(digest, str)
         and digest.strip()
-        and (chapter.meta.get("source_digest_complete") is True or _synopsis_complete(digest))
+        and (
+            chapter.meta.get("source_digest_complete") is True
+            and chapter.meta.get("source_digest_version") == _DIGEST_VERSION
+            if full_coverage
+            else chapter.meta.get("source_digest_complete") is True or _synopsis_complete(digest)
+        )
     )
 
 
@@ -146,6 +151,7 @@ class PreparationService:
         PDF state follows the filename, allowing manifest checks before repeated external
         conversion. Cache the initial converted HTML within that state directory.
         """
+        self._runtime.require_terminology_context_access()
         if self._runtime.storage is not None:
             store = self._runtime.storage
             self._runtime.bind_llm_events(store)
@@ -255,6 +261,20 @@ class PreparationService:
 
         store.begin_initialization(source_hash)
 
+        try:
+            return self._initialize_document(doc, store, input_path, progress, source_hash)
+        finally:
+            self._runtime.flush_usage(store, scope="prepare")
+
+    def _initialize_document(
+        self,
+        doc: Document,
+        store: Storage,
+        input_path: str,
+        progress: ProgressFn | None,
+        source_hash: str,
+    ) -> Storage:
+        """Build a new run after source identity is established by initialization."""
         # For new auto-language runs, use model detection only; require an explicit language on failure.
         if self._runtime.config.source_lang in ("auto", "", None):
             if progress:
@@ -277,19 +297,18 @@ class PreparationService:
             source_hash=source_hash,
         )
         manifest["language_policies"] = initialize_policies(store, self._runtime.config)
+        digests = None
         if self._runtime.config.pipeline.book_understanding:
-            self._ensure_chapter_digests(store, doc.chapters, progress)
-        glossary = store
+            digests = self._ensure_chapter_digests(store, doc.chapters, progress)
         if progress:
             progress(0, 0, "Analyzing book style…")
-        sample = self.sample_text(doc)
-        analysis = self._runtime.analyzer.analyze(sample) if sample else {}
+        analysis = self._analyze_document(store, doc, digests, source_hash)
         analysis["language_policy"] = manifest["language_policies"]["analysis"]
         analysis["style_policy"] = self._runtime.config.language_policy(
             "analysis"
         ).task_fingerprint("analyzer")
         if analysis:
-            self._runtime.analyzer.seed_glossary(glossary, analysis)
+            self._seed_analysis(store, doc.chapters, analysis, progress)
         store.save_analysis(analysis)
         store.log_event("analysis_saved", has_analysis=bool(analysis))
         store.save_context(
@@ -325,11 +344,79 @@ class PreparationService:
         )
         return store
 
+    def _analyze_document(
+        self,
+        store: Storage,
+        document: Document,
+        digests: list[str] | None,
+        source_hash: str,
+    ) -> dict[str, Any]:
+        """Cache paid analysis before fallible admission, independently of the manifest."""
+        sample = self.sample_text(document)
+        if not sample:
+            return {}
+        policy = self._runtime.config.language_policy("analysis")
+        cached = policy.enabled("terminology.context")
+        if not cached:
+            return self._runtime.analyzer.analyze(sample)
+        key = (
+            "preparation/analysis/"
+            + content_hash(
+                {
+                    "source": source_hash,
+                    "sample": sample,
+                    "digests": digests,
+                    "policy": policy.task_fingerprint("analyzer"),
+                    "routing": self._runtime.config.llm.model_dump(mode="json"),
+                }
+            )
+            + ".json"
+        )
+        saved = store.read_artifact(key) if cached else None
+        if isinstance(saved, dict):
+            return saved
+        try:
+            analysis = (
+                self._runtime.analyzer.analyze(sample, chapter_digests=digests)
+                if digests is not None
+                else self._runtime.analyzer.analyze(sample)
+            )
+            if cached:
+                store.write_artifact(key, analysis)
+            return analysis
+        finally:
+            if cached:
+                self._runtime.flush_usage(store, scope="analysis")
+
+    def _seed_analysis(
+        self,
+        store: Storage,
+        chapters: list[Chapter],
+        analysis: dict[str, Any],
+        progress: ProgressFn | None = None,
+    ) -> None:
+        policy = self._runtime.config.language_policy("analysis")
+        if not policy.enabled("terminology.context"):
+            self._runtime.analyzer.seed_glossary(store, analysis)
+            return
+        self._runtime.require_terminology_context_access()
+        if progress:
+            progress(0, 0, "Collecting whole-book terminology evidence…")
+        terminology = TerminologyService(
+            store,
+            self._runtime.terminology_agent,
+            chapters,
+            checkpoint_usage=lambda: self._runtime.flush_usage(store, scope="terminology"),
+        )
+        self._runtime.analyzer.seed_glossary(store, analysis, admit=terminology.admit)
+
     def activate(self, store: Storage, *, phase: Phase | None = None) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
         store.recover_usage()
         manifest = store.load_manifest()
         self._runtime.apply_manifest_languages(manifest)
+        if phase == "translation":
+            self._runtime.require_terminology_context_access()
         if phase == "translation" and translation_revision(store, self._runtime.config):
             self._rebuild_analysis(store, manifest)
         return manifest
@@ -337,8 +424,9 @@ class PreparationService:
     def _rebuild_analysis(self, store: Storage, manifest: dict[str, Any]) -> None:
         """Refresh built-in guidance while preserving formal targets and glossary."""
         chapters = [store.load_chapter(row["index"]) for row in manifest["chapters"]]
+        digests = None
         if self._runtime.config.pipeline.book_understanding:
-            self._ensure_chapter_digests(store, chapters, None)
+            digests = self._ensure_chapter_digests(store, chapters, None)
         # Assemble only the source samples; formal chapters are never rewritten here.
         document = Document(
             title=manifest.get("title", ""),
@@ -350,11 +438,15 @@ class PreparationService:
         style_policy = self._runtime.config.language_policy("analysis").task_fingerprint("analyzer")
         analysis = store.load_analysis() or {}
         if analysis.get("style_policy") != style_policy:
-            analysis = self._runtime.analyzer.analyze(self.sample_text(document))
+            analysis = self._analyze_document(
+                store, document, digests, manifest.get("source_sha256", "")
+            )
         analysis["style_policy"] = style_policy
         analysis["language_policy"] = (
             f"language-policies/{self._runtime.config.language_policy('analysis').fingerprint}.json"
         )
+        if self._runtime.config.language_policy("analysis").enabled("terminology.context"):
+            self._seed_analysis(store, chapters, analysis)
         store.save_analysis(analysis)
         commit_revision(store, self._runtime.config)
         store.log_event(
@@ -434,7 +526,13 @@ class PreparationService:
             return ""
 
         analysis = store.load_analysis() or {}
-        style = self._runtime.analyzer.style_brief(analysis)
+        enabled = self._runtime.config.language_policy("analysis").enabled("terminology.context")
+        terms = sorted(store.all_terms(), key=lambda term: term.source) if enabled else []
+        style = (
+            self._runtime.analyzer.style_brief(analysis, terms=terms)
+            if enabled
+            else self._runtime.analyzer.style_brief(analysis)
+        )
         inputs = {
             "language_policy": self._runtime.config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"
@@ -448,10 +546,15 @@ class PreparationService:
             "source_lang": self._runtime.config.source_lang,
             "target_lang": self._runtime.config.target_lang,
         }
+        if enabled:
+            inputs["glossary"] = [
+                [term.source, term.target, term.type, term.gender, term.note] for term in terms
+            ]
+            inputs["routing"] = self._runtime.config.llm.model_dump(mode="json")
         fingerprint = hashlib.sha256(
             json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
-        metadata = {"version": 1, "inputs_sha256": fingerprint}
+        metadata = {"version": 2 if enabled else 1, "inputs_sha256": fingerprint}
         synopsis = analysis.get("book_synopsis", "")
         if (
             isinstance(synopsis, str)
@@ -461,7 +564,11 @@ class PreparationService:
             return synopsis
         if progress:
             progress(0, 0, "Generating whole-book synopsis…")
-        synopsis = self._runtime.synopsizer.book_synopsis(digests, style)
+        synopsis = (
+            self._runtime.synopsizer.book_synopsis(digests, style, glossary=terms)
+            if enabled
+            else self._runtime.synopsizer.book_synopsis(digests, style)
+        )
         if synopsis:
             analysis["book_synopsis"] = synopsis
             analysis["book_synopsis_meta"] = metadata
@@ -481,6 +588,18 @@ class PreparationService:
         chapters: list[Chapter],
         progress: ProgressFn | None,
     ) -> list[str]:
+        """Checkpoint all incurred requests even when prescan cannot finish."""
+        try:
+            return self._build_chapter_digests(store, chapters, progress)
+        finally:
+            self._runtime.flush_usage(store, scope="prescan")
+
+    def _build_chapter_digests(
+        self,
+        store: Storage,
+        chapters: list[Chapter],
+        progress: ProgressFn | None,
+    ) -> list[str]:
         """Prescan staged or initialized chapters and return digests in source order."""
         # Digest chapters independently in a thread pool, but persist all results on the main thread
         # to avoid competing atomic writes and preserve incremental chapter-level resume. Skip saved digests.
@@ -490,16 +609,63 @@ class PreparationService:
             for ci, ch in loaded.items()
             if ch.text_segments
         }
-        fingerprint = self._runtime.config.language_policy("analysis").task_fingerprint(
-            "chapter_digest"
+        policy = self._runtime.config.language_policy("analysis")
+        enabled = policy.enabled("terminology.context")
+        fingerprint = content_hash(
+            [
+                self._runtime.config.language_policy("analysis").task_fingerprint("chapter_digest"),
+                self._runtime.config.llm.model_dump(mode="json"),
+            ]
         )
+        if not enabled:
+            fingerprint = policy.task_fingerprint("chapter_digest")
+        source_hashes = {
+            ci: hashlib.sha256(source.encode("utf-8")).hexdigest() for ci, source in sources.items()
+        }
+        cache_keys = {}
+        if self._runtime.config.language_policy("analysis").enabled("terminology.context"):
+            for ci in sources:
+                cache_keys[ci] = (
+                    "preparation/digests/"
+                    + content_hash(
+                        [
+                            _DIGEST_VERSION,
+                            source_hashes[ci],
+                            fingerprint,
+                            self._runtime.config.llm.model_dump(mode="json"),
+                        ]
+                    )
+                    + ".json"
+                )
+                saved = store.read_artifact(cache_keys[ci])
+                if (
+                    (
+                        not _digest_complete(loaded[ci], full_coverage=True)
+                        or loaded[ci].meta.get("source_digest_policy") != fingerprint
+                        or loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
+                    )
+                    and isinstance(saved, dict)
+                    and isinstance(saved.get("digest"), str)
+                    and saved["digest"]
+                ):
+                    loaded[ci].meta.update(
+                        source_digest=saved["digest"],
+                        source_digest_complete=True,
+                        source_digest_policy=fingerprint,
+                        source_digest_version=_DIGEST_VERSION,
+                        source_digest_sha256=source_hashes[ci],
+                    )
+                    store.save_chapter(loaded[ci])
         todo = [
             (ci, source)
             for ci, source in sources.items()
-            if not _digest_complete(loaded[ci])
+            if not _digest_complete(loaded[ci], full_coverage=enabled)
             or loaded[ci].meta.get("source_digest_policy") != fingerprint
+            or enabled
+            and loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
         ]
         failed: list[int] = []
+        error: Exception | None = None
         if todo:
             store.log_event(
                 "book_understanding_chapter_digest_started",
@@ -515,11 +681,22 @@ class PreparationService:
                 }
                 for n_done, fut in enumerate(as_completed(futs), 1):
                     ci = futs[fut]
-                    digest = fut.result().strip()
+                    try:
+                        digest = fut.result().strip()
+                    except Exception as exc:
+                        # Drain submitted work and save other successful chapters before
+                        # propagating the original provider/cancellation failure.
+                        error = error or exc
+                        digest = ""
                     if digest:
                         loaded[ci].meta["source_digest"] = digest
                         loaded[ci].meta["source_digest_complete"] = True
                         loaded[ci].meta["source_digest_policy"] = fingerprint
+                        if enabled:
+                            loaded[ci].meta["source_digest_version"] = _DIGEST_VERSION
+                            loaded[ci].meta["source_digest_sha256"] = source_hashes[ci]
+                        if ci in cache_keys:
+                            store.write_artifact(cache_keys[ci], {"digest": digest})
                         store.save_chapter(loaded[ci])
                         store.log_event(
                             "book_understanding_chapter_digest_saved", chapter=ci, digest=digest
@@ -530,6 +707,8 @@ class PreparationService:
                     if progress:
                         progress(n_done, len(todo), "Prescanning chapter digests")
 
+        if error is not None:
+            raise error
         if failed:
             indices = ", ".join(str(ci) for ci in sorted(failed))
             raise ValueError(
