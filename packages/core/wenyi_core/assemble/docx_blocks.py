@@ -19,6 +19,7 @@ from wenyi_core.assemble.docx_styles import (
 )
 from wenyi_core.assemble.writer_common import (
     _bilingual_source,
+    _heading_level,
     _seg_text,
 )
 from wenyi_core.document_styles.docx import (
@@ -289,8 +290,7 @@ def _emit_chapter_blocks(
         kind = seg.kind
         heading_level = 1
         if kind == KIND_HEADING:
-            raw_level = meta.get("heading_level", 1)
-            heading_level = raw_level if isinstance(raw_level, int) else 1
+            heading_level = _heading_level(chapter, seg)
         style_meta = meta
         i += 1
         while i < len(segs):
