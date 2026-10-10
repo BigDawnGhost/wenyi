@@ -132,6 +132,43 @@ def test_selected_prescan_variants_freeze_actual_resource_paths():
         assert dict(plan.templates)[f"{task}_system"] == read_text(path)
 
 
+def test_default_polisher_preserves_original_resource_and_fingerprint():
+    plan = Config.from_dict({"llm": {"preset": "fake"}}).language_policy("translation")
+    path = "tasks/polisher_user.txt"
+    assert path in dict(plan.resources)
+    assert "tasks/polisher_terminology_user.txt" not in dict(plan.resources)
+    assert dict(plan.templates)["polisher_user"] == read_text(path)
+    assert "$source_context" not in dict(plan.templates)["polisher_user"]
+    assert plan.task_fingerprint("polisher") == (
+        "964a2d08eb651aea404703d04c6017a0f29655b03f35c93a5a373016bb2fc634"
+    )
+
+
+@pytest.mark.parametrize(
+    "phase,fingerprint",
+    [
+        ("analysis", "9af7af675550080aaa7f73904d3310635a033716e350a02d4e871b93db8545a6"),
+        ("translation", "4f6eeba5788a7251fd63f850c9713a01ee4adb71a7ae238ae030efb56d599642"),
+        ("review", "a7fbdc2f147d578b689c9ce85939e9306e5be0b6c7d492a1f7df4d4bd1550571"),
+        ("export", "37fc624a4a972f98a1067358cf6a15c496e145493ab32c80197182ed13a8bee9"),
+    ],
+)
+def test_default_phase_fingerprints_match_feature_baseline(phase, fingerprint):
+    # Recorded from the original packaged code at 11aaa491d2992a844aafdb7e8025a98417e24b0c.
+    selected = Config.from_dict({"llm": {"preset": "fake"}})
+    plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
+    assert plan.fingerprint == fingerprint
+
+
+def test_selected_polisher_variant_freezes_the_source_context_resource():
+    plan = config(terminology_context=True).language_policy("translation")
+    path = "tasks/polisher_terminology_user.txt"
+    assert path in dict(plan.resources)
+    assert "tasks/polisher_user.txt" not in dict(plan.resources)
+    assert dict(plan.templates)["polisher_user"] == read_text(path)
+    assert "$source_context" in dict(plan.templates)["polisher_user"]
+
+
 def test_explicitly_disabled_operation_does_not_select_feature_templates():
     selected = config(terminology_context=True).language_policy("analysis")
     plan = resolve_policy(selected.context, {"terminology.context": OperationBinding(mode="off")})

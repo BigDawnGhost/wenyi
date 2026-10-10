@@ -123,8 +123,14 @@ def _rules(context: PolicyContext) -> dict[str, str]:
 
 def _template_path(task: str, *, terminology: bool) -> str:
     """Resolve selected variants while retaining the public task names."""
-    if terminology and task in {"analyzer_system", "chapter_digest_system", "book_synopsis_system"}:
-        return f"tasks/{task.removesuffix('_system')}_terminology_system.txt"
+    if terminology and task in {
+        "analyzer_system",
+        "chapter_digest_system",
+        "book_synopsis_system",
+        "polisher_user",
+    }:
+        group, role = task.rsplit("_", 1)
+        return f"tasks/{group}_terminology_{role}.txt"
     return f"tasks/{task}.txt"
 
 
