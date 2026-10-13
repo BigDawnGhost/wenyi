@@ -70,7 +70,7 @@ class PrecisionAgent(Agent):
     def _call(self, inputs: PrecisionInputs, task: str, payload: dict, operation: str) -> list[str]:
         if not any(Translator._needs_translation(source) for source in inputs.sources):
             return list(inputs.sources)
-        messages = [
+        messages: Messages = [
             {"role": "system", "content": self.render("precision_generation_system")},
             {"role": "user", "content": self._packet(inputs)},
             {
@@ -81,22 +81,28 @@ class PrecisionAgent(Agent):
             },
         ]
 
-        def invoke() -> str:
-            # Match standard translation: leave output limits to the model/provider configuration.
-            return self.client.complete(messages, operation=operation, json_mode=True)
-
-        def validate(raw: str) -> list[str]:
-            data = parse_json_loose(raw)
-            # Match standard translation: accept both {"translations": [...]} and a bare array.
-            items = data.get("translations") if isinstance(data, dict) else data
-            return self._targets(inputs, items)
-
         retries_remaining = self.config.pipeline.align_retry_limit
+        feedback: list[dict[str, str]] = []
+        last_raw: dict[str, str] = {}
         while True:
+            attempt = messages + feedback
+
+            def invoke(attempt: Messages = attempt) -> str:
+                # Match standard translation: leave output limits to the model/provider configuration.
+                text = self.client.complete(attempt, operation=operation, json_mode=True)
+                last_raw["raw"] = text
+                return text
+
+            def validate(raw: str) -> list[str]:
+                data = parse_json_loose(raw)
+                # Match standard translation: accept both {"translations": [...]} and a bare array.
+                items = data.get("translations") if isinstance(data, dict) else data
+                return self._targets(inputs, items)
+
             try:
                 if self._recorder:
                     targets, self.last_call_ref = self._recorder(
-                        operation, messages, invoke, validate
+                        operation, attempt, invoke, validate
                     )
                     return targets
                 return validate(invoke())
@@ -109,6 +115,26 @@ class PrecisionAgent(Agent):
                         f"{operation}: invalid or truncated precision response"
                     ) from error
                 retries_remaining -= 1
+                if isinstance(error, TruncatedResponseError) or "raw" not in last_raw:
+                    # Feedback cannot raise an output cap; without a received reply it is empty.
+                    continue
+                # Models that merge or drop segments repeat the mistake on identical retries;
+                # quote the rejected reply and restate the exact structural contract instead.
+                feedback.extend(
+                    [
+                        {"role": "assistant", "content": last_raw["raw"]},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"The previous reply failed local validation: {error}. "
+                                'Return only a JSON object like {"translations": ["...", ...]} '
+                                f"with exactly {len(inputs.sources)} strings, one per requested "
+                                "segment in task.segments order. Do not merge, split, omit or "
+                                "pad segments, and do not add extra fields."
+                            ),
+                        },
+                    ]
+                )
 
     @staticmethod
     def _targets(inputs: PrecisionInputs, targets: object) -> list[str]:

@@ -78,7 +78,15 @@ def test_invalid_output_exhausts_shared_retry_limit(response, stage, retry_limit
         else:
             worker.synthesize(packet, [["稿"]] * 3)
     assert len(client.calls) == retry_limit + 1
-    assert all(call["messages"] == client.calls[0]["messages"] for call in client.calls)
+    # Every structural retry quotes the previous reply and restates the contract.
+    assert [len(call["messages"]) for call in client.calls] == [
+        3 + 2 * index for index in range(retry_limit + 1)
+    ]
+    for previous, current in zip(client.calls, client.calls[1:]):
+        assert current["messages"][: len(previous["messages"])] == previous["messages"]
+        assert current["messages"][-2]["role"] == "assistant"
+        assert "failed local validation" in current["messages"][-1]["content"]
+        assert "exactly 1 strings" in current["messages"][-1]["content"]
 
 
 @pytest.mark.parametrize("stage", ["translate", "synthesize"])
@@ -111,9 +119,36 @@ def test_invalid_output_retries_full_request_and_recovers(stage, failure):
     assert len(client.calls) == 2
     operation = "translation.body" if stage == "translate" else "polish.body"
     assert [call["operation"] for call in client.calls] == [operation] * 2
-    assert all(call["messages"] == client.calls[0]["messages"] for call in client.calls)
+    if failure == "truncated":
+        # Feedback cannot raise an output cap, so truncation retries the identical request.
+        assert client.calls[1]["messages"] == client.calls[0]["messages"]
+    else:
+        assert client.calls[1]["messages"][:3] == client.calls[0]["messages"]
+        assert client.calls[1]["messages"][-2]["role"] == "assistant"
+        correction = client.calls[1]["messages"][-1]
+        assert correction["role"] == "user"
+        assert "failed local validation" in correction["content"]
+        assert "exactly 2 strings" in correction["content"]
     assert all(call["max_tokens"] is None for call in client.calls)
     assert '"sources": ["Title", "Body"]' in client.calls[-1]["messages"][1]["content"]
+
+
+def test_merged_segments_retry_quotes_the_rejection_and_recovers():
+    attempts = 0
+
+    def respond(*_):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return json.dumps({"translations": ["第一段。\n\n第二段。"]})
+        return json.dumps({"translations": ["第一段。", "第二段。"]})
+
+    worker, client = agent(handler=respond)
+    assert worker.translate(inputs("First.", "Second.")) == ["第一段。", "第二段。"]
+    assert len(client.calls) == 2
+    rejected = json.dumps({"translations": ["第一段。\n\n第二段。"]})
+    assert client.calls[1]["messages"][-2] == {"role": "assistant", "content": rejected}
+    assert "expected 2, got 1" in client.calls[1]["messages"][-1]["content"]
 
 
 def test_bare_translation_array_is_accepted_like_standard_translation():
