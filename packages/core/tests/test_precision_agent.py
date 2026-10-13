@@ -116,6 +116,26 @@ def test_invalid_output_retries_full_request_and_recovers(stage, failure):
     assert '"sources": ["Title", "Body"]' in client.calls[-1]["messages"][1]["content"]
 
 
+def test_bare_translation_array_is_accepted_like_standard_translation():
+    worker, client = agent(["甲", "乙"])
+    assert worker.translate(inputs("one", "two")) == ["甲", "乙"]
+    assert worker.synthesize(inputs("one", "two"), [["甲", "乙"]] * 3) == ["甲", "乙"]
+
+
+def test_missing_translations_array_reports_shape_not_count():
+    worker, client = agent({"result": ["译文"]})
+    with pytest.raises(PrecisionError, match="translations array"):
+        worker.translate(inputs("source"))
+    assert len(client.calls) == 3
+
+
+def test_count_mismatch_reports_expected_and_actual():
+    worker, client = agent({"translations": ["一", "二", "三"]})
+    with pytest.raises(PrecisionError, match="expected 2, got 3"):
+        worker.translate(inputs("one", "two"))
+    assert len(client.calls) == 3
+
+
 @pytest.mark.parametrize("status", [401, 429, 500])
 def test_provider_failures_do_not_start_another_retry_loop(status):
     error = ProviderRequestError(

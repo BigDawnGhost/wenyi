@@ -87,9 +87,9 @@ class PrecisionAgent(Agent):
 
         def validate(raw: str) -> list[str]:
             data = parse_json_loose(raw)
-            return self._targets(
-                inputs, data.get("translations") if isinstance(data, dict) else None
-            )
+            # Match standard translation: accept both {"translations": [...]} and a bare array.
+            items = data.get("translations") if isinstance(data, dict) else data
+            return self._targets(inputs, items)
 
         retries_remaining = self.config.pipeline.align_retry_limit
         while True:
@@ -113,8 +113,13 @@ class PrecisionAgent(Agent):
     @staticmethod
     def _targets(inputs: PrecisionInputs, targets: object) -> list[str]:
         """Validate structure and restore protected sources without splitting."""
-        if not isinstance(targets, list) or len(targets) != len(inputs.sources):
-            raise PrecisionError("Precision output count does not match the document segments")
+        if not isinstance(targets, list):
+            raise PrecisionError("Precision output did not include a translations array")
+        if len(targets) != len(inputs.sources):
+            raise PrecisionError(
+                "Precision output count does not match the document segments: "
+                f"expected {len(inputs.sources)}, got {len(targets)}"
+            )
         output: list[str] = []
         for index, (source, target) in enumerate(zip(inputs.sources, targets)):
             if not isinstance(target, str):
