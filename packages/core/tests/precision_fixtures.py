@@ -79,10 +79,13 @@ class PrecisionHandler:
         self.invalid, self.blank = invalid, blank
 
     def __call__(self, messages, tier, json_mode):
-        if "Task (JSON):\n" not in messages[-1]["content"]:
+        task_message = next(
+            (message for message in messages if "Task (JSON):\n" in message["content"]), None
+        )
+        if task_message is None:
             return routing_handler(messages, tier, json_mode)
         sources = json.loads(messages[1]["content"].split("\n", 1)[1])["sources"]
-        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        task = json.loads(task_message["content"].split("Task (JSON):\n")[1])
         kind = "synthesis" if "drafts" in task else "translate"
         with self.lock:
             self.counts[kind] += 1
