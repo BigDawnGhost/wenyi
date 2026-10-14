@@ -108,7 +108,8 @@ def test_failure_receipt_storage_error_blocks_retries_but_preserves_interrupts(
 
     def respond(messages, tier, json_mode):
         response = handler(messages, tier, json_mode)
-        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        task_message = next(m for m in messages if "Task (JSON):\n" in m["content"])
+        task = json.loads(task_message["content"].split("Task (JSON):\n")[1])
         if "drafts" in task:
             if failure == "invalid_output":
                 return '{"translations":[]}'
@@ -203,7 +204,8 @@ def test_completed_paid_receipt_recovers_gap_before_stage_checkpoint(
     def respond(messages, tier, json_mode):
         nonlocal invalid
         response = handler(messages, tier, json_mode)
-        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        task_message = next(m for m in messages if "Task (JSON):\n" in m["content"])
+        task = json.loads(task_message["content"].split("Task (JSON):\n")[1])
         with handler.lock:
             if invalid and "drafts" in task:
                 invalid = False
