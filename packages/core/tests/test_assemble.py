@@ -156,6 +156,84 @@ def _run(input_path, state_dir):
 
 
 class TestAssembleText(unittest.TestCase):
+    def test_markdown_heading_levels_and_epub_toc_hierarchy(self):
+        levels = [5, 6, 5, 3, 6, 6, 2, 4, 1, 2]
+        parents = [None, None, 1, None, None, 4, 4, None, 7, None, 9]
+
+        def linked_parents(tree, node_tag, link_tag, attribute):
+            result = []
+            for node in tree.find_all(node_tag):
+                link = node.find(link_tag, recursive=False)
+                parent = node.find_parent(node_tag)
+                parent_link = parent.find(link_tag, recursive=False) if parent else None
+                result.append((link[attribute], parent_link[attribute] if parent_link else None))
+            return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "headings.md")
+            with open(source_path, "w", encoding="utf-8") as source:
+                source.write(
+                    "Preface.\n\n"
+                    + "\n\n".join(
+                        f"{'#' * level} Title {index}\n\nBody {index}."
+                        for index, level in enumerate(levels, start=1)
+                    )
+                )
+            document = load_document(source_path, "en", "en")
+            # Segment metadata must win over chapter defaults and continuation metadata.
+            chapter = document.chapters[2]
+            chapter.meta["heading_level"] = 1
+            heading, body = chapter.segments
+            heading.source = "Title "
+            heading.meta["heading_level"] = 6
+            body.index = 2
+            chapter.segments.insert(
+                1,
+                Segment(index=1, source="2", kind="heading", cont=True, meta={"heading_level": 1}),
+            )
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(document)
+            manifest = store.load_manifest()
+            output_path = assemble(store, source_path, out_format="epub", about_page=False)
+
+            with zipfile.ZipFile(output_path) as archive:
+                paths = {os.path.basename(name): name for name in archive.namelist()}
+                for index, level in enumerate([None, *levels]):
+                    body = BeautifulSoup(
+                        archive.read(paths[f"ch{index}.xhtml"]), "html.parser"
+                    ).body
+                    assert isinstance(body, Tag)
+                    self.assertEqual(
+                        [
+                            (heading.name, heading.get_text())
+                            for heading in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                        ],
+                        [(f"h{level}", f"Title {index}")] if level is not None else [],
+                    )
+                    self.assertEqual(
+                        [paragraph.get_text() for paragraph in body.find_all("p")],
+                        [f"Body {index}."] if index else ["Preface."],
+                    )
+                nav = BeautifulSoup(archive.read(paths["nav.xhtml"]), "html.parser").find("nav")
+                ncx = BeautifulSoup(archive.read(paths["toc.ncx"]), "xml").find("navMap")
+                assert isinstance(nav, Tag)
+                assert isinstance(ncx, Tag)
+
+            expected = [
+                (f"ch{index}.xhtml", f"ch{parent}.xhtml" if parent is not None else None)
+                for index, parent in enumerate(parents)
+            ]
+            self.assertEqual(linked_parents(nav, "li", "a", "href"), expected)
+            self.assertEqual(linked_parents(ncx, "navPoint", "content", "src"), expected)
+            self.assertTrue(
+                all(ordered_list.find("li", recursive=False) for ordered_list in nav.find_all("ol"))
+            )
+            self.assertEqual(store.load_manifest(), manifest)
+            self.assertEqual(
+                [store.load_chapter(chapter.index).model_dump() for chapter in document.chapters],
+                [chapter.model_dump() for chapter in document.chapters],
+            )
+
     def test_fb2_images_and_cover_are_preserved_in_generated_epub(self):
         with tempfile.TemporaryDirectory() as d:
             fb2 = os.path.join(d, "illustrated.fb2")

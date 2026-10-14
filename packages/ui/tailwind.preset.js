@@ -112,6 +112,12 @@ export default {
         "2xl": "16px",
         "3xl": "24px",
       },
+      transitionDuration: {
+        sidebar: "280ms",
+      },
+      transitionTimingFunction: {
+        sidebar: "cubic-bezier(0.22, 1, 0.36, 1)",
+      },
     },
   },
   plugins: [],

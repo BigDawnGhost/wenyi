@@ -208,10 +208,14 @@ or scoped alignment recovery. Structural validation supports EPUB/DOCX backfill 
 never silently zips away text. Draft and synthesis model-output failures share
 `pipeline.align_retry_limit`: one initial request plus at most N retries (default N=2).
 Malformed JSON, missing or invalid translation arrays/counts/types, forbidden blank
-translations and truncated responses retry only the failing candidate or synthesis,
-with unchanged messages, context and output limits. There is no automatic paragraph
-splitting or single-paragraph fallback. Provider transport/credential failures and
-storage/recording failures propagate without a nested provider retry loop.
+translations and truncated responses retry only the failing candidate or synthesis.
+Structural failures (wrong shape, count mismatch, wrong types, blank targets) append
+the rejected reply and a corrective instruction restating the exact segment contract,
+because models that merge or drop segments repeat the mistake on identical retries;
+truncated responses retry with unchanged messages because feedback cannot raise an
+output cap. Context and output limits stay unchanged, and there is no automatic
+paragraph splitting or single-paragraph fallback. Provider transport/credential
+failures and storage/recording failures propagate without a nested provider retry loop.
 Exhaustion pauses the batch; completed drafts and paid completed receipts remain
 reusable, and manual resume gives missing stages a new bounded retry budget.
 Each attempt retains its raw response, receipt and actual available usage; failed

@@ -8,7 +8,7 @@ import re
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
-from ..ingest.models import Chapter
+from ..ingest.models import Chapter, Segment
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 
@@ -99,6 +99,14 @@ def _seg_text(seg) -> str:
     return seg.target if (seg.target and seg.target.strip()) else seg.source
 
 
+def _heading_level(chapter: Chapter, segment: Segment | None = None) -> int:
+    """Prefer segment heading metadata, falling back to chapter metadata for older text state."""
+    level = chapter.meta.get("heading_level", 1)
+    if segment is not None:
+        level = segment.meta.get("heading_level", level)
+    return level if isinstance(level, int) and not isinstance(level, bool) and level > 0 else 1
+
+
 def _epub_lang(lang: str | None) -> str:
     """Return the EPUB metadata language code; the default Chinese target is Simplified
     Chinese.
@@ -108,11 +116,12 @@ def _epub_lang(lang: str | None) -> str:
     ).export.language_tag
 
 
-def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:
-    """Merge chapter segments and continuations into (kind, target, source) paragraph tuples."""
+def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str, int]]:
+    """Merge continuations while retaining each paragraph's original heading level."""
     paras: list[list[str]] = []  # Translation fragments accumulated for each paragraph.
     srcs: list[list[str]] = []  # Source fragments accumulated for each paragraph.
     kinds: list[str] = []
+    levels: list[int] = []
     for s in chapter.segments:
         if not s.source.strip():
             continue
@@ -123,7 +132,11 @@ def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str]]:
             paras.append([_seg_text(s)])
             srcs.append([s.source])
             kinds.append(s.kind)
-    return [(k, "".join(p), "".join(sr)) for k, p, sr in zip(kinds, paras, srcs)]
+            levels.append(_heading_level(chapter, s))
+    return [
+        (kind, "".join(target), "".join(source), level)
+        for kind, target, source, level in zip(kinds, paras, srcs, levels)
+    ]
 
 
 def _bilingual_source(source: str, target: str) -> str:

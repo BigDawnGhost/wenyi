@@ -32,7 +32,7 @@ export function cacheRate(slot: Record<string, unknown>) {
     hit === undefined ||
     miss === undefined ||
     hit + miss === 0 ||
-    (input !== undefined && hit + miss !== input)
+    (input !== undefined && hit + miss > input)
   )
     return undefined;
   return hit / (hit + miss);

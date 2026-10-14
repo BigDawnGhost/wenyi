@@ -82,7 +82,8 @@ def test_structural_retry_repeats_only_failed_request_and_reuses_success(tmp_pat
     failed_messages = []
 
     def fail_once(messages, tier, json_mode):
-        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        task_message = next(m for m in messages if "Task (JSON):\n" in m["content"])
+        task = json.loads(task_message["content"].split("Task (JSON):\n")[1])
         kind = "synthesis" if "drafts" in task else "translate"
         response = handler(messages, tier, json_mode)
         with lock:
@@ -101,8 +102,13 @@ def test_structural_retry_repeats_only_failed_request_and_reuses_success(tmp_pat
     }
     operation = "translation.body" if stage == "translate" else "polish.body"
     requests = [call for call in client.calls if call["operation"] == operation]
-    assert sum(call["messages"] == failed_messages[0] for call in requests) >= 2
     assert all(call["max_tokens"] is None for call in requests)
+    # The failed stage alone retries, quoting the rejection instead of repeating it.
+    extended = [call for call in requests if len(call["messages"]) > len(failed_messages[0])]
+    assert len(extended) == 1
+    assert extended[0]["messages"][: len(failed_messages[0])] == failed_messages[0]
+    assert extended[0]["messages"][-2]["role"] == "assistant"
+    assert "failed local validation" in extended[0]["messages"][-1]["content"]
     records = [
         load_precision_call(store, key)
         for key in store.list_artifacts(f"{result.precision_key}/calls/")

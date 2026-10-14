@@ -140,6 +140,7 @@ def test_conversion_errors_never_expose_credentials(
     def convert(source, output, *, api_token):
         seen.append(api_token)
         effective = os.getenv("MINERU_API_KEY") if api_token is None else api_token
+        assert effective is not None
         reflected = repr(effective.encode()) if escaped else effective
         raise error_type(f"Illegal header value: {reflected}")
 

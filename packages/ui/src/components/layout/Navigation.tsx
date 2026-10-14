@@ -39,8 +39,8 @@ export function NavigationLink({
       onFocus={() => void prefetch?.().catch(() => {})}
       className={({ isActive }) =>
         cn(
-          "flex items-center rounded-md py-2 text-sm transition-colors",
-          collapsed ? "justify-center px-2" : "gap-2 px-3",
+          "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-[color,background-color,padding,gap] duration-sidebar ease-sidebar md:justify-center",
+          collapsed && "md:gap-0 md:px-2",
           isActive
             ? "bg-accent text-accent-foreground font-medium"
             : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
@@ -49,7 +49,14 @@ export function NavigationLink({
       }
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span className={collapsed ? "sr-only" : undefined}>{t(label)}</span>
+      <span
+        className={cn(
+          "min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar md:max-w-48 md:flex-1",
+          collapsed && "md:max-w-0 md:-translate-x-2 md:opacity-0",
+        )}
+      >
+        {t(label)}
+      </span>
     </NavLink>
   );
 }
@@ -75,11 +82,10 @@ export function ProjectNavigation({
   return (
     <nav aria-label={t("navigation.project")} className="space-y-1">
       <p
-        className={
-          collapsed
-            ? "sr-only"
-            : "px-3 pb-1 text-xs text-muted-foreground truncate"
-        }
+        className={cn(
+          "max-h-5 overflow-hidden truncate px-3 pb-1 text-xs text-muted-foreground transition-[max-height,padding,opacity] duration-sidebar ease-sidebar",
+          collapsed && "md:max-h-0 md:pb-0 md:opacity-0",
+        )}
         title={name}
       >
         {name || pid}
