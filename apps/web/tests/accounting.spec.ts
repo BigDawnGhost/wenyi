@@ -98,6 +98,10 @@ test("cache partitions preserve input totals and rates require valid cache token
   }
 });
 
+test("cache rates remain available without input totals", () => {
+  expect(cacheRate({ cache_hit_tokens: 20, cache_miss_tokens: 30 })).toBe(0.4);
+});
+
 test("model usage combines configuration identities with the same provider and model name", async ({
   page,
 }) => {
