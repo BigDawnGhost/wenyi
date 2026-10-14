@@ -27,7 +27,13 @@ export function amount(value: unknown): number | undefined {
 export function cacheRate(slot: Record<string, unknown>) {
   const hit = amount(slot.cache_hit_tokens);
   const miss = amount(slot.cache_miss_tokens);
-  if (hit === undefined || miss === undefined || hit + miss === 0)
+  const input = amount(slot.prompt_tokens);
+  if (
+    hit === undefined ||
+    miss === undefined ||
+    hit + miss === 0 ||
+    (input !== undefined && hit + miss > input)
+  )
     return undefined;
   return hit / (hit + miss);
 }
