@@ -394,6 +394,7 @@ class TestProviderFactory(unittest.TestCase):
 
     def test_builds_each_provider_from_its_own_module(self):
         from wenyi_core.llm.factory import build_client
+        from wenyi_core.llm.providers.atlascloud import AtlasCloudClient
         from wenyi_core.llm.providers.ollama import OllamaClient
         from wenyi_core.llm.providers.openai import OpenAIClient
         from wenyi_core.llm.providers.openai_compatible import (
@@ -407,6 +408,7 @@ class TestProviderFactory(unittest.TestCase):
             ("openai", OpenAIClient, None),
             ("openrouter", OpenRouterClient, None),
             ("orcarouter", OrcaRouterClient, None),
+            ("atlascloud", AtlasCloudClient, None),
             ("openai-compatible", OpenAICompatibleClient, "https://example.test/v1"),
             ("ollama", OllamaClient, None),
             ("vllm", VLLMClient, None),
@@ -432,6 +434,22 @@ class TestProviderFactory(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ORCAROUTER_API_KEY"):
                 client.validate_credentials()
         with patch.dict(os.environ, {"ORCAROUTER_API_KEY": "secret"}, clear=True):
+            client.validate_credentials()
+
+    def test_atlascloud_defaults_and_api_key_validation(self):
+        from wenyi_core.llm.factory import build_client
+        from wenyi_core.llm.providers.atlascloud import AtlasCloudClient
+
+        client = build_client(self._config("atlascloud"))
+        assert isinstance(client.adapter("default"), AtlasCloudClient)
+
+        self.assertEqual(client.adapter("default").base_url, "https://api.atlascloud.ai/v1")
+        self.assertEqual(client.adapter("default").api_key_env, "ATLASCLOUD_API_KEY")
+        self.assertTrue(client.adapter("default").requires_api_key)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "ATLASCLOUD_API_KEY"):
+                client.validate_credentials()
+        with patch.dict(os.environ, {"ATLASCLOUD_API_KEY": "secret"}, clear=True):
             client.validate_credentials()
 
     def test_local_provider_defaults(self):

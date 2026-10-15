@@ -64,7 +64,13 @@ def convert_config(raw: dict[str, Any]) -> dict[str, Any]:
         if key not in {"provider", "tiers", "reasoning_style"} and value is not None
     }
     connection["kind"] = kind
-    if "reasoning_style" in old and kind in {"openai-compatible", "ollama", "vllm", "orcarouter"}:
+    if "reasoning_style" in old and kind in {
+        "openai-compatible",
+        "ollama",
+        "vllm",
+        "orcarouter",
+        "atlascloud",
+    }:
         connection["reasoning_style"] = old["reasoning_style"]
     llm = {
         "providers": {"default": connection},
