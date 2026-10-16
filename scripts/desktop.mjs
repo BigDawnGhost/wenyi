@@ -38,12 +38,12 @@ if (!env.RUSTUP_HOME && existsSync(path.join(root, '.scratch/rustup/toolchains')
 function run(command, parameters, cwd = root) {
   let shell = false;
   if (command === 'pnpm' && env.npm_execpath) {
-    if (env.npm_execpath.endsWith('.exe')) {
-      // Native pnpm binary; Node cannot load it as a module.
-      command = env.npm_execpath;
-    } else {
+    if (/\.[cm]?js$/i.test(env.npm_execpath)) {
       parameters = [env.npm_execpath, ...parameters];
       command = process.execPath;
+    } else {
+      // Standalone pnpm binaries may have no extension (for example, Linux ELF).
+      command = env.npm_execpath;
     }
   } else if (command === 'pnpm' && process.platform === 'win32') {
     // No npm_execpath (direct node invocation): pnpm may exist only as a .cmd shim.

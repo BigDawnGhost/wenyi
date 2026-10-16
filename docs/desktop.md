@@ -98,6 +98,8 @@ pnpm desktop --data-dir /path/to/desktop-test-workspace
 
 The launcher builds the UI and starts the native application. Debug builds use the repository's `.venv`; `WENYI_DESKTOP_PYTHON` can explicitly select another development interpreter. There is no remote `--url` mode or silent fallback to a Web server.
 
+The launcher supports both JavaScript pnpm entry points and standalone native pnpm executables, including extensionless Linux binaries.
+
 Build a native release on the target platform with:
 
 ```bash
