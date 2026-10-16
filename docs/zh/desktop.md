@@ -96,6 +96,8 @@ pnpm desktop --data-dir /path/to/desktop-test-workspace
 
 启动脚本先构建界面，再启动原生应用。Debug 构建使用仓库 `.venv`，也可用 `WENYI_DESKTOP_PYTHON` 显式指定开发解释器。不再提供远程 `--url` 模式，也不会悄悄回退连接 Web 服务。
 
+启动脚本兼容 JavaScript 入口及独立原生可执行形式的 pnpm，包括 Linux 上没有扩展名的二进制程序。
+
 在目标平台构建原生发行包：
 
 ```bash
