@@ -60,6 +60,11 @@ export function tokenParts(slot: Record<string, unknown>) {
   const reported = (cached ?? 0) + (uncached ?? 0);
   // Unreported cache usage cannot be inferred to be a cache miss.
   const validCache = reported <= input;
+  // A reasoning model bills its thinking as output, so these tokens are already
+  // inside completion_tokens. A report claiming more reasoning than output is
+  // not something to draw a bar from; it stays unknown instead.
+  const reasoning = amount(slot.reasoning_tokens);
+  const validReasoning = reasoning !== undefined && reasoning <= output ? reasoning : undefined;
   return {
     input,
     output,
@@ -68,6 +73,8 @@ export function tokenParts(slot: Record<string, unknown>) {
     cachedInput: validCache ? cached : undefined,
     uncachedInput: validCache ? uncached : undefined,
     unknownInput: validCache ? input - reported : input,
+    reasoning: validReasoning,
+    answered: validReasoning === undefined ? undefined : output - validReasoning,
   };
 }
 
@@ -92,6 +99,7 @@ export function usageRows(usage: Record<string, unknown>, group: UsageGroup) {
       "total_tokens",
       "cache_hit_tokens",
       "cache_miss_tokens",
+      "reasoning_tokens",
     ]) {
       const left = amount(existing.slot[field]);
       const right = amount(slot[field]);

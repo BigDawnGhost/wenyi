@@ -2,7 +2,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useI18n } from "@/i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
+import { api, isProjectBusy, isProjectSettled, type ChapterSummary } from "@/lib/api";
 import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -14,18 +14,25 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
 import { toast } from "@/lib/toast";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { progressInterval } from "@/lib/runtime";
 
 export default function ProgressPage() {
   const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
+  const previousStatus = useRef<string | undefined>(undefined);
   const { msg, connected } = useProjectProgress(pid);
   const projectQuery = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
-    refetchInterval: progressInterval(connected, 2500),
+    // A finished book changes only when the reader acts, so polling it costs a
+    // request every few seconds and returns the same bytes: 17 requests in the
+    // first 15 seconds of an idle page, and then the same again every 15.
+    refetchInterval: (query) =>
+      isProjectSettled(query.state.data?.status)
+        ? false
+        : progressInterval(connected, 2500),
   });
   const project = projectQuery.data;
   const subtitle = project?.fmt === "srt";
@@ -33,13 +40,17 @@ export default function ProgressPage() {
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
     enabled: !!project && !subtitle,
-    refetchInterval: progressInterval(connected, 3000),
+    refetchInterval: isProjectSettled(project?.status)
+      ? false
+      : progressInterval(connected, 3000),
   });
   const { data: cues } = useQuery({
     queryKey: ["subtitles", pid],
     queryFn: () => api.getSubtitles(pid),
     enabled: subtitle,
-    refetchInterval: progressInterval(connected, 3000),
+    refetchInterval: isProjectSettled(project?.status)
+      ? false
+      : progressInterval(connected, 3000),
   });
   const report = useQuery({
     queryKey: ["report", pid],
@@ -55,14 +66,20 @@ export default function ProgressPage() {
       : false,
   });
   useEffect(() => {
-    // Fetch the terminal totals even when the busy-only polling interval has just stopped.
-    if (project?.status) {
-      qc.invalidateQueries({ queryKey: ["stats", pid] });
-      qc.invalidateQueries({ queryKey: ["workflow", pid] });
-      qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      qc.invalidateQueries({ queryKey: ["subtitles", pid] });
-      qc.invalidateQueries({ queryKey: ["report", pid] });
-    }
+    // Fetch the terminal totals even when the busy-only polling interval has just
+    // stopped. This is about a run that just finished, not about first load: the
+    // queries above already returned current data, and invalidating them there
+    // only repeats every request the page just made.
+    const status = project?.status;
+    if (!status) return;
+    const previous = previousStatus.current;
+    previousStatus.current = status;
+    if (previous === undefined || previous === status) return;
+    qc.invalidateQueries({ queryKey: ["stats", pid] });
+    qc.invalidateQueries({ queryKey: ["workflow", pid] });
+    qc.invalidateQueries({ queryKey: ["chapters", pid] });
+    qc.invalidateQueries({ queryKey: ["subtitles", pid] });
+    qc.invalidateQueries({ queryKey: ["report", pid] });
   }, [pid, project?.status, qc]);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", pid] });
@@ -176,7 +193,12 @@ export default function ProgressPage() {
             </div>
           </CardContent>
         </Card>
-        <WorkflowPanel pid={pid} msg={msg} connected={connected} />
+        <WorkflowPanel
+          pid={pid}
+          msg={msg}
+          connected={connected}
+          settled={isProjectSettled(project?.status)}
+        />
         <p className="text-xs text-muted-foreground">
           {tr("progress.progressConnection")}:{" "}
           {connected ? tr("progress.live") : tr("progress.polling")}

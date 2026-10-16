@@ -255,9 +255,10 @@ export const api = {
   downloadExportUrl: (pid: string, id: number) =>
     `${apiBase()}/projects/${pid}/exports/${id}/download`,
 
-  listEvents: (pid: string, type?: string) => {
+  listEvents: (pid: string, type?: string, limit?: number) => {
     const s = new URLSearchParams();
     if (type) s.set("type", type);
+    if (limit) s.set("limit", String(limit));
     return request<EventOut[]>(`/projects/${pid}/events?${s}`);
   },
 
@@ -288,3 +289,10 @@ export const ACTIVE_STATUSES = [
 ];
 export const isProjectBusy = (status?: string) =>
   ACTIVE_STATUSES.includes(status || "");
+
+// Statuses that will not move without the reader asking for it. A page left
+// open over a finished book has nothing to watch for, and polling it anyway
+// costs a request every few seconds for the rest of the session.
+export const SETTLED_STATUSES = ["done", "error", "paused"];
+export const isProjectSettled = (status?: string) =>
+  SETTLED_STATUSES.includes(status || "");

@@ -13,6 +13,7 @@ _USAGE_FIELDS = (
     "total_tokens",
     "cache_hit_tokens",
     "cache_miss_tokens",
+    "reasoning_tokens",
 )
 
 
@@ -25,6 +26,13 @@ class UsageSample:
     total_tokens: int
     cache_hit_tokens: int = 0
     cache_miss_tokens: int = 0
+    # The part of completion_tokens the model spent reasoning instead of
+    # answering. Providers bill it as output, so it is already inside
+    # completion_tokens -- this is the share of that output the reader never
+    # receives, and without it a slow run cannot be told apart from a verbose
+    # one. Endpoints that do not report it leave it at zero rather than
+    # guessing from the absence.
+    reasoning_tokens: int = 0
 
 
 def read_usage_value(usage: Any, name: str) -> Any:
@@ -51,6 +59,7 @@ def make_usage_sample(
     *,
     cache_hit_tokens: int = 0,
     cache_miss_tokens: int = 0,
+    reasoning_tokens: int = 0,
 ) -> UsageSample | None:
     """Build a provider-independent usage record from common API token fields."""
     if usage is None:
@@ -64,6 +73,7 @@ def make_usage_sample(
         total_tokens=total_tokens,
         cache_hit_tokens=max(0, cache_hit_tokens),
         cache_miss_tokens=max(0, cache_miss_tokens),
+        reasoning_tokens=max(0, reasoning_tokens),
     )
 
 
@@ -87,6 +97,12 @@ def _normalize_usage_group(
 
 
 _GROUPS = ("by_tier", "by_stage", "by_provider", "by_model")
+# Version 2 stays. reasoning_tokens joined the ledger as an additive field that
+# every read path already tolerates missing -- read_usage_int reports an absent
+# field as zero, so a ledger written before this change still validates and
+# reports an honest zero rather than an invented number. Bumping the version
+# would refuse every existing book until it was converted, to carry no
+# information the older ledger did not already imply.
 USAGE_SCHEMA_VERSION = 2
 
 

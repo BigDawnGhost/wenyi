@@ -44,9 +44,20 @@ function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
           },
         ]
       : []),
+    ...(parts.reasoning
+      ? [
+          {
+            label: "accounting.reasoningTokens" as const,
+            value: parts.reasoning,
+            color: "bg-teal-300 dark:bg-teal-600",
+          },
+        ]
+      : []),
+    // Reasoning is a subset of output, so the bar shows what was actually sent
+    // back to the reader and leaves the spent reasoning out of the answer slice.
     {
-      label: "data.outputTokens",
-      value: amount(slot.completion_tokens),
+      label: "accounting.answeredTokens",
+      value: parts.answered ?? parts.output,
       color: "bg-teal-500 dark:bg-teal-400",
     },
     ...(parts.other

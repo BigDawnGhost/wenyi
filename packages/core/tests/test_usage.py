@@ -29,9 +29,11 @@ from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.usage import (
     UsageSample,
     UsageTracker,
+    empty_usage,
     make_usage_sample,
     merge_usage_summaries,
     usage_delta,
+    validate_usage,
 )
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import source_sha256
@@ -473,6 +475,74 @@ class TestOpenAIUsageNormalization(unittest.TestCase):
         totals = tracker.summary()["totals"]
         self.assertEqual(totals["cache_hit_tokens"], 0)
         self.assertEqual(totals["cache_miss_tokens"], 0)
+
+    def test_reasoning_tokens_are_counted_inside_completion_tokens(self):
+        """A reasoning model bills thinking as output; the share has to be readable.
+
+        Without this the reader sees completion tokens far exceed the source and
+        cannot tell a slow model from a verbose one.
+        """
+        sample = normalize_openai_usage(
+            SimpleNamespace(
+                prompt_tokens=100,
+                completion_tokens=60,
+                total_tokens=160,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=45),
+            )
+        )
+        self.assertIsNotNone(sample)
+        self.assertEqual(sample.reasoning_tokens, 45)  # type: ignore[union-attr]
+        # The provider already counted reasoning inside completion_tokens.
+        self.assertEqual(sample.completion_tokens, 60)  # type: ignore[union-attr]
+
+        tracker = UsageTracker()
+        tracker.record("strong", sample, "translation.body")
+        self.assertEqual(tracker.summary()["totals"]["reasoning_tokens"], 45)
+        self.assertEqual(tracker.summary()["by_stage"]["translation.body"]["reasoning_tokens"], 45)
+
+    def test_missing_reasoning_details_report_zero_rather_than_guessing(self):
+        sample = normalize_openai_usage(
+            SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        )
+        self.assertIsNotNone(sample)
+        self.assertEqual(sample.reasoning_tokens, 0)  # type: ignore[union-attr]
+
+    def test_reasoning_tokens_survive_delta_and_merge(self):
+        sample = UsageSample(
+            prompt_tokens=100,
+            completion_tokens=60,
+            total_tokens=160,
+            reasoning_tokens=45,
+        )
+        tracker = UsageTracker()
+        tracker.record("strong", sample, "translation.body")
+        first = tracker.summary()
+
+        increment = usage_delta(first, empty_usage())
+        self.assertEqual(increment["totals"]["reasoning_tokens"], 45)
+        self.assertEqual(merge_usage_summaries(first, increment)["totals"]["reasoning_tokens"], 90)
+
+    def test_ledger_written_before_reasoning_accounting_still_validates(self):
+        """An older book has no reasoning column; it must read as an honest zero."""
+        totals = {
+            "calls": 1,
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+            "cache_hit_tokens": 0,
+            "cache_miss_tokens": 10,
+        }
+        legacy = {
+            "schema_version": 2,
+            "totals": dict(totals),
+            "by_tier": {"strong": dict(totals)},
+            "by_stage": {},
+            "by_provider": {},
+            "by_model": {},
+            "labels": {},
+        }
+        self.assertEqual(validate_usage(legacy)["totals"]["calls"], 1)
+        self.assertEqual(empty_usage()["totals"]["reasoning_tokens"], 0)
 
 
 class TestMissingUsage(unittest.TestCase):

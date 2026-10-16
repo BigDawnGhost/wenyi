@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -56,22 +57,25 @@ def _response(content: str = "ok") -> Any:
 
 
 class _CompletionsStub:
-    def __init__(self, outcomes: list[Any]):
+    def __init__(self, outcomes: list[Any], delay: float = 0.0):
         self.outcomes = list(outcomes)
         self.calls = 0
+        self.delay = delay
 
     def create(self, **kwargs: Any) -> Any:
         del kwargs
         self.calls += 1
         outcome = self.outcomes.pop(0)
+        if self.delay:
+            time.sleep(self.delay)
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
 
 
 class _ClientStub:
-    def __init__(self, outcomes: list[Any]):
-        self.completions = _CompletionsStub(outcomes)
+    def __init__(self, outcomes: list[Any], delay: float = 0.0):
+        self.completions = _CompletionsStub(outcomes, delay)
         self.chat = SimpleNamespace(completions=self.completions)
 
 
@@ -245,6 +249,58 @@ def test_transient_error_retries_once_and_records_wait_event():
     assert events[0]["wait_source"] == "server"
     assert events[0]["stage"] == "translation.body"
     assert events[0]["request_id"] == "req-test"
+
+
+def test_completed_event_reports_how_long_the_provider_took():
+    """A slow call has to be visible as a number, not as a reader's impression.
+
+    Without a duration the interface can only show that something happened; the
+    comparison against a healthy run is the whole point.
+    """
+    client = RoutedLLMClient(_config(max_retries=0))
+    client.adapter("default")._client = _ClientStub([_response()], delay=0.05)
+    events: list[dict[str, Any]] = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    client.complete([{"role": "user", "content": "x"}], operation="translation.body")
+
+    completed = [event for event in events if event["event"] == "llm_request_completed"]
+    assert len(completed) == 1
+    assert completed[0]["attempt_seconds"] >= 0.05
+    assert completed[0]["operation"] == "translation.body"
+
+
+def test_failed_event_reports_attempt_duration():
+    """A call that dies at the provider still has to say how long it hung there."""
+    client = RoutedLLMClient(_config(max_retries=0))
+    client.adapter("default")._client = _ClientStub([_HttpError(500)], delay=0.05)
+    events: list[dict[str, Any]] = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    with pytest.raises(Exception):
+        client.complete([{"role": "user", "content": "x"}], operation="translation.body")
+
+    failed = [event for event in events if event["event"] == "llm_request_failed"]
+    assert len(failed) == 1
+    assert failed[0]["attempt_seconds"] >= 0.05
+
+
+def test_attempt_duration_measures_the_attempt_not_the_retry_backoff():
+    """The number answers "how slow is the provider", not "how patient were we"."""
+    client = RoutedLLMClient(_config(max_retries=1))
+    client.adapter("default")._client = _ClientStub(
+        [_HttpError(502, headers={"retry-after-ms": "2000"}), _response()], delay=0.01
+    )
+    events: list[dict[str, Any]] = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    client.complete([{"role": "user", "content": "x"}], operation="translation.body")
+
+    assert any(event["event"] == "llm_retry_wait" for event in events)
+    completed = [event for event in events if event["event"] == "llm_request_completed"]
+    # The 2s server-directed backoff happens outside the permit, so it must not
+    # land in the reported attempt time.
+    assert completed[0]["attempt_seconds"] < 1
 
 
 def test_retry_exhaustion_is_recorded_and_reraises_last_error():

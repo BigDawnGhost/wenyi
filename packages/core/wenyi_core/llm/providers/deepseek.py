@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..transport import Messages, ResolvedModel
-from ..usage import UsageSample, make_usage_sample, read_usage_int
+from ..usage import UsageSample, make_usage_sample, read_usage_int, read_usage_value
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
     base_request_kwargs,
@@ -26,6 +26,12 @@ def normalize_deepseek_usage(usage: Any) -> UsageSample | None:
         usage,
         cache_hit_tokens=read_usage_int(usage, "prompt_cache_hit_tokens"),
         cache_miss_tokens=read_usage_int(usage, "prompt_cache_miss_tokens"),
+        # deepseek-reasoner bills thinking as output and reports it under the
+        # OpenAI-shaped completion details; the cache counters above are the
+        # only reason this provider needs its own normalizer.
+        reasoning_tokens=read_usage_int(
+            read_usage_value(usage, "completion_tokens_details"), "reasoning_tokens"
+        ),
     )
 
 

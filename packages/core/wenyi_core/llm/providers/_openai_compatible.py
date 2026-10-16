@@ -85,6 +85,12 @@ def normalize_openai_usage(usage: Any) -> UsageSample | None:
         usage,
         cache_hit_tokens=cache_hit_tokens,
         cache_miss_tokens=cache_miss_tokens,
+        # Reasoning models bill their thinking as output, so these tokens are
+        # already counted in completion_tokens. OpenRouter and OpenAI report
+        # them beside it; a provider that does not leaves this at zero.
+        reasoning_tokens=read_usage_int(
+            read_usage_value(usage, "completion_tokens_details"), "reasoning_tokens"
+        ),
     )
 
 

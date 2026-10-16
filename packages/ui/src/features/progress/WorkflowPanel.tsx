@@ -13,10 +13,13 @@ export function WorkflowPanel({
   pid,
   msg,
   connected = false,
+  settled = false,
 }: {
   pid: string;
   msg: ProgressMessage | null;
   connected?: boolean;
+  /** The book reached a state it leaves only when the reader acts; stop polling it. */
+  settled?: boolean;
 }) {
   const { t: tr } = useI18n();
   const TASKS: Record<string, string> = {
@@ -31,7 +34,7 @@ export function WorkflowPanel({
   const query = useQuery({
     queryKey: ["workflow", pid],
     queryFn: () => api.getWorkflow(pid),
-    refetchInterval: progressInterval(connected, 2500),
+    refetchInterval: settled ? false : progressInterval(connected, 2500),
   });
   const workflow = query.data;
   const cached = workflow?.progress;

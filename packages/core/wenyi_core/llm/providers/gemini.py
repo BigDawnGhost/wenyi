@@ -96,9 +96,8 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
         return None
 
     prompt_tokens = read_usage_int(usage_metadata, "prompt_token_count")
-    completion_tokens = read_usage_int(usage_metadata, "candidates_token_count") + read_usage_int(
-        usage_metadata, "thoughts_token_count"
-    )
+    reasoning_tokens = read_usage_int(usage_metadata, "thoughts_token_count")
+    completion_tokens = read_usage_int(usage_metadata, "candidates_token_count") + reasoning_tokens
     total_tokens = read_usage_int(usage_metadata, "total_token_count") or (
         prompt_tokens + completion_tokens
     )
@@ -114,6 +113,7 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
         },
         cache_hit_tokens=cache_hit_tokens,
         cache_miss_tokens=cache_miss_tokens,
+        reasoning_tokens=reasoning_tokens,
     )
 
 

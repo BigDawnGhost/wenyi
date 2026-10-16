@@ -1,4 +1,5 @@
 import {
+  Brain,
   BarChart3,
   Clock3,
   Database,
@@ -40,6 +41,7 @@ export function Accounting({
   const number = (value: unknown) =>
     amount(value)?.toLocaleString(locale) ?? "—";
   const rate = cacheRate(totals);
+  const reasoning = amount(totals.reasoning_tokens);
   const metrics = [
     {
       label: t("progress.cumulativeTokens"),
@@ -67,10 +69,21 @@ export function Accounting({
       value: formatDuration(timing.total_seconds, t),
       icon: Clock3,
     },
+    // A ledger written before reasoning was accounted for has no such column.
+    // Showing zero there would claim a measurement that was never taken.
+    ...(reasoning
+      ? [
+          {
+            label: t("accounting.reasoningShare"),
+            value: number(reasoning),
+            icon: Brain,
+          },
+        ]
+      : []),
   ];
   return (
     <section aria-label={t("progress.totalUsageRunTime")} className="space-y-5">
-      <dl className="grid grid-cols-2 gap-5 rounded-lg bg-muted/40 p-4 lg:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-5 rounded-lg bg-muted/40 p-4 lg:grid-cols-5">
         {metrics.map(({ label, value, icon: Icon }) => (
           <div key={label} className="min-w-0">
             <dt className="flex items-center gap-2 text-xs text-muted-foreground">

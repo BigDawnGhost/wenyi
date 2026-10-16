@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -155,6 +156,7 @@ class RoutedLLMClient(LLMClient):
         ]
         call_id = uuid4().hex
         attempt_number = 0
+        attempt_seconds: float | None = None
         for position, route in enumerate(routes):
             self.limits.check()
             metadata = {
@@ -182,6 +184,14 @@ class RoutedLLMClient(LLMClient):
                     }
                 self._emit_event(event, **data)
 
+            def attempt_duration() -> dict[str, float]:
+                """Report the elapsed time of the attempt that just ended, when one ran."""
+                return (
+                    {"attempt_seconds": round(attempt_seconds, 3)}
+                    if attempt_seconds is not None
+                    else {}
+                )
+
             emit("llm_request_scheduled")
             active_reservation = None
 
@@ -204,7 +214,7 @@ class RoutedLLMClient(LLMClient):
 
             @contextmanager
             def attempt_scope():
-                nonlocal active_reservation, attempt_number
+                nonlocal active_reservation, attempt_number, attempt_seconds
                 self._validate_token_reservation(route)
                 estimate = (
                     len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
@@ -214,11 +224,19 @@ class RoutedLLMClient(LLMClient):
                 with self.limits.attempt(route.provider, estimate, emit) as reservation:
                     active_reservation = reservation
                     attempt_number += 1
+                    # One transport attempt, measured where the permit is held so the
+                    # number answers "how long did the provider take" rather than
+                    # "how long was this call queued behind other work". The reader
+                    # comparing a slow run against a healthy one needs that
+                    # difference; a call's total also folds in retry backoff.
+                    attempt_started = time.monotonic()
+                    attempt_seconds = None
                     emit("llm_request_started", estimated_tokens=estimate)
                     try:
                         yield
                     finally:
                         active_reservation = None
+                        attempt_seconds = time.monotonic() - attempt_started
 
             context = RequestContext(
                 operation,
@@ -241,6 +259,7 @@ class RoutedLLMClient(LLMClient):
             except Exception as error:
                 emit(
                     "llm_request_failed",
+                    **attempt_duration(),
                     error_type=type(error).__name__,
                     **describe_provider_failure(error).log_fields(),
                 )
@@ -255,7 +274,7 @@ class RoutedLLMClient(LLMClient):
                 else:
                     emit("llm_model_failover", next_profile=routes[position + 1].profile)
             else:
-                emit("llm_request_completed")
+                emit("llm_request_completed", **attempt_duration())
                 return result
             # Raise outside the handler: do not retain even a suppressed SDK context.
             if safe_error is not None:

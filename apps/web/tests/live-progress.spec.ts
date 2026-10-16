@@ -250,6 +250,11 @@ test("newer cached progress wins and reconnecting refreshes without a page reloa
 }) => {
   await page.clock.install();
   await fakeApi(page);
+  // Cached progress is polled only while the book can still change on its own,
+  // so this run is a live one; a settled book stops asking for progress.
+  await page.route(`**/api/projects/${pid}`, (route) =>
+    route.fulfill({ json: { ...project, status: "translating" } }),
+  );
   let latest = "Waiting";
   const sockets: WebSocketRoute[] = [];
   const auth: unknown[] = [];
