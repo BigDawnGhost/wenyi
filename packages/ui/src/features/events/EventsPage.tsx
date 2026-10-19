@@ -94,10 +94,7 @@ export default function EventsPage() {
 
   return (
     <>
-      <PageHeader
-        title={tr("common.eventLog")}
-        subtitle={tr("events.keyProjectEventsRefreshedEvery5Seconds")}
-      />
+      <PageHeader title={tr("common.eventLog")} />
       <PageContainer>
         <ErrorNotice error={error} />
         <Card>

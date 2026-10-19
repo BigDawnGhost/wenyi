@@ -8,7 +8,7 @@ export default function InterfaceSettingsPage() {
 
   return (
     <>
-      <PageHeader title={t("settings.title")} subtitle={t("settings.subtitle")} />
+      <PageHeader title={t("settings.title")} />
       <PageContainer className="max-w-5xl space-y-4">
         <LanguageSettings />
         <GlobalConfiguration />
