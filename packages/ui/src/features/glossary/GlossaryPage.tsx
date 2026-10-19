@@ -201,7 +201,6 @@ export default function GlossaryPage() {
     <>
       <PageHeader
         title={tr("common.glossary")}
-        subtitle={tr("glossary.manageNamesAppellationsAndFixedExpressionsAnd")}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative" ref={exportRef} onBlur={handleExportBlur}>

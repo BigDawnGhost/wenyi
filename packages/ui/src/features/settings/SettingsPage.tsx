@@ -100,10 +100,7 @@ export default function SettingsPage() {
     restore.isPending;
   return (
     <>
-      <PageHeader
-        title={tr("common.projectSettings")}
-        subtitle={tr("settings.configurationIsValidatedOnTheServerAdvanced")}
-      />
+      <PageHeader title={tr("common.projectSettings")} />
       <PageContainer className="max-w-5xl space-y-4">
         <ErrorNotice error={config.error || configurationError} />
         {busy && (
@@ -115,7 +112,6 @@ export default function SettingsPage() {
           <CardContent className="p-5 space-y-4">
             <h2 className="font-medium">{tr("settings.modelSetup")}</h2>
             <p className="text-sm text-muted-foreground">
-              {tr("settings.projectModelHelp")}{" "}
               <Link to="/settings" className="underline underline-offset-4">
                 {tr("settings.manageGlobalModels")}
               </Link>
@@ -148,9 +144,7 @@ export default function SettingsPage() {
             />
             <Disclosure
               title={tr("settings.advancedYamlConfiguration")}
-              summary={tr(
-                yamlDirty ? "settings.unsavedSummary" : "settings.yamlSummary",
-              )}
+              summary={yamlDirty ? tr("settings.unsavedSummary") : undefined}
               error={configurationError}
             >
               <p className="text-xs text-muted-foreground mt-3">

@@ -112,8 +112,6 @@ const en = {
   "dashboard.deleteProjectThisCannotBeUndone":
     "Delete project “{name}”? This cannot be undone.",
   "dashboard.myProjects": "My projects",
-  "dashboard.openAProjectToViewItsProgress":
-    "Open a project to view its progress, or create a new one.",
   "dashboard.loading": "Loading…",
   "dashboard.noProjectsYet": "No projects yet.",
   "dashboard.createYourFirstProject": "Create your first project",
@@ -139,8 +137,6 @@ const en = {
   "events.exportedFiles": "Exported files: {files}",
   "events.projectInitializedChapters":
     "Project initialized — chapters: {count}",
-  "events.keyProjectEventsRefreshedEvery5Seconds":
-    "Latest project events first, refreshed every 5 seconds",
   "events.noEventsYet": "No events yet.",
   "export.exportTaskSubmitted": "Export task submitted",
   "export.saveAs": "Save as",
@@ -181,8 +177,6 @@ const en = {
   "glossary.conflictResolved": "Conflict resolved",
   "glossary.selectedTermsDeleted": "Selected terms deleted",
   "glossary.couldNotDeleteSelectedTerms": "Could not delete selected terms",
-  "glossary.manageNamesAppellationsAndFixedExpressionsAnd":
-    "Manage names, appellations and fixed expressions, and resolve translation conflicts.",
   "glossary.csvFile": "CSV file",
   "glossary.jsonFile": "JSON file",
   "glossary.import": "Import",
@@ -324,8 +318,6 @@ const en = {
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
-  "createProject.introduction":
-    "Choose your languages, source file, and translation method.",
   "createProject.projectAndLanguages": "Project & languages",
   "createProject.translationMode": "Translation method",
   "createProject.standardMode": "Standard",
@@ -431,8 +423,6 @@ const en = {
   "review.typeReference": "Reference",
   "review.typeOther": "Review issue",
   "review.wholeBookReviewSubmitted": "Whole-book review submitted",
-  "review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd":
-    "Inspect review issues, evidence, suggested revisions and published autofixes.",
   "review.runWholeBookReview": "Run whole-book review",
   "review.wholeBookReviewIsAvailableOnceAll":
     "Whole-book review is available once all chapters are translated.",
@@ -450,8 +440,6 @@ const en = {
   "proofreading.invalidChapter": "Invalid chapter number",
   "proofreading.paragraphActions": "Paragraph actions",
   "proofreading.paragraphEditor": "Paragraph editor",
-  "proofreading.editorHelp":
-    "Compare the source, edit the translation, or inspect earlier versions. Save to apply your changes.",
   "proofreading.changeHistory": "Change history",
   "proofreading.precisionDrafts": "Precision drafts",
   "proofreading.retryDrafts": "Retry loading drafts",
@@ -538,8 +526,6 @@ const en = {
   "settings.projectSettingsSaved": "Project settings saved",
   "settings.configurationIsValidButNotSavedYet":
     "Configuration is valid but not saved yet",
-  "settings.configurationIsValidatedOnTheServerAdvanced":
-    "Choose registered models and configure this project’s workflow.",
   "settings.settingsAreReadOnlyWhileATask":
     "Settings are read-only while a task runs. Pause and save a checkpoint before editing.",
   "settings.workflowSettings": "Workflow settings",
@@ -622,7 +608,6 @@ const en = {
   "api.postprocessing": "Postprocessing",
   "app.documentTitle": "Wenyi — AI translation",
   "settings.title": "Settings",
-  "settings.subtitle": "Interface language, shared models and project defaults",
   "settings.interfaceLanguage": "Interface language",
   "settings.languageDescription":
     "Choose the language used for menus, buttons and labels. Project source and target languages are managed separately.",
@@ -678,14 +663,11 @@ const en = {
   "settings.performanceSummary": "Batch: {tokens} tokens",
   "settings.unsavedSummary": "Unsaved changes",
   "settings.routeSummary": "{count} operation routes",
-  "settings.yamlSummary":
-    "All settings, including operation routing and budgets",
   "export.punctuationSummary": "Punctuation: {value}",
   "settings.operationModels": "Models by operation",
   "settings.operationModelsHelp":
     "Override individual operations with registered models. Configure fallback models in advanced YAML.",
   "settings.registeredModels": "Registered providers & models",
-  "settings.projectModelHelp": "Select registered models for this project.",
   "settings.manageGlobalModels": "Manage models in global Settings",
   "settings.projectYamlHelp":
     "Project YAML accepts model selections, operation routes and budgets. Register connections and model parameters in global Settings.",

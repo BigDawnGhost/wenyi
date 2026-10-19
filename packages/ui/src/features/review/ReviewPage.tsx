@@ -115,7 +115,6 @@ function ReviewWorkbench({ pid }: { pid: string }) {
     <>
       <PageHeader
         title={t("common.wholeBookReview")}
-        subtitle={t("review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd")}
         actions={
           <>
             {(runs.data?.length || 0) > 1 && (

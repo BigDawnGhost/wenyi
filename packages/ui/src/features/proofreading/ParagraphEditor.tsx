@@ -111,7 +111,6 @@ export function ParagraphEditor({
     <dialog
       ref={dialog}
       aria-labelledby="paragraph-editor-title"
-      aria-describedby="paragraph-editor-help"
       className="fixed inset-0 m-auto w-[calc(100%-32px)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 backdrop:backdrop-blur-[2px] open:flex open:flex-col"
       onCancel={(event) => {
         event.preventDefault();
@@ -138,9 +137,6 @@ export function ParagraphEditor({
         >
           {t("proofreading.paragraphEditor")}
         </h2>
-        <p id="paragraph-editor-help" className="text-sm text-muted-foreground">
-          {t("proofreading.editorHelp")}
-        </p>
         <button
           type="button"
           aria-label={t("common.close")}
