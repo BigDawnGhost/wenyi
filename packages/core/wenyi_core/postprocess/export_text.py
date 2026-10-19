@@ -9,7 +9,7 @@ from .punct import normalize_zh_segments
 
 
 def boundary_map(before: str, after: str) -> tuple[int, ...]:
-    """Map boundaries with the existing tested punctuation diff affinity."""
+    """Map the full paragraph span with the existing internal punctuation diff affinity."""
     mapping = [0] * (len(before) + 1)
     matcher = SequenceMatcher(a=before, b=after, autojunk=False)
     for operation, before_start, before_end, after_start, after_end in matcher.get_opcodes():
@@ -24,6 +24,8 @@ def boundary_map(before: str, after: str) -> tuple[int, ...]:
             for offset in range(before_length + 1):
                 mapped_offset = (offset * after_length + before_length // 2) // before_length
                 mapping[before_start + offset] = after_start + mapped_offset
+    # Leading inserted punctuation belongs inside the paragraph and its first nonempty segment.
+    mapping[0] = 0
     return tuple(mapping)
 
 
@@ -53,6 +55,7 @@ def validate_result(request: ExportTextInput, result: ExportTextResult) -> None:
             or any(type(value) is not int for value in mapping)
             or tuple(sorted(mapping)) != mapping
             or any(value < 0 or value > len(after) for value in mapping)
+            or mapping[0] != 0
             or mapping[-1] != len(after)
         ):
             raise ValueError("Invalid export text boundary map")
