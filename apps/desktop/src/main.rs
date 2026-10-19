@@ -176,7 +176,6 @@ fn main() {
             updates::desktop_update_check,
             updates::desktop_update_download,
             updates::desktop_update_install,
-            updates::desktop_update_open_release,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
