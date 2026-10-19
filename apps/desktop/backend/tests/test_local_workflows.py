@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
+from bs4 import BeautifulSoup
 from desktop_test_support import initialize, wait_job
 from fastapi.testclient import TestClient
 from wenyi_backend import dal
@@ -337,6 +340,48 @@ def test_snapshot_export_download_and_ownership(desktop):
     assert client.get(f"/projects/{other}/exports").json() == []
     store.close()
     other_store.close()
+
+
+@pytest.mark.parametrize("bilingual", [False, True])
+@pytest.mark.parametrize("punctuation_normalize", [False, True])
+def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punctuation_normalize):
+    client, backend, fake = desktop
+    pid, store = initialize(backend)
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target = "—你好。…再见。"
+    store.save_chapter(chapter)
+    response = client.put(
+        f"/projects/{pid}/config",
+        json={"yaml": json.dumps({"output": {"punctuation_normalize": punctuation_normalize}})},
+    )
+    assert response.status_code == 200, response.text
+    export_ids = []
+    for _ in range(2):
+        response = client.post(
+            f"/projects/{pid}/exports",
+            json={"format": "epub", "bilingual": bilingual, "about_page": False},
+        )
+        assert response.status_code == 200, response.text
+        job = wait_job(response.json()["job_id"])
+        assert job["status"] == "done", job
+        eid = response.json()["export_id"]
+        export_ids.append(eid)
+        download = client.get(f"/projects/{pid}/exports/{eid}/download")
+        assert download.status_code == 200, download.text
+        with ZipFile(BytesIO(download.content)) as archive:
+            paragraphs = [
+                paragraph.get_text()
+                for name in archive.namelist()
+                if name.endswith(".xhtml")
+                for paragraph in BeautifulSoup(archive.read(name), "html.parser").find_all("p")
+            ]
+        expected = "——你好。……再见。" if punctuation_normalize else "—你好。…再见。"
+        assert expected in paragraphs
+        assert ("A paragraph." in paragraphs) == bilingual
+        assert store.load_chapter(0) == chapter
+    assert len(set(export_ids)) == 2
+    assert fake.calls == []
+    store.close()
 
 
 def test_fake_book_translation_commits_domain_state(desktop):

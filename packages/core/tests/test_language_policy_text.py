@@ -1,7 +1,13 @@
 """Text handlers operate on complete paragraphs without changing stable identities."""
 
-from wenyi_core.i18n.policy.models import ExportTextInput
-from wenyi_core.postprocess.export_text import normalize_chinese
+import hashlib
+
+import pytest
+from wenyi_core.assemble.export_view import ExportViewStore
+from wenyi_core.i18n.policy.models import ExportTextInput, ExportTextResult
+from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.pipeline.runstore import ExportSnapshotStore
+from wenyi_core.postprocess.export_text import boundary_map, normalize_chinese, validate_result
 
 
 def test_export_identity_binds_targets_and_output_choices_not_cache_timestamps(tmp_path):
@@ -107,3 +113,78 @@ def test_pending_and_intentionally_empty_targets_remain_distinct():
         (0, 1, 2), (None, "", "中文."), (False, False, False), ((0, 1), (1, 2), (2, 3))
     )
     assert normalize_chinese(request).targets == (None, "", "中文。")
+
+
+@pytest.mark.parametrize("mark", ["—", "…"])
+def test_boundary_map_includes_punctuation_inserted_at_paragraph_start(mark):
+    before = mark + "你好"
+    after = mark * 2 + "你好"
+    assert boundary_map(before, after) == (0, 2, 3, 4)
+
+
+@pytest.mark.parametrize("mark", ["—", "…"])
+@pytest.mark.parametrize("split", [False, True])
+@pytest.mark.parametrize("empty_segments", [False, True])
+def test_normalization_preserves_leading_punctuation_and_segment_boundaries(
+    mark, split, empty_segments
+):
+    targets = (mark, "你好") if split else (mark + "你好",)
+    if empty_segments:
+        targets = ("", *targets, "")
+    request = ExportTextInput(
+        tuple(3 + index * 4 for index in range(len(targets))),
+        targets,
+        (False, *(True for _ in targets[1:])),
+        ((0, len(targets)),),
+    )
+    result = normalize_chinese(request)
+    expected = (mark * 2, "你好") if split else (mark * 2 + "你好",)
+    if empty_segments:
+        expected = ("", *expected, "")
+    assert result.targets == expected
+    assert result.segment_ids == request.segment_ids
+    assert result.continuations == request.continuations
+    assert result.logical_ranges == request.logical_ranges
+    assert result.logical_boundary_maps == ((0, 2, 3, 4),)
+
+
+def test_validation_rejects_a_boundary_map_that_omits_the_paragraph_prefix():
+    request = ExportTextInput((0,), ("甲",), (False,), ((0, 1),))
+    result = ExportTextResult((0,), ("乙甲",), (False,), ((0, 1),), ((1, 2),))
+    with pytest.raises(ValueError, match="Invalid export text boundary map"):
+        validate_result(request, result)
+
+
+@pytest.mark.parametrize("mark", ["—", "…"])
+def test_leading_punctuation_remaps_annotations_and_styles_without_changing_snapshot(
+    tmp_path, mark
+):
+    before = mark + "你好"
+    after = mark * 2 + "你好"
+    metadata = {
+        "target_digest": hashlib.sha256(before.encode()).hexdigest(),
+        "placements": [{"id": "span", "target_start": 0, "target_end": 1}],
+    }
+    chapter = Chapter(
+        index=0,
+        segments=[
+            Segment(
+                index=3,
+                source="First source fragment.",
+                target=mark,
+                meta={"epub_annotations": metadata, "docx_styles": metadata},
+            ),
+            Segment(index=7, source="Second source fragment.", target="你好", cont=True),
+        ],
+    )
+    snapshot = ExportSnapshotStore(
+        str(tmp_path), {"source_lang": "en", "target_lang": "zh"}, {0: chapter}
+    )
+    for _ in range(2):
+        exported = ExportViewStore(snapshot, punctuation_normalize=True).load_chapter(0)
+        assert [segment.target for segment in exported.text_segments] == [mark * 2, "你好"]
+        for key in ("epub_annotations", "docx_styles"):
+            remapped = exported.text_segments[0].meta[key]
+            assert remapped["target_digest"] == hashlib.sha256(after.encode()).hexdigest()
+            assert remapped["placements"] == [{"id": "span", "target_start": 0, "target_end": 2}]
+        assert snapshot.load_chapter(0) == chapter
