@@ -12,7 +12,6 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{local_connection::Connection, native_export::Saves, Engine, State};
 
-const RELEASES: &str = "https://github.com/BigDawnGhost/wenyi/releases";
 const MANIFEST: &str = "https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json";
 const RELEASE_API: &str = "https://api.github.com/repos/BigDawnGhost/wenyi/releases/latest";
 type Result<T> = std::result::Result<T, &'static str>;
@@ -441,15 +440,6 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
     })
     .await;
     result.unwrap_or(Err("install_failed"))
-}
-
-#[tauri::command]
-pub async fn desktop_update_open_release(window: tauri::WebviewWindow) -> Result<()> {
-    trusted(&window)?;
-    tauri::async_runtime::spawn_blocking(|| open::that(RELEASES))
-        .await
-        .map_err(|_| "unavailable")?
-        .map_err(|_| "unavailable")
 }
 
 #[cfg(test)]

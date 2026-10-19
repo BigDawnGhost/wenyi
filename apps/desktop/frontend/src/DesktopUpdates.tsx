@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
+import { ReleaseNotes } from "./ReleaseNotes";
 
 type Status = {
   currentVersion: string;
@@ -29,6 +30,7 @@ export function DesktopUpdates({ blocked, onInstalling }: {
   const { t } = useDesktopI18n();
   const credentialsBlocked = useCredentialSafety();
   const [confirm, setConfirm] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<Status["error"]>();
@@ -43,7 +45,7 @@ export function DesktopUpdates({ blocked, onInstalling }: {
   useEffect(() => { onInstalling(locked); }, [locked, onInstalling]);
   const unsafe = blocked || credentialsBlocked;
   const active = pending || locked || data?.phase === "checking" || data?.phase === "downloading";
-  async function run(action: "check" | "download" | "install" | "open_release") {
+  async function run(action: "check" | "download" | "install") {
     if (action === "install" && unsafe) return;
     setPending(true);
     setError(undefined);
@@ -67,7 +69,6 @@ export function DesktopUpdates({ blocked, onInstalling }: {
         {data && <p role="status">{t(`updates.${data.phase}`)}</p>}
         {data?.mode !== "automatic" && <p>{t("updates.manual")}</p>}
         {data?.version && <p>{t("updates.version", { version: data.version })}</p>}
-        {data?.notes && <pre className="whitespace-pre-wrap break-words text-sm font-sans">{data.notes}</pre>}
         {data?.phase === "downloading" && (
           <div>
             <progress aria-label={t("updates.downloading")} value={data.total ? data.downloaded : undefined} max={data.total || undefined} />
@@ -85,8 +86,16 @@ export function DesktopUpdates({ blocked, onInstalling }: {
           {data?.mode === "automatic" && (data.phase === "ready" || failure === "busy" || failure === "install_failed") && (
             <Button disabled={active || unsafe} onClick={() => setConfirm(true)}>{t("updates.install")}</Button>
           )}
-          <Button variant="outline" disabled={locked} onClick={() => void run("open_release")}>{t("updates.releases")}</Button>
+          <Button variant="outline" disabled={locked || !data?.version} onClick={() => setNotesOpen(true)}>
+            {t("updates.viewNotes")}
+          </Button>
         </div>
+        <ReleaseNotes
+          open={notesOpen}
+          onClose={() => setNotesOpen(false)}
+          version={data?.version}
+          notes={data?.notes}
+        />
         {unsafe && <p>{t("updates.unsaved")}</p>}
         {confirm && (
           <div role="alertdialog" aria-label={t("updates.install")} className="space-y-3">
