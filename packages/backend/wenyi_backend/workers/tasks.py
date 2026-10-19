@@ -138,21 +138,32 @@ def _record_terminal_status(pid, run_id, error: BaseException | None = None, *, 
     message = str(error) if error is not None else None
     job = dal.get_job_by_arq_id(run_id) if run_id else None
     if job:
-        dal.set_job_status(job["id"], status, error=message)
-        storage = _pipeline_storage(pid)
         try:
             latest = next((item for item in dal.list_jobs(pid) if item["kind"] != "export"), None)
             if not latest or latest["id"] != job["id"]:
                 return
-            # Wait for a brief API write boundary rather than dropping the terminal status.
-            with storage.lock():
-                latest = next(
-                    (item for item in dal.list_jobs(pid) if item["kind"] != "export"), None
-                )
-                if latest and latest["id"] == job["id"]:
-                    dal.set_project_status(pid, status, error=message)
+            project = dal.get_project(pid)
+            if (
+                job["status"] == status
+                and project
+                and project["status"] == status
+                and project.get("error") == message
+            ):
+                # The async fallback must not reacquire a finished worker's run lock.
+                return
+            storage = _pipeline_storage(pid)
+            try:
+                # Wait for a brief API write boundary rather than dropping the terminal status.
+                with storage.lock():
+                    latest = next(
+                        (item for item in dal.list_jobs(pid) if item["kind"] != "export"), None
+                    )
+                    if latest and latest["id"] == job["id"]:
+                        dal.set_project_status(pid, status, error=message)
+            finally:
+                storage.close()
         finally:
-            storage.close()
+            dal.set_job_status(job["id"], status, error=message)
     elif not run_id:
         dal.set_project_status(pid, status, error=message)
 
@@ -263,10 +274,11 @@ def _execute(
                             kind, pid, storage, config, client, progress, params
                         )
             progress(1, 1, "任务完成")
-            dal.set_project_status(pid, result_status)
-            if job:
-                dal.set_job_status(job["id"], "done")
             storage.log_event("task_completed", kind=kind, run_id=run_id)
+        # Publish completion only after telemetry and the project's run lock have exited.
+        dal.set_project_status(pid, result_status)
+        if job:
+            dal.set_job_status(job["id"], "done")
     except (KeyboardInterrupt, RequestCancelled):
         _record_terminal_status(pid, run_id, status="paused")
         storage.log_event("task_paused", kind=kind, run_id=run_id)

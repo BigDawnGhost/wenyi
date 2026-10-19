@@ -22,7 +22,6 @@ cap-std = "3"
 cap-fs-ext = "3"
 rfd = "0.15"
 semver = "1"
-open = "5"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 
 [target.'cfg(unix)'.dependencies]

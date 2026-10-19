@@ -47,10 +47,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader
-        title={tr("dashboard.myProjects")}
-        subtitle={tr("dashboard.openAProjectToViewItsProgress")}
-      />
+      <PageHeader title={tr("dashboard.myProjects")} />
       <PageContainer>
         <ErrorNotice error={error} />
         {isLoading ? (

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
+from bs4 import BeautifulSoup
 from desktop_test_support import initialize, wait_job
 from fastapi.testclient import TestClient
 from wenyi_backend import dal
 from wenyi_backend.context import use_context
+from wenyi_backend.workers import tasks
 from wenyi_core.ingest.models import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
@@ -113,6 +119,116 @@ def test_upload_parse_preview_and_workflow_use_sqlite(desktop):
     assert not list(backend.workspace.rglob("preview.json"))
     assert not list(backend.workspace.rglob("manifest.json"))
     store.close()
+
+
+def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
+    client, backend, _ = desktop
+    releasing, release = threading.Event(), threading.Event()
+    worker_storage = []
+    parse_source = tasks._parse_source
+    storage_lock = SqliteStorage.lock
+
+    def capture_storage(pid, storage, config, progress):
+        worker_storage.append(storage)
+        return parse_source(pid, storage, config, progress)
+
+    @contextmanager
+    def hold_lock_exit(storage, blocking=True):
+        with storage_lock(storage, blocking=blocking):
+            try:
+                yield
+            finally:
+                if worker_storage and storage is worker_storage[0]:
+                    releasing.set()
+                    assert release.wait(10), "The test did not release the worker's run lock"
+
+    monkeypatch.setattr(tasks, "_parse_source", capture_storage)
+    monkeypatch.setattr(SqliteStorage, "lock", hold_lock_exit)
+    try:
+        created = client.post(
+            "/projects",
+            data={
+                "project": json.dumps(
+                    {"name": "Completion", "source_lang": "en", "target_lang": "zh"}
+                )
+            },
+            files={"file": ("book.txt", b"A short paragraph.\n")},
+        )
+        assert created.status_code == 201, created.text
+        pid = created.json()["id"]
+        assert releasing.wait(5), "The parse worker did not reach its run-lock exit"
+        job = dal.list_jobs(pid)[0]
+        assert job["status"] == "running"
+        assert dal.get_project(pid)["status"] == "parsing"
+        configuration = {"yaml": "pipeline: {review: false}"}
+        assert client.put(f"/projects/{pid}/config", json=configuration).status_code == 409
+    finally:
+        release.set()
+
+    assert wait_job(job["run_id"])["status"] == "done"
+    assert dal.get_project(pid)["status"] == "uploaded"
+    configured = client.put(f"/projects/{pid}/config", json=configuration)
+    assert configured.status_code == 200, configured.text
+    assert backend.get_job(job["id"])["status"] == "done"
+
+
+@pytest.mark.parametrize("status", ["error", "paused"])
+def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, monkeypatch, status):
+    pid = dal.create_project("Completion", "en", "zh", {})
+    job = dal.create_job(
+        pid, "translation", "terminal-run", run_id="terminal-run", status="running"
+    )
+    dal.set_project_status(pid, "translating")
+    storage_lock = SqliteStorage.lock
+    statuses_at_release = []
+
+    @contextmanager
+    def observe_lock_exit(storage, blocking=True):
+        with storage_lock(storage, blocking=blocking):
+            try:
+                yield
+            finally:
+                statuses_at_release.append(dal.get_job(job)["status"])
+
+    monkeypatch.setattr(SqliteStorage, "lock", observe_lock_exit)
+    tasks._record_terminal_status(pid, "terminal-run", RuntimeError("Stopped"), status=status)
+
+    assert statuses_at_release == ["running"]
+    assert dal.get_job(job)["status"] == status
+    assert dal.get_job(job)["error"] == "Stopped"
+    assert dal.get_project(pid)["status"] == status
+
+    tasks._record_terminal_status(pid, "terminal-run", RuntimeError("Stopped"), status=status)
+    assert statuses_at_release == ["running"]
+
+
+def test_late_terminal_status_updates_only_its_own_job(desktop_context):
+    pid = dal.create_project("Completion", "en", "zh", {})
+    old = dal.create_job(pid, "translation", "old-run", run_id="old-run", status="running")
+    latest = dal.create_job(pid, "translation", "new-run", run_id="new-run")
+    dal.set_project_status(pid, "translating")
+
+    tasks._record_terminal_status(pid, "old-run", RuntimeError("Old failure"))
+
+    assert dal.get_job(old)["status"] == "error"
+    assert dal.get_job(latest)["status"] == "queued"
+    assert dal.get_project(pid)["status"] == "translating"
+
+
+def test_terminal_status_survives_unavailable_storage(desktop_context, monkeypatch):
+    pid = dal.create_project("Completion", "en", "zh", {})
+    job = dal.create_job(pid, "translation", "failed-run", run_id="failed-run", status="running")
+    dal.set_project_status(pid, "translating")
+
+    def unavailable(_pid):
+        raise OSError("Storage unavailable")
+
+    monkeypatch.setattr(tasks, "_pipeline_storage", unavailable)
+    with pytest.raises(OSError, match="Storage unavailable"):
+        tasks._record_terminal_status(pid, "failed-run", RuntimeError("Worker failed"))
+
+    assert dal.get_job(job)["status"] == "error"
+    assert dal.get_job(job)["error"] == "Worker failed"
 
 
 @pytest.mark.parametrize("name,fmt", [("book.txt", "text"), ("book.md", "markdown")])
@@ -337,6 +453,48 @@ def test_snapshot_export_download_and_ownership(desktop):
     assert client.get(f"/projects/{other}/exports").json() == []
     store.close()
     other_store.close()
+
+
+@pytest.mark.parametrize("bilingual", [False, True])
+@pytest.mark.parametrize("punctuation_normalize", [False, True])
+def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punctuation_normalize):
+    client, backend, fake = desktop
+    pid, store = initialize(backend)
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target = "—你好。…再见。"
+    store.save_chapter(chapter)
+    response = client.put(
+        f"/projects/{pid}/config",
+        json={"yaml": json.dumps({"output": {"punctuation_normalize": punctuation_normalize}})},
+    )
+    assert response.status_code == 200, response.text
+    export_ids = []
+    for _ in range(2):
+        response = client.post(
+            f"/projects/{pid}/exports",
+            json={"format": "epub", "bilingual": bilingual, "about_page": False},
+        )
+        assert response.status_code == 200, response.text
+        job = wait_job(response.json()["job_id"])
+        assert job["status"] == "done", job
+        eid = response.json()["export_id"]
+        export_ids.append(eid)
+        download = client.get(f"/projects/{pid}/exports/{eid}/download")
+        assert download.status_code == 200, download.text
+        with ZipFile(BytesIO(download.content)) as archive:
+            paragraphs = [
+                paragraph.get_text()
+                for name in archive.namelist()
+                if name.endswith(".xhtml")
+                for paragraph in BeautifulSoup(archive.read(name), "html.parser").find_all("p")
+            ]
+        expected = "——你好。……再见。" if punctuation_normalize else "—你好。…再见。"
+        assert expected in paragraphs
+        assert ("A paragraph." in paragraphs) == bilingual
+        assert store.load_chapter(0) == chapter
+    assert len(set(export_ids)) == 2
+    assert fake.calls == []
+    store.close()
 
 
 def test_fake_book_translation_commits_domain_state(desktop):

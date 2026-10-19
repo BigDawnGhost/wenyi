@@ -176,6 +176,8 @@ The project list, project pages, and Settings share one persistent sidebar. It c
 
 Global **Settings** keeps **Interface language**, **API providers & models**, **New project defaults**, and **Advanced YAML configuration** on one `/settings` page. Save, validate, and restore defaults remain available without category navigation. Reminder links jump to incomplete ID edits or unvalidated YAML on the same page. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
 
+Web and Desktop omit introductory subtitles from the project list, glossary, whole-book review, event log, and global/project settings, along with redundant introductions in the creation and paragraph editor dialogs. Project settings keeps the link to global model management. Advanced YAML shows an unsaved-change summary only when edited; cost, read-only, safety, and error notices remain.
+
 Same-page history navigation closes open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport rather than following the last clicked button: successes dismiss after one second, errors and warnings after ten seconds, and other messages after five seconds. Errors can be dismissed; glossary add/edit failures also remain inline until retried or the dialog is closed.
 
 Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side without a header row on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
@@ -254,6 +256,8 @@ From `deploy/`, inspect task failures with `docker compose logs -f api worker ex
 Global **Settings** owns provider connections, model registration, default tiers and operation routes, and shared workflow defaults—not translation modes or workflow templates. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts other project workflow options; it does not register providers/models or switch the creation-time mode. Advanced YAML supports operation-specific routes and fallbacks.
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
+
+Web and Desktop publish a workflow job's terminal status only after releasing its project run lock. Successful completion also waits for the completion event and live-statistics cleanup, so saving configuration immediately after observing a completed job does not race that worker's cleanup. Queued or running work still keeps project edits read-only.
 
 The **MinerU PDF parsing** card provides deployment guidance only. Set `MINERU_API_KEY`
 for the API and workers when using MinerU; this is independent of model API keys. Web

@@ -195,9 +195,7 @@ export function GlobalConfiguration() {
         <CardContent className="p-5 space-y-4">
           <Disclosure
             title={t("settings.advancedYamlConfiguration")}
-            summary={t(
-              yamlDirty ? "settings.unsavedSummary" : "settings.yamlSummary",
-            )}
+            summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
             error={error}
           >
             <p className="text-sm text-muted-foreground">

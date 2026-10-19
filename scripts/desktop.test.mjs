@@ -95,3 +95,59 @@ test('Tauri runs in the native project without pnpm changing its working directo
     syncBuiltinESMExports();
   }
 });
+
+test('Desktop launches pnpm JavaScript entry points with Node and native executables directly', async (t) => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const calls = [];
+  const argv = process.argv;
+  const environmentNames = ['npm_execpath', 'WENYI_DESKTOP_PYTHON'];
+  const originalEnvironment = Object.fromEntries(environmentNames.map(name => [name, process.env[name]]));
+  const identity = { python: '1.2.3', version: '1.2.3', bundle_version: '1.2.3' };
+  mock.method(childProcess, 'spawnSync', (command, parameters, options) => {
+    calls.push({ command, parameters, options });
+    return { status: 0, stdout: JSON.stringify(identity) };
+  });
+  syncBuiltinESMExports();
+  process.argv = [process.execPath, 'desktop.mjs', 'dev', '--data-dir', 'test workspace'];
+  process.env.WENYI_DESKTOP_PYTHON = path.join(root, 'mock python');
+  const cases = [
+    { name: 'pnpm.cjs', entry: path.join(root, 'mock pnpm', 'pnpm.cjs'), script: true },
+    { name: 'pnpm.js', entry: path.join(root, 'mock pnpm', 'pnpm.js'), script: true },
+    { name: 'pnpm.mjs', entry: path.join(root, 'mock pnpm', 'pnpm.mjs'), script: true },
+    { name: 'native pnpm', entry: path.join(root, 'mock pnpm', 'pnpm'), script: false },
+    { name: 'native pnpm.exe', entry: path.join(root, 'mock pnpm', 'pnpm.exe'), script: false },
+    { name: 'PATH fallback', entry: undefined, script: false },
+  ];
+  try {
+    for (const [index, { name, entry, script }] of cases.entries()) {
+      await t.test(name, async () => {
+        if (entry === undefined) delete process.env.npm_execpath;
+        else process.env.npm_execpath = entry;
+        calls.length = 0;
+        await import(`./desktop.mjs?pnpm-launch-test-${index}`);
+        assert.equal(calls.length, 3);
+        const pnpm = calls[1];
+        assert.equal(pnpm.command, script ? process.execPath : (entry ?? 'pnpm'));
+        assert.deepEqual(pnpm.parameters, [
+          ...(script ? [entry] : []), '-C', 'apps/desktop/frontend', 'build',
+        ]);
+        assert.equal(pnpm.options.cwd, root);
+        assert.equal(pnpm.options.stdio, 'inherit');
+        assert.equal(pnpm.options.shell, entry === undefined && process.platform === 'win32');
+        assert.equal(calls[2].command, 'cargo');
+        assert.deepEqual(calls[2].parameters, [
+          'run', '--locked', '--manifest-path', 'apps/desktop/Cargo.toml',
+          '--', '--data-dir', 'test workspace',
+        ]);
+      });
+    }
+  } finally {
+    process.argv = argv;
+    for (const [name, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});

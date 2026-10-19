@@ -98,6 +98,8 @@ pnpm desktop --data-dir /path/to/desktop-test-workspace
 
 The launcher builds the UI and starts the native application. Debug builds use the repository's `.venv`; `WENYI_DESKTOP_PYTHON` can explicitly select another development interpreter. There is no remote `--url` mode or silent fallback to a Web server.
 
+The launcher supports both JavaScript pnpm entry points and standalone native pnpm executables, including extensionless Linux binaries.
+
 Build a native release on the target platform with:
 
 ```bash
@@ -174,10 +176,21 @@ The AppImage was launched on KDE Wayland with a temporary workspace and an inval
 ## Application updates
 
 The update area is at the **bottom of global Settings** and shows the current
-Git-derived application version. You can check for a newer public release and
-open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases).
+Git-derived application version. Check for a newer public release, then use the
+separate **View release notes** button to read its notes in a scrollable dialog.
+English interfaces show only English notes; Chinese interfaces show only Chinese
+notes. Missing or unmarked language sections show a localized empty message, never
+the other language. Markdown headings, lists, emphasis, code, quotes, and GFM tables
+and task lists are rendered; raw HTML is ignored, and links/images show their text
+without external navigation or remote-image requests. There is no release-page button.
 Older installations must be upgraded manually once to a release with this updater.
 The Desktop workspace is retained; back it up before upgrading.
+
+Maintainers should keep release notes under `## English` and `## 中文`
+(`English`/`en` and `中文`/`简体中文`/`zh-CN` are recognized, case-insensitively).
+A heading at the same or higher level or a horizontal divider ends each language
+section. Use deeper headings within it; place shared bilingual footers after a
+divider. Language-like text inside code blocks is not a section boundary.
 
 Only stable, configured native release builds check automatically at startup,
 without blocking launch. Checking never silently downloads, forces an installation,

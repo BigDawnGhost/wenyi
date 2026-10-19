@@ -165,7 +165,6 @@ export default function CreateProjectDialog() {
     <Dialog
       open
       title={tr("common.createProject")}
-      description={tr("createProject.introduction")}
       onClose={close}
       closeDisabled={pending}
       initialFocus={nameRef}

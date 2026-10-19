@@ -26,6 +26,7 @@ OPERATIONS = MappingProxyType(
             OperationSpec(
                 "punctuation.zh_cn",
                 "export.text",
+                implementation_version="2",
                 roles=("target", "pair"),
                 languages=("zh",),
                 paths=("book",),

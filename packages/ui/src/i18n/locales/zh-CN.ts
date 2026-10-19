@@ -113,8 +113,6 @@ const zhCN = {
   "dashboard.deleteProjectThisCannotBeUndone":
     "确认删除项目“{name}”？此操作无法撤销。",
   "dashboard.myProjects": "我的项目",
-  "dashboard.openAProjectToViewItsProgress":
-    "点击项目查看翻译进度，或创建新项目",
   "dashboard.loading": "加载中…",
   "dashboard.noProjectsYet": "还没有项目。",
   "dashboard.createYourFirstProject": "创建第一个项目",
@@ -138,8 +136,6 @@ const zhCN = {
   "events.chapterReviewIssues": "第 {chapter} 章审校：{count} 个问题",
   "events.exportedFiles": "导出文件：{files}",
   "events.projectInitializedChapters": "项目初始化：{count} 章",
-  "events.keyProjectEventsRefreshedEvery5Seconds":
-    "项目关键事件，最新在上（每 5 秒刷新）",
   "events.noEventsYet": "暂无事件。",
   "export.exportTaskSubmitted": "导出任务已提交",
   "export.saveAs": "另存为",
@@ -177,8 +173,6 @@ const zhCN = {
   "glossary.conflictResolved": "已解决冲突",
   "glossary.selectedTermsDeleted": "批量删除完成",
   "glossary.couldNotDeleteSelectedTerms": "批量删除失败",
-  "glossary.manageNamesAppellationsAndFixedExpressionsAnd":
-    "维护专有名词、称谓与固定表达，裁决自动提取的译名冲突",
   "glossary.csvFile": "CSV 文件",
   "glossary.jsonFile": "JSON 文件",
   "glossary.import": "导入",
@@ -315,8 +309,6 @@ const zhCN = {
   "workflowPanel.waitingForProgressUpdates": "等待后台上报进度",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "润色随翻译批次执行；以上步骤表示流程配置，完成情况以任务状态及最近步骤为准。导出任务在导出页单独查看。",
-  "createProject.introduction":
-    "选择语言、原文文件和翻译方式。",
   "createProject.projectAndLanguages": "项目与语言",
   "createProject.translationMode": "翻译方式",
   "createProject.standardMode": "标准翻译",
@@ -413,8 +405,6 @@ const zhCN = {
   "review.typeReference": "指代",
   "review.typeOther": "审校问题",
   "review.wholeBookReviewSubmitted": "全书审校已提交",
-  "review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd":
-    "查看审校问题、核查证据、建议修订与自动修复发布结果",
   "review.runWholeBookReview": "运行全书审校",
   "review.wholeBookReviewIsAvailableOnceAll":
     "所有章节翻译完成后可运行全书审校。",
@@ -432,7 +422,6 @@ const zhCN = {
   "proofreading.invalidChapter": "无效的章节编号",
   "proofreading.paragraphActions": "段落操作",
   "proofreading.paragraphEditor": "段落编辑",
-  "proofreading.editorHelp": "对照原文修改译文，或查看历史版本；保存后生效。",
   "proofreading.changeHistory": "改动记录",
   "proofreading.precisionDrafts": "精翻初稿",
   "proofreading.retryDrafts": "重新加载初稿",
@@ -516,8 +505,6 @@ const zhCN = {
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
   "settings.projectSettingsSaved": "项目配置已保存",
   "settings.configurationIsValidButNotSavedYet": "配置有效，尚未保存",
-  "settings.configurationIsValidatedOnTheServerAdvanced":
-    "选用已注册模型，并设置当前项目的翻译流程。",
   "settings.settingsAreReadOnlyWhileATask":
     "项目任务正在执行，配置暂时只读。暂停并保存检查点后可修改。",
   "settings.workflowSettings": "翻译流程配置",
@@ -599,7 +586,6 @@ const zhCN = {
   "api.postprocessing": "译后处理",
   "app.documentTitle": "文译 — AI 翻译",
   "settings.title": "设置",
-  "settings.subtitle": "界面语言、共享模型与项目默认配置",
   "settings.interfaceLanguage": "界面语言",
   "settings.languageDescription":
     "选择菜单、按钮与标签的显示语言。项目的源语言和目标语言独立设置。",
@@ -654,13 +640,11 @@ const zhCN = {
   "settings.performanceSummary": "每批：{tokens} tokens",
   "settings.unsavedSummary": "有未保存的修改",
   "settings.routeSummary": "{count} 项操作路由",
-  "settings.yamlSummary": "完整设置，包括操作路由和预算",
   "export.punctuationSummary": "标点规范化：{value}",
   "settings.operationModels": "按步骤选择模型",
   "settings.operationModelsHelp":
     "可以为具体步骤选用已注册模型，备用模型可在高级 YAML 中设置。",
   "settings.registeredModels": "提供商与模型注册",
-  "settings.projectModelHelp": "为当前项目选用已注册的模型。",
   "settings.manageGlobalModels": "前往总设置管理模型",
   "settings.projectYamlHelp":
     "项目 YAML 只配置模型选择、步骤路由和预算。连接与模型参数统一在总设置中注册。",
