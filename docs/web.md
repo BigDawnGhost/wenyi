@@ -257,6 +257,8 @@ Global **Settings** owns provider connections, model registration, default tiers
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 
+Web and Desktop publish a workflow job's terminal status only after releasing its project run lock. Successful completion also waits for the completion event and live-statistics cleanup, so saving configuration immediately after observing a completed job does not race that worker's cleanup. Queued or running work still keeps project edits read-only.
+
 The **MinerU PDF parsing** card provides deployment guidance only. Set `MINERU_API_KEY`
 for the API and workers when using MinerU; this is independent of model API keys. Web
 does not expose Desktop's manual MinerU credential input or storage endpoints.
