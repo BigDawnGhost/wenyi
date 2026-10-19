@@ -44,6 +44,19 @@ test("shared UI cannot import hosts or own platform transports/storage", () => {
   }
 });
 
+test("frontend modules have distinct names on case-insensitive filesystems", () => {
+  for (const directory of ["packages/ui/src", "apps/web/src", "apps/desktop/frontend/src"]) {
+    const sources = files(resolve(root, directory)).filter((file) => /\.(ts|tsx)$/.test(file));
+    assert(sources.length > 0, `The module-name check must scan ${directory}`);
+    const modules = new Map();
+    for (const file of sources) {
+      const key = file.replace(/\.(ts|tsx)$/, "").toLowerCase();
+      assert(!modules.has(key), `Case-insensitive module collision: ${modules.get(key)} and ${file}`);
+      modules.set(key, file);
+    }
+  }
+});
+
 test("production Web output contains no native bootstrap, IPC or vault UI", () => {
   const artifacts = files(resolve(root, "apps/web/dist"));
   assert(artifacts.some((file) => /wenyi-emblem-.*\.png$/.test(file)), "Web must emit the shared brand asset");

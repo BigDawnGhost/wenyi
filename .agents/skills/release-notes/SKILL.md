@@ -96,7 +96,7 @@ Sources of truth:
 
 - `docs/desktop.md`, section "Application updates".
 - `docs/zh/desktop.md`, section "应用更新".
-- `apps/desktop/frontend/src/releaseNotes.ts`, when present, and its affected
+- `apps/desktop/frontend/src/localizedReleaseNotes.ts`, when present, and its affected
   regressions in `apps/desktop/frontend/tests/desktop-updates.spec.ts`.
 
 Read the current sources before drafting; do not assume a historical template

@@ -2,7 +2,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Dialog } from "@/components/ui/misc";
 import { useDesktopI18n } from "./i18n";
-import { remarkLocalizedReleaseNotes } from "./releaseNotes";
+import { remarkLocalizedReleaseNotes } from "./localizedReleaseNotes";
 
 export function ReleaseNotes({ open, onClose, version, notes }: {
   open: boolean;
