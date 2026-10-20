@@ -123,18 +123,25 @@ pub fn refresh(app: &tauri::AppHandle) {
 }
 
 pub fn restore(app: &tauri::AppHandle) {
+    let _ = try_restore(app);
+}
+
+pub fn try_restore(app: &tauri::AppHandle) -> bool {
     if let Some(window) = app.get_webview_window("main") {
         #[cfg(target_os = "linux")]
         // GTK/Wayland may not report compositor-side minimization, and deiconify
         // alone may not restore it. Remap the same window without replacing its WebView.
         if window.hide().is_err() {
-            return;
+            return false;
         }
         if window.show().is_ok() && window.unminimize().is_ok() {
             refresh(app);
+            // Some window managers deny focus stealing even after a successful show.
             let _ = window.set_focus();
+            return true;
         }
     }
+    false
 }
 
 pub fn close(app: &tauri::AppHandle, tray_available: bool) {

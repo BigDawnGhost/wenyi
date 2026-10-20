@@ -3,6 +3,7 @@
 
 mod background;
 mod graphics;
+mod instance;
 mod local_connection;
 mod native_drop;
 mod native_export;
@@ -126,8 +127,46 @@ fn application_context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()
 }
 
+impl tauri::Resource for instance::Instance {}
+
+fn instance_error(error: instance::Error) {
+    eprintln!("{}", error.message());
+    rfd::MessageDialog::new()
+        .set_title("Wenyi Desktop")
+        .set_description(error.message())
+        .set_level(rfd::MessageLevel::Warning)
+        .show();
+}
+
+fn activate_instance(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let pending = app.state::<instance::Activation>().ready(Arc::new(move || {
+        if handle.state::<Engine>().closing.load(Ordering::SeqCst) {
+            return instance::Reply::Closing;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let activation_handle = handle.clone();
+        if handle.run_on_main_thread(move || {
+            let reply = if activation_handle.state::<Engine>().closing.load(Ordering::SeqCst) {
+                instance::Reply::Closing
+            } else if background::try_restore(&activation_handle) {
+                instance::Reply::Activated
+            } else {
+                instance::Reply::Unreachable
+            };
+            let _ = tx.send(reply);
+        }).is_err() {
+            return instance::Reply::Unreachable;
+        }
+        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(instance::Reply::Unreachable)
+    }));
+    if pending && !background::try_restore(app) {
+        instance_error(instance::Error::Unreachable);
+    }
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
     let data_dir = match args.as_slice() {
         [] => None,
         [flag, path] if flag == "--data-dir" => Some(std::path::PathBuf::from(path)),
@@ -144,6 +183,21 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let workspace = match instance::workspace(data_dir) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            instance_error(error);
+            return;
+        }
+    };
+    let primary = match instance::enter(&workspace) {
+        Ok(Some(primary)) => primary,
+        Ok(None) => return,
+        Err(error) => {
+            instance_error(error);
+            return;
+        }
+    };
     graphics::configure();
     let state = Arc::new(Mutex::new(State::default()));
     let closing = Arc::new(AtomicBool::new(false));
@@ -151,7 +205,7 @@ fn main() {
     let child = Arc::new(Mutex::new(None::<process::Backend>));
     let engine = Engine {
         child: child.clone(),
-        workspace: data_dir,
+        workspace: Some(workspace),
         closing: closing.clone(),
         closed: closed.clone(),
     };
@@ -160,6 +214,7 @@ fn main() {
     let tray_available = Arc::new(AtomicBool::new(false));
     let setup_tray = tray_available.clone();
     let app = tauri::Builder::default()
+        .manage(primary.activation.clone())
         .manage(state.clone())
         .manage(engine)
         .manage(updates::Updates::new())
@@ -186,6 +241,8 @@ fn main() {
             }
         })
         .setup(move |app| {
+            // Tauri closes resources before exit/restart, after our engine cleanup.
+            app.resources_table().add(primary);
             app.state::<native_drop::Grants>().start_expiry();
             let reload_state = startup_state.clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -248,6 +305,10 @@ fn main() {
         .expect("Could not build the Wenyi desktop window");
     app.run(move |handle, event_kind| {
         let requested = match event_kind {
+            tauri::RunEvent::Ready => {
+                activate_instance(handle);
+                false
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::CloseRequested { api, .. },
@@ -304,6 +365,22 @@ mod tests {
             context.package_info().version.to_string(),
             env!("WENYI_DESKTOP_VERSION")
         );
+    }
+
+    #[test]
+    fn tauri_resource_cleanup_releases_instance_for_restart() {
+        let mut id = [0u8; 16];
+        getrandom::fill(&mut id).unwrap();
+        let path = std::env::temp_dir().join(format!("wenyi-resource-{id:x?}"));
+        std::fs::create_dir(&path).unwrap();
+        let mut resources = tauri::ResourceTable::default();
+        let primary = instance::enter(&path).unwrap().unwrap();
+        let rid = resources.add(primary);
+        assert!(instance::enter(&path).unwrap().is_none());
+        resources.close(rid).unwrap();
+        let replacement = instance::enter(&path).unwrap().unwrap();
+        drop(replacement);
+        std::fs::remove_dir_all(&path).unwrap();
     }
 
     #[test]
