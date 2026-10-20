@@ -190,6 +190,15 @@ installation checks remain release responsibilities.
 
 The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and the previous close-to-exit lifecycle shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. The current tray lifecycle was also checked on KDE Wayland using a debug native build, production UI, source Python engine, and temporary empty workspace: minimize/restore and close-to-tray/restore kept the engine alive, and explicit tray exit reaped it. Packaged tray behavior, real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 
+Native single-instance behavior was additionally checked on KDE Wayland via
+XWayland with a debug build, production UI, source Python engine, and temporary
+empty workspace. A second launch during startup exited without initializing its
+own GUI or engine, even with an invalid display and Python path. Reopening after
+close-to-tray/minimize through a workspace path alias restored the same native
+window and engine. Explicit tray exit reaped the engine, and a subsequent launch
+succeeded with the discovery files retained. This does not replace packaged
+Windows/macOS acceptance testing.
+
 ## Application updates
 
 The update area is at the **bottom of global Settings** and shows the current
@@ -334,6 +343,34 @@ Restart Desktop after changing its inherited environment externally.
 ## Startup, shutdown, and rendering
 
 The UI has quiet startup/closing transitions without loading text. Startup errors remain visible with a retry/reload action. Requests wait for the local engine's ready handshake; the app never falls back to a remote endpoint. The backend listens only on a randomly allocated loopback port and uses a fresh in-memory token on every launch.
+
+### Reopening an already running app
+
+Opening the executable or shortcut again restores the existing window for that
+workspace, including when it is hidden in the tray or minimized. It does not
+create another window or engine, reload the page, interrupt tasks, or discard
+editor drafts and session-only credentials. Repeated launches during startup
+are coalesced into one pending restore request.
+
+Instance ownership is per workspace, not per executable path or application
+version. Separate `--data-dir` workspaces can run independently; path aliases
+to the same directory share one owner. Native admission happens before creating
+the WebView or starting Python. The existing backend workspace lock remains a
+separate data-safety check.
+
+If the existing app is closing, its previous engine is still shutting down, or
+the window cannot be restored, a native message explains what to do instead of
+opening a second failing interface. Try **Show Wenyi** in the tray, or wait for
+shutdown to finish and reopen. Desktop never force-stops the existing process.
+
+The workspace's `.desktop-instance.lock` is OS-owned. The accompanying
+`.desktop-instance.json` only advertises an activation-only loopback port and
+generation ID, never an API token or provider credential. These files can remain
+after exit or a crash; their presence does not mean the app is running. Do not
+delete them to bypass a live owner. Actual process exit releases the OS lock;
+normal quit and updater restart release it after engine cleanup.
+
+### Windows engine ownership
 
 On Windows, a debug Python override must name an existing executable path (not a
 PATH command or wrapper). For a CPython venv, Desktop reads `pyvenv.cfg` and starts

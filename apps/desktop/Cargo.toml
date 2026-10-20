@@ -4,6 +4,7 @@ name = "wenyi-desktop"
 version = "0.0.0"
 description = "Local desktop application for Wenyi."
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
 publish = false
 
