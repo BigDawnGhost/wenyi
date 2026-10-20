@@ -18,6 +18,7 @@ INSTALLERS = {
     ),
     "windows-x64": (("nsis", "{name}_{version}_x64-setup.exe"),),
     "macos-arm64": (("dmg", "{name}_{version}_aarch64.dmg"),),
+    "macos-x64": (("dmg", "{name}_{version}_x64.dmg"),),
 }
 
 

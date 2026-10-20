@@ -78,7 +78,7 @@ fn mode(version: &str, key: &str, debug: bool, os: &str, arch: &str, appimage: b
         return Mode::Unconfigured;
     }
     match (os, arch) {
-        ("windows", "x86_64") | ("macos", "aarch64") => Mode::Automatic,
+        ("windows", "x86_64") | ("macos", "aarch64" | "x86_64") => Mode::Automatic,
         ("linux", "x86_64") if appimage => Mode::Automatic,
         _ => Mode::Manual,
     }
@@ -476,6 +476,7 @@ mod tests {
         for (os, arch, appimage) in [
             ("windows", "x86_64", false),
             ("macos", "aarch64", false),
+            ("macos", "x86_64", false),
             ("linux", "x86_64", true),
         ] {
             assert!(mode("1.2.3", "public", false, os, arch, appimage) == Mode::Automatic);
@@ -486,7 +487,7 @@ mod tests {
             assert!(mode("1.2.3", "public", true, os, arch, appimage) == Mode::Unconfigured);
         }
         assert!(mode("1.2.3", "public", false, "linux", "x86_64", false) == Mode::Manual);
-        assert!(mode("1.2.3", "public", false, "macos", "x86_64", false) == Mode::Manual);
+        assert!(mode("1.2.3", "public", false, "macos", "unsupported", false) == Mode::Manual);
     }
 
     #[test]

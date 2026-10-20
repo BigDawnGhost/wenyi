@@ -54,9 +54,9 @@ def configured_public_key(monkeypatch):
 
 @pytest.fixture
 def assets(tmp_path, updates, signature):
-    for platform, (_, _, _, extension) in updates.PLATFORMS.items():
+    for platform, (_, directory, _, extension) in updates.PLATFORMS.items():
         path = tmp_path / f"wenyi-desktop-1.2.3-{platform}{extension}"
-        if platform == "macos-arm64":
+        if directory == "macos":
             macos_payload(path)
         else:
             path.write_bytes(b"offline payload")
@@ -67,7 +67,12 @@ def assets(tmp_path, updates, signature):
 def test_complete_manifest(updates, assets, signature):
     result = updates.manifest(assets, "1.2.3", "v1.2.3", "BigDawnGhost/wenyi")
     assert result["version"] == "1.2.3"
-    assert set(result["platforms"]) == {"windows-x86_64", "linux-x86_64", "darwin-aarch64"}
+    assert set(result["platforms"]) == {
+        "windows-x86_64",
+        "linux-x86_64",
+        "darwin-aarch64",
+        "darwin-x86_64",
+    }
     for platform, (key, _, _, extension) in updates.PLATFORMS.items():
         assert result["platforms"][key] == {
             "signature": signature,
@@ -126,9 +131,10 @@ def test_nonstable_identity_rejected(updates, assets, version):
         updates.manifest(assets, version, f"v{version}", "BigDawnGhost/wenyi")
 
 
+@pytest.mark.parametrize("platform", ["macos-arm64", "macos-x64"])
 @pytest.mark.parametrize("kind", ["missing", "empty", "malformed", "payload"])
-def test_incomplete_manifest_rejected(updates, assets, kind):
-    path = assets / "wenyi-desktop-1.2.3-macos-arm64.app.tar.gz.sig"
+def test_incomplete_manifest_rejected(updates, assets, kind, platform):
+    path = assets / f"wenyi-desktop-1.2.3-{platform}.app.tar.gz.sig"
     if kind == "missing":
         path.unlink()
     elif kind == "payload":
@@ -152,19 +158,21 @@ def test_short_numeric_tag_retains_packaging_semantics(updates, assets):
             document = base64.b64decode(path.read_text()).decode().replace("1.2.3", "1.2.0")
             path.write_text(base64.b64encode(document.encode()).decode())
         path.rename(path.with_name(path.name.replace("1.2.3", "1.2.0")))
-    macos_payload(assets / "wenyi-desktop-1.2.0-macos-arm64.app.tar.gz", "1.2.0")
+    for platform in ["macos-arm64", "macos-x64"]:
+        macos_payload(assets / f"wenyi-desktop-1.2.0-{platform}.app.tar.gz", "1.2.0")
     result = updates.manifest(assets, "1.2.0", "v1.2", "BigDawnGhost/wenyi")
     assert result["version"] == "1.2.0"
-    assert "/download/v1.2/" in result["platforms"]["darwin-aarch64"]["url"]
+    for key in ["darwin-aarch64", "darwin-x86_64"]:
+        assert "/download/v1.2/" in result["platforms"][key]["url"]
 
 
-@pytest.mark.parametrize("platform", ["windows-x64", "linux-x64", "macos-arm64"])
+@pytest.mark.parametrize("platform", ["windows-x64", "linux-x64", "macos-arm64", "macos-x64"])
 def test_collect_exact_payload_and_no_signature_overwrite(updates, tmp_path, signature, platform):
     source, output = tmp_path / "bundle", tmp_path / "assets"
     _, directory, template, extension = updates.PLATFORMS[platform]
     payload = source / directory / template.format(name="Wenyi Desktop", version="1.2.3")
     payload.parent.mkdir(parents=True)
-    if platform == "macos-arm64":
+    if directory == "macos":
         macos_payload(payload)
     else:
         payload.write_bytes(b"offline installer")
@@ -177,16 +185,32 @@ def test_collect_exact_payload_and_no_signature_overwrite(updates, tmp_path, sig
         updates.collect(source, output, "1.2.3", platform, "Wenyi Desktop")
 
 
-def test_collect_missing_signature_leaves_no_partial_assets(updates, tmp_path):
+@pytest.mark.parametrize("platform", ["macos-arm64", "macos-x64"])
+def test_collect_missing_signature_leaves_no_partial_assets(updates, tmp_path, platform):
     source, output = tmp_path / "bundle", tmp_path / "assets"
     (source / "macos").mkdir(parents=True)
     (source / "macos/Wenyi Desktop.app.tar.gz").write_bytes(b"offline payload")
     with pytest.raises(ValueError, match="signature"):
-        updates.collect(source, output, "1.2.3", "macos-arm64", "Wenyi Desktop")
+        updates.collect(source, output, "1.2.3", platform, "Wenyi Desktop")
     assert not output.exists()
 
 
-def test_stale_macos_archive_cannot_be_renamed(updates, assets):
-    macos_payload(assets / "wenyi-desktop-1.2.3-macos-arm64.app.tar.gz", "1.2.2")
+@pytest.mark.parametrize("platform", ["macos-arm64", "macos-x64"])
+def test_collect_stale_macos_archive_leaves_no_partial_assets(
+    updates, tmp_path, signature, platform
+):
+    source, output = tmp_path / "bundle", tmp_path / "assets"
+    payload = source / "macos/Wenyi Desktop.app.tar.gz"
+    payload.parent.mkdir(parents=True)
+    macos_payload(payload, "1.2.2")
+    Path(str(payload) + ".sig").write_text(signature)
+    with pytest.raises(ValueError, match="version differs"):
+        updates.collect(source, output, "1.2.3", platform, "Wenyi Desktop")
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("platform", ["macos-arm64", "macos-x64"])
+def test_stale_macos_archive_cannot_be_renamed(updates, assets, platform):
+    macos_payload(assets / f"wenyi-desktop-1.2.3-{platform}.app.tar.gz", "1.2.2")
     with pytest.raises(ValueError, match="version differs"):
         updates.manifest(assets, "1.2.3", "v1.2.3", "BigDawnGhost/wenyi")
