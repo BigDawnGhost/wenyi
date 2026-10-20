@@ -19,8 +19,13 @@ Open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) and choos
 | Windows x64 | `.exe` installer |
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 | macOS Apple Silicon | `.dmg` |
+| macOS Intel x64 | `.dmg` |
 
 Desktop assets are distributed directly, without an outer ZIP. For an AppImage, allow execution in the file's permissions before opening it. Packaged releases include the translation engine: you do not need to install Python or deploy a server.
+
+On macOS, choose `macos-arm64.dmg` for Apple Silicon or `macos-x64.dmg` for an
+Intel Mac. Each package includes a native application and Python engine for that
+architecture; there is no universal macOS package.
 
 Check the release notes for platform requirements and signing status. To build from source instead, follow [Run from source](#run-from-source).
 
@@ -125,6 +130,11 @@ pnpm desktop:build
 
 The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
 
+macOS packages are built separately on Apple Silicon and Intel runners. When
+building locally, use a native Python interpreter and Rust toolchain matching
+the Mac's architecture; cross-compiling only the Rust host does not rebuild the
+Python sidecar for another architecture.
+
 Windows release builds open only the application window, not a console. The local
 engine runs without a console window while retaining its private communication pipes.
 Debug/source launches keep their development console for diagnostics.
@@ -224,11 +234,12 @@ or restarts the application. Installation requires explicit confirmation; finish
 or cancel active tasks and save or discard unsaved editor/settings changes first.
 The application checks these guards again before installing and restarting.
 
-Signed Windows NSIS installations, macOS applications and Linux **AppImage**
-builds support integrated installation. Linux `.deb`/`.rpm` installations always
-use manual download/package installation, not AppImage replacement. Development,
-local and unconfigured builds still support public-release checks and manual
-downloads. Network/check failures remain visible and do not prevent using Desktop.
+Signed Windows NSIS installations, macOS applications on both Apple Silicon and
+Intel, and Linux **AppImage** builds support integrated installation. macOS updates
+stay on the installed application's architecture. Linux `.deb`/`.rpm` installations
+always use manual download/package installation, not AppImage replacement.
+Development, local and unconfigured builds still support public-release checks
+and manual downloads. Network/check failures remain visible and do not prevent using Desktop.
 Updater signatures are mandatory for integrated installation and are **separate
 from Windows/macOS OS code signing and notarization**.
 Signatures must also bind the advertised application version (`requireSignedVersion`):
@@ -276,11 +287,11 @@ installers and log that **no `latest.json` is published**. Partially configured
 signing fails instead of publishing misleading update metadata.
 
 Signed release assets add `.sig` beside Windows `.exe` and Linux `.AppImage`;
-macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg`. There are no
-extra installer ZIP wrappers. `scripts/desktop_updates.py` validates the complete
-three-platform set and produces a stable SemVer manifest with
-`windows-x86_64`, `linux-x86_64` and `darwin-aarch64` entries, the actual renamed
-release URLs, and signature contents. All payloads and signatures must build and
+macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg` for each
+architecture. There are no extra installer ZIP wrappers. `scripts/desktop_updates.py`
+validates the complete four-platform set and produces a stable SemVer manifest
+with `windows-x86_64`, `linux-x86_64`, `darwin-aarch64` and `darwin-x86_64` entries,
+the actual renamed release URLs, and signature contents. All payloads and signatures must build and
 upload successfully before `latest.json`, including the release notes, is uploaded
 **last**. Release uploads never overwrite existing attachments; retries with existing names fail. Missing
 or malformed signatures cannot publish a partial manifest. A release without a

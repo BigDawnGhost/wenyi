@@ -19,8 +19,12 @@ Desktop 是使用 Tauri、React 和现有 Python 翻译内核的**本地翻译�
 | Windows x64 | `.exe` 安装程序 |
 | Linux x64 | `.AppImage`、`.deb` 或 `.rpm` |
 | macOS Apple Silicon | `.dmg` |
+| macOS Intel x64 | `.dmg` |
 
 Desktop 安装包直接提供，不再套一层 ZIP。使用 AppImage 时，先在文件属性中允许作为程序执行，再打开。发行包已包含翻译引擎，无需安装 Python 或部署服务器。
+
+macOS 用户请按芯片选择：Apple Silicon 使用 `macos-arm64.dmg`，Intel Mac 使用
+`macos-x64.dmg`。各安装包包含对应架构的原生应用和 Python 引擎，不提供 macOS 通用包。
 
 平台要求和签名状态请以发行说明为准。如需从源码运行，参见[从源码运行](#从源码运行)。
 
@@ -119,6 +123,10 @@ pnpm desktop:build
 
 构建先将 Python 引擎冻结为 onedir sidecar，再与界面和原生程序一起打包。Onedir 避免每次启动都解压完整运行时。每次发行仍需验证安装包、签名和平台运行依赖；Linux 构建成功不代表 Windows/macOS 已验证。
 
+macOS 安装包分别在 Apple Silicon 和 Intel runner 上原生构建。本地构建时，
+Python 解释器和 Rust 工具链均应与 Mac 的架构一致；仅交叉编译 Rust 主程序
+不会将 Python sidecar 重建为另一种架构。
+
 Windows 发行包只打开应用窗口，不弹出控制台。本地引擎也不打开控制台窗口，
 但保留内部通信管道。Debug/源码启动仍保留开发终端，便于诊断。
 
@@ -198,7 +206,8 @@ Sidecar 构建会重新构建本地 Python 包，而不是复用其缓存 wheel�
 检查不会静默下载、强制安装或重启应用。安装需要明确确认；请先完成或取消运行中的任务，
 并保存或放弃编辑器及设置中的未保存修改。应用在安装并重启前会再次检查这些限制。
 
-已签名的 Windows NSIS、macOS 应用和 Linux **AppImage** 支持应用内安装更新。
+已签名的 Windows NSIS、macOS Apple Silicon／Intel 应用和 Linux **AppImage**
+支持应用内安装更新。macOS 更新保持已安装应用的架构，不跨架构切换。
 Linux `.deb`/`.rpm` 始终通过手动下载及包安装升级，不会用 AppImage 替换。
 开发、本地及未配置签名的构建仍可检查公开发行版并手动下载。
 网络或检查失败会明确显示，不影响继续使用 Desktop。
@@ -242,10 +251,11 @@ PR、开发/预发行构建和手动 workflow 运行保持未签名。
 部分签名配置则失败，不发布误导性的更新元数据。
 
 签名发行在 Windows `.exe` 和 Linux `.AppImage` 旁增加 `.sig`；
-macOS 在现有 `.dmg` 之外增加 `.app.tar.gz` 及 `.sig`，不额外套安装包 ZIP。
-`scripts/desktop_updates.py` 校验完整三平台集合，生成正式 SemVer manifest，
-包含 `windows-x86_64`、`linux-x86_64`、`darwin-aarch64`、实际重命名后的发行 URL
-和签名内容。所有更新包及签名构建、上传成功后才**最后上传**含发行说明的 `latest.json`。
+macOS 为每种架构在现有 `.dmg` 之外增加 `.app.tar.gz` 及 `.sig`，不额外套安装包 ZIP。
+`scripts/desktop_updates.py` 校验完整四平台集合，生成正式 SemVer manifest，
+包含 `windows-x86_64`、`linux-x86_64`、`darwin-aarch64`、`darwin-x86_64`、
+实际重命名后的发行 URL 和签名内容。所有更新包及签名构建、上传成功后才**最后上传**
+含发行说明的 `latest.json`。
 发行上传不覆盖已有附件；同名附件已存在时重试会失败。缺失或错误签名不能发布部分 manifest。
 没有 manifest 的发行不能通过应用内更新器安装，请手动下载。
 产物收集和 manifest 生成需要 `WENYI_UPDATER_PUBLIC_KEY`，并拒绝 key ID 与公钥不一致的签名。

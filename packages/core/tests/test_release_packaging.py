@@ -198,16 +198,35 @@ def test_windows_installers_remain_direct_files(tmp_path):
     assert all(p.read_bytes() == b"installer" for p in outputs)
 
 
-def test_macos_collects_only_the_requested_dmg(tmp_path):
+@pytest.mark.parametrize(
+    ("platform", "arch", "other_arch"),
+    [("macos-arm64", "aarch64", "x64"), ("macos-x64", "x64", "aarch64")],
+)
+def test_macos_collects_only_the_requested_dmg(tmp_path, platform, arch, other_arch):
     source = tmp_path / "bundle"
     (source / "dmg").mkdir(parents=True)
-    (source / "dmg/Wenyi Desktop_1.2.3_aarch64.dmg").write_bytes(b"installer")
-    (source / "dmg/Wenyi Desktop_0.0.1_aarch64.dmg").write_bytes(b"old")
+    (source / f"dmg/Wenyi Desktop_1.2.3_{arch}.dmg").write_bytes(b"installer")
+    (source / f"dmg/Wenyi Desktop_0.0.1_{arch}.dmg").write_bytes(b"old")
+    (source / f"dmg/Wenyi Desktop_1.2.3_{other_arch}.dmg").write_bytes(b"other architecture")
     outputs = script("package_release").desktop_assets(
-        source, tmp_path / "assets", "1.2.3", "macos-arm64", "Wenyi Desktop"
+        source, tmp_path / "assets", "1.2.3", platform, "Wenyi Desktop"
     )
-    assert [p.name for p in outputs] == ["wenyi-desktop-1.2.3-macos-arm64.dmg"]
+    assert [p.name for p in outputs] == [f"wenyi-desktop-1.2.3-{platform}.dmg"]
     assert outputs[0].read_bytes() == b"installer"
+
+
+@pytest.mark.parametrize(
+    ("platform", "other_arch"), [("macos-arm64", "x64"), ("macos-x64", "aarch64")]
+)
+def test_macos_cannot_collect_other_architecture(tmp_path, platform, other_arch):
+    source = tmp_path / "bundle"
+    (source / "dmg").mkdir(parents=True)
+    (source / f"dmg/Wenyi Desktop_1.2.3_{other_arch}.dmg").write_bytes(b"other architecture")
+    with pytest.raises(ValueError, match=f"Missing {platform} 1.2.3"):
+        script("package_release").desktop_assets(
+            source, tmp_path / "assets", "1.2.3", platform, "Wenyi Desktop"
+        )
+    assert not (tmp_path / "assets").exists()
 
 
 def test_collector_does_not_mix_previous_output_with_this_release(tmp_path):
@@ -298,3 +317,26 @@ def test_workflows_separate_components():
         assert "tag_name" in text
         assert "tar.gz" not in text
         assert document["jobs"]["release"]["if"] == "github.event_name == 'release'"
+
+
+def test_desktop_workflow_builds_native_macos_installers_and_updates():
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    job = document["jobs"]["local-package"]
+    matrix = {entry["platform"]: entry for entry in job["strategy"]["matrix"]["include"]}
+    assert set(matrix) == {"windows-x64", "linux-x64", "macos-arm64", "macos-x64"}
+    for platform, runner in [("macos-arm64", "macos-15"), ("macos-x64", "macos-15-intel")]:
+        assert matrix[platform]["os"] == runner
+        assert matrix[platform]["bundles"] == "dmg"
+        assert matrix[platform]["signed_bundles"] == "dmg,app"
+    build = next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("run", "").startswith("pnpm desktop:build ")
+    )
+    assert (
+        "steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles"
+    ) in build

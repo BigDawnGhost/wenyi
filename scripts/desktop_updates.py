@@ -18,6 +18,7 @@ PLATFORMS = {
     "windows-x64": ("windows-x86_64", "nsis", "{name}_{version}_x64-setup.exe", ".exe"),
     "linux-x64": ("linux-x86_64", "appimage", "{name}_{version}_amd64.AppImage", ".AppImage"),
     "macos-arm64": ("darwin-aarch64", "macos", "{name}.app.tar.gz", ".app.tar.gz"),
+    "macos-x64": ("darwin-x86_64", "macos", "{name}.app.tar.gz", ".app.tar.gz"),
 }
 
 
@@ -105,7 +106,7 @@ def collect(source: Path, output: Path, version: str, platform: str, name: str) 
         raise ValueError(f"Missing or empty updater artifact: {artifact}")
     signed = Path(str(artifact) + ".sig")
     signature(signed, version)
-    if platform == "macos-arm64":
+    if directory == "macos":
         macos_identity(artifact, version)
     target = output / f"wenyi-desktop-{version}-{platform}{extension}"
     # The installer collector already copied Windows/Linux's identical payload.
@@ -135,12 +136,12 @@ def manifest(
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("Expected a GitHub owner/repository")
     platforms = {}
-    for platform, (key, _, _, extension) in PLATFORMS.items():
+    for platform, (key, directory, _, extension) in PLATFORMS.items():
         filename = f"wenyi-desktop-{version}-{platform}{extension}"
         artifact = assets / filename
         if not artifact.is_file() or artifact.is_symlink() or not artifact.stat().st_size:
             raise ValueError(f"Missing or empty updater artifact: {artifact}")
-        if platform == "macos-arm64":
+        if directory == "macos":
             macos_identity(artifact, version)
         platforms[key] = {
             "signature": signature(assets / f"{filename}.sig", version),
