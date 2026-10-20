@@ -561,7 +561,8 @@ def test_settings_projects_health_and_download_routes_without_pg(backend):
     assert client.get(f"/projects/{pid}/exports").json()[0]["id"] == eid
     assert client.get(f"/projects/{pid}/exports/{eid}/download").text == "download"
     assert client.delete(f"/projects/{pid}").status_code == 200
-    assert output.exists()
+    assert not output.exists()
+    assert not backend.project_dir(pid).exists()
     assert client.get(f"/projects/{pid}").status_code == 404
 
 

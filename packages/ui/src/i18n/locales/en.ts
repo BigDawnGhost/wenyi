@@ -110,7 +110,7 @@ const en = {
   "dashboard.projectDeleted": "Project “{name}” deleted",
   "dashboard.couldNotDeleteProject": "Could not delete project: {error}",
   "dashboard.deleteProjectThisCannotBeUndone":
-    "Delete project “{name}”? This cannot be undone.",
+    "Permanently delete project “{name}” and all its original files, translations, history, caches, and project exports? This cannot be undone. Copies saved elsewhere will not be deleted.",
   "dashboard.myProjects": "My projects",
   "dashboard.loading": "Loading…",
   "dashboard.noProjectsYet": "No projects yet.",

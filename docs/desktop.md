@@ -19,8 +19,13 @@ Open [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases) and choos
 | Windows x64 | `.exe` installer |
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 | macOS Apple Silicon | `.dmg` |
+| macOS Intel x64 | `.dmg` |
 
 Desktop assets are distributed directly, without an outer ZIP. For an AppImage, allow execution in the file's permissions before opening it. Packaged releases include the translation engine: you do not need to install Python or deploy a server.
+
+On macOS, choose `macos-arm64.dmg` for Apple Silicon or `macos-x64.dmg` for an
+Intel Mac. Each package includes a native application and Python engine for that
+architecture; there is no universal macOS package.
 
 Check the release notes for platform requirements and signing status. To build from source instead, follow [Run from source](#run-from-source).
 
@@ -72,6 +77,23 @@ The default Desktop workspace is:
 
 The workspace contains a SQLite catalog, per-project SQLite state, uploaded originals, parse caches, and generated exports. Keep the entire workspace when backing up; stop Desktop before taking a filesystem backup. Do not copy only a live SQLite database while omitting its WAL.
 
+**Deleting a Desktop project is permanent.** The confirmation covers its uploaded
+originals, translations, history, caches, and exports inside the workspace. Files
+saved elsewhere are not removed. Active tasks or export downloads block deletion.
+If file cleanup fails, Desktop reports an error and retains the catalog entry so
+you can close files using the project and retry; some files may already be removed.
+Historical leftover directories are not bulk-cleaned.
+
+On Windows only, startup silently repairs an empty project catalog from readable
+`projects/<id>/state.sqlite3` metadata and matching uploaded originals. A nonempty
+catalog is left untouched; ambiguous, mismatched, or unreadable projects are skipped.
+Repair does not rewrite translations, start tasks, or add deletion markers. Lost
+project names, original filenames, project-specific settings, and job/export history
+cannot be fully reconstructed: settings fall back to the current global configuration.
+Check settings before starting translation again; saved checkpoints are reused.
+Old versions retained files after project deletion, so such legacy directories may
+also reappear when repairing an empty catalog.
+
 Use `--data-dir <path>` to select a separate workspace, for example for testing. One backend process owns a workspace at a time. Choosing another workspace neither imports nor deletes the old one.
 
 ## Run from source
@@ -107,6 +129,11 @@ pnpm desktop:build
 ```
 
 The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
+
+macOS packages are built separately on Apple Silicon and Intel runners. When
+building locally, use a native Python interpreter and Rust toolchain matching
+the Mac's architecture; cross-compiling only the Rust host does not rebuild the
+Python sidecar for another architecture.
 
 Windows release builds open only the application window, not a console. The local
 engine runs without a console window while retaining its private communication pipes.
@@ -173,6 +200,15 @@ installation checks remain release responsibilities.
 
 The AppImage was launched on KDE Wayland with a temporary workspace and an invalid development-Python path. Its bundled engine started, authenticated loopback requests succeeded, and the previous close-to-exit lifecycle shut down and reaped that engine. Separate frozen-engine checks exercised offline synthetic TXT upload/parse/preview and existing/new-format event reads. The current tray lifecycle was also checked on KDE Wayland using a debug native build, production UI, source Python engine, and temporary empty workspace: minimize/restore and close-to-tray/restore kept the engine alive, and explicit tray exit reaped it. Packaged tray behavior, real file-manager drag/drop, OS save dialogs, Windows/macOS execution, and removable-media behavior still require platform acceptance testing.
 
+Native single-instance behavior was additionally checked on KDE Wayland via
+XWayland with a debug build, production UI, source Python engine, and temporary
+empty workspace. A second launch during startup exited without initializing its
+own GUI or engine, even with an invalid display and Python path. Reopening after
+close-to-tray/minimize through a workspace path alias restored the same native
+window and engine. Explicit tray exit reaped the engine, and a subsequent launch
+succeeded with the discovery files retained. This does not replace packaged
+Windows/macOS acceptance testing.
+
 ## Application updates
 
 The update area is at the **bottom of global Settings** and shows the current
@@ -198,11 +234,12 @@ or restarts the application. Installation requires explicit confirmation; finish
 or cancel active tasks and save or discard unsaved editor/settings changes first.
 The application checks these guards again before installing and restarting.
 
-Signed Windows NSIS installations, macOS applications and Linux **AppImage**
-builds support integrated installation. Linux `.deb`/`.rpm` installations always
-use manual download/package installation, not AppImage replacement. Development,
-local and unconfigured builds still support public-release checks and manual
-downloads. Network/check failures remain visible and do not prevent using Desktop.
+Signed Windows NSIS installations, macOS applications on both Apple Silicon and
+Intel, and Linux **AppImage** builds support integrated installation. macOS updates
+stay on the installed application's architecture. Linux `.deb`/`.rpm` installations
+always use manual download/package installation, not AppImage replacement.
+Development, local and unconfigured builds still support public-release checks
+and manual downloads. Network/check failures remain visible and do not prevent using Desktop.
 Updater signatures are mandatory for integrated installation and are **separate
 from Windows/macOS OS code signing and notarization**.
 Signatures must also bind the advertised application version (`requireSignedVersion`):
@@ -250,11 +287,11 @@ installers and log that **no `latest.json` is published**. Partially configured
 signing fails instead of publishing misleading update metadata.
 
 Signed release assets add `.sig` beside Windows `.exe` and Linux `.AppImage`;
-macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg`. There are no
-extra installer ZIP wrappers. `scripts/desktop_updates.py` validates the complete
-three-platform set and produces a stable SemVer manifest with
-`windows-x86_64`, `linux-x86_64` and `darwin-aarch64` entries, the actual renamed
-release URLs, and signature contents. All payloads and signatures must build and
+macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg` for each
+architecture. There are no extra installer ZIP wrappers. `scripts/desktop_updates.py`
+validates the complete four-platform set and produces a stable SemVer manifest
+with `windows-x86_64`, `linux-x86_64`, `darwin-aarch64` and `darwin-x86_64` entries,
+the actual renamed release URLs, and signature contents. All payloads and signatures must build and
 upload successfully before `latest.json`, including the release notes, is uploaded
 **last**. Release uploads never overwrite existing attachments; retries with existing names fail. Missing
 or malformed signatures cannot publish a partial manifest. A release without a
@@ -317,6 +354,34 @@ Restart Desktop after changing its inherited environment externally.
 ## Startup, shutdown, and rendering
 
 The UI has quiet startup/closing transitions without loading text. Startup errors remain visible with a retry/reload action. Requests wait for the local engine's ready handshake; the app never falls back to a remote endpoint. The backend listens only on a randomly allocated loopback port and uses a fresh in-memory token on every launch.
+
+### Reopening an already running app
+
+Opening the executable or shortcut again restores the existing window for that
+workspace, including when it is hidden in the tray or minimized. It does not
+create another window or engine, reload the page, interrupt tasks, or discard
+editor drafts and session-only credentials. Repeated launches during startup
+are coalesced into one pending restore request.
+
+Instance ownership is per workspace, not per executable path or application
+version. Separate `--data-dir` workspaces can run independently; path aliases
+to the same directory share one owner. Native admission happens before creating
+the WebView or starting Python. The existing backend workspace lock remains a
+separate data-safety check.
+
+If the existing app is closing, its previous engine is still shutting down, or
+the window cannot be restored, a native message explains what to do instead of
+opening a second failing interface. Try **Show Wenyi** in the tray, or wait for
+shutdown to finish and reopen. Desktop never force-stops the existing process.
+
+The workspace's `.desktop-instance.lock` is OS-owned. The accompanying
+`.desktop-instance.json` only advertises an activation-only loopback port and
+generation ID, never an API token or provider credential. These files can remain
+after exit or a crash; their presence does not mean the app is running. Do not
+delete them to bypass a live owner. Actual process exit releases the OS lock;
+normal quit and updater restart release it after engine cleanup.
+
+### Windows engine ownership
 
 On Windows, a debug Python override must name an existing executable path (not a
 PATH command or wrapper). For a CPython venv, Desktop reads `pyvenv.cfg` and starts

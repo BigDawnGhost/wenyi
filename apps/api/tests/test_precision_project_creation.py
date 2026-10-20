@@ -53,7 +53,9 @@ def creation_api(monkeypatch, tmp_path):
         return {"job_id": "test-job", "project_id": pid, "kind": kind}
 
     # Substitute only the ports exercised by these rejection/editing contracts.
-    storage = SimpleNamespace(lock=lambda **_: nullcontext(), delete_artifact=lambda _: None)
+    storage = SimpleNamespace(
+        lock=lambda **_: nullcontext(), delete_artifact=lambda _: None, close=lambda: None
+    )
     context = replace(
         create_context(replace(main.settings, data_dir=str(tmp_path), api_token=None)),
         repository=SimpleNamespace(

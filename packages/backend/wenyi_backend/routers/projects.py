@@ -10,6 +10,7 @@ from pydantic import Json
 
 from .. import dal
 from ..config_documents import project_document
+from ..context import current_context
 from ..global_settings import load_settings, registry_guard
 from ..job_service import start_job
 from ..project_service import (
@@ -204,6 +205,5 @@ async def resume(pid: str) -> dict:
 
 @router.delete("/{pid}", response_model=Message)
 def delete_project(pid: str) -> dict:
-    with project_write(pid):
-        dal.delete_project(pid)
+    current_context().remove_project(pid)
     return {"message": "deleted"}

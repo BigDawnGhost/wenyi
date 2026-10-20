@@ -48,6 +48,11 @@ jobs:
           - os: macos-15
             platform: macos-arm64
             bundles: dmg
+            signed_bundles: dmg,app
+          - os: macos-15-intel
+            platform: macos-x64
+            bundles: dmg
+            signed_bundles: dmg,app
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -114,7 +119,7 @@ jobs:
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
       - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
-      - run: pnpm desktop:build --bundles ${{ matrix.platform == 'macos-arm64' && steps.updater.outputs.signed == 'true' && 'dmg,app' || matrix.bundles }}
+      - run: pnpm desktop:build --bundles ${{ steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles }}
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
           WENYI_UPDATER_PUBLIC_KEY: ${{ steps.updater.outputs.signed == 'true' && vars.WENYI_UPDATER_PUBLIC_KEY || '' }}
