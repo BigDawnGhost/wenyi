@@ -111,7 +111,7 @@ const zhCN = {
   "dashboard.projectDeleted": "已删除项目“{name}”",
   "dashboard.couldNotDeleteProject": "删除失败：{error}",
   "dashboard.deleteProjectThisCannotBeUndone":
-    "确认删除项目“{name}”？此操作无法撤销。",
+    "确认永久删除项目“{name}”及其全部原文、译文、历史记录、缓存和项目导出文件？此操作无法撤销。已另存到其他位置的文件不会被删除。",
   "dashboard.myProjects": "我的项目",
   "dashboard.loading": "加载中…",
   "dashboard.noProjectsYet": "还没有项目。",

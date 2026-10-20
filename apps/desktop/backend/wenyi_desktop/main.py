@@ -108,6 +108,7 @@ def create_context(
         health=services.health,
         update_term=lambda pid, storage, source, term: storage.update_term(source, term),
         api_token=api_token,
+        remove_project=backend.remove_project,
     )
 
 

@@ -81,6 +81,15 @@ Custom WebSocket clients must send a JSON first packet `{"token":"…"}` within 
 
 PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkpoints, Autofix publish indexes, subtitle caches, usage, and timing. `DATA_DIR` does not keep JSON/SQLite copies of that mutable state.
 
+**Deleting a project is permanent**, in Web and Desktop alike. The confirmation
+covers uploaded originals, translations, history, caches, and project exports.
+Web removes the project's directory under `DATA_DIR` and cascades deletion of its
+PostgreSQL records; separately saved downloads and other projects are untouched.
+Active tasks block deletion. Cleanup failure is reported and leaves database
+records available for retry; some files may already have been removed. Already-open
+downloads can finish on systems that support reading unlinked files. Historical
+leftover directories are not bulk-cleaned.
+
 ### PDF
 
 Backend images copy `uv`/`uvx` from the official Astral image, run a frozen `uv sync` for all workspace packages (plus PDF extras by default), and keep the venv on `PATH`, so containers start without installing extra Python dependencies. They also include WeasyPrint/fpdf2, required Pango libraries, Noto CJK/generic fonts, and WenQuanYi Zen Hei by default. fpdf2 only uses fonts with TrueType outlines and skips OpenType/CFF faces such as Noto CJK automatically; set `TRANS_NOVEL_PDF_FONT` to force a compatible font. Choosing an incompatible font explicitly returns an error instead of producing a broken file. WeasyPrint can use Noto CJK. MinerU is the default parse backend; parse caches are shared with upload previews.
