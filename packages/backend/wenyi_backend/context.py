@@ -156,6 +156,7 @@ class BackendContext:
     project_dir: Callable[[str], str]
     health: Callable[[], None]
     update_term: Callable[..., None]
+    remove_project: Callable[[str], None]
     api_token: str | None = None
     mineru_token_resolver: Callable[[], str | None] | None = None
 

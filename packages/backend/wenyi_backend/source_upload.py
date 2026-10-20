@@ -27,11 +27,17 @@ _FORMATS = {
 }
 
 
+def format_for_suffix(suffix: str) -> str | None:
+    """Resolve an input extension without opening or parsing its source."""
+    return _FORMATS.get(suffix.lstrip(".").lower())
+
+
 def input_format(file: UploadFile, fmt: str | None = None) -> str:
     ext = (fmt or Path(file.filename or "").suffix.lstrip(".")).lower()
-    if ext not in _FORMATS:
+    result = format_for_suffix(ext)
+    if result is None:
         raise HTTPException(422, "Unsupported input format")
-    return _FORMATS[ext]
+    return result
 
 
 @dataclass(frozen=True)

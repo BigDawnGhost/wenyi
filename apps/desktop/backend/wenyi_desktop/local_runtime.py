@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from sys import platform
 from typing import Any, Iterator
 
 from wenyi_backend.context import BackendContext
@@ -330,6 +331,10 @@ class LocalRuntime:
             storage.close()
 
     def recover(self, *, startup: bool = False) -> None:
+        if startup and platform == "win32":
+            from .catalog_recovery import recover_empty_catalog
+
+            recover_empty_catalog(self.backend)
         now = datetime.now(timezone.utc)
         for job in self.backend.all_jobs():
             if job["status"] not in {"queued", "running"} or job["run_id"] in self._submitted:

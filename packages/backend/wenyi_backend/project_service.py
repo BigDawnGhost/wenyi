@@ -56,6 +56,8 @@ def project_write(pid: str):
             yield project, storage
     except BlockingIOError as error:
         raise HTTPException(409, "project already has a running task") from error
+    finally:
+        storage.close()
 
 
 def validate_translation_mode_for_format(mode: str, fmt: str | None) -> None:

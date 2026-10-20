@@ -221,11 +221,12 @@ def create_job(
     config_snapshot: dict[str, Any] | None = None,
     run_id: str | None = None,
     status: str = "queued",
+    connection: Connection[Any] | None = None,
 ) -> int:
     saved_params = dict(params or {})
     if config_snapshot is not None:
         saved_params["config_snapshot"] = config_snapshot
-    with _conn() as c:
+    with _conn(connection) as c:
         r = c.execute(
             """INSERT INTO jobs (project_id, kind, status, arq_job_id, params, run_id)
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
@@ -314,8 +315,10 @@ def job_review_id(job_id: int) -> str | None:
     return row[0] if row else None
 
 
-def create_export(pid: str, fmt: str, options: dict[str, Any]) -> int:
-    with _conn() as c:
+def create_export(
+    pid: str, fmt: str, options: dict[str, Any], *, connection: Connection[Any] | None = None
+) -> int:
+    with _conn(connection) as c:
         row = c.execute(
             """INSERT INTO exports (project_id, format, options, status)
                VALUES (%s,%s,%s,'pending') RETURNING id""",
@@ -347,8 +350,8 @@ def is_paused(pid: str) -> bool:
     return bool(r and r[0] in {"paused", "pausing"})
 
 
-def delete_project(pid: str) -> None:
-    with _conn() as conn:
+def delete_project(pid: str, *, connection: Connection[Any] | None = None) -> None:
+    with _conn(connection) as conn:
         conn.execute("DELETE FROM projects WHERE id=%s", (pid,))
 
 

@@ -72,6 +72,23 @@ The default Desktop workspace is:
 
 The workspace contains a SQLite catalog, per-project SQLite state, uploaded originals, parse caches, and generated exports. Keep the entire workspace when backing up; stop Desktop before taking a filesystem backup. Do not copy only a live SQLite database while omitting its WAL.
 
+**Deleting a Desktop project is permanent.** The confirmation covers its uploaded
+originals, translations, history, caches, and exports inside the workspace. Files
+saved elsewhere are not removed. Active tasks or export downloads block deletion.
+If file cleanup fails, Desktop reports an error and retains the catalog entry so
+you can close files using the project and retry; some files may already be removed.
+Historical leftover directories are not bulk-cleaned.
+
+On Windows only, startup silently repairs an empty project catalog from readable
+`projects/<id>/state.sqlite3` metadata and matching uploaded originals. A nonempty
+catalog is left untouched; ambiguous, mismatched, or unreadable projects are skipped.
+Repair does not rewrite translations, start tasks, or add deletion markers. Lost
+project names, original filenames, project-specific settings, and job/export history
+cannot be fully reconstructed: settings fall back to the current global configuration.
+Check settings before starting translation again; saved checkpoints are reused.
+Old versions retained files after project deletion, so such legacy directories may
+also reappear when repairing an empty catalog.
+
 Use `--data-dir <path>` to select a separate workspace, for example for testing. One backend process owns a workspace at a time. Choosing another workspace neither imports nor deletes the old one.
 
 ## Run from source

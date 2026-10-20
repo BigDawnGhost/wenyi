@@ -30,6 +30,7 @@ def backend_context(tmp_path):
         project_dir=lambda pid: str(tmp_path / pid),
         health=lambda: None,
         update_term=Mock(),
+        remove_project=Mock(),
     )
     with use_context(context):
         yield context

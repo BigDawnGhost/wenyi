@@ -79,6 +79,13 @@ API、普通 Worker、导出 Worker 都加载 `deploy/.env`，只读挂载同一
 
 数据库存储项目、章节、段落、术语、Review 证据/检查点、Autofix 发布索引、字幕缓存、用量和计时。`DATA_DIR` 不存这些可变状态的 JSON/SQLite 副本。
 
+**Web 和 Desktop 删除项目均为永久操作。** 确认提示覆盖上传原文、译文、
+历史记录、缓存和项目导出文件。Web 会清理 `DATA_DIR` 下该项目的目录，并
+级联删除 PostgreSQL 中的项目数据；不影响另存的下载文件或其他项目。
+任务仍在进行时不能删除。清理失败会报错并保留数据库记录以供重试，
+部分文件可能已经被清理。在支持读取已取消目录链接文件的系统上，已打开的
+下载可以继续完成。不会批量清理历史残留目录。
+
 ### PDF
 
 后端镜像默认包含 WeasyPrint/fpdf2、所需 Pango 库、Noto 中日韩/通用字体和文泉驿正黑。fpdf2 仅使用带 TrueType 轮廓的字体，自动跳过 Noto CJK 等 OpenType/CFF 字体；也可通过 `TRANS_NOVEL_PDF_FONT` 指定兼容字体。显式选择不兼容字体会返回错误，避免生成显示损坏的文件。WeasyPrint 可使用 Noto CJK。MinerU 为默认解析后端，解析缓存与上传预览共用。

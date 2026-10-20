@@ -37,6 +37,7 @@ class LocalBackend:
         # Releasing memory must not depend on an available project directory.
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}
+        self._removing_projects: set[str] = set()
         with self.transaction() as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
@@ -158,6 +159,9 @@ class LocalBackend:
         return pid
 
     def get_project(self, pid: str) -> dict | None:
+        with self._export_leases_lock:
+            if pid in self._removing_projects:
+                return None
         project = self._get("projects", pid)
         if project is not None:
             storage = self.storage_for(pid, create=False)
@@ -237,17 +241,59 @@ class LocalBackend:
         )
 
     def delete_project(self, pid: str) -> None:
-        # Deliberately retain source and generated files, just as the Web endpoint does.
+        """Remove catalog records; remove_project owns permanent Desktop deletion."""
         with self.transaction() as conn:
-            if any(
-                row["status"] in {"pending", "running"}
-                for row in self._list("exports", pid=pid, connection=conn)
-            ) or any(
-                row["kind"] == "export" and row["status"] in {"queued", "running"}
-                for row in self._list("jobs", pid=pid, connection=conn)
-            ):
-                raise HTTPException(409, "An export is active; wait for it before deleting")
+            self._check_project_deletion(pid, conn)
             conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+
+    def _check_project_deletion(self, pid: str, connection: sqlite3.Connection) -> None:
+        if any(
+            row["status"] in {"pending", "running"}
+            for row in self._list("exports", pid=pid, connection=connection)
+        ) or any(
+            row["status"] in {"queued", "running"}
+            for row in self._list("jobs", pid=pid, connection=connection)
+        ):
+            raise HTTPException(409, "A task is active; wait for it before deleting")
+
+    def _reject_removing(self, pid: str) -> None:
+        with self._export_leases_lock:
+            if pid in self._removing_projects:
+                raise HTTPException(409, "Project deletion is in progress")
+
+    def remove_project(self, pid: str) -> None:
+        """Close owned handles before file removal, retaining the catalog on failure."""
+        from wenyi_backend.project_service import project_write
+
+        directory = self.project_dir(pid)
+        if directory.is_symlink() or directory.resolve().parent != self.workspace / "projects":
+            raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        self._reject_removing(pid)
+        admitted = False
+        try:
+            # Book and export locks protect admission, not recursive file cleanup:
+            # Windows cannot remove their files while our own handles remain open.
+            with project_write(pid), self._export_history_lock(pid):
+                with self.transaction() as connection:
+                    self._check_project_deletion(pid, connection)
+                    exports = self._list("exports", pid=pid, connection=connection)
+                    with self._export_leases_lock:
+                        if any(self._export_leases.get(row["id"]) for row in exports):
+                            raise HTTPException(409, "An export download is active; retry later")
+                        self._removing_projects.add(pid)
+                        admitted = True
+            try:
+                if directory.exists():
+                    shutil.rmtree(directory)
+            except OSError as error:
+                raise HTTPException(
+                    409, "Could not remove project files; close files using this project and retry"
+                ) from error
+            self.delete_project(pid)
+        finally:
+            if admitted:
+                with self._export_leases_lock:
+                    self._removing_projects.discard(pid)
 
     def create_job(
         self,
@@ -303,6 +349,7 @@ class LocalBackend:
         from wenyi_backend.dal import RUNNING_PROJECT_STATUSES
 
         with self.transaction() as connection:
+            self._reject_removing(pid)
             project = self._get("projects", pid, connection)
             if project is None:
                 raise HTTPException(404, "project not found")
@@ -347,6 +394,9 @@ class LocalBackend:
         self, pid: str, fmt: str, options: dict, run_id: str, config_snapshot: dict
     ) -> tuple[int, int]:
         with self.transaction() as connection:
+            self._reject_removing(pid)
+            if self._get("projects", pid, connection) is None:
+                raise HTTPException(404, "project not found")
             export_id = self.create_export(pid, fmt, options, connection=connection)
             job_id = self.create_job(
                 pid,
@@ -663,6 +713,7 @@ class LocalBackend:
         from .local_export_files import ExportLease, html_bundle, open_regular
 
         with self._export_history_lock(pid):
+            self._reject_removing(pid)
             export = self._get("exports", export_id)
             file = (
                 export_path(str(self.workspace / "projects"), pid, export["path"])
