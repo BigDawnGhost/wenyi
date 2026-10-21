@@ -1,6 +1,7 @@
 """Desktop catalog uses isolated temporary workspaces and no external services."""
 
 import inspect
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from contextvars import copy_context
@@ -712,3 +713,45 @@ def test_project_read_opens_existing_storage_only_and_always_closes(backend, mon
     else:
         assert backend.get_project(pid)["title"] == "Stored title"
     assert calls == [(pid, False), "closed"]
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (r"\\?\C:\Users\Reader\Wenyi Desktop", r"C:\Users\Reader\Wenyi Desktop"),
+        (r"\\?\D:\工作区 # 100%\Wenyi", r"D:\工作区 # 100%\Wenyi"),
+        (r"\\?\UNC\server\share\Wenyi Desktop", r"\\server\share\Wenyi Desktop"),
+        (r"C:\Users\Reader\Wenyi Desktop", r"C:\Users\Reader\Wenyi Desktop"),
+        (r"\\server\share\Wenyi Desktop", r"\\server\share\Wenyi Desktop"),
+        (r"\\.\C:\Wenyi", r"\\.\C:\Wenyi"),
+        (r"\\?\Volume{example}\Wenyi", r"\\?\Volume{example}\Wenyi"),
+        ("/tmp/Wenyi Desktop", "/tmp/Wenyi Desktop"),
+    ],
+)
+def test_windows_workspace_spelling_preserves_directory_identity(raw, expected):
+    from wenyi_desktop.local_backend import _plain_windows_path
+
+    assert _plain_windows_path(raw) == expected
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows paths")
+def test_verbatim_workspace_reopens_existing_catalog(tmp_path):
+    workspace = tmp_path / "Wenyi 工作区 # 100%"
+    backend = LocalBackend(workspace)
+    pid = backend.create_project("Existing project", "en", "zh", {}, config={"keep": True})
+    backend.close()
+
+    reopened = LocalBackend("\\\\?\\" + str(workspace))
+    try:
+        assert reopened.workspace == workspace
+        assert reopened.get_project(pid)["name"] == "Existing project"
+        assert reopened.get_project_config(pid) == {"keep": True}
+        assert reopened.database.samefile(workspace / "local.sqlite3")
+        storage = reopened.storage_for(pid)
+        try:
+            storage.write_artifact("preview.json", {"title": "Still writable"})
+            assert storage.read_artifact("preview.json") == {"title": "Still writable"}
+        finally:
+            storage.close()
+    finally:
+        reopened.close()
