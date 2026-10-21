@@ -257,6 +257,18 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await expect(page.getByText("Progress connection: Live")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
   const total = () => Object.values(counts).reduce((a, b) => a + b, 0);
+  const settleQueries = async () => {
+    await expect.poll(async () => {
+      // Flush query notifications without moving the paused browser clock.
+      await page.clock.runFor(0);
+      return page.evaluate(async () => {
+        const modulePath = "/src/main.tsx";
+        const { queryClient } = await import(modulePath);
+        return queryClient.isFetching();
+      });
+    }).toBe(0);
+  };
+  await settleQueries();
   const start = total();
   await page.clock.runFor(10_000);
   expect(total() - start).toBe(0);
@@ -273,14 +285,25 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await expect(page.getByRole("status")).not.toContainText("Old run");
   const beforeReconcile = total();
   await page.clock.runFor(30_000);
+  await settleQueries();
   expect(total()).toBeGreaterThan(beforeReconcile);
+  await page.route(`${origin}/**`, async route => {
+    // Real response latency must not be mistaken for elapsed browser timer time.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await route.fallback();
+  });
   accept = false;
   await socket!.close();
   await page.clock.runFor(100);
   await expect(page.getByText("Progress connection: Polling")).toBeVisible();
+  await settleQueries();
   const beforeFallback = total();
-  await page.clock.runFor(10_000);
-  // Drain browser-to-runner request delivery without advancing the paused clock.
+  // Query completion resets its polling timer. Settle real responses between
+  // virtual ticks so in-flight deduplication cannot swallow the next interval.
+  for (let elapsed = 0; elapsed < 10_000; elapsed += 1000) {
+    await page.clock.runFor(1000);
+    await settleQueries();
+  }
   await expect.poll(() => total() - beforeFallback).toBeGreaterThanOrEqual(8);
   console.log(`Desktop fixture: quiet healthy 10s=0 requests; disconnected 10s=${total() - beforeFallback}`);
 });
