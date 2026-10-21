@@ -9,12 +9,14 @@
     "types": [
       "node"
     ],
+    "rootDir": "../..",
     "outDir": "node_modules/.config-emit",
     "tsBuildInfoFile": "node_modules/.config-emit/tsconfig.node.tsbuildinfo"
   },
   "include": [
     "vite.config.ts",
     "playwright.config.ts",
-    "tests/fixtures.ts"
+    "tests/fixtures.ts",
+    "../../packages/ui/vite.shared.ts"
   ]
 }

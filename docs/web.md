@@ -250,6 +250,13 @@ pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
 
+Web and Desktop share the chunking rule in `packages/ui/vite.shared.ts`: React,
+React DOM and Scheduler form a separate `react-runtime` chunk, while pages keep
+their existing lazy chunks. After building both frontends, run
+`pnpm test:frontend-boundaries` to check platform isolation and enforce Vite's
+default 500 kB limit for each minified JavaScript chunk. Split growing chunks
+rather than raising `chunkSizeWarningLimit`; this is not a total-download budget.
+
 Set `WENYI_TEST_DATABASE_URL` to run real PostgreSQL integration tests. Those tests create an isolated schema and drop it afterward; use a dedicated test database. CI also provides Redis.
 
 - Jobs stay queued: confirm ordinary/export workers share the API Redis and listen to the matching queues.
