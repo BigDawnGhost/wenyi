@@ -419,6 +419,8 @@ the WebView or its drafts.
 
 Linux and Windows hide the native top window menu bar while keeping its menu
 events and **Ctrl+Q** quit accelerator registered, even without a usable tray.
+The bar stays hidden after repeated tray restores or reopening the running
+application; Linux window remapping does not show it again.
 macOS retains its system application menu and **Cmd+Q**. Tray **Show Wenyi** and
 **Quit Wenyi** remain available when a tray host is present.
 

@@ -5043,6 +5043,7 @@ dependencies = [
  "cap-std",
  "dbus",
  "getrandom 0.3.4",
+ "gtk",
  "libc",
  "reqwest",
  "rfd",
