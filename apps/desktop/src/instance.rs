@@ -38,11 +38,41 @@ impl Error {
     }
 }
 
-/// Resolve once in the native parent and pass this exact directory to Python.
+/// Resolve once and use a SQLite-compatible spelling for the Python workspace.
 pub fn workspace(explicit: Option<PathBuf>) -> Result<PathBuf, Error> {
     let path = explicit.map(Ok).unwrap_or_else(default_workspace)?;
     fs::create_dir_all(&path).map_err(|_| Error::Workspace)?;
-    path.canonicalize().map_err(|_| Error::Workspace)
+    path.canonicalize()
+        .map(plain_path)
+        .map_err(|_| Error::Workspace)
+}
+
+fn plain_path(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+    // canonicalize() adds a verbatim prefix that pathlib turns into an invalid
+    // SQLite URI authority. Keep the directory identity without that prefix.
+    let mut plain = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:\\", char::from(drive))),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut unc = std::ffi::OsString::from(r"\\");
+            unc.push(server);
+            unc.push(r"\");
+            unc.push(share);
+            PathBuf::from(unc)
+        }
+        _ => return path,
+    };
+    for component in components {
+        if component != Component::RootDir {
+            plain.push(component.as_os_str());
+        }
+    }
+    plain
 }
 
 fn default_workspace() -> Result<PathBuf, Error> {
@@ -402,6 +432,39 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn windows_workspace_uses_plain_drive_and_unc_paths() {
+        for (raw, expected) in [
+            (
+                r"\\?\C:\Users\Reader\Wenyi Desktop",
+                r"C:\Users\Reader\Wenyi Desktop",
+            ),
+            (r"\\?\D:\工作区 # 100%\Wenyi", r"D:\工作区 # 100%\Wenyi"),
+            (
+                r"\\?\UNC\server\share\Wenyi Desktop",
+                r"\\server\share\Wenyi Desktop",
+            ),
+            (
+                r"C:\Users\Reader\Wenyi Desktop",
+                r"C:\Users\Reader\Wenyi Desktop",
+            ),
+            (
+                r"\\server\share\Wenyi Desktop",
+                r"\\server\share\Wenyi Desktop",
+            ),
+        ] {
+            assert_eq!(plain_path(PathBuf::from(raw)), PathBuf::from(expected));
+        }
+        let directory = Workspace::new();
+        let canonical = directory.0.canonicalize().unwrap();
+        let resolved = workspace(Some(canonical.clone())).unwrap();
+        assert!(!resolved.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+        assert_eq!(resolved.canonicalize().unwrap(), canonical);
+        let _owner = enter(&resolved).unwrap().unwrap();
+        assert!(enter(&canonical).unwrap().is_none());
+    }
+
+    #[test]
     fn shutdown_and_failed_restore_are_not_reported_as_success() {
         let workspace = Workspace::new();
         let original = enter(&workspace.0).unwrap().unwrap();
@@ -567,6 +630,43 @@ mod tests {
         assert!(output.status.success());
         let existing: String = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(default_workspace().unwrap(), PathBuf::from(existing));
+    }
+
+    #[test]
+    fn admitted_workspace_is_the_directory_python_opens() {
+        let directory = Workspace::new();
+        let resolved = workspace(Some(directory.0.join("Wenyi 工作区 # 100%"))).unwrap();
+        let _owner = enter(&resolved).unwrap().unwrap();
+        let output = std::process::Command::new(python())
+            .args([
+                "-c",
+                r#"
+import json
+import sqlite3
+import sys
+from pathlib import Path
+from wenyi_desktop.local_backend import LocalBackend
+
+workspace = Path(sys.argv[1])
+backend = LocalBackend(workspace)
+try:
+    with sqlite3.connect(backend.database.as_uri() + "?mode=ro", uri=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0
+    print(json.dumps(str(backend.workspace)))
+finally:
+    backend.close()
+"#,
+            ])
+            .arg(&resolved)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let existing: String = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(resolved, PathBuf::from(existing));
     }
 
     #[test]
