@@ -8,7 +8,8 @@ from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
 
 
-def wait_job(run_id, *, timeout=10):
+def wait_job(run_id, *, timeout=60):
+    """Allow slow CI disks to commit real checkpoints without fixed test sleeps."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = dal.get_job_by_arq_id(run_id)

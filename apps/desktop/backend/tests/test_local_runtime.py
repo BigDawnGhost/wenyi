@@ -134,7 +134,10 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
 def test_queue_is_bounded_and_shutdown_interrupts_unstarted_work(catalog):
     async def run():
         runtime = LocalRuntime(catalog, current_context())
-        # Without starting consumers, admission can be tested deterministically.
+        assert runtime.workflow_queue.maxsize == 128
+        # Exercise overflow and durable draining, not a 128-job disk benchmark.
+        # No consumers are started, so admission remains deterministic.
+        runtime.workflow_queue = asyncio.Queue(maxsize=2)
         runtime.accepting = True
         pid = project()
         for index in range(runtime.workflow_queue.maxsize):
@@ -144,6 +147,7 @@ def test_queue_is_bounded_and_shutdown_interrupts_unstarted_work(catalog):
         assert "overflow" not in runtime._submitted
         assert runtime.export_queue.empty()
         await asyncio.wait_for(runtime.stop(), 10)
+        assert runtime.idle
         assert all(
             row["status"] == "interrupted"
             for row in catalog.all_jobs()
