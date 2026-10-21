@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from pathlib import Path
@@ -288,3 +289,31 @@ def test_recovery_reads_committed_wal_without_changing_project_metadata(tmp_path
         assert storage.load_manifest() == manifest
     finally:
         storage.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows paths")
+def test_verbatim_workspace_recovers_projects_and_preserves_translations(tmp_path, windows):
+    workspace = tmp_path / "Wenyi 工作区 # 100%"
+    directory, source, digest = orphan(workspace, done=True)
+    before = (directory / "state.sqlite3").read_bytes()
+    # Rust canonicalize() used this spelling for every --data-dir in 1.2.5.
+    verbatim = Path("\\\\?\\" + str(workspace))
+    for path in (verbatim, workspace):
+        app = create_app(path)
+        with TestClient(app) as client:
+            response = client.get("/projects")
+            assert response.status_code == 200
+            assert [project["id"] for project in response.json()] == [directory.name]
+            backend = app.state.backend.repository
+            project = backend.get_project(directory.name)
+            assert project["status"] == "done"
+            assert project["source_sha256"] == digest
+            assert backend.workspace / "projects" / project["source_path"] == source
+            assert backend.all_jobs() == []
+            assert backend.list_exports(directory.name) == []
+            storage = backend.storage_for(directory.name, create=False)
+            try:
+                assert storage.load_chapter(0).segments[0].target == "一小段原文。"
+            finally:
+                storage.close()
+        assert (directory / "state.sqlite3").read_bytes() == before

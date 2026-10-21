@@ -94,6 +94,11 @@ Check settings before starting translation again; saved checkpoints are reused.
 Old versions retained files after project deletion, so such legacy directories may
 also reappear when repairing an empty catalog.
 
+The native launcher and Python backend normalize Windows workspace paths so the
+`\\?\` prefix added during single-instance admission cannot prevent catalog repair
+or access to existing project state. The workspace location is unchanged; no
+project files need to be moved or reimported.
+
 Use `--data-dir <path>` to select a separate workspace, for example for testing. One backend process owns a workspace at a time. Choosing another workspace neither imports nor deletes the old one.
 
 ## Run from source
@@ -419,6 +424,8 @@ the WebView or its drafts.
 
 Linux and Windows hide the native top window menu bar while keeping its menu
 events and **Ctrl+Q** quit accelerator registered, even without a usable tray.
+The bar stays hidden after repeated tray restores or reopening the running
+application; Linux window remapping does not show it again.
 macOS retains its system application menu and **Cmd+Q**. Tray **Show Wenyi** and
 **Quit Wenyi** remain available when a tray host is present.
 

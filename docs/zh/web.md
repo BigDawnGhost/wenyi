@@ -231,6 +231,12 @@ pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
 
+Web 和 Desktop 共用 `packages/ui/vite.shared.ts` 中的分包规则：React、React DOM
+和 Scheduler 独立为 `react-runtime` chunk，页面继续保留现有懒加载分包。构建两端后，
+运行 `pnpm test:frontend-boundaries` 检查平台隔离，并验证每个压缩后的 JavaScript
+chunk 不超过 Vite 默认的 500 kB 限制。体积增长时应继续拆包，而不是调高
+`chunkSizeWarningLimit`；该检查不限制总下载量。
+
 设置 `WENYI_TEST_DATABASE_URL` 运行真实 PostgreSQL 集成测试，测试会创建独立 schema 并在结束时删除它；使用测试数据库。CI 同时提供 Redis 服务。
 
 - 任务一直排队：确认普通/导出 Worker 与 API 使用同一 Redis，并监听对应队列。

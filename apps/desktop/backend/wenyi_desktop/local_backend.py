@@ -28,9 +28,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _plain_windows_path(path: str) -> str:
+    """Use ordinary Win32 drive/UNC spelling without changing other path types."""
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path[8:]
+    if re.match(r"^\\\\\?\\[A-Za-z]:\\", path):
+        return path[4:]
+    return path
+
+
 class LocalBackend:
-    def __init__(self, workspace: str, config_path: str | None = None) -> None:
-        self.workspace = Path(workspace).expanduser().resolve()
+    def __init__(self, workspace: str | Path, config_path: str | None = None) -> None:
+        resolved = Path(workspace).expanduser().resolve()
+        # Also accept --data-dir from older native parents or direct engine launches.
+        self.workspace = Path(_plain_windows_path(str(resolved)))
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.config_path = config_path
         self.database = self.workspace / "local.sqlite3"
