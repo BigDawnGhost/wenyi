@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import { frontendManualChunks } from "../../packages/ui/vite.shared";
 import { createSandboxState, resolveFixture } from "./tests/fixtures";
 
 // MOCK_API=1 pnpm dev:web serves the same fixture data the Playwright suites
@@ -58,6 +59,11 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "../../packages/ui/src"),
       "@wenyi/ui": path.resolve(__dirname, "../../packages/ui/src"),
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: { manualChunks: frontendManualChunks },
     },
   },
   server: {
