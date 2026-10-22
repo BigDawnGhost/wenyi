@@ -57,15 +57,7 @@ export function ModelSelection({
           </div>
         ))}
       </div>
-      <Disclosure
-        title={t("settings.operationModels")}
-        summary={t("settings.routeSummary", {
-          count: Object.keys(routes).length,
-        })}
-      >
-        <p className="text-sm text-muted-foreground">
-          {t("settings.operationModelsHelp")}
-        </p>
+      <Disclosure title={t("settings.operationModels")}>
         <div className="space-y-3">
           {operations.map((operation) => {
             const id = String(operation.id);

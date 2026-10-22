@@ -42,8 +42,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         exact: true,
       });
       await expect(manageModels).toHaveAttribute("href", "/settings");
-      await expect(manageModels.locator(".."))
-        .toHaveText(t("settings.manageGlobalModels"));
+      await expect(manageModels).toHaveText(t("settings.manageGlobalModels"));
     });
 
     test("dialogs retain named controls without redundant descriptions", async ({

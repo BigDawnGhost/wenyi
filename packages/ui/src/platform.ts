@@ -27,7 +27,6 @@ export interface SourceDropCallbacks {
 
 export interface CredentialFieldProps {
   connection: string;
-  saved: boolean;
   children?: ReactNode;
 }
 
@@ -70,6 +69,16 @@ export interface PlatformServices {
     credentials?: {
       Field: ComponentType<CredentialFieldProps>;
       refresh: () => Promise<unknown>;
+      /** Writes entered keys for the saved connections; call after configuration is saved. */
+      commit: (connections: string[]) => Promise<void>;
+      /** Discards entered keys for connections that are no longer in the draft. */
+      retain: (connections: string[]) => void;
+      /** Keeps an entered key attached to a connection whose ID is renamed before saving. */
+      rename: (from: string, to: string) => void;
+      /** True while entered keys have not been written yet. */
+      usePending: () => boolean;
+      /** The key currently in a connection's field, used to list models before saving. */
+      forListing: (connection: string) => string | undefined;
     };
   };
 }

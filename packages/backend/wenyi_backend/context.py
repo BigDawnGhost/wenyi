@@ -159,6 +159,8 @@ class BackendContext:
     remove_project: Callable[[str], None]
     api_token: str | None = None
     mineru_token_resolver: Callable[[], str | None] | None = None
+    # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
+    connection_credential: Callable[[str, Any], str | None] | None = None
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

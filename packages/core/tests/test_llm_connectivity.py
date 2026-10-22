@@ -12,8 +12,14 @@ from openai import APIConnectionError, APIStatusError
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.llm.configuration import LLMConfig
-from wenyi_core.llm.connectivity import PROBE_OUTPUT_TOKENS, probe_connections, probe_targets
+from wenyi_core.llm.connectivity import (
+    PROBE_OUTPUT_TOKENS,
+    probe_connections,
+    probe_profiles,
+    probe_targets,
+)
 from wenyi_core.llm.providers._openai_compatible import OpenAICompatibleBaseClient
+from wenyi_core.llm.router import RoutedLLMClient
 
 SECRET = "fake-probe-secret-not-a-real-key"
 _NO_THINKING = {"thinking": False}
@@ -170,6 +176,26 @@ def test_thinking_profiles_keep_their_minimum_output(sdk):
     )
     probe_connections(config, ("translation.body",))
     assert sdk.calls[0]["max_completion_tokens"] == 4096
+
+
+def test_profile_probes_cover_unrouted_profiles_in_registry_order(sdk):
+    results = probe_profiles(_config())
+    assert [result.profile for result in results] == ["strong", "small", "spare"]
+    assert results[2].operations == ()
+    assert results[2].endpoint == "https://backup.invalid/v1"
+    assert [call["model"] for call in sdk.calls] == ["big", "small", "spare"]
+    assert [result.profile for result in probe_profiles(_config(), ["spare"])] == ["spare"]
+    with pytest.raises(ValueError, match="Unknown model profile"):
+        probe_profiles(_config(), ["missing"])
+
+
+def test_routed_client_probes_with_its_credential_snapshot(sdk, monkeypatch):
+    monkeypatch.delenv("PROBE_MAIN_KEY")
+    client = RoutedLLMClient(_config(), credentials={"main": "snapshot-key", "backup": None})
+    results = {result.profile: result for result in client.probe_profiles(timeout=3)}
+    assert results["strong"].ok and results["small"].ok
+    assert results["spare"].category == "missing_credential"
+    assert sdk.clients == [{"timeout": 3, "max_retries": 0}] * 2
 
 
 def test_invalid_timeout_is_rejected():

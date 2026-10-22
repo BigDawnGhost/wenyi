@@ -44,7 +44,6 @@ test("structured, registry ID and YAML drafts coexist on one settings page", asy
   await fakeApi(page);
   await page.goto("/settings");
   await page.getByLabel("Polishing", { exact: true }).uncheck();
-  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   await page.getByLabel("Model ID", { exact: true }).fill("pending model");
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await expect(page.getByRole("button", { name: "Save configuration", exact: true })).toBeDisabled();
@@ -72,7 +71,7 @@ test("mobile dashboard final cards and unified settings remain scrollable withou
   await last.scrollIntoViewIfNeeded();
   await expect(last).toBeInViewport();
   await page.goto("/settings");
-  for (const title of ["API providers & models", "Advanced YAML configuration", "Segmentation and performance"]) {
+  for (const title of ["Advanced YAML configuration", "Segmentation and performance"]) {
     await page.locator("summary").filter({ hasText: title }).click();
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -83,7 +82,6 @@ test("history navigation dismisses dropdowns without discarding same-page drafts
   await fakeApi(page);
   await page.goto("/settings");
   await page.getByLabel("Polishing", { exact: true }).uncheck();
-  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   await page.getByLabel("Model ID", { exact: true }).fill("pending model");
   await page.getByRole("link", { name: "Apply or discard the ID edits before saving.", exact: true }).click();
   await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();

@@ -53,7 +53,7 @@ export function WorkflowSettings({
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
       {!subtitles && (
-        <div className="grid sm:grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           {PIPELINE.map(([key, label]) => (
             <label key={key} className="flex gap-2 items-center text-sm">
               <input
@@ -67,20 +67,7 @@ export function WorkflowSettings({
           ))}
         </div>
       )}
-      {subtitles && (
-        <p className="text-sm text-muted-foreground">
-          {tr("settings.subtitlesUseASeparateWorkflowWithoutBook")}
-        </p>
-      )}
-      <Disclosure
-        title={tr("settings.performance")}
-        error={error}
-        summary={tr("settings.performanceSummary", {
-          tokens: Number(
-            section(config, "segment").max_tokens_per_batch ?? 1800,
-          ),
-        })}
-      >
+      <Disclosure title={tr("settings.performance")} error={error}>
         {!subtitles && (
           <label className="flex gap-2 items-center text-sm">
             <input

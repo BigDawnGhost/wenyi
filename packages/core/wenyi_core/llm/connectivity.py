@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -20,6 +21,9 @@ from .transport import RequestContext
 DEFAULT_PROBE_TIMEOUT = 30.0
 PROBE_OUTPUT_TOKENS = 16
 PROBE_MESSAGES = ({"role": "user", "content": "Reply with the single word: OK"},)
+MAX_PROBE_WORKERS = 8
+# Profiles outside every workflow route still need an operation to resolve output limits.
+_DEFAULT_PROBE_OPERATION = "translation.body"
 # A cut-off or blank answer still proves that endpoint, credential and model accepted the call.
 _REACHABLE_RESPONSES = (TruncatedResponseError, EmptyResponseError)
 
@@ -67,7 +71,44 @@ def probe_connections(
     credentials: Mapping[str, str | None] | None = None,
     timeout: float = DEFAULT_PROBE_TIMEOUT,
 ) -> list[ProbeResult]:
-    """Send one minimal, non-retried request per reachable profile in stable order.
+    """Probe every profile reachable by ``operations``, including explicit fallbacks."""
+    return _probe_all(
+        config,
+        probe_targets(config, tuple(operations)),
+        credentials=credentials,
+        timeout=timeout,
+    )
+
+
+def probe_profiles(
+    config: LLMConfig,
+    profiles: Iterable[str] | None = None,
+    *,
+    credentials: Mapping[str, str | None] | None = None,
+    timeout: float = DEFAULT_PROBE_TIMEOUT,
+) -> list[ProbeResult]:
+    """Probe registered profiles (all by default), independent of any workflow."""
+    selected = list(config.models) if profiles is None else list(dict.fromkeys(profiles))
+    for profile in selected:
+        if profile not in config.models:
+            raise ValueError(f"Unknown model profile: {profile}")
+    users = probe_targets(config, resolve_routes(config))
+    return _probe_all(
+        config,
+        {profile: users.get(profile, ()) for profile in selected},
+        credentials=credentials,
+        timeout=timeout,
+    )
+
+
+def _probe_all(
+    config: LLMConfig,
+    targets: Mapping[str, tuple[str, ...]],
+    *,
+    credentials: Mapping[str, str | None] | None,
+    timeout: float,
+) -> list[ProbeResult]:
+    """Send one minimal, non-retried request per profile; results keep the input order.
 
     Each probe bills a few tokens. Usage is not recorded in any run ledger, and failures are
     reduced to the provider-independent categories from ``describe_provider_failure``.
@@ -77,11 +118,18 @@ def probe_connections(
     if credentials is not None:
         for secret in credentials.values():
             validate_credential(secret)
-    operations = tuple(operations)
-    return [
-        _probe(config, profile, users, credentials=credentials, timeout=timeout)
-        for profile, users in probe_targets(config, operations).items()
-    ]
+    if not targets:
+        return []
+    with ThreadPoolExecutor(max_workers=min(MAX_PROBE_WORKERS, len(targets))) as pool:
+        # map() yields in submission order, so completion order never reorders results.
+        return list(
+            pool.map(
+                lambda item: _probe(
+                    config, item[0], item[1], credentials=credentials, timeout=timeout
+                ),
+                targets.items(),
+            )
+        )
 
 
 def _probe(
@@ -92,7 +140,8 @@ def _probe(
     credentials: Mapping[str, str | None] | None,
     timeout: float,
 ) -> ProbeResult:
-    route = model_route(config, operations[0], profile, origin="probe")
+    operation = operations[0] if operations else _DEFAULT_PROBE_OPERATION
+    route = model_route(config, operation, profile, origin="probe")
     connection = config.providers[route.provider]
     adapter_type = provider_spec(connection.kind).adapter_type()
     request_model = route.request_model()
@@ -127,7 +176,7 @@ def _probe(
         return result(False, "missing_credential", str(error))
 
     context = RequestContext(
-        operation=operations[0],
+        operation=operation,
         tier="probe",
         # Respect provider rules such as the minimum output size for thinking modes.
         max_tokens=adapter_type.output_limit(request_model.options, PROBE_OUTPUT_TOKENS, None),

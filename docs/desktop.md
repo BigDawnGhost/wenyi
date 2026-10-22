@@ -31,7 +31,9 @@ Check the release notes for platform requirements and signing status. To build f
 
 ### 2. Connect a model
 
-Open **Settings → API providers & models**, choose a provider, configure models and any custom base URL, and save the connection. Enter and save the API key in its password field.
+Open **Settings → Providers & models**, choose a provider, enter the API key in the connection's **API key** field, and set any custom base URL. In each model, click the refresh button next to **Model name** to fetch the provider's model list, then pick a name from the dropdown or type one. Click **Save configuration**; the key is written together with the configuration, with no separate save step.
+
+Click **Test connection** below the models to send one short request to each saved model. The table shows whether each one connected, its latency and the failure reason, such as an invalid API key, unknown model name or unreachable base URL. Each test uses a few tokens; save edits first, because only saved settings are tested.
 
 Desktop uses the system credential store when available. If it is unavailable, the interface explains that the key is kept only for the current session and must be entered again after restart. A local workspace does not mean offline model processing: text is sent to the provider you configure, unless you use a local model service.
 
@@ -309,34 +311,38 @@ artifact and signed version before installation.
 
 ## API keys
 
-Use **Settings** in the shared sidebar footer. `/settings` contains Interface language, API providers & models, New project defaults, and Advanced YAML configuration together, with save, validate, and restore defaults. There is no separate settings layout or category navigation. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
+Use **Settings** in the shared sidebar footer. `/settings` is one page of titled sections: General, Providers & models, Default models, Workflow, MinerU PDF parsing, and Advanced. Save, validate, and restore defaults stay in a bar pinned to the bottom of the page. There is no separate settings layout or category navigation. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
 
 The project list, projects, and Settings share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. There are no floating dashboard actions. Width, labels, and narrow-screen navigation height transition smoothly over 280 ms. Same-page history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
 
-Open **Settings → API providers & models**, configure the provider/model and optional base URL, then save the connection configuration. Enter the API key in its password field and save it.
+Open **Settings → Providers & models** and type the API key into the connection's **API key** field. It can be entered right away, including for a connection that has not been saved yet. The field is masked with dots; the eye button inside it shows or hides the value. **Save configuration** saves the connection first, then writes the key. If writing a key fails, the configuration stays saved, the key stays in the field, and saving again retries it. Typed keys exist only in memory until saved; leaving Settings or deleting the connection discards them.
 
 Native credential controls load independently, so entering Settings does not replace the page with a loading screen.
 
 - Desktop automatically uses a supported OS credential store: Keychain, Windows credentials, Secret Service, or KWallet through `keyring`.
 - If the store is unavailable or a write fails, the key stays **only in memory for this session**. The interface says that it must be entered again after restart. There is no storage-mode selector or plaintext fallback.
-- A saved key is never shown again. An empty input does not clear or replace it.
-- The advanced section supports an environment-variable name. With no manual credential selected, leave the name empty for the provider's default. An explicitly named variable never falls back to a different variable or connection's key. Restart Desktop after changing its inherited environment externally.
-- Use **Clear manual key** to remove it, or the explicit action to clear it and use the environment variable. A missing manual/session key does not silently switch to an environment key.
+- A saved manual key is loaded back into its field, masked, when Settings opens; the eye button reveals it. Only the authenticated local Desktop UI can read it (`GET /desktop/credentials/{connection}/secret`, sent with `Cache-Control: no-store`). An unchanged field is not rewritten on save; clearing the field and saving removes the stored key.
+- The **Environment variable** section supports an environment-variable name. With no manual credential selected, leave the name empty for the provider's default. An explicitly named variable never falls back to a different variable or connection's key. Restart Desktop after changing its inherited environment externally.
+- **Use environment variable instead** clears the manual key and reads the environment variable. A missing manual/session key does not silently switch to an environment key.
 
 Credential changes apply to newly created clients. Active tasks retain their configuration and credential snapshot. Renaming a connection moves its credential reference; deleting it prevents a replacement connection from inheriting its key.
 
-SQLite stores only modes and opaque credential references. Keys are not saved in YAML/JSON, project state, browser storage, or API responses. Web and CLI retain their environment-variable behavior.
+SQLite stores only modes and opaque credential references. Keys are not saved in YAML/JSON, project state, or browser storage, and appear in no API response other than the authenticated local reveal endpoint above. Web and CLI retain their environment-variable behavior.
 
-**Check local availability** checks local configuration; it does not contact the provider or validate the key with a model request.
+**Recheck** checks local configuration; it does not contact the provider or validate the key with a model request.
+
+### Fetching model names
+
+The refresh button next to **Model name** asks the model's connection for its model list (`POST /settings/models/list`). It uses the connection as currently edited, including an unsaved base URL and the key in its field, so nothing needs saving first. When the field is empty, the stored key is used. Supported providers: OpenAI-compatible endpoints (DeepSeek, OpenAI, OpenRouter, OpenCode Go, OrcaRouter, Ollama, vLLM, custom) via `GET /models`, and Gemini, limited to text-generation models. The request is sent once without retries, times out after 20 seconds, uses no tokens, and the list is capped at 2,000 names. Failures show a reason such as an invalid key or unreachable base URL; responses never include the key. Editing the connection clears a fetched list, and the name can always be typed by hand.
 
 ### MinerU PDF parsing key
 
-Settings includes a separate **MinerU PDF parsing** card. This key authorizes PDF parsing,
+Settings includes a separate **MinerU PDF parsing** section. This key authorizes PDF parsing,
 not model inference. The card contains one password input and one **Save MinerU key** button.
 Desktop automatically prefers `MINERU_API_KEY`; when present, the input indicates that
 source and both controls are disabled. Otherwise, enter or replace the key and save.
 Saving takes effect independently of model/configuration saves and uses the OS credential
-store or, when unavailable, only the current session with a warning. Saved keys never echo.
+store or, when unavailable, only the current session with a warning.
 Provider renames, deletion, or restoring model defaults do not remove this key.
 An invalid environment key does not fall back to a manual key; correct it and restart Desktop.
 

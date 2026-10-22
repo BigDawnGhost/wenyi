@@ -5,7 +5,12 @@ import { apiBase, authToken, progressInterval, progressUrl } from "./runtime";
 import { request, download } from "./transport";
 import { bindSourceDrop } from "./nativeDrop";
 import { saveNativeExport } from "./nativeExport";
-import { credentialQuery } from "./credentials";
+import {
+  credentialDrafts,
+  credentialForListing,
+  credentialQuery,
+  useCredentialDraftsPending,
+} from "./credentials";
 import { activity } from "./activity";
 
 const loadDesktopCredential = () => import("./DesktopCredential");
@@ -67,6 +72,11 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
       credentials: {
         Field: DesktopCredential,
         refresh: () => queryClient.refetchQueries({ queryKey: credentialQuery.queryKey }),
+        commit: (connections) => credentialDrafts.commit(queryClient, connections),
+        retain: credentialDrafts.retain,
+        rename: credentialDrafts.rename,
+        usePending: useCredentialDraftsPending,
+        forListing: credentialForListing,
       },
     },
   };
