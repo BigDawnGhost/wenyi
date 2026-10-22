@@ -214,6 +214,15 @@ uv run wenyi models check --for translate
 
 `list` and `explain` need no keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
 
+To confirm that providers are actually reachable, run a live connectivity test:
+
+```bash
+uv run wenyi models ping --for translate
+uv run wenyi models ping --for review --timeout 10 --json
+```
+
+`ping` sends one short request (`max_output_tokens` 16, or the provider minimum such as 4096 with thinking enabled) to every model profile reachable by the workflow, including explicit fallbacks. It never retries, caps each request at `--timeout` seconds (default 30), does not record usage in any run, and exits with status 1 if any profile fails. Failures are reported by category, such as `authentication_failed`, `model_or_endpoint_not_found`, `connection_failed` or `missing_credential`, without echoing provider responses. A truncated or empty reply counts as reachable.
+
 Optional local controls, illustrated with an offline provider:
 
 ```yaml

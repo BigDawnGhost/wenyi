@@ -90,6 +90,48 @@ def register_model_commands(
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
+    @models.command("ping")
+    def ping(
+        workflow: str = typer.Option(
+            "translate", "--for", help="prepare, translate, review or srt"
+        ),
+        timeout: float = typer.Option(
+            30.0, "--timeout", min=0.1, help="Seconds to wait for each provider"
+        ),
+        as_json: bool = typer.Option(False, "--json", help="Print structured probe results"),
+    ):
+        """Send one short live request per reachable model profile; uses a few tokens."""
+        from wenyi_core.llm.connectivity import probe_connections
+
+        try:
+            config = load_config()
+            operations = configured_operations(config, workflow)
+            results = probe_connections(config.llm, operations, timeout=timeout)
+        except (ValueError, RuntimeError) as error:
+            console.print(f"[red]Error: {error}[/]")
+            raise typer.Exit(1) from None
+        if as_json:
+            typer.echo(json.dumps([result.describe() for result in results], indent=2))
+        else:
+            table = Table("Profile", "Connection / adapter", "Model", "Status", "Latency", "Detail")
+            for result in results:
+                table.add_row(
+                    result.profile,
+                    f"{result.connection} / {result.provider}",
+                    result.model,
+                    "[green]ok[/]" if result.ok else f"[red]{result.category}[/]",
+                    "-" if result.latency_ms is None else f"{result.latency_ms} ms",
+                    result.message,
+                )
+            console.print(table)
+        failed = sum(not result.ok for result in results)
+        if failed:
+            if not as_json:
+                console.print(f"[red]{failed} of {len(results)} model profiles unreachable.[/]")
+            raise typer.Exit(1)
+        if not as_json:
+            console.print(f"All {len(results)} model profiles reachable for {workflow}.")
+
     @models.command("migrate-config")
     def migrate_config(
         source: Path = typer.Argument(..., exists=True, dir_okay=False),
