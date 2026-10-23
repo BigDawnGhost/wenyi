@@ -159,14 +159,14 @@ test.describe("high-DPI source selection", () => {
 test("Desktop bridge selects without upload, highlights/leaves and preserves selection on rejection", async ({ page }) => {
   await setup(page);
   const zone = page.getByRole("group", { name: "Source file selection" });
-  const release = zone.getByText("Release to select the source file.");
+  const release = zone.getByText("Release to add the file");
   await nativeEvent(page, { kind: "enter" });
   await expect(release).toBeVisible();
   await nativeEvent(page, { kind: "leave" });
   await expect(release).toHaveCount(0);
   await nativeEvent(page, { kind: "drop", source: source("first") });
   await expect(zone.getByText("first.docx", { exact: true })).toBeVisible();
-  await expect(zone).toContainText("123 bytes");
+  await expect(zone).toContainText("123 B");
   expect(await calls(page)).toEqual([]);
   for (const message of ["Select exactly one source file.", "Select a readable regular file."]) {
     await nativeEvent(page, { kind: "error", message });

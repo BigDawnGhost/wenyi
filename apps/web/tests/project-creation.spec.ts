@@ -302,7 +302,6 @@ test("Chinese creation fits mobile and enters the overview before parsing finish
   await page.getByLabel("项目名称", { exact: true }).fill("新书翻译");
   await page.getByRole("radio", { name: "三译合润", exact: true }).check();
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
-  await expect(page.getByText("精翻自动为本项目启用润色，不受全局设置影响。", { exact: false })).toBeVisible();
   await page.getByLabel("上传原文", { exact: true }).setInputFiles({
     name: "原文.docx",
     mimeType: "application/octet-stream",

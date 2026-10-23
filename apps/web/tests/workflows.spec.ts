@@ -85,7 +85,7 @@ test("creates a multilingual project and waits for background parsing", async ({
   });
   await expect(browseFiles).toBeVisible();
   await expect(
-    page.getByText("No file selected", { exact: true }),
+    page.getByText("Drop a file here", { exact: true }),
   ).toBeVisible();
   await browseFiles
     .locator("..")

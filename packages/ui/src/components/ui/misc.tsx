@@ -13,6 +13,7 @@ export function Dialog({
   initialFocus,
   returnFocus,
   children,
+  footer,
   className,
 }: {
   open: boolean;
@@ -23,6 +24,8 @@ export function Dialog({
   initialFocus?: React.RefObject<HTMLElement | null>;
   returnFocus?: () => HTMLElement | null;
   children: React.ReactNode;
+  /** Actions pinned below the scrolling body, so they stay reachable on small screens. */
+  footer?: React.ReactNode;
   className?: string;
 }) {
   const { t } = useI18n();
@@ -84,6 +87,11 @@ export function Dialog({
             </Primitive.Close>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</div>
+          {footer && (
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t px-4 py-3 sm:px-6">
+              {footer}
+            </div>
+          )}
         </Primitive.Content>
       </Primitive.Portal>
     </Primitive.Root>

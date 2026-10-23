@@ -317,25 +317,17 @@ const en = {
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
-  "createProject.projectAndLanguages": "Project & languages",
   "createProject.translationMode": "Translation method",
   "createProject.standardMode": "Standard",
   "createProject.precisionMode": "Three drafts + synthesis",
-  "createProject.standardHelp": "One initial translation, with polishing according to project settings.",
-  "createProject.precisionHelp": "Three independent drafts → one synthesis polish. The final text combines the drafts, rather than selecting one.",
-  "createProject.precisionCost": "Typically 4 model calls per batch, versus 2 for standard with polishing. Higher cost does not guarantee better quality.",
   "createProject.projectName": "Project name",
-  "createProject.forExampleEnglishTranslationOfAShort":
-    "For example: English translation of a short story",
   "createProject.sourceLanguage": "Source language",
   "createProject.targetLanguage": "Target language",
   "createProject.theSourceAndTargetLanguagesAreThe":
-    "The source and target languages are the same. Choose a different target language.",
+    "Source and target languages must differ.",
   "createProject.prepareSource": "Prepare before translating",
-  "createProject.prepareHelp":
-    "Analyze the book and build its glossary after upload (uses model tokens). Otherwise, preparation runs when translation starts.",
   "createProject.preparingSource":
-    "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
+    "Preparing the book and glossary…",
   "createProject.sourceRequired":
     "Choose a source file before creating the project.",
   "createProject.selectSourceAgain":
@@ -344,19 +336,15 @@ const en = {
     "The source file is empty. Choose a file with content.",
   "createProject.unsupportedFile": "This file format is not supported.",
   "createProject.serverDefault": "Use server default",
-  "createProject.projectCreatedChangingLanguagesOrSourceContent":
-    "Project created. Changing languages or source content after initialization requires a new project.",
-  "createProject.uploadStep": "Source file",
   "createProject.uploadSource": "Upload source",
   "createProject.browseFiles": "Browse files",
   "createProject.sourceDropZone": "Source file selection",
-  "createProject.dropFileHint": "Drag a source file here, or browse files.",
-  "createProject.releaseFile": "Release to select the source file.",
+  "createProject.dropFileHint": "Drop a file here",
+  "createProject.releaseFile": "Release to add the file",
   "createProject.singleFileOnly": "Choose one source file at a time.",
-  "createProject.noFileSelected": "No file selected",
   "createProject.uploading": "Uploading…",
   "createProject.parsingTheSourceAPreviewWillAppear":
-    "Parsing the source. A preview will appear when it is ready. You can leave this page and check project progress later.",
+    "Parsing the source…",
   "createProject.subtitleCues": "Subtitle cues: {count}",
   "createProject.chaptersParagraphs":
     "Chapters: {chapters} · Paragraphs: {count}",
@@ -514,7 +502,6 @@ const en = {
   "providerSettings.fastTier": "Fast tier",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
-  "createProject.precisionPolish": "Precision translation automatically enables polishing for this project, independently of global settings.",
   "settings.applyAutofixesToTheSavedTranslation":
     "Apply autofixes to the saved translation after review",
   "settings.paragraphAnnotationAlignment": "Paragraph annotation alignment",
@@ -606,8 +593,6 @@ const en = {
     "Conflicting terms: {count}. Choose how to handle them:",
   "export.filenameHelp":
     "Export filenames include the target language ({language}) and bilingual marker. Punctuation normalization only affects exported copies.",
-  "createProject.uploadHelp":
-    "Supported: {formats}. The file is uploaded when you create the project. Models and batch settings can be adjusted in project settings before translation.",
   "createProject.paragraphCount": "(paragraphs: {count})",
   "subtitles.pagination": "Page {page} / {pages} · Cues: {count}",
   "progress.reviewIssueCount": "Issues: {count}",
