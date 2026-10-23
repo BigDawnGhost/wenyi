@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 
 export function ContentsEditor({
   source,
@@ -60,11 +60,7 @@ export function ContentsEditor({
           {t("contents.editTitle")}
         </h2>
         <ErrorNotice error={save.error} />
-        {readOnly && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("contents.unavailable")}
-          </p>
-        )}
+        {readOnly && <ReadOnlyNotice />}
         {stale && (
           <div
             role="status"

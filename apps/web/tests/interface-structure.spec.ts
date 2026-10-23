@@ -140,7 +140,7 @@ test("progress keeps runtime and matching live progress visible while folding ad
   ).toBeVisible();
 });
 
-test("export history shows only five files with its retention notice", async ({
+test("export history shows only the latest five files", async ({
   page,
 }) => {
   await fakeApi(page, {
@@ -156,9 +156,6 @@ test("export history shows only five files with its retention notice", async ({
     })),
   });
   await page.goto(`/projects/${pid}/export`);
-  await expect(
-    page.getByText(/The server keeps the latest 5 completed exports/),
-  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Download", exact: true }),
   ).toHaveCount(5);

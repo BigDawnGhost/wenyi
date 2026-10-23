@@ -60,14 +60,7 @@ export default function ProofreadingPage() {
   }
   return (
     <>
-      <PageHeader
-        title={t("progress.manualProofreading")}
-        subtitle={t(
-          project.data?.initialized
-            ? "proofreading.savedBatchesRefresh"
-            : "proofreading.parsedSourceHelp",
-        )}
-      />
+      <PageHeader title={t("progress.manualProofreading")} />
       <PageContainer className="space-y-4">
         <ErrorNotice error={project.error || chapters.error} />
         <Card>

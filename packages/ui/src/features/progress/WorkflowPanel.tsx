@@ -76,13 +76,6 @@ export function WorkflowPanel({
               )}
             </div>
             <Disclosure title={tr("progress.workflowDetails")}>
-              <p className="text-xs text-muted-foreground mt-1">
-                {workflow?.source === "snapshot"
-                  ? tr("workflowPanel.thisIsTheWorkflowFromTheLatest")
-                  : tr(
-                      "workflowPanel.showingTheCurrentProjectConfigurationNoTask",
-                    )}
-              </p>
               <ol className="space-y-2">
                 {workflow.stages.map((stage, index) => (
                   <li
@@ -101,11 +94,6 @@ export function WorkflowPanel({
                   </li>
                 ))}
               </ol>
-              <p className="text-xs text-muted-foreground">
-                {tr(
-                  "workflowPanel.polishingRunsWithTranslationBatchesTheseCards",
-                )}
-              </p>
             </Disclosure>
           </>
         )}

@@ -29,6 +29,10 @@ for (const locale of ["en", "zh-CN"] as const) {
         [`/projects/${pid}/review`, t("common.wholeBookReview")],
         [`/projects/${pid}/events`, t("common.eventLog")],
         [`/projects/${pid}/settings`, t("common.projectSettings")],
+        [`/projects/${pid}/export`, t("export.exportTranslation")],
+        [`/projects/${pid}/style`, t("common.styleSynopsis")],
+        [`/projects/${pid}/contents`, t("contents.title")],
+        [`/projects/${pid}/proofreading`, t("progress.manualProofreading")],
       ];
       for (const [path, title] of routes) {
         await page.goto(path);
@@ -37,6 +41,7 @@ for (const locale of ["en", "zh-CN"] as const) {
           .toBeVisible();
         await expect(header.locator("p")).toHaveCount(0);
       }
+      await page.goto(`/projects/${pid}/settings`);
       const manageModels = page.getByRole("link", {
         name: t("settings.manageGlobalModels"),
         exact: true,

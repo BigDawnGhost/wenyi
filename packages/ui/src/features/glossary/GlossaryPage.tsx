@@ -10,7 +10,7 @@ import { Input, Textarea, Label } from "@/components/ui/form";
 import { Select, SelectItem } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ErrorNotice } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 import { Dialog } from "@/components/ui/misc";
 import {
   Plus,
@@ -245,11 +245,7 @@ export default function GlossaryPage() {
       />
       <PageContainer className="space-y-4">
         <ErrorNotice error={termsError || conflictsError} />
-        {busy && (
-          <p className="text-sm text-muted-foreground">
-            {tr("glossary.theGlossaryIsReadOnlyWhileA")}
-          </p>
-        )}
+        {busy && <ReadOnlyNotice />}
         <div className="flex flex-wrap items-center gap-2">
           <Input
             placeholder={tr(
@@ -918,9 +914,6 @@ function ImportDialog({
     >
       {step === "upload" && (
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            {tr("glossary.importTermsFromCsvOrJsonCsv")}
-          </p>
           <input
             ref={fileRef}
             type="file"

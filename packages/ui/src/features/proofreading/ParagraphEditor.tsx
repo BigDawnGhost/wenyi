@@ -7,7 +7,7 @@ import { useI18n } from "@/i18n";
 import { api, type ChapterSegments } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 import { RevisionHistory } from "./RevisionHistory";
 import { PrecisionDrafts } from "./PrecisionDrafts";
 
@@ -201,11 +201,7 @@ export function ParagraphEditor({
         <ErrorNotice
           error={save.error || (view === "history" ? history.error : undefined)}
         />
-        {readOnly && (
-          <p role="status" className="mb-4 text-sm text-muted-foreground">
-            {t("proofreading.pauseToEdit")}
-          </p>
-        )}
+        {readOnly && <ReadOnlyNotice className="mb-4" />}
         {stale && (
           <div
             role="status"

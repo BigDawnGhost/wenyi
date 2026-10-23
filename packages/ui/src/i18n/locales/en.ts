@@ -5,6 +5,9 @@ const en = {
   "runtime.loadingPage": "Loading page…",
   "runtime.pageFailed": "Unable to load this page.",
   "runtime.reload": "Reload",
+  "common.readOnlyWhileRunning": "Read-only while a task runs",
+  "subtitles.translatedCount": "{completed} / {total} cues",
+  "common.readOnlyUntilPrepared": "Read-only until AI preparation is complete",
   "common.untitledChapter": "Untitled chapter",
   "appLayout.wenyi": "Wenyi",
   "appLayout.projects": "Projects",
@@ -141,12 +144,8 @@ const en = {
   "export.saveAs": "Save as",
   "export.savedTo": "Saved to {path}",
   "export.exportTranslation": "Export translation",
-  "export.generateFilesFromSavedTranslationsIncludingSnapshots":
-    "Generate files from saved translations, including snapshots of work in progress.",
   "export.outputFormat": "Output format",
   "export.automatic": "Automatic",
-  "export.basedOnTheSourceFormatAndPdf":
-    "Based on the source format and PDF parser",
   "export.pdfExportEngine": "PDF export engine",
   "export.edition": "Edition",
   "export.monolingual": "Monolingual",
@@ -164,8 +163,6 @@ const en = {
   "export.size": "Size",
   "export.download": "Download",
   "export.noExportsYet": "No exports yet.",
-  "export.retentionHelp":
-    "The server keeps the latest 5 completed exports for this project. Download any files you want to keep.",
   "glossary.person": "Person",
   "glossary.appellation": "Appellation",
   "glossary.honorific": "Honorific",
@@ -180,8 +177,6 @@ const en = {
   "glossary.jsonFile": "JSON file",
   "glossary.import": "Import",
   "glossary.addTerm": "Add term",
-  "glossary.theGlossaryIsReadOnlyWhileA":
-    "The glossary is read-only while a project task is running.",
   "glossary.searchSourceTermsTranslationsOrAliases":
     "Search terms, translations, aliases or notes…",
   "glossary.searchWithReadings":
@@ -196,7 +191,7 @@ const en = {
   "glossary.editTerm": "Edit term",
   "glossary.deleteTerm": "Delete term",
   "glossary.noTermsYetTermsAreExtractedDuring":
-    "No terms yet. Terms are extracted during translation.",
+    "No terms yet",
   "glossary.current": "Current:",
   "glossary.aiSuggestion": "AI suggestion:",
   "glossary.keepCurrent": "Keep current",
@@ -227,8 +222,6 @@ const en = {
   "glossary.importedTerms": "Imported terms: {count}",
   "glossary.couldNotImportTerms": "Could not import terms: {error}",
   "glossary.importTerms": "Import terms",
-  "glossary.importTermsFromCsvOrJsonCsv":
-    "Import terms from CSV or JSON. CSV files must include source and target column headers.",
   "glossary.chooseFile": "Choose file",
   "glossary.imported": "Imported:",
   "glossary.overwrite": "Overwrite",
@@ -282,8 +275,6 @@ const en = {
   "accounting.unclassifiedTokens": "Unclassified tokens",
   "accounting.noBreakdown": "No usage breakdown recorded yet.",
   "accounting.runHistory": "Run history",
-  "accounting.timeHelp":
-    "Run time updates every second, including waits and I/O. Totals are saved when a run finishes or stops; pauses between runs are excluded.",
   "accounting.noRuns": "No runs recorded yet.",
   "accounting.showAllRuns": "Show all {count} runs",
   "accounting.showRecentRuns": "Show recent runs",
@@ -308,15 +299,9 @@ const en = {
   "workflowPanel.notStarted": "Not started",
   "common.queued": "Queued",
   "workflowPanel.currentWorkflow": "Current workflow",
-  "workflowPanel.thisIsTheWorkflowFromTheLatest":
-    "This is the workflow from the latest task. Configuration changes apply when you start or resume a task.",
-  "workflowPanel.showingTheCurrentProjectConfigurationNoTask":
-    "Showing the current project configuration. No task has been submitted yet.",
   "workflowPanel.disabled": "Disabled",
   "workflowPanel.latestStage": "Latest stage:",
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
-  "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
-    "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
   "createProject.translationMode": "Translation method",
   "createProject.standardMode": "Standard",
   "createProject.precisionMode": "Three drafts + synthesis",
@@ -357,11 +342,11 @@ const en = {
   "review.results": "Review results",
   "review.previousResults": "Previously saved results",
   "review.generating": "Results are still being generated.",
-  "review.incomplete": "Review is unfinished. Saved findings are shown below.",
+  "review.incomplete": "Unfinished; showing saved findings",
   "review.noIssues": "No issues found",
   "review.waitingProgress": "Waiting for review progress",
   "review.waitingTask":
-    "A project task is in progress. Review starts after translation is ready.",
+    "Waiting for the current task",
   "review.stageProgress": "Current stage progress",
   "review.taskElapsed": "Task elapsed",
   "review.lastUpdate": "Last update",
@@ -377,8 +362,6 @@ const en = {
   "review.itemPublication": "Automatic revision",
   "review.currentTexts": "Current source & translation",
   "review.suggestedTranslation": "Suggested translation",
-  "review.suggestionOnly":
-    "This is a recommendation. Publication is recorded separately below when available.",
   "review.beforeRevision": "Before revision",
   "review.proposedText": "Proposed text",
   "review.writtenTranslation": "Written-back translation",
@@ -411,14 +394,8 @@ const en = {
   "review.typeOther": "Review issue",
   "review.wholeBookReviewSubmitted": "Whole-book review submitted",
   "review.runWholeBookReview": "Run whole-book review",
-  "review.wholeBookReviewIsAvailableOnceAll":
-    "Whole-book review is available once all chapters are translated.",
   "review.noReviewYet": "No review yet",
-  "proofreading.savedBatchesRefresh":
-    "Saved paragraphs refresh every 3 seconds, including unfinished chapters.",
   "proofreading.savedParagraphs": "{done} / {total} paragraphs saved",
-  "proofreading.parsedSourceHelp":
-    "Read-only source preview. AI preparation is not complete; title and translation editing will be available after preparation.",
   "contents.readSource": "Read source",
   "contents.readContentsSource": "Read contents & source",
   "proofreading.waitingForTranslation": "Waiting for translation",
@@ -434,7 +411,7 @@ const en = {
   "proofreading.precisionExplanation": "The final translation synthesizes and polishes all three drafts; it is not a selection of one draft. These archived drafts are read-only.",
   "proofreading.archivedSynthesis": "Archived synthesized and polished translation",
   "proofreading.currentTranslation": "Current official translation",
-  "proofreading.currentDiffers": "The current translation differs from the archived synthesis; it may have been edited manually or by Review.",
+  "proofreading.currentDiffers": "Differs from the archived synthesis",
   "proofreading.precisionUnavailable.no_archive": "No precision drafts are archived for this paragraph. Standard translations and older projects may not have three drafts.",
   "proofreading.precisionUnavailable.incomplete": "The precision draft archive is incomplete. Three drafts cannot be shown.",
   "proofreading.precisionUnavailable.source_mismatch": "The archived source does not match this paragraph. Drafts cannot be shown safely.",
@@ -465,7 +442,7 @@ const en = {
   "proofreading.diffAdded": "Added",
   "proofreading.diffUnchanged": "No text changes.",
   "proofreading.diffTooLarge":
-    "This comparison is too large or complex for inline highlighting. Showing full texts instead.",
+    "Too large to highlight; showing full texts",
   "proofreading.initialCurrentComparison": "Initial translation → current version",
   "proofreading.initialCurrentNotice":
     "No separate polishing revision is recorded. The current version may include later manual edits or automatic fixes.",
@@ -508,8 +485,6 @@ const en = {
   "settings.projectSettingsSaved": "Project settings saved",
   "settings.configurationIsValidButNotSavedYet":
     "Configuration is valid but not saved yet",
-  "settings.settingsAreReadOnlyWhileATask":
-    "Settings are read-only while a task runs. Pause and save a checkpoint before editing.",
   "settings.advancedYamlHasUnvalidatedChangesValidateIt":
     "Advanced YAML has unvalidated changes. Validate it to update the form.",
   "settings.tokensPerBatch": "Tokens per batch",
@@ -530,10 +505,6 @@ const en = {
   "settings.custom": "Custom",
   "settings.fullRouteParameters": "Full route parameters",
   "style.saved": "Saved",
-  "style.preparationResultsCanBeEditedToGuide":
-    "Preparation results can be edited to guide subsequent translation.",
-  "style.styleAndSynopsisAreReadOnlyWhile":
-    "Style and synopsis are read-only while a task runs.",
   "style.styleAnalysis": "Style analysis",
   "style.characters": "Characters",
   "style.bookSynopsis": "Book synopsis",
@@ -552,16 +523,14 @@ const en = {
   "style.description": "Description",
   "style.firstAppearance": "First appearance",
   "style.noCharacterDataYetEnableStyleAnalysis":
-    "No character data yet. Enable style analysis and complete preparation.",
+    "No characters yet",
   "style.wholeBookSynopsis": "Whole-book synopsis",
   "style.noChapterSummariesYetEnableBookUnderstanding":
-    "No chapter summaries yet. Enable book understanding.",
+    "No chapter summaries yet",
   "style.chapterSummarySaved": "Chapter summary saved",
   "style.clickToAddASummary": "Click to add a summary",
   "style.chapterSummary": "Chapter {chapter} summary",
   "style.saveSummary": "Save summary",
-  "subtitles.translatedCuesOriginalIdsAndTimestampsAre":
-    "Translated {completed} / {total} cues; original IDs and timestamps are preserved",
   "subtitles.exportSrt": "Export SRT",
   "subtitles.aSubtitleTaskIsRunningContentRefreshes":
     "A subtitle task is running. Content refreshes automatically. Pause the task before editing translations.",
@@ -591,8 +560,6 @@ const en = {
   "glossary.conflictCount": "Open conflicts ({count})",
   "glossary.importConflictCount":
     "Conflicting terms: {count}. Choose how to handle them:",
-  "export.filenameHelp":
-    "Export filenames include the target language ({language}) and bilingual marker. Punctuation normalization only affects exported copies.",
   "createProject.paragraphCount": "(paragraphs: {count})",
   "subtitles.pagination": "Page {page} / {pages} · Cues: {count}",
   "progress.reviewIssueCount": "Issues: {count}",
@@ -662,13 +629,8 @@ const en = {
   "contents.notTranslated": "No translation yet",
   "contents.noEntries": "No matching entries.",
   "contents.search": "Search original or translated titles",
-  "contents.unavailable":
-    "Titles are read-only while a task is running or project data is unavailable.",
   "contents.changedWhileEditing":
     "This title has changed. Your draft is preserved; load the latest version before saving.",
-  "contents.help":
-    "Saved titles update the chapter list and linked EPUB contents for future exports. Edit body headings separately in proofreading.",
-  "contents.pauseToEdit": "Pause the project to edit titles.",
   "contents.loadLatest": "Load latest title",
   "contents.saved": "Title saved",
   "modelList.fetch": "Fetch models",

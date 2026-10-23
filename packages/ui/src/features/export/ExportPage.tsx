@@ -108,12 +108,7 @@ export default function ExportPage() {
 
   return (
     <>
-      <PageHeader
-        title={tr("export.exportTranslation")}
-        subtitle={tr(
-          "export.generateFilesFromSavedTranslationsIncludingSnapshots",
-        )}
-      />
+      <PageHeader title={tr("export.exportTranslation")} />
       <PageContainer className="space-y-4 max-w-4xl">
         <ErrorNotice
           error={
@@ -139,10 +134,7 @@ export default function ExportPage() {
                       !fmt && "border-muted-foreground bg-accent",
                     )}
                   >
-                    <strong>{tr("export.automatic")}</strong>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {tr("export.basedOnTheSourceFormatAndPdf")}
-                    </p>
+                    {tr("export.automatic")}
                   </button>
                 )}
                 {formats.map((f) => (
@@ -296,18 +288,10 @@ export default function ExportPage() {
                 ? tr("common.submitting")
                 : tr("export.generateExport")}
             </Button>
-            <p className="text-xs text-muted-foreground">
-              {tr("export.filenameHelp", {
-                language: project?.target_lang || "—",
-              })}
-            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-0 overflow-x-auto">
-            <p className="px-3 py-4 text-sm text-muted-foreground">
-              {tr("export.retentionHelp")}
-            </p>
             <table className="w-full text-sm">
               <thead className="border-b text-xs text-muted-foreground">
                 <tr>

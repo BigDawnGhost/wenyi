@@ -229,7 +229,7 @@ test("large comparisons fall back to complete texts without blocking the editor"
   const before = "原译文".repeat(4000);
   const after = "新译文".repeat(4000);
   const dialog = await openHistory(page, before, after);
-  await expect(dialog.getByText(/too large or complex/)).toBeVisible();
+  await expect(dialog.getByText("Too large to highlight; showing full texts", { exact: true })).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "Full texts", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -253,7 +253,7 @@ test("high-edit comparisons below the size limit also fall back safely", async (
   const before = "甲 ".repeat(500);
   const after = "乙 ".repeat(500);
   const dialog = await openHistory(page, before, after);
-  await expect(dialog.getByText(/too large or complex/)).toBeVisible();
+  await expect(dialog.getByText("Too large to highlight; showing full texts", { exact: true })).toBeVisible();
   const panels = dialog.getByTestId("translation-diff").locator("section p");
   expect(await panels.nth(0).textContent()).toBe(before);
   expect(await panels.nth(1).textContent()).toBe(after);

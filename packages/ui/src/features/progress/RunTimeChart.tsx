@@ -36,9 +36,6 @@ export default function RunTimeChart({
           {t("review.runCount", { count: runs.length })}
         </span>
       </div>
-      <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
-        {t("accounting.timeHelp")}
-      </p>
       {runs.length ? (
         <ol
           aria-label={t("accounting.runHistory")}

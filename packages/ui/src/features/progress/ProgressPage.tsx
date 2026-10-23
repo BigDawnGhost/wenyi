@@ -199,11 +199,6 @@ export default function ProgressPage() {
             >
               {tr("contents.readContentsSource")}
             </Link>
-            {!project?.initialized && (
-              <p className="text-sm text-muted-foreground">
-                {tr("proofreading.parsedSourceHelp")}
-              </p>
-            )}
           </div>
         )}
         {!subtitle && (

@@ -8,7 +8,7 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 
 const styleFields = [
@@ -94,17 +94,10 @@ export default function StylePage() {
 
   return (
     <>
-      <PageHeader
-        title={tr("common.styleSynopsis")}
-        subtitle={tr("style.preparationResultsCanBeEditedToGuide")}
-      />
+      <PageHeader title={tr("common.styleSynopsis")} />
       <PageContainer>
         <ErrorNotice error={error || save.error} />
-        {busy && (
-          <p className="text-sm text-muted-foreground mb-4">
-            {tr("style.styleAndSynopsisAreReadOnlyWhile")}
-          </p>
-        )}
+        {busy && <ReadOnlyNotice className="mb-4" />}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="flex w-fit max-w-full flex-wrap [&_button]:whitespace-nowrap">
             <TabsTrigger value="style">{tr("style.styleAnalysis")}</TabsTrigger>
