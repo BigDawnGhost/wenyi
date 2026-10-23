@@ -176,33 +176,7 @@ export default function ExportPage() {
               </label>
             </fieldset>
             {!subtitle && (
-              <Disclosure
-                title={tr("export.advanced")}
-                error={create.error}
-                summary={[
-                  bilingual
-                    ? tr(
-                        order === "target_first"
-                          ? "export.translationFirst"
-                          : "export.sourceFirst",
-                      )
-                    : "",
-                  tr("export.aboutSummary", {
-                    value: tr(about ? "data.yes" : "data.no"),
-                  }),
-                  bilingual
-                    ? tr("export.styleSummary", {
-                        value: tr(preserveStyle ? "data.yes" : "data.no"),
-                      })
-                    : "",
-                  tr("export.punctuationSummary", {
-                    value: tr(punctuation ? "data.yes" : "data.no"),
-                  }),
-                  fmt === "pdf" ? pdfBackend || tr("export.automatic") : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              >
+              <Disclosure title={tr("export.advanced")} error={create.error}>
                 <label className="flex gap-2 items-center text-sm">
                   <input
                     type="checkbox"

@@ -190,7 +190,8 @@ test("folded export options preserve edits and reveal controls after a validatio
   await page.getByLabel("Normalize punctuation on export").uncheck();
   await page.getByLabel("Include an “About this translation” page").uncheck();
   await advanced.click();
-  await expect(advanced).toContainText("Source first");
+  // The folded section shows only its title; edits are verified through the submission.
+  await expect(advanced).toHaveText("Layout and advanced options");
   await page
     .getByRole("button", { name: "Generate export", exact: true })
     .click();
