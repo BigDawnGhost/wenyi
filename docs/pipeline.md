@@ -12,7 +12,7 @@ flowchart TD
     B --> BV["Read-only source and table of contents"]
     B --> BL["AI language detection"]
     BL --> C["Optional parallel chapter prescan and digests"]
-    C --> D[Analyze style and seed the glossary]
+    C --> D["Analyze style and character voices"]
     D --> DS[Optional whole-book synopsis]
     DS --> E
 
@@ -70,7 +70,7 @@ Alignment retries retain the reference. Single-paragraph fallback uses that para
 
 ## Glossary
 
-The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. Every body-translation batch receives the full current glossary, including entries absent from the current chapter. Fresh Reviewer requests share the complete final glossary snapshot across chapters and workers. Entries retain insertion order, and new entries append at the end to preserve stable prompt prefixes. After extraction changes the glossary, translation refreshes its snapshot before the next pending batch; completed batches keep their saved targets. If interruption occurs after targets are saved but before extraction is checkpointed, resume completes extraction before translating the next batch. Checkpointed batches skip both translation and extraction.
+Preparation analyzes style and character voices without proposing name translations or extracting glossary entries. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. Existing project terms, including imports and earlier automatically seeded entries, remain unchanged by preparation on resume. Without imported terms, the first body-translation batch starts with an empty glossary: this avoids locking in sample-based guesses, but gives that batch no predefined terminology mappings. Every body-translation batch receives the full current glossary, including entries absent from the current chapter. Fresh Reviewer requests share the complete final glossary snapshot across chapters and workers. Entries retain insertion order, and new entries append at the end to preserve stable prompt prefixes. After extraction changes the glossary, translation refreshes its snapshot before the next pending batch; completed batches keep their saved targets. If interruption occurs after targets are saved but before extraction is checkpointed, resume completes extraction before translating the next batch. Checkpointed batches skip both translation and extraction.
 
 The glossary owns character name mappings. The style brief retains source identities,
 gender, and descriptive character notes, but does not repeat translated names from the
@@ -79,7 +79,7 @@ are preserved verbatim, so outdated names embedded in that prose still require m
 This reduces conflicting structured guidance without rewriting completed translations.
 
 Glossary `reading` is Japanese source metadata, not a target-language transliteration.
-Analysis and extraction prompts require copying only kana explicitly provided for the term
+Extraction prompts require copying only kana explicitly provided for the term
 in the original, such as furigana or a reading explanation, and leaving the field empty
 without that evidence.
 Japanese-source projects retain this field regardless of the translation language.

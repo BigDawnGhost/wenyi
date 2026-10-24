@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.languages import normalize_language
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -108,6 +110,60 @@ def test_chapter_prescan_finishes_before_style_analysis(tmp_path, entry_point, b
         assert chapter_calls == []
         assert "synopsis.book" not in operations
     assert store.exists()
+
+
+@pytest.mark.parametrize("entry_point", ["prepare", "prepare_for_translation"])
+@pytest.mark.parametrize("book_understanding", [False, True])
+def test_preparation_does_not_seed_glossary(tmp_path, entry_point, book_understanding):
+    source, config, store = _preparation_inputs(tmp_path, book_understanding)
+
+    def handler(messages, tier, json_mode):
+        if "pre-translation analyst" in messages[0]["content"]:
+            return json.dumps(
+                {
+                    "style_guide": "Keep a restrained voice.",
+                    "characters": [
+                        {
+                            "source": "綾小路",
+                            "target": "Suggested name",
+                            "reading": "あやのこうじ",
+                            "gender": "male",
+                            "note": "Speaks tersely.",
+                        }
+                    ],
+                    "terms": [{"source": "学校", "target": "School", "type": "place"}],
+                }
+            )
+        return routing_handler(messages, tier, json_mode)
+
+    client = FakeClient(handler=handler)
+    getattr(Orchestrator(config, client=client, storage=store), entry_point)(str(source))
+    assert store.all_terms() == []
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["style_guide"] == "Keep a restrained voice."
+    assert analysis["characters"] == [
+        {"source": "綾小路", "gender": "male", "note": "Speaks tersely."}
+    ]
+    assert "terms" not in analysis
+    assert not any(call["operation"].startswith("glossary.") for call in client.calls)
+    assert all(
+        segment.target is None
+        for row in store.load_manifest()["chapters"]
+        for segment in store.load_chapter(row["index"]).segments
+    )
+
+    # Glossary imports into initialized projects remain intact on repeated preparation.
+    store.upsert_term(
+        GlossaryTerm(
+            source="綾小路", target="Custom name", reading="Manual reading", note="Imported"
+        )
+    )
+    original_terms = store.all_terms()
+    resumed_client = FakeClient(handler=handler)
+    getattr(Orchestrator(config, client=resumed_client, storage=store), entry_point)(str(source))
+    assert store.all_terms() == original_terms
+    assert resumed_client.calls == []
 
 
 def test_synopsis_interrupt_resumes_without_repeating_prescan_or_style(tmp_path):

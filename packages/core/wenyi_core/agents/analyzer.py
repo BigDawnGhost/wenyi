@@ -1,16 +1,13 @@
 """Global analysis agent using the strong tier.
-Read sample chapters to produce a style guide, character reference with gender and voice,
-and initial term candidates. Seed characters and terms into the glossary as a consistent
-reference for the book.
+Read sample chapters to produce a style guide and character references with gender and
+voice. Name mappings and terminology extraction belong to the translation glossary workflow.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
-from ..i18n.metadata import normalize_gender, normalize_term_type
-from ..storage.protocol import Storage
+from ..i18n.metadata import normalize_gender
 from .base import Agent
 
 
@@ -27,7 +24,7 @@ class Analyzer(Agent):
     policy_phase = "analysis"
 
     def analyze(self, sample_text: str) -> dict[str, Any]:
-        """Analyze samples and return type-checked style, character and terminology data."""
+        """Analyze samples and return type-checked style and character guidance."""
         system = self.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = self.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
@@ -55,60 +52,13 @@ class Analyzer(Agent):
         data["characters"] = self.dict_items(
             data.get("characters"), operation="analysis.style", field="characters"
         )
-        data["terms"] = self.dict_items(
-            data.get("terms"), operation="analysis.style", field="terms"
-        )
+        # Ignore unsolicited glossary candidates, including fields from the former schema.
+        data.pop("terms", None)
         for character in data["characters"]:
             character["gender"] = normalize_gender(_text(character.get("gender")))
-            if self.src != "ja":
-                character.pop("reading", None)
-        for term in data["terms"]:
-            term["type"] = normalize_term_type(_text(term.get("type")))
-            if self.src != "ja":
-                term.pop("reading", None)
+            character.pop("target", None)
+            character.pop("reading", None)
         return data
-
-    def seed_glossary(self, store: Storage | GlossaryStore, analysis: dict[str, Any]) -> int:
-        """Seed analyzed characters and terms into the glossary; return the entry count."""
-        count = 0
-        for ch in self.dict_items(
-            analysis.get("characters"), operation="analysis.style", field="characters"
-        ):
-            source = _text(ch.get("source"))
-            target = _text(ch.get("target"))
-            if not source or not target:
-                continue
-            store.upsert_term(
-                GlossaryTerm(
-                    source=source,
-                    target=target,
-                    reading=_text(ch.get("reading")) if self.src == "ja" else "",
-                    type=TYPE_PERSON,
-                    gender=_text(ch.get("gender")),
-                    note=_text(ch.get("note")),
-                    first_chapter=0,
-                ),
-                chapter=0,
-            )
-            count += 1
-        for tm in self.dict_items(analysis.get("terms"), operation="analysis.style", field="terms"):
-            source = _text(tm.get("source"))
-            target = _text(tm.get("target"))
-            if not source or not target:
-                continue
-            store.upsert_term(
-                GlossaryTerm(
-                    source=source,
-                    target=target,
-                    reading=_text(tm.get("reading")) if self.src == "ja" else "",
-                    type=normalize_term_type(_text(tm.get("type"))),
-                    note=_text(tm.get("note")),
-                    first_chapter=0,
-                ),
-                chapter=0,
-            )
-            count += 1
-        return count
 
     def style_brief(self, analysis: dict[str, Any]) -> str:
         """Condense style and character guidance; name mappings belong to the glossary."""
