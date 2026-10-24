@@ -149,6 +149,7 @@ llm:
 | `gemini` | 原生 Gemini API；未指定自定义变量时，从 `GEMINI_API_KEY` 回退到 `GOOGLE_API_KEY` | `thinking_level` 或 `thinking_budget`、`temperature`、`extra_body` |
 | `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`；`ORCAROUTER_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
+| `cheaperinference` | `https://api.cheaperinference.com/v1`；`CHEAPER_INFERENCE_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
 | `ollama`、`vllm` | `http://localhost:11434/v1`、`http://localhost:8000/v1`；可选密钥；`reasoning_style` | 同 `openai-compatible` |
 | `fake` | 无网络、无需密钥 | 无提供商选项 |
 
