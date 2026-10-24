@@ -108,12 +108,7 @@ export default function ExportPage() {
 
   return (
     <>
-      <PageHeader
-        title={tr("export.exportTranslation")}
-        subtitle={tr(
-          "export.generateFilesFromSavedTranslationsIncludingSnapshots",
-        )}
-      />
+      <PageHeader title={tr("export.exportTranslation")} />
       <PageContainer className="space-y-4 max-w-4xl">
         <ErrorNotice
           error={
@@ -139,10 +134,7 @@ export default function ExportPage() {
                       !fmt && "border-muted-foreground bg-accent",
                     )}
                   >
-                    <strong>{tr("export.automatic")}</strong>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {tr("export.basedOnTheSourceFormatAndPdf")}
-                    </p>
+                    {tr("export.automatic")}
                   </button>
                 )}
                 {formats.map((f) => (
@@ -184,33 +176,7 @@ export default function ExportPage() {
               </label>
             </fieldset>
             {!subtitle && (
-              <Disclosure
-                title={tr("export.advanced")}
-                error={create.error}
-                summary={[
-                  bilingual
-                    ? tr(
-                        order === "target_first"
-                          ? "export.translationFirst"
-                          : "export.sourceFirst",
-                      )
-                    : "",
-                  tr("export.aboutSummary", {
-                    value: tr(about ? "data.yes" : "data.no"),
-                  }),
-                  bilingual
-                    ? tr("export.styleSummary", {
-                        value: tr(preserveStyle ? "data.yes" : "data.no"),
-                      })
-                    : "",
-                  tr("export.punctuationSummary", {
-                    value: tr(punctuation ? "data.yes" : "data.no"),
-                  }),
-                  fmt === "pdf" ? pdfBackend || tr("export.automatic") : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              >
+              <Disclosure title={tr("export.advanced")} error={create.error}>
                 <label className="flex gap-2 items-center text-sm">
                   <input
                     type="checkbox"
@@ -296,11 +262,6 @@ export default function ExportPage() {
                 ? tr("common.submitting")
                 : tr("export.generateExport")}
             </Button>
-            <p className="text-xs text-muted-foreground">
-              {tr("export.filenameHelp", {
-                language: project?.target_lang || "—",
-              })}
-            </p>
           </CardContent>
         </Card>
         <Card>

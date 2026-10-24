@@ -6,6 +6,9 @@ const zhCN = {
   "runtime.loadingPage": "正在加载页面…",
   "runtime.pageFailed": "无法加载此页面。",
   "runtime.reload": "重新加载",
+  "common.readOnlyWhileRunning": "任务运行中，暂为只读",
+  "subtitles.translatedCount": "{completed} / {total} 条",
+  "common.readOnlyUntilPrepared": "AI 预处理尚未完成，暂为只读",
   "common.untitledChapter": "未命名章节",
   "appLayout.wenyi": "文译",
   "appLayout.projects": "项目列表",
@@ -140,11 +143,8 @@ const zhCN = {
   "export.saveAs": "另存为",
   "export.savedTo": "已保存到 {path}",
   "export.exportTranslation": "导出译文",
-  "export.generateFilesFromSavedTranslationsIncludingSnapshots":
-    "从已保存译文生成文件；执行中的翻译可同时导出已保存快照",
   "export.outputFormat": "输出格式",
   "export.automatic": "自动选择",
-  "export.basedOnTheSourceFormatAndPdf": "依据原文格式和 PDF 解析后端",
   "export.pdfExportEngine": "PDF 导出引擎",
   "export.edition": "版本",
   "export.monolingual": "单语版",
@@ -160,8 +160,7 @@ const zhCN = {
   "export.size": "大小",
   "export.download": "下载",
   "export.noExportsYet": "尚无导出文件。",
-  "export.retentionHelp":
-    "服务端仅保留此项目最近完成的 5 份导出文件，需要长期保留的文件请下载。",
+  "export.retentionHelp": "仅保留最近 5 份导出文件，请及时保存到其他位置。",
   "glossary.person": "人物",
   "glossary.appellation": "称谓",
   "glossary.honorific": "敬称",
@@ -176,7 +175,6 @@ const zhCN = {
   "glossary.jsonFile": "JSON 文件",
   "glossary.import": "导入",
   "glossary.addTerm": "添加术语",
-  "glossary.theGlossaryIsReadOnlyWhileA": "项目任务执行中，术语修改暂时只读。",
   "glossary.searchSourceTermsTranslationsOrAliases": "搜索源词 / 译词 / 别名 / 备注…",
   "glossary.searchWithReadings": "搜索源词 / 译词 / 别名 / 读音 / 备注…",
   "glossary.allTypes": "全部类型",
@@ -189,7 +187,7 @@ const zhCN = {
   "glossary.editTerm": "编辑术语",
   "glossary.deleteTerm": "删除术语",
   "glossary.noTermsYetTermsAreExtractedDuring":
-    "暂无术语。翻译过程中会自动提取。",
+    "暂无术语",
   "glossary.current": "当前：",
   "glossary.aiSuggestion": "AI 提议：",
   "glossary.keepCurrent": "采纳当前",
@@ -220,7 +218,7 @@ const zhCN = {
   "glossary.couldNotImportTerms": "导入失败：{error}",
   "glossary.importTerms": "导入术语",
   "glossary.importTermsFromCsvOrJsonCsv":
-    "选择 CSV 或 JSON 文件导入术语。CSV 需包含 source, target 等列头。",
+    "CSV / JSON；CSV 需包含 source、target 列头。",
   "glossary.chooseFile": "选择文件",
   "glossary.imported": "导入：",
   "glossary.overwrite": "覆盖",
@@ -273,8 +271,6 @@ const zhCN = {
   "accounting.unclassifiedTokens": "未分类 Token",
   "accounting.noBreakdown": "暂无用量分组记录。",
   "accounting.runHistory": "运行记录",
-  "accounting.timeHelp":
-    "运行用时每秒更新，包含等待与读写；结束或停止时保存累计用时，两次运行之间的暂停时间不计入。",
   "accounting.noRuns": "暂无运行记录。",
   "accounting.showAllRuns": "查看全部 {count} 次运行",
   "accounting.showRecentRuns": "只看最近运行",
@@ -299,15 +295,9 @@ const zhCN = {
   "workflowPanel.notStarted": "尚未开始",
   "common.queued": "排队中",
   "workflowPanel.currentWorkflow": "当前翻译流程",
-  "workflowPanel.thisIsTheWorkflowFromTheLatest":
-    "显示最近一次任务提交时的流程。修改项目配置会在下次启动或恢复任务时生效。",
-  "workflowPanel.showingTheCurrentProjectConfigurationNoTask":
-    "显示当前项目配置，尚未提交任务。",
   "workflowPanel.disabled": "已关闭",
   "workflowPanel.latestStage": "最近步骤：",
   "workflowPanel.waitingForProgressUpdates": "等待后台上报进度",
-  "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
-    "润色随翻译批次执行；以上步骤表示流程配置，完成情况以任务状态及最近步骤为准。导出任务在导出页单独查看。",
   "createProject.translationMode": "翻译方式",
   "createProject.standardMode": "标准翻译",
   "createProject.precisionMode": "三译合润",
@@ -344,10 +334,10 @@ const zhCN = {
   "review.results": "审校结果",
   "review.previousResults": "此前保存的结果",
   "review.generating": "审校进行中，结果尚未生成。",
-  "review.incomplete": "审校尚未完成，以下为已保存的结果。",
+  "review.incomplete": "未完成，以下为已保存的结果",
   "review.noIssues": "未发现问题",
   "review.waitingProgress": "等待审校进度上报",
-  "review.waitingTask": "项目任务正在执行，译文准备就绪后才能进行审校。",
+  "review.waitingTask": "等待当前任务完成",
   "review.stageProgress": "本阶段进度",
   "review.taskElapsed": "本次任务用时",
   "review.lastUpdate": "最近更新",
@@ -363,7 +353,6 @@ const zhCN = {
   "review.itemPublication": "自动修订",
   "review.currentTexts": "当前原文与正式译文",
   "review.suggestedTranslation": "建议译文",
-  "review.suggestionOnly": "此处是审校建议，实际写回情况以本条的写回记录为准。",
   "review.beforeRevision": "修改前",
   "review.proposedText": "拟修改译文",
   "review.writtenTranslation": "已写回的译文",
@@ -394,14 +383,9 @@ const zhCN = {
   "review.typeOther": "审校问题",
   "review.wholeBookReviewSubmitted": "全书审校已提交",
   "review.runWholeBookReview": "运行全书审校",
-  "review.wholeBookReviewIsAvailableOnceAll":
-    "所有章节翻译完成后可运行全书审校。",
+  "review.wholeBookReviewIsAvailableOnceAll": "完成全部章节翻译后可审校。",
   "review.noReviewYet": "尚未审校",
-  "proofreading.savedBatchesRefresh":
-    "每 3 秒更新已落盘的段落，无需等待整章翻译完成。",
   "proofreading.savedParagraphs": "已保存 {done} / {total} 段",
-  "proofreading.parsedSourceHelp":
-    "原文只读预览。AI 预处理尚未完成；完成预处理后才可编辑标题和译文。",
   "contents.readSource": "查看原文",
   "contents.readContentsSource": "查看目录与原文",
   "proofreading.waitingForTranslation": "等待译文落盘",
@@ -417,7 +401,7 @@ const zhCN = {
   "proofreading.precisionExplanation": "最终译文是三稿综合润色，不是选择某一稿。归档初稿仅供只读查看。",
   "proofreading.archivedSynthesis": "归档综合润色结果",
   "proofreading.currentTranslation": "当前正式译文",
-  "proofreading.currentDiffers": "当前正式译文与归档综合结果不同，可能已由人工或 Review 修改。",
+  "proofreading.currentDiffers": "与存档的综合译文不同",
   "proofreading.precisionUnavailable.no_archive": "本段没有精翻初稿归档。标准翻译及旧版本项目可能没有三份初稿。",
   "proofreading.precisionUnavailable.incomplete": "精翻初稿归档不完整，无法展示三稿。",
   "proofreading.precisionUnavailable.source_mismatch": "归档原文与当前段落不匹配，无法安全展示初稿。",
@@ -447,7 +431,7 @@ const zhCN = {
   "proofreading.diffAdded": "新增",
   "proofreading.diffUnchanged": "文本未发生变化。",
   "proofreading.diffTooLarge":
-    "本次对比的文本过长或改动过多，已改为显示前后全文。",
+    "差异过大，无法高亮，已显示全文",
   "proofreading.initialCurrentComparison": "初译 → 当前版本",
   "proofreading.initialCurrentNotice":
     "未记录独立的润色版本；当前版本可能包含后续人工修改或自动修复。",
@@ -488,8 +472,6 @@ const zhCN = {
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
   "settings.projectSettingsSaved": "项目配置已保存",
   "settings.configurationIsValidButNotSavedYet": "配置有效，尚未保存",
-  "settings.settingsAreReadOnlyWhileATask":
-    "项目任务正在执行，配置暂时只读。暂停并保存检查点后可修改。",
   "settings.advancedYamlHasUnvalidatedChangesValidateIt":
     "高级 YAML 有未校验的修改。点击“校验配置”后同步到表单。",
   "settings.tokensPerBatch": "每批 Token 预算",
@@ -510,9 +492,6 @@ const zhCN = {
   "settings.custom": "自定义",
   "settings.fullRouteParameters": "完整路由参数",
   "style.saved": "已保存",
-  "style.preparationResultsCanBeEditedToGuide":
-    "翻译前准备的产物，可编辑以影响后续翻译",
-  "style.styleAndSynopsisAreReadOnlyWhile": "任务执行中，风格与概要暂时只读。",
   "style.styleAnalysis": "风格分析",
   "style.characters": "角色列表",
   "style.bookSynopsis": "书籍概要",
@@ -531,16 +510,14 @@ const zhCN = {
   "style.description": "描述",
   "style.firstAppearance": "首次出场",
   "style.noCharacterDataYetEnableStyleAnalysis":
-    "尚无角色数据（需开启风格分析并完成准备阶段）。",
+    "暂无角色",
   "style.wholeBookSynopsis": "全书概要",
   "style.noChapterSummariesYetEnableBookUnderstanding":
-    "尚无章节摘要（需开启书籍预理解）。",
+    "暂无章节摘要",
   "style.chapterSummarySaved": "章节摘要已保存",
   "style.clickToAddASummary": "点击添加摘要",
   "style.chapterSummary": "第 {chapter} 章摘要",
   "style.saveSummary": "保存摘要",
-  "subtitles.translatedCuesOriginalIdsAndTimestampsAre":
-    "已翻译 {completed} / {total} 条；保留原始序号和时间轴",
   "subtitles.exportSrt": "导出 SRT",
   "subtitles.aSubtitleTaskIsRunningContentRefreshes":
     "字幕任务执行中，内容自动刷新。暂停完成后可编辑译文。",
@@ -569,8 +546,6 @@ const zhCN = {
   "glossary.selectedCount": "已选 {count} 项",
   "glossary.conflictCount": "待解决冲突（{count}）",
   "glossary.importConflictCount": "发现 {count} 条冲突术语，请选择处理方式：",
-  "export.filenameHelp":
-    "导出文件名包含目标语言（{language}）及双语标识。标点规范化仅作用于导出副本。",
   "createProject.paragraphCount": "（{count} 段）",
   "subtitles.pagination": "{page} / {pages} 页 · {count} 条",
   "progress.reviewIssueCount": "{count} 项意见",
@@ -598,8 +573,6 @@ const zhCN = {
   "review.latestResult": "最新结果",
   "review.viewingHistory": "正在查看历史审校",
   "export.advanced": "排版与高级选项",
-  "export.aboutSummary": "说明页：{value}",
-  "export.styleSummary": "原文样式：{value}",
   "navigation.global": "全局导航",
   "navigation.settings": "设置导航",
   "navigation.collapseSidebar": "收起侧边栏",
@@ -607,7 +580,6 @@ const zhCN = {
   "navigation.project": "项目导航",
   "settings.performance": "分段与性能",
   "settings.unsavedSummary": "有未保存的修改",
-  "export.punctuationSummary": "标点规范化：{value}",
   "settings.operationModels": "按步骤选择模型",
   "settings.manageGlobalModels": "前往总设置管理模型",
   "settings.globalSaved": "总设置已保存",
@@ -639,12 +611,8 @@ const zhCN = {
   "contents.notTranslated": "暂无译名",
   "contents.noEntries": "没有匹配的条目。",
   "contents.search": "搜索原标题或译名",
-  "contents.unavailable": "任务运行中或项目数据不可用时，标题暂为只读。",
   "contents.changedWhileEditing":
     "标题已被修改，当前草稿已保留，请载入最新版本后再保存。",
-  "contents.help":
-    "保存后更新章节列表及关联的 EPUB 目录，供后续导出使用。正文标题请在人工校阅中单独修改。",
-  "contents.pauseToEdit": "暂停项目后可编辑标题。",
   "contents.loadLatest": "载入最新标题",
   "contents.saved": "标题已保存",
   "modelList.fetch": "获取模型列表",

@@ -40,9 +40,6 @@ export function ReviewItemDetails({
       {!!item.changes?.length && (
         <section className="space-y-2">
           <h4 className="font-medium">{t("review.suggestedTranslation")}</h4>
-          <p className="text-xs text-muted-foreground">
-            {t("review.suggestionOnly")}
-          </p>
           {item.changes.map((change, index) => (
             <p
               key={index}

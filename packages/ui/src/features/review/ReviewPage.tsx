@@ -174,8 +174,8 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           <ReviewActivity pid={pid} status={job!.status} progress={progress} />
         )}
         {!historical && busy && !reviewing && !showActivity && (
-          <p className="text-sm text-muted-foreground">
-            {t("review.waitingTask")}{" "}
+          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            {t("review.waitingTask")}
             <Link
               className="underline underline-offset-4"
               to={`/projects/${pid}`}
@@ -243,7 +243,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
         {!loading && !error && !run.data && !reviewing && (
           <div className="space-y-2 rounded-lg border p-5 text-sm text-muted-foreground">
             <p>{t("review.noReviewYet")}</p>
-            {!translated && (
+            {!chapters.isPending && !translated && (
               <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>
             )}
           </div>

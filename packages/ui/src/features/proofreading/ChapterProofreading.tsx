@@ -6,7 +6,7 @@ import { api, type ChapterSummary } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice, StructuredData } from "@/components/ui/data";
 import { Disclosure } from "@/components/ui/disclosure";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphEditor } from "./ParagraphEditor";
@@ -128,11 +128,6 @@ export function ChapterProofreading({
             chapter.data?.title.trim() ||
             t(chapter.data ? "common.untitledChapter" : "progress.loading"),
         })}
-        subtitle={t(
-          sourceOnly
-            ? "proofreading.parsedSourceHelp"
-            : "proofreading.savedBatchesRefresh",
-        )}
         actions={
           <>
             <Link to={`/projects/${pid}/proofreading`}>
@@ -163,11 +158,7 @@ export function ChapterProofreading({
               : undefined)
           }
         />
-        {!sourceOnly && busy && (
-          <p role="status" className="rounded border p-3 text-sm">
-            {t("proofreading.pauseToEdit")}
-          </p>
-        )}
+        {sourceOnly ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
         {!sourceOnly && chapter.data && (
           <p className="text-sm text-muted-foreground">
             {t("proofreading.savedParagraphs", {

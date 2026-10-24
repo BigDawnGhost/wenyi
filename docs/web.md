@@ -187,6 +187,8 @@ Global **Settings** is one `/settings` page of titled sections: **General**, **P
 
 Web and Desktop omit introductory subtitles from the project list, glossary, whole-book review, event log, and global/project settings, along with redundant introductions in the creation and paragraph editor dialogs. Project settings keeps the link to global model management. Advanced YAML shows an unsaved-change summary only when edited; cost, read-only, safety, and error notices remain.
 
+Operational constraints remain visible in both apps: export history warns that only the latest five files are kept and asks users to save copies elsewhere; an empty review page explains that all chapter translations must be complete before review can start; glossary import lists CSV/JSON support and the required `source` and `target` CSV headers.
+
 Same-page history navigation closes open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport rather than following the last clicked button: successes dismiss after one second, errors and warnings after ten seconds, and other messages after five seconds. Errors can be dismissed; glossary add/edit failures also remain inline until retried or the dialog is closed.
 
 Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side without a header row on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.

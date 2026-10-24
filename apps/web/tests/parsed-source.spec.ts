@@ -56,7 +56,7 @@ for (const { locale, entry } of [
       await page.getByRole("link", { name: new RegExp(chapter.title) }).click();
     }
     await expect(page.getByText("Parsed source paragraph.", { exact: true })).toBeVisible();
-    await expect(page.getByText(zh ? /AI 预处理尚未完成/ : /AI preparation is not complete/)).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: zh ? "AI 预处理尚未完成，暂为只读" : "Read-only until AI preparation is complete" })).toBeVisible();
     for (const status of ["preparing", "error"]) {
       state.status = status;
       await page.waitForResponse(async (response) =>

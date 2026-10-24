@@ -259,8 +259,12 @@ test("saving a padded key normalizes the field and clears the pending state", as
   await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
   await expect(install).toBeEnabled();
   await expect(save).toBeEnabled();
+  const savedAgain = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/settings" &&
+    response.request().method() === "PUT" && response.ok());
   await save.click();
-  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
+  await savedAgain;
+  await expect(save).toBeEnabled();
   expect(writes).toEqual([{ mode: "manual", secret: "fake-padded-key" }]);
 });
 

@@ -1,5 +1,6 @@
 import { useI18n, type MessageKey } from "@/i18n";
 import { statusLabel } from "@/i18n/status";
+import { Lock } from "lucide-react";
 export function ErrorNotice({ error }: { error?: unknown }) {
   if (!error) return null;
   return (
@@ -9,6 +10,27 @@ export function ErrorNotice({ error }: { error?: unknown }) {
     >
       {error instanceof Error ? error.message : String(error)}
     </div>
+  );
+}
+
+/** One consistent line for every page that becomes read-only while a project task runs. */
+export function ReadOnlyNotice({
+  className,
+  reason = "running",
+}: {
+  className?: string;
+  /** "source": the source is parsed but AI preparation has not finished yet. */
+  reason?: "running" | "source";
+}) {
+  const { t } = useI18n();
+  return (
+    <p
+      role="status"
+      className={`flex items-center gap-2 text-sm text-muted-foreground ${className ?? ""}`}
+    >
+      <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      {t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}
+    </p>
   );
 }
 

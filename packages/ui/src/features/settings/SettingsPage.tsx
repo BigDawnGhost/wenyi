@@ -8,7 +8,7 @@ import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/form";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice, StructuredData } from "@/components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
 import { SettingsActionBar, SettingsSection } from "./SettingsSection";
@@ -103,11 +103,7 @@ export default function SettingsPage() {
       <PageHeader title={tr("common.projectSettings")} />
       <PageContainer className="max-w-5xl">
         <ErrorNotice error={config.error || configurationError} />
-        {busy && (
-          <p role="status" className="mb-4 rounded border p-3 text-sm">
-            {tr("settings.settingsAreReadOnlyWhileATask")}
-          </p>
-        )}
+        {busy && <ReadOnlyNotice className="mb-4" />}
         <SettingsSection title={tr("settings.sectionModels")}>
           <ModelSelection
             llm={section(effective, "llm")}
