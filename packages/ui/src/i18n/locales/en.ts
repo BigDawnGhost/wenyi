@@ -1,8 +1,7 @@
 /** Canonical interface messages. Keys are shared by every locale. */
 const en = {
-  "settings.mineruTitle": "MinerU PDF parser credential",
-  "settings.mineruHelp": "MinerU parses PDF documents. Its API key is independent of model providers and is not saved in configuration YAML.",
-  "settings.mineruDeployment": "Configure MINERU_API_KEY in the server deployment environment. This Web application does not accept manual keys or logins.",
+  "settings.mineruTitle": "MinerU PDF parsing",
+  "settings.mineruDeployment": "Set MINERU_API_KEY in the server environment.",
   "runtime.loadingPage": "Loading page…",
   "runtime.pageFailed": "Unable to load this page.",
   "runtime.reload": "Reload",
@@ -318,25 +317,17 @@ const en = {
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "workflowPanel.polishingRunsWithTranslationBatchesTheseCards":
     "Polishing runs with translation batches. These steps show the workflow configuration; use the task status and latest stage to track completion. Export tasks are listed on the export page.",
-  "createProject.projectAndLanguages": "Project & languages",
   "createProject.translationMode": "Translation method",
   "createProject.standardMode": "Standard",
   "createProject.precisionMode": "Three drafts + synthesis",
-  "createProject.standardHelp": "One initial translation, with polishing according to project settings.",
-  "createProject.precisionHelp": "Three independent drafts → one synthesis polish. The final text combines the drafts, rather than selecting one.",
-  "createProject.precisionCost": "Typically 4 model calls per batch, versus 2 for standard with polishing. Higher cost does not guarantee better quality.",
   "createProject.projectName": "Project name",
-  "createProject.forExampleEnglishTranslationOfAShort":
-    "For example: English translation of a short story",
   "createProject.sourceLanguage": "Source language",
   "createProject.targetLanguage": "Target language",
   "createProject.theSourceAndTargetLanguagesAreThe":
-    "The source and target languages are the same. Choose a different target language.",
+    "Source and target languages must differ.",
   "createProject.prepareSource": "Prepare before translating",
-  "createProject.prepareHelp":
-    "Analyze the book and build its glossary after upload (uses model tokens). Otherwise, preparation runs when translation starts.",
   "createProject.preparingSource":
-    "Preparing the book and glossary in the background. You can leave this page and check the translation overview later.",
+    "Preparing the book and glossary…",
   "createProject.sourceRequired":
     "Choose a source file before creating the project.",
   "createProject.selectSourceAgain":
@@ -345,19 +336,15 @@ const en = {
     "The source file is empty. Choose a file with content.",
   "createProject.unsupportedFile": "This file format is not supported.",
   "createProject.serverDefault": "Use server default",
-  "createProject.projectCreatedChangingLanguagesOrSourceContent":
-    "Project created. Changing languages or source content after initialization requires a new project.",
-  "createProject.uploadStep": "Source file",
   "createProject.uploadSource": "Upload source",
   "createProject.browseFiles": "Browse files",
   "createProject.sourceDropZone": "Source file selection",
-  "createProject.dropFileHint": "Drag a source file here, or browse files.",
-  "createProject.releaseFile": "Release to select the source file.",
+  "createProject.dropFileHint": "Drop a file here",
+  "createProject.releaseFile": "Release to add the file",
   "createProject.singleFileOnly": "Choose one source file at a time.",
-  "createProject.noFileSelected": "No file selected",
   "createProject.uploading": "Uploading…",
   "createProject.parsingTheSourceAPreviewWillAppear":
-    "Parsing the source. A preview will appear when it is ready. You can leave this page and check project progress later.",
+    "Parsing the source…",
   "createProject.subtitleCues": "Subtitle cues: {count}",
   "createProject.chaptersParagraphs":
     "Chapters: {chapters} · Paragraphs: {count}",
@@ -508,18 +495,13 @@ const en = {
     "Leave blank for the provider default variable",
   "providerSettings.requestTimeoutSeconds": "Request timeout (seconds)",
   "providerSettings.addApiConnection": "Add API connection",
-  "providerSettings.afterChangingProvidersChooseAModelName":
-    "After changing providers, choose a model name supported by that provider. Model IDs are used in tiers and operation routes; model names are sent to the API.",
   "providerSettings.apiConnection": "API connection",
   "providerSettings.addModel": "Add model",
   "providerSettings.qualityTier": "Quality tier",
   "providerSettings.economyTier": "Economy tier",
   "providerSettings.fastTier": "Fast tier",
-  "providerSettings.operationSpecificModelRoutesTakePrecedenceOver":
-    "Model IDs are used by project selections and fallback routes. Configure model parameters in advanced YAML.",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
-  "createProject.precisionPolish": "Precision translation automatically enables polishing for this project, independently of global settings.",
   "settings.applyAutofixesToTheSavedTranslation":
     "Apply autofixes to the saved translation after review",
   "settings.paragraphAnnotationAlignment": "Paragraph annotation alignment",
@@ -528,19 +510,14 @@ const en = {
     "Configuration is valid but not saved yet",
   "settings.settingsAreReadOnlyWhileATask":
     "Settings are read-only while a task runs. Pause and save a checkpoint before editing.",
-  "settings.workflowSettings": "Workflow settings",
   "settings.advancedYamlHasUnvalidatedChangesValidateIt":
     "Advanced YAML has unvalidated changes. Validate it to update the form.",
-  "settings.subtitlesUseASeparateWorkflowWithoutBook":
-    "Subtitles use a separate workflow without book understanding, whole-book review or chapter polishing.",
   "settings.tokensPerBatch": "Tokens per batch",
   "settings.tokensPerParagraph": "Tokens per paragraph",
   "settings.reviewConcurrency": "Review concurrency",
   "settings.pdfParser": "PDF parser",
   "settings.normalizePunctuationOnExport": "Normalize punctuation on export",
   "settings.advancedYamlConfiguration": "Advanced YAML configuration",
-  "settings.useServerEnvironmentVariableNamesForApi":
-    "Use server environment variable names for API keys. The core validator checks models, fallbacks, request and token budgets, and all other settings.",
   "settings.validating": "Validating…",
   "settings.validateConfiguration": "Validate configuration",
   "settings.saveConfiguration": "Save configuration",
@@ -609,9 +586,6 @@ const en = {
   "app.documentTitle": "Wenyi — AI translation",
   "settings.title": "Settings",
   "settings.interfaceLanguage": "Interface language",
-  "settings.languageDescription":
-    "Choose the language used for menus, buttons and labels. Project source and target languages are managed separately.",
-  "settings.savedLocally": "Saved automatically in this browser.",
   "common.close": "Close",
   "glossary.selectedCount": "Selected: {count}",
   "glossary.conflictCount": "Open conflicts ({count})",
@@ -619,8 +593,6 @@ const en = {
     "Conflicting terms: {count}. Choose how to handle them:",
   "export.filenameHelp":
     "Export filenames include the target language ({language}) and bilingual marker. Punctuation normalization only affects exported copies.",
-  "createProject.uploadHelp":
-    "Supported: {formats}. The file is uploaded when you create the project. Models and batch settings can be adjusted in project settings before translation.",
   "createProject.paragraphCount": "(paragraphs: {count})",
   "subtitles.pagination": "Page {page} / {pages} · Cues: {count}",
   "progress.reviewIssueCount": "Issues: {count}",
@@ -655,35 +627,14 @@ const en = {
   "navigation.collapseSidebar": "Collapse sidebar",
   "navigation.expandSidebar": "Expand sidebar",
   "navigation.project": "Project navigation",
-  "settings.modelSetup": "Model setup",
-  "settings.presetSummary": "Preset: {name}",
-  "settings.modelSummary":
-    "Connections: {providers} · Models: {models} · Overrides: {routes}",
   "settings.performance": "Segmentation and performance",
-  "settings.performanceSummary": "Batch: {tokens} tokens",
   "settings.unsavedSummary": "Unsaved changes",
-  "settings.routeSummary": "{count} operation routes",
   "export.punctuationSummary": "Punctuation: {value}",
   "settings.operationModels": "Models by operation",
-  "settings.operationModelsHelp":
-    "Override individual operations with registered models. Configure fallback models in advanced YAML.",
-  "settings.registeredModels": "Registered providers & models",
   "settings.manageGlobalModels": "Manage models in global Settings",
-  "settings.projectYamlHelp":
-    "Project YAML accepts model selections, operation routes and budgets. Register connections and model parameters in global Settings.",
   "settings.globalSaved": "Global settings saved",
-  "settings.newProjectDefaults": "New project defaults",
-  "settings.defaultScopeHelp":
-    "Defaults are copied when a project is created. Registry changes apply to future tasks; queued and running tasks keep their original configuration.",
-  "settings.workflowDefaults": "Shared workflow defaults",
-  "settings.workflowDefaultsHelp":
-    "Translation mode is selected only when creating a project. These shared settings do not switch its mode.",
-  "providerSettings.sharedRegistryHelp":
-    "Connections and models are shared across projects. API keys use server environment variable names, such as DEEPSEEK_API_KEY.",
   "registry.connectionId": "Connection ID",
   "registry.modelId": "Model ID",
-  "registry.rename": "Rename",
-  "registry.delete": "Delete",
   "registry.deleteConnection": "Delete connection {id}",
   "registry.deleteModel": "Delete model {id}",
   "registry.usedBy": "Used by: {references}",
@@ -691,6 +642,15 @@ const en = {
     "Start with a letter; use only letters, numbers, underscores and hyphens.",
   "registry.duplicateId": "This ID already exists.",
   "registry.finishRenaming": "Apply or discard the ID edits before saving.",
+  "settings.sectionGeneral": "General",
+  "settings.sectionProviders": "Providers & models",
+  "settings.sectionDefaultModels": "Default models",
+  "settings.sectionModels": "Models",
+  "settings.sectionWorkflow": "Workflow",
+  "settings.sectionAdvanced": "Advanced",
+  "settings.credentialsFailed": "Configuration saved, but an API key could not be saved. Save again to retry.",
+  "providerSettings.connections": "Connections",
+  "providerSettings.models": "Models",
   "settings.restoreDefaults": "Restore defaults",
   "settings.defaultsLoaded": "Defaults loaded into the draft. Save to apply.",
   "status.applied": "Applied",
@@ -711,6 +671,36 @@ const en = {
   "contents.pauseToEdit": "Pause the project to edit titles.",
   "contents.loadLatest": "Load latest title",
   "contents.saved": "Title saved",
+  "modelList.fetch": "Fetch models",
+  "modelList.count": "{count} models available",
+  "modelList.empty": "The provider returned no models.",
+  "modelList.failed": "Could not fetch models.",
+  "modelList.notFound": "The endpoint has no model list. Check the base URL.",
+  "modelList.unsupported": "This provider cannot list models. Enter the name.",
+  "connectivity.test": "Test connection",
+  "connectivity.testing": "Testing…",
+  "connectivity.saveFirst": "Save the configuration before testing the connection.",
+  "connectivity.none": "No models are configured.",
+  "connectivity.allPassed": "All {total} models are reachable.",
+  "connectivity.someFailed": "{failed} of {total} models are unreachable.",
+  "connectivity.model": "Model",
+  "connectivity.status": "Status",
+  "connectivity.latency": "Latency",
+  "connectivity.detail": "Detail",
+  "connectivity.passed": "Connected",
+  "connectivity.failed": "Failed",
+  "connectivity.ok": "The model replied.",
+  "connectivity.reachable": "The model accepted the request; the reply was empty or truncated.",
+  "connectivity.missingCredential": "No API key is configured for this connection.",
+  "connectivity.authenticationFailed": "Authentication failed. Check the API key.",
+  "connectivity.insufficientBalance": "Insufficient account balance.",
+  "connectivity.permissionDenied": "Access denied. Check account and model permissions.",
+  "connectivity.notFound": "Model or endpoint not found. Check the model name and base URL.",
+  "connectivity.invalidRequest": "The provider rejected the request. Check the model settings.",
+  "connectivity.rateLimited": "Rate limit reached. Try again later.",
+  "connectivity.timeout": "The request timed out.",
+  "connectivity.connectionFailed": "Could not connect. Check the base URL and network.",
+  "connectivity.unavailable": "The provider is unavailable. Try again later.",
 } as const;
 
 export default en;

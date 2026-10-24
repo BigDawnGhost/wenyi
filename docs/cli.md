@@ -38,9 +38,10 @@ Whenever the program starts, it checks for `config.yaml` in the current director
 uv run wenyi models list
 uv run wenyi models explain --operation review.fix
 uv run wenyi models check --for translate
+uv run wenyi models ping --for translate
 ```
 
-These commands preview routes and check credentials locally without requests. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
+The first three commands preview routes and check credentials locally without requests. `models ping` sends one short live request per reachable model profile to confirm the endpoint, key and model name work; it uses a few tokens. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
 
 ## Multilingual translation (experimental)
 

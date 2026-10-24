@@ -77,6 +77,12 @@ class LLMClient(ABC):
     def validate_credentials(self, operations: Iterable[str] | None = None) -> None:
         """Validate provider credentials; local and test providers are exempt by default."""
 
+    def probe_profiles(
+        self, profiles: Iterable[str] | None = None, *, timeout: float | None = None
+    ) -> list:
+        """Send live connectivity probes; only routed provider clients support this."""
+        raise RuntimeError("This model client does not support connectivity tests")
+
     def cancel(self) -> None:
         """Stop waiting and future requests when supported by the client."""
 

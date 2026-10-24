@@ -102,6 +102,7 @@ def create_context(
         read_storage_for=lambda pid: backend.storage_for(pid, create=False),
         build_client=lambda config: build_local_client(config, credentials),
         mineru_token_resolver=credentials.resolve_mineru_token,
+        connection_credential=credentials.resolve,
         enqueue=services.enqueue,
         data_dir=str(backend.workspace / "projects"),
         project_dir=lambda pid: str(backend.project_dir(pid)),

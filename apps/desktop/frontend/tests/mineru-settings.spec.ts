@@ -1,22 +1,26 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi } from "./fixtures";
 
-test("MinerU saves independently, never echoes, and environment wins over fallback", async ({ page }) => {
+test("MinerU saves automatically, shows the saved key masked, and environment wins", async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {
     __WENYI_DESKTOP__: { apiBase: "http://127.0.0.1:4174/api", token: "fixture" },
   }));
   await fakeApi(page);
+  let stored: string | null = null;
   let status = {
     mode: "manual", storage: null as string | null, available: false,
     environment: "MINERU_API_KEY", system_storage_available: false,
     requires_key: true,
   };
   const writes: unknown[] = [];
+  await page.route("**/api/desktop/external-credentials/mineru/secret", route =>
+    route.fulfill({ json: { secret: status.mode === "manual" ? stored : null } }));
   await page.route("**/api/desktop/external-credentials/mineru", route => {
     if (route.request().method() === "PUT") {
       const body = route.request().postDataJSON();
       writes.push(body);
-      status = { ...status, mode: "manual", storage: "session", available: true };
+      stored = body.clear ? null : body.secret;
+      status = { ...status, mode: "manual", storage: body.clear ? null : "session", available: !body.clear };
     }
     return route.fulfill({ json: status });
   });
@@ -24,31 +28,41 @@ test("MinerU saves independently, never echoes, and environment wins over fallba
   const card = page.getByTestId("mineru-settings");
   const input = card.getByLabel("MinerU API key", { exact: true });
   await expect(card.locator("input")).toHaveCount(1);
+  // Only the eye toggle: no Save button.
   await expect(card.getByRole("button")).toHaveCount(1);
+  await expect(card.getByRole("button", { name: /Save/ })).toHaveCount(0);
   await expect(card.locator("code")).toHaveCount(0);
   await expect(input).toHaveAttribute("type", "password");
-  await input.fill("fake-mineru-test-secret");
-  await card.getByRole("button", { name: "Save MinerU key", exact: true }).click();
-  await expect(input).toHaveValue("");
+  await card.getByRole("button", { name: "Show MinerU key", exact: true }).click();
+  await expect(input).toHaveAttribute("type", "text");
+  await card.getByRole("button", { name: "Hide MinerU key", exact: true }).click();
+  // Typing pauses, then the key saves once.
+  await input.pressSequentially("fake-mineru-test-secret");
   await expect(card.getByRole("status")).toHaveText("MinerU key saved.");
-  await expect(card).toContainText("Stored for this session only.");
-  await expect(card.getByRole("button")).toHaveCount(1);
   expect(writes).toEqual([{ secret: "fake-mineru-test-secret" }]);
+  await expect(input).toHaveValue("fake-mineru-test-secret");
+  await expect(input).toHaveAttribute("type", "password");
+  await expect(card).toContainText("Stored for this session only.");
+  // Leaving the field with no change writes nothing.
+  await input.blur();
+  expect(writes).toHaveLength(1);
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain("fake-mineru");
   await page.reload();
-  await expect(card).toContainText("Stored for this session only.");
-  await expect(input).toHaveAttribute("placeholder", "Key saved · enter to replace");
-  await expect(card.getByRole("button")).toHaveCount(1);
+  await expect(input).toHaveValue("fake-mineru-test-secret");
+  await expect(input).toHaveAttribute("type", "password");
   await page.locator("summary").filter({ hasText: "Advanced YAML configuration" }).click();
   await expect(page.getByRole("textbox", { name: "Advanced YAML configuration" })).not.toHaveValue(/fake-mineru/);
+  // Clearing the field removes the key; blur saves without waiting.
+  await input.fill("");
+  await input.blur();
+  await expect(card.getByRole("status")).toHaveText("MinerU key removed.");
+  expect(writes[1]).toEqual({ clear: true });
   status = { ...status, mode: "environment", available: true };
   await page.reload();
   await expect(input).toBeDisabled();
   await expect(input).toHaveAttribute("placeholder", "Uses MINERU_API_KEY");
-  await expect(card.getByRole("button")).toHaveCount(1);
-  await expect(card.getByRole("button")).toBeDisabled();
   await expect(input).toHaveValue("");
-  expect(writes).toEqual([{ secret: "fake-mineru-test-secret" }]);
+  expect(writes).toHaveLength(2);
 });
 
 test("failed saves are safe and do not retry or claim success", async ({ page }) => {
@@ -71,7 +85,7 @@ test("failed saves are safe and do not retry or claim success", async ({ page })
   const card = page.getByTestId("mineru-settings");
   const input = card.getByLabel("MinerU API key", { exact: true });
   await input.fill("fake-failed-mineru");
-  await card.getByRole("button", { name: "Save MinerU key", exact: true }).click();
+  await input.blur();
   await expect(card.getByRole("alert")).toHaveText(
     "MinerU credential could not be checked or saved. Please retry.",
   );
@@ -79,6 +93,10 @@ test("failed saves are safe and do not retry or claim success", async ({ page })
   await expect(card.getByRole("status")).toHaveCount(0);
   await expect(card).not.toContainText("fake-sensitive-save-message");
   await expect(card).not.toContainText("Stored for this session only.");
+  // The same failed value is not retried automatically, even after leaving the field again.
+  await input.focus();
+  await input.blur();
+  await page.waitForTimeout(1200);
   expect(writes).toBe(1);
 });
 
@@ -125,6 +143,8 @@ test("dirty and pending MinerU writes block signed updates, then release the gua
   };
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/desktop/external-credentials/mineru/secret", route =>
+    route.fulfill({ json: { secret: "fake-mineru-saved" } }));
   await page.route("**/api/desktop/external-credentials/mineru", async route => {
     if (route.request().method() === "PUT") await gate;
     await route.fulfill({ json: status });
@@ -133,17 +153,19 @@ test("dirty and pending MinerU writes block signed updates, then release the gua
   const card = page.getByTestId("mineru-settings");
   const install = page.getByRole("button", { name: "Install and restart", exact: true });
   await expect(install).toBeEnabled();
+  await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("fake-mineru-saved");
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-mineru-dirty");
   await expect(install).toBeDisabled();
-  await card.getByRole("button", { name: "Save MinerU key", exact: true }).click();
+  await card.getByLabel("MinerU API key", { exact: true }).blur();
   await expect(install).toBeDisabled();
   await page.getByRole("link", { name: "Projects", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("");
+  // Remounting reloads the saved key; the pending write still blocks installation.
+  await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("fake-mineru-saved");
   await expect(install).toBeDisabled();
   release();
-  await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("");
   await expect(install).toBeEnabled();
+  // Leaving before the autosave delay discards the edit instead of writing it.
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-mineru-discard");
   await page.getByRole("link", { name: "Projects", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -167,7 +189,7 @@ test("local errors are redacted, never retried automatically, and Chinese mobile
   });
   await page.goto("/settings");
   const card = page.getByTestId("mineru-settings");
-  await expect(card).toContainText("MinerU PDF 解析凭据");
+  await expect(card).toContainText("MinerU PDF 解析");
   await expect(card.getByRole("alert")).toHaveText("无法检查或保存 MinerU 凭据，请重试。");
   await expect(page.getByText("fake-sensitive-vault-message")).toHaveCount(0);
   await page.evaluate(() => {
@@ -179,7 +201,7 @@ test("local errors are redacted, never retried automatically, and Chinese mobile
   expect(reads).toBe(1);
   await expect(card.locator("input")).toHaveCount(1);
   await expect(card.getByRole("button")).toHaveCount(1);
-  await expect(card.getByRole("button")).toHaveText("保存 MinerU 密钥");
+  await expect(card.getByRole("button", { name: "显示 MinerU 密钥", exact: true })).toBeVisible();
   expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
@@ -204,13 +226,12 @@ test("saving MinerU neither publishes configuration nor discards the model draft
   });
   await page.route("**/api/desktop/credentials", route => route.fulfill({ json: {} }));
   await page.goto("/settings");
-  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   const model = page.getByLabel("Model name", { exact: true });
   await model.fill("independent-model");
   const card = page.getByTestId("mineru-settings");
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-independent-mineru");
-  await card.getByRole("button", { name: "Save MinerU key", exact: true }).click();
-  await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("");
+  await expect(card.getByRole("status")).toHaveText("MinerU key saved.");
+  await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("fake-independent-mineru");
   await expect(model).toHaveValue("independent-model");
   expect(mineruWrites).toBe(1);
   expect(configurationWrites).toBe(0);

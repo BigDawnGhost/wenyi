@@ -190,6 +190,16 @@ class GeminiClient(ProviderAdapter):
                 self._client = genai.Client(**kwargs)
         return self._client
 
+    def list_models(self) -> list[str]:
+        """List models that support text generation, without the ``models/`` prefix."""
+        names = []
+        for item in self._ensure_client().models.list():
+            actions = getattr(item, "supported_actions", None) or []
+            name = str(getattr(item, "name", "") or "")
+            if name and (not actions or "generateContent" in actions):
+                names.append(name.removeprefix("models/"))
+        return names
+
     def _request(
         self,
         messages: Messages,

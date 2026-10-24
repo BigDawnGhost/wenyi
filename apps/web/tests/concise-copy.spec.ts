@@ -42,8 +42,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         exact: true,
       });
       await expect(manageModels).toHaveAttribute("href", "/settings");
-      await expect(manageModels.locator(".."))
-        .toHaveText(t("settings.manageGlobalModels"));
+      await expect(manageModels).toHaveText(t("settings.manageGlobalModels"));
     });
 
     test("dialogs retain named controls without redundant descriptions", async ({
@@ -58,8 +57,10 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(creation).not.toHaveAttribute("aria-describedby");
       await expect(creation.getByLabel(t("createProject.projectName")))
         .toBeVisible();
-      await expect(creation.getByText(t("createProject.prepareHelp"), { exact: true }))
+      await expect(creation.getByRole("checkbox", { name: t("createProject.prepareSource") }))
         .toBeVisible();
+      // Options carry their own names; there is no explanatory prose under them.
+      await expect(creation.locator("p")).toHaveCount(0);
 
       await page.goto(`/projects/${pid}/proofreading/0`);
       await page.getByTestId("translation-text").click({ button: "right" });

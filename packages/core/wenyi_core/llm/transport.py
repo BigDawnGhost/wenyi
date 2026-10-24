@@ -112,6 +112,10 @@ class ProviderAdapter(ABC):
     ) -> str:
         raise NotImplementedError
 
+    def list_models(self) -> list[str]:
+        """Return model names the endpoint offers; adapters without a listing API return none."""
+        raise NotImplementedError(f"Provider {self.cfg.kind} cannot list models")
+
     @classmethod
     def output_limit(cls, options: BaseModel, hint: int | None, explicit: int | None) -> int | None:
         return explicit if explicit is not None else hint

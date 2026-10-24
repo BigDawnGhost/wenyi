@@ -1,104 +1,101 @@
 import { useEffect, useState } from "react";
-import { updateCredentialSafety } from "./updateSafety";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { credentialQuery, saveCredential, type CredentialStatus } from "./credentials";
+import {
+  credentialDrafts,
+  credentialQuery,
+  readCredential,
+  saveCredential,
+  useCredentialEntry,
+  type CredentialStatus,
+} from "./credentials";
 import { useDesktopI18n } from "./i18n";
 import type { CredentialFieldProps } from "@wenyi/ui/platform";
 import { ErrorNotice } from "@/components/ui/data";
 import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/form";
+import { Label } from "@/components/ui/form";
+import { PasswordInput } from "@/components/ui/password-input";
 
-export function DesktopCredential({
-  connection, saved, children,
-}: CredentialFieldProps) {
+/**
+ * API key field. A saved manual key is loaded into the field masked with dots;
+ * the eye button reveals it. Edits are written with the next configuration save.
+ */
+export function DesktopCredential({ connection, children }: CredentialFieldProps) {
   const { t } = useDesktopI18n();
   const credentials = useQuery(credentialQuery);
   const status = credentials.data?.[connection];
-  const refresh = () => void credentials.refetch();
   const queryClient = useQueryClient();
-  const [secret, setSecret] = useState("");
+  const entry = useCredentialEntry(connection);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
-  const [safetyId] = useState(() => Symbol());
+  const manual = status?.mode === "manual" && status.available;
+  // Load the stored key once per connection so the field shows it masked.
   useEffect(() => {
-    updateCredentialSafety(safetyId, secret.length > 0 || pending);
-    return () => updateCredentialSafety(safetyId, false);
-  }, [safetyId, secret, pending]);
-  const save = async (action: "save" | "clear" | "environment") => {
-    if (action === "save" && !secret.trim()) return;
+    if (!manual || credentialDrafts.get(connection)) return;
+    let active = true;
+    readCredential(connection)
+      .then((secret) => { if (active) credentialDrafts.load(connection, secret); })
+      // An unreadable saved key must not block entering a replacement.
+      .catch(() => { if (active) credentialDrafts.load(connection, ""); });
+    return () => { active = false; };
+  }, [connection, manual]);
+  const write = async (mode: "manual" | "environment") => {
     setPending(true);
     setError(false);
     try {
-      // Only the secret-free response enters the query cache.
-      const result = await saveCredential(connection, {
-        mode: action === "environment" ? "environment" : "manual",
-        ...(action === "save" ? { secret } : { clear: true }),
-      });
+      const result = await saveCredential(connection, { mode, clear: true });
       queryClient.setQueryData<Record<string, CredentialStatus>>(
-        ["credentials"], (current) => ({ ...current, [connection]: result }),
+        credentialQuery.queryKey, (current) => ({ ...current, [connection]: result }),
       );
-      setSecret("");
+      credentialDrafts.stored(connection, "");
     } catch {
       setError(true);
     } finally {
       setPending(false);
     }
   };
+  const environment = status?.mode === "environment";
+  const placeholder = environment && status.available
+    ? t("credentials.environmentPlaceholder", { name: status.environment || "" })
+    : status && !status.requires_key && environment
+      ? t("credentials.notRequired")
+      : t("credentials.placeholder");
+  const inputId = `credential-secret-${connection}`;
   return (
-    <fieldset className="space-y-3 border-t pt-3" disabled={pending}>
-      <legend className="text-sm font-medium">{t("credentials.title")}</legend>
+    <div className="space-y-2">
       <ErrorNotice error={credentials.error} />
-      {!saved && <p className="text-sm">{t("credentials.saveConnection")}</p>}
-      <Label htmlFor={`credential-secret-${connection}`}>{t("credentials.key")}</Label>
-      <Input
-        id={`credential-secret-${connection}`}
-        type="password"
-        disabled={!saved || !status}
-        autoComplete="new-password"
-        spellCheck={false}
-        value={secret}
-        placeholder={t("credentials.noEcho")}
-        onChange={(event) => setSecret(event.target.value)}
+      <Label htmlFor={inputId}>{t("credentials.key")}</Label>
+      <PasswordInput
+        id={inputId}
+        value={entry?.value ?? ""}
+        placeholder={placeholder}
+        showLabel={t("credentials.show")}
+        hideLabel={t("credentials.hide")}
+        onChange={(event) => credentialDrafts.set(connection, event.target.value)}
       />
-      <p className="text-sm" role="status">
-        {t(
-          status && !status.requires_key && !status.environment && status.mode === "environment"
-            ? "credentials.notRequired"
-            : status?.available ? "credentials.available" : "credentials.missing",
-        )}
-        {status?.available && ` · ${t(status.mode === "environment"
-          ? "credentials.environment" : status.storage === "session"
-            ? "credentials.session" : "credentials.system")}`}
-      </p>
-      {status?.storage === "session" && (
-        <p className="text-sm">{t("credentials.sessionHelp")}</p>
+      {manual && status.storage === "session" && (
+        <p className="text-xs text-muted-foreground">{t("credentials.sessionHelp")}</p>
       )}
-      <p className="text-xs text-muted-foreground">{t("credentials.autoHelp")}</p>
       {error && <p role="alert" className="text-sm text-destructive">{t("credentials.failed")}</p>}
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" disabled={!saved || !status || !secret.trim()} onClick={() => void save("save")}>
-          {t("credentials.save")}
-        </Button>
-        {status?.mode === "manual" && (
-          <Button type="button" variant="outline" disabled={!saved} onClick={() => void save("clear")}>
-            {t("credentials.clear")}
-          </Button>
-        )}
-      </div>
-      <details>
-        <summary className="cursor-pointer text-sm">{t("credentials.advanced")}</summary>
-        <div className="space-y-3 pt-3">
+      <details className="text-sm">
+        <summary className="cursor-pointer text-muted-foreground">{t("credentials.advanced")}</summary>
+        <fieldset className="space-y-3 pt-3" disabled={pending}>
           {children}
-          <p className="text-sm">{t("credentials.environmentHelp", {
-            name: status?.environment || "—",
-          })}</p>
-          <Button type="button" variant="outline" disabled={!saved || !status} onClick={() => void save("environment")}>
-            {t("credentials.useEnvironment")}
-          </Button>
-          <p className="text-xs text-muted-foreground">{t("credentials.offline")}</p>
-          <Button type="button" variant="outline" onClick={refresh}>{t("credentials.refresh")}</Button>
-        </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!status || environment}
+              onClick={() => void write("environment")}
+            >
+              {t("credentials.useEnvironment")}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void credentials.refetch()}>
+              {t("credentials.refresh")}
+            </Button>
+          </div>
+        </fieldset>
       </details>
-    </fieldset>
+    </div>
   );
 }

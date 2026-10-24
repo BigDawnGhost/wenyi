@@ -34,9 +34,10 @@ CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包
 uv run wenyi models list
 uv run wenyi models explain --operation review.fix
 uv run wenyi models check --for translate
+uv run wenyi models ping --for translate
 ```
 
-这些命令只做本地预览与密钥检查，不发送请求。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)。
+前三个命令只做本地预览与密钥检查，不发送请求。`models ping` 会对每个可达模型配置发送一次简短的真实请求，确认端点、密钥与模型名可用，会消耗少量 token。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)。
 
 ## 多语言互译（实验性）
 

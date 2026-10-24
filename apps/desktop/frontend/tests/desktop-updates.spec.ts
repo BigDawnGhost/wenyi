@@ -315,11 +315,10 @@ test("unsaved and pending credential inputs block installation", async ({ page }
     await saved;
     await route.fulfill({ json: status });
   });
-  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   const install = page.getByRole("button", { name: "Install and restart", exact: true });
   await page.getByLabel("API key", { exact: true }).fill("fake-test-value");
   await expect(install).toBeDisabled();
-  await page.getByRole("button", { name: "Save key", exact: true }).click();
+  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
   await expect(install).toBeDisabled();
   finish();
   await expect(install).toBeEnabled();

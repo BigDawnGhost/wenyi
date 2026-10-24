@@ -91,7 +91,7 @@ test("projects only select registered models and operation overrides", async ({
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Registered providers & models",
+      name: "Providers & models",
       exact: true,
     }),
   ).toBeVisible();
@@ -184,7 +184,6 @@ test("global model registration works in Chinese on mobile", async ({
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page);
   await page.goto("/settings");
-  await page.locator("summary").filter({ hasText: "API 供应商与模型" }).click();
   await expect(
     page.getByLabel("API Key 环境变量", { exact: true }),
   ).toBeVisible();
@@ -220,10 +219,6 @@ test("registry IDs can be renamed with references and new registrations removed"
     } else await route.fulfill({ json: globalConfiguration });
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await expect(
     page.getByRole("button", {
       name: "Delete connection default",
@@ -283,10 +278,6 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     await route.fulfill({ json: globalConfiguration });
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await page.getByRole("button", { name: "Add model", exact: true }).click();
   const newId = page.getByLabel("Model ID", { exact: true }).last();
   await newId.fill("default_model");
@@ -307,10 +298,6 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     }),
   ).toBeVisible();
   expect(writes).toBe(0);
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await expect(page.getByLabel("Model ID", { exact: true })).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Save configuration", exact: true }),
@@ -376,10 +363,6 @@ test("adding and renaming another model preserves the original model's rename", 
     } else await route.fulfill({ json: initial });
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await page.getByLabel("Model ID", { exact: true }).fill("editor");
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
   await page.getByRole("button", { name: "Add model", exact: true }).click();

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { SettingsSection } from "@/features/settings/SettingsSection";
 import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
 import { ReleaseNotes } from "./ReleaseNotes";
@@ -62,9 +62,7 @@ export function DesktopUpdates({ blocked, onInstalling }: {
   }
   const failure = error || data?.error || (status.error ? "unavailable" : undefined);
   return (
-    <Card data-testid="desktop-updates">
-      <CardContent className="p-5 space-y-4">
-        <h2 className="font-medium">{t("updates.title")}</h2>
+    <SettingsSection title={t("updates.title")} data-testid="desktop-updates" className="first-of-type:border-t first-of-type:pt-6">
         <p>{t("updates.currentVersion", { version: data?.currentVersion || "—" })}</p>
         {data && <p role="status">{t(`updates.${data.phase}`)}</p>}
         {data?.mode !== "automatic" && <p>{t("updates.manual")}</p>}
@@ -104,7 +102,6 @@ export function DesktopUpdates({ blocked, onInstalling }: {
             <Button variant="outline" disabled={locked} onClick={() => setConfirm(false)}>{t("updates.cancel")}</Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+    </SettingsSection>
   );
 }

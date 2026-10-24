@@ -1,10 +1,10 @@
 import { useI18n } from "@/i18n";
 import { languageName } from "@/i18n/labels";
 import { useEffect, useRef, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { useLocation, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/form";
 import { Dialog } from "@/components/ui/misc";
 import { Select, SelectItem } from "@/components/ui/select";
@@ -161,6 +161,49 @@ export default function CreateProjectDialog() {
     else navigate("/", { replace: true });
   };
 
+  const languages = (caps?.languages || []).filter((l) => l.code !== "auto");
+  const createDisabled =
+    !name.trim() ||
+    !file ||
+    sourceConsumed ||
+    !!fileError ||
+    sameLanguage ||
+    !caps ||
+    create.isPending;
+  const footer = pid ? (
+    <>
+      <Link to={`/projects/${pid}`}>
+        <Button variant="outline">{tr("createProject.openProject")}</Button>
+      </Link>
+      {interrupted ? (
+        <Button onClick={() => resume.mutate()} disabled={resume.isPending}>
+          {tr("progress.resumeTask")}
+        </Button>
+      ) : (
+        <Button
+          onClick={() => start.mutate()}
+          disabled={!preview || busy || start.isPending}
+        >
+          {start.isPending ? tr("createProject.starting") : tr("common.startTranslation")}
+        </Button>
+      )}
+    </>
+  ) : (
+    <>
+      {sourceConsumed && (
+        <p role="status" className="mr-auto text-xs text-muted-foreground">
+          {tr("createProject.selectSourceAgain")}
+        </p>
+      )}
+      <Button variant="outline" disabled={pending} onClick={close}>
+        {tr("common.cancel")}
+      </Button>
+      <Button onClick={() => create.mutate()} disabled={createDisabled}>
+        {create.isPending ? tr("createProject.uploading") : tr("common.createProject")}
+      </Button>
+    </>
+  );
+
   return (
     <Dialog
       open
@@ -171,9 +214,10 @@ export default function CreateProjectDialog() {
       returnFocus={() =>
         document.getElementById(location.state?.returnFocusId || "create-project-trigger")
       }
-      className="max-w-3xl"
+      className="max-w-2xl"
+      footer={footer}
     >
-      <div className="space-y-4">
+      <div className="space-y-5">
         <ErrorNotice
           error={
             capsError ||
@@ -186,288 +230,148 @@ export default function CreateProjectDialog() {
             project?.error
           }
         />
-        <Card>
-          <CardContent className="p-5 space-y-4">
-            <h2 className="font-medium">
-              {tr("createProject.projectAndLanguages")}
-            </h2>
-            <div>
-              <Label htmlFor="project-name">
-                {tr("createProject.projectName")}
-              </Label>
-              <Input
-                ref={nameRef}
-                id="project-name"
-                value={name}
-                disabled={locked}
-                onChange={(e) => setName(e.target.value)}
-                className="mt-2"
-                placeholder={tr(
-                  "createProject.forExampleEnglishTranslationOfAShort",
-                )}
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="source-language">
-                  {tr("createProject.sourceLanguage")}
-                </Label>
-                <Select
-                  id="source-language"
-                  value={source}
-                  disabled={locked}
-                  onValueChange={setSource}
-                  className="mt-2"
-                >
-                  <SelectItem value="auto">
-                    {tr("progress.detectAutomatically")}
-                  </SelectItem>
-                  {caps?.languages
-                    .filter((l) => l.code !== "auto")
-                    .map((l) => (
-                      <SelectItem key={l.code} value={l.code}>
-                        {languageName(l.code, l.name, locale)} ({l.code})
-                      </SelectItem>
-                    ))}
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="target-language">
-                  {tr("createProject.targetLanguage")}
-                </Label>
-                <Select
-                  id="target-language"
-                  value={target}
-                  disabled={locked || !caps}
-                  onValueChange={setTarget}
-                  className="mt-2"
-                >
-                  {caps?.languages
-                    .filter((l) => l.code !== "auto")
-                    .map((l) => (
-                      <SelectItem key={l.code} value={l.code}>
-                        {languageName(l.code, l.name, locale)} ({l.code})
-                      </SelectItem>
-                    ))}
-                </Select>
-              </div>
-            </div>
-            {sameLanguage && (
-              <ErrorNotice
-                error={tr("createProject.theSourceAndTargetLanguagesAreThe")}
-              />
-            )}
-            {pid && (
-              <p className="text-sm text-muted-foreground">
-                {tr(
-                  "createProject.projectCreatedChangingLanguagesOrSourceContent",
-                )}
-                <Link
-                  className="text-primary underline ml-2"
-                  to={`/projects/${pid}/settings`}
-                >
-                  {tr("common.projectSettings")}
-                </Link>
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-5 space-y-4">
-            <h2 className="font-medium">{tr("createProject.uploadStep")}</h2>
-            <p className="text-sm text-muted-foreground">
-              {tr("createProject.uploadHelp", {
-                formats: caps?.input_formats.join(" / ") || "—",
-              })}
-            </p>
-            <SourceFilePicker
-              filename={typeof filename === "string" ? filename : undefined}
-              size={file?.size}
-              extensions={extensions}
-              disabled={locked}
-              onSelectFile={(file) => {
-                setFile(file);
-                setSourceConsumed(false);
-                create.reset();
-              }}
-            />
-            {!pid && extension === "pdf" && (
-              <div>
-                <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
-                <Select
-                  id="pdf-backend"
-                  className="mt-2"
-                  value={pdfBackend}
-                  disabled={locked}
-                  onValueChange={(value) =>
-                    setPdfBackend(value as typeof pdfBackend)
-                  }
-                >
-                  <SelectItem value="">{tr("createProject.serverDefault")}</SelectItem>
-                  <SelectItem value="mineru">MinerU</SelectItem>
-                  <SelectItem value="babeldoc">BabelDOC</SelectItem>
-                </Select>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-        {!subtitle && project?.fmt !== "srt" && (!pid || savedPipeline) && (
-          <Card>
-            <CardContent className="p-5 space-y-3">
-              <fieldset disabled={locked} className="min-w-0">
-                <legend className="mb-3 font-medium">
-                  {tr("createProject.translationMode")}
-                </legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {(["standard", "best_of_three"] as const).map((mode) => (
-                    <label
-                      key={mode}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-lg border p-4",
-                        "transition-colors focus-within:ring-2 focus-within:ring-ring",
-                        displayedMode === mode
-                          ? "border-primary bg-primary/5"
-                          : "hover:bg-muted/50",
-                        locked && "cursor-default opacity-75",
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="translation-mode"
-                        value={mode}
-                        checked={displayedMode === mode}
-                        onChange={() => setTranslationMode(mode)}
-                        aria-label={tr(
-                          mode === "standard"
-                            ? "createProject.standardMode"
-                            : "createProject.precisionMode",
-                        )}
-                        className="mt-1 shrink-0 accent-primary"
-                      />
-                      <span className="min-w-0 space-y-1">
-                        <span className="block text-sm font-medium">
-                          {tr(
-                            mode === "standard"
-                              ? "createProject.standardMode"
-                              : "createProject.precisionMode",
-                          )}
-                        </span>
-                        <span className="block text-sm text-muted-foreground">
-                          {tr(
-                            mode === "standard"
-                              ? "createProject.standardHelp"
-                              : "createProject.precisionHelp",
-                          )}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              {displayedMode === "best_of_three" && (
-                <p className="text-xs text-muted-foreground">
-                  {tr("createProject.precisionPolish")} {tr("createProject.precisionCost")}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        )}
-        <div className="space-y-4">
-          {!pid && !subtitle && (
-            <div className="flex items-start gap-3">
-              <input
-                id="prepare-source"
-                type="checkbox"
-                checked={prepare}
-                disabled={locked}
-                onChange={(e) => setPrepare(e.target.checked)}
-                aria-describedby="prepare-help"
-                className="mt-1 accent-primary"
-              />
-              <div>
-                <Label htmlFor="prepare-source">
-                  {tr("createProject.prepareSource")}
-                </Label>
-                <p
-                  id="prepare-help"
-                  className="mt-1 text-sm text-muted-foreground"
-                >
-                  {tr("createProject.prepareHelp")}
-                </p>
-              </div>
-            </div>
-          )}
-          {!pid && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-3">
-                <Button variant="outline" disabled={pending} onClick={close}>
-                  {tr("common.cancel")}
-                </Button>
-                <Button
-                  onClick={() => create.mutate()}
-                  disabled={
-                    !name.trim() ||
-                    !file ||
-                    sourceConsumed ||
-                    !!fileError ||
-                    sameLanguage ||
-                    !caps ||
-                    create.isPending
-                  }
-                  className="w-full sm:w-auto"
-                >
-                  {create.isPending
-                    ? tr("createProject.uploading")
-                    : tr("common.createProject")}
-                </Button>
-              </div>
-              {sourceConsumed && (
-                <p role="status" className="text-xs text-muted-foreground">
-                  {tr("createProject.selectSourceAgain")}
-                </p>
-              )}
-              {!file && (
-                <p className="text-xs text-muted-foreground">
-                  {tr("createProject.sourceRequired")}
-                </p>
-              )}
-            </div>
-          )}
-          {busy && (
-            <p role="status" className="text-sm">
-              {project?.status === "preparing"
-                ? tr("createProject.preparingSource")
-                : tr("createProject.parsingTheSourceAPreviewWillAppear")}
-            </p>
-          )}
-          {preview && <SourcePreview preview={preview} />}
-          {pid && (
-            <div className="flex flex-wrap gap-3">
-              {interrupted ? (
-                <Button
-                  onClick={() => resume.mutate()}
-                  disabled={resume.isPending}
-                >
-                  {tr("progress.resumeTask")}
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => start.mutate()}
-                  disabled={!preview || busy || start.isPending}
-                >
-                  {start.isPending
-                    ? tr("createProject.starting")
-                    : tr("common.startTranslation")}
-                </Button>
-              )}
-              <Link to={`/projects/${pid}`}>
-                <Button variant="outline">
-                  {tr("createProject.openProject")}
-                </Button>
-              </Link>
-            </div>
-          )}
+        <div className="space-y-2">
+          <Label htmlFor="project-name">{tr("createProject.projectName")}</Label>
+          <Input
+            ref={nameRef}
+            id="project-name"
+            value={name}
+            disabled={locked}
+            onChange={(e) => setName(e.target.value)}
+          />
         </div>
+        <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="min-w-0 space-y-2">
+            <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
+            <Select
+              id="source-language"
+              value={source}
+              disabled={locked}
+              onValueChange={setSource}
+            >
+              <SelectItem value="auto">{tr("progress.detectAutomatically")}</SelectItem>
+              {languages.map((l) => (
+                <SelectItem key={l.code} value={l.code}>
+                  {languageName(l.code, l.name, locale)} ({l.code})
+                </SelectItem>
+              ))}
+            </Select>
+          </div>
+          <ArrowRight
+            className="mb-2.5 hidden h-4 w-4 text-muted-foreground sm:block"
+            aria-hidden="true"
+          />
+          <div className="min-w-0 space-y-2">
+            <Label htmlFor="target-language">{tr("createProject.targetLanguage")}</Label>
+            <Select
+              id="target-language"
+              value={target}
+              disabled={locked || !caps}
+              onValueChange={setTarget}
+            >
+              {languages.map((l) => (
+                <SelectItem key={l.code} value={l.code}>
+                  {languageName(l.code, l.name, locale)} ({l.code})
+                </SelectItem>
+              ))}
+            </Select>
+          </div>
+        </div>
+        {sameLanguage && (
+          <ErrorNotice error={tr("createProject.theSourceAndTargetLanguagesAreThe")} />
+        )}
+        <SourceFilePicker
+          filename={typeof filename === "string" ? filename : undefined}
+          size={file?.size}
+          extensions={extensions}
+          formats={caps?.input_formats || []}
+          disabled={locked}
+          onSelectFile={(file) => {
+            setFile(file);
+            setSourceConsumed(false);
+            create.reset();
+          }}
+        />
+        {!pid && extension === "pdf" && (
+          <div className="space-y-2">
+            <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
+            <Select
+              id="pdf-backend"
+              value={pdfBackend}
+              disabled={locked}
+              onValueChange={(value) => setPdfBackend(value as typeof pdfBackend)}
+            >
+              <SelectItem value="">{tr("createProject.serverDefault")}</SelectItem>
+              <SelectItem value="mineru">MinerU</SelectItem>
+              <SelectItem value="babeldoc">BabelDOC</SelectItem>
+            </Select>
+          </div>
+        )}
+        {!subtitle && project?.fmt !== "srt" && (!pid || savedPipeline) && (
+          <fieldset disabled={locked} className="min-w-0 space-y-2">
+            <legend className="mb-2 text-sm font-medium leading-none">
+              {tr("createProject.translationMode")}
+            </legend>
+            <div className="inline-flex w-full rounded-lg border p-1 sm:w-auto">
+              {(["standard", "best_of_three"] as const).map((mode) => (
+                <label
+                  key={mode}
+                  className={cn(
+                    "relative flex flex-1 cursor-pointer items-center justify-center rounded-md px-4 py-1.5 text-sm transition-colors sm:flex-none",
+                    "focus-within:ring-2 focus-within:ring-ring",
+                    displayedMode === mode
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                    locked && "cursor-default",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="translation-mode"
+                    value={mode}
+                    checked={displayedMode === mode}
+                    onChange={() => setTranslationMode(mode)}
+                    // Invisible but covering the option, so it stays clickable and focusable.
+                    className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-default"
+                  />
+                  {tr(
+                    mode === "standard"
+                      ? "createProject.standardMode"
+                      : "createProject.precisionMode",
+                  )}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+        {!pid && !subtitle && (
+          <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={prepare}
+              disabled={locked}
+              onChange={(e) => setPrepare(e.target.checked)}
+              className="accent-primary"
+            />
+            {tr("createProject.prepareSource")}
+          </label>
+        )}
+        {pid && (
+          <Link
+            className="inline-block text-sm text-muted-foreground underline underline-offset-4"
+            to={`/projects/${pid}/settings`}
+          >
+            {tr("common.projectSettings")}
+          </Link>
+        )}
+        {busy && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {project?.status === "preparing"
+              ? tr("createProject.preparingSource")
+              : tr("createProject.parsingTheSourceAPreviewWillAppear")}
+          </p>
+        )}
+        {preview && <SourcePreview preview={preview} />}
       </div>
     </Dialog>
   );

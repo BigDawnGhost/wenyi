@@ -45,7 +45,6 @@ test("Desktop dashboard shares settings shell and keeps structured drafts", asyn
   expect(await shell!.evaluate(node => node === document.querySelector("#sidebar-navigation"))).toBe(true);
   await expect(page.getByRole("navigation", { name: "Settings navigation" })).toHaveCount(0);
   await page.getByLabel("Polishing", { exact: true }).uncheck();
-  await page.locator("summary").filter({ hasText: "API providers & models" }).click();
   await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -102,7 +101,6 @@ test("lazy credentials do not blank settings after its configuration loads", asy
     expect(blankFrames).toBe(0);
     await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
     await expect(page.getByLabel("Interface language")).toBeVisible();
-    await page.locator("summary").filter({ hasText: "API providers & models" }).click();
     await expect(page.locator("#provider-models").getByLabel("API provider", { exact: true })).toBeVisible();
     await expect(page.locator("#key-default")).toBeVisible();
     releaseCredential();
