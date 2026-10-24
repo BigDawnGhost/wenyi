@@ -1,4 +1,4 @@
-import type { components } from "@wenyi/shared-schema";
+import type { components, paths } from "@wenyi/shared-schema";
 import { platform, type ProjectSource } from "../platform";
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
@@ -29,6 +29,10 @@ export type JobEnqueued = Output<"JobEnqueued">;
 export type Capabilities = Output<"Capabilities">;
 export type GlobalConfig = Output<"GlobalConfigOut">;
 export type GlobalConfigInput = components["schemas"]["GlobalConfigInput"];
+export type ModelPingResult = Output<"ModelPingResult">;
+export type ModelListResult = Output<"ModelListResult">;
+export type ModelListRequest =
+  paths["/settings/models/list"]["post"]["requestBody"]["content"]["application/json"];
 export type ProjectConfig = Output<"ProjectConfigOut">;
 export type ReviewRun = Output<"ReviewRun">;
 export type ReviewItem = components["schemas"]["ReviewItem"];
@@ -53,6 +57,16 @@ export const api = {
   saveGlobalConfig: (body: GlobalConfigInput) =>
     request<GlobalConfig>("/settings", {
       method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  pingModels: (timeout?: number) =>
+    request<ModelPingResult[]>("/settings/models/ping", {
+      method: "POST",
+      body: JSON.stringify(timeout === undefined ? {} : { timeout }),
+    }),
+  listModels: (body: ModelListRequest) =>
+    request<ModelListResult>("/settings/models/list", {
+      method: "POST",
       body: JSON.stringify(body),
     }),
   validateGlobalConfig: (body: GlobalConfigInput) =>

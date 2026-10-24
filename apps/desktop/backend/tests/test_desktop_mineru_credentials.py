@@ -369,3 +369,36 @@ def test_each_context_binds_its_own_resolver(tmp_path):
         for context in contexts:
             context.settings_store.credentials.clear_session()
             context.repository.close()
+
+
+def test_manual_key_is_revealed_locally_but_environment_never_is(desktop_context, monkeypatch):
+    from dataclasses import replace
+
+    context = replace(desktop_context, api_token="fake-local-bearer")
+    path = "/desktop/external-credentials/mineru"
+    headers = {"Authorization": "Bearer fake-local-bearer", "Origin": "tauri://localhost"}
+    with TestClient(create_app(context=context)) as client:
+        assert client.get(f"{path}/secret").status_code == 401
+        evil = {**headers, "Origin": "https://evil.invalid"}
+        assert client.get(f"{path}/secret", headers=evil).status_code == 403
+        assert client.get(f"{path}/secret", headers=headers).json() == {"secret": None}
+        client.put(path, headers=headers, json={"secret": "fake-shown", "storage": "session"})
+        response = client.get(f"{path}/secret", headers=headers)
+        assert response.json() == {"secret": "fake-shown"}
+        assert response.headers["cache-control"] == "no-store"
+        monkeypatch.setenv("MINERU_API_KEY", "fake-environment-mineru")
+        response = client.get(f"{path}/secret", headers=headers)
+        assert "fake-environment-mineru" not in response.text
+        monkeypatch.delenv("MINERU_API_KEY")
+        client.put(path, headers=headers, json={"clear": True})
+        assert client.get(f"{path}/secret", headers=headers).json() == {"secret": None}
+
+
+def test_model_key_reveal_never_returns_environment_values(tmp_path, monkeypatch):
+    store = CredentialStore(tmp_path, vault_factory=lambda: None)
+    cfg = ProviderConfig(kind="openai", api_key_env="WENYI_TEST_REVEAL_KEY")
+    monkeypatch.setenv("WENYI_TEST_REVEAL_KEY", "fake-environment-model")
+    assert store.resolve("one", cfg) == "fake-environment-model"
+    assert store.manual_secret("one", cfg) is None
+    store.update("one", mode="manual", secret="fake-manual-model", storage="session")
+    assert store.manual_secret("one", cfg) == "fake-manual-model"

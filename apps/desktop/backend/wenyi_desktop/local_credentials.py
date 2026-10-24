@@ -201,6 +201,25 @@ class CredentialStore:
             "requires_key": True,
         }
 
+    def manual_mineru_secret(self) -> str | None:
+        """Return the manually saved MinerU key for display, ignoring MINERU_API_KEY."""
+        for _ in range(3):
+            record, revision = self._mineru_source()
+            reference = record.get("reference")
+            secret = None
+            if record.get("mode") == "manual" and reference:
+                if record.get("storage") == "session":
+                    with self._lock:
+                        secret = self._session.get(reference)
+                elif self.vault is not None:
+                    try:
+                        secret = self.vault.get_password(SERVICE, reference)
+                    except Exception:
+                        secret = None
+            if self._mineru_source() == (record, revision):
+                return secret
+        raise CredentialConflict("MinerU credential changed; reload before reading")
+
     def resolve_mineru_token(self) -> str | None:
         """Capture an invocation's env-first token without mutating process environment."""
         _, secret = self._mineru_snapshot()
@@ -348,6 +367,15 @@ class CredentialStore:
             "system_storage_available": self.vault is not None,
             "requires_key": adapter.requires_api_key,
         }
+
+    def resolve(self, connection: str, provider: ProviderConfig) -> str | None:
+        """Return one connection's effective key for local display or a draft model listing."""
+        return self._resolve(self._records().get(connection, {}), provider)
+
+    def manual_secret(self, connection: str, provider: ProviderConfig) -> str | None:
+        """Return a manually saved key for display; environment values are never revealed."""
+        record = self._records().get(connection, {})
+        return self._resolve(record, provider) if record.get("mode") == "manual" else None
 
     def snapshot(self, providers: Mapping[str, ProviderConfig]) -> dict[str, str | None]:
         records = self._records()

@@ -198,6 +198,15 @@ uv run wenyi models check --for translate
 
 `list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
 
+需要确认 provider 实际可连通时，运行真实连通性测试：
+
+```bash
+uv run wenyi models ping --for translate
+uv run wenyi models ping --for review --timeout 10 --json
+```
+
+`ping` 向该流程可达的每个模型配置（含显式 fallback）发送一次简短请求（`max_output_tokens` 为 16；开启 thinking 时取 provider 的最低值，例如 4096）。它不重试，每次请求最长等待 `--timeout` 秒（默认 30），不计入任何运行的用量；任一配置失败时退出码为 1。失败按类别报告，例如 `authentication_failed`、`model_or_endpoint_not_found`、`connection_failed` 或 `missing_credential`，不回显 provider 响应内容。回复被截断或为空也视为可连通。
+
 可选本地控制示例（使用离线提供商）：
 
 ```yaml

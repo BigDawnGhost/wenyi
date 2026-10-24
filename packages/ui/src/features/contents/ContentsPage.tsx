@@ -5,7 +5,7 @@ import { toast } from "@/lib/toast";
 import { useI18n } from "@/i18n";
 import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { ErrorNotice } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 import { Input } from "@/components/ui/form";
 import { ContentsEditor } from "./ContentsEditor";
 import { ContentsList } from "./ContentsList";
@@ -78,17 +78,10 @@ function ContentsWorkspace({
   const readOnly = !initialized || busy || !!error || loading;
   return (
     <>
-      <PageHeader
-        title={t("contents.title")}
-        subtitle={t(initialized ? "contents.help" : "proofreading.parsedSourceHelp")}
-      />
+      <PageHeader title={t("contents.title")} />
       <PageContainer className="space-y-4">
         <ErrorNotice error={error} />
-        {initialized && busy && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("contents.pauseToEdit")}
-          </p>
-        )}
+        {!initialized ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
         <Input
           aria-label={t("contents.search")}
           placeholder={t("contents.search")}

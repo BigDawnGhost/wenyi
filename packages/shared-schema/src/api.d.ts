@@ -402,6 +402,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/models/ping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ping Models
+         * @description Send one short live request per saved model profile; this uses provider tokens.
+         */
+        post: operations["ping_models_settings_models_ping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/models/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Models
+         * @description List a connection's model names; the connection may be an unsaved draft.
+         */
+        post: operations["list_models_settings_models_list_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/report": {
         parameters: {
             query?: never;
@@ -1185,6 +1225,52 @@ export interface components {
             valid: boolean;
             /** Operations */
             operations: string[];
+        };
+        /** ModelListResult */
+        ModelListResult: {
+            /** Ok */
+            ok: boolean;
+            /** Models */
+            models: string[];
+            /** Category */
+            category: string;
+            /** Message */
+            message: string;
+            /** Status Code */
+            status_code?: number | null;
+        };
+        /** ModelPingRequest */
+        ModelPingRequest: {
+            /**
+             * Timeout
+             * @default 30
+             */
+            timeout: number;
+        };
+        /** ModelPingResult */
+        ModelPingResult: {
+            /** Profile */
+            profile: string;
+            /** Connection */
+            connection: string;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Operations */
+            operations: string[];
+            /** Ok */
+            ok: boolean;
+            /** Category */
+            category: string;
+            /** Message */
+            message: string;
+            /** Status Code */
+            status_code?: number | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
         };
         /** PDFCapabilities */
         PDFCapabilities: {
@@ -2556,6 +2642,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ping_models_settings_models_ping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelPingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelPingResult"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_models_settings_models_list_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Connection */
+                    connection?: string | null;
+                    /** Provider */
+                    provider: {
+                        [key: string]: unknown;
+                    };
+                    /** Api Key */
+                    api_key?: string | null;
+                    /**
+                     * Timeout
+                     * @default 20
+                     */
+                    timeout?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelListResult"];
                 };
             };
         };

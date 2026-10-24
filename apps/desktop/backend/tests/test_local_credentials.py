@@ -577,3 +577,89 @@ def test_transaction_exit_failure_cleans_new_key_only(desktop_context, isolated_
     assert caught.value.status_code == 503
     assert store._records() == previous
     assert list(isolated_vault.values.values()) == ["fake-old"]
+
+
+def test_global_connectivity_test_uses_saved_manual_key_without_echo(desktop_context, monkeypatch):
+    from wenyi_core.llm.providers._openai_compatible import OpenAICompatibleBaseClient
+
+    secret = "fake-ping-manual-secret"
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    connection = next(iter(desktop_context.settings_store.load().config.llm.providers))
+    desktop_context.settings_store.credentials.update(
+        connection, mode="manual", secret=secret, storage="session"
+    )
+    used = []
+
+    def ensure(self):
+        used.append(self.api_key())
+        reply = SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="OK"))
+        create = lambda **kwargs: SimpleNamespace(usage=None, choices=[reply])  # noqa: E731
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    monkeypatch.setattr(OpenAICompatibleBaseClient, "_ensure_client", ensure)
+    client = TestClient(create_app(context=desktop_context))
+    headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}
+    assert client.post("/settings/models/ping", json={}).status_code == 401
+    response = client.post("/settings/models/ping", headers=headers, json={"timeout": 5})
+    assert response.status_code == 200, response.text
+    assert response.json() and all(result["ok"] for result in response.json())
+    assert used and set(used) == {secret}
+    assert secret not in response.text
+
+
+def test_saved_key_is_revealed_only_to_the_authenticated_local_ui(
+    tmp_path, desktop_context, isolated_vault
+):
+    client = TestClient(create_app(context=desktop_context))
+    headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}
+    connection = next(iter(client.get("/desktop/credentials", headers=headers).json()))
+    route = f"/desktop/credentials/{connection}"
+    assert client.get(f"{route}/secret").status_code == 401
+    assert (
+        client.get(
+            f"{route}/secret", headers={**headers, "Origin": "https://evil.invalid"}
+        ).status_code
+        == 403
+    )
+    client.put(route, headers=headers, json={"mode": "manual", "secret": "fake-reveal-key"})
+    response = client.get(f"{route}/secret", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"secret": "fake-reveal-key"}
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get("/desktop/credentials/missing/secret", headers=headers).status_code == 404
+    client.put(route, headers=headers, json={"mode": "manual", "clear": True})
+    assert client.get(f"{route}/secret", headers=headers).json() == {"secret": None}
+    assert all(
+        b"fake-reveal-key" not in path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    )
+
+
+def test_draft_model_listing_uses_the_stored_key(desktop_context, isolated_vault, monkeypatch):
+    import wenyi_backend.routers.settings as settings_router
+    from wenyi_core.llm.models import ModelListing
+
+    seen = []
+
+    def fake_list(provider, *, credential=None, use_credential=False, timeout=20):
+        seen.append((credential, use_credential))
+        return ModelListing(True, ("listed",))
+
+    monkeypatch.setattr(settings_router, "list_connection_models", fake_list)
+    client = TestClient(create_app(context=desktop_context))
+    headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}
+    connection = next(iter(client.get("/desktop/credentials", headers=headers).json()))
+    client.put(
+        f"/desktop/credentials/{connection}",
+        headers=headers,
+        json={"mode": "manual", "secret": "fake-stored-list-key"},
+    )
+    response = client.post(
+        "/settings/models/list",
+        headers=headers,
+        json={"connection": connection, "provider": {"kind": "deepseek"}},
+    )
+    assert response.json()["models"] == ["listed"]
+    assert seen == [("fake-stored-list-key", True)]
+    assert "fake-stored-list-key" not in response.text

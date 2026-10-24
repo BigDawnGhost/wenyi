@@ -85,7 +85,7 @@ test("creates a multilingual project and waits for background parsing", async ({
   });
   await expect(browseFiles).toBeVisible();
   await expect(
-    page.getByText("No file selected", { exact: true }),
+    page.getByText("Drop a file here", { exact: true }),
   ).toBeVisible();
   await browseFiles
     .locator("..")
@@ -335,10 +335,6 @@ test("global API provider form saves endpoint, model and tier changes", async ({
     },
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await page
     .locator("#provider-models")
     .getByLabel("API provider", { exact: true })

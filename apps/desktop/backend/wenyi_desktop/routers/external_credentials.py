@@ -1,8 +1,8 @@
-"""Independent Desktop service credentials; no provider registry or secret responses."""
+"""Independent Desktop service credentials; only the manual key can be read back locally."""
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, SecretStr, StrictBool, model_validator
 
@@ -41,6 +41,20 @@ class MinerUCredentialInput(BaseModel):
 @router.get("/mineru", response_model=MinerUCredentialStatus)
 def status() -> dict:
     return credential_store().mineru_status()
+
+
+class MinerUCredentialSecret(BaseModel):
+    secret: str | None
+
+
+@router.get("/mineru/secret", response_model=MinerUCredentialSecret)
+def reveal(response: Response) -> dict:
+    """Return the manually saved key for the local owner; MINERU_API_KEY is never returned."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return {"secret": credential_store().manual_mineru_secret()}
+    except CredentialConflict:
+        raise HTTPException(409, "MinerU credential changed; reload before reading") from None
 
 
 @router.put(

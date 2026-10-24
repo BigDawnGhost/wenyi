@@ -106,6 +106,10 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
                 )
         return self._client
 
+    def list_models(self) -> list[str]:
+        """Read ``GET /models``; the OpenAI SDK pages through gateways that paginate."""
+        return [str(item.id) for item in self._ensure_client().models.list() if item.id]
+
     @classmethod
     def output_limit(cls, options: BaseModel, hint: int | None, explicit: int | None) -> int | None:
         thinking = bool(getattr(options, "thinking", False))

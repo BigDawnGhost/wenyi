@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { RegistryIdField } from "./RegistryIdField";
 import { registryReferences, type RegistryGroup } from "./registryEdits";
+import { SettingsGroupHeader } from "./SettingsSection";
 import { useI18n } from "@/i18n";
 import { Input, Label } from "@/components/ui/form";
 import { Select, SelectItem } from "@/components/ui/select";
-import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
 import { platform } from "@/platform";
 import { LazyBoundary } from "@/routes/LazyBoundary";
+import { ModelConnectivity } from "./ModelConnectivity";
+import { ModelNameField } from "./ModelNameField";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -17,20 +19,18 @@ export function ProviderSettings({
   config,
   disabled,
   kinds,
-  error,
   onChange,
   onRename,
   onEditingChange,
-  credentialsSaved = false,
+  saved = false,
 }: {
   config: Document;
   disabled: boolean;
   kinds: string[];
-  error?: unknown;
   onChange: (llm: Document) => void;
   onRename: (group: RegistryGroup, oldId: string, newId: string) => void;
   onEditingChange: (pending: boolean) => void;
-  credentialsSaved?: boolean;
+  saved?: boolean;
 }) {
   const { t: tr } = useI18n();
   const CredentialField = platform().capabilities.credentials?.Field;
@@ -70,75 +70,67 @@ export function ProviderSettings({
     delete entries[id];
     onChange({ ...llm, preset: null, [group]: entries });
   };
-  const entryHeader = (group: RegistryGroup, id: string) => {
+  const idField = (group: RegistryGroup, id: string) => {
     const references = registryReferences(llm, group, id);
-    const descriptionId = `references-${group}-${id}`;
+    const noteId = `references-${group}-${id}`;
     return (
-      <div className="space-y-2">
-        <RegistryIdField
-          group={group}
-          id={id}
-          ids={Object.keys(object(llm[group]))}
-          onRename={onRename}
-          onPending={onPending}
-          action={
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              disabled={references.length > 0}
-              aria-describedby={references.length ? descriptionId : undefined}
-              aria-label={tr(
-                group === "providers"
-                  ? "registry.deleteConnection"
-                  : "registry.deleteModel",
-                { id },
-              )}
-              onClick={() => remove(group, id)}
-            >
-              <Trash2 className="h-4 w-4" />
-              {tr("registry.delete")}
-            </Button>
-          }
-        />
-        {references.length > 0 && (
-          <p
-            id={descriptionId}
-            className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
+      <RegistryIdField
+        group={group}
+        id={id}
+        ids={Object.keys(object(llm[group]))}
+        onRename={onRename}
+        onPending={onPending}
+        // The note only appears when it explains why deletion is unavailable.
+        note={
+          references.length
+            ? { id: noteId, text: tr("registry.usedBy", { references: references.join(", ") }) }
+            : undefined
+        }
+        action={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            disabled={references.length > 0}
+            aria-describedby={references.length ? noteId : undefined}
+            aria-label={tr(
+              group === "providers" ? "registry.deleteConnection" : "registry.deleteModel",
+              { id },
+            )}
+            title={tr(
+              group === "providers" ? "registry.deleteConnection" : "registry.deleteModel",
+              { id },
+            )}
+            onClick={() => remove(group, id)}
           >
-            {tr("registry.usedBy", { references: references.join(", ") })}
-          </p>
-        )}
-      </div>
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        }
+      />
     );
   };
   return (
-    <fieldset disabled={disabled} className="min-w-0 space-y-5 disabled:opacity-60">
-      <div>
-        <h2 className="font-medium">{tr("settings.registeredModels")}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {llm.preset
-            ? tr("settings.presetSummary", { name: String(llm.preset) })
-            : tr("settings.custom")}
-        </p>
-      </div>
-      <Disclosure
-        title={tr("providerSettings.apiProvidersModels")}
-        error={error}
-        summary={tr("settings.modelSummary", {
-          providers: Object.keys(providers).length,
-          models: Object.keys(models).length,
-          routes: Object.keys(object(llm.routes)).length,
-        })}
-      >
-        <p className="text-sm text-muted-foreground">
-          {tr("providerSettings.sharedRegistryHelp")}
-        </p>
+    <fieldset disabled={disabled} className="min-w-0 space-y-6 disabled:opacity-60">
+      <div className="space-y-3">
+        <SettingsGroupHeader
+          title={tr("providerSettings.connections")}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => add("providers", "provider", { kind: "openai-compatible" })}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {tr("providerSettings.addApiConnection")}
+            </Button>
+          }
+        />
         {Object.entries(providers).map(([id, raw]) => {
           const provider = object(raw);
           const environmentField = (
-            <div>
+            <div className="min-w-0 space-y-2">
               <Label htmlFor={`key-${id}`}>
                 {tr("providerSettings.apiKeyEnvironmentVariable")}
               </Label>
@@ -147,20 +139,18 @@ export function ProviderSettings({
                 autoComplete="off"
                 placeholder={tr("providerSettings.leaveBlankForTheProviderDefaultVariable")}
                 value={String(provider.api_key_env || "")}
-                onChange={(e) => update("providers", id, {
-                  api_key_env: e.target.value || null,
-                })}
+                onChange={(e) =>
+                  update("providers", id, { api_key_env: e.target.value || null })
+                }
               />
             </div>
           );
           return (
-            <div key={id} className="rounded-lg border p-4 space-y-3">
-              {entryHeader("providers", id)}
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <Label htmlFor={`provider-${id}`}>
-                    {tr("providerSettings.apiProvider")}
-                  </Label>
+            <div key={id} className="space-y-4 rounded-lg border p-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                {idField("providers", id)}
+                <div className="min-w-0 space-y-2">
+                  <Label htmlFor={`provider-${id}`}>{tr("providerSettings.apiProvider")}</Label>
                   <Select
                     id={`provider-${id}`}
                     value={String(provider.kind)}
@@ -171,11 +161,7 @@ export function ProviderSettings({
                         preset: null,
                         providers: {
                           ...providers,
-                          [id]: {
-                            kind: value,
-                            base_url: null,
-                            api_key_env: null,
-                          },
+                          [id]: { kind: value, base_url: null, api_key_env: null },
                         },
                         models: Object.fromEntries(
                           Object.entries(models).map(([key, value]) => [
@@ -188,9 +174,7 @@ export function ProviderSettings({
                       });
                     }}
                   >
-                    <SelectItem value={String(provider.kind)}>
-                      {String(provider.kind)}
-                    </SelectItem>
+                    <SelectItem value={String(provider.kind)}>{String(provider.kind)}</SelectItem>
                     {kinds
                       .filter((k) => k !== provider.kind && k !== "fake")
                       .map((k) => (
@@ -198,25 +182,18 @@ export function ProviderSettings({
                       ))}
                   </Select>
                 </div>
-                <div>
-                  <Label htmlFor={`url-${id}`}>
-                    {tr("providerSettings.apiBaseUrl")}
-                  </Label>
+                <div className="min-w-0 space-y-2">
+                  <Label htmlFor={`url-${id}`}>{tr("providerSettings.apiBaseUrl")}</Label>
                   <Input
                     id={`url-${id}`}
-                    placeholder={tr(
-                      "providerSettings.leaveBlankForTheProviderDefaultUrl",
-                    )}
+                    placeholder={tr("providerSettings.leaveBlankForTheProviderDefaultUrl")}
                     value={String(provider.base_url || "")}
                     onChange={(e) =>
-                      update("providers", id, {
-                        base_url: e.target.value || null,
-                      })
+                      update("providers", id, { base_url: e.target.value || null })
                     }
                   />
                 </div>
-                {!CredentialField && environmentField}
-                <div>
+                <div className="min-w-0 space-y-2">
                   <Label htmlFor={`timeout-${id}`}>
                     {tr("providerSettings.requestTimeoutSeconds")}
                   </Label>
@@ -226,101 +203,81 @@ export function ProviderSettings({
                     min={1}
                     value={Number(provider.timeout ?? 600)}
                     onChange={(e) =>
-                      update("providers", id, {
-                        timeout: Number(e.target.value),
-                      })
+                      update("providers", id, { timeout: Number(e.target.value) })
                     }
                   />
                 </div>
               </div>
-              {CredentialField && (
+              {CredentialField ? (
                 // The credential UI may be a lazy platform chunk; keep its slot
                 // filled with the environment field instead of blanking it.
                 <LazyBoundary fallback={environmentField}>
-                  <CredentialField
-                    connection={id}
-                    saved={credentialsSaved}
-                  >
-                    {environmentField}
-                  </CredentialField>
+                  <CredentialField connection={id}>{environmentField}</CredentialField>
                 </LazyBoundary>
+              ) : (
+                environmentField
               )}
             </div>
           );
         })}
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() =>
-            add("providers", "provider", { kind: "openai-compatible" })
+      </div>
+      <div className="space-y-3">
+        <SettingsGroupHeader
+          title={tr("providerSettings.models")}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={Object.keys(providers).length === 0}
+              onClick={() =>
+                add("models", "model", {
+                  provider: Object.keys(providers)[0],
+                  model: "",
+                  options: {},
+                })
+              }
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {tr("providerSettings.addModel")}
+            </Button>
           }
-        >
-          {tr("providerSettings.addApiConnection")}
-        </Button>
-        <p className="text-sm text-muted-foreground">
-          {tr("providerSettings.afterChangingProvidersChooseAModelName")}
-        </p>
+        />
         {Object.entries(models).map(([id, raw]) => {
           const model = object(raw);
           return (
-            <div key={id} className="rounded-lg border p-4 space-y-3">
-              {entryHeader("models", id)}
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <Label htmlFor={`connection-${id}`}>
-                    {tr("providerSettings.apiConnection")}
-                  </Label>
-                  <Select
-                    id={`connection-${id}`}
-                    value={String(model.provider)}
-                    onValueChange={(value) =>
-                      update("models", id, {
-                        provider: value,
-                        options: {},
-                      })
-                    }
-                  >
-                    {Object.keys(providers).map((p) => (
-                      <SelectItem key={p} value={p}>{p}</SelectItem>
-                    ))}
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor={`model-${id}`}>
-                    {tr("common.modelName")}
-                  </Label>
-                  <Input
-                    id={`model-${id}`}
-                    value={String(model.model || "")}
-                    onChange={(e) =>
-                      update("models", id, { model: e.target.value })
-                    }
-                  />
-                </div>
+            <div key={id} className="grid gap-4 rounded-lg border p-4 sm:grid-cols-3">
+              {idField("models", id)}
+              <div className="min-w-0 space-y-2">
+                <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>
+                <Select
+                  id={`connection-${id}`}
+                  value={String(model.provider)}
+                  onValueChange={(value) =>
+                    update("models", id, { provider: value, options: {} })
+                  }
+                >
+                  {Object.keys(providers).map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </Select>
               </div>
+              <ModelNameField
+                id={`model-${id}`}
+                value={String(model.model || "")}
+                connection={String(model.provider)}
+                provider={
+                  model.provider && String(model.provider) in providers
+                    ? object(providers[String(model.provider)])
+                    : undefined
+                }
+                onChange={(value) => update("models", id, { model: value })}
+              />
             </div>
           );
         })}
-        <Button
-          type="button"
-          variant="outline"
-          disabled={Object.keys(providers).length === 0}
-          onClick={() =>
-            add("models", "model", {
-              provider: Object.keys(providers)[0],
-              model: "",
-              options: {},
-            })
-          }
-        >
-          {tr("providerSettings.addModel")}
-        </Button>
-        <p className="text-xs text-muted-foreground">
-          {tr(
-            "providerSettings.operationSpecificModelRoutesTakePrecedenceOver",
-          )}
-        </p>
-      </Disclosure>
+      </div>
+      <ModelConnectivity saved={saved} disabled={disabled} />
     </fieldset>
   );
 }

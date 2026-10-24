@@ -80,6 +80,19 @@ class RoutedLLMClient(LLMClient):
     def cancel(self) -> None:
         self.limits.cancel()
 
+    def probe_profiles(
+        self, profiles: Iterable[str] | None = None, *, timeout: float | None = None
+    ) -> list:
+        """Send live probes using this invocation's frozen configuration and credentials."""
+        from .connectivity import DEFAULT_PROBE_TIMEOUT, probe_profiles
+
+        return probe_profiles(
+            self.config,
+            profiles,
+            credentials=self._credentials,
+            timeout=DEFAULT_PROBE_TIMEOUT if timeout is None else timeout,
+        )
+
     def request_snapshot(self, operation: str) -> dict[str, Any]:
         """Describe this client's effective routes without reading credentials or emitting events."""
         require_operation(operation)

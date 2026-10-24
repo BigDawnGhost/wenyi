@@ -58,7 +58,7 @@ for (const mobile of [false, true]) {
     await expect(dialog.getByText(/最终译文是三稿综合润色，不是选择某一稿/)).toBeVisible();
     for (const candidate of archive.candidates)
       await expect(dialog.getByText(candidate.target, { exact: true })).toBeAttached();
-    await expect(dialog.getByText(/当前正式译文与归档综合结果不同/)).toBeAttached();
+    await expect(dialog.getByText("与存档的综合译文不同", { exact: true })).toBeAttached();
     await expect(dialog.getByRole("textbox")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: /发布|保存/ })).toHaveCount(0);
     expect(requests).toBe(1);

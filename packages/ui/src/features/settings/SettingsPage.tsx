@@ -6,12 +6,12 @@ import { toast } from "@/lib/toast";
 import { api, isProjectBusy, type ProjectConfig } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Disclosure } from "@/components/ui/disclosure";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/form";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
+import { ErrorNotice, ReadOnlyNotice, StructuredData } from "@/components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
+import { SettingsActionBar, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 
 const section = (config: Record<string, unknown>, key: string) =>
@@ -101,137 +101,116 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title={tr("common.projectSettings")} />
-      <PageContainer className="max-w-5xl space-y-4">
+      <PageContainer className="max-w-5xl">
         <ErrorNotice error={config.error || configurationError} />
-        {busy && (
-          <p role="status" className="rounded border p-3 text-sm">
-            {tr("settings.settingsAreReadOnlyWhileATask")}
-          </p>
-        )}
-        <Card>
-          <CardContent className="p-5 space-y-4">
-            <h2 className="font-medium">{tr("settings.modelSetup")}</h2>
-            <p className="text-sm text-muted-foreground">
-              <Link to="/settings" className="underline underline-offset-4">
-                {tr("settings.manageGlobalModels")}
-              </Link>
-            </p>
-            <ModelSelection
-              llm={section(effective, "llm")}
-              models={config.data?.registered_models || {}}
-              operations={caps?.operations}
-              disabled={formDisabled}
-              onChange={(llm) => {
-                const next = { ...effective, llm };
-                setEffective(next);
-                setDraft(JSON.stringify(next, null, 2));
+        {busy && <ReadOnlyNotice className="mb-4" />}
+        <SettingsSection title={tr("settings.sectionModels")}>
+          <ModelSelection
+            llm={section(effective, "llm")}
+            models={config.data?.registered_models || {}}
+            operations={caps?.operations}
+            disabled={formDisabled}
+            onChange={(llm) => {
+              const next = { ...effective, llm };
+              setEffective(next);
+              setDraft(JSON.stringify(next, null, 2));
+            }}
+          />
+          <Link
+            to="/settings"
+            className="inline-block text-sm text-muted-foreground underline underline-offset-4"
+          >
+            {tr("settings.manageGlobalModels")}
+          </Link>
+        </SettingsSection>
+        <SettingsSection title={tr("settings.sectionWorkflow")}>
+          <WorkflowSettings
+            scope="project"
+            config={effective}
+            disabled={formDisabled}
+            error={configurationError}
+            subtitles={subtitles}
+            pdf={project?.fmt === "pdf"}
+            onField={setField}
+          />
+        </SettingsSection>
+        <SettingsSection id="advanced-yaml" title={tr("settings.sectionAdvanced")}>
+          <Disclosure
+            title={tr("settings.advancedYamlConfiguration")}
+            summary={yamlDirty ? tr("settings.unsavedSummary") : undefined}
+            error={configurationError}
+          >
+            <Textarea
+              aria-label={tr("settings.advancedYamlConfiguration")}
+              spellCheck={false}
+              className="min-h-[420px] font-mono text-xs"
+              value={draft}
+              disabled={busy || !loaded}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setYamlDirty(true);
               }}
             />
-            <h2 className="font-medium">{tr("settings.workflowSettings")}</h2>
-            {yamlDirty && (
-              <p className="text-sm text-amber-700">
-                {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-              </p>
-            )}
-            <WorkflowSettings
-              scope="project"
-              config={effective}
-              disabled={formDisabled}
-              error={configurationError}
-              subtitles={subtitles}
-              pdf={project?.fmt === "pdf"}
-              onField={setField}
-            />
-            <Disclosure
-              title={tr("settings.advancedYamlConfiguration")}
-              summary={yamlDirty ? tr("settings.unsavedSummary") : undefined}
-              error={configurationError}
-            >
-              <p className="text-xs text-muted-foreground mt-3">
-                {tr("settings.projectYamlHelp")}
-              </p>
-              <Textarea
-                aria-label={tr("settings.advancedYamlConfiguration")}
-                spellCheck={false}
-                className="mt-3 min-h-[420px] font-mono text-xs"
-                value={draft}
-                disabled={busy || !loaded}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  setYamlDirty(true);
-                }}
-              />
+          </Disclosure>
+          {validate.data && (
+            <Disclosure title={tr("settings.validatedModelRoutes")}>
+              <StructuredData value={validate.data.routes} />
             </Disclosure>
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="outline"
-                disabled={
-                  !loaded ||
-                  busy ||
-                  restore.isPending ||
-                  save.isPending ||
-                  validate.isPending
-                }
-                onClick={() => restore.mutate()}
-              >
-                {tr("settings.restoreDefaults")}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={
-                  !loaded || busy || validate.isPending || restore.isPending
-                }
-                onClick={() => validate.mutate()}
-              >
-                {validate.isPending
-                  ? tr("settings.validating")
-                  : tr("settings.validateConfiguration")}
-              </Button>
-              <Button
-                disabled={
-                  !loaded || busy || save.isPending || restore.isPending
-                }
-                onClick={() => save.mutate()}
-              >
-                {save.isPending
-                  ? tr("common.saving")
-                  : tr("settings.saveConfiguration")}
-              </Button>
-            </div>
-            {validate.data && (
-              <details>
-                <summary className="cursor-pointer text-sm">
-                  {tr("settings.validatedModelRoutes")}
-                </summary>
-                <div className="mt-3">
-                  <StructuredData value={validate.data.routes} />
-                </div>
-              </details>
+          )}
+          <Disclosure
+            title={tr("settings.savedModelRoutes")}
+            error={routes.error || check.error}
+          >
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={check.isPending}
+              onClick={() => check.mutate()}
+            >
+              {tr("settings.checkModelConfiguration")}
+            </Button>
+            <ErrorNotice error={routes.error || check.error} />
+            <ModelRoutes value={routes.data} />
+            {check.data !== undefined && (
+              <div className="rounded border p-3">
+                <StructuredData value={check.data} />
+              </div>
             )}
-          </CardContent>
-        </Card>
-        <Disclosure
-          title={tr("settings.savedModelRoutes")}
-          summary={tr("settings.routeSummary", {
-            count: Array.isArray(routes.data) ? routes.data.length : 0,
-          })}
-          error={routes.error || check.error}
+          </Disclosure>
+        </SettingsSection>
+        <SettingsActionBar
+          notices={
+            yamlDirty && (
+              <a
+                href="#advanced-yaml"
+                className="block text-amber-700 underline underline-offset-4 dark:text-amber-300"
+              >
+                {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
+              </a>
+            )
+          }
         >
           <Button
-            variant="outline"
-            disabled={check.isPending}
-            onClick={() => check.mutate()}
+            variant="ghost"
+            disabled={!loaded || busy || restore.isPending || save.isPending || validate.isPending}
+            onClick={() => restore.mutate()}
           >
-            {tr("settings.checkModelConfiguration")}
+            {tr("settings.restoreDefaults")}
           </Button>
-          <ErrorNotice error={routes.error || check.error} />
-          <ModelRoutes value={routes.data} />
-          {check.data !== undefined && (
-            <div className="rounded border p-3">
-              <StructuredData value={check.data} />
-            </div>
-          )}
-        </Disclosure>
+          <Button
+            variant="outline"
+            disabled={!loaded || busy || validate.isPending || restore.isPending}
+            onClick={() => validate.mutate()}
+          >
+            {validate.isPending ? tr("settings.validating") : tr("settings.validateConfiguration")}
+          </Button>
+          <Button
+            disabled={!loaded || busy || save.isPending || restore.isPending}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? tr("common.saving") : tr("settings.saveConfiguration")}
+          </Button>
+        </SettingsActionBar>
       </PageContainer>
     </>
   );

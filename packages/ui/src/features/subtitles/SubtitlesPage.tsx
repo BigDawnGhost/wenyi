@@ -39,7 +39,7 @@ export default function SubtitlesPage() {
     <>
       <PageHeader
         title={tr("common.subtitleEditor")}
-        subtitle={tr("subtitles.translatedCuesOriginalIdsAndTimestampsAre", {
+        subtitle={tr("subtitles.translatedCount", {
           completed: subtitles.data?.completed || 0,
           total: subtitles.data?.total || 0,
         })}

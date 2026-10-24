@@ -68,7 +68,7 @@ for (const chinese of [false, true]) {
       { name: "bản thảo.docx", content: "The selected source" },
     ]);
     const release = zone.getByText(
-      chinese ? "松开以选择原文文件。" : "Release to select the source file.",
+      chinese ? "松开以添加文件" : "Release to add the file",
     );
     await zone.dispatchEvent("dragenter", { dataTransfer: file });
     await zone.dispatchEvent("dragover", { dataTransfer: file });
@@ -158,7 +158,7 @@ test("drops validate files and reject multiple files without replacing the selec
   });
   await zone.dispatchEvent("dragenter", { dataTransfer: text });
   await expect(
-    zone.getByText("Release to select the source file."),
+    zone.getByText("Release to add the file"),
   ).toHaveCount(0);
   await zone.dispatchEvent("drop", { dataTransfer: text });
   await text.dispose();
@@ -211,7 +211,7 @@ test("uploading rejects replacement drops and creation enters the overview", asy
     ).toBeDisabled();
     await zone.dispatchEvent("dragenter", { dataTransfer: replacement });
     await expect(
-      zone.getByText("Release to select the source file."),
+      zone.getByText("Release to add the file"),
     ).toHaveCount(0);
     await zone.dispatchEvent("drop", { dataTransfer: replacement });
     await expect(

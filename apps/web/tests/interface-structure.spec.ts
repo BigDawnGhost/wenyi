@@ -140,7 +140,7 @@ test("progress keeps runtime and matching live progress visible while folding ad
   ).toBeVisible();
 });
 
-test("export history shows only five files with its retention notice", async ({
+test("export history shows only the latest five files", async ({
   page,
 }) => {
   await fakeApi(page, {
@@ -156,9 +156,6 @@ test("export history shows only five files with its retention notice", async ({
     })),
   });
   await page.goto(`/projects/${pid}/export`);
-  await expect(
-    page.getByText(/The server keeps the latest 5 completed exports/),
-  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Download", exact: true }),
   ).toHaveCount(5);
@@ -193,7 +190,8 @@ test("folded export options preserve edits and reveal controls after a validatio
   await page.getByLabel("Normalize punctuation on export").uncheck();
   await page.getByLabel("Include an “About this translation” page").uncheck();
   await advanced.click();
-  await expect(advanced).toContainText("Source first");
+  // The folded section shows only its title; edits are verified through the submission.
+  await expect(advanced).toHaveText("Layout and advanced options");
   await page
     .getByRole("button", { name: "Generate export", exact: true })
     .click();

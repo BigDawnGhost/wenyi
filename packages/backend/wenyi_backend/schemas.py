@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from wenyi_core.i18n.languages import require_language
 
 
@@ -391,6 +391,41 @@ class ModelCheckRequest(RequestModel):
 class ModelCheckResult(BaseModel):
     valid: bool
     operations: list[str]
+
+
+class ModelPingRequest(RequestModel):
+    timeout: float = Field(default=30, gt=0, le=120)
+
+
+class ModelPingResult(BaseModel):
+    profile: str
+    connection: str
+    provider: str
+    model: str
+    endpoint: Optional[str] = None
+    operations: list[str]
+    ok: bool
+    category: str
+    message: str
+    status_code: Optional[int] = None
+    latency_ms: Optional[int] = None
+
+
+class ModelListRequest(RequestModel):
+    # Hide inputs so validation errors can never echo a typed key.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    connection: Optional[str] = Field(default=None, max_length=200)
+    provider: dict[str, Any]
+    api_key: Optional[SecretStr] = None
+    timeout: float = Field(default=20, gt=0, le=60)
+
+
+class ModelListResult(BaseModel):
+    ok: bool
+    models: list[str]
+    category: str
+    message: str
+    status_code: Optional[int] = None
 
 
 class LiveStatsMetadata(BaseModel):
