@@ -342,9 +342,11 @@ Lists and errors from requests started before a connection edit are ignored.
 ### MinerU PDF parsing key
 
 Settings includes a separate **MinerU PDF parsing** section. This key authorizes PDF parsing,
-not model inference. The card contains one password input and one **Save MinerU key** button.
+not model inference. Its password input includes an eye button to show or hide the saved
+manual key. Edits save automatically after a pause or when the field loses focus;
+clearing the field removes the manual key. There is no separate save button.
 Desktop automatically prefers `MINERU_API_KEY`; when present, the input indicates that
-source and both controls are disabled. Otherwise, enter or replace the key and save.
+source and both the input and eye button are disabled. Environment keys are never shown.
 Saving takes effect independently of model/configuration saves and uses the OS credential
 store or, when unavailable, only the current session with a warning.
 Provider renames, deletion, or restoring model defaults do not remove this key.
