@@ -243,6 +243,9 @@ function ReviewWorkbench({ pid }: { pid: string }) {
         {!loading && !error && !run.data && !reviewing && (
           <div className="space-y-2 rounded-lg border p-5 text-sm text-muted-foreground">
             <p>{t("review.noReviewYet")}</p>
+            {!chapters.isPending && !translated && (
+              <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>
+            )}
           </div>
         )}
       </PageContainer>

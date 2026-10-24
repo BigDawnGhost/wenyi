@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../../packages/ui/src/i18n/catalog";
-import { fakeApi, pid } from "./fixtures";
+import { chapter, fakeApi, pid, project, workflow } from "./fixtures";
 
 for (const locale of ["en", "zh-CN"] as const) {
   const t = createTranslator(locale);
@@ -86,6 +86,111 @@ for (const locale of ["en", "zh-CN"] as const) {
       })).toBeVisible();
       await expect(editor.getByRole("button", {
         name: t("review.saveTranslation"),
+        exact: true,
+      })).toBeVisible();
+    });
+
+    test("export history keeps its retention warning when empty or populated", async ({
+      page,
+    }, info) => {
+      let populated = false;
+      await page.route(`**/projects/${pid}/exports`, (route) =>
+        route.fulfill({
+          json: populated
+            ? Array.from({ length: 7 }, (_, index) => ({
+                id: 7 - index,
+                project_id: pid,
+                format: "txt",
+                status: "done",
+                size: 100,
+                created_at: "2026-09-17T12:00:00Z",
+                options: {},
+              }))
+            : [],
+        }),
+      );
+      const notice = page.getByText(
+        locale === "zh-CN"
+          ? "仅保留最近 5 份导出文件，请及时保存到其他位置。"
+          : "Only the latest 5 exports are kept. Save files elsewhere to keep them.",
+        { exact: true },
+      );
+      await page.goto(`/projects/${pid}/export`);
+      await expect(page.getByText(t("export.noExportsYet"), { exact: true }))
+        .toBeVisible();
+      await expect(notice).toBeVisible();
+
+      populated = true;
+      await page.reload();
+      await expect(notice).toBeVisible();
+      await expect(page.getByRole("button", {
+        name: t(info.project.name === "desktop" ? "export.saveAs" : "export.download"),
+        exact: true,
+      })).toHaveCount(5);
+    });
+
+    test("review explains its translation prerequisite until all chapters are done", async ({
+      page,
+    }) => {
+      let translated = false;
+      await page.route(`**/projects/${pid}`, (route) =>
+        route.fulfill({ json: { ...project, status: "paused" } }),
+      );
+      await page.route(`**/projects/${pid}/workflow`, (route) =>
+        route.fulfill({ json: { ...workflow, status: "paused" } }),
+      );
+      await page.route(`**/projects/${pid}/chapters`, (route) =>
+        route.fulfill({
+          json: [
+            chapter,
+            { ...chapter, index: 1, status: translated ? "done" : "pending" },
+          ],
+        }),
+      );
+      const notice = page.getByText(
+        locale === "zh-CN"
+          ? "完成全部章节翻译后可审校。"
+          : "Complete all chapter translations before running review.",
+        { exact: true },
+      );
+      const start = page.getByRole("button", {
+        name: t("review.runWholeBookReview"),
+        exact: true,
+      });
+      await page.goto(`/projects/${pid}/review`);
+      await expect(page.getByText(t("review.noReviewYet"), { exact: true }))
+        .toBeVisible();
+      await expect(notice).toBeVisible();
+      await expect(start).toHaveCount(0);
+
+      translated = true;
+      await page.reload();
+      await expect(start).toBeVisible();
+      await expect(notice).toHaveCount(0);
+    });
+
+    test("glossary import states its supported formats and required CSV headers", async ({
+      page,
+    }) => {
+      await page.goto(`/projects/${pid}/glossary`);
+      await page.getByRole("button", {
+        name: t("glossary.import"),
+        exact: true,
+      }).click();
+      const dialog = page.getByRole("dialog", {
+        name: t("glossary.importTerms"),
+        exact: true,
+      });
+      await expect(dialog.getByText(
+        locale === "zh-CN"
+          ? "CSV / JSON；CSV 需包含 source、target 列头。"
+          : "CSV / JSON; CSV requires source and target headers.",
+        { exact: true },
+      )).toBeVisible();
+      await expect(dialog.locator('input[type="file"]'))
+        .toHaveAttribute("accept", ".csv,.json");
+      await expect(dialog.getByRole("button", {
+        name: t("glossary.chooseFile"),
         exact: true,
       })).toBeVisible();
     });

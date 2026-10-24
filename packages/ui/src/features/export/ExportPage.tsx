@@ -266,6 +266,9 @@ export default function ExportPage() {
         </Card>
         <Card>
           <CardContent className="p-0 overflow-x-auto">
+            <p className="px-3 py-4 text-sm text-muted-foreground">
+              {tr("export.retentionHelp")}
+            </p>
             <table className="w-full text-sm">
               <thead className="border-b text-xs text-muted-foreground">
                 <tr>

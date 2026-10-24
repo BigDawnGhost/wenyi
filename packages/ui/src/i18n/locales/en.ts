@@ -163,6 +163,8 @@ const en = {
   "export.size": "Size",
   "export.download": "Download",
   "export.noExportsYet": "No exports yet.",
+  "export.retentionHelp":
+    "Only the latest 5 exports are kept. Save files elsewhere to keep them.",
   "glossary.person": "Person",
   "glossary.appellation": "Appellation",
   "glossary.honorific": "Honorific",
@@ -222,6 +224,8 @@ const en = {
   "glossary.importedTerms": "Imported terms: {count}",
   "glossary.couldNotImportTerms": "Could not import terms: {error}",
   "glossary.importTerms": "Import terms",
+  "glossary.importTermsFromCsvOrJsonCsv":
+    "CSV / JSON; CSV requires source and target headers.",
   "glossary.chooseFile": "Choose file",
   "glossary.imported": "Imported:",
   "glossary.overwrite": "Overwrite",
@@ -394,6 +398,8 @@ const en = {
   "review.typeOther": "Review issue",
   "review.wholeBookReviewSubmitted": "Whole-book review submitted",
   "review.runWholeBookReview": "Run whole-book review",
+  "review.wholeBookReviewIsAvailableOnceAll":
+    "Complete all chapter translations before running review.",
   "review.noReviewYet": "No review yet",
   "proofreading.savedParagraphs": "{done} / {total} paragraphs saved",
   "contents.readSource": "Read source",

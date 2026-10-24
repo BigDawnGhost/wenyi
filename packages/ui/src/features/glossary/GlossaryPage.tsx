@@ -914,6 +914,9 @@ function ImportDialog({
     >
       {step === "upload" && (
         <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {tr("glossary.importTermsFromCsvOrJsonCsv")}
+          </p>
           <input
             ref={fileRef}
             type="file"
