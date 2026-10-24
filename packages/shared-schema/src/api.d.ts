@@ -1226,22 +1226,6 @@ export interface components {
             /** Operations */
             operations: string[];
         };
-        /** ModelListRequest */
-        ModelListRequest: {
-            /** Connection */
-            connection?: string | null;
-            /** Provider */
-            provider: {
-                [key: string]: unknown;
-            };
-            /** Api Key */
-            api_key?: string | null;
-            /**
-             * Timeout
-             * @default 20
-             */
-            timeout?: number;
-        };
         /** ModelListResult */
         ModelListResult: {
             /** Ok */
@@ -2704,7 +2688,21 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ModelListRequest"];
+                "application/json": {
+                    /** Connection */
+                    connection?: string | null;
+                    /** Provider */
+                    provider: {
+                        [key: string]: unknown;
+                    };
+                    /** Api Key */
+                    api_key?: string | null;
+                    /**
+                     * Timeout
+                     * @default 20
+                     */
+                    timeout?: number;
+                };
             };
         };
         responses: {

@@ -63,12 +63,14 @@ export function GlobalConfiguration() {
   };
   const save = useMutation({
     mutationFn: async () => {
+      // Keep submitted keys outside the mutation cache and independent of the page draft.
+      const commitCredentials = credentials?.prepareCommit();
       const value = await api.saveGlobalConfig(input());
       // Keys are written only after their connections exist in the saved configuration.
       let keysFailed = false;
-      if (credentials) {
+      if (commitCredentials) {
         try {
-          await credentials.commit(Object.keys(object(object(value.effective.llm).providers)));
+          await commitCredentials(Object.keys(object(object(value.effective.llm).providers)));
         } catch {
           keysFailed = true;
         }

@@ -72,7 +72,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
       credentials: {
         Field: DesktopCredential,
         refresh: () => queryClient.refetchQueries({ queryKey: credentialQuery.queryKey }),
-        commit: (connections) => credentialDrafts.commit(queryClient, connections),
+        prepareCommit: () => credentialDrafts.prepareCommit(queryClient),
         retain: credentialDrafts.retain,
         rename: credentialDrafts.rename,
         usePending: useCredentialDraftsPending,

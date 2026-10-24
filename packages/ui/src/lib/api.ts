@@ -1,4 +1,4 @@
-import type { components } from "@wenyi/shared-schema";
+import type { components, paths } from "@wenyi/shared-schema";
 import { platform, type ProjectSource } from "../platform";
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
@@ -31,7 +31,8 @@ export type GlobalConfig = Output<"GlobalConfigOut">;
 export type GlobalConfigInput = components["schemas"]["GlobalConfigInput"];
 export type ModelPingResult = Output<"ModelPingResult">;
 export type ModelListResult = Output<"ModelListResult">;
-export type ModelListRequest = components["schemas"]["ModelListRequest"];
+export type ModelListRequest =
+  paths["/settings/models/list"]["post"]["requestBody"]["content"]["application/json"];
 export type ProjectConfig = Output<"ProjectConfigOut">;
 export type ReviewRun = Output<"ReviewRun">;
 export type ReviewItem = components["schemas"]["ReviewItem"];
