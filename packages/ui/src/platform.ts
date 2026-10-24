@@ -69,8 +69,8 @@ export interface PlatformServices {
     credentials?: {
       Field: ComponentType<CredentialFieldProps>;
       refresh: () => Promise<unknown>;
-      /** Writes entered keys for the saved connections; call after configuration is saved. */
-      commit: (connections: string[]) => Promise<void>;
+      /** Capture entered keys now; invoke the returned write after configuration is saved. */
+      prepareCommit: () => (connections: string[]) => Promise<void>;
       /** Discards entered keys for connections that are no longer in the draft. */
       retain: (connections: string[]) => void;
       /** Keeps an entered key attached to a connection whose ID is renamed before saving. */

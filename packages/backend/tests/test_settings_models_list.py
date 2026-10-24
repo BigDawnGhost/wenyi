@@ -1,6 +1,8 @@
 """Draft model listing uses the typed key, the platform credential port, or the environment."""
 
+import re
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -130,3 +132,13 @@ def test_listing_failures_are_returned_as_results(backend_context, monkeypatch):
         response = client.post("/settings/models/list", json={"provider": {"kind": "deepseek"}})
     assert response.status_code == 200
     assert response.json()["category"] == "missing_credential"
+
+
+def test_shared_types_only_reference_registered_openapi_components(backend_context):
+    schema = create_app(backend_context).openapi()
+    types = Path(__file__).resolve().parents[2] / "shared-schema" / "src" / "api.d.ts"
+    references = set(
+        re.findall(r'components\["schemas"\]\["([^"]+)"\]', types.read_text(encoding="utf-8"))
+    )
+    missing = references - schema["components"]["schemas"].keys()
+    assert not missing, f"Shared types reference missing OpenAPI components: {sorted(missing)}"

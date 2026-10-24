@@ -9,6 +9,11 @@ import { platform } from "@/platform";
 import { cn } from "@/lib/utils";
 
 type Document = Record<string, unknown>;
+type ListingDraft = {
+  connection: string;
+  provider: Document | undefined;
+  signature: string;
+};
 
 // Provider-independent failure categories from wenyi_core.llm.errors and models.py.
 const failureMessages: Record<string, MessageKey> = {
@@ -47,21 +52,17 @@ export function ModelNameField({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [filter, setFilter] = useState("");
-  const [models, setModels] = useState<string[] | null>(null);
-  const [source, setSource] = useState("");
   // A listing belongs to one connection draft; editing it makes the list stale.
   const signature = JSON.stringify([connection, provider]);
   const fetch = useMutation({
-    mutationFn: (): Promise<ModelListResult> =>
+    mutationFn: ({ connection, provider }: ListingDraft): Promise<ModelListResult> =>
       api.listModels({
         connection,
         provider: provider ?? {},
         api_key: platform().capabilities.credentials?.forListing(connection) ?? null,
       }),
-    onSuccess: (result) => {
-      setSource(signature);
-      setModels(result.ok ? result.models : null);
-      if (result.ok && result.models.length) {
+    onSuccess: (result, draft) => {
+      if (draft.signature === signature && result.ok && result.models.length) {
         setFilter("");
         setActive(-1);
         setOpen(true);
@@ -69,16 +70,17 @@ export function ModelNameField({
       }
     },
   });
-  const listed = source === signature ? models : null;
+  const current = fetch.variables?.signature === signature;
+  const result = current ? fetch.data : undefined;
+  const listed = result?.ok ? result.models : null;
   const shown = useMemo(() => {
     if (!listed) return [];
     const query = filter.trim().toLowerCase();
     return query ? listed.filter((name) => name.toLowerCase().includes(query)) : listed;
   }, [listed, filter]);
-  const result = fetch.data;
-  const failure = result && !result.ok && source === signature
+  const failure = result && !result.ok
     ? t(failureMessages[result.category] ?? "modelList.failed")
-    : fetch.error
+    : current && fetch.error
       ? t("modelList.failed")
       : null;
   const expanded = open && shown.length > 0;
@@ -183,7 +185,7 @@ export function ModelNameField({
           disabled={!provider || fetch.isPending}
           aria-label={t("modelList.fetch")}
           title={t("modelList.fetch")}
-          onClick={() => fetch.mutate()}
+          onClick={() => fetch.mutate({ connection, provider, signature })}
         >
           {fetch.isPending
             ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

@@ -273,6 +273,8 @@ Global **Settings** owns provider connections, model registration, default tiers
 
 Credentials remain server environment variables. The form stores their names, not raw API keys. The refresh button next to **Model name** fetches the connection's model list (`POST /settings/models/list`) for a dropdown; it uses the edited, unsaved connection and reads the key from the server environment. To keep a draft from reading arbitrary server variables, only the provider's default variable or one already used by the saved configuration is accepted; save first to use a new variable name. The request is sent once without retries and uses no tokens. Configuration checks validate routing and credential availability without sending a model request. Save before checking the saved model configuration. Running projects must be paused before editing; new and resumed tasks capture the saved settings.
 
+Editing a connection clears its fetched model list. Lists and errors from requests started before the edit are ignored; fetch again to list models for the edited connection.
+
 Web and Desktop publish a workflow job's terminal status only after releasing its project run lock. Successful completion also waits for the completion event and live-statistics cleanup, so saving configuration immediately after observing a completed job does not race that worker's cleanup. Queued or running work still keeps project edits read-only.
 
 The **MinerU PDF parsing** section provides deployment guidance only. Set `MINERU_API_KEY`

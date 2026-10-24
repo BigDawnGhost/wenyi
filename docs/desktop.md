@@ -315,7 +315,9 @@ Use **Settings** in the shared sidebar footer. `/settings` is one page of titled
 
 The project list, projects, and Settings share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. There are no floating dashboard actions. Width, labels, and narrow-screen navigation height transition smoothly over 280 ms. Same-page history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
 
-Open **Settings → Providers & models** and type the API key into the connection's **API key** field. It can be entered right away, including for a connection that has not been saved yet. The field is masked with dots; the eye button inside it shows or hides the value. **Save configuration** saves the connection first, then writes the key. If writing a key fails, the configuration stays saved, the key stays in the field, and saving again retries it. Typed keys exist only in memory until saved; leaving Settings or deleting the connection discards them.
+Open **Settings → Providers & models** and type the API key into the connection's **API key** field. It can be entered right away, including for a connection that has not been saved yet. The field is masked with dots; the eye button inside it shows or hides the value. **Save configuration** saves the connection first, then writes the key. If writing a key fails while Settings remains open, the configuration stays saved, the key stays in the field, and saving again retries it. Keys not submitted for saving exist only in memory; leaving Settings or deleting the connection discards them.
+
+Each save captures the keys entered at that time and continues if you navigate away from Settings. Later edits remain a separate draft and require another save. A successful write removes surrounding whitespace from both the stored key and its field, clearing the unsaved-change indicator.
 
 Native credential controls load independently, so entering Settings does not replace the page with a loading screen.
 
@@ -334,6 +336,8 @@ SQLite stores only modes and opaque credential references. Keys are not saved in
 ### Fetching model names
 
 The refresh button next to **Model name** asks the model's connection for its model list (`POST /settings/models/list`). It uses the connection as currently edited, including an unsaved base URL and the key in its field, so nothing needs saving first. When the field is empty, the stored key is used. Supported providers: OpenAI-compatible endpoints (DeepSeek, OpenAI, OpenRouter, OpenCode Go, OrcaRouter, Ollama, vLLM, custom) via `GET /models`, and Gemini, limited to text-generation models. The request is sent once without retries, times out after 20 seconds, uses no tokens, and the list is capped at 2,000 names. Failures show a reason such as an invalid key or unreachable base URL; responses never include the key. Editing the connection clears a fetched list, and the name can always be typed by hand.
+
+Lists and errors from requests started before a connection edit are ignored.
 
 ### MinerU PDF parsing key
 

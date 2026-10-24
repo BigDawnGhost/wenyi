@@ -97,30 +97,36 @@ export const credentialDrafts = {
       if (!keep.has(connection)) removed = entries.delete(connection) || removed;
     if (removed) changed();
   },
-  /** Write every changed field; failed ones stay changed so the next save retries them. */
-  async commit(queryClient: QueryClient, connections: Iterable<string>) {
-    credentialDrafts.retain(connections);
-    let failed = false;
-    for (const [connection, entry] of [...entries]) {
-      if (!dirty(entry)) continue;
-      const value = entry.value.trim();
-      try {
-        const result = await saveCredential(
-          connection,
-          value ? { mode: "manual", secret: value } : { mode: "manual", clear: true },
-        );
-        queryClient.setQueryData<Record<string, CredentialStatus>>(
-          credentialQuery.queryKey, (current) => ({ ...current, [connection]: result }),
-        );
-        const current = entries.get(connection);
-        // Keep a newer value typed while the request was in flight.
-        if (current) entries.set(connection, { value: current.value, saved: value });
-      } catch {
-        failed = true;
+  /** Capture this save's changed fields before awaiting configuration or leaving Settings. */
+  prepareCommit(queryClient: QueryClient) {
+    const snapshot = [...entries].filter(([, entry]) => dirty(entry));
+    return async (connections: Iterable<string>) => {
+      const savedConnections = new Set(connections);
+      let failed = false;
+      for (const [connection, entry] of snapshot) {
+        if (!savedConnections.has(connection)) continue;
+        const value = entry.value.trim();
+        try {
+          const result = await saveCredential(
+            connection,
+            value ? { mode: "manual", secret: value } : { mode: "manual", clear: true },
+          );
+          queryClient.setQueryData<Record<string, CredentialStatus>>(
+            credentialQuery.queryKey, (current) => ({ ...current, [connection]: result }),
+          );
+          const current = entries.get(connection);
+          // Normalize the submitted value, but preserve edits made after this save began.
+          if (current) entries.set(connection, {
+            value: current.value === entry.value ? value : current.value,
+            saved: value,
+          });
+        } catch {
+          failed = true;
+        }
       }
-    }
-    changed();
-    if (failed) throw new Error("credential-save-failed");
+      changed();
+      if (failed) throw new Error("credential-save-failed");
+    };
   },
 };
 

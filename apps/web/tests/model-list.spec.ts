@@ -53,3 +53,48 @@ test("listing failures explain the cause in Chinese", async ({ page }) => {
   await expect(page.getByRole("status").filter({ hasText: "认证失败" })).toBeVisible();
   await expect(page.getByRole("listbox")).toHaveCount(0);
 });
+
+for (const outcome of ["success", "failure", "http error"] as const) {
+  test(`a late listing ${outcome} is ignored after editing the connection`, async ({ page }) => {
+    await fakeApi(page);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let requests = 0;
+    await page.route("**/api/settings/models/list", async route => {
+      requests++;
+      if (requests === 1) {
+        await gate;
+        if (outcome === "http error")
+          return route.fulfill({ status: 503, json: { detail: "Listing unavailable" } });
+        return route.fulfill({ json: outcome === "success"
+          ? { ok: true, models: ["old-server-model"], category: "ok", message: "" }
+          : { ok: false, models: [], category: "authentication_failed", message: "", status_code: 401 },
+        });
+      }
+      return route.fulfill({ json: {
+        ok: true, models: ["new-server-model"], category: "ok", message: "",
+      } });
+    });
+    try {
+      await page.goto("/settings");
+      const fetch = page.getByRole("button", { name: "Fetch models", exact: true });
+      const submitted = page.waitForRequest("**/api/settings/models/list");
+      await fetch.click();
+      await submitted;
+      await page.getByLabel("API base URL", { exact: true }).fill("https://new-server.invalid/v1");
+      release();
+      await expect(fetch).toBeEnabled();
+      await expect(page.getByRole("listbox")).toHaveCount(0);
+      await expect(page.getByRole("status").filter({
+        hasText: /models available|Authentication failed|Could not fetch/,
+      })).toHaveCount(0);
+      await fetch.click();
+      await expect(page.getByRole("option")).toHaveText(["new-server-model"]);
+      await page.getByRole("option", { name: "new-server-model", exact: true }).click();
+      await expect(page.getByRole("combobox", { name: "Model name", exact: true }))
+        .toHaveValue("new-server-model");
+    } finally {
+      release();
+    }
+  });
+}
