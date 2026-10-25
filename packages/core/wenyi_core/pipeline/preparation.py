@@ -1,6 +1,6 @@
 """AI preparation: language detection, chapter prescan and style analysis.
 Reuse model-free input preparation for source parsing and state location. Own sample
-selection, initial glossary and rolling context. Initialize derived state first, commit the
+selection and rolling context. Initialize derived state first, commit the
 initialized manifest last, then finish initialization. Build the book synopsis afterward as
 configured. Share pure language normalization with Runtime through top-level i18n.
 """
@@ -243,7 +243,6 @@ class PreparationService:
         manifest["language_policies"] = initialize_policies(store, self._runtime.config)
         if self._runtime.config.pipeline.book_understanding:
             self._ensure_chapter_digests(store, doc.chapters, progress)
-        glossary = store
         if progress:
             progress(0, 0, "Analyzing book style…")
         sample = self.sample_text(doc)
@@ -252,8 +251,6 @@ class PreparationService:
         analysis["style_policy"] = self._runtime.config.language_policy(
             "analysis"
         ).task_fingerprint("analyzer")
-        if analysis:
-            self._runtime.analyzer.seed_glossary(glossary, analysis)
         store.save_analysis(analysis)
         store.log_event("analysis_saved", has_analysis=bool(analysis))
         store.save_context(

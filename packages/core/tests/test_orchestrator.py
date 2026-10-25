@@ -391,11 +391,11 @@ class TestOrchestrator(unittest.TestCase):
                 )
             )
 
-            # Verify the extracted character and analysis-seeded character are stored.
+            # Only translation-time extraction contributes glossary entries.
             from wenyi_core.glossary.store import GlossaryStore
 
             g = GlossaryStore(store.glossary_path)
-            self.assertIsNotNone(g.get_term("綾小路"))
+            self.assertIsNone(g.get_term("綾小路"))
             self.assertIsNotNone(g.get_term("堀北"))
             g.close()
 
@@ -722,7 +722,7 @@ class TestBookUnderstanding(unittest.TestCase):
             self.assertIn("本章梗概", user)  # Fake chapter digest text.
 
     def test_prepare_for_translation_builds_understanding_without_targets(self):
-        """Preparation persists analysis, initial terms and synopsis without translating the
+        """Preparation persists analysis and synopsis without extracting terms or translating the
         body.
         """
         with tempfile.TemporaryDirectory() as d:
@@ -743,7 +743,7 @@ class TestBookUnderstanding(unittest.TestCase):
             self.assertTrue((store.load_analysis() or {}).get("book_synopsis"))
             glossary = GlossaryStore(store.glossary_path)
             try:
-                self.assertGreater(glossary.stats()["terms"], 0)
+                self.assertEqual(glossary.stats()["terms"], 0)
             finally:
                 glossary.close()
             for item in manifest["chapters"]:

@@ -28,8 +28,7 @@ def routing_handler(messages, tier, json_mode):
                 "genre": "校园",
                 "tone": "冷峻",
                 "style_guide": "克制",
-                "characters": [{"source": "綾小路", "target": "绫小路", "gender": "male"}],
-                "terms": [],
+                "characters": [{"source": "綾小路", "gender": "male"}],
             },
             ensure_ascii=False,
         )

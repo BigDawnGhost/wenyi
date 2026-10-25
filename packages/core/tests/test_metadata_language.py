@@ -15,11 +15,10 @@ from wenyi_core.llm.providers.fake import FakeClient
 
 @pytest.mark.parametrize("source", [*supported_languages(), "auto"])
 @pytest.mark.parametrize("target", ["en", "ja"])
-@pytest.mark.parametrize("task", ["analyzer_system", "glossary_extractor_system"])
-def test_glossary_reading_schema_depends_on_source_not_target(task, source, target):
-    prompt = render(task, src=source, tgt=target)
+def test_glossary_reading_schema_depends_on_source_not_target(source, target):
+    prompt = render("glossary_extractor_system", src=source, tgt=target)
     schema = json.loads(prompt[prompt.index("\n{") :])
-    entries = schema.get("characters", []) + schema["terms"]
+    entries = schema["terms"]
     assert all(("reading" in entry) == (source == "ja") for entry in entries)
     if source == "ja":
         assert '"reading":' in prompt
@@ -32,8 +31,23 @@ def test_glossary_reading_schema_depends_on_source_not_target(task, source, targ
         assert "reading records" not in prompt
 
 
+@pytest.mark.parametrize("source", [*supported_languages(), "auto"])
+@pytest.mark.parametrize("target", ["en", "ja"])
+def test_analysis_schema_only_requests_style_and_character_guidance(source, target):
+    prompt = render("analyzer_system", src=source, tgt=target)
+    schema = json.loads(prompt[prompt.index("\n{") :])
+    assert "style_guide" in schema
+    assert "terms" not in schema
+    assert set(schema["characters"][0]) == {"source", "gender", "note"}
+    assert '"target":' not in prompt
+    assert '"reading":' not in prompt
+    assert "do not propose translated names, readings or glossary entries" in prompt
+    user = render("analyzer_user", src=source, tgt=target, sample="Source sample.")
+    assert "Do not extract terminology or suggest name translations" in user
+
+
 @pytest.mark.parametrize("source", ["ja", "en", "ru", "zh", "auto"])
-def test_analysis_only_accepts_japanese_source_readings(tmp_path, source):
+def test_analysis_ignores_unsolicited_glossary_fields(source):
     data = {
         "characters": [{"source": "綾小路", "target": "Ayanokoji", "reading": "あやのこうじ"}],
         "terms": [{"source": "学校", "target": "School", "reading": "がっこう"}],
@@ -43,42 +57,8 @@ def test_analysis_only_accepts_japanese_source_readings(tmp_path, source):
         Config.from_dict({"language": {"source": source, "target": "en"}}),
     )
     result = analyzer.analyze("綾小路〘あやのこうじ〙は学校〘がっこう〙に行った。")
-    expected = {"綾小路": "あやのこうじ", "学校": "がっこう"} if source == "ja" else {}
-    for entry in result["characters"] + result["terms"]:
-        assert entry.get("reading", "") == expected.get(entry["source"], "")
-
-    store = GlossaryStore(str(tmp_path / "glossary.db"))
-    try:
-        # Also guard seeding from an older, unnormalized analysis snapshot.
-        assert analyzer.seed_glossary(store, data) == 2
-        for term in store.all_terms():
-            assert term.reading == expected.get(term.source, "")
-    finally:
-        store.close()
-
-
-def test_non_japanese_analysis_does_not_erase_manually_saved_readings(tmp_path):
-    analyzer = Analyzer(
-        FakeClient(), Config.from_dict({"language": {"source": "en", "target": "ja"}})
-    )
-    store = GlossaryStore(str(tmp_path / "glossary.db"))
-    try:
-        store.upsert_term(
-            GlossaryTerm(source="Alice", target="アリス", reading="Manual pronunciation")
-        )
-        analyzer.seed_glossary(
-            store,
-            {
-                "characters": [
-                    {"source": "Alice", "target": "アリス", "reading": "Unexpected model reading"}
-                ]
-            },
-        )
-        term = store.get_term("Alice")
-        assert term is not None
-        assert term.reading == "Manual pronunciation"
-    finally:
-        store.close()
+    assert result["characters"] == [{"source": "綾小路", "gender": ""}]
+    assert "terms" not in result
 
 
 @pytest.mark.parametrize(
@@ -89,7 +69,10 @@ def test_metadata_language_is_explicit(task, target, name):
     prompt = render(task, src="ru", tgt=target)
     assert f"Write all human-readable metadata in {name}" in prompt
     assert "including every note" in prompt
-    assert "Preserve source and aliases" in prompt
+    if task == "analyzer_system":
+        assert "Preserve source exactly in its original language" in prompt
+    else:
+        assert "Preserve source and aliases" in prompt
     assert "male|female|unknown" in prompt
 
 
@@ -133,9 +116,9 @@ def test_analysis_preserves_style_bullets_and_normalizes_character_metadata():
     assert "Keep the sparse dialogue." in result["style_guide"]
     assert "Preserve ambiguity." in result["style_guide"]
     assert result["characters"][0]["source"] == "Вадим"
-    assert result["characters"][0]["target"] == "Vadim"
     assert result["characters"][0]["gender"] == "male"
-    assert result["terms"][0]["type"] == "place"
+    assert "target" not in result["characters"][0]
+    assert "terms" not in result
 
 
 def test_cli_and_generated_configuration_use_english(tmp_path):

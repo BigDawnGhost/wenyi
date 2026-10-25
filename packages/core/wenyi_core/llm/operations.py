@@ -71,7 +71,7 @@ OPERATIONS = register_operations(
         ),
         OperationSpec(
             "analysis.style",
-            "Analyze style, characters and seed terms",
+            "Analyze style and character voices",
             "strong",
             workflows=("prepare", "translate"),
         ),

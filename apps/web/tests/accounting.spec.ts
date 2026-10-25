@@ -235,7 +235,7 @@ test("usage charts switch attribution without double counting and retain resumed
   await accounting.getByRole("button", { name: "Show all 6 runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(6);
   await expect(runs.getByRole("listitem").last()).toContainText(
-    "Prepare source and glossary",
+    "Prepare translation",
   );
   await accounting.getByRole("button", { name: "Show recent runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(3);
