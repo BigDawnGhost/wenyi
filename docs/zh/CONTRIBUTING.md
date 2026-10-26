@@ -18,6 +18,52 @@
 
 代码注释、docstring、配置注释、CLI 文案和提示词指令统一使用标准英语。语言规则和任务模板集中在 `packages/core/wenyi_core/i18n/data/`。模型生成的说明性内容（包括术语备注和分析描述）使用翻译目标语言；原文 `source` 和 `aliases` 保持不变，用于匹配。保留语言专属示例和多语言测试数据，并同步维护英文和中文文档。
 
+## 围绕 main 的主干开发
+
+`main` 是唯一长期集成分支，必须保持可构建、通过测试、可发布。使用小而短期的
+`feat/*`、`fix/*`、`docs/*` 或 `chore/*` 分支，PR 直接指向 `main`，不再经过
+`dev`、`webui` 或独立发布集成分支。将大改动拆成可以独立安全合入的 PR，未完成的
+行为不得进入默认用户路径。
+
+当 `origin` 指向 Wenyi 仓库时，从最新主干开始新工作：
+
+```bash
+git fetch origin
+git switch -c feat/short-description origin/main
+# Implement, verify, and commit only the intended changes.
+git push --set-upstream origin feat/short-description
+gh pr create --base main --head feat/short-description
+```
+
+合并前将最新 `origin/main` 合入任务分支，解决冲突但不改写已发布历史。检查相对
+`main` 的完整差异，而不只看最后一次提交。最终候选及当前基线必须通过完整
+`Tests` 工作流（Python 3.10、Python 3.12 和 web），以及适用的 CLI/Desktop
+打包检查。满足适用的审查要求，不绕过检查，不直接向 `main` 推送改动。默认继续
+使用 merge commit 合入。仓库的 `/land` 流程以 `main` 为目标，仍须用户明确授权落地。
+
+### 发布与修复
+
+在 `main` 上经过验证的提交处创建版本标签，例如 `v1.2.8` 或 `v1.2.8rc1`，
+然后为该标签发布 GitHub Release。发布 Release 会触发 CLI/Desktop 打包与产物上传。
+仅合并 PR 或推送标签不会发布安装包；仍可手动触发工作流验证构建。修复同样经过
+短期分支 → PR → `main`，再用新标签发布。不移动已有发布标签，不维护长期 hotfix 分支。
+
+### 仓库设置与迁移
+
+仓库管理员应保持 `main` 为默认分支，要求通过 PR 合入，启用 `Tests` 的
+Python 3.10 / Python 3.12 / web 必需检查，要求分支基于最新主干，并禁止强推和删除主干。
+CLI/Desktop 打包工作流有路径过滤，不应将这些条件检查设为所有 PR 的必需检查。
+文档规则不会自动配置 GitHub 保护；需单独检查线上分支保护与 ruleset。
+
+迁移已有工作时：
+
+1. 检查仅在 `dev` 或其他旧集成分支上的改动，通过独立 PR 将需要保留的内容合入
+   `main`。不要丢弃它们，也不要因为合并历史不同就认定全部改动都未进入 `main`。
+2. 将剩余 PR 的目标改为 `main`，集成最新主干，重新检查完整差异，并要求针对新基线
+   运行新的 CI。
+3. 停止使用旧集成分支。只有确认需要的工作均已保留、且获得明确删除授权后才能删除。
+   仅修改本规则不代表授权合并 PR、修改远端设置或删除分支。
+
 ## Python 回归测试
 
 按规则所属层组织测试：Core 覆盖领域规则和持久化、续跑不变量；共享 backend 覆盖平台无关的应用及 HTTP 契约；API/Desktop 覆盖适配装配、平台存储、队列和原生文件安全。Orchestrator 测试保留跨服务流程，不重复下层服务的细粒度矩阵。fixture 通过 `conftest.py` 共享，辅助函数放在 support 模块中，不通过导入其他 `test_*` 模块复用。

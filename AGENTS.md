@@ -142,6 +142,7 @@ git diff --check
 
 ## Git 与交付
 
+- `main` 是唯一长期集成主干；新工作从最新 `origin/main` 开短期分支，PR 直接合入 `main`，不再经 `dev` 或 `webui` 中转。保持主干可构建、可测试、可发布；发布与旧分支迁移规则见 [CONTRIBUTING.md](CONTRIBUTING.md#main-based-development)。
 - 保留用户已有修改及忽略/未跟踪数据，只暂存本任务明确修改的文件。
 - 不使用破坏性 Git 命令，不改写远端历史。提交或推送需要用户明确要求；同一任务内已授权的操作无需重复确认。
 - 提交信息使用 Conventional Commits 风格，例如 `fix(glossary): ...`、`feat(pdf): ...`、`docs: ...`。

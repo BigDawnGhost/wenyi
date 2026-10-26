@@ -319,6 +319,21 @@ def test_workflows_separate_components():
         assert document["jobs"]["release"]["if"] == "github.event_name == 'release'"
 
 
+@pytest.mark.parametrize("file", ["tests.yml", "build.yml", "desktop.yml"])
+def test_workflows_use_main_as_the_only_trunk(file):
+    import yaml
+
+    document = yaml.load((ROOT / ".github/workflows" / file).read_text(), Loader=yaml.BaseLoader)
+    events = document["on"]
+    assert events["pull_request"]["branches"] == ["main"]
+    if file == "tests.yml":
+        assert events["push"]["branches"] == ["main"]
+        assert "paths" not in events["pull_request"]
+        assert "paths-ignore" not in events["pull_request"]
+    else:
+        assert "push" not in events
+
+
 def test_desktop_workflow_builds_native_macos_installers_and_updates():
     import yaml
 
