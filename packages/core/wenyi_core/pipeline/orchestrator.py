@@ -69,7 +69,7 @@ class Orchestrator:
     ) -> Storage:
         """Complete all preparation without translating body text.
         Parse the document, detect language, optionally prescan chapters, analyze style and
-        initial terms, and optionally synthesize a synopsis. Initialized runs reuse persisted
+        character voices, and optionally synthesize a synopsis. Initialized runs reuse persisted
         results; incomplete initialization is rebuilt on retry.
         """
         with self._runtime.track_workflow("prepare"):

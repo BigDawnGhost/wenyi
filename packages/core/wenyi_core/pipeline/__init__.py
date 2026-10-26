@@ -2,7 +2,7 @@
 Dependencies flow downward; no lower module may import orchestrator.py. The orchestrator
 owns routing, stage order, lock scopes and exception propagation. Runtime owns
 Config/LLMClient/agents, language restoration, events, usage checkpoints and source validation.
-Preparation handles lookup, parsing, initialization, analysis, glossary seeds and prescans.
+Preparation handles lookup, parsing, initialization, style analysis and prescans.
 Annotation handles source context, continuations and alignment. Translation handles batches,
 polishing, glossary updates and titles. Review owns evidence, arbitration, shadow revisions
 and blind rechecks. ReviewAutofix separately publishes idempotent complete-paragraph

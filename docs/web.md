@@ -215,12 +215,12 @@ translations, gender, notes, and aliases, plus readings for Japanese-source proj
 terms, translations, aliases, readings, and notes, ignoring case and surrounding query
 whitespace. Type filters also apply to search results.
 
-Initial style analysis seeds characters with nonempty source and target names into
-the glossary. Analysis is a preparation snapshot, not a continuously synchronized
-copy of the glossary: later edits, deletions, and analysis rebuilds can make them
-differ. Removing the table does not delete either store or restore deleted terms.
-Name mappings in model requests come from the glossary, not the character snapshot's
-old translated names; descriptive character guidance remains available.
+Style analysis retains descriptive character guidance without extracting glossary
+entries or suggesting name translations. Glossary entries come from completed
+source-and-target pairs during translation or manual imports. Preparation on resume
+preserves existing terms, including entries created by older versions. Name mappings
+in model requests come from the glossary, not old translated names in an analysis
+snapshot.
 
 In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
 

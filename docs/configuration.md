@@ -186,7 +186,7 @@ DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` ex
 | Operation | Default tier or inheritance | Purpose |
 |---|---|---|
 | `language.detect` | `cheap` | Detect source language |
-| `analysis.style` | `strong` | Analyze style, characters and seed glossary |
+| `analysis.style` | `strong` | Analyze style and character voices |
 | `synopsis.chapter` | `fast` | Chapter digest; 600-token hint |
 | `synopsis.book` | `fast` | Book synopsis; 1,200-token hint |
 | `translation.body` | `strong` | Body translation and alignment recovery |

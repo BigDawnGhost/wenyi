@@ -170,7 +170,7 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 | 操作 | 默认档位或继承 | 用途 |
 |---|---|---|
 | `language.detect` | `cheap` | 源语言识别 |
-| `analysis.style` | `strong` | 风格、人物与初始术语分析 |
+| `analysis.style` | `strong` | 风格与人物语气分析 |
 | `synopsis.chapter` | `fast` | 章节梗概；600 token 输出提示 |
 | `synopsis.book` | `fast` | 全书概要；1,200 token 输出提示 |
 | `translation.body` | `strong` | 正文翻译及段落对齐恢复 |

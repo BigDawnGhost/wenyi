@@ -50,6 +50,29 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(manageModels).toHaveText(t("settings.manageGlobalModels"));
     });
 
+    test("workflow separates style analysis from translation-time term extraction", async ({
+      page,
+    }) => {
+      await page.route(`**/projects/${pid}/workflow`, (route) =>
+        route.fulfill({
+          json: {
+            ...workflow,
+            stages: [
+              { id: "style_analysis", label: "风格分析", enabled: true },
+              { id: "term_extract", label: "实时术语提取", enabled: true },
+            ],
+          },
+        }),
+      );
+      await page.goto(`/projects/${pid}`);
+      await page.getByText(t("progress.workflowDetails"), { exact: true }).click();
+      await expect(page.getByText(locale === "en" ? "Style analysis" : "风格分析", {
+        exact: true,
+      })).toBeVisible();
+      await expect(page.getByText(t("workflow.terms"), { exact: true })).toBeVisible();
+      await expect(page.getByText(/initial glossary|初始术语/i)).toHaveCount(0);
+    });
+
     test("dialogs retain named controls without redundant descriptions", async ({
       page,
     }) => {

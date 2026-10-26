@@ -318,7 +318,7 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 Use `prepare` or `translate` afterward with the same source and configuration. Matching cached parsing is reused, including PDF conversion; changed content or parsing options invalidate it. An existing initialized run rejects different source content and keeps saved translations, analysis and usage unchanged.
 
-`prepare` parses the book, detects its language, generates chapter digests when enabled, builds the style guide and initial glossary, and then generates the whole-book synopsis when enabled, without translating any body text. Run `translate` with the same source file to continue from the saved state.
+`prepare` parses the book, detects its language, generates chapter digests when enabled, builds style and character-voice guidance, and then generates the whole-book synopsis when enabled, without translating any body text or extracting glossary entries. Glossary extraction starts from completed source-and-target pairs during translation. Existing project terms are preserved on resume. Run `translate` with the same source file to continue from the saved state.
 
 ## Best-of-three precision translation
 

@@ -16,7 +16,7 @@ STEP_REGISTRY = [
     },
     {
         "id": "style_analysis",
-        "name": "风格与初始术语",
+        "name": "风格分析",
         "category": "prepare",
         "always_on": True,
         "locked": True,
