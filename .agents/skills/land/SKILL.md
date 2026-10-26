@@ -2,7 +2,7 @@
 name: land
 description: >-
   Land an explicitly requested Wenyi change through a new remote branch and a
-  pull request targeting dev, with complete CI verification before merging.
+  pull request targeting main, with complete CI verification before merging.
   Invoke only when the user requests landing or merging, including an explicit
   /land invocation, not merely for review, preparation, passing checks, or
   installing this skill.
@@ -14,7 +14,7 @@ metadata:
 # Land a Wenyi change
 
 Carry the requested change through preparation, verification, publication, and
-merge into `dev`. Creating a commit, pushing a branch, opening a PR, or starting
+merge into `main`. Creating a commit, pushing a branch, opening a PR, or starting
 CI is not completion. An explicit invocation supplies landing intent: proceed
 without asking for the same merge permission again. Stop for genuine blockers,
 unclear scope, unmet automatic landing gates, or unsafe operations.
@@ -22,6 +22,11 @@ unclear scope, unmet automatic landing gates, or unsafe operations.
 This workflow applies to `BigDawnGhost/wenyi`. The expected publication remote
 is `origin`, currently `https://github.com/BigDawnGhost/wenyi.git`; verify this
 at execution time. Never publish through the `local` checkout backlink.
+
+`main` is the only long-lived integration branch. Do not route new work through
+`dev`, `webui`, or a separate release integration branch. Existing work on those
+branches needs its own explicit migration scope; do not merge or delete it as
+an incidental part of landing another change.
 
 ## 1. Establish scope and prerequisites
 
@@ -59,9 +64,9 @@ git branch -vv
 git remote -v
 gh auth status --active --hostname github.com
 gh api repos/BigDawnGhost/wenyi
-gh api repos/BigDawnGhost/wenyi/branches/dev
-gh api repos/BigDawnGhost/wenyi/branches/dev/protection
-gh api repos/BigDawnGhost/wenyi/rules/branches/dev
+gh api repos/BigDawnGhost/wenyi/branches/main
+gh api repos/BigDawnGhost/wenyi/branches/main/protection
+gh api repos/BigDawnGhost/wenyi/rules/branches/main
 ```
 
 Inspect only the relevant repository, access, merge-method, check, and review
@@ -127,19 +132,21 @@ merge. This is a targeted cleanup, not permission to purge the working tree.
 Source: `AGENTS.md` local-data preservation and Git scope rules; `.gitignore`
 and `apps/web/.gitignore` identify excluded artifacts, not deletion permission.
 
-## 4. Prepare a new branch and integrate dev
+## 4. Prepare a new branch and integrate main
 
-- Fetch the intended publication remote, including `dev`, without rewriting
+- Fetch the intended publication remote, including `main`, without rewriting
   local branches. Choose a new, unused descriptive branch such as
   `feat/three-draft-precision`; verify it does not already exist locally or
-  remotely. Do not push directly to `dev` or `main`.
-- Create the branch from the change's appropriate current history. If that
-  history includes unrelated outgoing commits, stop to separate the scope
-  rather than publishing them.
+  remotely. Do not push directly to `main` or recreate a legacy integration
+  branch.
+- Start new work from the latest `origin/main`. For an existing change, create
+  the publication branch from its appropriate current history and integrate
+  `origin/main` before verification. If that history includes unrelated outgoing
+  commits, stop to separate the scope rather than publishing them.
 - Stage only explicitly reviewed task paths, never blanket `git add .`.
   Create a Conventional Commit with an explicit message. Respect hook changes:
   inspect them, stage only in-scope results, and rerun invalidated checks.
-- Merge the latest `origin/dev` into this new branch, retaining shared history.
+- Merge the latest `origin/main` into this new branch, retaining shared history.
   Do not rebase or force-push published history.
 - Resolve conflicts automatically when the intended result is clear. Preserve
   both the requested behavior and unrelated upstream changes. Pause and describe
@@ -156,12 +163,12 @@ GIT_TERMINAL_PROMPT=0 git fetch origin
 git switch -c "$branch"
 # Stage only the explicitly reviewed task paths.
 GIT_EDITOR=true git commit -m "$commit_message"
-GIT_EDITOR=true git merge --no-edit origin/dev
+GIT_EDITOR=true git merge --no-edit origin/main
 ```
 
 Skip the commit step when the requested change is already committed and no
 in-scope staged changes remain. Review the complete resulting diff against
-`origin/dev`, not just the last commit. Record the candidate head and integrated
+`origin/main`, not just the last commit. Record the candidate head and integrated
 base SHAs. Source: `AGENTS.md` Git rules; merge commits follow current repository
 practice, subject to the destination's current allowed methods and rules.
 
@@ -283,7 +290,7 @@ publish without force:
 GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
   -c 'credential.helper=!gh auth git-credential' \
   push --set-upstream origin "$branch"
-gh pr create --repo BigDawnGhost/wenyi --base dev --head "$branch" \
+gh pr create --repo BigDawnGhost/wenyi --base main --head "$branch" \
   --title "$pr_title" --body-file "$pr_body_file"
 ```
 
@@ -294,7 +301,7 @@ intentionally retained local files. Exclude secrets and private content.
 If retrying after a partial failure, discover and reuse the PR for this exact
 branch and base instead of creating a duplicate.
 
-Source: `AGENTS.md` Git/delivery rules. The PR targeting `dev` triggers
+Source: `AGENTS.md` Git/delivery rules. The PR targeting `main` triggers
 `.github/workflows/tests.yml`; pushing an ordinary feature branch alone does
 not trigger that workflow's restricted `push` event.
 
@@ -314,11 +321,11 @@ of server-required checks is insufficient.
 - The Python 3.12 job also supplies PDF regression dependencies and builds the
   packages with the resource check. The web job runs typecheck, build, and the
   full Chromium Playwright suite with Node 22 / pnpm 9.
-- Require `Build executables` when its current PR path conditions apply.
-  `.github/workflows/build.yml` currently triggers on a PR to `dev` changing
-  that workflow file, as well as manual dispatch or a published release.
+- Require `CLI packages` and `Desktop packages` when their current PR path
+  conditions apply. `.github/workflows/build.yml` and `desktop.yml` target PRs
+  to `main`, with path filters, manual dispatch, and published-release triggers.
   Do not create a release, publish packages, or dispatch release work merely to
-  land a change. Its conditional release-upload job is not a normal PR gate.
+  land a change. Their conditional release-upload jobs are not normal PR gates.
 - Satisfy any additional applicable remote checks, reviews, and conversation
   rules. Address blocking review findings; do not manufacture approvals or use
   administrator bypass. Optional, deliberately inapplicable test skips must be
@@ -346,7 +353,7 @@ unfinished. Failed, cancelled, missing, or unverifiable required checks block
 landing. If fixes are necessary, add reviewed commits, push normally, and
 repeat all invalidated verification and required CI.
 
-Fetch and recheck `dev` before merging. If it advanced beyond the integrated
+Fetch and recheck `main` before merging. If it advanced beyond the integrated
 base, merge the new base into the task branch, resolve conflicts according to
 the agreed preference, push, and verify the resulting candidate again.
 
@@ -372,13 +379,13 @@ Finally:
 ```sh
 gh pr view "$pr" --repo BigDawnGhost/wenyi \
   --json url,state,baseRefName,headRefOid,mergeCommit,mergedAt
-GIT_TERMINAL_PROMPT=0 git fetch origin dev
-git merge-base --is-ancestor "$merge_sha" origin/dev
+GIT_TERMINAL_PROMPT=0 git fetch origin main
+git merge-base --is-ancestor "$merge_sha" origin/main
 git --no-optional-locks status --short
 ```
 
-Require `state == MERGED`, base `dev`, the expected head, an actual merge SHA,
-and that merge's presence in remote `dev`. Report the PR, branch, merge commit,
+Require `state == MERGED`, base `main`, the expected head, an actual merge SHA,
+and that merge's presence in remote `main`. Report the PR, branch, merge commit,
 verified CI, cleanup performed, retained files, and any remaining limitations.
 If any blocker prevented merging, explicitly report **not landed**, the
 precise blocker, and what is needed next. Do not reset or switch the user's

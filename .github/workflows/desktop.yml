@@ -11,6 +11,7 @@ on:
   release:
     types: [published]
   pull_request:
+    branches: [main]
     paths:
       - "apps/desktop/**"
       - "apps/api/**"
