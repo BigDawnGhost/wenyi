@@ -30,6 +30,49 @@ const termTypes = (): Record<string, string> => ({
   fixed_expression: tr("glossary.fixedExpression"),
 });
 
+const PAGE_SIZE = 100;
+
+function TermPagination({
+  page,
+  total,
+  disabled,
+  onChange,
+}: {
+  page: number;
+  total: number;
+  disabled?: boolean;
+  onChange: (page: number) => void;
+}) {
+  const { t } = useI18n();
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  return (
+    <nav
+      aria-label={t("glossary.paginationLabel")}
+      className="flex flex-wrap items-center justify-end gap-3"
+    >
+      <span role="status" className="text-sm text-muted-foreground">
+        {disabled
+          ? t("progress.loading")
+          : t("glossary.pagination", { page: page + 1, pages, count: total })}
+      </span>
+      <Button
+        variant="outline"
+        disabled={disabled || page === 0}
+        onClick={() => onChange(page - 1)}
+      >
+        {t("glossary.previousPage")}
+      </Button>
+      <Button
+        variant="outline"
+        disabled={disabled || page + 1 >= pages}
+        onClick={() => onChange(page + 1)}
+      >
+        {t("glossary.nextPage")}
+      </Button>
+    </nav>
+  );
+}
+
 // ── CSV helpers ─────────────────────────────────────────────────────────
 function parseCsv(text: string): Partial<Term>[] {
   const rows: string[][] = [];
@@ -89,8 +132,20 @@ export default function GlossaryPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(q.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [q]);
   const requestedType = searchParams.get("type") || "";
   const type = Object.keys(termTypes()).includes(requestedType) ? requestedType : "";
+  const filterKey = JSON.stringify([pid, searchQuery, type]);
+  const [pagination, setPagination] = useState({ filterKey, page: 0 });
+  const page = pagination.filterKey === filterKey ? pagination.page : 0;
+  const changePage = (value: number) => {
+    setSelected(new Set());
+    setPagination({ filterKey, page: value });
+  };
   const setType = (value: string) =>
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
@@ -112,12 +167,36 @@ export default function GlossaryPage() {
   });
   const busy = isProjectBusy(project?.status);
   const showReading = project?.source_lang === "ja";
-  const { data: terms, error: termsError } = useQuery({
-    queryKey: ["terms", pid, q, type],
-    queryFn: () =>
-      api.listTerms(pid, { q: q || undefined, type: type || undefined }),
+  const {
+    data: termPage,
+    error: termsError,
+    isPending: termsLoading,
+  } = useQuery({
+    queryKey: ["terms", pid, searchQuery, type, page],
+    queryFn: ({ signal }) =>
+      api.listTermsPage(
+        pid,
+        {
+          q: searchQuery || undefined,
+          type: type || undefined,
+          offset: page * PAGE_SIZE,
+          limit: PAGE_SIZE,
+        },
+        signal,
+      ),
     enabled: !!pid,
+    gcTime: 60_000,
   });
+  const terms = termPage?.items;
+  useEffect(() => {
+    setSelected(new Set());
+    setPagination({ filterKey, page: 0 });
+  }, [filterKey]);
+  useEffect(() => {
+    if (!termPage) return;
+    const lastPage = Math.max(0, Math.ceil(termPage.total / PAGE_SIZE) - 1);
+    if (page > lastPage) setPagination({ filterKey, page: lastPage });
+  }, [termPage, page, filterKey]);
   const { data: conflicts, error: conflictsError } = useQuery({
     queryKey: ["conflicts", pid],
     queryFn: () => api.listConflicts(pid),
@@ -175,7 +254,7 @@ export default function GlossaryPage() {
   };
   const toggleSelectAll = () => {
     if (!terms) return;
-    if (selected.size === terms.length) setSelected(new Set());
+    if (terms.every((term) => selected.has(term.source))) setSelected(new Set());
     else setSelected(new Set(terms.map((t) => t.source)));
   };
 
@@ -255,13 +334,13 @@ export default function GlossaryPage() {
             )}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            className="max-w-xs"
+            className="min-w-40 max-w-xs flex-1"
           />
           <Select
             value={type}
             onValueChange={setType}
             aria-label={tr("common.type")}
-            className="max-w-[140px]"
+            className="w-[140px] shrink-0"
           >
             <SelectItem value="">{tr("glossary.allTypes")}</SelectItem>
             {Object.entries(termTypes()).map(([id, label]) => (
@@ -270,6 +349,14 @@ export default function GlossaryPage() {
               </SelectItem>
             ))}
           </Select>
+          <div className="ml-auto max-w-full">
+            <TermPagination
+              page={page}
+              total={termPage?.total || 0}
+              disabled={termsLoading}
+              onChange={changePage}
+            />
+          </div>
         </div>
 
         {/* batch action bar */}
@@ -321,9 +408,11 @@ export default function GlossaryPage() {
                   <th className="text-left p-3 font-medium">
                     <input
                       type="checkbox"
+                      aria-label={tr("glossary.selectPage")}
+                      disabled={termsLoading || !terms?.length}
                       checked={
                         terms
-                          ? selected.size === terms.length && terms.length > 0
+                          ? terms.length > 0 && terms.every((term) => selected.has(term.source))
                           : false
                       }
                       onChange={toggleSelectAll}
@@ -403,7 +492,11 @@ export default function GlossaryPage() {
                       colSpan={5}
                       className="p-8 text-center text-muted-foreground text-sm"
                     >
-                      {tr("glossary.noTermsYetTermsAreExtractedDuring")}
+                      {tr(
+                        searchQuery || type
+                          ? "glossary.noMatchingTerms"
+                          : "glossary.noTermsYetTermsAreExtractedDuring",
+                      )}
                     </td>
                   </tr>
                 )}
@@ -484,7 +577,6 @@ export default function GlossaryPage() {
             />
             <ImportDialog
               pid={pid}
-              existingTerms={terms || []}
               open={importOpen}
               onClose={() => setImportOpen(false)}
               onSaved={() => {
@@ -778,36 +870,50 @@ interface ImportConflict {
 
 function ImportDialog({
   pid,
-  existingTerms,
   open,
   onClose,
   onSaved,
 }: {
   pid: string;
-  existingTerms: Term[];
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { t: tr } = useI18n();
-  const [step, setStep] = useState<"upload" | "conflicts" | "importing">(
-    "upload",
-  );
+  const [step, setStep] = useState<
+    "upload" | "checking" | "conflicts" | "importing"
+  >("upload");
   const [parsed, setParsed] = useState<Partial<Term>[]>([]);
   const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
+  const [conflictPage, setConflictPage] = useState(0);
+  const pageConflicts = conflicts.slice(
+    conflictPage * PAGE_SIZE,
+    (conflictPage + 1) * PAGE_SIZE,
+  );
   const fileRef = useRef<HTMLInputElement>(null);
+  const operation = useRef(0);
 
   const reset = () => {
+    operation.current++;
     setStep("upload");
     setParsed([]);
     setConflicts([]);
+    setConflictPage(0);
   };
+  useEffect(() => {
+    if (!open) operation.current++;
+    return () => {
+      operation.current++;
+    };
+  }, [open]);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const attempt = ++operation.current;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
+      if (attempt !== operation.current) return;
       const text = String(reader.result);
       let items: Partial<Term>[] = [];
       if (file.name.endsWith(".csv")) {
@@ -841,10 +947,24 @@ function ImportDialog({
         toast.error(tr("glossary.theFileIsEmptyOrHasAn"));
         return;
       }
-      // detect conflicts
-      const existingMap = new Map(
-        existingTerms.map((t) => [t.source, t.target]),
-      );
+      // Look up only imported sources, across every page and regardless of active filters.
+      setStep("checking");
+      const sources = [...new Set(items.map((item) => item.source!))];
+      const existingMap = new Map<string, string>();
+      try {
+        for (let offset = 0; offset < sources.length; offset += 500) {
+          const matches = await api.lookupTerms(pid, sources.slice(offset, offset + 500));
+          if (attempt !== operation.current) return;
+          for (const term of matches) existingMap.set(term.source, term.target);
+        }
+      } catch (error) {
+        if (attempt !== operation.current) return;
+        toast.error(
+          tr("glossary.couldNotCheckTerms", { error: (error as Error).message }),
+        );
+        setStep("upload");
+        return;
+      }
       const found: ImportConflict[] = [];
       for (const it of items) {
         if (it.source && existingMap.has(it.source)) {
@@ -937,7 +1057,7 @@ function ImportDialog({
             {tr("glossary.importConflictCount", { count: conflicts.length })}
           </p>
           <div className="max-h-60 overflow-auto space-y-2">
-            {conflicts.map((c, i) => (
+            {pageConflicts.map((c, i) => (
               <div
                 key={c.source}
                 className="flex items-center gap-3 rounded border p-2 text-sm"
@@ -953,7 +1073,7 @@ function ImportDialog({
                 </span>
                 <button
                   className={`ml-auto rounded px-2 py-0.5 text-xs ${c.decision === "overwrite" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                  onClick={() => toggleConflict(i)}
+                  onClick={() => toggleConflict(conflictPage * PAGE_SIZE + i)}
                 >
                   {c.decision === "overwrite"
                     ? tr("glossary.overwrite")
@@ -962,6 +1082,11 @@ function ImportDialog({
               </div>
             ))}
           </div>
+          <TermPagination
+            page={conflictPage}
+            total={conflicts.length}
+            onChange={setConflictPage}
+          />
           <div className="flex justify-end gap-2">
             <Button
               variant="outline"
@@ -979,9 +1104,9 @@ function ImportDialog({
         </div>
       )}
 
-      {step === "importing" && (
+      {(step === "importing" || step === "checking") && (
         <div className="py-8 text-center text-sm text-muted-foreground">
-          {tr("glossary.importing")}
+          {tr(step === "checking" ? "glossary.checkingTerms" : "glossary.importing")}
         </div>
       )}
     </Dialog>

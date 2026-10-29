@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS glossary (
     PRIMARY KEY (project_id, source)
 );
 CREATE INDEX IF NOT EXISTS idx_glossary_insertion ON glossary (project_id, insertion_id);
+CREATE INDEX IF NOT EXISTS idx_glossary_source_codepoint
+    ON glossary (project_id, source COLLATE "C");
 CREATE TABLE IF NOT EXISTS term_conflicts (
     id BIGSERIAL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -850,6 +850,22 @@ class SqliteStorage:
                 return None
             return self._glossary().get_term(source)
 
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        with self._mutex:
+            if self._conn is None and not os.path.isfile(self.database_path):
+                return []
+            return self._glossary().get_terms(sources)
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        if self._conn is None and not os.path.isfile(self.database_path):
+            return [], 0
+        with self._read_lock():
+            return self._glossary().list_terms_page(
+                q=q, term_type=term_type, offset=offset, limit=limit
+            )
+
     def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
         with self.state_lock():
             return self._glossary().upsert_term(term, chapter)
