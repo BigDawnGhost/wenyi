@@ -135,6 +135,13 @@ requests use the same full glossary snapshot. Review reuse and resume compare th
 full-glossary policy marker and every glossary field, including aliases, pronunciation,
 gender, notes, and entry order. Any mismatch starts a new Review; caches created before
 this policy are preserved but not reused. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
+Recoverable provider stops during evidence verification, arbitration, or shadow revision
+propagate to this interruption path instead of becoming terminal Agent fallbacks or
+unresolved fixer suggestions. Completed evidence turns remain reusable. The same stops
+during final Autofix verification or revision halt planning before a publication index is
+committed; rerunning reuses successful traces and retries unfinished calls. Unverified
+candidates never bypass the safety checks. This does not automatically repair runs that
+older versions already saved as completed.
 The run's configuration identity also includes the effective style brief, whole-book
 synopsis, and chapter digests. Editing that guidance starts a new Review instead of
 reusing completed results or old run-scoped fixer traces. Older caches without this
