@@ -53,3 +53,26 @@ def test_export_defaults_and_failure_records(
     assert raised.value.status_code == 503
     assert records[0][0] == expected
     assert statuses[0][:2] == (9, "error")
+
+
+def test_non_babeldoc_pdf_request_is_rejected_before_admission(monkeypatch, backend_context):
+    monkeypatch.setattr(
+        export,
+        "require_project",
+        lambda pid: {"id": pid, "fmt": "pdf", "initialized": True},
+    )
+    close = []
+    monkeypatch.setattr(
+        export,
+        "storage_for",
+        lambda pid: SimpleNamespace(
+            load_manifest=lambda: {"meta": {"mineru": True}}, close=lambda: close.append(pid)
+        ),
+    )
+
+    with pytest.raises(HTTPException, match="PDF export is only available for BabelDOC") as error:
+        asyncio.run(export.create_export("p", ExportRequest(format="pdf")))
+
+    assert error.value.status_code == 422
+    backend_context.exports.admit_export.assert_not_called()
+    assert close == ["p"]

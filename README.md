@@ -112,6 +112,7 @@ Prefer a graphical app? See the [Desktop quick start](docs/desktop.md#quick-star
 | SRT (movie / series subtitles) | SRT (monolingual / bilingual) |
 
 - PDF input defaults to MinerU and requires its API key for the initial conversion; the resulting HTML is cached and reused. The BabelDOC bridge is optional for layout-preserving PDFs. See [PDF configuration](docs/configuration.md#pipeline).
+- PDF output is available only for saved BabelDOC projects through bridge fillback; other projects use the book output formats above.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
 - SRT projects use a lightweight subtitle workflow without a glossary, polishing, or whole-book review.
 - DOCX uses the full book pipeline. Headings, simple tables, lists, and common run/paragraph styles are preserved where possible; translated Chinese uses Song (宋体).

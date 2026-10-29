@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import Json
+from wenyi_core.assemble.writer_common import output_formats
 
 from .. import dal
 from ..config_documents import project_document
@@ -101,10 +102,18 @@ async def create_project(
 def get_project(pid: str) -> dict:
     project = require_project(pid)
     summaries = chapter_summaries(project)
+    manifest = {}
+    if project.get("initialized") and project.get("fmt") != "srt":
+        storage = read_storage_for(pid)
+        try:
+            manifest = storage.load_manifest()
+        finally:
+            storage.close()
     project.update(
         chapter_count=len(summaries),
         total_word_count=sum(ch["word_count"] for ch in summaries),
         done_chapters=sum(ch["status"] == "done" for ch in summaries),
+        output_formats=["srt"] if project.get("fmt") == "srt" else output_formats(manifest),
     )
     return project
 

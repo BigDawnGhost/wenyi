@@ -125,7 +125,7 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 - For Markdown input, headings starting with `#` through `######`, followed by whitespace and title text, start new chapters. Their original levels are recorded during import; plain-text contents lists with page numbers remain body text.
 - Markdown heading levels are preserved in EPUB body headings, the generated EPUB navigation tree, and DOCX outline styles. Navigation nests each heading under the nearest preceding heading with a smaller level number; skipped levels do not create synthetic entries. Existing state with correct chapter divisions and stored heading levels only needs a fresh export, not retranslation.
 - Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx`, and BabelDOC PDF state defaults to `<book-name>.zh.pdf`). The bilingual `*.zh-bi.*` edition is optional.
-- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit format always takes precedence; PDF defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
+- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs; `pdf` is only available for saved BabelDOC projects. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit supported format takes precedence; PDF availability and defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. The source is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. Their order is controlled by `output.bilingual_order`.
 - Untranslated EPUB paragraphs appear once as the original text, retaining ruby readings and links. This also applies to Web exports and partially translated chapters; bilingual ordering and source styling do not add a second copy.
@@ -180,26 +180,17 @@ Later runs reuse this file, and you may correct it manually before resuming.
 
 #### PDF output
 
-WeasyPrint is the default PDF engine. Install its optional dependency and omit
-`--pdf-engine`:
+PDF output is only supported for projects parsed with BabelDOC. It sends saved
+translations to the external bridge's `/fillback` endpoint to preserve the original
+PDF layout. No local PDF rendering dependencies or engine selection are needed:
 
 ```bash
-uv sync --extra pdf-output
-uv run wenyi assemble book.html --format pdf
+uv run wenyi assemble book.pdf --format pdf
 ```
 
-For a lightweight cross-platform engine without system rendering libraries,
-use `fpdf2`:
-
-```bash
-uv sync --extra pdf-output-lite
-uv run wenyi assemble book.html --format pdf --pdf-engine fpdf2
-```
-
-`fpdf2` supports basic layout and images, but only a limited HTML/CSS subset.
-Images mixed with text are placed as separate blocks. It uses a discoverable
-CJK system font; if none is found, set `TRANS_NOVEL_PDF_FONT` to a TTF, OTF, or
-TTC font file. This option also works on Windows.
+MinerU projects and other book inputs cannot export PDF; use EPUB, DOCX or HTML
+instead. This rule is the same in CLI, Web and Desktop. Changing the current parser
+setting does not convert an existing project into BabelDOC state.
 
 ## DOCX (Word)
 

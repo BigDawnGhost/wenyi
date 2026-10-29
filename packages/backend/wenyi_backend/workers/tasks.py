@@ -365,7 +365,6 @@ def _render_export_sync(
     about_page: bool = True,
     preserve_source_style: bool = False,
     punctuation_normalize: bool | None = None,
-    pdf_engine: str = "weasyprint",
 ) -> int:
     from wenyi_core.assemble.policy import export_plan
     from wenyi_core.assemble.writer import assemble
@@ -416,7 +415,6 @@ def _render_export_sync(
                 plan = export_plan(
                     snapshot,
                     fmt,
-                    pdf_engine=pdf_engine,
                     punctuation_normalize=config.output.punctuation_normalize
                     if punctuation_normalize is None
                     else punctuation_normalize,
@@ -438,7 +436,6 @@ def _render_export_sync(
                     punctuation_normalize=config.output.punctuation_normalize
                     if punctuation_normalize is None
                     else punctuation_normalize,
-                    pdf_engine=pdf_engine,
                     babeldoc_timeout=config.pipeline.babeldoc_timeout,
                     language_policy=plan,
                 )
@@ -455,6 +452,8 @@ def _render_export_sync(
 
 
 def _export_sync(pid, *, export_id, run_id=None, **params):
+    # Previously queued jobs may carry the retired local PDF renderer option.
+    params.pop("pdf_engine", None)
     storage = _pipeline_storage(pid)
     job = dal.get_job_by_arq_id(run_id) if run_id else None
     try:

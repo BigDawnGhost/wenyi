@@ -187,7 +187,6 @@ class Orchestrator:
         progress: ProgressFn | None,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """Run local finalization from existing state without creating a translation task."""
         store = self._preparation.locate_existing(input_path, progress=progress)
@@ -201,7 +200,6 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
             )
 
     def run_report(
@@ -223,7 +221,6 @@ class Orchestrator:
         *,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
         """Export an existing-state snapshot without waiting for ongoing whole-book
@@ -243,7 +240,6 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
             )
             self._runtime.log_event(
                 store, "run_steps_finished", steps=["assemble"], outputs=outputs
@@ -267,7 +263,6 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """Run any requested subset of ALL_STEPS."""
         with self._runtime.track_workflow("workflow"):
@@ -290,7 +285,6 @@ class Orchestrator:
                     input_path,
                     out_format=out_format,
                     out_path=out_path,
-                    pdf_engine=pdf_engine,
                     progress=progress,
                 )
 
@@ -308,7 +302,6 @@ class Orchestrator:
                     progress=progress,
                     out_format=out_format,
                     out_path=out_path,
-                    pdf_engine=pdf_engine,
                 )
 
     def _finish_steps_locked(
@@ -321,7 +314,6 @@ class Orchestrator:
         progress: ProgressFn | None,
         out_format: str | None,
         out_path: str | None,
-        pdf_engine: str,
     ) -> dict[str, Any]:
         """Delegate review, reporting and assembly under the book lock and return combined
         results.
@@ -374,7 +366,6 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
             )
 
         self._runtime.log_event(
@@ -401,7 +392,6 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """Translate, review, report and assemble, returning combined results."""
         steps = {"translate", "report", "assemble"}
@@ -413,5 +403,4 @@ class Orchestrator:
             progress=progress,
             out_format=out_format,
             out_path=out_path,
-            pdf_engine=pdf_engine,
         )

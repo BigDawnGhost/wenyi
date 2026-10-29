@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { api, type ExportFormat, type PdfEngine } from "@/lib/api";
+import { api, type ExportFormat } from "@/lib/api";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,14 +33,9 @@ export default function ExportPage() {
   const [about, setAbout] = useState(true);
   const [punctuation, setPunctuation] = useState(true);
   const [preserveStyle, setPreserveStyle] = useState(false);
-  const [pdfBackend, setPdfBackend] = useState<PdfEngine | "">("");
   const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
-  });
-  const { data: caps, error: capsError } = useQuery({
-    queryKey: ["capabilities"],
-    queryFn: api.capabilities,
   });
   const { data: exports, error: exportsError } = useQuery({
     queryKey: ["exports", pid],
@@ -70,10 +65,10 @@ export default function ExportPage() {
   const subtitle = project?.fmt === "srt";
   const formats: ExportFormat[] = subtitle
     ? ["srt"]
-    : ((caps?.output_formats || []).filter(
+    : ((project?.output_formats || []).filter(
         (f) => f !== "srt",
       ) as ExportFormat[]);
-  const fmt = subtitle ? "srt" : format;
+  const fmt = subtitle ? "srt" : formats.includes(format as ExportFormat) ? format : "";
   const create = useMutation({
     mutationFn: async () => {
       const options = {
@@ -83,7 +78,6 @@ export default function ExportPage() {
         about_page: subtitle ? false : about,
         preserve_source_style: preserveStyle,
         punctuation_normalize: punctuation,
-        ...(pdfBackend && fmt === "pdf" ? { pdf_engine: pdfBackend } : {}),
       };
       if (saveExport) {
         const saved = await saveExport(pid, options);
@@ -114,7 +108,6 @@ export default function ExportPage() {
           error={
             projectError ||
             configError ||
-            capsError ||
             exportsError ||
             create.error ||
             download.error
@@ -185,28 +178,6 @@ export default function ExportPage() {
                   />
                   {tr("settings.normalizePunctuationOnExport")}
                 </label>
-                {fmt === "pdf" && (
-                  <div>
-                    <Label htmlFor="pdf-export-engine">
-                      {tr("export.pdfExportEngine")}
-                    </Label>
-                    <Select
-                      id="pdf-export-engine"
-                      value={pdfBackend}
-                      onValueChange={(value) =>
-                        setPdfBackend(value as PdfEngine | "")
-                      }
-                      className="mt-2"
-                    >
-                      <SelectItem value="">{tr("export.automatic")}</SelectItem>
-                      {caps?.pdf?.export_backends?.map((b) => (
-                        <SelectItem key={b} value={b}>
-                          {b}
-                        </SelectItem>
-                      ))}
-                    </Select>
-                  </div>
-                )}
                 {bilingual && !subtitle && (
                   <Select
                     aria-label={tr("export.bilingualOrder")}
@@ -253,7 +224,7 @@ export default function ExportPage() {
               disabled={
                 create.isPending ||
                 !project?.fmt ||
-                !caps ||
+                !formats.length ||
                 !defaultsLoaded ||
                 !!configError
               }

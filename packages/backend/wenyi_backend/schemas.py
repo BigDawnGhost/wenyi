@@ -61,6 +61,7 @@ class ProjectDetail(Project):
     total_word_count: int = 0
     done_chapters: int = 0
     source_meta: dict[str, Any] = Field(default_factory=dict)
+    output_formats: list[str] = Field(default_factory=list)
 
 
 class PreviewChapter(BaseModel):
@@ -222,7 +223,6 @@ class ExportRequest(RequestModel):
     about_page: bool = True
     preserve_source_style: bool = False
     punctuation_normalize: bool | None = None
-    pdf_engine: Literal["weasyprint", "fpdf2"] = "weasyprint"
 
 
 class ExportOut(BaseModel):
@@ -354,7 +354,6 @@ class LanguageOption(BaseModel):
 
 class PDFCapabilities(BaseModel):
     backends: list[str]
-    engines: list[str]
     export_backends: list[str]
 
 

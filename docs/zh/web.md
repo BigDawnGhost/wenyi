@@ -69,7 +69,6 @@ API、普通 Worker、导出 Worker 都加载 `deploy/.env`，只读挂载同一
 | `WENYI_CONFIG_FILE` | Compose 宿主配置文件，默认 `../config.yaml`，相对 `deploy/`。 |
 | `DATA_DIR` | 上传原件、解析资源与导出成品目录；容器固定 `/data`。 |
 | `DATABASE_URL` / `REDIS_URL` | 本地开发连接地址；Compose 覆盖为内部服务地址。 |
-| `INSTALL_PDF_OUTPUT` | Docker 构建参数，默认 `true`，安装 WeasyPrint 和 fpdf2；`false` 省略 Python PDF 输出依赖。 |
 | `WENYI_VERSION` | Docker 构建时传入的包版本，默认 `0.0.0+docker`；发布镜像须显式设置发布版本。 |
 | `DEBIAN_MIRROR` / `UV_DEFAULT_INDEX` / `UV_IMAGE` / `NPM_REGISTRY` | 可选构建镜像源与官方 `uv` 镜像标签；默认使用官方源；需要换源时取消 `deploy/.env` 中对应行的注释。 |
 | `WENYI_API_TOKEN` | 可选静态 token；HTTP 使用 Bearer 鉴权，WebSocket 使用连接后的首个 `{"token":"…"}` 消息鉴权，前端自动发送。 |
@@ -88,9 +87,9 @@ API、普通 Worker、导出 Worker 都加载 `deploy/.env`，只读挂载同一
 
 ### PDF
 
-后端镜像默认包含 WeasyPrint/fpdf2、所需 Pango 库、Noto 中日韩/通用字体和文泉驿正黑。fpdf2 仅使用带 TrueType 轮廓的字体，自动跳过 Noto CJK 等 OpenType/CFF 字体；也可通过 `TRANS_NOVEL_PDF_FONT` 指定兼容字体。显式选择不兼容字体会返回错误，避免生成显示损坏的文件。WeasyPrint 可使用 Noto CJK。MinerU 为默认解析后端，解析缓存与上传预览共用。
+后端镜像从 Astral 官方镜像复制 `uv`/`uvx`，通过 frozen `uv sync` 仅安装 Web 依赖闭包，并将虚拟环境加入 `PATH`，启动时不再安装额外 Python 依赖。镜像不包含本地 PDF 渲染库及字体。MinerU 为默认解析后端，解析缓存与上传预览共用。
 
-BabelDOC 作为独立 HTTP bridge 部署。将 `pipeline.pdf_backend` 设为 `babeldoc`，把 `pipeline.babeldoc_bridge_url` 设为 API 与两个 Worker 都能访问的地址。bridge 的 `127.0.0.1` 指当前容器，不是宿主机。此 Compose 不自动下载或启动 BabelDOC 服务。页面根据已安装依赖/配置呈现可用 PDF 功能。
+BabelDOC 作为独立 HTTP bridge 部署。将 `pipeline.pdf_backend` 设为 `babeldoc`，把 `pipeline.babeldoc_bridge_url` 设为 API 与两个 Worker 都能访问的地址。bridge 的 `127.0.0.1` 指当前容器，不是宿主机。此 Compose 不自动下载或启动 BabelDOC 服务。PDF 导出仅对已保存的 BabelDOC 项目开放，通过 bridge 回填保留排版，不再提供本地 PDF 引擎选择。导出格式依据各项目已保存的状态，而非当前解析器设置。MinerU 及其他书籍项目可导出 EPUB、DOCX、HTML、TXT 或 Markdown；不支持的 PDF 请求在创建导出任务前返回 HTTP 422。
 
 ## 本地开发
 

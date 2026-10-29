@@ -15,7 +15,6 @@ from .validation import (
     require_input_file,
     resolve_output_format,
     runstore_for_cli,
-    validate_pdf_engine,
 )
 
 
@@ -26,9 +25,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             None, "--source", help="Resolved source language for preview"
         ),
         fmt: str | None = typer.Option(None, "--format", help="Actual export format"),
-        backend: str = typer.Option(
-            "native", "--backend", help="native / weasyprint / fpdf2 / babeldoc"
-        ),
+        backend: str = typer.Option("native", "--backend", help="native / babeldoc"),
         subtitles: bool = typer.Option(
             False, "--subtitles", help="Preview the independent SRT path"
         ),
@@ -106,12 +103,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         fmt: str | None = typer.Option(
             None,
             "--format",
-            help="Output format: epub / txt / html / markdown / pdf / docx; default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
-        ),
-        pdf_engine: str = typer.Option(
-            "weasyprint",
-            "--pdf-engine",
-            help="PDF renderer: weasyprint (default) / fpdf2",
+            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
         ),
         mono: bool | None = typer.Option(
             None,
@@ -132,7 +124,6 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         config = context().load_config()
         require_input_file(input, console=console)
         fmt = resolve_output_format(input, fmt, console=console)
-        pdf_engine = validate_pdf_engine(pdf_engine, console=console)
         if mono is not None:
             config.output.mono = mono
         if bilingual is not None:
@@ -142,7 +133,6 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
                 input,
                 out_format=fmt,
                 out_path=out,
-                pdf_engine=pdf_engine,
             )
         except (IngestError, OSError, ValueError) as error:
             console.print(f"[red]Error: {error}[/]")

@@ -112,6 +112,7 @@ uv run wenyi translate book.epub
 | SRT（影视字幕） | SRT（单语 / 双语） |
 
 - PDF 输入默认走 MinerU，首次转换需配置其 API Key，生成的 HTML 会缓存复用。可选 BabelDOC bridge 用于尽量保留版式。详见 [PDF 配置](configuration.md#流水线)。
+- PDF 导出仅支持已保存的 BabelDOC 项目，通过 bridge 回填保留排版；其他项目使用上表中的书籍输出格式。
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
 - SRT 项目使用轻量字幕流程，不建术语库、不做润色与全书审校。
 - DOCX 走完整书籍管线：尽量保留标题导航、简易表格、列表与常见字符/段落样式；已译中文用宋体。

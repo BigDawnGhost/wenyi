@@ -13,6 +13,7 @@ export const project = {
   total_word_count: 24,
   done_chapters: 3,
   initialized: true,
+  output_formats: ["epub", "txt", "html", "markdown", "docx"],
 };
 // Specs build their own chapter variants from this base; keep it free of
 // presentation-only fields so overrides stay fully deterministic.
@@ -42,6 +43,7 @@ const extraProjects = [
     name: projectNames["book-3"],
     title: "Subtitle sample",
     fmt: "srt",
+    output_formats: ["srt"],
     source_lang: "en",
     target_lang: "zh",
     status: "done",
@@ -149,7 +151,7 @@ export const capabilities = {
   output_formats: ["epub", "txt", "html", "markdown", "docx", "pdf"],
   pdf: {
     backends: ["mineru", "babeldoc"],
-    export_backends: ["weasyprint", "fpdf2"],
+    export_backends: ["babeldoc"],
   },
   providers: ["deepseek"],
   operations: [

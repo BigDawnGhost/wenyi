@@ -22,13 +22,32 @@ _OUT_EXT = {
 }
 
 
-def default_output_format(manifest: dict) -> str:
-    """Select the export format from the backend recorded in the same state snapshot."""
+def supports_pdf_export(manifest: dict) -> bool:
+    """Only persisted BabelDOC state can be filled back into the original PDF layout."""
     raw_meta = manifest.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
-    if meta.get("pdf_export") == "babeldoc" or meta.get("babeldoc"):
-        return "pdf"
-    return "epub"
+    return meta.get("pdf_export") == "babeldoc" or bool(meta.get("babeldoc"))
+
+
+def output_formats(manifest: dict) -> list[str]:
+    """List book export formats supported by this saved state, not current configuration."""
+    return [fmt for fmt in _OUT_EXT if fmt != "pdf" or supports_pdf_export(manifest)]
+
+
+def output_backend(manifest: dict, fmt: str) -> str:
+    """Resolve the writer backend and reject unsupported PDF output before any writes."""
+    if fmt != "pdf":
+        return "native"
+    if not supports_pdf_export(manifest):
+        raise ValueError(
+            "PDF export is only available for BabelDOC projects; use EPUB, DOCX or HTML instead."
+        )
+    return "babeldoc"
+
+
+def default_output_format(manifest: dict) -> str:
+    """Select the export format from the backend recorded in the same state snapshot."""
+    return "pdf" if supports_pdf_export(manifest) else "epub"
 
 
 def _sanitize_filename(name: str, fallback: str = "translated") -> str:

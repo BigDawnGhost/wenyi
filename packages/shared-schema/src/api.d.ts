@@ -1165,12 +1165,6 @@ export interface components {
             preserve_source_style: boolean;
             /** Punctuation Normalize */
             punctuation_normalize?: boolean | null;
-            /**
-             * Pdf Engine
-             * @default weasyprint
-             * @enum {string}
-             */
-            pdf_engine: "weasyprint" | "fpdf2";
         };
         /** GlobalConfigInput */
         GlobalConfigInput: {
@@ -1316,8 +1310,6 @@ export interface components {
         PDFCapabilities: {
             /** Backends */
             backends: string[];
-            /** Engines */
-            engines: string[];
             /** Export Backends */
             export_backends: string[];
         };
@@ -1494,6 +1486,8 @@ export interface components {
             source_meta?: {
                 [key: string]: unknown;
             };
+            /** Output Formats */
+            output_formats?: string[];
         };
         /** ProjectStats */
         ProjectStats: {

@@ -27,6 +27,7 @@ from .writer_common import (
     _ensure_parent_dir,
     _manifest_target_lang,
     default_output_format,
+    output_backend,
 )
 
 __all__ = ["assemble"]
@@ -42,7 +43,6 @@ def assemble(
     order: Literal["target_first", "source_first"] = "target_first",
     preserve_source_style: bool = False,
     about_page: bool = True,
-    pdf_engine: str = "weasyprint",
     babeldoc_timeout: float = 600.0,
     punctuation_normalize: bool = False,
     language_policy: PolicyPlan | None = None,
@@ -50,8 +50,8 @@ def assemble(
     """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
     EPUB input reuses the original layout and resources; template-free input produces a
     standard EPUB with headings and paragraphs. TXT and Markdown rebuild chapters. HTML
-    prefers source templates and otherwise rebuilds chapters. PDF renders print HTML with
-    the selected engine. DOCX reconstructs heading navigation, paragraphs and basic tables.
+    prefers source templates and otherwise rebuilds chapters. PDF is only available through
+    BabelDOC layout-preserving fillback. DOCX reconstructs headings, paragraphs and tables.
     With bilingual=True, include source text in the requested order. preserve_source_style
     reuses original styles instead of muted CSS. about_page appends the translation about
     page. punctuation_normalize changes only export copies, never chapter target state.
@@ -63,6 +63,7 @@ def assemble(
     m = store.load_manifest()
     if out_format is None:
         out_format = default_output_format(m)
+    backend = output_backend(m, out_format)
     if language_policy is None:
         language_policy = resolve_policy(
             PolicyContext(
@@ -70,15 +71,7 @@ def assemble(
                 _manifest_target_lang(m),
                 phase="export",
                 format=out_format,
-                backend="babeldoc"
-                if out_format == "pdf"
-                and (
-                    m.get("meta", {}).get("pdf_export") == "babeldoc"
-                    or m.get("meta", {}).get("babeldoc")
-                )
-                else pdf_engine
-                if out_format == "pdf"
-                else "native",
+                backend=backend,
                 punctuation_normalize=punctuation_normalize,
                 source_identity=m.get("source_sha256", ""),
                 bilingual=bilingual,
@@ -87,7 +80,11 @@ def assemble(
                 about_page=about_page,
             )
         )
-    if language_policy.context.phase != "export" or language_policy.context.format != out_format:
+    if (
+        language_policy.context.phase != "export"
+        or language_policy.context.format != out_format
+        or language_policy.context.backend != backend
+    ):
         raise ValueError("Export language policy does not match the actual output format")
     view: AssembleStore
     if isinstance(store, ExportViewStore):
@@ -129,16 +126,7 @@ def assemble(
             source_path, "pdf", "", bilingual=bilingual, target_lang=target_lang
         )
         _ensure_parent_dir(out_path)
-        return _assemble_pdf(
-            view,
-            source_path,
-            out_path,
-            engine=pdf_engine,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-            babeldoc_timeout=babeldoc_timeout,
-        )
+        return _assemble_pdf(view, out_path, timeout=babeldoc_timeout)
     if out_format == "docx":
         out_path = out_path or _default_out(
             source_path, "docx", "", bilingual=bilingual, target_lang=target_lang

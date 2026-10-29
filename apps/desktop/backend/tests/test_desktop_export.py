@@ -66,6 +66,34 @@ def test_plan_is_side_effect_free_and_matches_export_filename(desktop_exports, f
     assert (backend.list_exports(pid), backend.all_jobs()) == before
 
 
+@pytest.mark.parametrize(
+    "meta", [{}, {"mineru": True}, {"babeldoc": True}, {"pdf_export": "babeldoc"}]
+)
+def test_pdf_plan_and_format_choices_follow_saved_babeldoc_state(desktop_exports, meta):
+    client, backend, pid = desktop_exports
+    store = backend.storage_for(pid)
+    manifest = store.load_manifest()
+    manifest["meta"] = meta
+    store.save_manifest(manifest)
+    store.close()
+    before = (backend.list_exports(pid), backend.all_jobs())
+    supports_pdf = meta.get("pdf_export") == "babeldoc" or bool(meta.get("babeldoc"))
+
+    detail = client.get(f"/projects/{pid}")
+    assert detail.status_code == 200, detail.text
+    assert ("pdf" in detail.json()["output_formats"]) == supports_pdf
+    plan = client.post(f"/desktop/projects/{pid}/exports/plan", json={"format": "pdf"})
+    assert plan.status_code == (200 if supports_pdf else 422), plan.text
+    if supports_pdf:
+        assert plan.json()["request"]["format"] == "pdf"
+        assert "pdf_engine" not in plan.json()["request"]
+    else:
+        assert "PDF export is only available for BabelDOC" in plan.json()["detail"]
+        request = client.post(f"/projects/{pid}/exports", json={"format": "pdf"})
+        assert request.status_code == 422, request.text
+    assert (backend.list_exports(pid), backend.all_jobs()) == before
+
+
 def publish(backend, pid, fmt, content):
     export_id = backend.create_export(pid, fmt, {})
     root = backend.project_dir(pid) / "exports" / str(export_id)

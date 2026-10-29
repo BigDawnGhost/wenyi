@@ -1,7 +1,8 @@
-"""Platform-neutral export format and optional-engine policy."""
+"""Platform-neutral export format and BabelDOC-only PDF policy."""
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from wenyi_backend import export_plan
 from wenyi_backend.schemas import ExportRequest
 
@@ -18,7 +19,19 @@ def test_default_plan_policy_matches_source(source_format, meta, expected):
     assert options["bilingual"] is True
 
 
-def test_plan_validates_subtitles_initialization_and_installed_pdf_engines(monkeypatch):
+@pytest.mark.parametrize("source_format", ["pdf", "epub", "txt", "docx", "html"])
+@pytest.mark.parametrize("meta", [None, {}, {"mineru": True}, {"babeldoc": False}])
+def test_pdf_export_requires_saved_babeldoc_metadata(source_format, meta):
+    with pytest.raises(HTTPException, match="PDF export is only available for BabelDOC") as error:
+        export_plan.resolve_export(
+            {"initialized": True, "fmt": source_format},
+            {"meta": meta},
+            ExportRequest(format="pdf"),
+        )
+    assert error.value.status_code == 422
+
+
+def test_plan_validates_subtitles_and_initialization():
     project = {"initialized": True, "fmt": "txt"}
     for changes, request, status in [
         ({"initialized": False}, {}, 409),
@@ -28,13 +41,17 @@ def test_plan_validates_subtitles_initialization_and_installed_pdf_engines(monke
         with pytest.raises(HTTPException) as error:
             export_plan.resolve_export({**project, **changes}, {}, ExportRequest(**request))
         assert error.value.status_code == status
-    monkeypatch.setattr(export_plan.importlib.util, "find_spec", lambda name: name == "fpdf")
-    _, options = export_plan.resolve_export(project, {}, ExportRequest(format="pdf"))
-    assert options["pdf_engine"] == "fpdf2"
-    with pytest.raises(HTTPException, match="not installed"):
-        export_plan.resolve_export(
-            project, {}, ExportRequest(format="pdf", pdf_engine="weasyprint")
-        )
-    monkeypatch.setattr(export_plan.importlib.util, "find_spec", lambda name: None)
-    with pytest.raises(HTTPException, match="optional pdf-export"):
-        export_plan.resolve_export(project, {}, ExportRequest(format="pdf"))
+
+
+@pytest.mark.parametrize("meta", [{"pdf_export": "babeldoc"}, {"babeldoc": True}])
+def test_babeldoc_pdf_export_needs_no_local_rendering_engine(meta):
+    fmt, options = export_plan.resolve_export(
+        {"initialized": True, "fmt": "pdf"}, {"meta": meta}, ExportRequest(format="pdf")
+    )
+    assert fmt == "pdf"
+    assert "pdf_engine" not in options
+
+
+def test_removed_pdf_engine_request_field_is_rejected():
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ExportRequest.model_validate({"format": "pdf", "pdf_engine": "removed-engine"})
