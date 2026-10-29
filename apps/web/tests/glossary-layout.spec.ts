@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid, termPageFixture } from "./fixtures";
 import { chooseOption } from "./select-helper";
 
 const terms = [
@@ -22,9 +22,8 @@ for (const locale of ["en", "zh-CN"] as const) {
     );
     await fakeApi(page, { [`/projects/${pid}/glossary/conflicts`]: [] });
     await page.route(`**/api/projects/${pid}/glossary/terms**`, (route) => {
-      const type = new URL(route.request().url()).searchParams.get("type");
       return route.fulfill({
-        json: terms.filter((term) => !type || term.type === type),
+        json: termPageFixture(terms, route.request().url()),
       });
     });
     await page.goto(`/projects/${pid}/glossary`);

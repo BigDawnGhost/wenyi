@@ -215,6 +215,16 @@ translations, gender, notes, and aliases, plus readings for Japanese-source proj
 terms, translations, aliases, readings, and notes, ignoring case and surrounding query
 whitespace. Type filters also apply to search results.
 
+The Web and Desktop glossary tables load 100 terms per page, ordered by the original
+source's Unicode code points (not locale or phonetic order). Search, type filters and
+pagination share the top toolbar, wrapping on narrow screens; no pager is repeated
+below the table. Search and type filters
+apply to the complete glossary and return to the first page. Select-all affects only
+the current page; changing pages or filters clears selection. Import checks existing
+sources across the complete glossary, including terms outside the displayed page or
+filter. Model context continues to use insertion order; display pagination does not
+change translation or Review glossary snapshots.
+
 Style analysis retains descriptive character guidance without extracting glossary
 entries or suggesting name translations. Glossary entries come from completed
 source-and-target pairs during translation or manual imports. Preparation on resume

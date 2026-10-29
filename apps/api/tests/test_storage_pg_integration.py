@@ -118,6 +118,23 @@ def test_glossary_order_conflict_and_batch_checkpoint(storage, tmp_path):
     assert storage.completed_batch_glossary_keys(0) == {"2:4"}
 
 
+def test_glossary_display_pages_do_not_reorder_prompt_terms(storage):
+    sources = ["𐀀", "中", "a", "Z", "\ue000", "Å"]
+    for source in sources:
+        storage.upsert_term(
+            GlossaryTerm(source=source, target="Straße", aliases=["Alias"], type="person")
+        )
+    for query in ("", "STRASSE", "alias"):
+        items, total = storage.list_terms_page(q=query, offset=1, limit=2, term_type="person")
+        assert total == len(sources)
+        assert [term.source for term in items] == sorted(sources)[1:3]
+    assert storage.list_terms_page(offset=100) == ([], len(sources))
+    assert storage.list_terms_page(term_type="term") == ([], 0)
+    assert storage.list_terms_page(q="not present") == ([], 0)
+    assert {term.source for term in storage.get_terms(["Z", "a", "absent"])} == {"Z", "a"}
+    assert [term.source for term in storage.all_terms()] == sources
+
+
 def test_review_artifacts_and_timing_are_durable_and_idempotent(storage, tmp_path):
     initialize(storage, tmp_path)
     key = "reviews/review-2026/result.json"

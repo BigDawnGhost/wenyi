@@ -12,8 +12,23 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.metadata import normalize_term_type
 
 from ..context import current_context
-from ..project_service import project_write, require_book, require_project, storage_for
-from ..schemas import ConflictOut, GlossaryImport, Message, ResolveConflict, TermIn, TermOut
+from ..project_service import (
+    project_write,
+    read_storage_for,
+    require_book,
+    require_project,
+    storage_for,
+)
+from ..schemas import (
+    ConflictOut,
+    GlossaryImport,
+    Message,
+    ResolveConflict,
+    TermIn,
+    TermLookup,
+    TermOut,
+    TermPage,
+)
 
 router = APIRouter(prefix="/projects/{pid}/glossary", tags=["glossary"])
 
@@ -42,6 +57,37 @@ def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(N
             )
         ]
     return [vars(term) for term in terms]
+
+
+@router.get("/terms/page", response_model=TermPage)
+def list_terms_page(
+    pid: str,
+    q: str = "",
+    type: str = "",
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+) -> dict:
+    """Browse by source codepoint order without changing model-context order."""
+    require_book(require_project(pid))
+    storage = read_storage_for(pid)
+    try:
+        items, total = storage.list_terms_page(
+            q=q, term_type=normalize_term_type(type) if type else "", offset=offset, limit=limit
+        )
+        return {"items": [vars(term) for term in items], "total": total}
+    finally:
+        storage.close()
+
+
+@router.post("/terms/lookup", response_model=list[TermOut])
+def lookup_terms(pid: str, body: TermLookup) -> list[dict]:
+    """Check imported sources against the whole glossary, not just the displayed page."""
+    require_book(require_project(pid))
+    storage = read_storage_for(pid)
+    try:
+        return [vars(term) for term in storage.get_terms(body.sources)]
+    finally:
+        storage.close()
 
 
 @router.post("/terms", response_model=TermOut, status_code=201)
