@@ -12,6 +12,7 @@ from ..config import Config
 from ..events import ProgressFn
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.base import LLMClient
+from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.conflicts import (
     apply_review_arbitrations,
     build_conflict_groups,
@@ -364,6 +365,8 @@ class ReviewRoundService:
                     trace=record,
                 )
             except Exception as error:  # noqa: BLE001 - Keep individual fixer failures as unresolved suggestions.
+                if is_resumable_provider_interrupt(error):
+                    raise
                 trace["status"] = "failed"
                 trace["error"] = {
                     "type": type(error).__name__,

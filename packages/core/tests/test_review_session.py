@@ -1,15 +1,20 @@
 """Whole-book checkpoint and accounting interruption contracts."""
 
+import json
+import re
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from wenyi_core.ingest.models import Segment
+from wenyi_core.llm.retrying import ProviderRequestError
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
-from tests.fake_llm import MeteredFakeClient
+from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
 from tests.review_fixtures import autofix_config as _config
 from tests.review_fixtures import autofix_store as _store
 from tests.review_fixtures import fix_json as _fix_json
@@ -104,6 +109,99 @@ def test_review_recovers_checkpoint_and_usage_boundaries(tmp_path, boundary, aft
     ]
     assert Path(store.chapter_path(0)).read_bytes() == formal
     assert Path(store.manifest_path).read_bytes() == manifest
+
+
+@pytest.mark.parametrize("failed_operation", ["review.verify", "review.fix"])
+def test_provider_interrupt_resumes_review_and_publishes_once(tmp_path, failed_operation):
+    config = _config(str(tmp_path / "state"))
+    config.segment.max_tokens_per_batch = 1
+    config.pipeline.review_clean_confirmations = 1
+    store = _store(str(tmp_path))
+    chapter = store.load_chapter(0)
+    chapter.segments.append(Segment(index=1, source="Second source.", target="Second target."))
+    store.save_chapter(chapter)
+    formal = Path(store.chapter_path(0)).read_bytes()
+    manifest = Path(store.manifest_path).read_bytes()
+    attempts = Counter()
+
+    def handler(messages, tier, json_mode):
+        system, user = messages[0]["content"], messages[-1]["content"]
+        if "translation reviewer" in system:
+            issues = (
+                []
+                if "影子修订译文。" in user
+                else [
+                    {
+                        "index": 0,
+                        "type": "missing",
+                        "detail": "Missing meaning",
+                        "suggestion": "Restore it",
+                    }
+                ]
+            )
+            return _review_json(user, issues)
+        operation = "review.verify" if "evidence-based review agent" in system else "review.fix"
+        attempts[operation] += 1
+        if operation == failed_operation and attempts[operation] == 2:
+            raise ProviderRequestError(
+                provider="default",
+                operation=operation,
+                error_type="http_503",
+                status_code=503,
+                reason="http_503",
+                resumable=True,
+            )
+        if operation == "review.verify":
+            return json.dumps(
+                {
+                    "action": "final",
+                    "decisions": [
+                        {"candidate_id": candidate, "verdict": "confirmed"}
+                        for candidate in re.findall(r'"candidate_id":\s*"([^"]+)"', user)
+                    ],
+                    "complete": True,
+                }
+            )
+        return _fix_json(user, "影子修订译文。")
+
+    first_client = MeteredFakeClient(handler=handler)
+    with pytest.raises(ProviderRequestError):
+        Orchestrator(config, first_client)._review.run_session(store, [])
+    interrupted = store.load_latest_review_result()
+    assert interrupted is not None
+    assert interrupted["status"] == "interrupted"
+    assert interrupted["termination"] == "interrupted"
+    assert Path(store.chapter_path(0)).read_bytes() == formal
+
+    client = MeteredFakeClient(handler=handler)
+    resumed = Orchestrator(config, client)
+    outcome = resumed._review.run_session(store, [])
+    assert outcome.result["review_id"] == interrupted["review_id"]
+    assert outcome.result["termination"] == "clean_confirmed"
+    assert outcome.issues == []
+    calls = first_client.calls + client.calls
+    assert Counter(call["operation"] for call in calls) == {
+        "review.scan": 4,
+        "review.verify": 2 + (failed_operation == "review.verify"),
+        "review.fix": 2 + (failed_operation == "review.fix"),
+    }
+    assert len(outcome.changes) == 2
+    assert outcome.usage["totals"]["calls"] == len(calls)
+    assert outcome.usage["totals"]["total_tokens"] == len(calls) * METERED_TOTAL_TOKENS
+    assert Path(store.chapter_path(0)).read_bytes() == formal
+
+    fixed = resumed._review_autofix.run(store, outcome, [])
+    assert fixed.result["autofix"]["applied_segment_count"] == 2
+    assert fixed.result["autofix"]["status"] == "completed"
+    published = Path(store.chapter_path(0)).read_bytes()
+    usage = store.load_usage()
+    assert usage is not None
+    assert usage["totals"]["calls"] == len(calls)
+    assert resumed._review_autofix.run(store, fixed, []).result == fixed.result
+    assert Path(store.chapter_path(0)).read_bytes() == published
+    assert Path(store.manifest_path).read_bytes() == manifest
+    assert store.load_usage() == usage
+    assert len(first_client.calls) + len(client.calls) == len(calls)
 
 
 @pytest.mark.parametrize("change", ["style", "synopsis", "digest", "unchanged"])

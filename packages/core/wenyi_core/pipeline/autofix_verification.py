@@ -11,6 +11,7 @@ from ..agents.review_loop import ReviewAgentLoop
 from ..config import Config
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..llm.base import LLMClient
+from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome, review_candidate_id, text_hash
 from ..review.run_store import ReviewRunStore
@@ -241,6 +242,8 @@ class AutofixVerification:
                 trace=record,
             )
         except Exception as error:  # noqa: BLE001 - Preserve unchanged issues when final verification fails.
+            if is_resumable_provider_interrupt(error):
+                raise
             trace["status"] = "failed"
             trace["error"] = {
                 "type": type(error).__name__,
