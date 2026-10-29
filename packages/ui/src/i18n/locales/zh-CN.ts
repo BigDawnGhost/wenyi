@@ -145,7 +145,6 @@ const zhCN = {
   "export.exportTranslation": "导出译文",
   "export.outputFormat": "输出格式",
   "export.automatic": "自动选择",
-  "export.pdfExportEngine": "PDF 导出引擎",
   "export.edition": "版本",
   "export.monolingual": "单语版",
   "export.bilingual": "双语版",

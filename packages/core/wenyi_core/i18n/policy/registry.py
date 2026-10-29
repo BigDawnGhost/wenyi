@@ -48,8 +48,8 @@ OPERATIONS = MappingProxyType(
                 roles=("source", "pair"),
                 languages=("ja",),
                 paths=("book",),
-                formats=("epub", "html", "pdf"),
-                backends=("native", "weasyprint", "fpdf2"),
+                formats=("epub", "html"),
+                backends=("native",),
                 writes=("preserve_source_ruby",),
             ),
             OperationSpec(

@@ -11,7 +11,7 @@ from wenyi_api.config import Settings
 from wenyi_api.storage_pg import PostgresStorage
 from wenyi_api.telemetry import RedisTelemetry
 from wenyi_api.workers.recovery import RecoveryStorage
-from wenyi_backend.context import Repository, current_context
+from wenyi_backend.context import BackendStorage, Repository, current_context
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -67,11 +67,14 @@ def test_progress_snapshot_reads_a_synchronous_redis_value(monkeypatch, raw, exp
 def test_recovery_lock_contract_is_specific_to_database_storage(tmp_path):
     # An unopened pool and lazy SQLite store exercise contracts without services or writes.
     pool: ConnectionPool = ConnectionPool(open=False)
-    postgres: RecoveryStorage = PostgresStorage("project", pool, run_dir=str(tmp_path))
-    sqlite: RecoveryStorage = SqliteStorage(str(tmp_path), create=False)
+    postgres: BackendStorage = PostgresStorage("project", pool, run_dir=str(tmp_path))
+    sqlite: BackendStorage = SqliteStorage(str(tmp_path), create=False)
     try:
+        assert isinstance(postgres, BackendStorage)
+        assert isinstance(sqlite, BackendStorage)
         assert isinstance(postgres, RecoveryStorage)
         assert isinstance(sqlite, RecoveryStorage)
+        assert not isinstance(FileStorage(str(tmp_path)), BackendStorage)
         assert not isinstance(FileStorage(str(tmp_path)), RecoveryStorage)
     finally:
         sqlite.close()

@@ -20,6 +20,29 @@ from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
 
 
+@pytest.mark.parametrize("fmt", ["epub", "pdf"])
+def test_previously_queued_exports_drop_retired_renderer_option(monkeypatch, fmt):
+    closed = []
+    monkeypatch.setattr(
+        tasks,
+        "_pipeline_storage",
+        lambda pid: SimpleNamespace(
+            export_lock=lambda eid: nullcontext(), close=lambda: closed.append(pid)
+        ),
+    )
+    monkeypatch.setattr(tasks.dal, "set_export_status", lambda *a, **kw: None)
+    rendered = []
+
+    def render(pid, *, export_id, run_id, fmt):
+        rendered.append((pid, export_id, run_id, fmt))
+        return export_id
+
+    monkeypatch.setattr(tasks, "_render_export_sync", render)
+    assert tasks._export_sync("p", export_id=7, fmt=fmt, pdf_engine="retired-engine") == 7
+    assert rendered == [("p", 7, None, fmt)]
+    assert closed == ["p"]
+
+
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("preserve_source_style", [False, True])
 @pytest.mark.parametrize("source_changes", [False, True])

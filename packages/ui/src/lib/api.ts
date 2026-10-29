@@ -23,7 +23,6 @@ export type StrategyTemplate = Output<"StrategyTemplateOut">;
 export type ExportFormat = NonNullable<
   components["schemas"]["ExportRequest"]["format"]
 >;
-export type PdfEngine = components["schemas"]["ExportRequest"]["pdf_engine"];
 export type ExportOut = Output<"ExportOut">;
 export type EventOut = Output<"EventOut">;
 export type JobEnqueued = Output<"JobEnqueued">;

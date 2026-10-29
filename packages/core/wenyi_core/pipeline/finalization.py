@@ -70,7 +70,6 @@ class AssemblyService:
         progress: ProgressFn | None,
         out_format: str,
         out_path: str | None,
-        pdf_engine: str,
         policy_store: Storage,
     ) -> list[str]:
         """Generate every configured artifact from live state or a read-only snapshot."""
@@ -89,7 +88,6 @@ class AssemblyService:
             plans[bilingual] = export_plan(
                 store,
                 out_format,
-                pdf_engine=pdf_engine,
                 punctuation_normalize=out_cfg.punctuation_normalize,
                 bilingual=bilingual,
                 order=out_cfg.bilingual_order if bilingual else "target_first",
@@ -111,7 +109,6 @@ class AssemblyService:
                     out_format=out_format,
                     bilingual=False,
                     about_page=out_cfg.about_page,
-                    pdf_engine=pdf_engine,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     punctuation_normalize=out_cfg.punctuation_normalize,
                     language_policy=plans[False],
@@ -129,7 +126,6 @@ class AssemblyService:
                     order=out_cfg.bilingual_order,
                     preserve_source_style=out_cfg.bilingual_preserve_source_style,
                     about_page=out_cfg.about_page,
-                    pdf_engine=pdf_engine,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     punctuation_normalize=out_cfg.punctuation_normalize,
                     language_policy=plans[True],
@@ -145,7 +141,6 @@ class AssemblyService:
         progress: ProgressFn | None,
         out_format: str | None,
         out_path: str | None,
-        pdf_engine: str,
     ) -> list[str]:
         """Export under the book run lock, adding the assembly lock to serialize output
         writers.
@@ -163,7 +158,6 @@ class AssemblyService:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
                 policy_store=store,
             )
             self._runtime.ensure_store_source(store, input_path)
@@ -178,7 +172,6 @@ class AssemblyService:
         progress: ProgressFn | None,
         out_format: str | None,
         out_path: str | None,
-        pdf_engine: str,
     ) -> list[str]:
         """Capture an immutable snapshot under the assembly lock and validate source hashes
         around rendering.
@@ -199,7 +192,6 @@ class AssemblyService:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
                 policy_store=store,
             )
             # The source template is an export input; validate afterward so mid-render replacement cannot succeed.

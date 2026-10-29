@@ -244,7 +244,6 @@ class TestOrchestratorContract(unittest.TestCase):
             "novel.txt",
             out_format="epub",
             out_path="out.epub",
-            pdf_engine="weasyprint",
             progress=progress,
         )
 
@@ -255,7 +254,6 @@ class TestOrchestratorContract(unittest.TestCase):
             progress=progress,
             out_format="epub",
             out_path="out.epub",
-            pdf_engine="weasyprint",
         )
         self.assertEqual(store.lock_events, [])
         self.assertEqual(store.assemble_lock_events, [])
@@ -271,7 +269,7 @@ class TestOrchestratorContract(unittest.TestCase):
         self.preparation.locate_existing.return_value = store
         self.assembly.assemble_snapshot.return_value = ["out.epub"]
 
-        result = orch.run_steps("novel.txt", {"assemble"}, out_format="txt", pdf_engine="fpdf2")
+        result = orch.run_steps("novel.txt", {"assemble"}, out_format="txt")
 
         self.preparation.prepare.assert_not_called()
         self.assembly.assemble_snapshot.assert_called_once_with(
@@ -280,7 +278,6 @@ class TestOrchestratorContract(unittest.TestCase):
             progress=None,
             out_format="txt",
             out_path=None,
-            pdf_engine="fpdf2",
         )
         self.assertEqual(result["output"], "out.epub")
 

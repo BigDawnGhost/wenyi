@@ -18,7 +18,6 @@ from .context import ContextAccessor
 from .validation import (
     require_input_file,
     resolve_output_format,
-    validate_pdf_engine,
 )
 
 
@@ -68,7 +67,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         chapter: int | None = None,
         fmt: str | None = None,
         out: str | None = None,
-        pdf_engine: str = "weasyprint",
         polish: bool | None = None,
         translation_mode: TranslationMode | None = None,
         review: bool | None = None,
@@ -83,7 +81,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 chapter=chapter,
                 fmt=fmt,
                 out=out,
-                pdf_engine=pdf_engine,
                 polish=polish,
                 translation_mode=translation_mode,
                 review=review,
@@ -165,7 +162,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         chapter: int | None = None,
         fmt: str | None = None,
         out: str | None = None,
-        pdf_engine: str = "weasyprint",
         polish: bool | None = None,
         translation_mode: TranslationMode | None = None,
         review: bool | None = None,
@@ -191,7 +187,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             return
 
         fmt = resolve_output_format(input_path, fmt, console=console)
-        pdf_engine = validate_pdf_engine(pdf_engine, console=console)
         config = context().load_config()
         pipeline_values = config.pipeline.model_dump()
         if polish is not None:
@@ -266,7 +261,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 progress=cb,
                 out_format=fmt,
                 out_path=out,
-                pdf_engine=pdf_engine,
             )
 
         presentation.print_translation_summary(console, result["report"]["summary"])
@@ -335,17 +329,12 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         fmt: str | None = typer.Option(
             None,
             "--format",
-            help="Output format: epub / txt / html / markdown / pdf / docx; default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
+            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
         ),
         out: str | None = typer.Option(
             None,
             "--out",
             help="Monolingual output path; defaults to the output directory beside the source",
-        ),
-        pdf_engine: str = typer.Option(
-            "weasyprint",
-            "--pdf-engine",
-            help="PDF renderer: weasyprint (default) / fpdf2",
         ),
         polish: bool | None = typer.Option(
             None,
@@ -379,7 +368,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             chapter=chapter,
             fmt=fmt,
             out=out,
-            pdf_engine=pdf_engine,
             polish=polish,
             translation_mode=translation_mode,
             review=review,

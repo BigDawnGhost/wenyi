@@ -12,13 +12,8 @@ dependencies = [
     "redis>=5.0",
 ]
 
-[project.optional-dependencies]
-pdf-output = ["wenyi-core[pdf-output]"]
-pdf-output-lite = ["wenyi-core[pdf-output-lite]"]
-
 [tool.uv.sources]
 wenyi-backend = { workspace = true }
-wenyi-core = { workspace = true }
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
