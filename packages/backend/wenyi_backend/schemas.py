@@ -170,6 +170,15 @@ class TermIn(RequestModel):
     note: str = ""
 
 
+class TermPage(BaseModel):
+    items: list[TermOut]
+    total: int
+
+
+class TermLookup(RequestModel):
+    sources: list[str] = Field(max_length=500)
+
+
 class ConflictOut(BaseModel):
     id: int
     source: str

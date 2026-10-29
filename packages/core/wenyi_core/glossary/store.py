@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import time
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -110,6 +111,25 @@ def _match_text(text: str) -> str:
 
 
 _WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
+
+
+def search_term_page(
+    terms: Iterable[GlossaryTerm], query: str, *, offset: int, limit: int
+) -> tuple[list[GlossaryTerm], int]:
+    """Count Unicode casefold substring matches while retaining only one display page."""
+    needle = query.strip().casefold()
+    items: list[GlossaryTerm] = []
+    total = 0
+    for term in terms:
+        if not any(
+            needle in value.casefold()
+            for value in (term.source, term.target, term.reading, term.note, *term.aliases)
+        ):
+            continue
+        if offset <= total < offset + limit:
+            items.append(term)
+        total += 1
+    return items, total
 
 
 def _source_pattern(key: str) -> re.Pattern[str] | None:
@@ -402,6 +422,34 @@ class GlossaryStore:
         """
         rows = self.conn.execute("SELECT * FROM glossary ORDER BY rowid").fetchall()
         return [GlossaryTerm.from_row(r) for r in rows]
+
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        """Look up a bounded set of exact sources independently of display filters."""
+        if not sources:
+            return []
+        placeholders = ",".join("?" for _ in sources)
+        rows = self.conn.execute(
+            f"SELECT * FROM glossary WHERE source IN ({placeholders})", sources
+        )
+        return [GlossaryTerm.from_row(row) for row in rows]
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        """Read a source-codepoint ordered display page, never changing prompt order."""
+        where = " WHERE type = ?" if term_type else ""
+        params = (term_type,) if term_type else ()
+        query = f"SELECT * FROM glossary{where} ORDER BY source COLLATE BINARY"
+        if q.strip():
+            # Stream substring searches to preserve Python's Unicode casefold semantics.
+            # SQL lower()/LIKE differ across SQLite and PostgreSQL for characters such as ß.
+            rows = self.conn.execute(query, params)
+            return search_term_page(
+                (GlossaryTerm.from_row(row) for row in rows), q, offset=offset, limit=limit
+            )
+        total = self.conn.execute(f"SELECT COUNT(*) FROM glossary{where}", params).fetchone()[0]
+        rows = self.conn.execute(f"{query} LIMIT ? OFFSET ?", (*params, limit, offset))
+        return [GlossaryTerm.from_row(row) for row in rows], total
 
     @staticmethod
     def terms_in(terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:

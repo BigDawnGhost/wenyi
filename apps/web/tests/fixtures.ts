@@ -535,11 +535,21 @@ export function resolveFixture(
       json: sandbox ? evolveSandbox(json, path, sandbox) : json,
     });
     if (path in data) return respond(data[path]);
+    if (path.endsWith("/glossary/terms/page")) {
+      const sourcePath = path.replace(/\/page$/, "");
+      const terms = data[sourcePath] ?? familyFixture(sourcePath)?.json ?? [];
+      return respond(termPageFixture(terms as Record<string, unknown>[], rawPath));
+    }
     const family = familyFixture(path);
     if (family) return respond(family.json);
     return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   }
   if (path in overrides) return { status: 200, json: overrides[path] };
+  if (verb === "POST" && path.endsWith("/glossary/terms/lookup")) {
+    const sources = new Set((JSON.parse(rawBody || "{}") as { sources?: string[] }).sources);
+    const terms = data[path.replace(/\/lookup$/, "")] as { source: string }[] || [];
+    return { status: 200, json: terms.filter((term) => sources.has(term.source)) };
+  }
   if (verb === "POST" && path === "/projects") {
     // Create accepts multipart form data; echo the requested name when present.
     const name = rawBody?.match(/"name"\s*:\s*"([^"]*)"/)?.[1] ?? project.name;
@@ -558,6 +568,25 @@ export function resolveFixture(
   };
 }
 
+export function termPageFixture(terms: Record<string, unknown>[], rawPath: string) {
+  const params = new URL(rawPath, "http://fixture").searchParams;
+  const q = (params.get("q") || "").trim().toLowerCase();
+  const filtered = terms.filter((term) =>
+    (!params.get("type") || term.type === params.get("type")) &&
+    (!q || [term.source, term.target, term.reading, term.note, ...((term.aliases || []) as string[])]
+      .some((value) => String(value || "").toLowerCase().includes(q))),
+  ).sort((a, b) => {
+    const left = Array.from(String(a.source), (char) => char.codePointAt(0)!);
+    const right = Array.from(String(b.source), (char) => char.codePointAt(0)!);
+    for (let i = 0; i < Math.min(left.length, right.length); i++)
+      if (left[i] !== right[i]) return left[i] - right[i];
+    return left.length - right.length;
+  });
+  const offset = Number(params.get("offset") || 0);
+  const limit = Number(params.get("limit") || 100);
+  return { items: filtered.slice(offset, offset + limit), total: filtered.length };
+}
+
 export async function fakeApi(
   page: Page,
   overrides: Record<string, unknown> = {},
@@ -565,7 +594,8 @@ export async function fakeApi(
 ) {
   await page.routeWebSocket("**/ws/**", () => {});
   await page.route(apiOrigin ? `${apiOrigin}/**` : "**/api/**", async (route) => {
-    const pathname = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url());
+    const pathname = url.pathname + url.search;
     const method = route.request().method();
     const rawBody =
       method === "GET" ? undefined : route.request().postData() ?? undefined;

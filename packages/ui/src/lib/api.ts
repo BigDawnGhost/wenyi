@@ -17,6 +17,7 @@ export type ChapterSegments = Output<"ChapterSegments">;
 export type SegmentRevision = Output<"SegmentRevision">;
 export type PrecisionDrafts = Output<"PrecisionDraftsOut">;
 export type Term = Output<"TermOut">;
+export type TermPage = Omit<Output<"TermPage">, "items"> & { items: Term[] };
 export type Conflict = Output<"ConflictOut">;
 export type StrategyTemplate = Output<"StrategyTemplateOut">;
 export type ExportFormat = NonNullable<
@@ -153,12 +154,23 @@ export const api = {
       method: "POST",
     }),
 
-  listTerms: (pid: string, params: { q?: string; type?: string } = {}) => {
+  listTermsPage: (
+    pid: string,
+    params: { q?: string; type?: string; offset: number; limit: number },
+    signal?: AbortSignal,
+  ) => {
     const s = new URLSearchParams();
     if (params.q) s.set("q", params.q);
     if (params.type) s.set("type", params.type);
-    return request<Term[]>(`/projects/${pid}/glossary/terms?${s}`);
+    s.set("offset", String(params.offset));
+    s.set("limit", String(params.limit));
+    return request<TermPage>(`/projects/${pid}/glossary/terms/page?${s}`, { signal });
   },
+  lookupTerms: (pid: string, sources: string[]) =>
+    request<Term[]>(`/projects/${pid}/glossary/terms/lookup`, {
+      method: "POST",
+      body: JSON.stringify({ sources }),
+    }),
   addTerm: (pid: string, body: Partial<Term>) =>
     request<Term>(`/projects/${pid}/glossary/terms`, {
       method: "POST",

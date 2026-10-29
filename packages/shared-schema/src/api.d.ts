@@ -600,6 +600,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/glossary/terms/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Terms Page
+         * @description Browse by source codepoint order without changing model-context order.
+         */
+        get: operations["list_terms_page_projects__pid__glossary_terms_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/glossary/terms/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lookup Terms
+         * @description Check imported sources against the whole glossary, not just the displayed page.
+         */
+        post: operations["lookup_terms_projects__pid__glossary_terms_lookup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/glossary/terms/{source}": {
         parameters: {
             query?: never;
@@ -1743,6 +1783,11 @@ export interface components {
              */
             note: string;
         };
+        /** TermLookup */
+        TermLookup: {
+            /** Sources */
+            sources: string[];
+        };
         /** TermOut */
         TermOut: {
             /** Source */
@@ -1781,6 +1826,13 @@ export interface components {
              * @default ok
              */
             status: string;
+        };
+        /** TermPage */
+        TermPage: {
+            /** Items */
+            items: components["schemas"]["TermOut"][];
+            /** Total */
+            total: number;
         };
         /** UploadPreview */
         UploadPreview: {
@@ -3066,6 +3118,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TermOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_terms_page_projects__pid__glossary_terms_page_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                type?: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_terms_projects__pid__glossary_terms_lookup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermLookup"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermOut"][];
                 };
             };
             /** @description Validation Error */

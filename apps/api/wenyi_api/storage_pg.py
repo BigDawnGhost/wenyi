@@ -18,7 +18,7 @@ from typing import Any, Iterator, Literal
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
-from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
+from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, search_term_page
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
 
@@ -709,6 +709,41 @@ class PostgresStorage:
                 (self.project_id, source),
             ).fetchone()
         return self._row_to_term(row) if row else None
+
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        if not sources:
+            return []
+        with self._conn as conn:
+            rows = conn.execute(
+                f"SELECT {self._TERM_COLS} FROM glossary WHERE project_id=%s AND source=ANY(%s)",
+                (self.project_id, sources),
+            ).fetchall()
+        return [self._row_to_term(row) for row in rows]
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        """Keep display ordering independent of the insertion-ordered prompt snapshot."""
+        where = "project_id=%s" + (" AND type=%s" if term_type else "")
+        params = (self.project_id, term_type) if term_type else (self.project_id,)
+        query = f'SELECT {self._TERM_COLS} FROM glossary WHERE {where} ORDER BY source COLLATE "C"'
+        with self._conn as conn:
+            if q.strip():
+                # A server cursor bounds memory while keeping the same Unicode search as SQLite.
+                with conn.transaction(), conn.cursor(name="glossary_search") as cursor:
+                    cursor.execute(query, params)
+                    return search_term_page(
+                        (self._row_to_term(row) for row in cursor), q, offset=offset, limit=limit
+                    )
+            # One statement gives the page and count the same MVCC snapshot, including empty pages.
+            rows = conn.execute(
+                f"""SELECT page.*, counts.total
+                FROM (SELECT count(*) AS total FROM glossary WHERE {where}) counts
+                LEFT JOIN ({query} LIMIT %s OFFSET %s) page ON TRUE
+                ORDER BY page.source COLLATE "C" """,
+                (*params, *params, limit, offset),
+            ).fetchall()
+        return [self._row_to_term(row) for row in rows if row[0] is not None], rows[0][-1]
 
     def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
         with self.state_lock(), self._conn as conn:

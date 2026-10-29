@@ -111,8 +111,8 @@ test("style and synopsis drafts survive visiting the glossary and going back", a
   page,
 }) => {
   await analysisFixture(page);
-  await page.route(`**/projects/${pid}/glossary/terms*`, (route) =>
-    route.fulfill({ json: [] }),
+  await page.route(`**/projects/${pid}/glossary/terms/page**`, (route) =>
+    route.fulfill({ json: { items: [], total: 0 } }),
   );
   await page.route(`**/projects/${pid}/glossary/conflicts`, (route) =>
     route.fulfill({ json: [] }),
@@ -135,8 +135,8 @@ test("a pending analysis save stays read-only after glossary navigation and Back
   page,
 }) => {
   const submitted = await analysisFixture(page);
-  await page.route(`**/projects/${pid}/glossary/terms*`, (route) =>
-    route.fulfill({ json: [] }),
+  await page.route(`**/projects/${pid}/glossary/terms/page**`, (route) =>
+    route.fulfill({ json: { items: [], total: 0 } }),
   );
   await page.route(`**/projects/${pid}/glossary/conflicts`, (route) =>
     route.fulfill({ json: [] }),
@@ -209,15 +209,16 @@ test("failed saves retain drafts for retry and busy projects remain read-only", 
 test("style has no character shortcut and the sidebar glossary retains person filtering", async ({ page }) => {
   await analysisFixture(page);
   let requestedType: string | null = null;
-  await page.route(`**/projects/${pid}/glossary/terms*`, (route) => {
+  await page.route(`**/projects/${pid}/glossary/terms/page**`, (route) => {
     requestedType = new URL(route.request().url()).searchParams.get("type");
+    const items = [
+      { source: "Alice", target: "艾丽丝", type: "person", aliases: [] },
+      ...(requestedType === "person"
+        ? []
+        : [{ source: "Rabbit hole", target: "兔子洞", type: "term", aliases: [] }]),
+    ];
     return route.fulfill({
-      json: [
-        { source: "Alice", target: "艾丽丝", type: "person", aliases: [] },
-        ...(requestedType === "person"
-          ? []
-          : [{ source: "Rabbit hole", target: "兔子洞", type: "term", aliases: [] }]),
-      ],
+      json: { items, total: items.length },
     });
   });
   await page.route(`**/projects/${pid}/glossary/conflicts`, (route) =>
