@@ -48,16 +48,6 @@ def resolve_output_format(
     return "epub"
 
 
-def validate_pdf_engine(engine: str, *, console: Console | None = None) -> str:
-    """Normalize and validate the PDF rendering engine."""
-    console = console or Console()
-    normalized = engine.strip().lower()
-    if normalized not in {"weasyprint", "fpdf2"}:
-        console.print(f"[red]Unsupported PDF engine: {engine} (choose weasyprint / fpdf2)[/]")
-        raise typer.Exit(2)
-    return normalized
-
-
 def runstore_for(config: Config, input_path: str, *, console: Console | None = None) -> RunStore:
     """Resolve the title and locate existing state without creating a directory."""
     console = console or Console()

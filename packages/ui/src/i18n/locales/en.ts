@@ -146,7 +146,6 @@ const en = {
   "export.exportTranslation": "Export translation",
   "export.outputFormat": "Output format",
   "export.automatic": "Automatic",
-  "export.pdfExportEngine": "PDF export engine",
   "export.edition": "Edition",
   "export.monolingual": "Monolingual",
   "export.bilingual": "Bilingual",

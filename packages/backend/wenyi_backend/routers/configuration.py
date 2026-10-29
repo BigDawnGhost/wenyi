@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 from dataclasses import asdict
 
 import yaml
@@ -40,16 +39,11 @@ router = APIRouter(tags=["configuration"])
 
 @router.get("/capabilities", response_model=Capabilities)
 def capabilities() -> dict:
-    engines = [
-        name
-        for name, module in (("weasyprint", "weasyprint"), ("fpdf2", "fpdf"))
-        if importlib.util.find_spec(module)
-    ]
     return {
         "languages": [{"code": code, "name": label(code)} for code in supported_languages()],
         "input_formats": ["epub", "fb2", "txt", "markdown", "html", "pdf", "docx", "srt"],
         "output_formats": ["epub", "txt", "html", "markdown", "pdf", "docx", "srt"],
-        "pdf": {"backends": ["mineru", "babeldoc"], "engines": engines, "export_backends": engines},
+        "pdf": {"backends": ["mineru", "babeldoc"], "export_backends": ["babeldoc"]},
         "providers": list(PROVIDERS),
         "operations": [asdict(spec) for spec in OPERATIONS.values()],
     }

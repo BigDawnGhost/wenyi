@@ -57,12 +57,6 @@ jobs:
           uv run --no-sync wenyi --help
       - name: Install workspace
         run: uv sync --locked --all-packages --group dev --python ${{ matrix.python-version }}
-      - name: Install real PDF rendering regression dependencies
-        if: matrix.python-version == '3.12'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-wqy-zenhei fonts-noto-cjk poppler-utils
-          uv sync --locked --all-packages --group dev --extra pdf-output-lite --python 3.12
       - name: Prepare token-budget vocabulary
         run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - name: Python style

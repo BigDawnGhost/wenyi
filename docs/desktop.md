@@ -55,6 +55,10 @@ Compare the translation with the source, edit paragraphs, inspect revisions, and
 
 Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
 
+PDF is offered only for saved BabelDOC projects, using the external bridge to preserve
+the original layout. MinerU and other book projects export EPUB, DOCX, HTML, TXT or
+Markdown instead. No local PDF rendering engine is installed or selected.
+
 ### Continue later
 
 Completed batches are saved in the local workspace. Reopen Desktop, open the same project, and resume from its checkpoints. Save any in-progress proofreading edits before closing. For workspace locations and backup instructions, see [Independent data](#independent-data).

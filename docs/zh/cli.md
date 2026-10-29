@@ -119,7 +119,7 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 - Markdown 输入中，以 `#` 至 `######` 开头并与标题文字以空白分隔的标题行会划分为章节。导入时会记录原始标题层级；带页码的普通目录列表仍作为正文保留。
 - Markdown 标题层级会保留在 EPUB 正文标题、自动生成的 EPUB 导航目录和 DOCX 大纲样式中。导航将标题嵌套到前面最近且等级数字更小的标题下；跳级不会补造目录条目。已有状态若章节划分正确且保存了标题等级，只需重新导出，无需重新翻译。
 - 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认为 `<书名>.zh.docx`，BabelDOC PDF 状态默认为 `<书名>.zh.pdf`）；双语版 `*.zh-bi.*` 按需开启。
-- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式格式始终优先；PDF 默认格式依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套默认值。该选项不适用于 SRT。
+- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。该选项不适用于 SRT。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
 - EPUB 中未翻译的段落只保留一份原文及其注音、链接。Web 导出和部分已译章节同样遵循此规则，双语排列顺序与原文样式选项不会额外生成重复段落。
@@ -169,25 +169,15 @@ MinerU 转换生成的 HTML 会保存到
 
 #### PDF 导出
 
-默认 PDF 引擎为 WeasyPrint。安装对应的可选依赖后，无需指定
-`--pdf-engine`：
+PDF 导出仅支持由 BabelDOC 解析的项目，通过外部 bridge 的 `/fillback`
+接口回填已保存的译文并保留原始 PDF 排版，无需安装本地 PDF 渲染依赖或选择引擎：
 
 ```bash
-uv sync --extra pdf-output
-uv run wenyi assemble book.html --format pdf
+uv run wenyi assemble book.pdf --format pdf
 ```
 
-如需不依赖系统排版库的跨平台轻量引擎，可使用 `fpdf2`：
-
-```bash
-uv sync --extra pdf-output-lite
-uv run wenyi assemble book.html --format pdf --pdf-engine fpdf2
-```
-
-`fpdf2` 可处理基础排版和图片，但只支持有限的 HTML/CSS；与文字混排的图片
-会作为独立区块输出。它会查找系统中的中文字体；如果未找到，请用
-`TRANS_NOVEL_PDF_FONT` 指定 TTF、OTF 或 TTC 字体文件。此方案也适用于
-Windows。
+MinerU 项目及其他书籍输入不再支持导出 PDF，请使用 EPUB、DOCX 或 HTML。
+CLI、Web、Desktop 使用同一规则；修改当前解析器设置不会将已有项目转换为 BabelDOC 状态。
 
 ## DOCX（Word）
 

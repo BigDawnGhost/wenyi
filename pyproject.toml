@@ -18,14 +18,6 @@ wenyi-backend = { workspace = true }
 wenyi-api = { workspace = true }
 wenyi-desktop = { workspace = true }
 
-[project.optional-dependencies]
-pdf-output = [
-    "weasyprint>=69.0",
-]
-pdf-output-lite = [
-    "fpdf2>=2.8.5",
-]
-
 # Resolve dynamic workspace metadata without installing a root package.
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

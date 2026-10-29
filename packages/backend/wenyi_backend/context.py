@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol, runtime_checkable
 
 from fastapi import WebSocket
 from wenyi_core.config import Config
@@ -23,6 +23,14 @@ from .live_statistics import StatisticsCache
 
 if TYPE_CHECKING:
     from .global_settings import GlobalSettings
+
+
+@runtime_checkable
+class BackendStorage(Storage, Protocol):
+    """Project state with the session and per-export locks required by backend workers."""
+
+    def lock(self, *, blocking: bool = True) -> ContextManager[None]: ...
+    def export_lock(self, export_id: int, *, blocking: bool = True) -> ContextManager[None]: ...
 
 
 class Repository(Protocol):
@@ -148,7 +156,7 @@ class BackendContext:
     settings_store: SettingsStore
     exports: ExportStore
     telemetry: Telemetry
-    storage_for: Callable[[str], Storage]
+    storage_for: Callable[[str], BackendStorage]
     read_storage_for: Callable[[str], Storage]
     build_client: Callable[[Config], LLMClient]
     enqueue: Callable[..., Awaitable[Any]]

@@ -18,7 +18,7 @@ from .config_documents import (
     project_document,
     project_llm,
 )
-from .context import current_context
+from .context import BackendStorage, current_context
 from .global_settings import load_settings, registered_models
 from .strategies import _saved_strategy_to_config
 
@@ -30,7 +30,7 @@ def require_project(pid: str) -> dict:
     return project
 
 
-def storage_for(pid: str) -> Storage:
+def storage_for(pid: str) -> BackendStorage:
     return current_context().storage_for(pid)
 
 

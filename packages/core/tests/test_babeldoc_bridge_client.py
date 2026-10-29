@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from wenyi_core.assemble.pdf_writer import _assemble_pdf_babeldoc
+from wenyi_core.assemble.pdf_writer import _assemble_pdf
 from wenyi_core.ingest.pdf_babeldoc import _is_image_only_pdf, read_pdf_babeldoc
 from wenyi_core.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeError
 
@@ -21,7 +21,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             ),
             patch("wenyi_core.pdf_bridge.BabeldocBridgeClient") as client_class,
         ):
-            result = _assemble_pdf_babeldoc(
+            result = _assemble_pdf(
                 MagicMock(),
                 "output.pdf",
                 timeout=3600,

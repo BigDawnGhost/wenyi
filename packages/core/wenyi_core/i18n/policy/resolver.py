@@ -159,7 +159,7 @@ def resolve_policy(
         ("srt",) if context.path == "srt" else ("epub", "docx", "html", "txt", "markdown", "pdf")
     ):
         raise ValueError(f"Unsupported language policy export format: {context.format}")
-    if context.backend not in {"native", "weasyprint", "fpdf2", "babeldoc"}:
+    if context.backend not in {"native", "babeldoc"}:
         raise ValueError(f"Unsupported language policy backend: {context.backend}")
     bindings: dict[str, tuple[OperationBinding, tuple[str, ...]]] = {
         "prompt.language_rules": (OperationBinding(), ("common",)),

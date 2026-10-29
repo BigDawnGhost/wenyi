@@ -1,7 +1,45 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid, project } from "./fixtures";
 
 const origin = "http://127.0.0.1:19481";
+
+for (const babeldoc of [false, true]) {
+  test(`native PDF export is ${babeldoc ? "available for BabelDOC" : "hidden for MinerU"}`, async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+      window.__TAURI_INTERNALS__ = {
+        invoke: (_command, args) => {
+          Object.assign(window, { savedOptions: args.options });
+          return Promise.resolve({ path: "/fixture/book.pdf" } as never);
+        },
+      };
+    });
+    await fakeApi(page, {
+      [`/projects/${pid}`]: {
+        ...project,
+        fmt: "pdf",
+        output_formats: [...project.output_formats, ...(babeldoc ? ["pdf"] : [])],
+      },
+    }, origin);
+    await page.goto(`/projects/${pid}/export`);
+    await expect(page.getByRole("button", { name: "EPUB", exact: true })).toBeVisible();
+    const pdf = page.getByRole("button", { name: "PDF", exact: true });
+    if (!babeldoc) {
+      await expect(pdf).toHaveCount(0);
+      return;
+    }
+    await pdf.click();
+    await page.getByText("Layout and advanced options", { exact: true }).click();
+    await expect(page.getByLabel("PDF export engine")).toHaveCount(0);
+    await page.getByRole("button", { name: "Generate export", exact: true }).click();
+    await expect(page.getByText("Saved to /fixture/book.pdf", { exact: true })).toBeVisible();
+    const options = await page.evaluate(() =>
+      (window as unknown as { savedOptions: Record<string, unknown> }).savedOptions,
+    );
+    expect(options.format).toBe("pdf");
+    expect(options).not.toHaveProperty("pdf_engine");
+  });
+}
 
 test("HTML native save preserves the options and reports the archive path", async ({ page }) => {
   await page.addInitScript(() => {

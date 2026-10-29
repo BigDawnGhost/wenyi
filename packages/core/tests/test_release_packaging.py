@@ -291,8 +291,8 @@ def test_sidecar_rebuilds_local_packages_instead_of_reusing_cached_wheels(monkey
 @pytest.mark.parametrize("dockerfile", ["Dockerfile.api", "Dockerfile.api.buildx"])
 def test_web_images_do_not_reuse_cached_local_package_versions(dockerfile):
     text = (ROOT / "docker" / dockerfile).read_text().replace("\\\n", " ")
-    commands = re.findall(r"uv sync [^;]+;", text)
-    assert len(commands) == 2
+    commands = re.findall(r"uv sync [^&;\n]+", text)
+    assert len(commands) == 1
     for command in commands:
         assert "--no-cache" in command or all(
             f"--reinstall-package {package}" in command

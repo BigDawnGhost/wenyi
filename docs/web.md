@@ -71,7 +71,6 @@ API, workflow worker, and export worker all load `deploy/.env`, mount the same r
 | `WENYI_CONFIG_FILE` | Host config file for Compose; default `../config.yaml` relative to `deploy/`. |
 | `DATA_DIR` | Uploaded originals, parser caches, and export artifacts. Containers use `/data`. |
 | `DATABASE_URL` / `REDIS_URL` | Local development URLs; Compose overrides them to internal service addresses. |
-| `INSTALL_PDF_OUTPUT` | Docker build arg, default `true`, installs WeasyPrint and fpdf2. Set `false` to skip Python PDF output dependencies. |
 | `WENYI_VERSION` | Package version supplied during Docker builds; default `0.0.0+docker`. Set the release version explicitly for release images. |
 | `DEBIAN_MIRROR` / `UV_DEFAULT_INDEX` / `UV_IMAGE` / `NPM_REGISTRY` | Optional build mirrors and the official `uv` image tag. Official sources are the default; uncomment the corresponding entries in `deploy/.env` to use mirrors. |
 | `WENYI_API_TOKEN` | Optional static token. HTTP uses Bearer auth; WebSocket authenticates with the first post-connect `{"token":"…"}` message (the frontend sends it automatically). |
@@ -92,9 +91,9 @@ leftover directories are not bulk-cleaned.
 
 ### PDF
 
-Backend images copy `uv`/`uvx` from the official Astral image, run a frozen `uv sync` for all workspace packages (plus PDF extras by default), and keep the venv on `PATH`, so containers start without installing extra Python dependencies. They also include WeasyPrint/fpdf2, required Pango libraries, Noto CJK/generic fonts, and WenQuanYi Zen Hei by default. fpdf2 only uses fonts with TrueType outlines and skips OpenType/CFF faces such as Noto CJK automatically; set `TRANS_NOVEL_PDF_FONT` to force a compatible font. Choosing an incompatible font explicitly returns an error instead of producing a broken file. WeasyPrint can use Noto CJK. MinerU is the default parse backend; parse caches are shared with upload previews.
+Backend images copy `uv`/`uvx` from the official Astral image, run a frozen `uv sync` for the Web dependency closure, and keep the venv on `PATH`, so containers start without installing extra Python dependencies. Local PDF rendering libraries and fonts are not included. MinerU is the default parse backend; parse caches are shared with upload previews.
 
-BabelDOC runs as a separate HTTP bridge. Set `pipeline.pdf_backend` to `babeldoc` and point `pipeline.babeldoc_bridge_url` at an address reachable from the API and both workers. `127.0.0.1` inside the bridge means that container, not the host. This Compose file does not download or start BabelDOC. The UI only exposes PDF features that match installed dependencies and configuration.
+BabelDOC runs as a separate HTTP bridge. Set `pipeline.pdf_backend` to `babeldoc` and point `pipeline.babeldoc_bridge_url` at an address reachable from the API and both workers. `127.0.0.1` inside the bridge means that container, not the host. This Compose file does not download or start BabelDOC. PDF export is only available for saved BabelDOC projects and preserves layout through bridge fillback; there is no local PDF engine selector. Export format choices come from each project's saved state, not the current parser setting. MinerU and other book projects can export EPUB, DOCX, HTML, TXT or Markdown instead; unsupported PDF requests return HTTP 422 before an export task is created.
 
 ## Local development
 

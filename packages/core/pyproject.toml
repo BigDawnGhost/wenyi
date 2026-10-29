@@ -19,10 +19,6 @@ dependencies = [
     "tiktoken>=0.14.0",
 ]
 
-[project.optional-dependencies]
-pdf-output = ["weasyprint>=69.0"]
-pdf-output-lite = ["fpdf2>=2.8.5"]
-
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
