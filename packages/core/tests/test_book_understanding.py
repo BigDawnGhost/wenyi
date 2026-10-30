@@ -104,8 +104,9 @@ def test_reduce_failure_does_not_omit_a_group_and_publish_the_rest():
     assert client.complete.call_count == 1
 
 
-def test_failed_chapter_digest_requires_retry_and_preserves_successes(tmp_path):
-    service, store, runtime = _service(tmp_path)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_failed_chapter_digest_requires_retry_and_preserves_successes(tmp_path, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
     runtime.synopsizer.digest_chapter.side_effect = lambda source: (
         "Opening digest." if source == "Opening." else ""
     )
@@ -137,8 +138,9 @@ def test_empty_chapter_does_not_require_a_digest(tmp_path):
     )
 
 
-def test_book_failure_is_not_cached_and_resume_reuses_chapter_digests(tmp_path):
-    service, store, runtime = _service(tmp_path)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_book_failure_is_not_cached_and_resume_reuses_chapter_digests(tmp_path, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
     runtime.synopsizer.book_synopsis.return_value = ""
     assert service.ensure_understanding(store) == ""
     analysis = store.load_analysis()
@@ -225,8 +227,9 @@ def test_chapter_digest_covers_all_blocks_and_merges_in_order():
 
 
 @pytest.mark.parametrize("responses", [["First.", ""], ["First.", "Last.", ""]])
-def test_chapter_map_or_merge_failure_never_publishes_partial_digest(responses):
-    agent = Synopsizer(FakeClient(), _selected_config())
+@pytest.mark.parametrize("enabled", [False, True])
+def test_chapter_map_or_merge_failure_never_publishes_partial_digest(responses, enabled):
+    agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
     agent._ask_text = Mock(side_effect=responses)
     assert agent.digest_chapter("a" * 8000 + "ENDING") == ""
     assert agent._ask_text.call_count == len(responses)
@@ -241,8 +244,9 @@ def test_chapter_recursive_reduction_preserves_every_group():
 
 
 @pytest.mark.parametrize("output_length", [7000, 13000])
-def test_noncontracting_or_oversized_outputs_stop_without_looping(output_length):
-    agent = Synopsizer(FakeClient(), _selected_config())
+@pytest.mark.parametrize("enabled", [False, True])
+def test_noncontracting_or_oversized_outputs_stop_without_looping(output_length, enabled):
+    agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
     agent._ask_text = Mock(return_value="x" * output_length)
     assert agent.digest_chapter("a" * 16000) == ""
     assert agent._ask_text.call_count <= 4
@@ -300,8 +304,9 @@ def test_glossary_change_invalidates_synopsis_cache(tmp_path):
 
 
 @pytest.mark.parametrize("change", ["version", "source"])
-def test_full_coverage_cache_requires_version_and_source_hash(tmp_path, change):
-    service, store, runtime = _service(tmp_path)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_full_coverage_cache_requires_version_and_source_hash(tmp_path, change, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
     service.ensure_understanding(store)
     chapter = store.load_chapter(0)
     if change == "version":
@@ -318,16 +323,15 @@ def test_full_coverage_cache_requires_version_and_source_hash(tmp_path, change):
         runtime.synopsizer.digest_chapter.assert_called_once_with(chapter.segments[0].source)
 
 
-def test_disabled_long_chapter_uses_one_legacy_source_sample():
+def test_short_chapter_does_not_need_an_extra_merge():
     agent = Synopsizer(FakeClient(), Config())
     agent._ask_text = Mock(return_value="Digest.")
-    assert agent.digest_chapter("a" * 8000 + "UNSAMPLED-ENDING") == "Digest."
+    assert agent.digest_chapter("a" * 8000) == "Digest."
     agent._ask_text.assert_called_once()
     assert "a" * 8000 in agent._ask_text.call_args.args[1]
-    assert "UNSAMPLED-ENDING" not in agent._ask_text.call_args.args[1]
 
 
-def test_disabled_legacy_v1_cache_survives_routing_and_glossary_changes(tmp_path):
+def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_path):
     service, store, runtime = _service(tmp_path, terminology=False)
     policy = runtime.config.language_policy("analysis")
     digests = ["Opening digest.", "Ending digest."]
@@ -359,38 +363,48 @@ def test_disabled_legacy_v1_cache_survives_routing_and_glossary_changes(tmp_path
     )
     runtime.config.llm = Config.from_dict({"llm": {"preset": "deepseek"}}).llm
     store.upsert_term(GlossaryTerm(source="Alice", target="Current", type="person"))
-    assert service.ensure_understanding(store) == "Legacy synopsis."
-    runtime.synopsizer.digest_chapter.assert_not_called()
-    runtime.synopsizer.book_synopsis.assert_not_called()
-    runtime.analyzer.style_brief.assert_called_once_with(store.load_analysis())
+    terms = store.all_terms()
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    assert runtime.synopsizer.digest_chapter.call_count == 2
+    runtime.synopsizer.book_synopsis.assert_called_once_with(
+        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=terms
+    )
+    assert store.load_analysis()["book_synopsis_meta"]["version"] == 2
+    assert store.all_terms() == terms
     assert all(store.load_chapter(i).segments[0].target == "Saved target." for i in range(2))
 
 
-def test_disabled_analysis_ignores_supplied_digests_and_live_style_names():
+def test_default_analysis_uses_digests_and_explicit_style_terms():
     agent = Analyzer(FakeClient(), Config())
     agent._ask_json = Mock(return_value={})
-    agent.analyze("Original samples.", chapter_digests=["UNUSED-DIGEST"])
-    assert "UNUSED-DIGEST" not in agent._ask_json.call_args.args[1]
+    agent.analyze("Original samples.", chapter_digests=["FACTUAL-DIGEST"])
+    assert "FACTUAL-DIGEST" in agent._ask_json.call_args.args[1]
     assert "Original samples." in agent._ask_json.call_args.args[1]
-    brief = agent.style_brief({"characters": [{"source": "Alice", "target": "Legacy"}]}, terms=[])
-    assert "Alice" in brief and "Legacy" not in brief
+    analysis = {"characters": [{"source": "Alice", "target": "Legacy", "note": "Voice"}]}
+    assert "Voice" in agent.style_brief(analysis)
+    brief = agent.style_brief(analysis, terms=[])
+    assert "Alice" not in brief and "Legacy" not in brief
 
 
-def test_disabled_synopsis_has_no_glossary_appendix_or_style_truncation():
-    agent = Synopsizer(FakeClient(), Config())
+@pytest.mark.parametrize("enabled", [False, True])
+def test_synopsis_bounds_style_and_uses_authoritative_glossary(enabled):
+    agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
     agent._ask_text = Mock(return_value="Synopsis.")
-    style = "x" * 5000 + "STYLE-ENDING"
+    style = "Keep a restrained voice.\n" + "x" * 5000 + "STYLE-ENDING"
     agent.book_synopsis(
         ["Alice arrives."], style, glossary=[GlossaryTerm(source="Alice", target="Current")]
     )
     prompt = agent._ask_text.call_args.args[1]
-    assert style in prompt
-    assert "authoritative mappings" not in prompt
-    assert "Current" not in prompt
+    assert "Keep a restrained voice." in prompt
+    assert "STYLE-ENDING" not in prompt
+    assert "Additional style context omitted" in prompt
+    assert "authoritative mappings" in prompt
+    assert '["Alice", "Current", "term"]' in prompt
 
 
-def test_selected_analysis_uses_digest_context_and_resumes_paid_result(tmp_path):
-    service, store, runtime = _service(tmp_path)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_analysis_uses_digest_context_and_resumes_paid_result(tmp_path, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
     document = Document(
         source_lang="en",
         target_lang="zh",
@@ -403,7 +417,7 @@ def test_selected_analysis_uses_digest_context_and_resumes_paid_result(tmp_path)
     runtime.analyzer.analyze.assert_called_once_with(
         service.sample_text(document), chapter_digests=["Full digest."]
     )
-    agent = Analyzer(FakeClient(), _selected_config())
+    agent = Analyzer(FakeClient(), runtime.config)
     agent._ask_json = Mock(return_value={})
     agent.analyze("Source prose.", chapter_digests=["Full digest."])
     assert "Full digest." in agent._ask_json.call_args.args[1]

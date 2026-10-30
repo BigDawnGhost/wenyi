@@ -45,7 +45,10 @@ class EvidenceAgent:
     def discover(self, passages, existing):
         self.calls.append(("discover", tuple(p.reference for p in passages)))
         return DiscoveryResult(
-            terms=[GlossaryTerm("Alice", "艾丽丝"), GlossaryTerm("Carl", "卡尔")],
+            terms=[
+                GlossaryTerm("Alice", "艾丽丝", type="person"),
+                GlossaryTerm("Carl", "卡尔", type="person"),
+            ],
         )
 
     def enrich(self, term, passages):

@@ -28,7 +28,7 @@ class Analyzer(Agent):
         """Analyze samples and return type-checked style and character guidance."""
         system = self.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = self.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
-        if chapter_digests and self.language_policy.enabled("terminology.context"):
+        if chapter_digests:
             user += "\n\n[Draft chapter digests: factual context, not naming authority]\n"
             user += "\n".join(f"[{i}] {digest}" for i, digest in enumerate(chapter_digests))
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
@@ -66,8 +66,6 @@ class Analyzer(Agent):
 
     def style_brief(self, analysis: dict[str, Any], terms: list[GlossaryTerm] | None = None) -> str:
         """Condense style and character guidance; name mappings belong to the glossary."""
-        if not self.language_policy.enabled("terminology.context"):
-            terms = None
         lines = []
         if analysis.get("genre"):
             lines.append(f"Genre: {analysis['genre']}")

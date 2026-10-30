@@ -155,7 +155,7 @@ def test_cached_and_published_knowledge_uses_only_canonical_references(tmp_path)
     store, chapters = book_store(tmp_path)
     agent = worker({"note": "Supported description.", "evidence_refs": ["p1"]})
     service = TerminologyService(store, agent, chapters)
-    service.admit(GlossaryTerm("Alice", "艾丽丝"))
+    service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     keys = store.list_artifacts("terminology/requests/evidence/")
     assert len(keys) == 1
     cached = store.read_artifact(keys[0])
@@ -164,7 +164,7 @@ def test_cached_and_published_knowledge_uses_only_canonical_references(tmp_path)
     assert entry["knowledge"]["evidence_refs"] == cached["evidence_refs"]
     assert all(reference.startswith("c") for reference in entry["locations"])
     count = len(agent.client.calls)
-    TerminologyService.for_store(store, agent).admit(GlossaryTerm("Alice", "艾丽丝"))
+    TerminologyService.for_store(store, agent).admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     assert len(agent.client.calls) == count
 
 
@@ -172,7 +172,7 @@ def test_existing_canonical_result_cache_is_reused_without_a_model_call(tmp_path
     store, chapters = book_store(tmp_path)
     agent = worker(None)  # Any uncached model request would fail validation.
     service = TerminologyService(store, agent, chapters)
-    term = GlossaryTerm("Alice", "艾丽丝")
+    term = GlossaryTerm("Alice", "艾丽丝", type="person")
     group = service.index.evidence_groups(term, store.all_terms())[0]
     # Existing request keys contain canonical domain inputs, not ephemeral wire labels.
     digest = content_hash([service.identity, [asdict(term), [p.model_dump() for p in group]]])

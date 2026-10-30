@@ -27,8 +27,6 @@ class Synopsizer(Agent):
         """Cover every source block; publish nothing if any map or merge fails."""
         if not source_text.strip():
             return ""
-        if not self.language_policy.enabled("terminology.context"):
-            return self._digest(source_text[:_SOURCE_BUDGET])
         digests = []
         for start in range(0, len(source_text), _SOURCE_BUDGET):
             digest = self._digest(source_text[start : start + _SOURCE_BUDGET])
@@ -62,18 +60,6 @@ class Synopsizer(Agent):
         items = [d.strip() for d in digests if d and d.strip()]
         if not items:
             return ""
-        if not self.language_policy.enabled("terminology.context"):
-            while True:
-                groups = self._group(items, _REDUCE_BUDGET)
-                if len(groups) == 1:
-                    return self._synth(groups[0], analysis_brief)
-                summaries = []
-                for group in groups:
-                    summary = self._synth(group, analysis_brief)
-                    if not summary:
-                        return ""
-                    summaries.append(summary)
-                items = summaries
         # Split oversized legacy/caller inputs without dropping their endings.
         items = [
             item[start : start + _REDUCE_BUDGET]
@@ -142,7 +128,6 @@ class Synopsizer(Agent):
     ) -> str:
         """Merge one group of chapter digests and style analysis into a higher-level synopsis."""
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
-        enabled = self.language_policy.enabled("terminology.context")
         style_lines = []
         used = 0
         for line in analysis_brief.splitlines():
@@ -156,11 +141,9 @@ class Synopsizer(Agent):
             "book_synopsis_user",
             src=self.src,
             tgt=self.tgt,
-            analysis=("\n".join(style_lines) if enabled else analysis_brief) or "(none)",
+            analysis="\n".join(style_lines) or "(none)",
             digests=numbered,
         )
-        if not enabled:
-            return self._ask_text(system, user, operation="synopsis.book")
         user += "\n\n[Relevant authoritative mappings: source, target, type]\n"
         used = 0
         for term in GlossaryStore.terms_in(glossary or [], "\n".join(digests)):

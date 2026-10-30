@@ -92,7 +92,7 @@ def test_chapter_prescan_finishes_before_style_analysis(tmp_path, entry_point, b
             chapter = store.load_chapter(0)
             assert bool(chapter.meta.get("source_digest")) == book_understanding
             prompt = messages[-1]["content"]
-            assert digest not in prompt
+            assert (digest in prompt) == book_understanding
             assert chapter.text_segments[0].source in prompt, "Keep original prose evidence"
             assert "[Source samples" in prompt
         return routing_handler(messages, tier, json_mode)
@@ -164,7 +164,8 @@ def test_preparation_does_not_seed_glossary(tmp_path, entry_point, book_understa
     resumed_client = FakeClient(handler=handler)
     getattr(Orchestrator(config, client=resumed_client, storage=store), entry_point)(str(source))
     assert store.all_terms() == original_terms
-    assert resumed_client.calls == []
+    expected = ["synopsis.book"] if book_understanding and entry_point != "prepare" else []
+    assert [call["operation"] for call in resumed_client.calls] == expected
 
 
 def test_synopsis_interrupt_resumes_without_repeating_prescan_or_style(tmp_path):
@@ -189,7 +190,7 @@ def test_synopsis_interrupt_resumes_without_repeating_prescan_or_style(tmp_path)
     assert [call["operation"] for call in client.calls] == ["synopsis.book"]
     resumed_analysis = store.load_analysis() or {}
     metadata = resumed_analysis.pop("book_synopsis_meta")
-    assert metadata["version"] == 1
+    assert metadata["version"] == 2
     assert len(metadata["inputs_sha256"]) == 64
     assert resumed_analysis == {
         **(analysis or {}),
@@ -219,8 +220,7 @@ def test_style_failure_after_prescan_keeps_initialization_uncommitted(tmp_path):
     client = FakeClient(handler=routing_handler)
     Orchestrator(config, client=client, storage=store).prepare_for_translation(str(source))
     operations = [call["operation"] for call in client.calls]
-    assert operations.count("synopsis.chapter") == len(store.load_manifest()["chapters"])
-    assert operations.index("synopsis.chapter") < operations.index("analysis.style")
+    assert operations == ["analysis.style", "synopsis.book"]
     assert store.exists()
 
 

@@ -50,24 +50,14 @@ class LanguageDetectionError(ValueError):
         super().__init__(f"Source language detection request failed{status}: {failure.message}")
 
 
-def _synopsis_complete(text: str) -> bool:
-    """Identify likely finished legacy digests without a completion marker."""
-    cleaned = (text or "").strip().rstrip("”\"'」』）)]}")
-    return bool(cleaned) and cleaned[-1] in "。．.！？!?…"
-
-
-def _digest_complete(chapter: Chapter, *, full_coverage: bool = False) -> bool:
-    """Use legacy completion checks unless full-source coverage is selected."""
+def _digest_complete(chapter: Chapter) -> bool:
+    """Only verified full-source digests satisfy preparation."""
     digest = chapter.meta.get("source_digest")
     return bool(
         isinstance(digest, str)
         and digest.strip()
-        and (
-            chapter.meta.get("source_digest_complete") is True
-            and chapter.meta.get("source_digest_version") == _DIGEST_VERSION
-            if full_coverage
-            else chapter.meta.get("source_digest_complete") is True or _synopsis_complete(digest)
-        )
+        and chapter.meta.get("source_digest_complete") is True
+        and chapter.meta.get("source_digest_version") == _DIGEST_VERSION
     )
 
 
@@ -317,9 +307,6 @@ class PreparationService:
         if not sample:
             return {}
         policy = self._runtime.config.language_policy("analysis")
-        cached = policy.enabled("terminology.context")
-        if not cached:
-            return self._runtime.analyzer.analyze(sample)
         key = (
             "preparation/analysis/"
             + content_hash(
@@ -333,7 +320,7 @@ class PreparationService:
             )
             + ".json"
         )
-        saved = store.read_artifact(key) if cached else None
+        saved = store.read_artifact(key)
         if isinstance(saved, dict):
             return saved
         try:
@@ -342,12 +329,10 @@ class PreparationService:
                 if digests is not None
                 else self._runtime.analyzer.analyze(sample)
             )
-            if cached:
-                store.write_artifact(key, analysis)
+            store.write_artifact(key, analysis)
             return analysis
         finally:
-            if cached:
-                self._runtime.flush_usage(store, scope="analysis")
+            self._runtime.flush_usage(store, scope="analysis")
 
     def activate(self, store: Storage, *, phase: Phase | None = None) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
@@ -461,13 +446,8 @@ class PreparationService:
             return ""
 
         analysis = store.load_analysis() or {}
-        enabled = self._runtime.config.language_policy("analysis").enabled("terminology.context")
-        terms = sorted(store.all_terms(), key=lambda term: term.source) if enabled else []
-        style = (
-            self._runtime.analyzer.style_brief(analysis, terms=terms)
-            if enabled
-            else self._runtime.analyzer.style_brief(analysis)
-        )
+        terms = sorted(store.all_terms(), key=lambda term: term.source)
+        style = self._runtime.analyzer.style_brief(analysis, terms=terms)
         inputs = {
             "language_policy": self._runtime.config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"
@@ -480,16 +460,15 @@ class PreparationService:
             "style": style,
             "source_lang": self._runtime.config.source_lang,
             "target_lang": self._runtime.config.target_lang,
-        }
-        if enabled:
-            inputs["glossary"] = [
+            "glossary": [
                 [term.source, term.target, term.type, term.gender, term.note] for term in terms
-            ]
-            inputs["routing"] = self._runtime.config.llm.model_dump(mode="json")
+            ],
+            "routing": self._runtime.config.llm.model_dump(mode="json"),
+        }
         fingerprint = hashlib.sha256(
             json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
-        metadata = {"version": 2 if enabled else 1, "inputs_sha256": fingerprint}
+        metadata = {"version": 2, "inputs_sha256": fingerprint}
         synopsis = analysis.get("book_synopsis", "")
         if (
             isinstance(synopsis, str)
@@ -499,11 +478,7 @@ class PreparationService:
             return synopsis
         if progress:
             progress(0, 0, "Generating whole-book synopsis…")
-        synopsis = (
-            self._runtime.synopsizer.book_synopsis(digests, style, glossary=terms)
-            if enabled
-            else self._runtime.synopsizer.book_synopsis(digests, style)
-        )
+        synopsis = self._runtime.synopsizer.book_synopsis(digests, style, glossary=terms)
         if synopsis:
             analysis["book_synopsis"] = synopsis
             analysis["book_synopsis_meta"] = metadata
@@ -544,60 +519,54 @@ class PreparationService:
             for ci, ch in loaded.items()
             if ch.text_segments
         }
-        policy = self._runtime.config.language_policy("analysis")
-        enabled = policy.enabled("terminology.context")
         fingerprint = content_hash(
             [
                 self._runtime.config.language_policy("analysis").task_fingerprint("chapter_digest"),
                 self._runtime.config.llm.model_dump(mode="json"),
             ]
         )
-        if not enabled:
-            fingerprint = policy.task_fingerprint("chapter_digest")
         source_hashes = {
             ci: hashlib.sha256(source.encode("utf-8")).hexdigest() for ci, source in sources.items()
         }
         cache_keys = {}
-        if self._runtime.config.language_policy("analysis").enabled("terminology.context"):
-            for ci in sources:
-                cache_keys[ci] = (
-                    "preparation/digests/"
-                    + content_hash(
-                        [
-                            _DIGEST_VERSION,
-                            source_hashes[ci],
-                            fingerprint,
-                            self._runtime.config.llm.model_dump(mode="json"),
-                        ]
-                    )
-                    + ".json"
+        for ci in sources:
+            cache_keys[ci] = (
+                "preparation/digests/"
+                + content_hash(
+                    [
+                        _DIGEST_VERSION,
+                        source_hashes[ci],
+                        fingerprint,
+                        self._runtime.config.llm.model_dump(mode="json"),
+                    ]
                 )
-                saved = store.read_artifact(cache_keys[ci])
-                if (
-                    (
-                        not _digest_complete(loaded[ci], full_coverage=True)
-                        or loaded[ci].meta.get("source_digest_policy") != fingerprint
-                        or loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
-                    )
-                    and isinstance(saved, dict)
-                    and isinstance(saved.get("digest"), str)
-                    and saved["digest"]
-                ):
-                    loaded[ci].meta.update(
-                        source_digest=saved["digest"],
-                        source_digest_complete=True,
-                        source_digest_policy=fingerprint,
-                        source_digest_version=_DIGEST_VERSION,
-                        source_digest_sha256=source_hashes[ci],
-                    )
-                    store.save_chapter(loaded[ci])
+                + ".json"
+            )
+            saved = store.read_artifact(cache_keys[ci])
+            if (
+                (
+                    not _digest_complete(loaded[ci])
+                    or loaded[ci].meta.get("source_digest_policy") != fingerprint
+                    or loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
+                )
+                and isinstance(saved, dict)
+                and isinstance(saved.get("digest"), str)
+                and saved["digest"]
+            ):
+                loaded[ci].meta.update(
+                    source_digest=saved["digest"],
+                    source_digest_complete=True,
+                    source_digest_policy=fingerprint,
+                    source_digest_version=_DIGEST_VERSION,
+                    source_digest_sha256=source_hashes[ci],
+                )
+                store.save_chapter(loaded[ci])
         todo = [
             (ci, source)
             for ci, source in sources.items()
-            if not _digest_complete(loaded[ci], full_coverage=enabled)
+            if not _digest_complete(loaded[ci])
             or loaded[ci].meta.get("source_digest_policy") != fingerprint
-            or enabled
-            and loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
+            or loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
         ]
         failed: list[int] = []
         error: Exception | None = None
@@ -627,11 +596,9 @@ class PreparationService:
                         loaded[ci].meta["source_digest"] = digest
                         loaded[ci].meta["source_digest_complete"] = True
                         loaded[ci].meta["source_digest_policy"] = fingerprint
-                        if enabled:
-                            loaded[ci].meta["source_digest_version"] = _DIGEST_VERSION
-                            loaded[ci].meta["source_digest_sha256"] = source_hashes[ci]
-                        if ci in cache_keys:
-                            store.write_artifact(cache_keys[ci], {"digest": digest})
+                        loaded[ci].meta["source_digest_version"] = _DIGEST_VERSION
+                        loaded[ci].meta["source_digest_sha256"] = source_hashes[ci]
+                        store.write_artifact(cache_keys[ci], {"digest": digest})
                         store.save_chapter(loaded[ci])
                         store.log_event(
                             "book_understanding_chapter_digest_saved", chapter=ci, digest=digest

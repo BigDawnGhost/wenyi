@@ -92,7 +92,7 @@ def test_provider_extra_field_is_diagnosed_before_caching_or_publication(tmp_pat
     client = FakeClient(handler=handler)
     worker = TerminologyAgent(client, agent({}).config)
     service = TerminologyService(store, worker, chapters)
-    term = GlossaryTerm("Beth", "贝丝")
+    term = GlossaryTerm("Beth", "贝丝", type="person")
     with pytest.raises(TerminologyKnowledgeError):
         service.admit(term)
     assert store.get_term("Beth") is None

@@ -293,6 +293,8 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 `prepare` 会解析书籍、识别语言、在启用时生成逐章梗概，再生成风格和人物语气指导，最后在启用时生成全书概览，但不翻译正文，也不抽取术语。术语在翻译过程中从已完成的原译文对中抽取；续跑保留项目已有词条。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 
+启用 `book_understanding` 后，普通翻译与人物证据模式共用相同准备流程：完整原文的章节梗概、原文样本加梗概的风格分析，以及保留原文身份并参考相关已有术语映射的全书概览。相较此前仅取章首 8,000 字符，长章节首次预扫需要更多请求；重试和切换证据模式会复用有效的准备缓存。详见[准备与缓存行为](pipeline.md)。
+
 ## 三选一精翻
 
 仅在 Web 创建书籍项目时选择**三译合润精翻**，之后不在总设置或项目配置中提供切换选项；
@@ -330,7 +332,7 @@ uv run wenyi --config config.yaml prepare book.epub
 uv run wenyi --config config.yaml translate book.epub
 ```
 
-`terminology_context` 会对译前发现和译后补漏候选，检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。全量术语映射不变，既有译名和受保护的人工字段保留，不同译名建议记录为冲突。`prepare` 只分析风格与人物语气，不抽取或建立术语；取证从待译批次开始。
+`terminology_context` 仅对译前发现和译后补漏候选中的人物条目（`type: person`），检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。译前发现仅处理人物；其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。全量术语映射不变，既有人物译名和受保护的人工字段保留，不同译名建议记录为冲突，不删除已有备注。`prepare` 只分析风格与人物语气，不抽取或建立术语；取证从待译批次开始。
 
 只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review、assemble 和 report 可以消费已有备注，不生产证据。SRT 不使用此路径。
 

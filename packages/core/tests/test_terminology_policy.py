@@ -1,5 +1,3 @@
-import hashlib
-
 import pytest
 from wenyi_core.config import Config, PipelineConfig
 from wenyi_core.i18n.policy.models import OperationBinding
@@ -100,35 +98,25 @@ def test_terminology_templates_are_independent_of_relationship_guidance():
     assert "Aliases must always be empty" in templates["terminology_merge_system"]
 
 
-def test_default_analysis_templates_and_fingerprints_match_feature_baseline():
-    # Recorded from main at b7bf4c9, not the enhanced variants.
+def test_shared_preparation_invalidates_old_sampled_task_identities():
+    # Sampled preparation identities recorded from main at b7bf4c9 must not be reused.
     expected = {
-        "analyzer": (
-            "75a3f6c3ff2879e83d7b0358363787322b5793f19210b23a4c2b75f0ec209470",
-            "c9b0f621c493c986b33ae18b21d753ed0d0e3b18ce7404cfd978cabf753b6cc1",
-        ),
-        "chapter_digest": (
-            "47d2e5e75cd7a457ad2e0a59c31c55a6e6da6e65859e0b6c1f1f8deaa5ec8a93",
-            "2347b767b1955282a5900183dc470114dbc0fac38c86be0d1914327c5f8d3754",
-        ),
-        "book_synopsis": (
-            "2cb628580d1641336412be5627e180a7f4ba0d5efce971f2bab6e8f1c72252f0",
-            "28a8783ff3bf8b8e09618f2330fb09a67e0ac84780e4325f1feb9585c54ebb8e",
-        ),
+        "analyzer": "c9b0f621c493c986b33ae18b21d753ed0d0e3b18ce7404cfd978cabf753b6cc1",
+        "chapter_digest": "2347b767b1955282a5900183dc470114dbc0fac38c86be0d1914327c5f8d3754",
+        "book_synopsis": "28a8783ff3bf8b8e09618f2330fb09a67e0ac84780e4325f1feb9585c54ebb8e",
     }
     plan = Config.from_dict({"llm": {"preset": "fake"}}).language_policy("analysis")
-    for task, (template_hash, fingerprint) in expected.items():
-        template = dict(plan.templates)[f"{task}_system"]
-        assert hashlib.sha256(template.encode("utf-8")).hexdigest() == template_hash
-        assert plan.task_fingerprint(task) == fingerprint
+    for task, fingerprint in expected.items():
+        assert plan.task_fingerprint(task) != fingerprint
 
 
-def test_selected_prescan_variants_freeze_actual_resource_paths():
-    plan = config(terminology_context=True).language_policy("analysis")
+@pytest.mark.parametrize("enabled", [False, True])
+def test_shared_prescan_templates_freeze_actual_resource_paths(enabled):
+    plan = config(terminology_context=enabled).language_policy("analysis")
     for task in ("analyzer", "chapter_digest", "book_synopsis"):
-        path = f"tasks/{task}_terminology_system.txt"
+        path = f"tasks/{task}_system.txt"
         assert path in dict(plan.resources)
-        assert f"tasks/{task}_system.txt" not in dict(plan.resources)
+        assert f"tasks/{task}_terminology_system.txt" not in dict(plan.resources)
         assert dict(plan.templates)[f"{task}_system"] == read_text(path)
 
 
@@ -153,11 +141,11 @@ def test_default_polisher_preserves_original_resource_and_fingerprint():
         ("export", "f18cefb9111ecee5ca4a1470edf6351e51be6cd4983634e93aa8c64643f5b043"),
     ],
 )
-def test_default_phase_fingerprints_match_feature_baseline(phase, fingerprint):
+def test_only_default_analysis_phase_changes_from_feature_baseline(phase, fingerprint):
     # Recorded from unmodified main at b7bf4c9.
     selected = Config.from_dict({"llm": {"preset": "fake"}})
     plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
-    assert plan.fingerprint == fingerprint
+    assert (plan.fingerprint != fingerprint) == (phase == "analysis")
 
 
 def test_selected_polisher_variant_freezes_the_source_context_resource():

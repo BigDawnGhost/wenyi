@@ -351,12 +351,17 @@ class SqliteStorage:
                 raise ValueError("Translation state is already initialized")
             previous = self.read_artifact("initializing.json") or {}
             same_source = previous.get("source_sha256") == source_hash
+            if same_source:
+                self.recover_usage()
             parsed = self.read_artifact("parsed_document.json")
             keep_source = isinstance(parsed, dict) and parsed.get("source_sha256") == source_hash
             for key in self.list_artifacts():
                 if keep_source and key in {"parsed_document.json", "preview.json"}:
                     continue
-                if same_source and (key == "events.jsonl" or key.startswith("reviews/")):
+                if same_source and (
+                    key in {"events.jsonl", "usage.json"}
+                    or key.startswith(("reviews/", "preparation/"))
+                ):
                     continue
                 self.delete_artifact(key)
             conn = self._connection()

@@ -21,7 +21,7 @@ from tests.terminology_fixtures import EvidenceAgent, book_store
 def test_admission_precedes_publication_and_reuses_successful_requests(tmp_path):
     store, chapters = book_store(tmp_path)
     agent = EvidenceAgent()
-    term = GlossaryTerm("Alice", "艾丽丝", note="Local-only observation")
+    term = GlossaryTerm("Alice", "艾丽丝", type="person", note="Local-only observation")
     assert TerminologyService(store, agent, chapters).admit(term, 0) == "inserted"
     assert "全书" in store.get_term("Alice").note
     count = len(agent.calls)
@@ -37,7 +37,7 @@ def test_evidence_only_protocol_does_not_reuse_prior_experiment_caches(tmp_path)
     store.save_chapter(chapters[0])
     before = store.load_chapter(0)
     agent = EvidenceAgent()
-    term = GlossaryTerm("Alice", "艾丽丝")
+    term = GlossaryTerm("Alice", "艾丽丝", type="person")
     previous = TerminologyService(store, agent, chapters)
     previous.identity["version"] = 3
     previous.admit(term)
@@ -63,7 +63,7 @@ def test_unresolved_history_defers_new_term_but_keeps_confirmed_terms_and_saved_
     previous.segments[0].target = "Already saved translation."
     store.save_chapter(previous)
     before = store.load_chapter(0).model_dump()
-    store.upsert_term(GlossaryTerm("Carl", "人工译名", note="Manual note"))
+    store.upsert_term(GlossaryTerm("Carl", "人工译名", type="person", note="Manual note"))
     service = TerminologyService(store, EvidenceAgent(), chapters)
     extractor = GlossaryExtractor(
         FakeClient(handler=lambda *args: '{"terms":[]}'), Config(source_lang="en", target_lang="zh")
@@ -91,18 +91,18 @@ def test_empty_groups_are_cached_as_reviewed_but_not_published_as_knowledge(tmp_
     agent = EvidenceAgent()
     service = TerminologyService(store, agent, chapters)
     agent.empty_evidence = True
-    assert service.admit(GlossaryTerm("Alice", "艾丽丝")) == "unresolved"
+    assert service.admit(GlossaryTerm("Alice", "艾丽丝", type="person")) == "unresolved"
     assert store.get_term("Alice") is None
     assert store.list_artifacts("terminology/requests/evidence/")
     count = len(agent.calls)
-    assert service.admit(GlossaryTerm("Alice", "艾丽丝")) == "unresolved"
+    assert service.admit(GlossaryTerm("Alice", "艾丽丝", type="person")) == "unresolved"
     assert len(agent.calls) == count
     agent.empty_evidence = False
     agent.fail_evidence = True
     with pytest.raises(RuntimeError, match="interruption"):
-        service.admit(GlossaryTerm("Carl", "卡尔"))
+        service.admit(GlossaryTerm("Carl", "卡尔", type="person"))
     agent.fail_evidence = False
-    service.admit(GlossaryTerm("Carl", "卡尔"))
+    service.admit(GlossaryTerm("Carl", "卡尔", type="person"))
     assert store.get_term("Carl") is not None
 
 
@@ -111,7 +111,7 @@ def test_all_groups_complete_before_admission_and_merge_results_are_cached(tmp_p
     chapters = [Chapter(index=0, segments=[Segment(index=0, source="Alice " + "text " * 6000)])]
     agent = EvidenceAgent()
     service = TerminologyService(store, agent, chapters)
-    service.admit(GlossaryTerm("Alice", "艾丽丝"))
+    service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     assert sum(kind == "evidence" for kind, _ in agent.calls) >= 3
     assert any(kind == "merge" for kind, _ in agent.calls)
     entries = store.list_artifacts("terminology/entries/")
@@ -121,7 +121,7 @@ def test_all_groups_complete_before_admission_and_merge_results_are_cached(tmp_p
         chapters[0].segments[0].source
     )
     count = len(agent.calls)
-    service.admit(GlossaryTerm("Alice", "艾丽丝"))
+    service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     assert len(agent.calls) == count
 
 
@@ -129,7 +129,7 @@ def test_manual_changes_remain_protected_across_more_than_one_refresh(tmp_path):
     store, chapters = book_store(tmp_path)
     agent = EvidenceAgent()
     service = TerminologyService(store, agent, chapters)
-    term = GlossaryTerm("Alice", "艾丽丝")
+    term = GlossaryTerm("Alice", "艾丽丝", type="person")
     service.admit(term)
     store.upsert_term(replace(store.get_term("Alice"), note="Human-approved note"))
     service.admit(term)
@@ -151,12 +151,14 @@ def test_publication_recovers_after_glossary_write_interruption(tmp_path, monkey
 
     monkeypatch.setattr(store, "upsert_term", interrupted)
     with pytest.raises(RuntimeError, match="after glossary"):
-        TerminologyService(store, agent, chapters).admit(GlossaryTerm("Alice", "艾丽丝"))
+        TerminologyService(store, agent, chapters).admit(
+            GlossaryTerm("Alice", "艾丽丝", type="person")
+        )
     count = len(agent.calls)
     key = store.list_artifacts("terminology/entries/")[0]
     assert store.read_artifact(key)["status"] == "prepared"
     monkeypatch.setattr(store, "upsert_term", original)
-    TerminologyService(store, agent, chapters).admit(GlossaryTerm("Alice", "艾丽丝"))
+    TerminologyService(store, agent, chapters).admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     assert len(agent.calls) == count
     assert store.read_artifact(key)["status"] == "published"
     assert store.read_artifact(key)["protected_fields"] == []
@@ -165,7 +167,7 @@ def test_publication_recovers_after_glossary_write_interruption(tmp_path, monkey
 def test_source_and_policy_changes_invalidate_evidence(tmp_path):
     store, chapters = book_store(tmp_path)
     agent = EvidenceAgent()
-    term = GlossaryTerm("Alice", "艾丽丝")
+    term = GlossaryTerm("Alice", "艾丽丝", type="person")
     TerminologyService(store, agent, chapters).admit(term)
     count = len(agent.calls)
     chapters[1].segments[0].source += " Alice later returned."
@@ -181,9 +183,9 @@ def test_different_candidate_mapping_never_replaces_established_target(tmp_path)
     store, chapters = book_store(tmp_path)
     agent = EvidenceAgent()
     service = TerminologyService(store, agent, chapters)
-    service.admit(GlossaryTerm("Alice", "艾丽丝"))
-    assert service.admit(GlossaryTerm("Alice", "另一译名")) == "conflict"
-    service.admit(GlossaryTerm("Alice", "另一译名"))
+    service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
+    assert service.admit(GlossaryTerm("Alice", "另一译名", type="person")) == "conflict"
+    service.admit(GlossaryTerm("Alice", "另一译名", type="person"))
     assert store.get_term("Alice").target == "艾丽丝"
     assert len(store.open_conflicts()) == 1
 
@@ -193,7 +195,7 @@ def test_identity_changes_during_collection_do_not_publish_stale_evidence(
     tmp_path, monkeypatch, change
 ):
     store, chapters = book_store(tmp_path)
-    store.upsert_term(GlossaryTerm("Alice", "艾丽丝"))
+    store.upsert_term(GlossaryTerm("Alice", "艾丽丝", type="person"))
     agent = EvidenceAgent()
     original = agent.enrich
 
@@ -209,7 +211,7 @@ def test_identity_changes_during_collection_do_not_publish_stale_evidence(
     monkeypatch.setattr(agent, "enrich", edit_during_collection)
     service = TerminologyService(store, agent, chapters)
     with pytest.raises(ValueError, match="identity changed"):
-        service.admit(GlossaryTerm("Alice", "艾丽丝"))
+        service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     assert store.list_artifacts("terminology/entries/") == []
     current = store.get_term("Alice")
     if change == "delete":
@@ -226,7 +228,7 @@ def test_known_terms_refresh_after_identity_edit_even_if_discovery_omits_them(
     store, chapters = book_store(tmp_path)
     agent = EvidenceAgent()
     service = TerminologyService(store, agent, chapters)
-    service.admit(GlossaryTerm("Alice", "艾丽丝"))
+    service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     store.resolve_term("Alice", "人工译名")
     assert service._current_record("Alice") is None
     resumed = TerminologyService.for_store(store, agent)
@@ -265,7 +267,7 @@ def test_discovery_cache_tracks_the_actual_glossary_input(tmp_path):
     service = TerminologyService(store, agent, chapters)
     passages = service.index.for_segments(0, chapters[0].segments)
     service._discover(passages)
-    store.upsert_term(GlossaryTerm("Alice", "人工译名", aliases=["Ace"]))
+    store.upsert_term(GlossaryTerm("Alice", "人工译名", type="person", aliases=["Ace"]))
     service._discover(passages)
     assert [kind for kind, _ in agent.calls] == ["discover", "discover"]
     service._discover(passages)
@@ -275,7 +277,7 @@ def test_discovery_cache_tracks_the_actual_glossary_input(tmp_path):
 def test_alias_suggestions_cannot_recreate_removed_or_competing_aliases(tmp_path):
     store, chapters = book_store(tmp_path)
     store.upsert_term(GlossaryTerm("Carl", "卡尔"))
-    store.upsert_term(GlossaryTerm("Alice", "艾丽丝"))
+    store.upsert_term(GlossaryTerm("Alice", "艾丽丝", type="person"))
     agent = EvidenceAgent()
     original = agent.enrich
 
@@ -284,7 +286,7 @@ def test_alias_suggestions_cannot_recreate_removed_or_competing_aliases(tmp_path
 
     agent.enrich = proposed_aliases
     service = TerminologyService(store, agent, chapters)
-    service.admit(GlossaryTerm("Alice", "艾丽丝", aliases=["Removed alias"]))
+    service.admit(GlossaryTerm("Alice", "艾丽丝", type="person", aliases=["Removed alias"]))
     assert store.get_term("Alice").aliases == []
     record = store.read_artifact(store.list_artifacts("terminology/entries/")[0])
     assert record["knowledge"]["aliases"] == ["Carl"]
@@ -304,7 +306,7 @@ def test_a_valid_empty_evidence_group_does_not_discard_supported_groups(tmp_path
 
     agent.enrich = only_supported
     service = TerminologyService(store, agent, chapters)
-    assert service.admit(GlossaryTerm("Alice", "艾丽丝")) == "inserted"
+    assert service.admit(GlossaryTerm("Alice", "艾丽丝", type="person")) == "inserted"
     assert any(kind == "empty" for kind, _ in agent.calls)
     record = store.read_artifact(store.list_artifacts("terminology/entries/")[0])
     assert sum(location[3] for location in record["locations"].values()) == len(
@@ -313,11 +315,11 @@ def test_a_valid_empty_evidence_group_does_not_discard_supported_groups(tmp_path
 
 
 @pytest.mark.parametrize("source", ["brother", "sister", "Brother"])
-def test_source_attested_words_use_general_admission_without_special_filtering(tmp_path, source):
+def test_nonperson_words_use_general_admission_without_evidence(tmp_path, source):
     store, _ = book_store(tmp_path)
     chapters = [Chapter(index=0, segments=[Segment(index=0, source=f"Her {source} arrived.")])]
     agent = EvidenceAgent()
     service = TerminologyService(store, agent, chapters)
     assert service.admit(GlossaryTerm(source, "候选译文")) == "inserted"
     assert store.get_term(source).target == "候选译文"
-    assert agent.calls
+    assert agent.calls == []

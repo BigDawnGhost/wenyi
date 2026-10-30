@@ -50,7 +50,7 @@ pipeline:
   translation_mode: standard # standard | best_of_three; best_of_three requires polish
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
   terminology_context: false # CLI-only experimental whole-book terminology evidence
-  book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests used during translation
+  book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   annotation_alignment: true # Align EPUB annotation links per paragraph; if disabled, target links fall back to paragraph ends
   annotation_alignment_concurrency: 4 # Maximum concurrent alignment requests when a paragraph has multiple annotations

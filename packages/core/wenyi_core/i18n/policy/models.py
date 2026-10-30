@@ -184,7 +184,10 @@ class PolicyPlan:
                 "operations": [
                     (op.id, op.implementation_version, op.contract_version, op.options)
                     for op in self.operations
-                    if op.point == "prompt.compose" or op.point == "evidence.prepare" and op.enabled
+                    if op.point == "prompt.compose"
+                    or op.point == "evidence.prepare"
+                    # Book preparation has the same inputs and semantics in both modes.
+                    and prefix not in {"analyzer", "chapter_digest", "book_synopsis"}
                 ],
             }
         )

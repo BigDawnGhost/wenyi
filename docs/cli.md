@@ -313,6 +313,8 @@ Use `prepare` or `translate` afterward with the same source and configuration. M
 
 `prepare` parses the book, detects its language, generates chapter digests when enabled, builds style and character-voice guidance, and then generates the whole-book synopsis when enabled, without translating any body text or extracting glossary entries. Glossary extraction starts from completed source-and-target pairs during translation. Existing project terms are preserved on resume. Run `translate` with the same source file to continue from the saved state.
 
+With `book_understanding` enabled, ordinary translation and person-evidence mode share the same preparation: full-source chapter digests, style analysis using original samples plus digests, and a synopsis retaining original identities with relevant existing glossary mappings. Long chapters need more initial prescan calls than the former first-8,000-character sample; valid preparation caches are reused across retries and evidence-mode switches. See [preparation and cache behavior](pipeline.md).
+
 ## Best-of-three precision translation
 
 Select **Three-draft precision** when creating a Web book project. The choice is
@@ -355,7 +357,7 @@ uv run wenyi --config config.yaml prepare book.epub
 uv run wenyi --config config.yaml translate book.epub
 ```
 
-`terminology_context` checks candidates discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. It keeps the full glossary mappings, preserves existing term translations and protected manual fields, and records differing translations as conflicts. `prepare` analyzes style and character voices but does not extract or seed glossary entries; evidence work begins with pending translation batches.
+`terminology_context` checks only person entries (`type: person`) discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. Pretranslation discovery is person-only; other types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. It keeps the full glossary mappings, preserves existing person translations and protected manual fields, and records differing translations as conflicts. Existing notes are not deleted. `prepare` analyzes style and character voices but does not extract or seed glossary entries; evidence work begins with pending translation batches.
 
 Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review, assemble and report may consume existing notes without generating evidence. SRT does not use this path.
 

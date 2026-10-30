@@ -24,7 +24,7 @@ from ..glossary.evidence_models import (
     SourcePassage,
 )
 from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
-from ..glossary.store import GlossaryTerm, source_matches_text
+from ..glossary.store import TYPE_PERSON, GlossaryTerm, source_matches_text
 from ..i18n.policy.models import content_hash
 from ..ingest.models import Chapter, Segment
 from ..storage.protocol import Storage
@@ -237,12 +237,15 @@ class TerminologyService:
         return results[0], locations
 
     def admit(self, candidate: GlossaryTerm, chapter: int | None = None) -> str:
-        """Enrich a candidate before admission, preserving existing and edited fields."""
+        """Enrich people; keep ordinary glossary admission for every other term type."""
         existing = self.store.get_term(candidate.source)
+        term_type = existing.type if existing else candidate.type
+        if term_type != TYPE_PERSON:
+            return self.store.upsert_term(candidate, chapter=chapter)
         term = GlossaryTerm(
             source=candidate.source,
             target=existing.target if existing else candidate.target,
-            type=existing.type if existing else candidate.type,
+            type=term_type,
             # Only stored aliases are confirmed identities. New model aliases remain
             # proposals in the evidence artifact until an editor confirms them.
             aliases=list(existing.aliases) if existing else [],
@@ -337,10 +340,10 @@ class TerminologyService:
         history: Iterable[TranslatedSegmentEvidence] = (),
         before: tuple[int, int] | None = None,
     ) -> None:
-        """Discover and admit source-attested terms before translation."""
+        """Discover and admit source-attested people before translation."""
         passages = self.index.for_segments(chapter, segments)
         discovery = self._discover(passages)
-        candidates = discovery.terms
+        candidates = [term for term in discovery.terms if term.type == TYPE_PERSON]
         occurrences = (
             extractor._first_occurrences(candidates, self.store, history, before)
             if before is not None
@@ -357,5 +360,5 @@ class TerminologyService:
             self.store.all_terms(), "\n".join(segment.source for segment in segments)
         )
         for term in relevant:
-            if self._current_record(term.source) is None:
+            if term.type == TYPE_PERSON and self._current_record(term.source) is None:
                 self.admit(term, chapter)

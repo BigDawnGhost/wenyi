@@ -243,7 +243,7 @@ def test_prepare_batch_defers_uncertain_terms_without_touching_saved_targets(tmp
     store, chapters = book_store(tmp_path)
     chapters[0].segments[0].target = "Earlier saved translation 爱丽丝"
     store.save_chapter(chapters[0])
-    store.upsert_term(GlossaryTerm("Beth", "贝丝"))
+    store.upsert_term(GlossaryTerm("Beth", "贝丝", type="person"))
     agent = EvidenceAgent()
     first, client = extractor([{"source": "Alice", "target": "爱丽丝"}])
     service = TerminologyService(store, agent, chapters)

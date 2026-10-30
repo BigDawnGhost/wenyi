@@ -372,23 +372,15 @@ def test_deferred_history_cache_resumes_without_rewriting_targets_or_rebilling_a
     assert store.load_usage() == after
 
 
-def test_enabling_context_refreshes_analysis_without_seeding_glossary(tmp_path):
+def test_enabling_context_reuses_analysis_without_seeding_glossary(tmp_path):
     source, config, store = inputs(tmp_path, enabled=False)
     Orchestrator(config, client=MeteredFakeClient(handler=FamilyHandler()), storage=store).prepare(
         str(source)
     )
     assert store.get_term("Carl") is None
+    characters = store.load_analysis()["characters"]
     config.pipeline.terminology_context = True
-
-    class Refreshed(FamilyHandler):
-        def __call__(self, messages, tier, json_mode):
-            if "pre-translation analyst" in messages[0]["content"]:
-                return json.dumps(
-                    {"characters": [{"source": "Carl", "target": NAMES["Carl"]}], "terms": []}
-                )
-            return super().__call__(messages, tier, json_mode)
-
-    client = MeteredFakeClient(handler=Refreshed())
+    client = MeteredFakeClient(handler=FamilyHandler())
     Orchestrator(
         config,
         client=client,
@@ -396,9 +388,9 @@ def test_enabling_context_refreshes_analysis_without_seeding_glossary(tmp_path):
         allow_terminology_context=True,
     ).prepare_for_translation(str(source))
     assert store.all_terms() == []
-    assert store.load_analysis()["characters"] == [{"source": "Carl", "gender": ""}]
+    assert store.load_analysis()["characters"] == characters
     assert "terms" not in store.load_analysis()
-    assert not any(call["operation"].startswith("terminology.") for call in client.calls)
+    assert client.calls == []
     assert all(
         s.target is None
         for row in store.load_manifest()["chapters"]
