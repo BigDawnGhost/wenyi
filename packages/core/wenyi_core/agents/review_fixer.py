@@ -113,11 +113,14 @@ def _glossary_text(
     relevant_glossary: Sequence[GlossaryTerm] | str,
     *,
     source_lang: str,
+    note_source: str | None = None,
 ) -> str:
     """Filter structured terms; legacy text remains caller-owned and is not rewritten."""
     if isinstance(relevant_glossary, str):
         return relevant_glossary.strip() or "(none)"
-    return prompts.render_glossary(list(relevant_glossary), source_lang=source_lang)
+    return prompts.render_glossary(
+        list(relevant_glossary), source_lang=source_lang, note_source=note_source
+    )
 
 
 class ReviewFixer(Agent):
@@ -244,7 +247,11 @@ class ReviewFixer(Agent):
                 if isinstance(chapter_digest, str) and chapter_digest.strip()
                 else "(none)"
             ),
-            glossary=_glossary_text(relevant_glossary, source_lang=self.src),
+            glossary=_glossary_text(
+                relevant_glossary,
+                source_lang=self.src,
+                note_source=source if self.config.pipeline.terminology_context else None,
+            ),
             nearby_pairs=_nearby_text(nearby_pairs),
             issues_json=json.dumps(issue_payload, ensure_ascii=False, indent=2),
             segment_ref=segment_ref,

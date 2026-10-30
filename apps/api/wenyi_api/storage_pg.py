@@ -153,12 +153,15 @@ class PostgresStorage:
                 raise KeyError(f"project {self.project_id} not found")
             if row[0]:
                 raise ValueError("Project is already initialized; create a new project")
+            same_source = row[1] == source_hash
+            if same_source:
+                self.recover_usage()
             for table in ("chapters", "glossary", "term_conflicts"):
                 conn.execute(
                     sql.SQL("DELETE FROM {} WHERE project_id=%s").format(sql.Identifier(table)),
                     (self.project_id,),
                 )
-            if row[1] != source_hash:
+            if not same_source:
                 conn.execute("DELETE FROM events WHERE project_id=%s", (self.project_id,))
                 # Upload parsing happens before preparation. Preserve the matching
                 # source preview, but discard mutable run state.
@@ -170,15 +173,16 @@ class PostgresStorage:
                 conn.execute("DELETE FROM artifact_events WHERE project_id=%s", (self.project_id,))
             else:
                 conn.execute(
-                    "DELETE FROM artifacts WHERE project_id=%s AND key IN ('usage-pending.json','timing.json')",
+                    "DELETE FROM artifacts WHERE project_id=%s AND key='timing.json'",
                     (self.project_id,),
                 )
             conn.execute(
                 """UPDATE projects SET initialization_sha256=%s, source_sha256=%s,
                 manifest='{}'::jsonb, meta='{}'::jsonb, context=NULL,
-                annotation_contexts=NULL, analysis=NULL, usage=NULL, report=NULL,
+                annotation_contexts=NULL, analysis=NULL,
+                usage=CASE WHEN %s THEN usage ELSE NULL END, report=NULL,
                 updated_at=now() WHERE id=%s""",
-                (source_hash, source_hash, self.project_id),
+                (source_hash, source_hash, same_source, self.project_id),
             )
 
     def finish_initialization(self) -> None:

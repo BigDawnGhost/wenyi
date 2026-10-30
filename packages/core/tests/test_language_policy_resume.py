@@ -117,7 +117,10 @@ def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_ta
     assert store.load_manifest()["language_policies"] == initial_manifest["language_policies"]
 
 
-def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cached", [False, True])
+def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(
+    tmp_path, monkeypatch, cached
+):
     source, config, store = book(tmp_path)
     Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(str(source))
     saved = [store.load_chapter(index).model_dump() for index in (0, 1)]
@@ -127,6 +130,9 @@ def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(tmp_
     analysis.pop("style_policy")
     analysis.pop("language_policy")
     store.save_analysis(analysis)
+    if not cached:
+        for key in store.list_artifacts("preparation/analysis/"):
+            store.delete_artifact(key)
     client = FakeClient(handler=routing_handler)
     resumed = Orchestrator(config, client=client, storage=store)
     monkeypatch.setattr(
@@ -134,6 +140,12 @@ def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(tmp_
         "analyze",
         lambda sample: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
+    if cached:
+        resumed.run(str(source))
+        assert client.calls == []
+        assert store.read_artifact(CHECKPOINT) != {}
+        assert [store.load_chapter(index).model_dump() for index in (0, 1)] == saved
+        return
     with pytest.raises(KeyboardInterrupt):
         resumed.run(str(source))
     assert store.read_artifact(CHECKPOINT) == {}

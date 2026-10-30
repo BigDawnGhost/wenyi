@@ -115,7 +115,13 @@ class Translator(Agent):
             tgt=self.tgt,
             style=style or "(none)",
             book_synopsis=book_synopsis or "(none)",
-            glossary=prompts.render_glossary(glossary_terms, source_lang=self.src),
+            glossary=prompts.render_glossary(
+                glossary_terms,
+                source_lang=self.src,
+                note_source="\n".join(sources)
+                if self.config.pipeline.terminology_context
+                else None,
+            ),
             annotation_contexts=prompts.render_annotation_contexts(
                 annotation_contexts or [[] for _ in sources]
             ),

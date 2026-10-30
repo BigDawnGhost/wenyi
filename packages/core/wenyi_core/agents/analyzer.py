@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..glossary.store import TYPE_PERSON, GlossaryTerm
 from ..i18n.metadata import normalize_gender
 from .base import Agent
 
@@ -23,10 +24,13 @@ def _text(value: Any, default: str = "") -> str:
 class Analyzer(Agent):
     policy_phase = "analysis"
 
-    def analyze(self, sample_text: str) -> dict[str, Any]:
+    def analyze(self, sample_text: str, chapter_digests: list[str] | None = None) -> dict[str, Any]:
         """Analyze samples and return type-checked style and character guidance."""
         system = self.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = self.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
+        if chapter_digests:
+            user += "\n\n[Draft chapter digests: factual context, not naming authority]\n"
+            user += "\n".join(f"[{i}] {digest}" for i, digest in enumerate(chapter_digests))
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
         data = self._ask_json(system, user, operation="analysis.style")
         if not isinstance(data, dict):
@@ -60,7 +64,7 @@ class Analyzer(Agent):
             character.pop("reading", None)
         return data
 
-    def style_brief(self, analysis: dict[str, Any]) -> str:
+    def style_brief(self, analysis: dict[str, Any], terms: list[GlossaryTerm] | None = None) -> str:
         """Condense style and character guidance; name mappings belong to the glossary."""
         lines = []
         if analysis.get("genre"):
@@ -79,8 +83,21 @@ class Analyzer(Agent):
         ):
             if analysis.get(key):
                 lines.append(f"{tag}: {analysis[key]}")
-        chars = self.dict_items(
-            analysis.get("characters"), operation="analysis.style", field="characters"
+        chars = (
+            [
+                {
+                    "source": term.source,
+                    "gender": term.gender,
+                    # Notes belong in the bounded, source-scoped glossary evidence,
+                    # never in the global style prefix.
+                }
+                for term in terms
+                if term.type == TYPE_PERSON
+            ]
+            if terms is not None
+            else self.dict_items(
+                analysis.get("characters"), operation="analysis.style", field="characters"
+            )
         )
         if chars:
             lines.append("Characters: ")

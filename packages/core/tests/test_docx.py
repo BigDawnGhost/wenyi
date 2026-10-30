@@ -490,7 +490,7 @@ class TestDocxCliDefaults(unittest.TestCase):
         captured: dict = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, client=None):
+            def __init__(self, config, client=None, *, allow_terminology_context=False):
                 self.client = FakeClient()
                 del client
                 captured["config"] = config
@@ -535,7 +535,7 @@ class TestDocxCliDefaults(unittest.TestCase):
         captured: dict = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, client=None):
+            def __init__(self, config, client=None, *, allow_terminology_context=False):
                 self.client = FakeClient()
                 del client
 

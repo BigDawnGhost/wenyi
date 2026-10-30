@@ -18,7 +18,7 @@ from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.llm.usage import empty_usage
+from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
 from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.pipeline.translation import TranslationService
@@ -163,6 +163,27 @@ def test_usage_commit_recovery_does_not_double_charge(storage, tmp_path):
     assert storage.load_usage() == ledger
     assert storage.read_artifact(key) == ledger
     assert storage.read_artifact("usage-pending.json") is None
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_initialization_retry_preserves_preparation_and_recovers_usage(pg_storage, published):
+    tracker = UsageTracker()
+    tracker.record("fast", UsageSample(10, 5, 15), stage="analysis")
+    ledger = tracker.summary()
+    key = "preparation/analysis/source-bound.json"
+    pg_storage.begin_initialization("a" * 64)
+    pg_storage.write_artifact(key, {"style": "restrained"})
+    pg_storage.prepare_usage_commit({"usage.json": ledger})
+    if published:
+        pg_storage.save_usage(ledger)
+    for _ in range(2):
+        pg_storage.begin_initialization("a" * 64)
+        assert pg_storage.load_usage() == ledger
+        assert pg_storage.read_artifact("usage-pending.json") is None
+        assert pg_storage.read_artifact(key) == {"style": "restrained"}
+    pg_storage.begin_initialization("b" * 64)
+    assert pg_storage.load_usage() is None
+    assert pg_storage.read_artifact(key) is None
 
 
 def test_postgres_initialization_rollback_and_project_isolation(pg_storage, pg_pool, tmp_path):
