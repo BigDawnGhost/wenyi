@@ -19,7 +19,7 @@ def test_defaults_and_removed_configuration():
         op.startswith("terminology.") for op in configured_operations(default, "prepare")
     )
     with pytest.raises(ValueError, match="kinship_resolution"):
-        PipelineConfig(kinship_resolution=True)
+        PipelineConfig.model_validate({"kinship_resolution": True})
     assert {op.id for op in OPERATIONS.values() if op.point == "evidence.prepare"} == {
         "terminology.context"
     }
@@ -137,12 +137,12 @@ def test_default_polisher_preserves_original_resource_and_fingerprint():
     [
         ("analysis", "395155e77e13b4da88691410724aaa83b5f924b9b8afb6690c196aed969af139"),
         ("translation", "d5b09a1db42684cc475fd55e88d84ec09ad2f0ab2ab79db91bd8c3dc19e303eb"),
-        ("review", "5bef984bdb9767d863c622b98cb43cc2c35970a9e4d2bfbd4c613f3e5cfe59b1"),
+        ("review", "6297d2547a9a32893e34291f22051e3d3dfda78fefa80ff3c5b784e938139611"),
         ("export", "f18cefb9111ecee5ca4a1470edf6351e51be6cd4983634e93aa8c64643f5b043"),
     ],
 )
 def test_only_default_analysis_phase_changes_from_feature_baseline(phase, fingerprint):
-    # Recorded from unmodified main at b7bf4c9.
+    # Recorded from main; Review includes the prompt revision in 63a1149.
     selected = Config.from_dict({"llm": {"preset": "fake"}})
     plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
     assert (plan.fingerprint != fingerprint) == (phase == "analysis")

@@ -2,6 +2,15 @@
 
 from contextlib import nullcontext
 from copy import deepcopy
+from typing import TypeVar
+
+T = TypeVar("T")
+
+
+def require_value(value: T | None) -> T:
+    """Assert that an expected storage lookup succeeded and narrow its optional type."""
+    assert value is not None
+    return value
 
 
 class MemoryArtifacts:

@@ -45,7 +45,7 @@ class TerminologyReferenceError(ValueError):
         unknown_count: int = 0,
     ):
         self.operation = operation
-        self.reason = reason
+        self.reason: Literal["missing", "outside_input"] = reason
         self.field = field
         self.allowed_count = allowed_count
         self.received_count = received_count

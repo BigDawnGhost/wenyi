@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 
 import pytest
-from wenyi_core.agents.terminology import TerminologyAgent, TerminologyReferenceError
+from wenyi_core.agents.terminology import TerminologyReferenceError
 from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import KnowledgeResult, SourcePassage
 from wenyi_core.glossary.store import GlossaryTerm
@@ -12,7 +12,8 @@ from wenyi_core.i18n.policy.models import content_hash
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.terminology import TerminologyService
 
-from tests.terminology_fixtures import book_store
+from tests.storage_fixtures import require_value
+from tests.terminology_fixtures import ResponseAgent, book_store
 
 PASSAGES = [
     SourcePassage(reference="c0:s29:0-789", chapter=0, segment=29, source="Alice arrived."),
@@ -34,7 +35,7 @@ def worker(data):
             "pipeline": {"terminology_context": True},
         }
     )
-    return TerminologyAgent(FakeClient(handler=lambda *args: json.dumps(data)), config)
+    return ResponseAgent(FakeClient(handler=lambda *args: json.dumps(data)), config)
 
 
 def payload(client):
@@ -158,9 +159,9 @@ def test_cached_and_published_knowledge_uses_only_canonical_references(tmp_path)
     service.admit(GlossaryTerm("Alice", "艾丽丝", type="person"))
     keys = store.list_artifacts("terminology/requests/evidence/")
     assert len(keys) == 1
-    cached = store.read_artifact(keys[0])
+    cached = require_value(store.read_artifact(keys[0]))
     assert cached["evidence_refs"] == [service.index.passages[0].reference]
-    entry = store.read_artifact(store.list_artifacts("terminology/entries/")[0])
+    entry = require_value(store.read_artifact(store.list_artifacts("terminology/entries/")[0]))
     assert entry["knowledge"]["evidence_refs"] == cached["evidence_refs"]
     assert all(reference.startswith("c") for reference in entry["locations"])
     count = len(agent.client.calls)
@@ -182,4 +183,4 @@ def test_existing_canonical_result_cache_is_reused_without_a_model_call(tmp_path
     assert service.admit(term) == "inserted"
     assert agent.client.calls == []
     assert store.read_artifact(key) == saved.model_dump()
-    assert store.get_term("Alice").note == "Previously supported note."
+    assert require_value(store.get_term("Alice")).note == "Previously supported note."

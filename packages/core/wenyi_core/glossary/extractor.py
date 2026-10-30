@@ -183,22 +183,22 @@ class GlossaryExtractor(Agent):
             key = f"glossary/history/requests/{content_hash(identity)}.json"
             saved = store.read_artifact(key)
             if saved is not None:
-                resolved = saved.get("resolved") if isinstance(saved, dict) else None
+                cached_mappings = saved.get("resolved") if isinstance(saved, dict) else None
                 if (
                     not isinstance(saved, dict)
                     or saved.get("schema_version") != _HISTORY_VERSION
-                    or not isinstance(resolved, dict)
+                    or not isinstance(cached_mappings, dict)
                     or any(
                         source not in historical_targets
                         or not isinstance(target, str)
                         or not target.strip()
                         or target != target.strip()
                         or not source_matches_text(target, historical_targets[source])
-                        for source, target in resolved.items()
+                        for source, target in cached_mappings.items()
                     )
                 ):
                     raise ValueError("Invalid glossary history alignment cache")
-                return dict(resolved)
+                return dict(cached_mappings)
         text = self.client.complete(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             operation="glossary.align_history",

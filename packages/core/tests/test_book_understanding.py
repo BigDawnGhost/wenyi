@@ -369,7 +369,9 @@ def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_p
     runtime.synopsizer.book_synopsis.assert_called_once_with(
         ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=terms
     )
-    assert store.load_analysis()["book_synopsis_meta"]["version"] == 2
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["book_synopsis_meta"]["version"] == 2
     assert store.all_terms() == terms
     assert all(store.load_chapter(i).segments[0].target == "Saved target." for i in range(2))
 

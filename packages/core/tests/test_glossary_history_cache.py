@@ -218,9 +218,9 @@ def test_only_unambiguous_attested_mappings_are_accepted(tmp_path, targets):
     assert (aligned, deferred) == (int(accepted), 2 - int(accepted))
     assert [term.source for term in result] == ([terms[0].source, "New"] if accepted else ["New"])
     assert len(client.calls) == 1
-    assert store.read_artifact(store.list_artifacts(REQUESTS)[0])["resolved"] == (
-        {terms[0].source: "历史译法"} if accepted else {}
-    )
+    cached = store.read_artifact(store.list_artifacts(REQUESTS)[0])
+    assert cached is not None
+    assert cached["resolved"] == ({terms[0].source: "历史译法"} if accepted else {})
 
 
 def test_pre_and_posttranslation_share_storage_cache(tmp_path, monkeypatch):
@@ -235,7 +235,8 @@ def test_pre_and_posttranslation_share_storage_cache(tmp_path, monkeypatch):
         store, "Alice returned.", "爱丽丝回来。", 1, history=[evidence], before=(1, 3)
     )
     assert summary["history_aligned"] == 1
-    assert store.get_term("Alice").target == "爱丽丝"
+    stored = store.get_term("Alice")
+    assert stored is not None and stored.target == "爱丽丝"
     assert client.calls == []
 
 
@@ -253,9 +254,11 @@ def test_prepare_batch_defers_uncertain_terms_without_touching_saved_targets(tmp
     service.prepare_batch(
         1, chapters[1].segments, extractor=first, history=[evidence], before=(1, 3)
     )
-    assert store.get_term("Alice").target == "爱丽丝"
+    alice = store.get_term("Alice")
+    assert alice is not None and alice.target == "爱丽丝"
     assert store.get_term("Carl") is None
-    assert store.get_term("Beth").note
+    beth = store.get_term("Beth")
+    assert beth is not None and beth.note
     assert store.load_chapter(0).segments[0].target == "Earlier saved translation 爱丽丝"
     assert len(client.calls) == 1
     # Repeat the identical historical request independently of admission's known-term filter.

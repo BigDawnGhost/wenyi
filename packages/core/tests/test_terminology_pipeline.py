@@ -9,6 +9,7 @@ from wenyi_core.agents.terminology import TerminologyKnowledgeError, Terminology
 from wenyi_core.pipeline.orchestrator import Orchestrator
 
 from tests.fake_llm import MeteredFakeClient
+from tests.storage_fixtures import require_value
 from tests.terminology_fixtures import NAMES, FamilyHandler, inputs
 
 
@@ -26,8 +27,11 @@ def test_first_real_translation_receives_admitted_notes(tmp_path):
     assert "全书人物说明" in first
     assert "LOCAL ALICE" not in first
     assert store.pending_chapters() == []
-    assert store.get_term("Alice").note.endswith("全书人物说明。")
-    assert store.load_usage()["totals"]["calls"] == client.usage_summary()["totals"]["calls"]
+    assert require_value(store.get_term("Alice")).note.endswith("全书人物说明。")
+    assert (
+        require_value(store.load_usage())["totals"]["calls"]
+        == client.usage_summary()["totals"]["calls"]
+    )
 
 
 def test_saved_body_resumes_only_missing_postcheck_without_double_usage(tmp_path):
@@ -40,7 +44,7 @@ def test_saved_body_resumes_only_missing_postcheck_without_double_usage(tmp_path
     first_targets = [s.target for s in store.load_chapter(0).text_segments]
     assert first_targets and all(target is not None for target in first_targets)
     assert store.completed_batch_glossary_keys(0) == set()
-    previous_calls = store.load_usage()["totals"]["calls"]
+    previous_calls = require_value(store.load_usage())["totals"]["calls"]
     resumed_handler = FamilyHandler()
     resumed = MeteredFakeClient(handler=resumed_handler)
     Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).run(
@@ -49,7 +53,7 @@ def test_saved_body_resumes_only_missing_postcheck_without_double_usage(tmp_path
     assert [s.target for s in store.load_chapter(0).text_segments] == first_targets
     assert all("Alice waited for Carl" not in text for text in resumed_handler.translation_inputs)
     assert store.completed_batch_glossary_keys(0)
-    assert store.load_usage()["totals"]["calls"] == (
+    assert require_value(store.load_usage())["totals"]["calls"] == (
         previous_calls + resumed.usage_summary()["totals"]["calls"]
     )
     assert store.pending_chapters() == []
@@ -64,7 +68,7 @@ def test_disabled_feature_makes_no_terminology_calls_or_artifacts(tmp_path):
     assert not any(call["operation"].startswith("terminology.") for call in client.calls)
     assert store.list_artifacts("terminology/") == []
     assert store.get_term("Alice") is None
-    assert store.load_analysis()["characters"][0]["note"] == "LOCAL ALICE"
+    assert require_value(store.load_analysis())["characters"][0]["note"] == "LOCAL ALICE"
 
 
 def test_initialization_retry_reuses_analysis_without_seeding_glossary(tmp_path, monkeypatch):
@@ -101,7 +105,7 @@ def test_initialization_retry_reuses_analysis_without_seeding_glossary(tmp_path,
     assert store.all_terms() == []
     assert store.open_conflicts() == []
     assert store.list_artifacts("terminology/") == []
-    previous_calls = store.load_usage()["totals"]["calls"]
+    previous_calls = require_value(store.load_usage())["totals"]["calls"]
     assert previous_calls == client.usage_summary()["totals"]["calls"]
     monkeypatch.setattr(store, "save_analysis", save_analysis)
     resumed = MeteredFakeClient(handler=InitializationHandler())
@@ -111,9 +115,9 @@ def test_initialization_retry_reuses_analysis_without_seeding_glossary(tmp_path,
     assert resumed.calls == []
     assert store.exists()
     assert store.all_terms() == []
-    assert store.load_analysis()["characters"] == [{"source": "Alice", "gender": ""}]
-    assert "terms" not in store.load_analysis()
-    assert store.load_usage()["totals"]["calls"] == previous_calls
+    assert require_value(store.load_analysis())["characters"] == [{"source": "Alice", "gender": ""}]
+    assert "terms" not in require_value(store.load_analysis())
+    assert require_value(store.load_usage())["totals"]["calls"] == previous_calls
 
 
 @pytest.mark.parametrize("reason", ["missing", "outside_input"])
@@ -160,7 +164,7 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
     assert store.get_term("Carl") is None
     diagnostics = store.list_artifacts("terminology/diagnostics/evidence/")
     assert len(diagnostics) == 1
-    diagnostic = store.read_artifact(diagnostics[0])
+    diagnostic = require_value(store.read_artifact(diagnostics[0]))
     assert diagnostic["schema_version"] == 1
     assert diagnostic["reason"] == reason
     assert diagnostic["operation"] == "terminology.evidence"
@@ -175,7 +179,7 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
     assert events[0]["diagnostic_key"] == diagnostics[0]
     assert "PRIVATE" not in json.dumps(diagnostic)
     assert "PRIVATE" not in json.dumps(events)
-    previous = store.load_usage()["totals"]["calls"]
+    previous = require_value(store.load_usage())["totals"]["calls"]
     assert previous == first.usage_summary()["totals"]["calls"]
     saved = {key: store.read_artifact(key) for key in store.list_artifacts("terminology/requests/")}
 
@@ -194,7 +198,7 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
     assert "Carl" in evidence_terms and "Alice" not in evidence_terms
     assert store.get_term("Carl") is not None
     assert store.pending_chapters() == []
-    assert store.load_usage()["totals"]["calls"] == (
+    assert require_value(store.load_usage())["totals"]["calls"] == (
         previous + resumed.usage_summary()["totals"]["calls"]
     )
     assert all(store.read_artifact(key) == value for key, value in saved.items())
@@ -262,7 +266,7 @@ def test_schema_failure_retains_successful_requests_and_usage_on_translation_res
     assert store.get_term("Alice") is None
     diagnostics = store.list_artifacts(f"terminology/diagnostics/{kind}/")
     assert len(diagnostics) == 1
-    diagnostic = store.read_artifact(diagnostics[0])
+    diagnostic = require_value(store.read_artifact(diagnostics[0]))
     assert diagnostic["reason"] == "invalid_fields"
     assert diagnostic["issues"] == [{"field": field, "code": code}]
     assert store.read_artifact(diagnostic["request_key"]) is None
@@ -273,7 +277,7 @@ def test_schema_failure_retains_successful_requests_and_usage_on_translation_res
     assert saved
     if kind == "merge":
         assert len(store.list_artifacts("terminology/requests/merge/")) == 2
-    previous = store.load_usage()["totals"]["calls"]
+    previous = require_value(store.load_usage())["totals"]["calls"]
     assert previous == first.usage_summary()["totals"]["calls"]
 
     resumed = MeteredFakeClient(handler=SchemaHandler(fail=False))
@@ -285,7 +289,7 @@ def test_schema_failure_retains_successful_requests_and_usage_on_translation_res
     assert all(call["operation"] != "analysis.style" for call in resumed.calls)
     if kind == "merge":
         assert all(call["operation"] != "terminology.evidence" for call in resumed.calls)
-    assert store.load_usage()["totals"]["calls"] == (
+    assert require_value(store.load_usage())["totals"]["calls"] == (
         previous + resumed.usage_summary()["totals"]["calls"]
     )
     assert store.pending_chapters() == []
@@ -341,7 +345,7 @@ def test_deferred_history_cache_resumes_without_rewriting_targets_or_rebilling_a
     events = store.list_events(event_type="glossary_history_alignment_deferred")
     assert len(events) == 1
     assert sum(call["operation"] == "glossary.align_history" for call in first.calls) == 1
-    previous = store.load_usage()["totals"]["calls"]
+    previous = require_value(store.load_usage())["totals"]["calls"]
     assert previous == first.usage_summary()["totals"]["calls"]
     resumed = MeteredFakeClient(handler=DelayedDiscoveryHandler(interrupt=False))
     Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).run(
@@ -360,7 +364,7 @@ def test_deferred_history_cache_resumes_without_rewriting_targets_or_rebilling_a
     assert store.get_term("Carl") is None
     assert store.pending_chapters() == []
     assert store.list_events(event_type="glossary_history_alignment_deferred") == events
-    assert store.load_usage()["totals"]["calls"] == (
+    assert require_value(store.load_usage())["totals"]["calls"] == (
         previous + resumed.usage_summary()["totals"]["calls"]
     )
     after = store.load_usage()
@@ -378,7 +382,7 @@ def test_enabling_context_reuses_analysis_without_seeding_glossary(tmp_path):
         str(source)
     )
     assert store.get_term("Carl") is None
-    characters = store.load_analysis()["characters"]
+    characters = require_value(store.load_analysis())["characters"]
     config.pipeline.terminology_context = True
     client = MeteredFakeClient(handler=FamilyHandler())
     Orchestrator(
@@ -388,8 +392,8 @@ def test_enabling_context_reuses_analysis_without_seeding_glossary(tmp_path):
         allow_terminology_context=True,
     ).prepare_for_translation(str(source))
     assert store.all_terms() == []
-    assert store.load_analysis()["characters"] == characters
-    assert "terms" not in store.load_analysis()
+    assert require_value(store.load_analysis())["characters"] == characters
+    assert "terms" not in require_value(store.load_analysis())
     assert client.calls == []
     assert all(
         s.target is None
@@ -417,12 +421,12 @@ def test_digest_failure_keeps_paid_usage_and_successful_chapter_cache(tmp_path):
     assert not store.exists()
     previous = first.usage_summary()["totals"]["calls"]
     assert previous == 2
-    assert store.load_usage()["totals"]["calls"] == previous
+    assert require_value(store.load_usage())["totals"]["calls"] == previous
     resumed = MeteredFakeClient(handler=FamilyHandler())
     Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).prepare(
         str(source)
     )
     assert [call["operation"] for call in resumed.calls].count("synopsis.chapter") == 1
-    assert store.load_usage()["totals"]["calls"] == (
+    assert require_value(store.load_usage())["totals"]["calls"] == (
         previous + resumed.usage_summary()["totals"]["calls"]
     )

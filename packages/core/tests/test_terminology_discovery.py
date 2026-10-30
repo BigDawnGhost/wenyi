@@ -11,6 +11,7 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.terminology import TerminologyService
 
 from tests.fake_llm import MeteredFakeClient
+from tests.storage_fixtures import require_value
 from tests.terminology_fixtures import FakeClient, FamilyHandler, book_store, inputs
 
 PASSAGES = [
@@ -125,7 +126,7 @@ def test_service_caches_filtered_results_safe_audit_and_usage_once(tmp_path, cap
     assert rejection_rows(result) == rows
     request_keys = store.list_artifacts("terminology/requests/discover/")
     assert len(request_keys) == 1
-    cached = store.read_artifact(request_keys[0])
+    cached = require_value(store.read_artifact(request_keys[0]))
     assert cached["rejections"] == rows
     assert [term["source"] for term in cached["terms"]] == ["Alice"]
     diagnostic_keys = store.list_artifacts("terminology/diagnostics/discover/")
@@ -145,7 +146,7 @@ def test_service_caches_filtered_results_safe_audit_and_usage_once(tmp_path, cap
     events = store.list_events(event_type="terminology_discovery_proposals_rejected")
     assert len(events) == 1
     assert "PRIVATE" not in json.dumps([diagnostic, events]) + caplog.text
-    usage = store.load_usage()
+    usage = require_value(store.load_usage())
     assert usage["totals"]["calls"] == 1
     resumed = TerminologyService.for_store(store, agent)
     again = resumed._discover(passages)
@@ -169,7 +170,9 @@ def test_service_caches_all_rejected_results_without_retrying_or_publishing(tmp_
     assert rejection_rows(result) == [rejected("terms", 0, "source_absent")]
     assert store.all_terms() == []
     assert store.list_artifacts("terminology/entries/") == []
-    diagnostic = store.read_artifact(store.list_artifacts("terminology/diagnostics/discover/")[0])
+    diagnostic = require_value(
+        store.read_artifact(store.list_artifacts("terminology/diagnostics/discover/")[0])
+    )
     assert diagnostic["accepted_terms_count"] == 0
     assert diagnostic["rejected_count"] == 1
     assert service._discover(passages) == result
@@ -185,7 +188,7 @@ def test_legacy_discovery_cache_without_rejections_is_reused(tmp_path):
     passages = service.index.for_segments(0, chapters[0].segments)
     first = service._discover(passages)
     key = store.list_artifacts("terminology/requests/discover/")[0]
-    legacy = store.read_artifact(key)
+    legacy = require_value(store.read_artifact(key))
     legacy.pop("rejections", None)
     store.write_artifact(key, legacy)
     usage = client.usage_summary()
@@ -227,4 +230,7 @@ def test_orchestrator_rejected_proposal_never_reaches_enrichment_or_formal_gloss
     assert store.get_term("PRIVATE_ABSENT") is None
     assert "PRIVATE_ABSENT" not in handler.enriched_sources
     assert store.list_events(event_type="terminology_discovery_proposals_rejected")
-    assert store.load_usage()["totals"]["calls"] == client.usage_summary()["totals"]["calls"]
+    assert (
+        require_value(store.load_usage())["totals"]["calls"]
+        == client.usage_summary()["totals"]["calls"]
+    )

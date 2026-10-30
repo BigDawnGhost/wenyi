@@ -1,13 +1,14 @@
 """Shared offline terminology responses and temporary source fixtures."""
 
 import json
-from types import SimpleNamespace
+from typing import Generic, TypeVar
 
 from wenyi_core.agents.terminology import TerminologyAgent
 from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import DiscoveryResult, KnowledgeResult, SourcePassage
 from wenyi_core.glossary.store import GlossaryTerm, source_matches_text
 from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.llm.base import LLMClient
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler
@@ -17,10 +18,12 @@ PASSAGES = [
 ]
 TERM = GlossaryTerm("Ann", "安")
 NAMES = {"Alice": "艾丽丝", "Beth": "贝丝", "Carl": "卡尔"}
+ClientT = TypeVar("ClientT", bound=LLMClient)
 
 
-class FakeClient:
+class FakeClient(LLMClient):
     def __init__(self, data):
+        super().__init__()
         self.data = data
         self.calls = []
 
@@ -29,15 +32,21 @@ class FakeClient:
         return json.dumps(self.data)
 
 
+class ResponseAgent(TerminologyAgent, Generic[ClientT]):
+    """Use the real agent with a typed, inspectable response client."""
+
+    def __init__(self, client: ClientT, config: Config):
+        super().__init__(client, config)
+        self.client = client
+
+
 def agent(data):
-    return TerminologyAgent(FakeClient(data), Config(source_lang="en", target_lang="zh"))
+    return ResponseAgent(FakeClient(data), Config(source_lang="en", target_lang="zh"))
 
 
-class EvidenceAgent:
-    language_policy = SimpleNamespace(fingerprint="test-policy-v1")
-
+class EvidenceAgent(TerminologyAgent):
     def __init__(self):
-        self.config = Config(source_lang="en", target_lang="zh")
+        super().__init__(FakeClient({}), Config(source_lang="en", target_lang="zh"))
         self.calls = []
         self.fail_evidence = False
         self.empty_evidence = False

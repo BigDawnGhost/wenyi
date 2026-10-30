@@ -12,6 +12,7 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.terminology import TerminologyService
 
 from tests.fake_llm import MeteredFakeClient
+from tests.storage_fixtures import require_value
 from tests.terminology_fixtures import EvidenceAgent, FamilyHandler, book_store, inputs
 
 
@@ -47,7 +48,7 @@ def test_nonperson_admission_uses_normal_glossary_without_evidence(tmp_path, ter
     assert service.admit(term, 1) == "inserted"
     assert store.get_term(term.source) == term
     assert service.admit(replace(term, target="不同建议"), 2) == "conflict"
-    assert store.get_term(term.source).target == term.target
+    assert require_value(store.get_term(term.source)).target == term.target
     assert len(store.open_conflicts()) == 1
     assert agent.calls == []
     assert store.list_artifacts("terminology/") == []
@@ -65,7 +66,7 @@ def test_stored_type_controls_evidence_scope(tmp_path, stored_type, candidate_ty
 
     service.admit(GlossaryTerm("Alice", "艾丽丝", type=candidate_type))
 
-    current = store.get_term("Alice")
+    current = require_value(store.get_term("Alice"))
     assert current.type == stored_type
     assert bool(agent.calls) is (stored_type == TYPE_PERSON)
     assert bool(current.note) is (stored_type == TYPE_PERSON)
@@ -110,7 +111,7 @@ def test_pretranslation_filters_nonpersons_before_history_and_refresh(tmp_path, 
     assert [term.source for term in extracted] == ["Alice"]
     assert enriched == ["Alice", "Carl"]
     assert store.get_term("waited") is None
-    assert store.get_term("uncle").note == "Local note"
+    assert require_value(store.get_term("uncle")).note == "Local note"
 
 
 def test_mixed_pipeline_keeps_nonperson_backfill_without_enrichment(tmp_path):
@@ -181,13 +182,16 @@ def test_mixed_pipeline_keeps_nonperson_backfill_without_enrichment(tmp_path):
     assert handler.enriched
     assert all(term["type"] == TYPE_PERSON for term in handler.enriched)
     assert "Dora" in {term["source"] for term in handler.enriched}
-    assert store.get_term("Tower").note == "Extracted note"
-    assert store.get_term("sword").note == "Local note"
-    assert store.get_term("Dora").note.endswith("全书人物说明。")
+    assert require_value(store.get_term("Tower")).note == "Extracted note"
+    assert require_value(store.get_term("sword")).note == "Local note"
+    assert require_value(store.get_term("Dora")).note.endswith("全书人物说明。")
     assert "sword →" not in handler.translation_inputs[0]
     assert "Tower →" not in handler.translation_inputs[0]
     assert store.pending_chapters() == []
-    assert store.load_usage()["totals"]["calls"] == client.usage_summary()["totals"]["calls"]
+    assert (
+        require_value(store.load_usage())["totals"]["calls"]
+        == client.usage_summary()["totals"]["calls"]
+    )
     saved = store.load_chapter(0)
     usage = store.load_usage()
     resumed = MeteredFakeClient(handler=MixedHandler())

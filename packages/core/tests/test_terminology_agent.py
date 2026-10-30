@@ -226,5 +226,7 @@ def test_merge_keeps_exact_alias_and_reference_union_locally():
 def test_merge_rejects_unbounded_secondary_fields(field):
     worker = agent({})
     with pytest.raises(ValueError, match=f"{field}:string_too_long"):
-        worker.merge(TERM, [KnowledgeResult(**{field: "x" * 257}, evidence_refs=["r"])])
+        worker.merge(
+            TERM, [KnowledgeResult.model_validate({field: "x" * 257, "evidence_refs": ["r"]})]
+        )
     assert worker.client.calls == []

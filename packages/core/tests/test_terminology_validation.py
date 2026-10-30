@@ -13,6 +13,7 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.terminology import TerminologyService
 
+from tests.storage_fixtures import require_value
 from tests.terminology_fixtures import PASSAGES, TERM, agent, book_store
 
 
@@ -99,14 +100,16 @@ def test_provider_extra_field_is_diagnosed_before_caching_or_publication(tmp_pat
     assert store.list_artifacts("terminology/requests/evidence/") == []
     keys = store.list_artifacts("terminology/diagnostics/evidence/")
     assert len(keys) == 1
-    diagnostic = store.read_artifact(keys[0])
+    diagnostic = require_value(store.read_artifact(keys[0]))
     assert diagnostic["issues"] == [{"field": "<extra>", "code": "extra_forbidden"}]
     events = store.list_events(event_type="terminology_knowledge_validation_failed")
     assert len(events) == 1
     assert "PRIVATE" not in json.dumps(diagnostic) + json.dumps(events)
     handler.fail = False
     assert service.admit(term) == "inserted"
-    cached = store.read_artifact(store.list_artifacts("terminology/requests/evidence/")[0])
+    cached = require_value(
+        store.read_artifact(store.list_artifacts("terminology/requests/evidence/")[0])
+    )
     assert cached["note"] == "Supported ordinary metadata"
     record = store.read_artifact(store.list_artifacts("terminology/entries/")[0])
     assert "PRIVATE" not in json.dumps(cached) + json.dumps(record)

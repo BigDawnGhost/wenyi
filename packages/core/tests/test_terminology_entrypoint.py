@@ -17,9 +17,10 @@ from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.review.session import ReviewRoundResult
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
-from tests.storage_fixtures import MemoryArtifacts
+from tests.storage_fixtures import require_value
 from tests.terminology_fixtures import FamilyHandler
 
 
@@ -48,16 +49,14 @@ def config(tmp_path, *, enabled=True):
 @pytest.mark.parametrize("injected", [False, True])
 def test_non_cli_generation_fails_before_parsing_calls_or_artifacts(tmp_path, entry, injected):
     client = FakeClient(handler=routing_handler)
-    storage = MemoryArtifacts(tmp_path / "resources") if injected else None
+    storage = Mock(spec=Storage) if injected else None
     orch = Orchestrator(config(tmp_path), client=client, storage=storage)
     with pytest.raises(ValueError, match="supported only by CLI prepare/translate"):
         getattr(orch, entry)(str(tmp_path / "missing.txt"))
     assert client.calls == []
     assert not (tmp_path / "state").exists()
     if storage is not None:
-        assert storage.data == {}
-        assert storage.events == []
-        assert storage.manifest == {}
+        assert storage.mock_calls == []
 
 
 def test_permission_does_not_enable_the_feature_when_config_is_disabled(tmp_path):
@@ -95,7 +94,7 @@ def test_real_cli_produces_evidence_only_during_translation(tmp_path, entry):
     store = FileStorage(str(manifests[0].parent))
     with store.lock():
         if entry == "translate":
-            assert store.get_term("Alice").note.endswith("全书人物说明。")
+            assert require_value(store.get_term("Alice")).note.endswith("全书人物说明。")
             assert store.list_artifacts("terminology/requests/evidence/")
         else:
             assert store.all_terms() == []
@@ -149,7 +148,7 @@ def test_translation_retains_legacy_character_notes_when_feature_is_disabled(tmp
         config(tmp_path, enabled=False), client=FakeClient(handler=FamilyHandler()), storage=store
     ).prepare(str(source))
     with store.lock():
-        analysis = store.load_analysis()
+        analysis = require_value(store.load_analysis())
         analysis["characters"][0]["note"] = "LEGACY_CHARACTER_NOTE"
         store.save_analysis(analysis)
         store.upsert_term(
