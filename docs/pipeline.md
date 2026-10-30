@@ -135,6 +135,16 @@ requests use the same full glossary snapshot. Review reuse and resume compare th
 full-glossary policy marker and every glossary field, including aliases, pronunciation,
 gender, notes, and entry order. Any mismatch starts a new Review; caches created before
 this policy are preserved but not reused. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
+
+Reviewer system instructions are invariant across chunk sizes. The actual paragraph
+count and paragraph pairs appear only after the full glossary in the user message.
+The response must still contain the exact `reviewed_segments` count and `complete:true`;
+the validation is unchanged. This removes an avoidable prefix-cache obstacle without
+filtering glossary coverage or adding provider-specific cache markers. Provider cache
+hits are not guaranteed. The template change follows the existing language-policy
+fingerprint rules, so older Review caches may require fresh calls; saved translations
+and historical artifacts remain intact.
+
 Recoverable provider stops during evidence verification, arbitration, or shadow revision
 propagate to this interruption path instead of becoming terminal Agent fallbacks or
 unresolved fixer suggestions. Completed evidence turns remain reusable. The same stops

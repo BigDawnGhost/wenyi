@@ -49,6 +49,11 @@ Once parsing finishes, **Read contents & source** opens the chapter list and ori
 
 Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
 
+The shared usage display separates cache reads, writes, ordinary input and unknown
+classification. **Cache read / all input** includes unknown input in its denominator;
+historical misses are not reclassified as ordinary input. Available write TTL subtotals
+are shown separately. See [usage accounting](cli.md#usage-and-event-logs) for details.
+
 ### 4. Proofread and save
 
 Compare the translation with the source, edit paragraphs, inspect revisions, and review reported issues. Review can publish fixes to the translation; disable automatic fixes when you want a read-only review. Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.

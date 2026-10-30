@@ -25,17 +25,16 @@ export function amount(value: unknown): number | undefined {
 }
 
 export function cacheRate(slot: Record<string, unknown>) {
-  const hit = amount(slot.cache_hit_tokens);
-  const miss = amount(slot.cache_miss_tokens);
+  const parts = tokenParts(slot);
   const input = amount(slot.prompt_tokens);
-  if (
-    hit === undefined ||
-    miss === undefined ||
-    hit + miss === 0 ||
-    (input !== undefined && hit + miss > input)
-  )
-    return undefined;
-  return hit / (hit + miss);
+  if (!input || parts.cachedInput === undefined) return undefined;
+  return parts.cachedInput / input;
+}
+
+export function reportedAmount(slot: Record<string, unknown>, field: string) {
+  const value = amount(slot[field]);
+  const presence = amount(slot[field.replace(/_tokens$/, "_reported_calls")]);
+  return presence === 0 && !value ? undefined : value;
 }
 
 export function formatDuration(value: unknown, t: Translator) {
@@ -55,17 +54,22 @@ export function tokenParts(slot: Record<string, unknown>) {
   const input = amount(slot.prompt_tokens) ?? 0;
   const output = amount(slot.completion_tokens) ?? 0;
   const total = amount(slot.total_tokens) ?? input + output;
-  const cached = amount(slot.cache_hit_tokens);
-  const uncached = amount(slot.cache_miss_tokens);
-  const reported = (cached ?? 0) + (uncached ?? 0);
-  // Unreported cache usage cannot be inferred to be a cache miss.
-  const validCache = reported <= input;
+  const legacy = slot.cache_unknown_tokens === undefined;
+  let cached = reportedAmount(slot, "cache_hit_tokens");
+  const miss = amount(slot.cache_miss_tokens) ?? 0;
+  if (legacy && !cached && !amount(slot.cache_hit_reported_calls)) cached = undefined;
+  const written = reportedAmount(slot, "cache_write_tokens");
+  const uncached = reportedAmount(slot, "uncached_tokens");
+  const reported = (cached ?? 0) + (written ?? 0) + (uncached ?? 0);
+  // Historical misses cannot be split into cache writes and ordinary input.
+  const validCache = reported <= input && (!legacy || (cached ?? 0) + miss <= input);
   return {
     input,
     output,
     other: Math.max(0, total - input - output),
     total,
     cachedInput: validCache ? cached : undefined,
+    writtenInput: validCache ? written : undefined,
     uncachedInput: validCache ? uncached : undefined,
     unknownInput: validCache ? input - reported : input,
   };
@@ -79,7 +83,15 @@ export function usageRows(usage: Record<string, unknown>, group: UsageGroup) {
     // A model's ledger identity also includes inference options and output limits.
     // Combine matching provider/model names only in this presentation view.
     const key = group === "by_model" && label ? `model:${label}` : `id:${id}`;
-    const slot = record(value);
+    const original = record(value);
+    const parts = tokenParts(original);
+    const slot: Record<string, unknown> = {
+      ...original,
+      cache_hit_tokens: parts.cachedInput,
+      cache_write_tokens: parts.writtenInput,
+      uncached_tokens: parts.uncachedInput,
+      cache_unknown_tokens: parts.unknownInput,
+    };
     const existing = rows.get(key);
     if (!existing) {
       rows.set(key, { id, slot: { ...slot } });
@@ -92,11 +104,25 @@ export function usageRows(usage: Record<string, unknown>, group: UsageGroup) {
       "total_tokens",
       "cache_hit_tokens",
       "cache_miss_tokens",
+      "cache_write_tokens",
+      "uncached_tokens",
+      "cache_unknown_tokens",
+      "cache_write_5m_tokens",
+      "cache_write_1h_tokens",
+      "cache_hit_reported_calls",
+      "cache_write_reported_calls",
+      "uncached_reported_calls",
+      "cache_write_5m_reported_calls",
+      "cache_write_1h_reported_calls",
     ]) {
       const left = amount(existing.slot[field]);
       const right = amount(slot[field]);
+      const partialCounter = field.startsWith("cache_") || field.startsWith("uncached_");
       existing.slot[field] =
-        left === undefined || right === undefined ? undefined : left + right;
+        (left === undefined && right === undefined) ||
+        (!partialCounter && (left === undefined || right === undefined))
+          ? undefined
+          : (left ?? 0) + (right ?? 0);
     }
     delete existing.slot.cache_hit_rate;
   }
