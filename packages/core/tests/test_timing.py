@@ -13,17 +13,9 @@ from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.srt.store import SrtRunStore
 from wenyi_core.srt.translate import translate_srt
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 from wenyi_core.timing import RunTimer, format_duration, load_timing
 
 from tests.fake_llm import routing_handler
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 @pytest.mark.parametrize("store_type", [RunStore, SrtRunStore])

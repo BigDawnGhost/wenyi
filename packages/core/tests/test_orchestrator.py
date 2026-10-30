@@ -19,20 +19,13 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import STATUS_DONE, STATUS_PENDING
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config as _config
+from tests.pipeline_fixtures import require_file_storage
 from tests.review_fixtures import fix_json as _fix_json
 from tests.review_fixtures import review_json as _review_json
 from tests.sample_data import write_sample_txt
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _translated_para_count(calls) -> int:

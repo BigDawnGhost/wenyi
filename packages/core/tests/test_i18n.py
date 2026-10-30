@@ -28,17 +28,9 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import translation_run_dir
 from wenyi_core.srt.translate import translate_srt
-from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
+from tests.pipeline_fixtures import require_file_storage
 
 
 def test_non_chinese_translation_has_no_chinese_target_instruction():
