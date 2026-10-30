@@ -154,7 +154,7 @@ for (const initiallyBackground of [false, true]) {
     let reads = 0;
     await page.route(`${origin}/projects`, route => {
       reads++;
-      return route.fulfill({ json: [project] });
+      return route.fulfill({ json: [{ ...project, status: "translating" }] });
     });
     await page.goto("/");
     await expect.poll(async () => {
@@ -200,6 +200,45 @@ test("hiding and restoring preserves an unsaved paragraph draft", async ({ page 
   await setBackground(page, false);
   await page.clock.runFor(1000);
   await expect(draft).toHaveValue("Unsaved local draft");
+});
+
+test("a terminal response arriving while hidden defers final reads until restore", async ({ page }) => {
+  await bootstrap(page);
+  await fakeApi(page, {}, origin);
+  let hold = false;
+  let held = false;
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`${origin}/projects/${pid}`, async route => {
+    if (hold) {
+      held = true;
+      await delayed;
+    }
+    await route.fulfill({ json: { ...project, status: hold ? "done" : "translating" } });
+  });
+  const reads: string[] = [];
+  page.on("request", request => {
+    if (request.url().startsWith(origin)) reads.push(request.url());
+  });
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  await expect.poll(async () => {
+    await page.clock.runFor(100);
+    return page.getByTestId("translation-text").count();
+  }).toBe(1);
+  hold = true;
+  await page.clock.runFor(3000);
+  await expect.poll(() => held).toBe(true);
+  await setBackground(page, true);
+  const before = [...reads];
+  release();
+  await expect.poll(async () => {
+    await page.clock.runFor(100);
+    return page.getByText("Read-only while a task runs", { exact: true }).count();
+  }).toBe(0);
+  await page.clock.runFor(60_000);
+  expect(reads).toEqual(before);
+  await setBackground(page, false);
+  await expect.poll(() => reads.length).toBeGreaterThan(before.length);
 });
 
 for (const kind of ["translation", "review"] as const) {

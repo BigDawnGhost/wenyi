@@ -7,10 +7,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..transport import Messages, ResolvedModel
+from ..usage import UsageSample
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
     base_request_kwargs,
     deep_merge,
+    normalize_openai_usage,
 )
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -50,6 +52,9 @@ class OpenAIClient(OpenAICompatibleBaseClient[OpenAIOptions]):
     default_base_url = DEFAULT_BASE_URL
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
+
+    def _normalize_usage(self, usage: Any) -> UsageSample | None:
+        return normalize_openai_usage(usage, separate_cache_writes=False)
 
     def _build_request_kwargs(
         self,

@@ -6,6 +6,7 @@ import {
   amount,
   cacheRate,
   record,
+  reportedAmount,
   tokenParts,
   usageRows,
   type UsageGroup,
@@ -29,6 +30,11 @@ function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
       label: "accounting.cachedInput",
       value: parts.cachedInput,
       color: "bg-sky-300",
+    },
+    {
+      label: "accounting.writtenInput",
+      value: parts.writtenInput,
+      color: "bg-amber-500",
     },
     {
       label: "accounting.uncachedInput",
@@ -179,6 +185,14 @@ export default function UsageChart({
                     {t("data.cacheHitRate")}:{" "}
                     {rate === undefined ? "—" : percent.format(rate)}
                   </span>
+                  {["5m", "1h"].map((ttl) => {
+                    const value = reportedAmount(slot, `cache_write_${ttl}_tokens`);
+                    return value === undefined ? null : (
+                      <span key={ttl}>
+                        {t("accounting.writeTtl", { ttl, count: number(value) })}
+                      </span>
+                    );
+                  })}
                 </div>
               </li>
             );

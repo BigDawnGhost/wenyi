@@ -59,9 +59,8 @@ for (const { locale, entry } of [
     await expect(page.getByRole("status").filter({ hasText: zh ? "AI 预处理尚未完成，暂为只读" : "Read-only until AI preparation is complete" })).toBeVisible();
     for (const status of ["preparing", "error"]) {
       state.status = status;
-      await page.waitForResponse(async (response) =>
-        response.url().endsWith(`/projects/${pid}`) && (await response.json()).status === status,
-      );
+      // Idle projects do not poll for work started by another client.
+      await page.reload();
       await expect(page.getByRole("button", { name: zh ? "段落操作" : "Paragraph actions" })).toHaveCount(0);
       await expect(page.getByText("Parsed source paragraph.", { exact: true })).toBeVisible();
     }
@@ -71,6 +70,7 @@ for (const { locale, entry } of [
     await expect(page.getByRole("button", { name: editTitle })).toBeDisabled();
     state.initialized = true;
     state.status = "done";
+    await page.reload();
     await expect(page.getByRole("button", { name: editTitle })).toBeEnabled({ timeout: 10000 });
     await page.getByRole("link", { name: zh ? "跳转人工校阅" : "Open in proofreading" }).click();
     await expect(page.getByText("Translated paragraph.", { exact: true })).toBeVisible({ timeout: 10000 });

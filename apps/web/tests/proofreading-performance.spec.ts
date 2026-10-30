@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid, project } from "./fixtures";
 
 // Synthetic, offline mixed-language text: never load a user's book.
 const count = Number(process.env.PERF_PARAGRAPHS || 2000);
@@ -46,7 +46,8 @@ test("large chapter reading, polling and editing measurements", async ({ page },
     };
   });
   let reads = 0;
-  await fakeApi(page);
+  const savedProject = { ...project, status: "translating" };
+  await fakeApi(page, { [`/projects/${pid}`]: savedProject });
   await page.route(`**/api/projects/${pid}/review/0`, (route) => {
     reads++;
     return route.fulfill({ json: { index: 0, title: "Synthetic chapter", segments, review_issues: [] } });
@@ -64,6 +65,8 @@ test("large chapter reading, polling and editing measurements", async ({ page },
   // Allow the response's React commit to finish.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const pollRenders = await page.evaluate(() => (window as any).__perf.renders) - initialRenders;
+  savedProject.status = "paused";
+  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
   const frames = await page.locator("#paragraph-0").evaluate(async (row) => {
     let scroller = row.parentElement!;
     while (scroller.parentElement && scroller.scrollHeight <= scroller.clientHeight) scroller = scroller.parentElement;
@@ -115,6 +118,9 @@ test("large chapter preserves deep links, find, cross-paragraph selection and dr
   await page.route(`**/api/projects/${pid}/review/0`, (route) =>
     route.fulfill({ json: { index: 0, title: "Synthetic chapter", segments: rows, review_issues: [] } }),
   );
+  await page.route(`**/api/projects/${pid}/review/0/segments/998`, (route) =>
+    route.fulfill({ status: 409, json: { detail: "Translation changed before saving" } }),
+  );
   await page.goto(`/projects/${pid}/proofreading/0?segment=998`);
   const linked = page.locator("#paragraph-998");
   await expect(linked).toBeFocused();
@@ -140,7 +146,9 @@ test("large chapter preserves deep links, find, cross-paragraph selection and dr
   await page.getByRole("menuitem", { name: "Edit translation", exact: true }).click();
   const input = page.getByLabel("Edit translation", { exact: true });
   await input.fill("Keep my draft 保留草稿");
+  rows[998].target = "Concurrent saved translation";
   rows[999].target = "";
+  await page.getByRole("button", { name: "Save translation", exact: true }).click();
   await expect(page.locator("#paragraph-999").getByTestId("translation-text")).toHaveText("(Empty translation)");
   await expect(input).toHaveValue("Keep my draft 保留草稿");
   await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).last().click();

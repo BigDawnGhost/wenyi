@@ -11,36 +11,13 @@ from unittest.mock import patch
 
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.reviewer import Reviewer, ReviewOutputError
-from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.ingest.models import Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
-from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
-
-
-def _cfg():
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
-        }
-    )
+from tests.pipeline_fixtures import fake_agent_config as _cfg
 
 
 def _review_response(issues, count):
@@ -55,6 +32,26 @@ def _review_response(issues, count):
 
 
 class TestReviewer(unittest.TestCase):
+    def test_review_prefix_is_stable_across_chunk_sizes(self):
+        def respond(messages, _tier, _json):
+            count = re.search(r"\[Paragraph pairs\] \((\d+) paragraphs\)", messages[1]["content"])
+            assert count is not None
+            return _review_response([], int(count[1]))
+
+        client = FakeClient(handler=respond)
+        reviewer = Reviewer(client, _cfg())
+        glossary = [GlossaryTerm(source="Alice", target="爱丽丝")]
+        reviewer.review(["Alice"], ["爱丽丝"], glossary)
+        reviewer.review(["Alice", "Hello"], ["爱丽丝", "你好"], glossary)
+        first, second = [call["messages"] for call in client.calls]
+        self.assertEqual(first[0]["content"], second[0]["content"])
+        self.assertEqual(
+            first[1]["content"].split("[Paragraph pairs]")[0],
+            second[1]["content"].split("[Paragraph pairs]")[0],
+        )
+        self.assertIn('"reviewed_segments":1', first[1]["content"])
+        self.assertIn('"reviewed_segments":2', second[1]["content"])
+
     def test_review_reports_issues(self):
         issues = [
             {
@@ -75,7 +72,7 @@ class TestReviewer(unittest.TestCase):
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
         self.assertEqual(client.calls[-1]["tier"], "cheap")  # Review uses the cheap tier.
-        self.assertIn('"reviewed_segments":2', client.calls[-1]["messages"][0]["content"])
+        self.assertIn('"reviewed_segments":2', client.calls[-1]["messages"][1]["content"])
 
     def test_reviewer_drops_fields_outside_the_initial_issue_contract(self):
         """Cheap initial review cannot bypass the strong agent to inject cross-block

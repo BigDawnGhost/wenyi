@@ -36,18 +36,10 @@ from wenyi_core.llm.usage import (
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
 from tests.model_fixtures import model_config
 from tests.sample_data import write_sample_txt
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _make_usage(
@@ -531,10 +523,10 @@ class TestMissingUsage(unittest.TestCase):
 
 
 class TestEmptyCacheHitRate(unittest.TestCase):
-    def test_fresh_client_zero_hit_rate_and_full_keys(self):
+    def test_fresh_client_unknown_hit_rate_and_full_keys(self):
         c = FakeClient()
         totals = c.usage_summary()["totals"]
-        self.assertEqual(totals["cache_hit_rate"], 0.0)
+        self.assertIsNone(totals["cache_hit_rate"])
         self.assertEqual(totals["total_tokens"], 0)
         for key in (
             "calls",

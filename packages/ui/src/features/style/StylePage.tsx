@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import { skipToken, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { api, isProjectBusy, type AnalysisPayload } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,11 +37,7 @@ export default function StylePage() {
   });
   const setDraft = (update: (current: Record<string, string>) => Record<string, string>) =>
     qc.setQueryData<Record<string, string>>(["analysis-draft", pid], (current) => update(current || {}));
-  const { data: project } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const { data: project } = useProjectQuery(pid);
   const busy = isProjectBusy(project?.status);
   const { data, error } = useQuery({
     queryKey: ["analysis", pid],

@@ -17,17 +17,10 @@ from wenyi_core.pipeline.review_workflow import ReviewService
 from wenyi_core.pipeline.runtime import PipelineRuntime
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
+from tests.pipeline_fixtures import require_file_storage
 from tests.sample_data import write_sample_txt
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _config(tmp_path):
@@ -59,7 +52,15 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     debug = ReviewRunStore(store.run_dir)
     client.usage.record(
         "strong",
-        UsageSample(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        UsageSample(
+            prompt_tokens=7,
+            completion_tokens=3,
+            total_tokens=10,
+            cache_hit_tokens=1,
+            cache_write_tokens=3,
+            uncached_tokens=2,
+            cache_write_1h_tokens=3,
+        ),
         "review.verify",
         provider="provider-id",
         model="model-id",
@@ -104,6 +105,15 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     book_usage = store.load_usage()
     assert book_usage is not None
     assert book_usage["totals"]["calls"] == 1
+    for usage in (book_usage, review_usage):
+        totals = usage["totals"]
+        assert totals["cache_hit_tokens"] == 1
+        assert totals["cache_write_tokens"] == 3
+        assert totals["uncached_tokens"] == 2
+        assert totals["cache_unknown_tokens"] == 1
+        assert totals["cache_write_1h_tokens"] == 3
+        assert totals["cache_write_1h_reported_calls"] == 1
+        assert totals["cache_write_5m_reported_calls"] == 0
 
 
 def test_fixer_protocol_revisions_invalidate_old_autofix_plans(tmp_path, monkeypatch):

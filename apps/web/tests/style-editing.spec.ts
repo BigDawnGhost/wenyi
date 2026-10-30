@@ -177,6 +177,7 @@ test("a pending analysis save stays read-only after glossary navigation and Back
 });
 
 test("failed saves retain drafts for retry and busy projects remain read-only", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2025-01-01T00:00:00Z"));
   const submitted = await analysisFixture(page);
   let fail = true;
   await page.route(`**/projects/${pid}/analysis`, (route) =>
@@ -198,7 +199,17 @@ test("failed saves retain drafts for retry and busy projects remain read-only", 
   await page.route(`**/projects/${pid}`, (route) =>
     route.fulfill({ json: { ...project, status: "translating" } }),
   );
+  // Idle pages discover externally started tasks when reopened, not by polling.
+  await page.clock.setFixedTime(new Date("2025-01-01T00:00:06Z"));
+  const refreshed = page.waitForResponse(response =>
+    response.url().endsWith(`/projects/${pid}`) && response.request().method() === "GET",
+  );
+  await page.getByRole("link", { name: "Glossary", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("heading", { name: "Glossary", exact: true })).toBeVisible();
+  expect((await (await refreshed).json()).status).toBe("translating");
+  await page.goBack();
   await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled({ timeout: 8000 });
+  await expect(page.getByRole("textbox", { name: "Tone", exact: true })).toHaveValue("Unsaved tone");
   for (const [, label] of dimensions) {
     await expect(page.getByRole("textbox", { name: label, exact: true })).toBeDisabled();
   }

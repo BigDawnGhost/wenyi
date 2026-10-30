@@ -22,13 +22,6 @@ from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.storage_fixtures import MemoryArtifacts
 
 
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
-
-
 def test_review_rounds_resume_and_events_use_artifacts_without_creating_files(tmp_path):
     resource_dir = tmp_path / "resources"
     store = MemoryArtifacts(resource_dir)

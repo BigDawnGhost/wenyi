@@ -149,17 +149,9 @@ class TranslationService:
         )
         for chapter_index in chapter_indices:
             chapter = store.load_chapter(chapter_index)
-            for segment_index, segment in enumerate(chapter.text_segments):
-                source_parts.append(segment.source)
-                target = (segment.target or "").strip()
-                if not target:
-                    continue
-                history[(chapter_index, segment_index)] = TranslatedSegmentEvidence(
-                    chapter=chapter_index,
-                    segment=segment_index,
-                    source=segment.source,
-                    target=target,
-                )
+            segments = chapter.text_segments
+            source_parts.extend(segment.source for segment in segments)
+            TranslationService.update_translation_history(history, chapter_index, 0, segments)
         return history, "\n".join(source_parts)
 
     @staticmethod
@@ -167,7 +159,7 @@ class TranslationService:
         history: dict[tuple[int, int], TranslatedSegmentEvidence],
         chapter: int,
         start_index: int,
-        segments,
+        segments: list[Segment],
     ) -> None:
         """Update the in-memory location index with the latest source/target batch."""
         for offset, segment in enumerate(segments):
@@ -260,26 +252,7 @@ class TranslationService:
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Blank "" is a completed MinerU allowance; only None means not yet translated.
-                self._annotations.align_annotations_after_batch(
-                    ci,
-                    chapter,
-                    batch_start,
-                    len(b),
-                    store,
-                )
-                self._docx_styles.align_styles_after_batch(
-                    ci,
-                    chapter,
-                    batch_start,
-                    len(b),
-                    store,
-                )
-                context.add_targets([s.target or "" for s in b])
-                self.sync_context_chapter_prefix(
-                    context,
-                    text_segs,
-                    batch_start + len(b),
-                )
+                self._align_batch_context(store, chapter, text_segs, context, batch_start, len(b))
                 if glossary_key in glossary_checkpoints:
                     summary = {
                         "inserted": 0,
@@ -385,29 +358,7 @@ class TranslationService:
                     segment.target_before_polish = before_polish
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
-            # Handle only annotated logical paragraphs touched by this batch, in source order.
-            # If the batch contains only an initial slice of a long paragraph, wait until its final
-            # continuation finishes before merging and aligning.
-            self._annotations.align_annotations_after_batch(
-                ci,
-                chapter,
-                batch_start,
-                len(b),
-                store,
-            )
-            self._docx_styles.align_styles_after_batch(
-                ci,
-                chapter,
-                batch_start,
-                len(b),
-                store,
-            )
-            context.add_targets([s.target or "" for s in b])
-            self.sync_context_chapter_prefix(
-                context,
-                text_segs,
-                batch_start + len(b),
-            )
+            self._align_batch_context(store, chapter, text_segs, context, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -472,6 +423,28 @@ class TranslationService:
             segment_count=len(text_segs),
         )
         return done
+
+    def _align_batch_context(
+        self,
+        store: Storage,
+        chapter: Chapter,
+        text_segments: list[Segment],
+        context: RollingContext,
+        start: int,
+        count: int,
+    ) -> None:
+        """Align saved or newly translated text before updating the rolling context.
+
+        Alignment handles touched logical paragraphs in source order, waiting for their
+        final continuation. Refresh the completed prefix because alignment can also
+        update targets from earlier batches.
+        """
+        self._annotations.align_annotations_after_batch(chapter.index, chapter, start, count, store)
+        self._docx_styles.align_styles_after_batch(chapter.index, chapter, start, count, store)
+        context.add_targets(
+            [segment.target or "" for segment in text_segments[start : start + count]]
+        )
+        self.sync_context_chapter_prefix(context, text_segments, start + count)
 
     @staticmethod
     def save_precision_batch(store: Storage, plan: BatchPlan, result: BatchResult) -> Chapter:

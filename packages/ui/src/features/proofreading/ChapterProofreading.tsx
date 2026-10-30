@@ -10,21 +10,22 @@ import { ErrorNotice, ReadOnlyNotice, StructuredData } from "@/components/ui/dat
 import { Disclosure } from "@/components/ui/disclosure";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphEditor } from "./ParagraphEditor";
+import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
 
 const ParagraphRow = memo(function ParagraphRow({
   index,
   source,
   target,
-  disabled,
+  expanded,
   sourceOnly,
-  onOpen,
+  onMenu,
 }: {
   index: number;
   source: string;
   target: string | null | undefined;
-  disabled: boolean;
+  expanded: boolean;
   sourceOnly: boolean;
-  onOpen: (index: number, view: "edit" | "history" | "precision") => void;
+  onMenu: (anchor: ParagraphMenuAnchor) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -46,10 +47,10 @@ const ParagraphRow = memo(function ParagraphRow({
       </div>
       {!sourceOnly && (
         <ParagraphActions
-          source={source}
+          index={index}
           target={target}
-          disabled={disabled}
-          onOpen={(view) => onOpen(index, view)}
+          expanded={expanded}
+          onMenu={onMenu}
         />
       )}
     </div>
@@ -79,6 +80,8 @@ export function ChapterProofreading({
   const [searchParams] = useSearchParams();
   const requested = searchParams.get("segment");
   const focused = useRef<string | undefined>(undefined);
+  const [menu, setMenu] = useState<ParagraphMenuAnchor | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
   const [editor, setEditor] = useState<{
     index: number;
     view: "edit" | "history" | "precision";
@@ -86,9 +89,9 @@ export function ChapterProofreading({
   const validIndex = Number.isSafeInteger(index) && index >= 0;
   const chapter = useQuery({
     queryKey: ["review", pid, index],
-    queryFn: () => api.getReview(pid, index),
+    queryFn: ({ signal }) => api.getReview(pid, index, signal),
     enabled: validIndex,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   const current = chapters.findIndex((c) => c.index === index);
   const previous = current > 0 ? chapters[current - 1] : undefined;
@@ -106,6 +109,7 @@ export function ChapterProofreading({
   const paragraphs = segments.filter((s) => s.kind === "text");
   const saved = paragraphs.filter((s) => s.target != null).length;
   const activeSegment = segments.find((s) => s.index === editor?.index);
+  const menuSegment = segments.find((s) => s.index === menu?.index);
   useEffect(() => {
     if (!requested || !/^\d+$/.test(requested)) {
       focused.current = undefined;
@@ -175,13 +179,23 @@ export function ChapterProofreading({
                 index={segment.index}
                 source={segment.source}
                 target={segment.target}
-                disabled={readOnly || chapter.isError}
+                expanded={menu?.index === segment.index}
                 sourceOnly={sourceOnly}
-                onOpen={openEditor}
+                onMenu={setMenu}
               />
             ))}
           </CardContent>
         </Card>
+        {!sourceOnly && menu && menuSegment && (
+          <ParagraphMenu
+            anchor={menu}
+            source={menuSegment.source}
+            target={menuSegment.target}
+            disabled={readOnly || chapter.isError}
+            onOpen={openEditor}
+            onClose={closeMenu}
+          />
+        )}
         {!sourceOnly && editor && activeSegment && (
           <ParagraphEditor
             key={activeSegment.index}
@@ -196,7 +210,7 @@ export function ChapterProofreading({
           />
         )}
         {!sourceOnly && (
-          <Disclosure title={t("review.recordedReviewNotesForThisChapter")}>
+          <Disclosure lazy title={t("review.recordedReviewNotesForThisChapter")}>
             <StructuredData
               value={chapter.data?.review_issues}
               empty={t("review.noNotesRecordedCheckTheWholeBook")}
