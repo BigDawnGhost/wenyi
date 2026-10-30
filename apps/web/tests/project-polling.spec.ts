@@ -8,11 +8,20 @@ for (const status of ["done", "paused"]) {
   ]) {
     test(`${status} projects do not poll on ${route || "/overview"}`, async ({ page }) => {
       await page.clock.install();
+      const saved = {
+        ...project, status, fmt: route === "/subtitles" ? "srt" : "epub",
+      };
       await fakeApi(page, {
-        [`/projects/${pid}`]: {
-          ...project, status, fmt: route === "/subtitles" ? "srt" : "epub",
-        },
+        [`/projects/${pid}`]: saved,
       });
+      const hasProgressSocket = !route || route === "/review";
+      const reconciledName = `${project.name} (reconciled)`;
+      let projectReads = 0;
+      if (hasProgressSocket) {
+        await page.route(`**/api/projects/${pid}`, route => route.fulfill({
+          json: { ...saved, name: ++projectReads > 1 ? reconciledName : project.name },
+        }));
+      }
       let authenticated = false;
       await page.routeWebSocket("**/ws/**", socket => {
         socket.onMessage(() => { authenticated = true; });
@@ -28,16 +37,23 @@ for (const status of ["done", "paused"]) {
       page.on("requestfailed", request => pending.delete(request));
       await page.goto(`/projects/${pid}${route}`);
       await expect(page.getByRole("main").getByRole("heading").first()).toBeVisible();
-      if (!route || route === "/review")
-        await expect.poll(() => authenticated).toBe(true);
       if (route === "/proofreading/0") {
         await page.getByRole("button", { name: "Paragraph actions", exact: true }).click();
         await page.getByRole("menuitem", { name: "Change history", exact: true }).click();
         await expect(page.getByRole("tab", { name: "Change history", exact: true }))
           .toHaveAttribute("aria-selected", "true");
       }
-      // Drain initial queries and the socket's one-off snapshot reconciliation.
-      await page.clock.runFor(1500);
+      if (hasProgressSocket) {
+        await expect.poll(() => authenticated).toBe(true);
+        // Authentication alone does not mean the coalesced refresh has run.
+        // Wait for its saved metadata to render before measuring idle requests.
+        await expect.poll(async () => {
+          await page.clock.runFor(100);
+          return page.getByTitle(reconciledName, { exact: true }).count();
+        }).toBe(1);
+      } else {
+        await page.clock.runFor(1500);
+      }
       await expect.poll(() => pending.size).toBe(0);
       const initial = [...reads];
       expect(initial.length).toBeGreaterThan(0);
