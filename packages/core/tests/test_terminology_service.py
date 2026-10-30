@@ -11,73 +11,11 @@ from wenyi_core.glossary.evidence_models import (
 )
 from wenyi_core.glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.terminology import TerminologyService
-from wenyi_core.storage.file import FileStorage
 
-
-class EvidenceAgent:
-    language_policy = SimpleNamespace(fingerprint="test-policy-v1")
-
-    def __init__(self):
-        self.config = Config(source_lang="en", target_lang="zh")
-        self.calls = []
-        self.fail_evidence = False
-        self.empty_evidence = False
-
-    def discover(self, passages, existing):
-        self.calls.append(("discover", tuple(p.reference for p in passages)))
-        return DiscoveryResult(
-            terms=[GlossaryTerm("Alice", "艾丽丝"), GlossaryTerm("Carl", "卡尔")],
-        )
-
-    def enrich(self, term, passages):
-        self.calls.append(("evidence", tuple(p.reference for p in passages)))
-        if self.fail_evidence:
-            raise RuntimeError("Injected evidence interruption")
-        if self.empty_evidence:
-            return KnowledgeResult()
-        return KnowledgeResult(
-            note=f"{term.target}：根据全书原文确认的人物信息。",
-            evidence_refs=[p.reference for p in passages],
-        )
-
-    def merge(self, term, results):
-        self.calls.append(("merge", len(results)))
-        return KnowledgeResult(
-            note=results[0].note,
-            evidence_refs=list(
-                dict.fromkeys(ref for item in results for ref in item.evidence_refs)
-            ),
-        )
-
-
-def book_store(tmp_path):
-    chapters = [
-        Chapter(index=0, segments=[Segment(index=7, source="Alice waited for Carl, her uncle.")]),
-        Chapter(
-            index=1,
-            segments=[
-                Segment(index=3, source="Beth was Alice's mother."),
-                Segment(index=9, source="Carl was Beth's elder brother."),
-            ],
-        ),
-    ]
-    store = FileStorage(str(tmp_path / "run"))
-    source = tmp_path / "source.txt"
-    source.write_text("\n".join(s.source for chapter in chapters for s in chapter.segments))
-    store.init_from_document(
-        Document(
-            title="Invented family",
-            source_lang="en",
-            target_lang="zh",
-            fmt="text",
-            source_path=str(source),
-            chapters=chapters,
-        )
-    )
-    return store, chapters
+from tests.terminology_fixtures import EvidenceAgent, book_store
 
 
 def test_admission_precedes_publication_and_reuses_successful_requests(tmp_path):

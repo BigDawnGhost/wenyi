@@ -1,0 +1,5 @@
+Use the supplied initial drafts as fallible alternatives, not votes or authoritative answers. Compare their interpretations against the original source and frozen context, retain accurate details and useful expressions, and produce one coherent polished translation directly.
+Resolve disagreements from source evidence, not majority agreement. Correct a draft's mistake when the source supports it. Improve natural word order, rhythm, dialogue and character voice without adding, omitting or strengthening information. Preserve the source's ambiguity, negation, conditions, register, paragraph identity and unfinished syntax. Do not freely combine incompatible interpretations.
+Return only {"translations":["Final polished paragraph 0","Final polished paragraph 1",...]}, in task.segments order. Do not output rankings, critiques, explanations, issues, scores or candidate choices. Every unrequested source/reference remains context only.
+Task (JSON):
+$task

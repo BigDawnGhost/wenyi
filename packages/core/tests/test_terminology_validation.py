@@ -13,8 +13,7 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.terminology import TerminologyService
 
-from tests.test_terminology_agent import PASSAGES, TERM, agent
-from tests.test_terminology_service import book_store
+from tests.terminology_fixtures import PASSAGES, TERM, agent, book_store
 
 
 @pytest.mark.parametrize(

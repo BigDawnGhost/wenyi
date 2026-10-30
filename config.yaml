@@ -22,8 +22,10 @@ segment:
 pipeline:
   # Body translation and Reviewer requests always use the full glossary.
   review: true # Run final review after whole-book translation; disable with --no-review
+  # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  translation_mode: standard # standard | best_of_three; best_of_three requires polish
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests; disable to save prescan cost
@@ -56,9 +58,9 @@ paths:
 
 # ── Output ───────────────────────────────────────────────────────────────────
 output:
-  mono: true            # Monolingual output in language.target
-  bilingual: false      # Bilingual output with visually muted source text
-  bilingual_order: target_first  # target_first=translation first; source_first=source first
+  mono: true # Monolingual output in language.target
+  bilingual: false # Bilingual output with visually muted source text
+  bilingual_order: target_first # target_first=translation first; source_first=source first
   bilingual_preserve_source_style: false # true=preserve original source styling; false=render source in muted gray
-  about_page: true      # Append an About This Translation page
+  about_page: true # Append an About This Translation page
   punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state

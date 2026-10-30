@@ -1,6 +1,6 @@
-"""Preparation: state lookup, parsing, language detection, chapter prescan and style analysis.
-Own PDF conversion caches, source hashes, sample selection, initial glossary and rolling
-context. Initialize derived chapters/analysis/glossary/context first, atomically commit the
+"""AI preparation: language detection, chapter prescan and style analysis.
+Reuse model-free input preparation for source parsing and state location. Own sample
+selection and rolling context. Initialize derived state first, commit the
 initialized manifest last, then finish initialization. Build the book synopsis afterward as
 configured. Share pure language normalization with Runtime through top-level i18n.
 """
@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
@@ -21,17 +22,32 @@ from ..i18n.prompts import render
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.models import Chapter, Document
 from ..ingest.segmenter import load_document
+from ..llm.errors import ProviderFailure, describe_provider_failure
 from ..storage.protocol import Storage
 from .context import RollingContext
+from .input_preparation import (
+    ingest_config,
+    load_parsed_document,
+    locate_input_storage,
+    parse_document,
+)
 from .language_policies import commit_revision, initialize_policies, translation_revision
 from .runstore import source_sha256, translation_run_dir
-from .terminology import TerminologyService
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
 _LOGGER = logging.getLogger(__name__)
 _DIGEST_VERSION = 2
+
+
+class LanguageDetectionError(ValueError):
+    """Preserve a safe provider diagnostic instead of reporting an invalid language."""
+
+    def __init__(self, failure: ProviderFailure):
+        self.failure = failure
+        status = f" (HTTP {failure.status_code})" if failure.status_code is not None else ""
+        super().__init__(f"Source language detection request failed{status}: {failure.message}")
 
 
 def _synopsis_complete(text: str) -> bool:
@@ -58,38 +74,26 @@ def _digest_complete(chapter: Chapter, *, full_coverage: bool = False) -> bool:
 class PreparationService:
     """Domain service for state lookup, parsing, initialization and book understanding."""
 
-    def __init__(self, runtime: PipelineRuntime):
+    def __init__(
+        self,
+        runtime: PipelineRuntime,
+        *,
+        mineru_token_resolver: Callable[[], str | None] | None = None,
+    ):
         self._runtime = runtime
+        self._mineru_token_resolver = mineru_token_resolver
 
     @staticmethod
     def ingest_config(config) -> dict[str, Any]:
         """Fingerprint only parsing inputs shared by upload preview and initialization."""
-        return {
-            "source_lang": config.source_lang,
-            "target_lang": config.target_lang,
-            "max_tokens_per_segment": config.segment.max_tokens_per_segment,
-            "pdf_backend": config.pipeline.pdf_backend,
-            "babeldoc_bridge_url": config.pipeline.babeldoc_bridge_url,
-            "babeldoc_pages": config.pipeline.babeldoc_pages,
-            "babeldoc_timeout": config.pipeline.babeldoc_timeout,
-        }
+        return ingest_config(config)
 
     @staticmethod
     def load_parsed_document(
         storage, input_path: str, config, *, actual_sha256: str | None = None
     ) -> Document | None:
         """Reuse validated preview parsing; changed input/config triggers normal parsing."""
-        cached = storage.read_artifact("parsed_document.json")
-        if not isinstance(cached, dict):
-            return None
-        digest = actual_sha256 or source_sha256(input_path)
-        if cached.get("source_sha256") != digest or cached.get(
-            "ingest_config"
-        ) != PreparationService.ingest_config(config):
-            return None
-        document = Document.model_validate(cached["document"])
-        document.source_path = input_path
-        return document
+        return load_parsed_document(storage, input_path, config, actual_sha256=actual_sha256)
 
     # State lookup and resume.
     def locate_existing(
@@ -154,86 +158,29 @@ class PreparationService:
         self._runtime.require_terminology_context_access()
         if self._runtime.storage is not None:
             store = self._runtime.storage
-            self._runtime.bind_llm_events(store)
-            if store.exists():
-                self._runtime.ensure_store_source(store, input_path)
-                return store
-            digest = source_sha256(input_path)
-            cached = self.load_parsed_document(
-                store, input_path, self._runtime.config, actual_sha256=digest
+            source_hash = source_sha256(input_path)
+        else:
+            store, source_hash = locate_input_storage(
+                input_path, self._runtime.config, self._runtime.get_store, progress=progress
             )
-            if cached is not None:
-                with store.lock():
-                    return self._prepare_locked(
-                        cached, store, input_path, progress, source_hash=digest
-                    )
-        if os.path.splitext(input_path)[1].lower() == ".pdf":
-            # PDF titles use the filename, so the state directory is known before initial parsing.
-            pdf_title = os.path.splitext(os.path.basename(input_path))[0]
-            run_dir = translation_run_dir(
-                self._runtime.config.state_dir, pdf_title, self._runtime.config.target_lang
-            )
-            store = self._runtime.get_store(run_dir)
-            self._runtime.bind_llm_events(store)
-
-            with store.lock():
-                if store.exists():
-                    self._runtime.ensure_store_source(store, input_path)
-                    store.log_event(
-                        "run_resumed",
-                        input_path=input_path,
-                        run_dir=store.run_dir,
-                    )
-                    return store
-                if progress:
-                    progress(0, 0, "Parsing document…")
-                source_hash = source_sha256(input_path)
-                # Preserve the source identity and event history when conversion fails.
-                store.begin_initialization(source_hash)
-                pipeline = self._runtime.config.pipeline
-                doc = load_document(
-                    input_path,
-                    self._runtime.config.source_lang,
-                    self._runtime.config.target_lang,
-                    split_segments=self._runtime.config.segment.max_tokens_per_segment,
-                    cache_dir=store.source_dir,
-                    source_hash=source_hash,
-                    pdf_backend=pipeline.pdf_backend,
-                    babeldoc_bridge_url=pipeline.babeldoc_bridge_url,
-                    babeldoc_pages=pipeline.babeldoc_pages,
-                    babeldoc_timeout=pipeline.babeldoc_timeout,
-                )
-                if source_sha256(input_path) != source_hash:
-                    raise ValueError(
-                        "PDF changed during parsing; ensure the file is stable and retry."
-                    )
-                return self._prepare_locked(
-                    doc,
-                    store,
-                    input_path,
-                    progress,
-                    source_hash=source_hash,
-                )
-
-        if progress:
-            progress(0, 0, "Parsing document…")
-        source_hash = source_sha256(input_path)
-        # Split long paragraphs at sentences and mark continuations for later backfill merging.
-        doc = load_document(
-            input_path,
-            self._runtime.config.source_lang,
-            self._runtime.config.target_lang,
-            split_segments=self._runtime.config.segment.max_tokens_per_segment,
-        )
-        if source_sha256(input_path) != source_hash:
-            raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
-        run_dir = translation_run_dir(
-            self._runtime.config.state_dir, doc.title, self._runtime.config.target_lang
-        )
-        store = self._runtime.get_store(run_dir)
         self._runtime.bind_llm_events(store)
 
         with store.lock():
+            if store.exists():
+                self._runtime.ensure_store_source(store, input_path)
+                store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
+                return store
+            if os.path.splitext(input_path)[1].lower() == ".pdf":
+                # Preserve the source identity and event history when conversion fails.
+                store.begin_initialization(source_hash)
+            doc = parse_document(
+                store,
+                input_path,
+                self._runtime.config,
+                expected_sha256=source_hash,
+                progress=progress,
+                mineru_token_resolver=self._mineru_token_resolver,
+            )
             return self._prepare_locked(
                 doc,
                 store,
@@ -279,11 +226,27 @@ class PreparationService:
         if self._runtime.config.source_lang in ("auto", "", None):
             if progress:
                 progress(0, 0, "Detecting language…")
-            detected = self.detect_language_ai(doc)
+            try:
+                detected = self.detect_language_ai(doc)
+            except LanguageDetectionError as error:
+                store.log_event(
+                    "language_detection_failed",
+                    source_lang=doc.source_lang,
+                    operation="language.detect",
+                    error_type=type(error.__cause__).__name__,
+                    **error.failure.log_fields(),
+                )
+                raise
             if not detected:
-                store.log_event("language_detection_failed", source_lang=doc.source_lang)
+                store.log_event(
+                    "language_detection_failed",
+                    source_lang=doc.source_lang,
+                    reason="unsupported_language_result",
+                    error_category="unsupported_language_result",
+                    error_message="Language detection returned no supported language code.",
+                )
                 raise ValueError(
-                    "Source language detection failed. Check model settings or set "
+                    "Source language detection returned no supported language. Set "
                     "language.source in config.yaml to a supported code, such as ja/en/zh-Hant/ko/fr/de/es."
                 )
             doc.source_lang = detected
@@ -307,8 +270,6 @@ class PreparationService:
         analysis["style_policy"] = self._runtime.config.language_policy(
             "analysis"
         ).task_fingerprint("analyzer")
-        if analysis:
-            self._seed_analysis(store, doc.chapters, analysis, progress)
         store.save_analysis(analysis)
         store.log_event("analysis_saved", has_analysis=bool(analysis))
         store.save_context(
@@ -351,7 +312,7 @@ class PreparationService:
         digests: list[str] | None,
         source_hash: str,
     ) -> dict[str, Any]:
-        """Cache paid analysis before fallible admission, independently of the manifest."""
+        """Cache paid style analysis independently of the initialization manifest."""
         sample = self.sample_text(document)
         if not sample:
             return {}
@@ -388,28 +349,6 @@ class PreparationService:
             if cached:
                 self._runtime.flush_usage(store, scope="analysis")
 
-    def _seed_analysis(
-        self,
-        store: Storage,
-        chapters: list[Chapter],
-        analysis: dict[str, Any],
-        progress: ProgressFn | None = None,
-    ) -> None:
-        policy = self._runtime.config.language_policy("analysis")
-        if not policy.enabled("terminology.context"):
-            self._runtime.analyzer.seed_glossary(store, analysis)
-            return
-        self._runtime.require_terminology_context_access()
-        if progress:
-            progress(0, 0, "Collecting whole-book terminology evidence…")
-        terminology = TerminologyService(
-            store,
-            self._runtime.terminology_agent,
-            chapters,
-            checkpoint_usage=lambda: self._runtime.flush_usage(store, scope="terminology"),
-        )
-        self._runtime.analyzer.seed_glossary(store, analysis, admit=terminology.admit)
-
     def activate(self, store: Storage, *, phase: Phase | None = None) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
         store.recover_usage()
@@ -445,8 +384,6 @@ class PreparationService:
         analysis["language_policy"] = (
             f"language-policies/{self._runtime.config.language_policy('analysis').fingerprint}.json"
         )
-        if self._runtime.config.language_policy("analysis").enabled("terminology.context"):
-            self._seed_analysis(store, chapters, analysis)
         store.save_analysis(analysis)
         commit_revision(store, self._runtime.config)
         store.log_event(
@@ -454,9 +391,7 @@ class PreparationService:
         )
 
     def detect_language_ai(self, doc) -> str:
-        """Detect the primary source language with the model; return its code or empty on
-        failure.
-        """
+        """Return a supported language code, or surface model request failures distinctly."""
         # Use unlabeled source samples so sampling labels cannot contaminate language detection.
         sample = self.sample_text(doc, labeled=False)[:1500]
         if not sample.strip():
@@ -472,8 +407,8 @@ class PreparationService:
             )
             code = (data.get("language") if isinstance(data, dict) else "") or ""
             return normalize_language(str(code))
-        except Exception:  # noqa: BLE001 - provider errors mean detection failed
-            return ""
+        except Exception as error:
+            raise LanguageDetectionError(describe_provider_failure(error)) from error
 
     @staticmethod
     def sample_text(doc, *, labeled: bool = True) -> str:

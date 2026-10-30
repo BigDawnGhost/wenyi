@@ -7,7 +7,6 @@ compatibility notes.
 
 from __future__ import annotations
 
-import os
 import uuid
 from typing import Any
 
@@ -62,8 +61,8 @@ class OpenCodeGoClient(OpenAICompatibleBaseClient[OpenCodeGoOptions]):
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
 
-    def __init__(self, cfg):
-        super().__init__(cfg)
+    def __init__(self, cfg, *, credentials: tuple[str | None] | None = None):
+        super().__init__(cfg, credentials=credentials)
         # One session id per connection/client lifetime (stable across retries in a run).
         self._session_id = str(uuid.uuid4())
 
@@ -74,7 +73,7 @@ class OpenCodeGoClient(OpenAICompatibleBaseClient[OpenCodeGoOptions]):
                 from openai import OpenAI
 
                 self.validate_credentials()
-                api_key = os.environ.get(self.api_key_env) if self.api_key_env else None
+                api_key = self.api_key()
                 self._client = OpenAI(
                     api_key=api_key or "no-key",
                     base_url=self.base_url,

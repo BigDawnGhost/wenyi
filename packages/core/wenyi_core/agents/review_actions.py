@@ -9,6 +9,7 @@ from typing import Any, Callable
 from ..config import Config
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
+from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.contracts import EvidenceTools, ReviewTrace
 from ..review.models import clean_text
 
@@ -140,8 +141,10 @@ class ReviewActionLoop:
         allowed_refs: set[str],
         validate_final: Callable[[dict[str, Any], set[str]], Any],
     ) -> tuple[Any | None, str]:
-        """Run up to N evidence rounds plus a final call; return a failure reason instead of
-        raising.
+        """Run up to N evidence rounds plus a final call.
+
+        Propagate recoverable provider stops with the trace left resumable; other failures
+        return a conservative fallback reason.
         """
         messages = [
             {"role": "system", "content": system},
@@ -361,7 +364,9 @@ class ReviewActionLoop:
                 if conversation.evidence_rounds >= max_rounds:
                     evidence_message += "\nEvidence rounds are exhausted. The next response must use action=final; do not request more evidence."
                 conversation.messages.append({"role": "user", "content": evidence_message})
-        except Exception as error:  # noqa: BLE001 - Loop failures fall back to the initial review by contract.
+        except Exception as error:  # noqa: BLE001 - Non-resumable failures retain the initial candidates.
+            if is_resumable_provider_interrupt(error):
+                raise
             reason = (
                 str(error)
                 if isinstance(error, ReviewLoopProtocolError)

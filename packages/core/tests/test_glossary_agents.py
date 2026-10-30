@@ -86,7 +86,27 @@ class TestAgentCollectionNormalization(unittest.TestCase):
 
 
 class TestAnalyzer(unittest.TestCase):
-    def test_analyze_and_seed(self):
+    def test_style_brief_omits_snapshot_target_and_preserves_character_guidance(self):
+        analyzer = Analyzer(FakeClient(), _cfg())
+        brief = analyzer.style_brief(
+            {
+                "characters": [
+                    {
+                        "source": "H.H.",
+                        "target": "Stale snapshot name",
+                        "gender": " male ",
+                        "note": "Speaks in restrained, formal sentences.",
+                    }
+                ]
+            }
+        )
+
+        self.assertNotIn("Stale snapshot name", brief)
+        self.assertIn("H.H.", brief)
+        self.assertIn("male", brief)
+        self.assertIn("Speaks in restrained, formal sentences.", brief)
+
+    def test_analyze_preserves_style_and_voice_without_glossary_candidates(self):
         analysis = {
             "genre": "校园",
             "tone": "冷峻第三人称",
@@ -106,23 +126,16 @@ class TestAnalyzer(unittest.TestCase):
         a = Analyzer(client, _cfg())
         result = a.analyze("……样章……")
         self.assertEqual(result["genre"], "校园")
-
-        with tempfile.TemporaryDirectory() as d:
-            store = GlossaryStore(os.path.join(d, "g.db"))
-            n = a.seed_glossary(store, result)
-            self.assertEqual(n, 2)
-            character = store.get_term("綾小路")
-            organization = store.get_term("高度育成高校")
-            self.assertIsNotNone(character)
-            self.assertIsNotNone(organization)
-            assert character is not None
-            assert organization is not None
-            self.assertEqual(character.gender, "male")
-            self.assertEqual(organization.type, "organization")
-            store.close()
+        self.assertEqual(result["style_guide"], "保持克制")
+        self.assertEqual(
+            result["characters"],
+            [{"source": "綾小路", "gender": "male", "note": "第一人称用俺"}],
+        )
+        self.assertNotIn("terms", result)
 
         brief = a.style_brief(result)
-        self.assertIn("绫小路", brief)
+        self.assertIn("綾小路", brief)
+        self.assertNotIn("绫小路", brief)
 
     def test_malformed_collection_items_are_filtered(self):
         analysis = {
@@ -136,17 +149,11 @@ class TestAnalyzer(unittest.TestCase):
 
         self.assertEqual(result["genre"], "")
         self.assertEqual(len(result["characters"]), 1)
-        self.assertEqual(len(result["terms"]), 1)
-        with tempfile.TemporaryDirectory() as d:
-            store = GlossaryStore(os.path.join(d, "g.db"))
-            self.assertEqual(analyzer.seed_glossary(store, result), 2)
-            school = store.get_term("学校")
-            self.assertIsNotNone(school)
-            assert school is not None
-            self.assertEqual(school.type, "term")
-            store.close()
+        self.assertEqual(result["characters"][0]["source"], "綾小路")
+        self.assertNotIn("target", result["characters"][0])
+        self.assertNotIn("terms", result)
 
-    def test_numeric_collections_are_normalized_to_empty_lists(self):
+    def test_numeric_character_collection_is_normalized_to_empty_list(self):
         analysis = {
             "genre": "novel",
             "characters": 3,
@@ -158,14 +165,12 @@ class TestAnalyzer(unittest.TestCase):
             result = Analyzer(client, _cfg()).analyze("sample")
 
         self.assertEqual(result["characters"], [])
-        self.assertEqual(result["terms"], [])
-        self.assertEqual(len(logs.records), 2)
-        for record, field, actual_type in zip(
-            logs.records, ("characters", "terms"), ("int", "float")
-        ):
-            self.assertIn("operation=analysis.style", record.getMessage())
-            self.assertIn(f"field={field}", record.getMessage())
-            self.assertIn(f"got {actual_type}", record.getMessage())
+        self.assertNotIn("terms", result)
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        self.assertIn("operation=analysis.style", message)
+        self.assertIn("field=characters", message)
+        self.assertIn("got int", message)
 
 
 class TestExtractor(unittest.TestCase):

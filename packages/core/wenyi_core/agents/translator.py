@@ -117,6 +117,7 @@ class Translator(Agent):
             book_synopsis=book_synopsis or "(none)",
             glossary=prompts.render_glossary(
                 glossary_terms,
+                source_lang=self.src,
                 note_source="\n".join(sources)
                 if self.config.pipeline.terminology_context
                 else None,

@@ -200,7 +200,9 @@ class TitleTranslationService:
 
         batches = title_batches(plan.pending)
         completed = 0
-        glossary_text = prompts.render_glossary(glossary.all_terms())
+        glossary_text = prompts.render_glossary(
+            glossary.all_terms(), source_lang=self._translator.src
+        )
         for batch_index, batch in enumerate(batches):
             titles = [item.source for item in batch]
             try:

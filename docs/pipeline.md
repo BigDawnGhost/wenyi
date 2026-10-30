@@ -4,11 +4,15 @@
 
 Wenyi first builds a whole-book understanding and then translates chapters in order. Optional stages can be disabled in `config.yaml` to reduce cost or runtime.
 
+Source parsing is a separate, model-free stage. `wenyi parse` and the Web/Desktop upload task save a content- and configuration-bound source snapshot before AI preparation. The UI can show its table of contents and original paragraphs read-only immediately after parsing, including while preparation runs or after it fails. Parsing does not commit an initialized manifest, expose partially staged targets, or enable translation editing. Matching source snapshots survive initialization retries; changed source identities are not reused.
+
 ```mermaid
 flowchart TD
-    A[Input file] --> B[Parse chapters and detect language]
-    B --> C[Optional parallel chapter prescan<br/>Generate chapter digests]
-    C --> D[Analyze style and seed the glossary]
+    A[Input file] --> B["Parse chapters and save source"]
+    B --> BV["Read-only source and table of contents"]
+    B --> BL["AI language detection"]
+    BL --> C["Optional parallel chapter prescan and digests"]
+    C --> D["Analyze style and character voices"]
     D --> DS[Optional whole-book synopsis]
     DS --> E
 
@@ -66,7 +70,30 @@ Alignment retries retain the reference. Single-paragraph fallback uses that para
 
 ## Glossary
 
-The initial analysis seeds the glossary. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. Every body-translation batch receives the full current glossary, including entries absent from the current chapter. Fresh Reviewer requests share the complete final glossary snapshot across chapters and workers. Entries retain insertion order, and new entries append at the end to preserve stable prompt prefixes. After extraction changes the glossary, translation refreshes its snapshot before the next pending batch; completed batches keep their saved targets. If interruption occurs after targets are saved but before extraction is checkpointed, resume completes extraction before translating the next batch. Checkpointed batches skip both translation and extraction.
+Preparation analyzes style and character voices without proposing name translations or extracting glossary entries. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. Existing project terms, including imports and earlier automatically seeded entries, remain unchanged by preparation on resume. By default, without imported terms, the first body-translation batch starts with an empty glossary: this avoids locking in sample-based guesses, but gives that batch no predefined terminology mappings. The optional terminology-evidence mode described below can admit discovered candidates before a pending body batch. Every body-translation batch receives the full current glossary, including entries absent from the current chapter. Fresh Reviewer requests share the complete final glossary snapshot across chapters and workers. Entries retain insertion order, and new entries append at the end to preserve stable prompt prefixes. After extraction changes the glossary, translation refreshes its snapshot before the next pending batch; completed batches keep their saved targets. If interruption occurs after targets are saved but before extraction is checkpointed, resume completes extraction before translating the next batch. Checkpointed batches skip both translation and extraction.
+
+The glossary owns character name mappings. The style brief retains source identities,
+gender, and descriptive character notes, but does not repeat translated names from the
+analysis snapshot, which may be stale after glossary edits. Free-form notes and style text
+are preserved verbatim, so outdated names embedded in that prose still require manual review.
+This reduces conflicting structured guidance without rewriting completed translations.
+
+Glossary `reading` is Japanese source metadata, not a target-language transliteration.
+Extraction prompts require copying only kana explicitly provided for the term
+in the original, such as furigana or a reading explanation, and leaving the field empty
+without that evidence.
+Japanese-source projects retain this field regardless of the translation language.
+Other source languages omit it from the model's output schema, structured glossary context,
+and Review evidence responses, even when translating into Japanese. Unexpected readings
+returned by the model are ignored for non-Japanese sources. Existing and manually edited
+glossary readings remain stored; this change does not delete them or rewrite completed text.
+Internal callers supplying preformatted Fixer glossary text remain responsible for its
+contents; automatic filtering applies to structured entries.
+The stricter prompts follow the usual language-policy cache invalidation rules.
+Review reuse and unfinished best-of-three checkpoints also bind the glossary reading policy,
+so older cached work may require fresh model calls; historical artifacts remain available.
+This trades inferred reading coverage for less unsupported pronunciation guidance;
+offline tests do not establish model quality.
 
 This policy provides cross-chapter terminology context at the cost of larger prompts and potentially higher token usage. It does not guarantee provider prefix-cache hits or improved translation quality. Selective evidence queries and segment Fixer requests still use relevant terms. `pipeline.glossary_scope` has been removed; configuration containing that key is rejected and must be edited explicitly.
 
@@ -84,7 +111,7 @@ The glossary constrains later translation and supplies evidence to the final rev
 
 `pipeline.terminology_context` defaults to `false` and is a CLI-only experimental book feature. CLI `prepare` and `translate` explicitly grant operation-scoped `allow_terminology_context=True`; Orchestrator/PipelineRuntime default to `False`. Ordinary callers and the API cannot produce evidence just by enabling the YAML setting. Review, assemble and report may consume existing notes without producing evidence. API storage and Web/UI are unchanged; SRT does not use this path.
 
-When enabled through an authorized CLI operation, initial analysis seeds, pretranslation discoveries, and posttranslation backfill pass through whole-book source-evidence admission. Every matching source group is processed; failed evidence collection or merging does not publish partial knowledge. Discovery, group results, and merged knowledge are cached through Storage artifacts. Retry retains successful groups and saved translations rather than retranslating completed body text.
+When enabled through an authorized CLI operation, pretranslation discoveries and posttranslation backfill pass through whole-book source-evidence admission. Preparation does not extract or seed glossary entries, even in this mode; evidence work begins with pending translation batches. Every matching source group is processed; failed evidence collection or merging does not publish partial knowledge. Discovery, group results, and merged knowledge are cached through Storage artifacts. Retry retains successful groups and saved translations rather than retranslating completed body text.
 
 Pretranslation discovery returns only `terms` and validates proposals individually. A malformed candidate, missing/foreign citation, or source spelling absent from its cited passages is rejected without discarding valid candidates from the same response. An invalid response envelope still stops the request. Accepted proposals alone can proceed to historical alignment and whole-book evidence admission; evidence or merge failures still stop publication. Even an all-rejected discovery result is cached with its rejection audit rather than retried automatically. This favors progress without accepting unsupported terms, at the cost of potentially missing a rejected term until a later valid discovery or extraction.
 
@@ -94,9 +121,9 @@ Discovery caches include the current glossary snapshot; editing a mapping or ali
 
 This standalone evidence-only branch uses cache protocol version 4. Request and publication caches from the earlier combined experiment are not reused. There is no old-cache cleanup or completed-target rewrite, but the first enabled run on this branch may incur fresh evidence calls.
 
-Admission preserves existing translations of terms; a different suggestion enters the conflict workflow. Nonempty local fields without provenance are conservatively treated as manual, and edits to managed fields remain protected. Full glossary mappings are unchanged. Translator, Polisher, Reviewer, and Fixer prompts additionally receive relevant notes selected as whole entries within a budget, never cut mid-sentence. These notes are read-only evidence, not instructions or permission to add identities, relationships, or plot absent from the current source.
+Admission preserves existing translations of terms; a different suggestion enters the conflict workflow. Nonempty local fields without provenance are conservatively treated as manual, and edits to managed fields remain protected. Full glossary mappings are unchanged. Translator (including best-of-three), Polisher, Reviewer, and Fixer prompts additionally receive relevant notes selected as whole entries within a budget, never cut mid-sentence. These notes are read-only evidence, not instructions or permission to add identities, relationships, or plot absent from the current source.
 
-Evidence and merge reference validation distinguishes missing citations (`missing`) from IDs outside the supplied input (`outside_input`) and identifies the failing operation and field. These are semantic response failures, not provider truncation. Preparation stops without publishing the failed result or adding automatic paid correction requests. A safe diagnostic is saved at `terminology/diagnostics/<kind>/<request-hash>.json` and appended as `terminology_reference_validation_failed` in the event ledger. It contains only operation/field identifiers, aggregate reference counts and the request-cache key—not source text, model prose or untrusted reference strings. Retry reuses successful requests and paid preparation caches; a diagnostic is never treated as successful evidence. Earlier failures without diagnostics cannot be reconstructed retroactively.
+Evidence and merge reference validation distinguishes missing citations (`missing`) from IDs outside the supplied input (`outside_input`) and identifies the failing operation and field. These are semantic response failures, not provider truncation. The affected batch stops without publishing the failed result or adding automatic paid correction requests. A safe diagnostic is saved at `terminology/diagnostics/<kind>/<request-hash>.json` and appended as `terminology_reference_validation_failed` in the event ledger. It contains only operation/field identifiers, aggregate reference counts and the request-cache key—not source text, model prose or untrusted reference strings. Retry reuses successful requests and paid preparation caches; a diagnostic is never treated as successful evidence. Earlier failures without diagnostics cannot be reconstructed retroactively.
 
 Evidence and merge requests also supply a JSON response schema generated from the provider knowledge model: only `note`, `reading`, `gender`, `aliases`, and `evidence_refs`, with exact field types, forbidden extra properties and existing length limits. Missing values use empty strings/arrays, not `null`; merge aliases must remain empty because the program retains their local union. Schema failures identify the operation, known field paths and fixed error codes such as `reading:string_type` or `note:string_too_long`, with at most eight distinct details and a total error count. Overlength fields use the same validation path. These failures use the same diagnostic directory and append `terminology_knowledge_validation_failed`. Arbitrary extra property names, invalid values and model prose are never included. The schema adds prompt tokens; it is guidance, not provider-enforced structured output or a guarantee of model compliance.
 
@@ -106,7 +133,7 @@ New model-suggested aliases remain proposals in the evidence artifacts; they are
 
 The built-in `evidence.prepare` policy point contains only `terminology.context`. The YAML switch selects this work; it does not grant production permission to a caller. Each glossary entry still has one source identity and one main target. This is supplementary whole-book knowledge, not a real sense model or per-occurrence target selector. Notes can retain uncertainty and contextual distinctions but cannot represent independent translations for multiple senses. Source grounding and reveal-timing instructions reduce unsupported additions; there is no guarantee of model compliance or automatic spoiler filtering.
 
-With this mode enabled in the CLI, successful source-bound analysis and chapter digests are cached before glossary admission. A same-source local initialization retry restores pending usage and preserves cumulative charges while rebuilding derived state; conflicts are reconstructed from actual storage rather than stale markers. Enabling the mode on an initialized run also admits the refreshed analysis candidates without rewriting completed targets. These recovery paths are local; no API storage behavior is added.
+With this mode enabled in the CLI, successful source-bound analysis and chapter digests are cached before initialization commits its manifest. A same-source local initialization retry restores pending usage and preserves cumulative charges while rebuilding derived state. Enabling the mode on an initialized run refreshes analysis guidance without seeding glossary entries or rewriting completed targets; evidence admission runs only as translation proceeds. These recovery paths are local; no API storage behavior is added.
 
 The model operations `terminology.discover`, `terminology.evidence`, and `terminology.merge` default to `strong`. Enabling this path adds prompt context, model calls, and first-batch latency. Offline FakeClient tests do not establish translation quality; real-model before/after comparisons on public-domain long books remain pending.
 
@@ -114,12 +141,13 @@ The model operations `terminology.discover`, `terminology.evidence`, and `termin
 
 - **Segment alignment:** the model must return a JSON array with the same number of items as the input. Wenyi retries mismatched batches and falls back to translating one segment at a time.
 - **Polishing:** improves target-language fluency while preserving meaning and segment count. After a successful single-shot translation batch, polishing appends one more user turn to that same conversation (shared system/user prefix for cache hits) instead of opening a fresh dialogue; alignment fallback still uses a standalone polish call.
-- **Punctuation normalization:** optionally converts punctuation to common Simplified Chinese full-width conventions on an export-only copy for Simplified Chinese targets; other targets skip this conversion. It never rewrites formal chapter `target` values, so changing this output option does not alter translation, Review, or resume state.
+- **Punctuation normalization:** optionally converts punctuation to common Simplified Chinese full-width conventions on an export-only copy for Simplified Chinese targets; other targets skip this conversion. Paragraph-initial `—` and `…` expand to `——` and `……` without dropping the added punctuation, including across split continuations; annotation and style offsets follow the complete normalized text. It never rewrites formal chapter `target` values, so changing this output option does not alter translation, Review, or resume state.
 - **EPUB annotation context:** during preparation, Wenyi resolves high-confidence footnote and endnote references to their source-language note bodies, deduplicates shared targets, and stores an auxiliary copy separately from chapter text. Translation batches automatically receive that copy only for the numbered segments that reference it. Backlinks, chapter jumps, external links, and other ordinary hyperlinks are excluded. The borrowed copy is never appended to the referencing segment or rolling context; note resources already present in the EPUB spine remain ordinary translatable book content.
 - **EPUB annotation alignment:** removes recognized footnote markers from translatable source text while retaining semantic superscripts/subscripts. As soon as an annotated logical paragraph has been fully translated and polished, Wenyi makes one sequential alignment call against the formal target and immediately persists the restored `a/sup/href/id/class` positions. When export punctuation normalization is enabled, the export layer remaps those offsets together with the normalized in-memory copy. Split continuations are rejoined first; unrelated paragraphs make no call. Failures degrade to clickable end markers instead of dropping links. Untranslated text and bilingual source copies keep the source EPUB's original annotation positions. EPUB state created before this metadata format must be prepared again from the source book.
 - **Agent Review:** starts only after every chapter has been translated and uses the completed glossary. Contiguous chapter chunks are checked concurrently with the existing Reviewer prompt. Every response must contain a completion receipt with the exact reviewed-segment count and `complete: true`; JSON object field order has no meaning. Strictly valid JSON proceeds directly to semantic validation. A repaired response is accepted only when the repair deterministically removes a JSON fence or adds/removes a root boundary delimiter without synthesizing payload content. Structurally ambiguous or truncated responses are rejected; an invalid receipt recursively splits only the affected chunk, and a singleton receives at most `1 + review_output_retries` attempts.
 - **Selective evidence loop:** when a successfully reviewed leaf chunk contains candidates and `review_agent_loop` is enabled, a bounded Agent Loop confirms, dismisses, or refines them and may add issues within that chunk. It can request one glossary entry by source or alias, the first, middle, last, or Nth occurrence of a term, nearby source-and-translation segments, and limited book, chapter, or style context instead of loading the whole book or glossary into every prompt. The loop uses the configured tier (`strong` by default) and must decide after at most `review_agent_max_evidence_rounds` evidence rounds.
 - **Cross-chunk arbitration:** after all concurrent chunks finish, contradictory consistency proposals for the same term, pronoun, or fixed expression can be sent through a final arbiter. The final suggestion set conservatively rewrites every losing proposal to the winning value; every superseded proposal remains available in the round traces. It never changes the glossary or translated text.
+  The arbiter prompt explicitly requires all seven final JSON fields (`action`, `conflict_id`, `status`, `recommended_value`, `reason`, `evidence_refs`, `complete`), with boolean `complete: true`. Citations must exactly copy non-empty `samples[].segment_ref` identifiers or `ref` values from successful evidence tool results; request IDs, issue IDs, and invented or modified references are not citations. Strict validation remains unchanged: invalid references or a missing/non-true completion flag leave arbitration unresolved, with the failure recorded in traces.
 - **Shadow Fix and blind re-review:** confirmed issues for the same segment are grouped into one Fixer request. The Fixer receives the style brief, book synopsis, chapter digest, relevant glossary subset, and nearby source/translation pairs, and must return one complete replacement segment rather than a diff. All Fixers in a round read one immutable shadow snapshot; their patches are applied together only after the round finishes. The next whole-book Review and evidence index read the updated shadow text without receiving the old issue explanations. Unresolved arbitration conflicts and unverified Agent fallbacks are left unresolved. The loop stops after consecutive clean passes, the configured Fix limit, no progress, or an A→B→A cycle.
 - **Optional Autofix publishing:** the Review engine itself remains read-only. When `review_autofix` is enabled, a separate publisher first overlays the folded `changes`, then sends final unresolved issues through the existing Review Agent Loop against that updated translation. Confirmed issues reuse the existing Fixer; no Autofix-specific loop or prompt exists. The publisher writes only final complete segments to formal `target` values, then refreshes annotation and DOCX style offsets.
 Final review is the sole model-driven semantic review stage and is enabled by
@@ -143,6 +171,19 @@ requests use the same full glossary snapshot. Review reuse and resume compare th
 full-glossary policy marker and every glossary field, including aliases, pronunciation,
 gender, notes, and entry order. Any mismatch starts a new Review; caches created before
 this policy are preserved but not reused. A finished shadow-fixer trace is also reused after an interrupted round commit when the round, segment, issue IDs and current-target hash still match; that completed revision is not requested or charged again. Resume also restores earlier rounds’ issue summaries and reconnects active patches to their history records, keeping final counts consistent with an uninterrupted run.
+Recoverable provider stops during evidence verification, arbitration, or shadow revision
+propagate to this interruption path instead of becoming terminal Agent fallbacks or
+unresolved fixer suggestions. Completed evidence turns remain reusable. The same stops
+during final Autofix verification or revision halt planning before a publication index is
+committed; rerunning reuses successful traces and retries unfinished calls. Unverified
+candidates never bypass the safety checks. This does not automatically repair runs that
+older versions already saved as completed.
+The run's configuration identity also includes the effective style brief, whole-book
+synopsis, and chapter digests. Editing that guidance starts a new Review instead of
+reusing completed results or old run-scoped fixer traces. Older caches without this
+guidance identity remain available for inspection but are not reused. The revised
+character guidance also advances the Review/Autofix Fixer request protocols, so a
+subsequent run may require new model calls; previously completed translations are unchanged.
 The CLI shows chapter loading and checkpoint preparation before reviewing paragraphs.
 Elapsed time measures the entire current workflow and never resets at stage or round
 boundaries. It continues advancing while model requests are pending, even after a stage
@@ -181,9 +222,127 @@ replacement is semantically correct. Stop reasons include
 `unresolved_fixes` (a previously confirmed issue did not receive a valid patch
 even if a later Reviewer missed it).
 
+## Best-of-three precision translation
+
+The optional `best_of_three` mode processes each pending book batch through:
+three independent initial drafts → one comprehensive source-aware polishing →
+final text. Drafts share the frozen system/source/context prefix but have independent
+conversation histories and do not see their siblings. The polishing call uses the
+same prefix plus all three fallible drafts as data, combines their useful parts and
+outputs the final text array directly, preserving the existing document structure.
+Source, glossary, synopsis, recent context
+and following source remain unchanged.
+
+```mermaid
+flowchart TD
+    C["Source, glossary and full context"] --> T1["Independent draft 1"]
+    C --> T2["Independent draft 2"]
+    C --> T3["Independent draft 3"]
+    T1 --> P["One source-aware synthesis and polishing"]
+    T2 --> P
+    T3 --> P
+    C -. "Source reference" .-> P
+    P --> O["Save final translation"]
+```
+
+The synthesis policy prioritizes the source over draft consensus or fluency; it is
+not an independently verified accuracy guarantee. There is no accuracy judge,
+three-way polishing, blind acceptance, refinement round, per-paragraph competition
+or scoped alignment recovery. Structural validation supports EPUB/DOCX backfill and
+never silently zips away text. Draft and synthesis model-output failures share
+`pipeline.align_retry_limit`: one initial request plus at most N retries (default N=2).
+Malformed JSON, missing or invalid translation arrays/counts/types, forbidden blank
+translations and truncated responses retry only the failing candidate or synthesis.
+Structural failures (wrong shape, count mismatch, wrong types, blank targets) append
+the rejected reply and a corrective instruction restating the exact segment contract,
+because models that merge or drop segments repeat the mistake on identical retries;
+truncated responses retry with unchanged messages because feedback cannot raise an
+output cap. Context and output limits stay unchanged, and there is no automatic
+paragraph splitting or single-paragraph fallback. Provider transport/credential
+failures and storage/recording failures propagate without a nested provider retry loop.
+Exhaustion pauses the batch; completed drafts and paid completed receipts remain
+reusable, and manual resume gives missing stages a new bounded retry budget.
+Each attempt retains its raw response, receipt and actual available usage; failed
+receipts stay failed, without migration or revalidation of historical failures.
+Segments that need no translation, such as numbers, punctuation, empty text and
+whitespace-only text, are copied directly from the source in every draft and the
+synthesis. Generated text at those positions is ignored, including changed spacing
+or blank outputs; array count and string-type checks still apply.
+Publication metadata means a structurally valid synthesized result, not a semantic
+acceptance gate. `target_before_polish` stores the first initial draft as a comparison
+reference, not a selected accurate draft; `target` stores the synthesized final text.
+
+Initial drafts always use built-in three-branch concurrency. Web manual proofreading
+can inspect published T1/T2/T3 and the original synthesis as read-only archives;
+inspection does not make model calls or choose a draft for publication. Draft lookup
+validates source and segment identity, hashes, and the saved T1 comparison. Unavailable
+or ambiguous archives are reported rather than guessed.
+
+Saved checkpoints allow an interrupted run with compatible source, context, policy
+and model identities to resume without recreating completed draft work. Completed
+formal targets are skipped, not reprocessed when the mode changes.
+
+### Precision archive and future benchmark replay
+
+New checkpoints separate immutable shared data from batch progress:
+
+```text
+precision/
+  shared/
+    objects/<hash>.json                 # Text, plans, terms, model metadata and result objects
+    glossary/
+      head.json                        # Current compact reference index, not formal glossary state
+      versions/<hash>.json              # Base references or incremental changes, removals and order
+  chapters/<chapter>/<start>-<count>/<fingerprint>/
+    meta.json                          # Source identity and shared plan/glossary references
+    drafts/T1.json, T2.json, T3.json     # Target and call references, not duplicate prose
+    result.json                        # One synthesized result and first-draft references
+    publication.json                   # Result reference, source hashes and ready/published state
+    calls/<stage>/<attempt-id>.json     # Every new logical model invocation
+```
+
+Glossary versions retain full term metadata and historical prompt lines. Unchanged entries
+are reused, while additions, updates, removals and ordering changes are recorded as deltas;
+periodic reference-only bases bound replay depth. This does not change the formal glossary.
+Shared request recipes reconstruct the exact historical system/user messages, including
+their original formatting, without current prompts or the current glossary. Unknown
+formatting is kept literally rather than approximated.
+
+Call records retain request parameters, declared and available client-frozen model snapshots,
+environment versions, elapsed model-call time, raw response and validated-output references.
+Scoped provider events bind retries, fallbacks and known token/cache usage to that call, without
+mixing concurrent drafts. Missing usage/model data remains explicitly unknown, not zero.
+Failed or interrupted calls remain diagnostic records; cache reuse is not recorded as a new
+model invocation. Response text is saved before local output validation.
+
+This is a replay-data foundation, not a benchmark runner: restoring inputs is deterministic,
+but another model invocation can differ because of sampling or server model revisions.
+Credentials are excluded, and required external credentials must be supplied again. Private
+source and translation text remain in the run's `Storage` artifacts, never automatically
+exported or committed. Do not share this archive unintentionally.
+
+Compatible old `inputs.json`/`synthesis.json`/`ready.json` checkpoints remain readable and are
+not deleted or re-billed; legacy calls without historical request receipts are explicitly
+marked incomplete for replay. New results are written only once. Published history is not
+automatically pruned because it is useful for future comparison and replay.
+
+Polishing is required. Whole-book Review remains a separate optional workflow,
+and SRT is unchanged. A normal body batch uses four model calls
+versus two for standard translation with polishing; structural retries add billed
+attempts. Provider retries and other book tasks are accounted for separately;
+this is **not a fixed 2× cost**. Precision uses the existing
+`translation.body` and `polish.body` routes with the same profiles and provider
+behavior as standard, without precision-specific output-token caps or hints.
+Shared-prefix caching and concurrency
+may reduce latency or input-token costs, but do not remove output costs. No real
+model quality comparison has been performed yet; offline tests validate contracts,
+not a guaranteed quality improvement.
+
 ## Resumability
 
 Each completed translation batch is persisted immediately. When polishing is enabled, each segment in the chapter JSON keeps the translation-stage text in `target_before_polish` and the polished final text in `target`. Running `translate` again skips completed batches and fills only missing work. A standalone `assemble` briefly freezes the persisted manifest and chapter snapshot, releases the state lock, and renders from that snapshot, so it does not wait for a full translation running in another terminal.
+
+On Windows, local JSON state reads/writes and artifact access use extended-length drive and UNC paths. Artifact keys remain relative to the run directory, and listings and resume operations retain portable `/`-separated keys. This does not guarantee arbitrarily long path support across all CLI operations or dependencies.
 
 ## Subtitle path (SRT)
 
@@ -192,7 +351,7 @@ Orchestrator above. There is no whole-book prescan, glossary, polishing, or
 Review. Translation uses overlapping cue windows with high concurrency on the
 strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with
 `cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
-[Usage guide — SRT subtitles](usage.md#srt-subtitles).
+[CLI guide — SRT subtitles](cli.md#srt-subtitles).
 
 ## Model registration and usage
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import types
 import unittest
 import zipfile
 from unittest.mock import patch
@@ -12,7 +11,6 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 from wenyi_cli.commands.validation import runstore_for
-from wenyi_core.assemble.pdf_writer import _normalize_html_for_fpdf
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
@@ -64,6 +62,12 @@ def _initialize_test_store(store: FileStorage, document: Document) -> None:
 
 
 class TestPdfIngest(unittest.TestCase):
+    def setUp(self):
+        # Converter calls are mocked; use a synthetic credential independent of the host.
+        environment = patch.dict(os.environ, {"MINERU_API_KEY": "fake-offline-mineru-token"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_pdf_reuses_state_html_without_api_call(self):
         with tempfile.TemporaryDirectory() as directory:
             pdf_path = os.path.join(directory, "sample.pdf")
@@ -116,7 +120,8 @@ class TestPdfIngest(unittest.TestCase):
                     pdf_backend="mineru",
                 )
 
-        self.assertIsInstance(raised.exception.__cause__, RuntimeError)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
 
     def test_pdf_failed_conversion_cannot_leave_a_reusable_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -507,186 +512,6 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                     package_title.get_text(),
                     "sample-wenyi-zh",
                 )
-
-    def test_pdf_export_uses_print_html_and_weasyprint(self):
-        writes: list[tuple[str, str | None, str]] = []
-
-        class FakeHTML:
-            def __init__(self, *, string: str, base_url: str | None = None):
-                self.string = string
-                self.base_url = base_url
-
-            def write_pdf(self, output: str) -> None:
-                writes.append((self.string, self.base_url, output))
-                with open(output, "wb") as file:
-                    file.write(b"%PDF-fake")
-
-        with tempfile.TemporaryDirectory() as directory:
-            source_path = os.path.join(directory, "sample.html")
-            with open(source_path, "w", encoding="utf-8") as file:
-                file.write(_HTML)
-            document = load_document(source_path, "en", "zh")
-            store = FileStorage(os.path.join(directory, "state"))
-            _initialize_test_store(store, document)
-            _set_test_targets(store)
-            output_path = os.path.join(directory, "translated.pdf")
-
-            with patch.dict(
-                "sys.modules",
-                {"weasyprint": types.SimpleNamespace(HTML=FakeHTML)},
-            ):
-                result = assemble(
-                    store,
-                    source_path,
-                    out_path=output_path,
-                    out_format="pdf",
-                )
-
-            self.assertEqual(result, output_path)
-            self.assertEqual(len(writes), 1)
-            self.assertIn('id="trans-novel-print-style"', writes[0][0])
-            self.assertTrue(os.path.isfile(output_path))
-
-    def test_pdf_export_can_use_fpdf2_without_system_renderer(self):
-        writes: list[dict[str, object]] = []
-
-        class FakeFontFace:
-            def __init__(self, **kwargs):
-                self.options = kwargs
-
-        class FakeFPDF:
-            def __init__(self, **kwargs):
-                self.options = kwargs
-
-            def set_margins(self, *args):
-                pass
-
-            def set_auto_page_break(self, **kwargs):
-                pass
-
-            def add_font(self, *args, **kwargs):
-                pass
-
-            def alias_nb_pages(self):
-                pass
-
-            def add_page(self):
-                pass
-
-            def write_html(self, html, **kwargs):
-                writes.append({"html": html, **kwargs})
-
-            def output(self, path):
-                with open(path, "wb") as file:
-                    file.write(b"%PDF-fpdf2-fake")
-
-        with tempfile.TemporaryDirectory() as directory:
-            source_path = os.path.join(directory, "sample.html")
-            with open(source_path, "w", encoding="utf-8") as file:
-                file.write(
-                    """<html><body><h1>Chapter</h1>
-                    <p>Before <img src="dot.png"/> after.</p>
-                    </body></html>"""
-                )
-            with open(os.path.join(directory, "dot.png"), "wb") as file:
-                file.write(b"not decoded by the mocked renderer")
-            font_path = os.path.join(directory, "font.ttf")
-            with open(font_path, "wb") as file:
-                file.write(b"mock font")
-            document = load_document(source_path, "en", "zh")
-            store = FileStorage(os.path.join(directory, "state"))
-            _initialize_test_store(store, document)
-            _set_test_targets(store)
-            output_path = os.path.join(directory, "translated.pdf")
-
-            with (
-                patch.dict(
-                    "sys.modules",
-                    {
-                        "fpdf": types.SimpleNamespace(
-                            FPDF=FakeFPDF,
-                            FontFace=FakeFontFace,
-                        )
-                    },
-                ),
-                patch(
-                    "wenyi_core.assemble.pdf_writer._find_fpdf_font",
-                    return_value=font_path,
-                ),
-            ):
-                result = assemble(
-                    store,
-                    source_path,
-                    out_path=output_path,
-                    out_format="pdf",
-                    pdf_engine="fpdf2",
-                )
-
-        self.assertEqual(result, output_path)
-        self.assertEqual(len(writes), 1)
-        self.assertEqual(writes[0]["font_family"], "WenyiCJK")
-        self.assertIn("<img", str(writes[0]["html"]))
-        self.assertNotIn("<style", str(writes[0]["html"]))
-
-    def test_fpdf_normalizer_preserves_named_anchor_metadata(self):
-        normalized = _normalize_html_for_fpdf(
-            """<html><body><p>
-            <a class="decorative">plain</a>
-            <a id="note-1" name="note-1">target</a>
-            <a href="#note-1">jump</a>
-            </p></body></html>""",
-            base_dir=".",
-        )
-        rendered = BeautifulSoup(normalized, "html.parser")
-
-        self.assertIsNone(rendered.find("a", class_="decorative"))
-        destination = rendered.find("span", id="note-1")
-        self.assertIsNotNone(destination)
-        assert destination is not None
-        self.assertEqual(destination.get("name"), "note-1")
-        link = rendered.find("a", href="#note-1")
-        self.assertIsNotNone(link)
-        assert link is not None
-        self.assertEqual(link.get_text(strip=True), "jump")
-
-    def test_fpdf_normalizer_flattens_nested_tables_without_losing_rich_content(self):
-        normalized = _normalize_html_for_fpdf(
-            """<html><body><table><caption>Details</caption><tr>
-            <th>Outer</th><td><img src="chart.png"/><a href="#note">caption</a>
-            <table><tr><td><em>inner</em></td></tr></table></td>
-            </tr></table></body></html>""",
-            base_dir=".",
-        )
-        rendered = BeautifulSoup(normalized, "html.parser")
-
-        self.assertIsNone(rendered.find("table"))
-        self.assertIsNone(rendered.find("tr"))
-        self.assertIsNone(rendered.find("td"))
-        text = rendered.get_text(" ", strip=True)
-        self.assertEqual(text.count("Details"), 1)
-        self.assertEqual(text.count("Outer"), 1)
-        self.assertEqual(text.count("inner"), 1)
-        self.assertIsNotNone(rendered.find("em", string="inner"))
-        image = rendered.find("img")
-        self.assertIsNotNone(image)
-        assert image is not None
-        self.assertEqual(image.get("src"), os.path.abspath("chart.png"))
-        self.assertEqual(image.get("width"), "340")
-        self.assertIsNotNone(rendered.find("a", href="#note"))
-
-    def test_fpdf_normalizer_preserves_image_only_table_cells(self):
-        normalized = _normalize_html_for_fpdf(
-            '<html><body><table><tr><td><img src="chart.png"/></td></tr></table></body></html>',
-            base_dir=".",
-        )
-        rendered = BeautifulSoup(normalized, "html.parser")
-
-        self.assertIsNone(rendered.find("table"))
-        image = rendered.find("img")
-        self.assertIsNotNone(image)
-        assert image is not None
-        self.assertEqual(image.get("src"), os.path.abspath("chart.png"))
-        self.assertEqual(image.get("width"), "340")
 
     def test_html_export_has_one_head_and_translated_content(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,137 @@
+import { useState } from "react";
+import { Navigate, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
+import { useI18n } from "@/i18n";
+import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
+import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
+import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
+import { Input } from "@/components/ui/form";
+import { ContentsEditor } from "./ContentsEditor";
+import { ContentsList } from "./ContentsList";
+
+export default function ContentsPage() {
+  const { pid = "" } = useParams();
+  const project = useQuery({
+    queryKey: ["project", pid],
+    queryFn: () => api.getProject(pid),
+    refetchInterval: 3000,
+  });
+  const subtitle = project.data?.fmt === "srt";
+  const chapters = useQuery({
+    queryKey: ["chapters", pid],
+    queryFn: () => api.listChapters(pid),
+    enabled: !!project.data && !subtitle,
+    refetchInterval: 3000,
+  });
+  if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
+  return (
+    <ContentsWorkspace
+      key={pid}
+      pid={pid}
+      chapters={chapters.data || []}
+      loading={project.isPending || chapters.isPending}
+      error={project.error || chapters.error}
+      busy={isProjectBusy(project.data?.status)}
+      initialized={project.data?.initialized === true}
+    />
+  );
+}
+
+function ContentsWorkspace({
+  pid,
+  chapters,
+  loading,
+  error,
+  busy,
+  initialized,
+}: {
+  pid: string;
+  chapters: ChapterSummary[];
+  loading: boolean;
+  error: unknown;
+  busy: boolean;
+  initialized: boolean;
+}) {
+  const { t } = useI18n();
+  const qc = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const entries = chapters.map((chapter) => {
+    const id = String(chapter.index);
+    return {
+      id,
+      title: chapter.title,
+      title_translated: chapter.title_translated ?? null,
+      depth: 0,
+      chapter_index: chapter.index,
+      segment_index: null,
+    };
+  });
+  const active = entries.find((entry) => entry.id === editing);
+  const query = search.trim().toLocaleLowerCase();
+  const visible = entries.filter((entry) =>
+    `${entry.title} ${entry.title_translated || ""}`
+      .toLocaleLowerCase()
+      .includes(query),
+  );
+  const readOnly = !initialized || busy || !!error || loading;
+  return (
+    <>
+      <PageHeader title={t("contents.title")} />
+      <PageContainer className="space-y-4">
+        <ErrorNotice error={error} />
+        {!initialized ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
+        <Input
+          aria-label={t("contents.search")}
+          placeholder={t("contents.search")}
+          className="max-w-md"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        {loading ? (
+          <p className="text-sm text-muted-foreground">
+            {t("progress.loading")}
+          </p>
+        ) : (
+          <ContentsList
+            pid={pid}
+            entries={visible}
+            readOnly={readOnly}
+            sourceOnly={!initialized}
+            empty={
+              chapters.length
+                ? undefined
+                : t("progress.chaptersWillAppearAfterParsing")
+            }
+            onEdit={setEditing}
+          />
+        )}
+        {active && (
+          <ContentsEditor
+            key={`${active.id}:${active.title}`}
+            source={active.title}
+            target={active.title_translated}
+            readOnly={readOnly}
+            onClose={() => setEditing(null)}
+            onSave={async (target, expected) => {
+              try {
+                await api.updateChapterTitle(pid, active.chapter_index, {
+                  title_translated: target,
+                  expected_title_translated: expected,
+                });
+              } finally {
+                await Promise.all([
+                  qc.invalidateQueries({ queryKey: ["chapters", pid] }),
+                  qc.invalidateQueries({ queryKey: ["review", pid] }),
+                  qc.invalidateQueries({ queryKey: ["events", pid] }),
+                ]);
+              }
+              toast.success(t("contents.saved"));
+            }}
+          />
+        )}
+      </PageContainer>
+    </>
+  );
+}

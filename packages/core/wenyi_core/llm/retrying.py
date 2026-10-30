@@ -36,6 +36,50 @@ class TruncatedResponseError(RuntimeError):
     """The provider stopped generation at its output token limit."""
 
 
+class ProviderRequestError(RuntimeError):
+    """A credential-scoped failure containing only stable, safe classifications."""
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        operation: str,
+        error_type: str,
+        status_code: int | None,
+        reason: str | None,
+        resumable: bool,
+    ):
+        self.status_code = status_code
+        self.reason = reason
+        self.resumable = resumable
+        super().__init__(
+            f"Model request failed: provider={provider} operation={operation} "
+            f"error_type={error_type} status={status_code or 'unknown'}"
+        )
+
+
+class _SafeTruncatedResponseError(ProviderRequestError, TruncatedResponseError):
+    """Retain translation's alignment-recovery signal without provider details."""
+
+
+def safe_provider_error(error: Exception, *, provider: str, operation: str) -> ProviderRequestError:
+    """Classify before discarding the SDK exception, its request and its cause chain."""
+    reason = retry_reason(error)
+    truncated = any(isinstance(item, TruncatedResponseError) for item in _exception_chain(error))
+    error_class = _SafeTruncatedResponseError if truncated else ProviderRequestError
+    status = error_status_code(error)
+    return error_class(
+        provider=provider,
+        operation=operation,
+        error_type="truncated_response"
+        if truncated
+        else reason or ("http_error" if status is not None else "provider_error"),
+        status_code=status,
+        reason=reason,
+        resumable=is_resumable_provider_interrupt(error),
+    )
+
+
 def _exception_chain(error: Any) -> Iterator[Any]:
     """Walk the exception cause chain while guarding against cycles."""
     current = error
@@ -109,6 +153,12 @@ def retry_reason(error: Any, *, operation: str | None = None) -> str | None:
     URLs, TLS certificates and local protocol configuration errors. Empty responses are
     retryable; truncated responses are retryable only for summary operations.
     """
+    if isinstance(error, ProviderRequestError):
+        if isinstance(error, TruncatedResponseError):
+            return (
+                "truncated_response" if operation in {"synopsis.chapter", "synopsis.book"} else None
+            )
+        return error.reason
     override = _retry_override(error)
     if override is not None:
         return "server_requested_retry" if override else None
@@ -163,6 +213,8 @@ def is_resumable_provider_interrupt(error: Any) -> bool:
     Covers automatic-retry cases plus payment/quota stops such as HTTP 402. Other errors
     may still finish as ``failed`` for diagnosis while remaining resume-eligible.
     """
+    if isinstance(error, ProviderRequestError):
+        return error.resumable
     if is_retryable_provider_error(error):
         return True
     status_code = error_status_code(error)
@@ -226,15 +278,22 @@ class RetryReporter:
     stage: str | None
     max_attempts: int
     emit: Callable[..., None]
+    redact: Callable[[str], str] | None = None
 
     def _error_fields(self, error: Any) -> dict[str, Any]:
         """Build safe error fields excluding request bodies, response bodies and credentials."""
-        return {
+        fields = {
             "reason": retry_reason(error, operation=self.stage) or "not_retryable",
             "error_type": type(error).__name__,
             "status_code": error_status_code(error),
             "request_id": _request_id(error),
         }
+        if self.redact is not None:
+            fields = {
+                key: self.redact(value) if isinstance(value, str) else value
+                for key, value in fields.items()
+            }
+        return fields
 
     def before_sleep(self, retry_state: RetryCallState) -> None:
         """Tenacity callback recording failed attempts, the next attempt and actual wait
@@ -322,6 +381,7 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None):
 
 __all__ = [
     "EmptyResponseError",
+    "ProviderRequestError",
     "RetryReporter",
     "TruncatedResponseError",
     "error_status_code",

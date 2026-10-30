@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid, termPageFixture } from "./fixtures";
+import { chooseOption } from "./select-helper";
 
 const terms = [
   { source: "An", target: "安", reading: "An", type: "person" },
@@ -21,9 +22,8 @@ for (const locale of ["en", "zh-CN"] as const) {
     );
     await fakeApi(page, { [`/projects/${pid}/glossary/conflicts`]: [] });
     await page.route(`**/api/projects/${pid}/glossary/terms**`, (route) => {
-      const type = new URL(route.request().url()).searchParams.get("type");
       return route.fulfill({
-        json: terms.filter((term) => !type || term.type === type),
+        json: termPageFixture(terms, route.request().url()),
       });
     });
     await page.goto(`/projects/${pid}/glossary`);
@@ -32,13 +32,13 @@ for (const locale of ["en", "zh-CN"] as const) {
     const rows = table.locator("tbody tr");
     for (const width of [1440, 900, 390]) {
       await page.setViewportSize({ width, height: 960 });
-      await filter.selectOption("person");
+      await chooseOption(filter, locale === "en" ? "Person" : "人物");
       await expect(rows).toHaveCount(1);
       const baseline = await rows.first().boundingBox();
       expect(baseline).not.toBeNull();
       expect(baseline!.height).toBeLessThanOrEqual(60);
 
-      await filter.selectOption("");
+      await chooseOption(filter, locale === "en" ? "All types" : "全部类型");
       await expect(rows).toHaveCount(2);
       for (const row of await rows.all()) {
         const bounds = await row.boundingBox();
@@ -65,9 +65,9 @@ for (const locale of ["en", "zh-CN"] as const) {
 
     await page.setViewportSize({ width: 1440, height: 960 });
     const expression = rows.nth(1);
-    for (const [index, field] of (
-      ["source", "target", "reading"] as const
-    ).entries()) {
+    await expect(table.getByRole("columnheader")).toHaveCount(5);
+    await expect(table).not.toContainText(terms[1].reading.trim());
+    for (const [index, field] of (["source", "target"] as const).entries()) {
       await expect(expression.getByRole("cell").nth(index + 1)).toHaveText(
         terms[1][field].trim(),
       );

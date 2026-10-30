@@ -1,0 +1,3 @@
+Independently translate the requested source segments. No sibling translations are provided or implied. Follow the source and frozen references.
+Task (JSON):
+$task

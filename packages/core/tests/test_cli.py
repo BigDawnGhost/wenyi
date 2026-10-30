@@ -8,11 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import typer
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_cli.commands.bootstrap import configure_windows_console
-from wenyi_cli.commands.validation import validate_pdf_engine
 from wenyi_core.config import Config
 from wenyi_core.ingest.errors import MinerUError
 from wenyi_core.llm.providers.fake import FakeClient
@@ -34,15 +32,13 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
-    def test_pdf_engine_validation_accepts_both_backends(self):
-        self.assertEqual(validate_pdf_engine("WeasyPrint"), "weasyprint")
-        self.assertEqual(validate_pdf_engine(" fpdf2 "), "fpdf2")
-
-    def test_pdf_engine_validation_rejects_unknown_backend(self):
-        with self.assertRaises(typer.Exit) as raised:
-            validate_pdf_engine("unknown")
-
-        self.assertEqual(raised.exception.exit_code, 2)
+    def test_pdf_engine_option_is_removed_from_book_commands(self):
+        for command in ("translate", "assemble"):
+            with self.subTest(command=command):
+                result = CliRunner().invoke(app, [command, "--help"])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertNotIn("--pdf-engine", plain_text(result.output))
+                self.assertIn("BabelDOC", plain_text(result.output))
 
     def test_every_cli_start_checks_default_config(self):
         runner = CliRunner()
@@ -481,11 +477,9 @@ class TestCliConfig(unittest.TestCase):
                 app,
                 [
                     "assemble",
-                    "input.epub",
+                    "input.pdf",
                     "--format",
                     "pdf",
-                    "--pdf-engine",
-                    "fpdf2",
                     "--no-mono",
                     "--bilingual",
                 ],
@@ -494,9 +488,8 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertFalse(captured["mono"])
         self.assertTrue(captured["bilingual"])
-        self.assertEqual(captured["input"], "input.epub")
+        self.assertEqual(captured["input"], "input.pdf")
         self.assertEqual(captured["kwargs"]["out_format"], "pdf")
-        self.assertEqual(captured["kwargs"]["pdf_engine"], "fpdf2")
         self.assertIn("out.pdf", plain_text(result.output))
 
     def test_report_uses_local_orchestrator_entry(self):

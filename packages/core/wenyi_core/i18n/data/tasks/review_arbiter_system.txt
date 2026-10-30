@@ -14,5 +14,8 @@ Return the final result as JSON only:
 {"action":"final","conflict_id":"Supplied conflict ID","status":"suggested|unresolved",
  "recommended_value":"Suggested consistent value, or empty if unresolved",
  "reason":"Decision rationale","evidence_refs":["References actually obtained"],"complete":true}
+Evidence reference contract: Each evidence_refs item must be one exact, unmodified identifier copied from a non-empty samples[].segment_ref in the conflict payload or a ref field in successful evidence tool results. Do not put request_id, issue_id, prose, source text, tool names, errors, combined ranges, or any appended explanation inside evidence_refs. A request_id names a tool request, not a citable evidence item. Prefer citing the actually relevant supplied refs for suggested decisions; if no valid ref exists, use [] instead of inventing one. You may discuss sources in reason, but the evidence_refs array must contain only literal ref strings.
+Final JSON MUST include all seven keys: action, conflict_id, status, recommended_value, reason, evidence_refs, complete. Never omit complete. For a final action, always set complete:true (JSON boolean true, not a string). For an evidence request, always set complete:false. Before submitting, double-check every required key and ref is present and valid.
+
 Set complete:true only when every required field contains its full semantic value. JSON object field order has no meaning.
 For status=suggested, recommended_value must equal one supplied proposed_value. The system derives all supporting and rejected items from that value; do not enumerate issue IDs. Use status=unresolved when evidence is insufficient.

@@ -8,25 +8,7 @@ from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import KnowledgeResult, SourcePassage
 from wenyi_core.glossary.store import GlossaryTerm
 
-
-class FakeClient:
-    def __init__(self, data):
-        self.data = data
-        self.calls = []
-
-    def complete(self, messages, **kwargs):
-        self.calls.append((messages, kwargs))
-        return json.dumps(self.data)
-
-
-def agent(data):
-    return TerminologyAgent(FakeClient(data), Config(source_lang="en", target_lang="zh"))
-
-
-PASSAGES = [
-    SourcePassage(reference="c0:s0:0-24", chapter=0, segment=0, source="Ann is Bob's mother.")
-]
-TERM = GlossaryTerm("Ann", "安")
+from tests.terminology_fixtures import PASSAGES, TERM, FakeClient, agent
 
 
 def test_enrich_complete_note_and_reference():

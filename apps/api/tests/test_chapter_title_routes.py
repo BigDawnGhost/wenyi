@@ -5,7 +5,7 @@ from __future__ import annotations
 import zipfile
 
 import pytest
-import test_domain_routes_integration as domain_tests
+from api_test_support import initialize
 from bs4 import BeautifulSoup
 from tests.sample_data import write_nested_toc_epub
 from wenyi_api import dal
@@ -13,14 +13,10 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.pipeline.title_translation import plan_titles
 
-pg_pool = domain_tests.pg_pool
-pg_storage = domain_tests.pg_storage
-domain_client = domain_tests.domain_client
-
 
 def test_title_save_updates_only_linked_toc_nodes_and_survives_reload(domain_client, tmp_path):
     client, storage, _ = domain_client
-    domain_tests.initialize(storage, tmp_path)
+    initialize(storage, tmp_path)
     manifest = storage.load_manifest()
     primary = {
         "entry_id": "toc-a",
@@ -120,7 +116,7 @@ def test_saved_directory_title_is_used_by_epub_exports(
 @pytest.mark.parametrize("status", ["translating", "reviewing", "pausing", "preparing"])
 def test_title_save_is_blocked_while_a_task_runs(domain_client, tmp_path, status):
     client, storage, _ = domain_client
-    domain_tests.initialize(storage, tmp_path)
+    initialize(storage, tmp_path)
     dal.set_project_status(storage.project_id, status)
     before = storage.load_manifest()
     result = client.put(
@@ -136,7 +132,7 @@ def test_title_save_validates_input_and_project_identity(domain_client, tmp_path
     url = f"/projects/{storage.project_id}/chapters/0/title"
     body = {"title_translated": "Title", "expected_title_translated": None}
     assert client.put(url, json=body).status_code == 409
-    domain_tests.initialize(storage, tmp_path)
+    initialize(storage, tmp_path)
     assert client.put(url.replace("/0/", "/99/"), json=body).status_code == 404
     assert client.put(url.replace(storage.project_id, "missing"), json=body).status_code == 404
     for invalid in (
@@ -159,7 +155,7 @@ def test_title_save_validates_input_and_project_identity(domain_client, tmp_path
 
 def test_title_and_event_roll_back_together(domain_client, tmp_path, monkeypatch):
     client, storage, _ = domain_client
-    domain_tests.initialize(storage, tmp_path)
+    initialize(storage, tmp_path)
     before = storage.load_manifest()
 
     def fail(*args, **kwargs):

@@ -147,6 +147,9 @@ class GeminiClient(ProviderAdapter):
 
     def validate_credentials(self) -> None:
         """Validate Gemini API-key configuration."""
+        if self._credentials is not None:
+            super().validate_credentials()
+            return
         api_key, target_env = get_api_key_from_env(self.cfg.api_key_env)
         if not api_key:
             raise RuntimeError(
@@ -166,7 +169,11 @@ class GeminiClient(ProviderAdapter):
                     ) from error
 
                 self.validate_credentials()
-                api_key, _ = get_api_key_from_env(self.cfg.api_key_env)
+                api_key = (
+                    self.api_key()
+                    if self._credentials is not None
+                    else get_api_key_from_env(self.cfg.api_key_env)[0]
+                )
 
                 kwargs: dict[str, Any] = {
                     "api_key": api_key,
@@ -182,6 +189,16 @@ class GeminiClient(ProviderAdapter):
 
                 self._client = genai.Client(**kwargs)
         return self._client
+
+    def list_models(self) -> list[str]:
+        """List models that support text generation, without the ``models/`` prefix."""
+        names = []
+        for item in self._ensure_client().models.list():
+            actions = getattr(item, "supported_actions", None) or []
+            name = str(getattr(item, "name", "") or "")
+            if name and (not actions or "generateContent" in actions):
+                names.append(name.removeprefix("models/"))
+        return names
 
     def _request(
         self,

@@ -2,11 +2,11 @@
 
 [简体中文](zh/configuration.md)
 
-Wenyi reads `config.yaml` from the current working directory. If the file is missing, running the program creates a documented default configuration.
+The Wenyi CLI reads `config.yaml` from the current working directory. If the file is missing, running the CLI creates a documented default configuration.
 
 Top-level sections are `language`, `llm`, `segment`, `pipeline`, `output`, `honorific`, and `paths`. Unknown sections are rejected; removed settings are not translated to a newer schema.
 
-## Web settings and model registration
+## Web/Desktop settings and model registration
 
 The CLI continues to read `config.yaml`. Web **Settings** manages a shared registry
 of provider connections and model profiles, default tiers and operation routes, and
@@ -15,11 +15,19 @@ new-project workflow defaults. The Web server reads its initial defaults from
 PostgreSQL and survive restarts. Saving Web settings does not rewrite the CLI file.
 API keys remain server environment variables; enter only their variable names.
 
-The default creation template is selected here. Standard translation uses the configured
-workflow switches; Quick draft disables book understanding, polishing, review and
-autofix. Projects copy defaults at creation, so later default changes do not reset an
-existing project's workflow or model selections. Language choices on the creation form
-remain authoritative.
+Desktop uses the same settings workflow in an independent SQLite workspace, initialized
+from built-in defaults rather than the CLI's current-directory file. It does not import
+Web settings or projects. Desktop also accepts manually entered API keys: it automatically
+uses the OS credential store when available, otherwise keeps them only for the current
+session and clearly asks for re-entry after restart. Environment variables remain supported.
+See [Desktop credentials](desktop.md#api-keys); keys never belong in configuration YAML.
+
+Standard or precision translation is selected only when creating a Web/Desktop book project.
+Global Settings has no translation-mode or workflow-template selector; Quick draft is
+retired for new requests. Projects copy shared defaults at creation, so later default
+changes do not reset an existing project's workflow or model selections. The saved
+mode cannot be changed in project settings or YAML; create another project to change it.
+Existing historical projects and frozen jobs retain their saved workflow.
 
 Project configuration accepts registered model IDs through `llm.tiers`, `llm.routes`
 and route fallbacks, plus `llm.budget`. Provider connections, model names/options,
@@ -37,9 +45,9 @@ letters, digits, underscores or hyphens. A referenced connection or model cannot
 deleted until its selections are changed. Unused registrations can be deleted.
 
 **Restore defaults** first loads a draft, and **Save configuration** applies it. Global
-Settings reloads the server configuration file and selects Standard translation as the
-creation template; project settings use current global defaults and the project's
-workflow template, preserving its translation languages. Restoring defaults cannot
+Settings reloads the server configuration file (built-in defaults in Desktop).
+Project settings use current global defaults while preserving the project's saved
+translation mode and languages. Restoring defaults cannot
 remove models still selected by other projects; change those selections first.
 Operation selectors show the effective tier directly, without a “Follow default tier”
 prefix. Selecting the operation's default tier clears its model override and preserves
@@ -56,6 +64,13 @@ language:
 
 `source: auto` asks the model to identify the source language; alternatively, select a language below. Translation runs directly between source and target without pivoting through Chinese. Multilingual quality is experimental. The default CLI, configuration comments, and prompt instructions use English independently of the translation target. The generated configuration still defaults to `target: zh`; choose `en` for English translations.
 
+Detection request failures are distinct from unsupported language results. HTTP 402 reports
+insufficient provider balance and asks you to recharge or change provider; authentication,
+rate-limit and connection failures retain their own diagnostics. `llm_request_failed` and
+`language_detection_failed` events include `status_code` when available, `error_category` and
+a safe `error_message`, without raw provider bodies or credentials. Setting an explicit
+source skips detection but does not fix a provider/account problem for later model calls.
+
 All generated descriptive metadata, including glossary `note`, style guidance, character descriptions, and references to characters in prose, is requested in the target language. Character `target` values contain translated or transliterated names; `source` and `aliases` preserve the original spelling for matching. Original-language quotations may appear as evidence. Type and gender values use English identifiers; older Chinese enum values are no longer converted. Matching policies reuse saved analysis and notes. A changed built-in semantic policy automatically rebuilds affected analysis; existing glossary notes are retained. Use a separate `paths.state_dir` for a complete new translation and quality comparison.
 
 | Codes | Languages |
@@ -71,7 +86,7 @@ Run `uv run wenyi languages` to list built-in profiles without an API key. `targ
 
 Each invocation selects one direction. For example, `source: zh`, `target: en` translates Chinese directly into English; `source: ja`, `target: en` translates Japanese directly into English. Identical languages after detection/normalization are rejected. Changing the target creates separate state. Use the corresponding `language.target` for `prepare`, `translate`, `review`, `assemble`, `status`, `report`, and glossary commands. An explicit source conflicting with saved state is rejected on resume.
 
-See the [pipeline guide](pipeline.md) for prompt resources and state isolation, and [Web interface languages](web-i18n.md) for display-language settings. Multilingual long-form blind evaluation, native-language review and RTL/layout certification remain future work; interface language support does not certify translation quality. The CLI and prompt instructions remain English; there are no `ui_locale` or `prompt_locale` configuration fields.
+See the [pipeline guide](pipeline.md) for prompt resources and state isolation, and [Web interface language](web.md#interface-language) for display-language settings. Multilingual long-form blind evaluation, native-language review and RTL/layout certification remain future work; interface language support does not certify translation quality. The CLI and prompt instructions remain English; there are no `ui_locale` or `prompt_locale` configuration fields.
 
 ## Built-in language policies
 
@@ -135,7 +150,7 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 - `routes.<operation>` selects exactly one of `{model: profile}` or `{tier: strong}`. Unknown operations, fields and references fail before requests. There is no missing-tier fallback.
 - Preset overrides replace whole connection/profile entries by ID. Repeat required fields when replacing an entry; model options are not merged across profiles. Tier and route mappings replace individual keys.
 - An explicit `max_output_tokens` overrides static and dynamic workflow hints. Without it, synopsis and annotation hints retain their prior behavior. OpenAI-compatible thinking profiles expand hints below 4,096 to 4,096; explicit smaller caps are rejected while thinking is enabled. Actual model limits still depend on the service.
-- API keys come only from environment variables. Do not place credentials in endpoints or request overrides. Raw overrides cannot replace model identity, messages, streaming, JSON mode, credentials or output caps.
+- CLI/Web API keys come only from environment variables; Desktop additionally supports its OS credential store or session-only manual input. Do not place credentials in YAML, endpoints or request overrides. Raw overrides cannot replace model identity, messages, streaming, JSON mode, credentials or output caps.
 
 ### Provider options
 
@@ -155,6 +170,15 @@ Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `open
 
 Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
 
+The global **MinerU PDF parsing** settings card is separate from model connections.
+Web and CLI use `MINERU_API_KEY` from the deployment/process environment. Desktop checks
+the same variable first and, when absent, uses the manual key saved in that card through
+the OS credential store or session-only memory. The Desktop card has one input and one
+Save button; both are disabled when the environment key is active. Saving does not change
+configuration YAML or model registrations. Credentials are resolved only when an uncached
+PDF needs MinerU conversion; existing converted HTML and non-PDF inputs require no MinerU
+key. The key never enters project/job snapshots, manifests, or parser caches.
+
 DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. When neither a profile cap nor a workflow hint applies, the service supplies its default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. Workflow hints and explicit `max_output_tokens` still follow the configuration rules above. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
 
 ### Registered operations
@@ -162,7 +186,7 @@ DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` ex
 | Operation | Default tier or inheritance | Purpose |
 |---|---|---|
 | `language.detect` | `cheap` | Detect source language |
-| `analysis.style` | `strong` | Analyze style, characters and seed glossary |
+| `analysis.style` | `strong` | Analyze style and character voices |
 | `synopsis.chapter` | `fast` | Chapter digest; 600-token hint |
 | `synopsis.book` | `fast` | Book synopsis; 1,200-token hint |
 | `translation.body` | `strong` | Body translation and alignment recovery |
@@ -189,6 +213,15 @@ uv run wenyi models check --for translate
 ```
 
 `list` and `explain` need no keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
+
+To confirm that providers are actually reachable, run a live connectivity test:
+
+```bash
+uv run wenyi models ping --for translate
+uv run wenyi models ping --for review --timeout 10 --json
+```
+
+`ping` sends one short request (`max_output_tokens` 16, or the provider minimum such as 4096 with thinking enabled) to every model profile reachable by the workflow, including explicit fallbacks. It never retries, caps each request at `--timeout` seconds (default 30), does not record usage in any run, and exits with status 1 if any profile fails. Failures are reported by category, such as `authentication_failed`, `model_or_endpoint_not_found`, `connection_failed` or `missing_credential`, without echoing provider responses. A truncated or empty reply counts as reachable.
 
 Optional local controls, illustrated with an offline provider:
 
@@ -243,9 +276,36 @@ Use isolated public-domain fixtures before choosing a mixed-model setup. No new 
 
 ## Pipeline
 
+`pipeline.translation_mode` accepts `standard` (default) or `best_of_three`.
+Precision mode requires `pipeline.polish: true`; invalid combinations are rejected,
+including project YAML settings. In Web, choose the translation mode
+when creating a book project; new projects default to `standard`, independently of
+global settings. Selecting precision enables polishing for that project. Its mode is
+fixed at creation; project settings can adjust other fields but cannot disable the
+polishing required by precision. Restoring defaults also preserves the saved mode.
+Translation mode is not a global Web setting; global YAML rejects it. SRT does not
+support precision; project YAML and source replacement enforce this boundary.
+
+Precision always creates three drafts with built-in three-branch concurrency; it is
+not a user option. Existing configurations and frozen jobs containing the retired
+`pipeline.precision_concurrency` field remain readable, but the value is ignored
+and omitted from new configuration documents. New Web YAML writes reject it.
+One comprehensive source-aware polishing combines their useful parts and outputs
+final text directly. It uses the existing `translation.body` and `polish.body`
+routes, profiles and provider behavior, with no precision-specific output-token
+caps or hints. A normal batch uses four calls versus two for standard translation
+with polishing. The former `translation.select`, `translation.verify` and
+`translation.refine` operation IDs are no longer supported: existing explicit
+`llm.routes` entries for them fail validation. Remove those entries and configure
+`translation.body` / `polish.body` explicitly if needed; no settings are rewritten.
+See [precision workflow](pipeline.md#best-of-three-precision-translation) for
+synthesis, resume, and cost semantics.
+
 ```yaml
 pipeline:
+  translation_mode: standard
   review: true
+  align_retry_limit: 2
   polish: true
   rolling_context_segments: 6
   book_understanding: true
@@ -268,6 +328,7 @@ pipeline:
 ```
 
 - `review`: enabled by default; automatically run the evidence-driven whole-book review after the complete book has been translated. Pass `--no-review` or set this to `false` to skip it in the one-command workflow. The explicit `wenyi review` command remains available.
+- `align_retry_limit`: additional attempts for invalid model-output structure; the default `2` allows three attempts including the initial request, and `0` disables these retries. Standard translation falls back to individual paragraphs after exhaustion. Precision uses the same budget for each initial draft and synthesis, retries only the failing stage with unchanged context, and pauses after exhaustion without paragraph splitting. Actual requests, including failed attempts, incur provider usage; transport retries remain separate.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `rolling_context_segments`: number of recent translated segments included with each translation batch. Translation and polishing also receive one following source segment from the same chapter as a read-only reference, including when this setting is zero. This built-in lookahead does not change output counts or saved translation context; see [whole-book context](pipeline.md#whole-book-understanding-and-context).
 - `book_understanding`: prescan the book to create chapter digests and a whole-book synopsis. Chapters with source text require a usable digest before body translation; synopsis synthesis failures allow translation to continue. Failed digests are retried on the next prepare/translate run. See [Pipeline](pipeline.md) for retry and cache behavior.

@@ -63,7 +63,7 @@ def pdf_project(tmp_path, monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        "wenyi_core.pipeline.preparation.load_document",
+        "wenyi_core.pipeline.input_preparation.load_document",
         lambda *a, **kw: document.model_copy(deep=True),
     )
     monkeypatch.setattr(
@@ -162,6 +162,38 @@ def test_saved_non_babeldoc_pdf_still_defaults_to_epub(pdf_project):
 
     assert result.exit_code == 0, result.output
     assert (source.parent / "output" / "book.zh.epub").is_file()
+    assert requests == []
+
+
+@pytest.mark.parametrize("meta", [None, {}, {"mineru": True}, {"babeldoc": False}])
+def test_non_babeldoc_pdf_export_fails_before_creating_output(pdf_project, tmp_path, meta):
+    config, source, requests = pdf_project
+    store = Orchestrator(config).run(str(source))
+    manifest = store.load_manifest()
+    manifest["meta"] = meta
+    store.save_manifest(manifest)
+    output = tmp_path / "rejected" / "book.pdf"
+
+    with pytest.raises(ValueError, match="PDF export is only available for BabelDOC"):
+        assemble(store, str(source), out_path=str(output), out_format="pdf")
+
+    assert not output.parent.exists()
+    assert requests == []
+
+
+def test_cli_rejects_non_babeldoc_pdf_export_without_traceback(pdf_project):
+    config, source, requests = pdf_project
+    store = Orchestrator(config).run(str(source))
+    manifest = store.load_manifest()
+    manifest["meta"] = {"mineru": True}
+    store.save_manifest(manifest)
+
+    result = CliRunner().invoke(app, ["assemble", str(source), "--format", "pdf"])
+
+    assert result.exit_code == 1, result.output
+    assert "PDF export is only available for BabelDOC" in result.output
+    assert "Traceback" not in result.output
+    assert not (source.parent / "output").exists()
     assert requests == []
 
 

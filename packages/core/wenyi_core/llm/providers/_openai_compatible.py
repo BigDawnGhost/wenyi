@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from abc import abstractmethod
 from typing import Any, Generic, TypeVar
 
@@ -98,7 +97,7 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
                 from openai import OpenAI
 
                 self.validate_credentials()
-                api_key = os.environ.get(self.api_key_env) if self.api_key_env else None
+                api_key = self.api_key()
                 self._client = OpenAI(
                     api_key=api_key or "no-key",
                     base_url=self.base_url,
@@ -106,6 +105,10 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
                     max_retries=0,
                 )
         return self._client
+
+    def list_models(self) -> list[str]:
+        """Read ``GET /models``; the OpenAI SDK pages through gateways that paginate."""
+        return [str(item.id) for item in self._ensure_client().models.list() if item.id]
 
     @classmethod
     def output_limit(cls, options: BaseModel, hint: int | None, explicit: int | None) -> int | None:

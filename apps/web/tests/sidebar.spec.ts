@@ -1,6 +1,19 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid } from "./fixtures";
 
+test.beforeEach(async ({ page }, info) => {
+  if (info.project.name === "desktop") {
+    await page.addInitScript(() => {
+      Object.assign(window, {
+        __WENYI_DESKTOP__: {
+          apiBase: "http://127.0.0.1:19485",
+          token: "sidebar-fixture-token",
+        },
+      });
+    });
+  }
+});
+
 for (const chinese of [false, true]) {
   test.describe(`collapsible navigation in ${chinese ? "Chinese" : "English"}`, () => {
     const collapseLabel = chinese ? "收起侧边栏" : "Collapse sidebar";
@@ -9,12 +22,12 @@ for (const chinese of [false, true]) {
     const globalLabel = chinese ? "全局导航" : "Global navigation";
     const proofreadingLabel = chinese ? "人工校阅" : "Manual proofreading";
 
-    test.beforeEach(async ({ page }) => {
+    test.beforeEach(async ({ page }, info) => {
       await page.addInitScript(
         (locale) => localStorage.setItem("wenyi.locale", locale),
         chinese ? "zh-CN" : "en",
       );
-      await fakeApi(page);
+      await fakeApi(page, {}, info.project.name === "desktop" ? "http://127.0.0.1:19485" : undefined);
     });
 
     test("desktop icon navigation keeps links accessible and remembers its width", async ({
@@ -25,6 +38,8 @@ for (const chinese of [false, true]) {
       const sidebar = page.getByRole("complementary");
       const main = page.getByRole("main");
       const navigation = page.getByRole("navigation", { name: projectLabel });
+      // Do not measure the full-width lazy-route placeholder as the layout.
+      await expect(sidebar).toHaveCSS("width", "240px");
       const expandedWidth = await main.evaluate(
         (element) => element.clientWidth,
       );
@@ -53,6 +68,9 @@ for (const chinese of [false, true]) {
       await expect(current).toHaveAttribute("aria-current", "page");
       await expect(current).toHaveAttribute("title", proofreadingLabel);
       await expect(sidebar.getByRole("link")).toHaveCount(12);
+      const global = page.getByRole("navigation", { name: globalLabel });
+      await expect(global.getByRole("link")).toHaveCount(1);
+      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
       for (const link of await sidebar.getByRole("link").all()) {
         await expect(link).toBeInViewport();
       }
@@ -67,12 +85,16 @@ for (const chinese of [false, true]) {
         .click();
       await expect(page).toHaveURL(`/projects/${pid}/settings`);
       await expect(expand).toBeVisible();
-      await page
-        .getByRole("navigation", { name: globalLabel })
+      // Settings lives in the sidebar footer stratum, outside the panels nav.
+      await sidebar
         .getByRole("link", { name: chinese ? "设置" : "Settings", exact: true })
         .click();
       await expect(page).toHaveURL("/settings");
       await page.reload();
+      await expect(expand).toBeVisible();
+      await expect(page.getByLabel(chinese ? "界面语言" : "Interface language")).toBeVisible();
+      await expect(sidebar).toHaveCSS("width", "64px");
+      await page.goto(`/projects/${pid}/proofreading`);
       await expect(expand).toBeVisible();
       await expect(sidebar).toHaveCSS("width", "64px");
       await expand.click();
@@ -91,6 +113,8 @@ for (const chinese of [false, true]) {
       const navigation = page.getByRole("navigation", { name: projectLabel });
       const global = page.getByRole("navigation", { name: globalLabel });
       await expect(navigation).toBeVisible();
+      await expect(global.getByRole("link")).toHaveCount(1);
+      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
       const main = page.getByRole("main");
       const expandedHeight = await main.evaluate(
         (element) => element.clientHeight,
@@ -139,7 +163,7 @@ for (const chinese of [false, true]) {
 
 test("sidebar toggles remain usable when browser preference storage is unavailable", async ({
   page,
-}) => {
+}, info) => {
   await page.addInitScript(() => {
     const getItem = Storage.prototype.getItem;
     const setItem = Storage.prototype.setItem;
@@ -154,8 +178,8 @@ test("sidebar toggles remain usable when browser preference storage is unavailab
       setItem.call(this, key, value);
     };
   });
-  await fakeApi(page);
-  await page.goto("/");
+  await fakeApi(page, {}, info.project.name === "desktop" ? "http://127.0.0.1:19485" : undefined);
+  await page.goto(`/projects/${pid}/proofreading`);
   await page
     .getByRole("button", { name: "Collapse sidebar", exact: true })
     .click();

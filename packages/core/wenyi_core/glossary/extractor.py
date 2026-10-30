@@ -100,7 +100,7 @@ class GlossaryExtractor(Agent):
             "glossary_extractor_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(existing),
+            glossary=prompts.render_glossary(existing, source_lang=self.src),
             source=source_text,
             target=target_text,
         )
@@ -118,7 +118,7 @@ class GlossaryExtractor(Agent):
                 GlossaryTerm(
                     source=source,
                     target=target,
-                    reading=_text(d.get("reading")),
+                    reading=_text(d.get("reading")) if self.src == "ja" else "",
                     type=_text(d.get("type"), TYPE_TERM),
                     gender=gender,
                     aliases=[alias for a in aliases if (alias := _text(a))],

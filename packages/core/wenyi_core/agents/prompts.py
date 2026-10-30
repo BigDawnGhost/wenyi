@@ -7,8 +7,10 @@ import json
 from ..glossary.store import GlossaryStore, GlossaryTerm
 
 
-def render_glossary(terms: list[GlossaryTerm], *, note_source: str | None = None) -> str:
-    """Render glossary objects as a line-by-line reference for prompts."""
+def render_glossary(
+    terms: list[GlossaryTerm], *, source_lang: str, note_source: str | None = None
+) -> str:
+    """Render mappings, optional source-scoped notes, and Japanese-source readings."""
     if not terms:
         return "(none)"
     relevant = (
@@ -24,7 +26,7 @@ def render_glossary(terms: list[GlossaryTerm], *, note_source: str | None = None
         extra = []
         if t.gender:
             extra.append(t.gender)
-        if t.reading:
+        if source_lang == "ja" and t.reading:
             extra.append(f"Pronunciation: {t.reading}")
         tag = f"({t.type}{(', ' + ', '.join(extra)) if extra else ''})"
         alias = f" [Aliases:  {', '.join(t.aliases)}]" if t.aliases else ""

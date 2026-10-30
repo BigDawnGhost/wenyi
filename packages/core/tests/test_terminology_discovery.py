@@ -11,9 +11,7 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.terminology import TerminologyService
 
 from tests.fake_llm import MeteredFakeClient
-from tests.test_terminology_agent import FakeClient
-from tests.test_terminology_pipeline import FamilyHandler, inputs
-from tests.test_terminology_service import book_store
+from tests.terminology_fixtures import FakeClient, FamilyHandler, book_store, inputs
 
 PASSAGES = [
     SourcePassage(reference="c0:s0:0-30", chapter=0, segment=0, source="Ann met Bob's mother."),

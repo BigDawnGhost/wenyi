@@ -1,4 +1,5 @@
 """Fail packaging validation when language/prompt resources are missing from a core wheel."""
+
 from __future__ import annotations
 
 import sys
@@ -14,7 +15,8 @@ def main() -> None:
     resource_root = Path(__file__).resolve().parents[1] / "packages/core/wenyi_core/i18n/data"
     expected = {
         "wenyi_core/i18n/data/" + path.relative_to(resource_root).as_posix()
-        for path in resource_root.rglob("*") if path.is_file()
+        for path in resource_root.rglob("*")
+        if path.is_file()
     }
     if not expected:
         raise SystemExit("Source language resources are missing")

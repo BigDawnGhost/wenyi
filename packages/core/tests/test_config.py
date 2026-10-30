@@ -62,6 +62,8 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertIn("  punctuation_normalize: true", generated)
             self.assertNotIn("\npunctuation:\n", generated)
             self.assertTrue(cfg.pipeline.review)
+            self.assertEqual(cfg.pipeline.align_retry_limit, 2)
+            self.assertIn("  align_retry_limit: 2", generated)
             self.assertTrue(cfg.pipeline.polish)
             self.assertTrue(cfg.pipeline.annotation_alignment)
             self.assertEqual(cfg.pipeline.review_concurrency, 4)

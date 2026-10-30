@@ -4,61 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
+from api_test_support import new_project
 from fastapi.testclient import TestClient
-from test_storage_pg_integration import pg_pool  # noqa: F401
-from tests.fake_llm import MeteredFakeClient, routing_handler
+from tests.fake_llm import MeteredFakeClient
 from type_helpers import must
-from wenyi_api import dal, job_service
-from wenyi_api.db import pool as pool_module
+from wenyi_api import dal
+from wenyi_api.adapters import postgres_repository
 from wenyi_api.main import create_app
-from wenyi_api.project_service import storage_for
-from wenyi_api.routers import export
-from wenyi_api.workers import tasks
-
-
-@pytest.fixture
-def api(monkeypatch, pg_pool, tmp_path):  # noqa: F811
-    from wenyi_api.config import settings
-    from wenyi_core.llm import factory
-
-    config = tmp_path / "config.yaml"
-    config.write_text("llm:\n  preset: fake\n", encoding="utf-8")
-    overrides = replace(
-        settings,
-        data_dir=str(tmp_path / "data"),
-        config_path=str(config),
-        api_token=None,
-        redis_url="redis://127.0.0.1:56379/0",
-    )
-    for module_name, module in list(sys.modules.items()):
-        if module_name.startswith("wenyi_api") and hasattr(module, "settings"):
-            monkeypatch.setattr(module, "settings", overrides)
-    monkeypatch.setattr(pool_module, "_pool", pg_pool)
-    monkeypatch.setattr(tasks, "init_pool", lambda dsn: pg_pool)
-    monkeypatch.setattr(
-        factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)
-    )
-    queue = []
-
-    async def enqueue(name, **kwargs):
-        queue.append((name, kwargs))
-        return SimpleNamespace(job_id=kwargs["_job_id"])
-
-    monkeypatch.setattr(job_service, "enqueue", enqueue)
-    monkeypatch.setattr(export, "enqueue", enqueue)
-    client = TestClient(create_app())
-    yield client, queue
-    client.close()
-
-
-def new_project(api, source="en", target="zh"):
-    # Seed existing projects for endpoint tests; public creation requires a source.
-    return dal.create_project("Book", source, target, {"template": "标准翻译"})
+from wenyi_backend import job_service
+from wenyi_backend.context import current_context
+from wenyi_backend.project_service import storage_for
+from wenyi_backend.workers import tasks
 
 
 def test_creation_requires_an_uploaded_source(api):
@@ -91,6 +50,23 @@ def test_creation_uploads_source_and_runs_selected_setup(api, prepare):
         "prepared" if prepare else "uploaded"
     )
     assert all(ch["status"] != "done" for ch in dal.chapter_summaries(pid))
+    detail = client.get(f"/projects/{pid}").json()
+    chapters = client.get(f"/projects/{pid}/chapters").json()
+    assert detail["chapter_count"] == len(chapters) > 0
+    assert detail["initialized"] is prepare
+    for chapter in chapters:
+        for route in ("chapters", "review"):
+            response = client.get(f"/projects/{pid}/{route}/{chapter['index']}")
+            assert response.status_code == 200, response.text
+            assert all(segment["target"] is None for segment in response.json()["segments"])
+    if not prepare:
+        assert dal.chapter_summaries(pid) == [], "Parsing must not initialize formal chapters"
+        ci = chapters[0]["index"]
+        response = client.put(
+            f"/projects/{pid}/review/{ci}/segments/0",
+            json={"target": "Must remain read-only", "expected_target": None},
+        )
+        assert response.status_code == 409
 
 
 @pytest.mark.parametrize(
@@ -165,7 +141,7 @@ def test_interrupted_upload_removes_partial_source(api, monkeypatch, tmp_path):
     from io import BytesIO
 
     from fastapi import UploadFile
-    from wenyi_api.source_upload import save_source
+    from wenyi_backend.source_upload import save_source
 
     before = dal.list_projects()
     file = UploadFile(file=BytesIO(b"first block"), filename="book.txt")
@@ -199,6 +175,27 @@ def test_creation_saves_pdf_parser_before_queueing(api):
     assert tasks._build_config_for(project["id"], run_id).pipeline.pdf_backend == "babeldoc"
 
 
+def test_creation_freezes_project_precision_before_queueing(api):
+    client, queue = api
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps({"name": "Book", "translation_mode": "best_of_three"})},
+        files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
+    )
+    assert response.status_code == 201, response.text
+    pid = response.json()["id"]
+    pipeline = must(dal.get_project(pid))["config"]["pipeline"]
+    assert pipeline["translation_mode"] == "best_of_three"
+    assert "precision_concurrency" not in pipeline
+    assert pipeline["polish"] is True
+    snapshot = tasks._build_config_for(pid, queue[0][1]["run_id"]).pipeline
+    assert snapshot.translation_mode == "best_of_three"
+    assert "precision_concurrency" not in snapshot.model_dump()
+    assert snapshot.polish is True
+    globals = client.get("/settings").json()["effective"]["pipeline"]
+    assert "translation_mode" not in globals and "precision_concurrency" not in globals
+
+
 def test_subtitle_creation_only_parses_source(api):
     client, queue = api
     response = client.post(
@@ -218,7 +215,7 @@ def execute_next(api):
     _, queue = api
     name, params = queue.pop(0)
     params.pop("_job_id")
-    asyncio.run(getattr(tasks, name)({}, **params))
+    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **params))
 
 
 def upload(api, pid, filename="book.html", data=None):
@@ -393,7 +390,7 @@ def test_srt_full_workflow_manual_edit_resume_and_exports(api, monkeypatch):
     assert len(rows) == 5
     from pathlib import Path
 
-    files = list((Path(tasks.settings.data_dir) / pid / "exports").rglob("*.srt"))
+    files = list((Path(current_context().data_dir) / pid / "exports").rglob("*.srt"))
     assert len(files) == 5
     assert client.post(f"/projects/{pid}/review/run").status_code == 422
 
@@ -405,15 +402,19 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
     from arq import create_pool
     from arq.connections import RedisSettings
     from arq.worker import Worker
-    from wenyi_api import workers
 
     redis_url = os.environ.get("WENYI_TEST_REDIS_URL")
     if not redis_url:
         pytest.skip("Set WENYI_TEST_REDIS_URL to run a real Arq queue")
-    monkeypatch.setattr(workers, "settings", replace(workers.settings, redis_url=redis_url))
     queue_name = "wenyi:test:" + uuid.uuid4().hex
-    monkeypatch.setattr(workers, "WORKFLOW_QUEUE", queue_name)
-    monkeypatch.setattr(job_service, "enqueue", workers.enqueue)
+    from wenyi_api import queue
+
+    monkeypatch.setattr(queue, "WORKFLOW_QUEUE", queue_name)
+
+    async def enqueue(name, **kwargs):
+        return await queue.enqueue(redis_url, name, **kwargs)
+
+    monkeypatch.setattr(job_service, "enqueue", enqueue)
     client, _ = api
     pid = new_project(api)
     response = client.post(
@@ -430,6 +431,7 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
             burst=True,
             handle_signals=False,
             poll_delay=0.01,
+            ctx={"backend": current_context()},
         )
         try:
             await worker.async_run()
@@ -451,7 +453,7 @@ def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
     response = client.post(f"/projects/{pid}/prepare")
     job = must(dal.get_job_by_arq_id(response.json()["job_id"]))
     dal.set_job_status(job["id"], "running")
-    with pool_module.get_pool().connection() as conn:
+    with postgres_repository(current_context()).pool.connection() as conn:
         conn.execute(
             "UPDATE jobs SET updated_at=now()-interval '3 minutes' WHERE id=%s", (job["id"],)
         )
@@ -463,15 +465,11 @@ def test_dead_worker_status_can_resume_without_waiting_for_redis_ttl(api):
 
 def test_http_download_and_websocket_require_token(api, monkeypatch):
     from starlette.websockets import WebSocketDisconnect
-    from wenyi_api import main
-    from wenyi_api.routers import ws
 
     client, _ = api
     pid = new_project(api)
-    secured = replace(main.settings, api_token="test-access-token")
-    monkeypatch.setattr(main, "settings", secured)
-    monkeypatch.setattr(ws, "settings", secured)
-    secured_client = TestClient(create_app())
+    secured = replace(current_context(), api_token="test-access-token")
+    secured_client = TestClient(create_app(context=secured))
     assert secured_client.get(f"/projects/{pid}/exports/123/download").status_code == 401
     assert (
         secured_client.get(

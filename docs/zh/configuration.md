@@ -2,20 +2,26 @@
 
 [English](../configuration.md)
 
-程序读取当前工作目录的 `config.yaml`。配置文件不存在时会自动创建带注释的默认文件。
+Wenyi CLI 读取当前工作目录的 `config.yaml`。配置文件不存在时，运行 CLI 会自动创建带注释的默认文件。
 
 顶层配置项为 `language`、`llm`、`segment`、`pipeline`、`output`、`honorific` 和 `paths`。未知配置项会被拒绝；已移除的设置不会自动转换为新格式。
 
-## Web 设置与模型注册
+## Web/Desktop 设置与模型注册
 
 CLI 继续读取 `config.yaml`。Web **总设置** 统一管理提供商连接、模型注册、默认档位与
 步骤路由，以及新项目流程默认值。Web 首次使用 `WENYI_CONFIG` 指定的文件
 （默认 `config.yaml`）初始化默认值；首次保存后改从 PostgreSQL 读取，重启后保留。
 保存 Web 设置不会改写 CLI 配置文件。API Key 仍只从服务端环境变量读取，页面只填写变量名。
 
-创建项目默认选用的流程模板在这里设置。标准翻译使用配置的流程开关；快速出稿关闭
-全书预理解、润色、审校与自动修复。创建项目时会复制默认配置，之后修改默认值不会重置
-已有项目的流程和模型选择。翻译语言以创建页的选择为准。
+Desktop 在独立 SQLite 工作区使用相同设置流程，从内置默认配置初始化，而不是读取
+CLI 当前目录的配置文件，也不导入 Web 设置或项目。Desktop 另支持手动输入 API key：
+系统凭据库可用时自动保存，不可用时仅保留在当前会话内存，并明确提示重启后重新输入。
+仍可使用环境变量，详见 [Desktop 密钥设置](desktop.md#api-密钥)；密钥不能写入配置 YAML。
+
+标准翻译或精翻仅在 Web/Desktop 创建书籍项目时选择。总设置没有翻译模式或流程模板选择器，
+新请求不再支持快速出稿。创建项目时会复制通用默认配置，之后修改默认值不会重置
+已有项目的流程和模型选择。项目配置和 YAML 不能切换已保存的翻译方式，需创建新项目。
+已有历史项目和冻结任务仍保留原流程。
 
 项目仅通过 `llm.tiers`、`llm.routes` 及备用路由选用已注册的模型 ID，并可设置
 `llm.budget`。提供商连接、模型名与参数、预设和提供商配额只在总设置中管理，项目表单
@@ -28,9 +34,9 @@ CLI 继续读取 `config.yaml`。Web **总设置** 统一管理提供商连接�
 ID 以字母开头，只能包含字母、数字、下划线和连字符。被引用的连接或模型需要先调整
 引用再删除，未使用的注册项可直接删除。
 
-**恢复默认配置** 先载入草稿，点击 **保存配置** 后才生效。总设置重新载入服务端配置
-文件，并将创建模板恢复为标准翻译；项目设置使用当前全局默认值与本项目流程模板，
-保留翻译语言。恢复默认配置也不能删除仍被其他项目选用的模型，需要先调整这些选择。
+**恢复默认配置** 先载入草稿，点击 **保存配置** 后才生效。总设置重新载入服务端配置文件
+（Desktop 使用内置默认值）；项目设置使用当前全局默认值，保留本项目已保存的翻译方式和语言。
+恢复默认配置也不能删除仍被其他项目选用的模型，需要先调整这些选择。
 步骤下拉框直接显示实际档位，不再加“跟随默认档位”前缀；选回步骤的默认档位会清除
 模型覆盖，并保留已有备用路由。全局保存检查配置版本，过期编辑页需要
 重新加载再保存。
@@ -44,6 +50,12 @@ language:
 ```
 
 `source: auto` 会调用模型识别源语言；也可以显式选择下表语言。源语言与目标语言可直接互译，不经中文中转。多语言质量仍属实验性。默认 CLI、配置注释和提示词指令统一使用英语，与翻译目标独立。生成的默认配置仍为 `target: zh`；需要英语译文时选择 `en`。
+
+检测请求失败与返回了不支持的语言结果会分别提示。HTTP 402 明确提示 provider 余额不足，
+需要充值或更换 provider；鉴权、限流和连接失败保留各自诊断。
+`llm_request_failed` 与 `language_detection_failed` 事件会在可用时记录 `status_code`，
+并记录 `error_category` 和安全的 `error_message`，不写入原始服务响应或凭据。
+显式设置源语言只能跳过检测，不能解决后续模型调用的账户或服务问题。
 
 所有模型生成的说明性元数据（包括术语 `note`、风格指南、人物描述及说明中的人物称呼）均明确要求使用目标语言。人物 `target` 保存翻译或音译后的姓名；`source` 和 `aliases` 保留原文拼写以供匹配，证据引用也可以包含原文。类型和性别使用英语标识符，不再转换旧中文枚举。策略匹配时复用原有分析和备注。内置语义策略变更会自动重建受影响的分析，已有术语备注继续保留。完整重译和质量比较请使用独立的 `paths.state_dir`。
 
@@ -60,7 +72,7 @@ language:
 
 每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
-提示词资源与状态隔离见[翻译流程](pipeline.md)，界面语言设置见 [Web 界面语言](web-i18n.md)。多语言公版长篇盲评、母语审校及 RTL／排版认证仍待开展；支持界面语言不代表翻译质量已经认证。CLI 与提示词指令仍使用英语，当前没有 `ui_locale` 或 `prompt_locale` 配置字段。
+提示词资源与状态隔离见[翻译流程](pipeline.md)，界面语言设置见 [Web 界面语言](web.md#界面语言)。多语言公版长篇盲评、母语审校及 RTL／排版认证仍待开展；支持界面语言不代表翻译质量已经认证。CLI 与提示词指令仍使用英语，当前没有 `ui_locale` 或 `prompt_locale` 配置字段。
 
 ## 内置语言策略
 
@@ -124,7 +136,7 @@ llm:
 - `routes.<操作>` 必须且只能选择 `{model: 配置名}` 或 `{tier: strong}`。未知操作、字段及引用在请求前报错，不再隐式回退缺失档位。
 - 覆盖预设时，按 ID 整体替换连接或模型配置，需要重复必填字段；不同模型的 options 不合并。档位和路由按各自键替换。
 - 显式 `max_output_tokens` 优先于流程的静态、动态输出提示；不设置时，梗概和注释定位沿用原有提示预算。OpenAI 兼容适配器在 thinking 开启时将低于 4,096 的提示预算提升到 4,096；显式设置更小上限则报错。实际模型限制仍取决于服务端。
-- API Key 只从环境变量读取，不写入地址或原始请求扩展。原始扩展不能覆盖模型身份、消息、流式开关、JSON 模式、密钥和输出上限。
+- CLI/Web 的 API Key 只从环境变量读取，Desktop 另支持系统凭据库或仅本次会话的手动输入；密钥不写入 YAML、地址或原始请求扩展。原始扩展不能覆盖模型身份、消息、流式开关、JSON 模式、密钥和输出上限。
 
 ### 提供商选项
 
@@ -144,6 +156,13 @@ llm:
 
 SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 
+总设置中的 **MinerU PDF 解析**卡片独立于模型连接。Web 和 CLI 从部署/进程环境变量
+`MINERU_API_KEY` 读取密钥。Desktop 优先读取同一变量，缺失时使用该卡片手动保存的
+系统凭据库或仅会话内存密钥。Desktop 卡片仅提供一个输入框和一个保存按钮；
+环境密钥存在时两者均禁用。保存不会改变配置 YAML 或模型注册。
+仅当未缓存的 PDF 需要 MinerU 转换时才解析凭据；已有转换 HTML 与非 PDF 输入无需密钥。
+密钥不会进入项目/任务快照、manifest 或解析缓存。
+
 DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: false` 显式关闭思考，此时不发送推理强度。未配置输出上限且流程没有输出提示时，由服务采用默认上限：非思考模式 8K、思考模式 64K，`max` 强度下为 128K。流程提示和显式 `max_output_tokens` 仍按上述配置规则处理。详见 [DeepSeek 请求参数](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
 ### 已注册操作
@@ -151,7 +170,7 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 | 操作 | 默认档位或继承 | 用途 |
 |---|---|---|
 | `language.detect` | `cheap` | 源语言识别 |
-| `analysis.style` | `strong` | 风格、人物与初始术语分析 |
+| `analysis.style` | `strong` | 风格与人物语气分析 |
 | `synopsis.chapter` | `fast` | 章节梗概；600 token 输出提示 |
 | `synopsis.book` | `fast` | 全书概要；1,200 token 输出提示 |
 | `translation.body` | `strong` | 正文翻译及段落对齐恢复 |
@@ -178,6 +197,15 @@ uv run wenyi models check --for translate
 ```
 
 `list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
+
+需要确认 provider 实际可连通时，运行真实连通性测试：
+
+```bash
+uv run wenyi models ping --for translate
+uv run wenyi models ping --for review --timeout 10 --json
+```
+
+`ping` 向该流程可达的每个模型配置（含显式 fallback）发送一次简短请求（`max_output_tokens` 为 16；开启 thinking 时取 provider 的最低值，例如 4096）。它不重试，每次请求最长等待 `--timeout` 秒（默认 30），不计入任何运行的用量；任一配置失败时退出码为 1。失败按类别报告，例如 `authentication_failed`、`model_or_endpoint_not_found`、`connection_failed` 或 `missing_credential`，不回显 provider 响应内容。回复被截断或为空也视为可连通。
 
 可选本地控制示例（使用离线提供商）：
 
@@ -232,9 +260,30 @@ uv run wenyi models migrate-usage state/BOOK/targets/zh
 
 ## 流水线
 
+`pipeline.translation_mode` 可选 `standard`（默认）或 `best_of_three`。
+精翻模式必须设置 `pipeline.polish: true`；包括项目 YAML 在内的无效组合会被拒绝。
+Web 在创建书籍项目时选择翻译模式；新项目默认 `standard`，不继承全局模式。
+选择精翻会自动开启本项目润色，翻译方式在创建后固定；项目配置可调整其他字段，
+但不能关闭精翻要求的润色，恢复默认配置也保留已保存的翻译方式。
+翻译模式不属于 Web 总设置，全局 YAML 会拒绝它。SRT 不支持精翻；
+项目 YAML 和换源接口也会校验这一限制，不会静默改成普通字幕翻译。
+
+精翻始终生成三份初稿，内置三分支并发，不作为用户选项。
+旧配置及冻结任务中的 `pipeline.precision_concurrency` 仍可读取，但其值会被忽略，
+新配置文档不再输出此字段，Web 新的 YAML 写入会拒绝它。随后一次综合润色对照原文，
+融合各稿有用部分并直接输出最终译文。沿用 `translation.body` 与 `polish.body`
+路由、模型配置和 provider 行为，不增加精翻专属输出 token 上限或提示。
+正常批次调用四次，标准翻译加润色调用两次。
+旧操作 ID `translation.select`、`translation.verify` 和 `translation.refine`
+不再支持；已有 `llm.routes` 中对应条目会导致校验失败。
+请手动删除这些条目，并按需显式配置 `translation.body` / `polish.body`；
+系统不会改写配置。综合润色、续跑和成本语义见[精翻流程](pipeline.md#三选一精翻)。
+
 ```yaml
 pipeline:
+  translation_mode: standard
   review: true
+  align_retry_limit: 2
   polish: true
   rolling_context_segments: 6
   book_understanding: true
@@ -257,6 +306,7 @@ pipeline:
 ```
 
 - `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `wenyi review`。
+- `align_retry_limit`：模型输出结构无效时的额外尝试次数；默认 `2` 表示连同初次请求最多尝试三次，`0` 关闭此类重试。标准翻译耗尽后回退到逐段翻译；精翻的每份初稿和综合润色使用同一预算，仅重试失败阶段并保持上下文不变，耗尽后暂停，不自动拆段。实际请求（包括失败尝试）产生模型用量；网络等传输重试仍独立处理。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
 - `rolling_context_segments`：每批翻译附带的前文译文段数。翻译与润色还会内置附带同章下一条原文片段作为只读参考，此值为零时也保留后文参考；它不改变输出段数，也不写入滚动译文上下文。详见[全书理解与上下文](pipeline.md#全书理解与上下文)。
 - `book_understanding`：预扫全书，生成章节梗概和全书概览。有原文内容的章节必须具备可用梗概才能开始正文翻译；全书概览合成失败时翻译继续。失败的章节梗概会在下次 prepare/translate 时补齐。重试与缓存行为见[流程文档](pipeline.md)。

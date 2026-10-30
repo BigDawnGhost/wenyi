@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { fakeApi, pid } from "./fixtures";
-import { cacheRate, tokenParts } from "../src/features/progress/accountingData";
+import { cacheRate, tokenParts } from "../../../packages/ui/src/features/progress/accountingData";
 
 const modelA = {
   total_tokens: 8000,
@@ -68,15 +68,17 @@ const stats = {
   },
 };
 
-test("cache partitions preserve input totals and rates require complete cache information", () => {
+test("cache partitions preserve input totals and rates require valid cache tokens", () => {
   for (const [cache, expectedRate, unknown] of [
     [{ cache_hit_tokens: 60, cache_miss_tokens: 40 }, 0.6, 0],
     [{ cache_hit_tokens: 0, cache_miss_tokens: 100 }, 0, 0],
     [{ cache_hit_tokens: 100, cache_miss_tokens: 0 }, 1, 0],
     [{}, undefined, 100],
     [{ cache_hit_tokens: 0, cache_miss_tokens: 0 }, undefined, 100],
-    [{ cache_hit_tokens: 20, cache_miss_tokens: 30 }, undefined, 50],
+    // Partial cache info: rate computed from reported hit/miss, not against prompt_tokens.
+    [{ cache_hit_tokens: 20, cache_miss_tokens: 30 }, 0.4, 50],
     [{ cache_hit_tokens: 120, cache_miss_tokens: 0 }, undefined, 100],
+    [{ cache_hit_tokens: 60, cache_miss_tokens: 60 }, undefined, 100],
   ] as const) {
     const slot = {
       prompt_tokens: 100,
@@ -94,6 +96,10 @@ test("cache partitions preserve input totals and rates require complete cache in
     expect(cacheRate(slot)).toBe(expectedRate);
     expect(parts.total).toBe(125);
   }
+});
+
+test("cache rates remain available without input totals", () => {
+  expect(cacheRate({ cache_hit_tokens: 20, cache_miss_tokens: 30 })).toBe(0.4);
 });
 
 test("model usage combines configuration identities with the same provider and model name", async ({
@@ -229,7 +235,7 @@ test("usage charts switch attribution without double counting and retain resumed
   await accounting.getByRole("button", { name: "Show all 6 runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(6);
   await expect(runs.getByRole("listitem").last()).toContainText(
-    "Prepare source and glossary",
+    "Prepare translation",
   );
   await accounting.getByRole("button", { name: "Show recent runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(3);
@@ -395,6 +401,42 @@ test("unknown cache usage remains distinct from uncached input", async ({
   await expect(row).toContainText("Cached input: 200");
   await expect(row).toContainText("Uncached input: 100");
   await expect(row).toContainText("Input with unknown cache status: 700");
+  // Rate comes from the reported hit/miss tokens; unknown input stays out of the rate.
+  await expect(row).toContainText("Cache hit rate: 66.7%");
+});
+
+test("overreported cache usage shows an unknown rate in totals and model rows", async ({
+  page,
+}) => {
+  const slot = {
+    prompt_tokens: 100,
+    completion_tokens: 25,
+    total_tokens: 125,
+    cache_hit_tokens: 60,
+    cache_miss_tokens: 60,
+    calls: 1,
+  };
+  await fakeApi(page, {
+    [`/projects/${pid}/stats`]: {
+      usage: {
+        totals: slot,
+        by_model: { "overreported-cache": slot },
+      },
+      timing: { total_seconds: 0, runs: [] },
+    },
+  });
+  await page.goto(`/projects/${pid}`);
+  const accounting = page.getByRole("region", {
+    name: "Total usage & run time",
+  });
+  const rateSummary = accounting.locator("dl > div").filter({
+    has: page.getByText("Cache hit rate", { exact: true }),
+  });
+  await expect(rateSummary.locator("dd")).toHaveText("—");
+  await accounting.getByRole("button", { name: "By model", exact: true }).click();
+  const row = accounting.getByRole("list", { name: "By model", exact: true });
+  await expect(row).toContainText("Cached input: —");
+  await expect(row).toContainText("Uncached input: —");
+  await expect(row).toContainText("Input with unknown cache status: 100");
   await expect(row).toContainText("Cache hit rate: —");
-  await expect(row).not.toContainText("66.7%");
 });

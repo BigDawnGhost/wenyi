@@ -166,8 +166,8 @@ def _body_title_chapter(body: ET.Element) -> Chapter | None:
     return Chapter(index=0, title=lines[-1], segments=segments)
 
 
-def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
-    """Read an FB2 file into a Document."""
+def _read_xml(path: str) -> ET.Element:
+    """Read FB2 XML using the declared encoding with the existing UTF-8 fallback."""
     with open(path, "rb") as f:
         raw = f.read()
 
@@ -181,7 +181,31 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
     except (UnicodeDecodeError, LookupError):
         text = raw.decode("utf-8", errors="replace")
 
-    root = ET.fromstring(text)
+    return ET.fromstring(text)
+
+
+def _book_title(root: ET.Element, path: str) -> str:
+    """Resolve title-info/book-title, falling back to the filename."""
+    title = os.path.splitext(os.path.basename(path))[0]
+    for desc in root.iter():
+        if _local(desc) != "title-info":
+            continue
+        for child in desc:
+            if _local(child) == "book-title":
+                if child.text:
+                    title = child.text.strip()
+                break
+    return title
+
+
+def peek_fb2_title(path: str) -> str:
+    """Read the book title without constructing chapters, segments or resources."""
+    return _book_title(_read_xml(path), path)
+
+
+def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
+    """Read an FB2 file into a Document."""
+    root = _read_xml(path)
 
     resources: list[dict[str, str]] = []
     for binary in root.iter():
@@ -209,15 +233,7 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
         break
 
     # Book title.
-    title = os.path.splitext(os.path.basename(path))[0]
-    for desc in root.iter():
-        if _local(desc) != "title-info":
-            continue
-        for child in desc:
-            if _local(child) == "book-title":
-                if child.text:
-                    title = child.text.strip()
-                break
+    title = _book_title(root, path)
 
     # Chapters.
     chapters: list[Chapter] = []

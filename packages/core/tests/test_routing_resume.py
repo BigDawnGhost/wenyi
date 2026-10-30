@@ -106,6 +106,29 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     assert book_usage["totals"]["calls"] == 1
 
 
+def test_fixer_protocol_revisions_invalidate_old_autofix_plans(tmp_path, monkeypatch):
+    from wenyi_core.llm import operations, routing
+    from wenyi_core.llm.operations import OPERATIONS
+    from wenyi_core.llm.routing import inference_snapshot
+    from wenyi_core.pipeline.autofix_plan import prepare_identity
+
+    config = _config(tmp_path)
+    assert OPERATIONS["review.fix"].protocol_version == 2
+    assert OPERATIONS["autofix.fix"].protocol_version == 2
+    debug = ReviewRunStore(str(tmp_path / "run"))
+    current = inference_snapshot(config.llm, ("autofix.verify", "autofix.fix"))
+    registry = dict(OPERATIONS)
+    registry["autofix.fix"] = replace(registry["autofix.fix"], protocol_version=1)
+    with monkeypatch.context() as context:
+        context.setattr(routing, "OPERATIONS", registry)
+        context.setattr(operations, "OPERATIONS", registry)
+        old = inference_snapshot(config.llm, ("autofix.verify", "autofix.fix"))
+    assert old != current
+    debug.write_json("autofix/plan.json", {"inference": old})
+    with pytest.raises(ValueError, match="Autofix planning models changed"):
+        prepare_identity(debug, config.llm)
+
+
 def test_review_fingerprint_only_tracks_reachable_inference(tmp_path):
     config = _config(tmp_path)
     first = ReviewService(PipelineRuntime(config, FakeClient()))._review_config_snapshot()
@@ -196,6 +219,7 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
     metadata = store.read_artifact(f"reviews/{review_id}/rounds/metadata.json")
     assert isinstance(metadata, dict)
     assert metadata["config"]["review_glossary_policy"] == "full"
+    assert metadata["config"]["review_glossary_reading_source"] == "ja"
 
     client = MeteredFakeClient(handler=routing_handler)
     resumed = Orchestrator(config, client).run_review(str(source))
@@ -218,18 +242,26 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
 
 
 @pytest.mark.parametrize("interrupted", [False, True])
-@pytest.mark.parametrize("change", ["policy", "target", "aliases", "note", "insert", "delete"])
+@pytest.mark.parametrize(
+    "change",
+    ["policy", "reading_missing", "reading_old", "target", "aliases", "note", "insert", "delete"],
+)
 def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     tmp_path, interrupted, change
 ):
     source, config, store, term, review_id = _review_with_absent_term(tmp_path, interrupted)
     original_chapter = store.load_chapter(0)
-    if change == "policy":
+    if change in {"policy", "reading_missing", "reading_old"}:
         key = f"reviews/{review_id}/rounds/metadata.json"
         metadata = store.read_artifact(key)
         assert isinstance(metadata, dict)
         # A pre-policy run must not reuse chunks or initial traces under the new policy.
-        metadata["config"].pop("review_glossary_policy")
+        if change == "policy":
+            metadata["config"].pop("review_glossary_policy")
+        elif change == "reading_missing":
+            metadata["config"].pop("review_glossary_reading_source", None)
+        else:
+            metadata["config"]["review_glossary_reading_source"] = "all"
         store.write_artifact(key, metadata)
     elif change == "target":
         store.resolve_term(term.source, "新译名")
@@ -247,6 +279,7 @@ def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     assert new["review_result"]["review_id"] != review_id
     assert len(client.calls) == 2
     assert {call["operation"] for call in client.calls} == {"review.scan"}
+    assert store.read_artifact(f"reviews/{review_id}/rounds/metadata.json") is not None
     assert store.load_chapter(0) == original_chapter
     for call in client.calls:
         prompt = call["messages"][-1]["content"]
@@ -260,10 +293,42 @@ def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
             assert "Another unused term → 新增术语" in prompt
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("change", ["style", "synopsis", "digest", "character_target", "unchanged"])
+def test_review_guidance_controls_completed_and_interrupted_reuse(tmp_path, interrupted, change):
+    source, config, store, _term, review_id = _review_with_absent_term(tmp_path, interrupted)
+    analysis = store.load_analysis() or {}
+    if change == "style":
+        analysis["tone"] = "New restrained tone"
+    elif change == "synopsis":
+        analysis["book_synopsis"] = "New book context"
+    elif change == "digest":
+        chapter = store.load_chapter(0)
+        chapter.meta["source_digest"] = "New chapter context"
+        store.save_chapter(chapter)
+    elif change == "character_target":
+        # Target mappings are not effective style guidance.
+        analysis["characters"] = [{"source": "A", "gender": "male", "target": "old"}]
+        store.save_analysis(analysis)
+        # Establish the baseline with the same effective character guidance.
+        client = FakeClient(handler=routing_handler)
+        baseline = Orchestrator(config, client).run_review(str(source))
+        review_id = baseline["review_result"]["review_id"]
+        analysis["characters"][0]["target"] = "new"
+    store.save_analysis(analysis)
+
+    client = FakeClient(handler=routing_handler)
+    result = Orchestrator(config, client).run_review(str(source))["review_result"]
+    invalidated = change in {"style", "synopsis", "digest"}
+    assert (result["review_id"] != review_id) == invalidated
+    expected_calls = 2 if invalidated else int(interrupted and change != "character_target")
+    assert len(client.calls) == expected_calls
+
+
 def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
     from wenyi_core.agents.review_actions import ReviewActionLoop
 
-    from tests.test_review_agent import TestReviewAgentLoop
+    from tests.review_fixtures import review_evidence
 
     config = _config(tmp_path)
     debug = ReviewRunStore(str(tmp_path / "run"))
@@ -277,21 +342,15 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
         "allowed_refs": set(),
         "validate_final": lambda value, refs: value,
     }
-    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
-    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
     config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
         update={"model": "different-verifier"}
     )
     second = FakeClient(handler=lambda *args: response, config=config.llm)
-    ReviewActionLoop(
-        second, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)
-    ).run(**arguments)
+    ReviewActionLoop(second, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(second.calls) == 1
     assert second.calls[0]["model"] == "different-verifier"
 

@@ -81,6 +81,32 @@ class TestTextIngest(unittest.TestCase):
         self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
         self.assertEqual(len(ch1.text_segments), 4)
 
+    def test_markdown_heading_levels(self):
+        content = "\n\n".join(
+            f"{'#' * level} Level {level}\n\nBody {level}." for level in range(1, 7)
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "headings.md")
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(content)
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [(chapter.title, chapter.meta["heading_level"]) for chapter in document.chapters],
+            [(f"Level {level}", level) for level in range(1, 7)],
+        )
+        self.assertEqual(
+            [
+                [(segment.kind, segment.source) for segment in chapter.segments]
+                for chapter in document.chapters
+            ],
+            [
+                [(KIND_HEADING, f"Level {level}"), (KIND_TEXT, f"Body {level}.")]
+                for level in range(1, 7)
+            ],
+        )
+
     def test_preamble_before_first_heading_does_not_gain_book_title(self):
         content = "这是前言。\n\n# 第一章\n\n这是正文。\n"
         for suffix in (".txt", ".md"):

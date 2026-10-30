@@ -1,0 +1,108 @@
+import { NavLink } from "react-router-dom";
+import { type LucideIcon } from "lucide-react";
+import { useI18n, type MessageKey } from "@/i18n";
+import { cn } from "@/lib/utils";
+import { isVisibleFor, navEntries, navPath } from "@/routes/manifest";
+
+export function NavigationLink({
+  to,
+  icon: Icon,
+  label,
+  end,
+  collapsed = false,
+  prefetch,
+  className,
+  id,
+  state,
+}: {
+  to: string;
+  icon: LucideIcon;
+  label: MessageKey;
+  end?: boolean;
+  collapsed?: boolean;
+  /** Chunk loader warmed on hover/focus so the first click renders instantly. */
+  prefetch?: () => Promise<unknown>;
+  /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
+  className?: string;
+  id?: string;
+  state?: Record<string, unknown>;
+}) {
+  const { t } = useI18n();
+  return (
+    <NavLink
+      id={id}
+      to={to}
+      state={state}
+      end={end}
+      title={collapsed ? t(label) : undefined}
+      onPointerEnter={() => void prefetch?.().catch(() => {})}
+      onFocus={() => void prefetch?.().catch(() => {})}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-[color,background-color,padding,gap] duration-sidebar ease-sidebar md:justify-center",
+          collapsed && "md:gap-0 md:px-2",
+          isActive
+            ? "bg-accent text-accent-foreground font-medium"
+            : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+          className,
+        )
+      }
+    >
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span
+        className={cn(
+          "min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar md:max-w-48 md:flex-1",
+          collapsed && "md:max-w-0 md:-translate-x-2 md:opacity-0",
+        )}
+      >
+        {t(label)}
+      </span>
+    </NavLink>
+  );
+}
+
+export function ProjectNavigation({
+  pid,
+  format,
+  name,
+  collapsed = false,
+}: {
+  pid: string;
+  format?: string | null;
+  name?: string;
+  collapsed?: boolean;
+}) {
+  const { t } = useI18n();
+  const links = navEntries
+    .filter(
+      (entry) =>
+        entry.group === "project" && isVisibleFor(entry.audience, format),
+    )
+    .sort((a, b) => a.order - b.order);
+  return (
+    <nav aria-label={t("navigation.project")} className="space-y-1">
+      <p
+        className={cn(
+          "max-h-5 overflow-hidden truncate px-3 pb-1 text-xs text-muted-foreground transition-[max-height,padding,opacity] duration-sidebar ease-sidebar",
+          collapsed && "md:max-h-0 md:pb-0 md:opacity-0",
+        )}
+        title={name}
+      >
+        {name || pid}
+      </p>
+      <div className="flex flex-wrap md:block">
+        {links.map((entry) => (
+          <NavigationLink
+            key={entry.to}
+            to={navPath(entry, pid)}
+            icon={entry.icon}
+            label={entry.label}
+            collapsed={collapsed}
+            end={entry.end}
+            prefetch={entry.loader}
+          />
+        ))}
+      </div>
+    </nav>
+  );
+}

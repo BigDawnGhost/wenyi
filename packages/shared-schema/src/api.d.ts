@@ -402,6 +402,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/models/ping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ping Models
+         * @description Send one short live request per saved model profile; this uses provider tokens.
+         */
+        post: operations["ping_models_settings_models_ping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/models/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Models
+         * @description List a connection's model names; the connection may be an unsaved draft.
+         */
+        post: operations["list_models_settings_models_list_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/report": {
         parameters: {
             query?: never;
@@ -488,6 +528,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/chapters/{ci}/segments/{si}/precision-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Precision Drafts
+         * @description Inspect archived drafts without editing or regenerating the formal translation.
+         */
+        get: operations["get_precision_drafts_projects__pid__chapters__ci__segments__si__precision_drafts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/chapters/{ci}/title": {
         parameters: {
             query?: never;
@@ -534,6 +594,46 @@ export interface paths {
         put?: never;
         /** Add Term */
         post: operations["add_term_projects__pid__glossary_terms_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/glossary/terms/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Terms Page
+         * @description Browse by source codepoint order without changing model-context order.
+         */
+        get: operations["list_terms_page_projects__pid__glossary_terms_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/glossary/terms/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lookup Terms
+         * @description Check imported sources against the whole glossary, not just the displayed page.
+         */
+        post: operations["lookup_terms_projects__pid__glossary_terms_lookup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1065,23 +1165,24 @@ export interface components {
             preserve_source_style: boolean;
             /** Punctuation Normalize */
             punctuation_normalize?: boolean | null;
-            /**
-             * Pdf Engine
-             * @default weasyprint
-             * @enum {string}
-             */
-            pdf_engine: "weasyprint" | "fpdf2";
         };
         /** GlobalConfigInput */
         GlobalConfigInput: {
             /** Yaml */
             yaml: string;
-            /** Default Template */
-            default_template: string;
+            /**
+             * Default Template
+             * @constant
+             */
+            default_template: "标准翻译";
             /** Revision */
             revision: number;
             /** Model Renames */
             model_renames?: {
+                [key: string]: string;
+            };
+            /** Provider Renames */
+            provider_renames?: {
                 [key: string]: string;
             };
         };
@@ -1093,8 +1194,11 @@ export interface components {
             effective: {
                 [key: string]: unknown;
             };
-            /** Default Template */
-            default_template: string;
+            /**
+             * Default Template
+             * @constant
+             */
+            default_template: "标准翻译";
             /** Revision */
             revision: number;
         };
@@ -1156,14 +1260,85 @@ export interface components {
             /** Operations */
             operations: string[];
         };
+        /** ModelListResult */
+        ModelListResult: {
+            /** Ok */
+            ok: boolean;
+            /** Models */
+            models: string[];
+            /** Category */
+            category: string;
+            /** Message */
+            message: string;
+            /** Status Code */
+            status_code?: number | null;
+        };
+        /** ModelPingRequest */
+        ModelPingRequest: {
+            /**
+             * Timeout
+             * @default 30
+             */
+            timeout: number;
+        };
+        /** ModelPingResult */
+        ModelPingResult: {
+            /** Profile */
+            profile: string;
+            /** Connection */
+            connection: string;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Operations */
+            operations: string[];
+            /** Ok */
+            ok: boolean;
+            /** Category */
+            category: string;
+            /** Message */
+            message: string;
+            /** Status Code */
+            status_code?: number | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+        };
         /** PDFCapabilities */
         PDFCapabilities: {
             /** Backends */
             backends: string[];
-            /** Engines */
-            engines: string[];
             /** Export Backends */
             export_backends: string[];
+        };
+        /** PrecisionCandidateOut */
+        PrecisionCandidateOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "T1" | "T2" | "T3";
+            /** Target */
+            target: string;
+        };
+        /** PrecisionDraftsOut */
+        PrecisionDraftsOut: {
+            /** Chapter Index */
+            chapter_index: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: ("no_archive" | "incomplete" | "source_mismatch" | "ambiguous" | "corrupt") | null;
+            /** Candidates */
+            candidates?: components["schemas"]["PrecisionCandidateOut"][];
+            /** Synthesized Target */
+            synthesized_target?: string | null;
+            /** Before Polish Candidate */
+            before_polish_candidate?: "T1" | null;
         };
         /** PreviewChapter */
         PreviewChapter: {
@@ -1251,6 +1426,12 @@ export interface components {
             prepare: boolean;
             /** Pdf Backend */
             pdf_backend?: ("mineru" | "babeldoc") | null;
+            /**
+             * Translation Mode
+             * @default standard
+             * @enum {string}
+             */
+            translation_mode: "standard" | "best_of_three";
         };
         /** ProjectDetail */
         ProjectDetail: {
@@ -1305,6 +1486,8 @@ export interface components {
             source_meta?: {
                 [key: string]: unknown;
             };
+            /** Output Formats */
+            output_formats?: string[];
         };
         /** ProjectStats */
         ProjectStats: {
@@ -1600,6 +1783,11 @@ export interface components {
              */
             note: string;
         };
+        /** TermLookup */
+        TermLookup: {
+            /** Sources */
+            sources: string[];
+        };
         /** TermOut */
         TermOut: {
             /** Source */
@@ -1638,6 +1826,13 @@ export interface components {
              * @default ok
              */
             status: string;
+        };
+        /** TermPage */
+        TermPage: {
+            /** Items */
+            items: components["schemas"]["TermOut"][];
+            /** Total */
+            total: number;
         };
         /** UploadPreview */
         UploadPreview: {
@@ -2497,6 +2692,77 @@ export interface operations {
             };
         };
     };
+    ping_models_settings_models_ping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelPingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelPingResult"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_models_settings_models_list_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Connection */
+                    connection?: string | null;
+                    /** Provider */
+                    provider: {
+                        [key: string]: unknown;
+                    };
+                    /** Api Key */
+                    api_key?: string | null;
+                    /**
+                     * Timeout
+                     * @default 20
+                     */
+                    timeout?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelListResult"];
+                };
+            };
+        };
+    };
     get_report_projects__pid__report_get: {
         parameters: {
             query?: never;
@@ -2695,6 +2961,39 @@ export interface operations {
             };
         };
     };
+    get_precision_drafts_projects__pid__chapters__ci__segments__si__precision_drafts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+                si: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrecisionDraftsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_chapter_title_projects__pid__chapters__ci__title_put: {
         parameters: {
             query?: never;
@@ -2819,6 +3118,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TermOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_terms_page_projects__pid__glossary_terms_page_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                type?: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_terms_projects__pid__glossary_terms_lookup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermLookup"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermOut"][];
                 };
             };
             /** @description Validation Error */

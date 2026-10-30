@@ -1,0 +1,1 @@
+"""Desktop-only HTTP routes."""

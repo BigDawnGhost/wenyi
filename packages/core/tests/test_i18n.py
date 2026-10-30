@@ -129,10 +129,10 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         if "language detector" in system:
             return json.dumps({"language": "vi-VN"})
         if "pre-translation analyst" in system:
-            assert f"Suggested name in {target_label}" in system
-            return json.dumps(
-                {"style_guide": "Keep the narrator's voice.", "characters": [], "terms": []}
-            )
+            assert f"Write all human-readable metadata in {target_label}" in system
+            assert '"target":' not in system
+            assert '"terms":' not in system
+            return json.dumps({"style_guide": "Keep the narrator's voice.", "characters": []})
         if "literary translator" in system:
             assert f"into {target_label}" in system
             assert profile(source)["label"] in system
@@ -179,7 +179,9 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         formal_before = Path(store.chapter_path(0)).read_bytes()
         assert store.load_chapter(0).text_segments[0].target == translated
         reference = store.load_manifest()["language_policies"]["translation"]
-        assert store.read_artifact(reference)["fingerprint"] == config.language_policy().fingerprint
+        policy = store.read_artifact(reference)
+        assert policy is not None
+        assert policy["fingerprint"] == config.language_policy().fingerprint
         orchestrator.run_review(str(path))
         stages = {call["stage"] for call in client.calls}
         assert {

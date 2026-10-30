@@ -67,6 +67,7 @@ class BatchPlan:
 class BatchResult:
     targets: tuple[str, ...]
     before_polish: tuple[str | None, ...]
+    precision_key: str | None = None
 
 
 class TranslationBatchExecutor:

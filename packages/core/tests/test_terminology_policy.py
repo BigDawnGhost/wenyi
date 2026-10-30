@@ -101,11 +101,11 @@ def test_terminology_templates_are_independent_of_relationship_guidance():
 
 
 def test_default_analysis_templates_and_fingerprints_match_feature_baseline():
-    # Recorded from 11aaa491d2992a844aafdb7e8025a98417e24b0c, not the enhanced variants.
+    # Recorded from main at b7bf4c9, not the enhanced variants.
     expected = {
         "analyzer": (
-            "1aec5dc08746223c88791be152ae20cc2129632f29eb695c16f93db8724efcfb",
-            "39e8b63c236f161732ada47e4ca1d7541c8be857575434e29ab1fff9ce6d768d",
+            "75a3f6c3ff2879e83d7b0358363787322b5793f19210b23a4c2b75f0ec209470",
+            "c9b0f621c493c986b33ae18b21d753ed0d0e3b18ce7404cfd978cabf753b6cc1",
         ),
         "chapter_digest": (
             "47d2e5e75cd7a457ad2e0a59c31c55a6e6da6e65859e0b6c1f1f8deaa5ec8a93",
@@ -147,14 +147,14 @@ def test_default_polisher_preserves_original_resource_and_fingerprint():
 @pytest.mark.parametrize(
     "phase,fingerprint",
     [
-        ("analysis", "9af7af675550080aaa7f73904d3310635a033716e350a02d4e871b93db8545a6"),
-        ("translation", "4f6eeba5788a7251fd63f850c9713a01ee4adb71a7ae238ae030efb56d599642"),
-        ("review", "a7fbdc2f147d578b689c9ce85939e9306e5be0b6c7d492a1f7df4d4bd1550571"),
-        ("export", "37fc624a4a972f98a1067358cf6a15c496e145493ab32c80197182ed13a8bee9"),
+        ("analysis", "395155e77e13b4da88691410724aaa83b5f924b9b8afb6690c196aed969af139"),
+        ("translation", "d5b09a1db42684cc475fd55e88d84ec09ad2f0ab2ab79db91bd8c3dc19e303eb"),
+        ("review", "5bef984bdb9767d863c622b98cb43cc2c35970a9e4d2bfbd4c613f3e5cfe59b1"),
+        ("export", "f18cefb9111ecee5ca4a1470edf6351e51be6cd4983634e93aa8c64643f5b043"),
     ],
 )
 def test_default_phase_fingerprints_match_feature_baseline(phase, fingerprint):
-    # Recorded from the original packaged code at 11aaa491d2992a844aafdb7e8025a98417e24b0c.
+    # Recorded from unmodified main at b7bf4c9.
     selected = Config.from_dict({"llm": {"preset": "fake"}})
     plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
     assert plan.fingerprint == fingerprint

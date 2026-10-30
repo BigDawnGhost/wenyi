@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from types import SimpleNamespace
+import unittest
 from unittest.mock import Mock, call
 
 import pytest
@@ -14,7 +14,34 @@ from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.preparation import PreparationService
+from wenyi_core.pipeline.runtime import PipelineRuntime
 from wenyi_core.storage.file import FileStorage
+
+from tests.pipeline_fixtures import fake_pipeline_config
+
+
+class TestStyleAnalysis(unittest.TestCase):
+    def test_style_brief_new_fields(self):
+        """Render supported style dimensions and omit dimensions without evidence."""
+        cfg = fake_pipeline_config("state")
+        ana = Analyzer(FakeClient(), cfg)
+        brief = ana.style_brief(
+            {
+                "genre": "校园",
+                "pacing": "短句为主",
+                "register": "口语",
+                "dialogue_style": "语气词丰富",
+                "narration": "第一人称",
+            }
+        )
+        self.assertIn("Pacing: 短句为主", brief)
+        self.assertIn("Register: 口语", brief)
+        self.assertIn("Dialogue style: 语气词丰富", brief)
+        self.assertIn("Narration: 第一人称", brief)
+        # Sparse model output can omit unsupported dimensions.
+        sparse = ana.style_brief({"genre": "校园", "tone": "冷峻"})
+        self.assertIn("Genre: 校园", sparse)
+        self.assertNotIn("Pacing:", sparse)
 
 
 def _selected_config():
@@ -39,7 +66,8 @@ def _service(tmp_path, chapters=None, *, terminology=True):
         )
     )
     store.save_analysis({"style_guide": "Restrained."})
-    runtime = SimpleNamespace(
+    runtime = Mock(
+        spec=PipelineRuntime,
         config=_selected_config() if terminology else Config.from_dict({"llm": {"preset": "fake"}}),
         synopsizer=Mock(),
         analyzer=Mock(),
@@ -113,13 +141,17 @@ def test_book_failure_is_not_cached_and_resume_reuses_chapter_digests(tmp_path):
     service, store, runtime = _service(tmp_path)
     runtime.synopsizer.book_synopsis.return_value = ""
     assert service.ensure_understanding(store) == ""
-    assert not store.load_analysis().get("book_synopsis")
-    assert not store.load_analysis().get("book_synopsis_meta")
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert not analysis.get("book_synopsis")
+    assert not analysis.get("book_synopsis_meta")
     runtime.synopsizer.digest_chapter.reset_mock()
     runtime.synopsizer.book_synopsis.return_value = "Complete synopsis."
     assert service.ensure_understanding(store) == "Complete synopsis."
     runtime.synopsizer.digest_chapter.assert_not_called()
-    assert store.load_analysis()["style_guide"] == "Restrained."
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["style_guide"] == "Restrained."
 
 
 def test_complete_cache_is_reused_without_sentence_punctuation(tmp_path):
@@ -153,7 +185,9 @@ def test_failed_regeneration_keeps_existing_analysis_but_does_not_inject_stale_s
     runtime.analyzer.style_brief.return_value = "New style."
     runtime.synopsizer.book_synopsis.return_value = ""
     assert service.ensure_understanding(store) == ""
-    assert store.load_analysis()["book_synopsis"] == "Whole-book synopsis."
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["book_synopsis"] == "Whole-book synopsis."
     runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
     assert service.ensure_understanding(store) == "Revised synopsis."
 
@@ -220,11 +254,12 @@ def test_live_terms_replace_static_characters_even_when_empty():
         "narration": "Source-supported first person.",
         "characters": [{"source": "Alice", "target": "Stale", "note": "Obsolete"}],
     }
-    assert "Stale" in agent.style_brief(analysis)
-    assert "Stale" not in agent.style_brief(analysis, terms=[])
+    assert "Obsolete" in agent.style_brief(analysis)
+    assert "Alice" not in agent.style_brief(analysis, terms=[])
     live = GlossaryTerm(source="Alice", target="Current", type="person", note="Live note")
     brief = agent.style_brief(analysis, terms=[live])
-    assert "Current" in brief and "Live note" not in brief
+    assert "Alice" in brief and "Live note" not in brief
+    assert "Current" not in brief
     assert "Stale" not in brief and "Obsolete" not in brief
     assert analysis["narration"] in brief
 
@@ -337,9 +372,8 @@ def test_disabled_analysis_ignores_supplied_digests_and_live_style_names():
     agent.analyze("Original samples.", chapter_digests=["UNUSED-DIGEST"])
     assert "UNUSED-DIGEST" not in agent._ask_json.call_args.args[1]
     assert "Original samples." in agent._ask_json.call_args.args[1]
-    assert "Legacy" in agent.style_brief(
-        {"characters": [{"source": "Alice", "target": "Legacy"}]}, terms=[]
-    )
+    brief = agent.style_brief({"characters": [{"source": "Alice", "target": "Legacy"}]}, terms=[])
+    assert "Alice" in brief and "Legacy" not in brief
 
 
 def test_disabled_synopsis_has_no_glossary_appendix_or_style_truncation():

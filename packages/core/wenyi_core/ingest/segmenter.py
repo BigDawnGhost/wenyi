@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from copy import deepcopy
 
 from .epub_reader import read_epub
@@ -147,8 +148,9 @@ def load_document(
     babeldoc_bridge_url: str = "http://127.0.0.1:8765",
     babeldoc_pages: str | None = None,
     babeldoc_timeout: float = 600.0,
+    mineru_token_resolver: Callable[[], str | None] | None = None,
 ) -> Document:
-    """Dispatch by file extension and optionally split oversized translation segments."""
+    """Dispatch by extension; resolve MinerU credentials only for uncached PDF conversion."""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".epub":
         doc = read_epub(path, source_lang, target_lang)
@@ -180,6 +182,7 @@ def load_document(
                 target_lang,
                 cache_dir=cache_dir,
                 source_hash=source_hash,
+                mineru_token_resolver=mineru_token_resolver,
             )
     elif ext == ".docx":
         from .docx_reader import read_docx

@@ -8,8 +8,57 @@ from wenyi_cli.cli import app
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, term_match_sources
+from wenyi_core.i18n.languages import supported_languages
 from wenyi_core.i18n.prompts import render
 from wenyi_core.llm.providers.fake import FakeClient
+
+
+@pytest.mark.parametrize("source", [*supported_languages(), "auto"])
+@pytest.mark.parametrize("target", ["en", "ja"])
+def test_glossary_reading_schema_depends_on_source_not_target(source, target):
+    prompt = render("glossary_extractor_system", src=source, tgt=target)
+    schema = json.loads(prompt[prompt.index("\n{") :])
+    entries = schema["terms"]
+    assert all(("reading" in entry) == (source == "ja") for entry in entries)
+    if source == "ja":
+        assert '"reading":' in prompt
+        assert "furigana" in prompt
+        assert "Do not infer a reading" in prompt
+        assert "Leave reading empty when the source provides no reading" in prompt
+    else:
+        assert '"reading":' not in prompt
+        assert "pronunciation" not in prompt
+        assert "reading records" not in prompt
+
+
+@pytest.mark.parametrize("source", [*supported_languages(), "auto"])
+@pytest.mark.parametrize("target", ["en", "ja"])
+def test_analysis_schema_only_requests_style_and_character_guidance(source, target):
+    prompt = render("analyzer_system", src=source, tgt=target)
+    schema = json.loads(prompt[prompt.index("\n{") :])
+    assert "style_guide" in schema
+    assert "terms" not in schema
+    assert set(schema["characters"][0]) == {"source", "gender", "note"}
+    assert '"target":' not in prompt
+    assert '"reading":' not in prompt
+    assert "do not propose translated names, readings or glossary entries" in prompt
+    user = render("analyzer_user", src=source, tgt=target, sample="Source sample.")
+    assert "Do not extract terminology or suggest name translations" in user
+
+
+@pytest.mark.parametrize("source", ["ja", "en", "ru", "zh", "auto"])
+def test_analysis_ignores_unsolicited_glossary_fields(source):
+    data = {
+        "characters": [{"source": "綾小路", "target": "Ayanokoji", "reading": "あやのこうじ"}],
+        "terms": [{"source": "学校", "target": "School", "reading": "がっこう"}],
+    }
+    analyzer = Analyzer(
+        FakeClient(handler=lambda *_: json.dumps(data)),
+        Config.from_dict({"language": {"source": source, "target": "en"}}),
+    )
+    result = analyzer.analyze("綾小路〘あやのこうじ〙は学校〘がっこう〙に行った。")
+    assert result["characters"] == [{"source": "綾小路", "gender": ""}]
+    assert "terms" not in result
 
 
 @pytest.mark.parametrize(
@@ -20,7 +69,10 @@ def test_metadata_language_is_explicit(task, target, name):
     prompt = render(task, src="ru", tgt=target)
     assert f"Write all human-readable metadata in {name}" in prompt
     assert "including every note" in prompt
-    assert "Preserve source and aliases" in prompt
+    if task == "analyzer_system":
+        assert "Preserve source exactly in its original language" in prompt
+    else:
+        assert "Preserve source and aliases" in prompt
     assert "male|female|unknown" in prompt
 
 
@@ -64,9 +116,9 @@ def test_analysis_preserves_style_bullets_and_normalizes_character_metadata():
     assert "Keep the sparse dialogue." in result["style_guide"]
     assert "Preserve ambiguity." in result["style_guide"]
     assert result["characters"][0]["source"] == "Вадим"
-    assert result["characters"][0]["target"] == "Vadim"
     assert result["characters"][0]["gender"] == "male"
-    assert result["terms"][0]["type"] == "place"
+    assert "target" not in result["characters"][0]
+    assert "terms" not in result
 
 
 def test_cli_and_generated_configuration_use_english(tmp_path):

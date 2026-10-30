@@ -239,6 +239,14 @@ class FileStorage(FileArtifacts):
     def get_term(self, source: str) -> Optional[GlossaryTerm]:
         return self._g.get_term(source)
 
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        return self._g.get_terms(sources)
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        return self._g.list_terms_page(q=q, term_type=term_type, offset=offset, limit=limit)
+
     def upsert_term(self, term: GlossaryTerm, chapter: Optional[int] = None) -> str:
         return self._g.upsert_term(term, chapter=chapter)
 

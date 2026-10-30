@@ -6,86 +6,10 @@ import json
 
 import pytest
 from wenyi_core.agents.terminology import TerminologyKnowledgeError, TerminologyReferenceError
-from wenyi_core.config import Config
-from wenyi_core.glossary.store import source_matches_text
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.storage.file import FileStorage
 
-from tests.fake_llm import MeteredFakeClient, routing_handler
-
-NAMES = {"Alice": "艾丽丝", "Beth": "贝丝", "Carl": "卡尔"}
-
-
-class FamilyHandler:
-    def __init__(self, *, interrupt_postcheck=False):
-        self.interrupt_postcheck = interrupt_postcheck
-        self.translation_inputs = []
-
-    def __call__(self, messages, tier, json_mode):
-        system, user = messages[0]["content"], messages[-1]["content"]
-        if "pre-translation analyst" in system:
-            return json.dumps(
-                {
-                    "style_guide": "Keep the narrator's restraint.",
-                    "characters": [
-                        {"source": "Alice", "target": NAMES["Alice"], "note": "LOCAL ALICE"}
-                    ],
-                    "terms": [],
-                }
-            )
-        if system.startswith("You discover terminology"):
-            payload = json.loads(user.split("\n", 1)[1])
-            terms = []
-            for name, target in NAMES.items():
-                refs = [
-                    p["reference"]
-                    for p in payload["passages"]
-                    if source_matches_text(name, p["source"])
-                ]
-                if refs:
-                    terms.append(
-                        {"source": name, "target": target, "type": "person", "evidence_refs": refs}
-                    )
-            return json.dumps({"terms": terms})
-        if system.startswith("You extract terminology knowledge"):
-            payload = json.loads(user.split("\n", 1)[1])
-            return json.dumps(
-                {
-                    "note": payload["term"]["target"] + "的全书人物说明。",
-                    "evidence_refs": [p["reference"] for p in payload["passages"]],
-                }
-            )
-        if "terminology" in system and "extractor" in system:
-            if self.interrupt_postcheck:
-                self.interrupt_postcheck = False
-                raise KeyboardInterrupt("after saved body, before extraction checkpoint")
-            return '{"terms":[]}'
-        if "literary translator" in system:
-            self.translation_inputs.append(user)
-        return routing_handler(messages, tier, json_mode)
-
-
-def inputs(tmp_path, *, enabled=True):
-    source = tmp_path / "family.txt"
-    source.write_text(
-        "# First\n\nAlice waited for Carl, her uncle.\n\n"
-        "# Later\n\nBeth was Alice's mother.\n\nCarl was Beth's elder brother.\n",
-        encoding="utf-8",
-    )
-    config = Config.from_dict(
-        {
-            "language": {"source": "en", "target": "zh"},
-            "llm": {"preset": "fake"},
-            "pipeline": {
-                "book_understanding": False,
-                "terminology_context": enabled,
-                "review": False,
-                "polish": False,
-            },
-            "paths": {"state_dir": str(tmp_path / "state")},
-        }
-    )
-    return source, config, FileStorage(str(tmp_path / "run"))
+from tests.fake_llm import MeteredFakeClient
+from tests.terminology_fixtures import NAMES, FamilyHandler, inputs
 
 
 def test_first_real_translation_receives_admitted_notes(tmp_path):
@@ -139,18 +63,17 @@ def test_disabled_feature_makes_no_terminology_calls_or_artifacts(tmp_path):
     )
     assert not any(call["operation"].startswith("terminology.") for call in client.calls)
     assert store.list_artifacts("terminology/") == []
-    assert store.get_term("Alice").note == "LOCAL ALICE"
+    assert store.get_term("Alice") is None
+    assert store.load_analysis()["characters"][0]["note"] == "LOCAL ALICE"
 
 
-def test_initialization_retry_reuses_analysis_and_preserves_usage_and_conflicts(tmp_path):
+def test_initialization_retry_reuses_analysis_without_seeding_glossary(tmp_path, monkeypatch):
     source, config, store = inputs(tmp_path)
     config.pipeline.book_understanding = True
 
     class InitializationHandler(FamilyHandler):
-        fail = False
-
         def __call__(self, messages, tier, json_mode):
-            system, user = messages[0]["content"], messages[-1]["content"]
+            system = messages[0]["content"]
             if "pre-translation analyst" in system:
                 return json.dumps(
                     {
@@ -161,34 +84,36 @@ def test_initialization_retry_reuses_analysis_and_preserves_usage_and_conflicts(
                         ],
                     }
                 )
-            if system.startswith("You extract terminology knowledge"):
-                payload = json.loads(user.split("\n", 1)[1])
-                if self.fail and payload["term"]["source"] == "Carl":
-                    raise RuntimeError("Interrupted second seed")
             return super().__call__(messages, tier, json_mode)
 
-    interrupted = InitializationHandler()
-    interrupted.fail = True
-    client = MeteredFakeClient(handler=interrupted)
-    with pytest.raises(RuntimeError, match="second seed"):
+    save_analysis = store.save_analysis
+
+    def interrupt(analysis):
+        raise RuntimeError("Interrupted after cached analysis")
+
+    monkeypatch.setattr(store, "save_analysis", interrupt)
+    client = MeteredFakeClient(handler=InitializationHandler())
+    with pytest.raises(RuntimeError, match="cached analysis"):
         Orchestrator(config, client=client, storage=store, allow_terminology_context=True).prepare(
             str(source)
         )
     assert not store.exists()
-    assert len(store.open_conflicts()) == 1
+    assert store.all_terms() == []
+    assert store.open_conflicts() == []
+    assert store.list_artifacts("terminology/") == []
     previous_calls = store.load_usage()["totals"]["calls"]
     assert previous_calls == client.usage_summary()["totals"]["calls"]
+    monkeypatch.setattr(store, "save_analysis", save_analysis)
     resumed = MeteredFakeClient(handler=InitializationHandler())
     Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).prepare(
         str(source)
     )
-    operations = [call["operation"] for call in resumed.calls]
-    assert operations == ["terminology.evidence"]
+    assert resumed.calls == []
     assert store.exists()
-    assert store.get_term("Alice").status == "conflict"
-    assert len(store.open_conflicts()) == 1
-    assert store.get_term("Carl") is not None
-    assert store.load_usage()["totals"]["calls"] == previous_calls + 1
+    assert store.all_terms() == []
+    assert store.load_analysis()["characters"] == [{"source": "Alice", "gender": ""}]
+    assert "terms" not in store.load_analysis()
+    assert store.load_usage()["totals"]["calls"] == previous_calls
 
 
 @pytest.mark.parametrize("reason", ["missing", "outside_input"])
@@ -225,11 +150,12 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
 
     first = MeteredFakeClient(handler=ReferenceHandler())
     with pytest.raises(TerminologyReferenceError) as caught:
-        Orchestrator(config, client=first, storage=store, allow_terminology_context=True).prepare(
+        Orchestrator(config, client=first, storage=store, allow_terminology_context=True).run(
             str(source)
         )
     assert caught.value.reason == reason
-    assert not store.exists()
+    assert store.exists()
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
     assert store.get_term("Alice") is not None
     assert store.get_term("Carl") is None
     diagnostics = store.list_artifacts("terminology/diagnostics/evidence/")
@@ -251,17 +177,27 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
     assert "PRIVATE" not in json.dumps(events)
     previous = store.load_usage()["totals"]["calls"]
     assert previous == first.usage_summary()["totals"]["calls"]
+    saved = {key: store.read_artifact(key) for key in store.list_artifacts("terminology/requests/")}
 
     handler = ReferenceHandler()
     handler.fail = False
     resumed = MeteredFakeClient(handler=handler)
-    Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).prepare(
+    Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).run(
         str(source)
     )
-    assert [call["operation"] for call in resumed.calls] == ["terminology.evidence"]
-    assert store.exists() and store.get_term("Carl") is not None
-    assert store.load_usage()["totals"]["calls"] == previous + 1
-    assert len(store.list_artifacts("terminology/requests/evidence/")) == 2
+    assert all(call["operation"] != "analysis.style" for call in resumed.calls)
+    evidence_terms = [
+        json.loads(call["messages"][-1]["content"].split("\n", 1)[1])["term"]["source"]
+        for call in resumed.calls
+        if call["operation"] == "terminology.evidence"
+    ]
+    assert "Carl" in evidence_terms and "Alice" not in evidence_terms
+    assert store.get_term("Carl") is not None
+    assert store.pending_chapters() == []
+    assert store.load_usage()["totals"]["calls"] == (
+        previous + resumed.usage_summary()["totals"]["calls"]
+    )
+    assert all(store.read_artifact(key) == value for key, value in saved.items())
 
 
 @pytest.mark.parametrize("kind", ["evidence", "merge"])
@@ -274,7 +210,7 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
         ({"gender": "PRIVATE_" + "x" * 256}, "gender", "string_too_long"),
     ],
 )
-def test_schema_failure_retains_successful_requests_and_usage_on_prepare_resume(
+def test_schema_failure_retains_successful_requests_and_usage_on_translation_resume(
     tmp_path, kind, invalid_response, field, code
 ):
     source, config, store = inputs(tmp_path)
@@ -317,11 +253,12 @@ def test_schema_failure_retains_successful_requests_and_usage_on_prepare_resume(
 
     first = MeteredFakeClient(handler=SchemaHandler(fail=True))
     with pytest.raises(TerminologyKnowledgeError) as caught:
-        Orchestrator(config, client=first, storage=store, allow_terminology_context=True).prepare(
+        Orchestrator(config, client=first, storage=store, allow_terminology_context=True).run(
             str(source)
         )
     assert caught.value.operation == f"terminology.{kind}"
-    assert not store.exists()
+    assert store.exists()
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
     assert store.get_term("Alice") is None
     diagnostics = store.list_artifacts(f"terminology/diagnostics/{kind}/")
     assert len(diagnostics) == 1
@@ -340,20 +277,21 @@ def test_schema_failure_retains_successful_requests_and_usage_on_prepare_resume(
     assert previous == first.usage_summary()["totals"]["calls"]
 
     resumed = MeteredFakeClient(handler=SchemaHandler(fail=False))
-    Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).prepare(
+    Orchestrator(config, client=resumed, storage=store, allow_terminology_context=True).run(
         str(source)
     )
     assert store.exists() and store.get_term("Alice") is not None
     assert all(store.read_artifact(key) == value for key, value in saved.items())
-    assert all(call["operation"] != "analysis.sample" for call in resumed.calls)
+    assert all(call["operation"] != "analysis.style" for call in resumed.calls)
     if kind == "merge":
-        assert all(call["operation"] == "terminology.merge" for call in resumed.calls)
+        assert all(call["operation"] != "terminology.evidence" for call in resumed.calls)
     assert store.load_usage()["totals"]["calls"] == (
         previous + resumed.usage_summary()["totals"]["calls"]
     )
+    assert store.pending_chapters() == []
     after = store.load_usage()
     cached = MeteredFakeClient(handler=SchemaHandler(fail=False))
-    Orchestrator(config, client=cached, storage=store, allow_terminology_context=True).prepare(
+    Orchestrator(config, client=cached, storage=store, allow_terminology_context=True).run(
         str(source)
     )
     assert cached.calls == [] and store.load_usage() == after
@@ -434,7 +372,7 @@ def test_deferred_history_cache_resumes_without_rewriting_targets_or_rebilling_a
     assert store.load_usage() == after
 
 
-def test_enabling_context_on_an_initialized_run_admits_new_analysis_candidates(tmp_path):
+def test_enabling_context_refreshes_analysis_without_seeding_glossary(tmp_path):
     source, config, store = inputs(tmp_path, enabled=False)
     Orchestrator(config, client=MeteredFakeClient(handler=FamilyHandler()), storage=store).prepare(
         str(source)
@@ -450,14 +388,17 @@ def test_enabling_context_on_an_initialized_run_admits_new_analysis_candidates(t
                 )
             return super().__call__(messages, tier, json_mode)
 
+    client = MeteredFakeClient(handler=Refreshed())
     Orchestrator(
         config,
-        client=MeteredFakeClient(handler=Refreshed()),
+        client=client,
         storage=store,
         allow_terminology_context=True,
     ).prepare_for_translation(str(source))
-    assert store.get_term("Carl") is not None
-    assert store.get_term("Carl").note.endswith("全书人物说明。")
+    assert store.all_terms() == []
+    assert store.load_analysis()["characters"] == [{"source": "Carl", "gender": ""}]
+    assert "terms" not in store.load_analysis()
+    assert not any(call["operation"].startswith("terminology.") for call in client.calls)
     assert all(
         s.target is None
         for row in store.load_manifest()["chapters"]

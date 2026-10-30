@@ -109,7 +109,8 @@ def _rules(context: PolicyContext) -> dict[str, str]:
             )
         ),
         "target_guidance": target_guidance,
-        "term_guidance": source.get("term_guidance", common["reading"]) + common["evidence"],
+        "term_guidance": source.get("term_guidance", "") + common["evidence"],
+        "reading_field": source.get("reading_field", ""),
         "punct_rule": target["punctuation_rule"],
         "title_rule": target["title_rule"],
         "digest_length": target["digest_length"],
@@ -175,7 +176,7 @@ def resolve_policy(
         ("srt",) if context.path == "srt" else ("epub", "docx", "html", "txt", "markdown", "pdf")
     ):
         raise ValueError(f"Unsupported language policy export format: {context.format}")
-    if context.backend not in {"native", "weasyprint", "fpdf2", "babeldoc"}:
+    if context.backend not in {"native", "babeldoc"}:
         raise ValueError(f"Unsupported language policy backend: {context.backend}")
     bindings: dict[str, tuple[OperationBinding, tuple[str, ...]]] = {
         "prompt.language_rules": (OperationBinding(), ("common",)),
@@ -320,7 +321,15 @@ def resolve_policy(
     rules = {} if context.phase == "export" else _rules(context)
     used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
     effective_rules = {key: value for key, value in rules.items() if key in used}
-    if any(task in {"translator_system", "review_fixer_system"} for task, _ in templates):
+    if any(
+        task
+        in {
+            "translator_system",
+            "review_fixer_system",
+            "precision_generation_system",
+        }
+        for task, _ in templates
+    ):
         effective_rules["configured_lang_guidance"] = rules["configured_lang_guidance"]
     resources = tuple(
         (_template_path(task, terminology=terminology), content_hash(text))

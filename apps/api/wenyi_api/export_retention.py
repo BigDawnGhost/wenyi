@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 from psycopg import Connection
 from psycopg_pool import ConnectionPool
-
-EXPORT_LIMIT = 5
-log = logging.getLogger(__name__)
+from wenyi_backend.export_paths import EXPORT_LIMIT, export_path, log
 
 
 def export_history_lock(connection: Connection, pid: str, *, shared: bool = False) -> None:
@@ -24,20 +22,26 @@ def export_history_lock(connection: Connection, pid: str, *, shared: bool = Fals
     connection.execute(statement, (f"wenyi:export-history:{pid}",))
 
 
-def export_path(data_dir: str, pid: str, stored: str) -> Path | None:
-    """Reject paths and symlinks outside this project's generated export tree."""
-    root = Path(data_dir).resolve()
-    directory = root / pid / "exports"
-    candidate = root / stored
-    resolved = candidate.resolve()
-    if (
-        directory.resolve() != directory
-        or resolved != candidate.absolute()
-        or not resolved.is_relative_to(directory)
-        or resolved == directory
-    ):
-        return None
-    return resolved
+@contextmanager
+def export_history_session_lock(pool: ConnectionPool, pid: str) -> Iterator[Connection]:
+    """Exclude export admission/publication/opening without a transaction during cleanup."""
+    key = f"wenyi:export-history:{pid}"
+    with pool.connection() as connection:
+        acquired = False
+        try:
+            row = connection.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s,0))", (key,)
+            ).fetchone()
+            acquired = bool(row and row[0])
+            connection.commit()
+            if not acquired:
+                raise BlockingIOError("Project export history is busy")
+            yield connection
+        finally:
+            if acquired:
+                connection.rollback()
+                connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (key,))
+                connection.commit()
 
 
 def publish_export(

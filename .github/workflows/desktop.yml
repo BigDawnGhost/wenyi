@@ -1,0 +1,221 @@
+name: Desktop packages
+run-name: Desktop · ${{ inputs.tag || github.event.release.tag_name || format('dev {0}', github.ref_name) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to build (empty means development checkout)
+        type: string
+        default: ""
+  release:
+    types: [published]
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "apps/api/**"
+      - "packages/core/**"
+      - "packages/backend/**"
+      - "packages/ui/**"
+      - "packages/shared-schema/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/web/**"
+      - "scripts/desktop*"
+      - "scripts/release_version.py"
+      - "scripts/package_release.py"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  local-package:
+    name: Desktop · ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+            bundles: appimage,deb,rpm
+          - os: windows-latest
+            platform: windows-x64
+            bundles: nsis
+          - os: macos-15
+            platform: macos-arm64
+            bundles: dmg
+            signed_bundles: dmg,app
+          - os: macos-15-intel
+            platform: macos-x64
+            bundles: dmg
+            signed_bundles: dmg,app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Resolve Git version
+        id: version
+        shell: bash
+        env:
+          WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+      - name: Configure stable release updater signing
+        id: updater
+        if: github.event_name == 'release' && !github.event.release.prerelease
+        shell: bash
+        env:
+          PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PRIVATE_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ -z "$PUBLIC_KEY" && -z "$PRIVATE_KEY" && -z "$PRIVATE_PASSWORD" ]]; then
+            echo "::notice::Updater signing absent: manual installers only; no latest.json will be published."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z "$PUBLIC_KEY" || -z "$PRIVATE_KEY" ]]; then
+            echo "::error::Partial updater configuration: public and private signing keys are both required."
+            exit 1
+          elif [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Updater signing requires a stable release identity."
+            exit 1
+          else
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf xvfb
+      # Packaging tests need the root dev group and CLI console fixtures.
+      # The sidecar is still built in its separate desktop-only environment.
+      - run: uv sync --locked --all-packages --group dev
+      - name: Prepare token-budget vocabulary
+        run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/desktop.test.mjs
+      - run: uv run --no-sync pytest -q packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
+      - name: Test Windows local state and artifact paths
+        if: runner.os == 'Windows'
+        run: >
+          uv run --no-sync pytest -q
+          packages/core/tests/test_file_artifacts.py
+          packages/core/tests/test_file_storage.py
+          packages/core/tests/test_precision_pipeline.py
+          packages/core/tests/test_orchestrator.py
+      - run: uv run --no-sync pytest -q apps/desktop/backend/tests
+      - run: pnpm -C apps/desktop/frontend typecheck
+      - run: pnpm -C apps/desktop/frontend build
+      - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
+      - name: Test Linux menu visibility after native window remaps
+        if: runner.os == 'Linux'
+        run: >
+          xvfb-run -a cargo test --locked --manifest-path apps/desktop/Cargo.toml
+          gtk_menu_stays_hidden_after_repeated_window_remaps -- --ignored
+      - run: pnpm desktop:build --bundles ${{ steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles }}
+        env:
+          WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          WENYI_UPDATER_PUBLIC_KEY: ${{ steps.updater.outputs.signed == 'true' && vars.WENYI_UPDATER_PUBLIC_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+      - name: Verify native Windows GUI subsystem
+        if: runner.os == 'Windows'
+        run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
+      - name: Verify native application version
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          binary=apps/desktop/target/release/wenyi-desktop
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="${binary}.exe"; fi
+          actual="$("$binary" --version)"
+          test "$actual" = "Wenyi Desktop $EXPECTED_VERSION"
+      - name: Collect standalone installers (no extra ZIP)
+        run: >
+          uv run --no-project python scripts/package_release.py desktop
+          --version "${{ steps.version.outputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --source apps/desktop/target/release/bundle
+      - name: Collect signed updater payload and signature
+        if: steps.updater.outputs.signed == 'true'
+        env:
+          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
+        run: >
+          uv run --no-project python scripts/desktop_updates.py collect
+          --version "${{ steps.version.outputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --source apps/desktop/target/release/bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish Desktop assets · ${{ github.event.release.tag_name }}
+    if: github.event_name == 'release'
+    needs: local-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Resolve release identity
+        id: version
+        env:
+          WENYI_BUILD_TAG: ${{ github.event.release.tag_name }}
+        run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wenyi-desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate Desktop checksums
+        working-directory: release-assets
+        run: sha256sum wenyi-desktop-* > wenyi-desktop-SHA256SUMS.txt
+      - name: Upload standalone assets to published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release view "$TAG" --repo "$GH_REPO" >/dev/null
+          gh release upload "$TAG" release-assets/* --repo "$GH_REPO"
+      - name: Generate and publish complete stable updater manifest last
+        if: '!github.event.release.prerelease'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if compgen -G 'release-assets/*.sig' >/dev/null; then
+            gh release view "$TAG" --repo "$GH_REPO" --json body --jq '.body' > release-notes.txt
+            uv run --no-project python scripts/desktop_updates.py manifest \
+              --version "$VERSION" --tag "$TAG" --repository "$GH_REPO" \
+              --source release-assets --output updater-manifest --notes-file release-notes.txt
+            gh release upload "$TAG" updater-manifest/latest.json --repo "$GH_REPO"
+          else
+            echo "::notice::Manual installers published; updater signing absent, no latest.json."
+          fi

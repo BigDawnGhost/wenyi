@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { chooseOption } from "./select-helper";
 import {
   fakeApi,
   globalConfiguration,
@@ -11,6 +12,25 @@ const models = {
   ...configuration.registered_models,
   editor: { provider: "second", model: "editor-model" },
 };
+
+test("global workflow has no project precision controls or polishing constraint", async ({ page }) => {
+  await fakeApi(page, {
+    "/settings": {
+      ...globalConfiguration,
+      effective: {
+        ...globalConfiguration.effective,
+        pipeline: { ...globalConfiguration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+      },
+    },
+  });
+  await page.goto("/settings");
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Translation mode", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Default workflow template", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: /Quick draft|快速出稿/ })).toHaveCount(0);
+  await page.locator("summary").filter({ hasText: "Segmentation and performance" }).click();
+  await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
+});
 
 test("projects only select registered models and operation overrides", async ({
   page,
@@ -32,20 +52,20 @@ test("projects only select registered models and operation overrides", async ({
   ).toHaveCount(0);
   await expect(page.getByLabel("API provider", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(0);
-  await page.getByLabel("Quality tier").selectOption("editor");
+  await chooseOption(page.getByLabel("Quality tier"), "editor · second / editor-model");
   await page
     .locator("summary")
     .filter({ hasText: "Models by operation" })
     .click();
   await expect(
     page.getByLabel("Translate chapters in batches", { exact: true }),
-  ).toHaveValue("tier:strong");
+  ).toHaveText("Quality tier");
+  await page.getByLabel("Translate chapters in batches", { exact: true }).click();
   await expect(
     page.getByRole("option", { name: /Follow default tier/ }),
   ).toHaveCount(0);
-  await page
-    .getByLabel("Translate chapters in batches", { exact: true })
-    .selectOption("editor");
+  await page.keyboard.press("Escape");
+  await chooseOption(page.getByLabel("Translate chapters in batches", { exact: true }), "editor · second / editor-model");
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
     .click();
@@ -62,7 +82,7 @@ test("projects only select registered models and operation overrides", async ({
     "translation.body": { model: "editor", fallbacks: [] },
   });
   await page.reload();
-  await expect(page.getByLabel("Quality tier")).toHaveValue("editor");
+  await expect(page.getByLabel("Quality tier")).toHaveText("editor · second / editor-model");
   await page
     .getByRole("link", {
       name: "Manage models in global Settings",
@@ -71,7 +91,7 @@ test("projects only select registered models and operation overrides", async ({
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Registered providers & models",
+      name: "Providers & models",
       exact: true,
     }),
   ).toBeVisible();
@@ -97,7 +117,7 @@ test("global defaults persist independently of existing project settings", async
     await route.fulfill({ json: saved });
   });
   await page.goto("/settings");
-  await page.getByLabel("Default workflow template").selectOption("快速出稿");
+  await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
@@ -108,9 +128,8 @@ test("global defaults persist independently of existing project settings", async
   expect(writes).toBe(1);
   expect(saved.effective.pipeline.polish).toBe(false);
   await page.reload();
-  await expect(page.getByLabel("Default workflow template")).toHaveValue(
-    "快速出稿",
-  );
+  await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
+  expect(saved.default_template).toBe("标准翻译");
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.screenshot({
     path: testInfo.outputPath("global-settings.png"),
@@ -131,6 +150,7 @@ test("creation uses server defaults without a workflow selector", async ({
       templateRequests.push(request.url());
   });
   await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
     const form = await new Response(
       new Uint8Array(route.request().postDataBuffer()!),
       {
@@ -153,7 +173,7 @@ test("creation uses server defaults without a workflow selector", async ({
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
-  await expect(page).toHaveURL(new RegExp(`project=${pid}`));
+  await expect(page).toHaveURL(`/projects/${pid}`);
   expect(templateRequests).toEqual([]);
 });
 
@@ -164,7 +184,6 @@ test("global model registration works in Chinese on mobile", async ({
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page);
   await page.goto("/settings");
-  await page.locator("summary").filter({ hasText: "API 供应商与模型" }).click();
   await expect(
     page.getByLabel("API Key 环境变量", { exact: true }),
   ).toBeVisible();
@@ -200,10 +219,6 @@ test("registry IDs can be renamed with references and new registrations removed"
     } else await route.fulfill({ json: globalConfiguration });
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await expect(
     page.getByRole("button", {
       name: "Delete connection default",
@@ -222,8 +237,8 @@ test("registry IDs can be renamed with references and new registrations removed"
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
   await page.getByLabel("Model ID", { exact: true }).fill("final_model");
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
-  await expect(page.getByLabel("Quality tier", { exact: true })).toHaveValue(
-    "final_model",
+  await expect(page.getByLabel("Quality tier", { exact: true })).toHaveText(
+    "final_model · my_provider / deepseek-flash",
   );
   await page
     .getByRole("button", { name: "Add API connection", exact: true })
@@ -263,10 +278,6 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     await route.fulfill({ json: globalConfiguration });
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await page.getByRole("button", { name: "Add model", exact: true }).click();
   const newId = page.getByLabel("Model ID", { exact: true }).last();
   await newId.fill("default_model");
@@ -287,10 +298,6 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     }),
   ).toBeVisible();
   expect(writes).toBe(0);
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await expect(page.getByLabel("Model ID", { exact: true })).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Save configuration", exact: true }),
@@ -356,10 +363,6 @@ test("adding and renaming another model preserves the original model's rename", 
     } else await route.fulfill({ json: initial });
   });
   await page.goto("/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
   await page.getByLabel("Model ID", { exact: true }).fill("editor");
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
   await page.getByRole("button", { name: "Add model", exact: true }).click();

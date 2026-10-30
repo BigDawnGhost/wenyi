@@ -155,7 +155,8 @@ test("issue rows separate suggestions from published fixes and link to stable pa
   await page.goto(`/projects/${pid}/review`);
   const list = page.getByRole("list", { name: "Review issues", exact: true });
   await expect(list.getByRole("listitem")).toHaveCount(3);
-  await page.getByLabel("Filter by handling status").selectOption("pending");
+  await page.getByLabel("Filter by handling status").click();
+  await page.getByRole("option", { name: "Needs attention", exact: true }).click();
   await expect(list.getByRole("listitem")).toHaveCount(1);
   await list.getByText("Evidence and details", { exact: true }).click();
   await expect(
@@ -166,7 +167,8 @@ test("issue rows separate suggestions from published fixes and link to stable pa
     path: testInfo.outputPath("review-workbench.png"),
     fullPage: true,
   });
-  await page.getByLabel("Filter by handling status").selectOption("fixed");
+  await page.getByLabel("Filter by handling status").click();
+  await page.getByRole("option", { name: "Written back", exact: true }).click();
   await list.getByText("Evidence and details", { exact: true }).click();
   await expect(list.getByText("Published name", { exact: true })).toBeVisible();
   await expect(
@@ -214,7 +216,8 @@ test("history never borrows progress from the current review and empty sections 
   });
   await page.goto(`/projects/${pid}/review`);
   await expect(page.getByRole("progressbar")).toBeVisible();
-  await page.getByLabel("Review history").selectOption(old.id);
+  await page.getByLabel("Review history").click();
+  await page.getByRole("option", { name: /9\/16\/2026.*Completed/ }).click();
   await expect(
     page.getByText("No issues found", { exact: true }),
   ).toBeVisible();

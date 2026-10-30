@@ -10,62 +10,24 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.llm.retrying import ProviderRequestError
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
+from tests.review_fixtures import autofix_config as _config
+from tests.review_fixtures import autofix_store as _store
+from tests.review_fixtures import fix_json as _fix_json
 
 
 def require_file_storage(store: Storage) -> FileStorage:
     """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
     if not isinstance(store, FileStorage):
         raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
-
-
-def _config(state_dir: str) -> Config:
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {"default_strong": {"provider": "default", "model": "p"}},
-            },
-            "pipeline": {
-                "review_autofix": True,
-                "review_concurrency": 1,
-            },
-            "output": {"punctuation_normalize": False},
-            "paths": {"state_dir": state_dir},
-        }
-    )
-
-
-def _store(directory: str, target: str = "正式译文。") -> FileStorage:
-    store = FileStorage(str(Path(directory, "state", "book")))
-    store.save_chapter(
-        Chapter(
-            index=0,
-            title="第一章",
-            segments=[Segment(index=0, source="原文。", target=target)],
-        )
-    )
-    store.save_manifest(
-        {
-            "title": "book",
-            "source_lang": "ja",
-            "target_lang": "zh",
-            "source_sha256": "0" * 64,
-            "chapters": [{"index": 0, "status": STATUS_DONE}],
-        }
-    )
     return store
 
 
@@ -115,25 +77,6 @@ def _agent_final(user: str) -> str:
                 for candidate_id in candidate_ids
             ],
             "new_issues": [],
-            "complete": True,
-        },
-        ensure_ascii=False,
-    )
-
-
-def _fix_json(user: str, replacement: str) -> str:
-    def field(name: str) -> str:
-        match = re.search(rf"^{name}:\s*(.+)$", user, re.MULTILINE)
-        if match is None:
-            raise AssertionError(f"Fixer prompt missing {name}")
-        return match.group(1).strip()
-
-    return json.dumps(
-        {
-            "segment_ref": field("segment_ref"),
-            "before_hash": field("before_hash"),
-            "issue_ids": json.loads(field("issue_ids")),
-            "replacement": replacement,
             "complete": True,
         },
         ensure_ascii=False,
@@ -497,6 +440,69 @@ class TestReviewAutofix(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("failed_operation", ["autofix.verify", "autofix.fix"])
+def test_provider_interrupt_does_not_cache_terminal_autofix_failure(tmp_path, failed_operation):
+    store = _store(str(tmp_path))
+    outcome = _outcome(
+        store,
+        issues=[
+            {
+                "issue_id": "review-1",
+                "issue_key": "issue-1",
+                "chapter": 0,
+                "index": 0,
+                "type": "mistranslation",
+                "detail": "Missing meaning",
+                "suggestion": "Restore it",
+            }
+        ],
+    )
+    config = _config(str(tmp_path / "state"))
+    failed = False
+
+    def handler(messages, tier, json_mode):
+        nonlocal failed
+        system, user = messages[0]["content"], messages[-1]["content"]
+        operation = "autofix.verify" if "evidence-based review agent" in system else "autofix.fix"
+        if operation == failed_operation and not failed:
+            failed = True
+            raise ProviderRequestError(
+                provider="default",
+                operation=operation,
+                error_type="http_503",
+                status_code=503,
+                reason="http_503",
+                resumable=True,
+            )
+        if operation == "autofix.verify":
+            return _agent_final(user)
+        return _fix_json(user, "Recovered translation.")
+
+    first_client = MeteredFakeClient(handler=handler)
+    with pytest.raises(ProviderRequestError):
+        Orchestrator(config, first_client)._review_autofix.run(store, outcome, [])
+    debug = ReviewRunStore.open_existing(outcome.run_dir, storage=store)
+    assert store.load_chapter(0).text_segments[0].target == "正式译文。"
+    assert debug.load_json("autofix/index.json") is None
+
+    client = MeteredFakeClient(handler=handler)
+    service = Orchestrator(config, client)._review_autofix
+    fixed = service.run(store, outcome, [])
+    assert fixed.result["autofix"]["status"] == "completed"
+    assert fixed.result["autofix"]["applied_segment_count"] == 1
+    assert store.load_chapter(0).text_segments[0].target == "Recovered translation."
+    assert [call["operation"] for call in client.calls] == (
+        ["autofix.verify", "autofix.fix"]
+        if failed_operation == "autofix.verify"
+        else ["autofix.fix"]
+    )
+    assert fixed.usage["totals"]["calls"] == 3
+    usage = store.load_usage()
+    assert service.run(store, fixed, []).result == fixed.result
+    assert store.load_usage() == usage
+    assert len(first_client.calls) + len(client.calls) == 3
 
 
 @pytest.mark.parametrize("boundary", ["index", "chapter", "alignment", "result"])

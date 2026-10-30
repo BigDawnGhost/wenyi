@@ -33,6 +33,8 @@ for (const chinese of [false, true]) {
       project: Record<string, unknown>;
     }[] = [];
     await page.route("**/api/projects", async (route) => {
+      // The sidebar also reads the project list from this path.
+      if (route.request().method() !== "POST") return route.fallback();
       const form = await new Response(
         new Uint8Array(route.request().postDataBuffer()!),
         {
@@ -66,7 +68,7 @@ for (const chinese of [false, true]) {
       { name: "bản thảo.docx", content: "The selected source" },
     ]);
     const release = zone.getByText(
-      chinese ? "松开以选择原文文件。" : "Release to select the source file.",
+      chinese ? "松开以添加文件" : "Release to add the file",
     );
     await zone.dispatchEvent("dragenter", { dataTransfer: file });
     await zone.dispatchEvent("dragover", { dataTransfer: file });
@@ -87,7 +89,7 @@ for (const chinese of [false, true]) {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
       await page
-        .getByRole("main")
+        .getByRole("dialog", { name: chinese ? "创建项目" : "Create project", exact: true })
         .evaluate((element) => element.scrollWidth <= element.clientWidth),
     ).toBe(true);
     await zone.screenshot({
@@ -156,7 +158,7 @@ test("drops validate files and reject multiple files without replacing the selec
   });
   await zone.dispatchEvent("dragenter", { dataTransfer: text });
   await expect(
-    zone.getByText("Release to select the source file."),
+    zone.getByText("Release to add the file"),
   ).toHaveCount(0);
   await zone.dispatchEvent("drop", { dataTransfer: text });
   await text.dispose();
@@ -170,15 +172,18 @@ test("drops validate files and reject multiple files without replacing the selec
   await expect(create).toBeEnabled();
 });
 
-test("uploading and created projects reject replacement drops", async ({
+test("uploading rejects replacement drops and creation enters the overview", async ({
   page,
 }) => {
   await fakeApi(page);
+  let uploads = 0;
   let finish: () => void = () => {};
   const hold = new Promise<void>((resolve) => {
     finish = resolve;
   });
   await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    uploads += 1;
     await hold;
     await route.fulfill({ json: { ...project, status: "parsing" } });
   });
@@ -194,26 +199,65 @@ test("uploading and created projects reject replacement drops", async ({
   const replacement = await fileTransfer(page, [{ name: "replacement.docx" }]);
   try {
     await expect(zone).toHaveAttribute("aria-disabled", "true");
+    const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await page.mouse.click(2, 2);
+    await expect(dialog).toBeVisible();
+    await expect(page).toHaveURL("/projects/new");
     await expect(
       zone.getByRole("button", { name: "Browse files" }),
     ).toBeDisabled();
     await zone.dispatchEvent("dragenter", { dataTransfer: replacement });
     await expect(
-      zone.getByText("Release to select the source file."),
+      zone.getByText("Release to add the file"),
     ).toHaveCount(0);
     await zone.dispatchEvent("drop", { dataTransfer: replacement });
     await expect(
       zone.getByText("original.docx", { exact: true }),
     ).toBeVisible();
     finish();
-    await expect(page).toHaveURL(`/projects/new?project=${pid}`);
-    await zone.dispatchEvent("drop", { dataTransfer: replacement });
-    await expect(
-      zone.getByText("original.docx", { exact: true }),
-    ).toBeVisible();
-    await expect(zone).toHaveAttribute("aria-disabled", "true");
+    await expect(page).toHaveURL(`/projects/${pid}`);
+    await expect(zone).toHaveCount(0);
+    expect(uploads).toBe(1);
   } finally {
     finish();
+    await replacement.dispose();
+  }
+});
+
+test("a legacy creation link keeps the saved source locked against drops", async ({
+  page,
+}) => {
+  await fakeApi(page, {
+    [`/projects/${pid}`]: {
+      ...project,
+      fmt: "docx",
+      status: "parsing",
+      initialized: false,
+      source_meta: { original_filename: "original.docx" },
+    },
+  });
+  let uploads = 0;
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() === "POST") uploads += 1;
+    await route.fallback();
+  });
+  await page.goto(`/projects/new?project=${pid}`);
+  const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  const zone = page.getByRole("group", { name: "Source file selection" });
+  await expect(zone).toHaveAttribute("aria-disabled", "true");
+  await expect(zone.getByRole("button", { name: "Browse files" })).toBeDisabled();
+  await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
+  const replacement = await fileTransfer(page, [{ name: "replacement.docx" }]);
+  try {
+    await zone.dispatchEvent("drop", { dataTransfer: replacement });
+    await expect(zone.getByText("original.docx", { exact: true })).toBeVisible();
+    expect(uploads).toBe(0);
+  } finally {
     await replacement.dispose();
   }
 });

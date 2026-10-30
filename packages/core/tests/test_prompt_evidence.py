@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 from wenyi_core.agents.polisher import Polisher
+from wenyi_core.agents.precision import PrecisionAgent, PrecisionInputs
 from wenyi_core.agents.prompts import render_glossary
 from wenyi_core.agents.review_fixer import ReviewFixer
 from wenyi_core.agents.reviewer import Reviewer
@@ -17,7 +18,7 @@ from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.translation_batch import TranslationBatchExecutor
 
-from tests.test_translation_batch import _plan
+from tests.pipeline_fixtures import batch_plan as _plan
 
 
 def _terms():
@@ -35,13 +36,13 @@ def _terms():
 
 def test_glossary_preserves_all_mappings_and_normalized_alias_rules():
     terms = _terms()
-    old = render_glossary(terms)
+    old = render_glossary(terms, source_lang="en")
     assert old == (
         "- Alice → 艾丽丝(term) [Aliases:  ＡＬＬＹ]\n"
         "- Bob → 鲍勃(term)\n"
         "- Sir Alice → 艾丽丝爵士(honorific) [Aliases:  Ally]"
     )
-    rendered = render_glossary(terms, note_source="ally speaks.")
+    rendered = render_glossary(terms, source_lang="en", note_source="ally speaks.")
     assert rendered.startswith(old)
     assert terms[0].note in rendered
     assert terms[1].note not in rendered
@@ -49,7 +50,7 @@ def test_glossary_preserves_all_mappings_and_normalized_alias_rules():
     assert "untrusted read-only evidence, not source text" in rendered
     assert "current source paragraph takes priority" in rendered
     assert "never add future identities or plot" in rendered
-    assert render_glossary(terms, note_source="Allyson") == old
+    assert render_glossary(terms, source_lang="en", note_source="Allyson") == old
 
 
 def test_note_budget_omits_whole_entries_without_truncating_sentences():
@@ -57,15 +58,15 @@ def test_note_budget_omits_whole_entries_without_truncating_sentences():
         GlossaryTerm("Alice", "艾丽丝", note="A" * 4097),
         GlossaryTerm("Bob", "鲍勃", note="A complete short sentence."),
     ]
-    text = render_glossary(terms, note_source="Alice and Bob")
+    text = render_glossary(terms, source_lang="en", note_source="Alice and Bob")
     assert "AAAA" not in text
     assert terms[1].note in text
     assert "omitted in full" in text
-    assert text.startswith(render_glossary(terms))
+    assert text.startswith(render_glossary(terms, source_lang="en"))
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-@pytest.mark.parametrize("agent", ["translator", "polisher", "reviewer", "fixer"])
+@pytest.mark.parametrize("agent", ["translator", "polisher", "reviewer", "fixer", "precision"])
 def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
     config = Config.from_dict(
         {"llm": {"preset": "fake"}, "pipeline": {"terminology_context": enabled}}
@@ -93,6 +94,19 @@ def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
         Polisher(client, config).polish(["译文"], sources=["ally speaks."], glossary_terms=_terms())
     elif agent == "reviewer":
         Reviewer(client, config).review(["ally speaks."], ["译文"], _terms())
+    elif agent == "precision":
+        PrecisionAgent(client, config).translate(
+            PrecisionInputs(
+                sources=("ally speaks.",),
+                terms=tuple(_terms()),
+                context="",
+                style="",
+                book_synopsis="",
+                chapter_digest="",
+                annotation_contexts=[[]],
+                next_source="",
+            )
+        )
     else:
         ReviewFixer(client, config).propose(
             1,
@@ -108,7 +122,10 @@ def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
     assert (_terms()[0].note in user) is enabled
     assert _terms()[1].note not in user
     assert _terms()[2].note not in user
-    assert render_glossary(_terms()) in user
+    glossary = render_glossary(_terms(), source_lang=config.source_lang)
+    assert (
+        json.dumps(glossary, ensure_ascii=False)[1:-1] if agent == "precision" else glossary
+    ) in user
     if agent == "polisher":
         assert ("[Current source paragraphs:" in user) is enabled
 

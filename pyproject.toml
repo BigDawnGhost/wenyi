@@ -9,20 +9,14 @@ dependencies = ["wenyi-cli"]
 package = false
 
 [tool.uv.workspace]
-members = ["packages/core", "packages/cli", "apps/api"]
+members = ["packages/core", "packages/cli", "packages/backend", "apps/api", "apps/desktop/backend"]
 
 [tool.uv.sources]
 wenyi-core = { workspace = true }
 wenyi-cli = { workspace = true }
+wenyi-backend = { workspace = true }
 wenyi-api = { workspace = true }
-
-[project.optional-dependencies]
-pdf-output = [
-    "weasyprint>=69.0",
-]
-pdf-output-lite = [
-    "fpdf2>=2.8.5",
-]
+wenyi-desktop = { workspace = true }
 
 # Resolve dynamic workspace metadata without installing a root package.
 [build-system]
@@ -40,6 +34,7 @@ only-include = ["pyproject.toml"]
 
 [dependency-groups]
 dev = [
+    "hatch-vcs>=0.5", # Exercise the same tag-derived versioning used by package builds.
     "httpx2>=2.13", # Starlette's TestClient HTTP transport.
     "pre-commit>=3.7",
     "ruff>=0.6",
@@ -55,8 +50,12 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests", "apps/api/tests"]
+testpaths = ["packages/core/tests", "packages/backend/tests", "apps/api/tests", "apps/desktop/backend/tests"]
 pythonpath = ["packages/core", "packages/cli"]
+addopts = "--strict-markers"
+markers = [
+    "integration: requires isolated PostgreSQL/Redis or opt-in Docker test services",
+]
 filterwarnings = [
     "error:Using `httpx` with `starlette.testclient` is deprecated",
 ]

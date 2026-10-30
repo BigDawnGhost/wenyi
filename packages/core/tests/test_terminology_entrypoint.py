@@ -19,8 +19,8 @@ from wenyi_core.review.session import ReviewRoundResult
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler
-from tests.test_storage_injection import MemoryArtifacts
-from tests.test_terminology_pipeline import FamilyHandler
+from tests.storage_fixtures import MemoryArtifacts
+from tests.terminology_fixtures import FamilyHandler
 
 
 def config(tmp_path, *, enabled=True):
@@ -73,7 +73,7 @@ def test_permission_does_not_enable_the_feature_when_config_is_disabled(tmp_path
 
 
 @pytest.mark.parametrize("entry", ["prepare", "translate"])
-def test_real_cli_entry_produces_terminology_evidence(tmp_path, entry):
+def test_real_cli_produces_evidence_only_during_translation(tmp_path, entry):
     source = tmp_path / "book.txt"
     source.write_text("# Chapter 1\n\nAlice enters.\n\nAlice waits.", encoding="utf-8")
     selected = config(tmp_path)
@@ -87,13 +87,19 @@ def test_real_cli_entry_produces_terminology_evidence(tmp_path, entry):
     ):
         result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
-    assert any(call["operation"] == "terminology.evidence" for call in client.calls)
+    assert any(call["operation"] == "terminology.evidence" for call in client.calls) == (
+        entry == "translate"
+    )
     manifests = list((tmp_path / "state").glob("*/targets/zh/manifest.json"))
     assert len(manifests) == 1
     store = FileStorage(str(manifests[0].parent))
     with store.lock():
-        assert store.get_term("Alice").note.endswith("全书人物说明。")
-        assert store.list_artifacts("terminology/requests/evidence/")
+        if entry == "translate":
+            assert store.get_term("Alice").note.endswith("全书人物说明。")
+            assert store.list_artifacts("terminology/requests/evidence/")
+        else:
+            assert store.all_terms() == []
+            assert store.list_artifacts("terminology/") == []
         completed = all(
             segment.target is not None for segment in store.load_chapter(0).text_segments
         )

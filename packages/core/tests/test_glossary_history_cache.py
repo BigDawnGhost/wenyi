@@ -10,7 +10,7 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.terminology import TerminologyService
 
-from tests.test_terminology_service import EvidenceAgent, book_store
+from tests.terminology_fixtures import EvidenceAgent, book_store
 
 REQUESTS = "glossary/history/requests/"
 DIAGNOSTICS = "glossary/history/diagnostics/"

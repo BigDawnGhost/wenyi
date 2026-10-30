@@ -30,6 +30,9 @@ class FakeProvider(ProviderAdapter):
     ) -> str:
         return "[]" if json_mode else ""
 
+    def list_models(self) -> list[str]:
+        return ["fake"]
+
 
 class FakeClient(LLMClient):
     """Inject directly into workflows; record immutable request snapshots."""

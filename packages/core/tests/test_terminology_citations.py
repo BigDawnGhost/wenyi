@@ -12,7 +12,7 @@ from wenyi_core.i18n.policy.models import content_hash
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.terminology import TerminologyService
 
-from tests.test_terminology_service import book_store
+from tests.terminology_fixtures import book_store
 
 PASSAGES = [
     SourcePassage(reference="c0:s29:0-789", chapter=0, segment=29, source="Alice arrived."),

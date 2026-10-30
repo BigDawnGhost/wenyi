@@ -13,4 +13,4 @@ Rules:
 $metadata_guidance
 Term field guidance: $term_guidance
 Return only JSON:
-{"terms":[{"source":"Original term, form of address or fixed expression","reading":"Evidence-backed pronunciation, or empty","target":"Actual $tgt_label wording in this batch","type":"person|place|organization|term|technique|item|setting|appellation|honorific|speech|fixed_expression","gender":"male|female|unknown","aliases":["Alternative source spelling or abbreviation"],"note":"Referent, speaker, tone, context or reason for consistency"}]}
+{"terms":[{"source":"Original term, form of address or fixed expression",${reading_field}"target":"Actual $tgt_label wording in this batch","type":"person|place|organization|term|technique|item|setting|appellation|honorific|speech|fixed_expression","gender":"male|female|unknown","aliases":["Alternative source spelling or abbreviation"],"note":"Referent, speaker, tone, context or reason for consistency"}]}
