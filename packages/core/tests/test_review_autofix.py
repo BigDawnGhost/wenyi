@@ -16,19 +16,11 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
 from tests.review_fixtures import autofix_config as _config
 from tests.review_fixtures import autofix_store as _store
 from tests.review_fixtures import fix_json as _fix_json
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _outcome(

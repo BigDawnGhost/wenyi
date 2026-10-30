@@ -9,7 +9,6 @@ import unittest
 
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.base import Agent
-from wenyi_core.config import Config
 from wenyi_core.glossary.extractor import (
     GlossaryExtractor,
     TranslatedSegmentEvidence,
@@ -18,25 +17,22 @@ from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.context import RollingContext
 
-
-def _cfg():
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
-        }
-    )
+from tests.pipeline_fixtures import fake_agent_config as _cfg
 
 
 class TestAgentCollectionNormalization(unittest.TestCase):
     def test_invalid_collection_logs_context_without_response_content(self):
-        for value in (0, 1.5, True, False, "private model text", {"private model text": 1}):
+        for value in (
+            0,
+            1,
+            0.0,
+            1.5,
+            True,
+            False,
+            "private model text",
+            {},
+            {"private model text": 1},
+        ):
             with self.subTest(value=value):
                 with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
                     result = Agent.dict_items(value, operation="glossary.extract", field="terms")
@@ -69,16 +65,9 @@ class TestAgentCollectionNormalization(unittest.TestCase):
         self.assertIn("2 non-object items", message)
         self.assertNotIn("private", message)
 
-    def test_non_list_model_collections_are_rejected(self):
-        for value in (None, 0, 1, 0.0, 1.5, "invalid", {}):
-            with self.subTest(value=value):
-                self.assertEqual(Agent.dict_items(value), [])
-
     def test_json_arrays_keep_only_dictionary_members(self):
         valid = {"source": "a", "target": "b"}
 
-        self.assertEqual(Agent.dict_items([]), [])
-        self.assertEqual(Agent.dict_items([valid]), [valid])
         self.assertEqual(
             Agent.dict_items([None, 1, 1.5, "invalid", {}, valid]),
             [{}, valid],

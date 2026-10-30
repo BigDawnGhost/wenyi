@@ -1,9 +1,18 @@
-"""Small shared configuration for offline pipeline regression tests."""
+"""Shared configuration and storage narrowing for offline pipeline tests."""
 
 from wenyi_core.config import Config
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 
-def fake_pipeline_config(state_dir: str) -> Config:
+def require_file_storage(store: Storage) -> FileStorage:
+    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
+    if not isinstance(store, FileStorage):
+        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
+    return store
+
+
+def fake_agent_config() -> Config:
     return Config.from_dict(
         {
             "language": {"source": "ja", "target": "zh"},
@@ -14,12 +23,15 @@ def fake_pipeline_config(state_dir: str) -> Config:
                     "default_cheap": {"provider": "default", "model": "f"},
                 },
             },
-            "segment": {"max_tokens_per_batch": 1800},
-            "pipeline": {
-                "review": True,
-                "review_autofix": False,
-                "polish": True,
-            },
-            "paths": {"state_dir": state_dir},
         }
     )
+
+
+def fake_pipeline_config(state_dir: str) -> Config:
+    config = fake_agent_config()
+    config.segment.max_tokens_per_batch = 1800
+    config.pipeline.review = True
+    config.pipeline.review_autofix = False
+    config.pipeline.polish = True
+    config.state_dir = state_dir
+    return config
