@@ -205,8 +205,8 @@ export const api = {
       body: JSON.stringify({ terms: terms.map(termInput) }),
     }),
 
-  getReview: (pid: string, ci: number) =>
-    request<ChapterSegments>(`/projects/${pid}/review/${ci}`),
+  getReview: (pid: string, ci: number, signal?: AbortSignal) =>
+    request<ChapterSegments>(`/projects/${pid}/review/${ci}`, { signal }),
   updateChapterTitle: (
     pid: string,
     ci: number,

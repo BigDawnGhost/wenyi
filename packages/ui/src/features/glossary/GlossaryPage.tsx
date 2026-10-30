@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { api, isProjectBusy, type Term } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Label } from "@/components/ui/form";
@@ -160,11 +161,7 @@ export default function GlossaryPage() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
-  const { data: project } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const { data: project } = useProjectQuery(pid);
   const busy = isProjectBusy(project?.status);
   const showReading = project?.source_lang === "ja";
   const {

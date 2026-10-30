@@ -1,7 +1,8 @@
 import { useI18n, translate as tr } from "@/i18n";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, type EventOut } from "@/lib/api";
+import { api, isProjectBusy, type EventOut } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice, StructuredData } from "@/components/ui/data";
@@ -84,19 +85,20 @@ function describe(e: EventOut): string {
 export default function EventsPage() {
   const { t: tr, locale } = useI18n();
   const { pid = "" } = useParams();
+  const project = useProjectQuery(pid);
   const { data: events, error } = useQuery({
     queryKey: ["events", pid],
     queryFn: () => api.listEvents(pid),
     select: (items) => [...items].sort((a, b) => b.id - a.id),
     enabled: !!pid,
-    refetchInterval: 5000,
+    refetchInterval: isProjectBusy(project.data?.status) ? 5000 : false,
   });
 
   return (
     <>
       <PageHeader title={tr("common.eventLog")} />
       <PageContainer>
-        <ErrorNotice error={error} />
+        <ErrorNotice error={project.error || error} />
         <Card>
           <CardContent className="p-4">
             {!events?.length ? (

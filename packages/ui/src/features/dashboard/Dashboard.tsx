@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { LazyBoundary } from "@/routes/LazyBoundary";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/data";
-import { api, type Project } from "@/lib/api";
+import { api, isProjectBusy, type Project } from "@/lib/api";
 import { LoaderCircle, Trash2 } from "lucide-react";
 
 export default function Dashboard() {
@@ -21,7 +21,8 @@ export default function Dashboard() {
   } = useQuery({
     queryKey: ["projects"],
     queryFn: api.listProjects,
-    refetchInterval: 5000,
+    refetchInterval: (query) =>
+      query.state.data?.some((project) => isProjectBusy(project.status)) ? 5000 : false,
   });
   const deleteProject = useMutation({
     mutationFn: (project: Project) => api.deleteProject(project.id),

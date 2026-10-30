@@ -214,7 +214,7 @@ test("a title changed before saving preserves the editor input and requires the 
   expect(state.rows[0].title_translated).toBe("Reconciled title");
 });
 
-test("polling preserves an unsaved title and disables saving when a task starts", async ({
+test("a rejected idle save preserves an unsaved title and discovers a newly started task", async ({
   page,
 }) => {
   const state = await mockContents(page);
@@ -223,11 +223,15 @@ test("polling preserves an unsaved title and disables saving when a task starts"
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox").fill("Unsaved title");
   state.rows[0].title_translated = "Another editor's title";
+  state.status = "translating";
+  await page.route(`**/api/projects/${pid}/chapters/0/title`, route =>
+    route.fulfill({ status: 409, json: { detail: "A project task is running" } }),
+  );
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.getByText(/This title has changed/)).toBeVisible({
     timeout: 8000,
   });
   await expect(dialog.getByRole("textbox")).toHaveValue("Unsaved title");
-  state.status = "translating";
   await expect(dialog.getByRole("textbox")).toBeDisabled({ timeout: 8000 });
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),

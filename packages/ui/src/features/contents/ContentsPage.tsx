@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { useI18n } from "@/i18n";
 import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 import { Input } from "@/components/ui/form";
@@ -12,17 +13,14 @@ import { ContentsList } from "./ContentsList";
 
 export default function ContentsPage() {
   const { pid = "" } = useParams();
-  const project = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const project = useProjectQuery(pid);
+  const busy = isProjectBusy(project.data?.status);
   const subtitle = project.data?.fmt === "srt";
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
     enabled: !!project.data && !subtitle,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   return (
@@ -32,7 +30,7 @@ export default function ContentsPage() {
       chapters={chapters.data || []}
       loading={project.isPending || chapters.isPending}
       error={project.error || chapters.error}
-      busy={isProjectBusy(project.data?.status)}
+      busy={busy}
       initialized={project.data?.initialized === true}
     />
   );
@@ -122,6 +120,7 @@ function ContentsWorkspace({
                 });
               } finally {
                 await Promise.all([
+                  qc.invalidateQueries({ queryKey: ["project", pid] }),
                   qc.invalidateQueries({ queryKey: ["chapters", pid] }),
                   qc.invalidateQueries({ queryKey: ["review", pid] }),
                   qc.invalidateQueries({ queryKey: ["events", pid] }),

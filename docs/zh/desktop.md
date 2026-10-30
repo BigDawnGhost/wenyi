@@ -55,6 +55,8 @@ Desktop 优先使用系统凭据库；不可用时，界面会提示密钥仅在
 
 对照原文检查译文，编辑段落、查看版本记录并处理审校问题。审校可以将修订写回译文；只想查看建议时，请关闭自动修复。Desktop 与 Web 共用这些工作台页面，截图见[界面预览](README.md#界面预览)。
 
+项目已完成或已暂停时，章节、术语和改动记录等页面不再周期轮询。任务停止时读取最终落盘数据；开始／恢复任务后重新启用运行中的轮询。保存编辑、从隐藏状态恢复窗口仍会同步数据，不丢弃草稿。大章节保留原生查找、跨段选择和深链接，段落共用一个操作菜单，章节审校记录仅在首次展开时挂载。
+
 选择导出格式，并在支持时选择双语版。Desktop 会先打开系统保存对话框，确认位置后才开始导出；取消不会创建导出任务。HTML 以包含页面和资源的 ZIP 保存，阅读前请先解压。
 
 PDF 仅对已保存的 BabelDOC 项目开放，通过外部 bridge 保留原始排版。
@@ -394,6 +396,6 @@ Linux 有 Wayland 时优先使用原生 Wayland；X11 仅是连接阶段的回�
 WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm desktop
 ```
 
-已用原生 GTK/WebKit 探针复现 NVIDIA/KDE Wayland 的 `Gdk Error 71`，并确认针对性显式同步设置可以避免该错误。这仅验证该兼容场景，不代表所有 GPU 的性能结论。界面性能测量与正确性测试分开记录。
+已用原生 GTK/WebKit 探针复现 NVIDIA/KDE Wayland 的 `Gdk Error 71`，并确认针对性显式同步设置可以避免该错误。这仅验证该兼容场景，不代表所有 GPU 的性能结论。[界面性能测量](../../apps/web/tests/proofreading-performance.md) 分开记录 Chromium 检查与原生 Tauri/WebKitGTK 实测，包括大章节仍存在的卡顿。
 
 Rust 后端重写仍暂缓。Desktop 通过共享后端接口复用现有 Python 引擎；Rust 仅负责原生应用能力和进程生命周期。
