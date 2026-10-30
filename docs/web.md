@@ -153,11 +153,15 @@ The translation overview updates status, saved paragraph counts, usage, and run 
 
 Project pages poll only while a task is active, including queueing and pausing. Completed, paused and other idle projects stop periodic requests after reconciling the final saved data. The project list also stops polling when no listed project is active. Opening pages, saving edits, starting/resuming tasks and connected progress events can still trigger reads; export jobs refresh independently until finished. On an idle page without a progress subscription, reopen or reload it to see work started by another client. Conflicting edits are still rejected by the server and reload the latest values without discarding the draft.
 
-Cache hit rate uses `hit / (hit + miss)` from the provider's reported cache tokens,
-not from all input tokens. Unreported input remains "unknown cache status" and is
-neither counted as a cache miss nor included in the rate. Missing hit/miss counters
-or a zero reported sum show `—`. If the reported cache sum exceeds a known input
-total, the cache breakdown and rate are both treated as unknown.
+**Cache read / all input** uses reported reads divided by all input tokens,
+including unknown input in the denominator. The charts separate reads, writes,
+ordinary input and unknown classification, and show 5m/1h write subtotals only when
+available. Missing counters show `—`, not zero; known subtotals can cover only some
+calls. The summary also shows the unknown amount against total input. No available
+read counter or no input total means an unknown rate. An impossible cache partition
+is treated as unknown. Historical misses are not assumed to be ordinary input,
+because they may include cache writes. See [usage accounting](cli.md#usage-and-event-logs)
+for supported usage dialects and ledger compatibility. These counters do not establish cost.
 
 1. Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list stays visible behind it but cannot be interacted with. `/projects/new` opens the same dialog directly, not a separate page. Focus starts in **Project name**; Tab stays inside the dialog, and Escape closes an open dropdown before closing the dialog. **Cancel**, **Close**, clicking the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project; focus returns to the sidebar entry and reopening starts a clean form. Browser Back also leaves the dialog. On narrow screens the form scrolls while its close header stays visible.
    Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection and dialog dismissal are disabled while uploading, not a way to cancel a task. Failed uploads retain the form and source for retry. Legacy `/projects/new?project=<id>` links keep the saved source read-only and expose existing preview/resume controls. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.

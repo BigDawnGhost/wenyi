@@ -10,7 +10,13 @@ from pydantic import BaseModel
 
 from ..retrying import EmptyResponseError, TruncatedResponseError
 from ..transport import Messages, ProviderAdapter, RequestContext, ResolvedModel
-from ..usage import UsageSample, make_usage_sample, read_usage_int, read_usage_value
+from ..usage import (
+    UsageSample,
+    make_usage_sample,
+    read_usage_counter,
+    read_usage_int,
+    read_usage_value,
+)
 
 OptionsT = TypeVar("OptionsT", bound=BaseModel)
 _JSON_MODE_INSTRUCTION = "Output must be valid json."
@@ -66,25 +72,48 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return merged
 
 
-def normalize_openai_usage(usage: Any) -> UsageSample | None:
-    """Normalize OpenAI-style nested cache details into shared usage accounting."""
-    if usage is None:
+def normalize_openai_usage(usage: Any, *, separate_cache_writes: bool = True) -> UsageSample | None:
+    """Normalize inclusive Chat Completions totals, not native Anthropic input_tokens.
+
+    Gateways may expose OpenRouter-style nested cache_write_tokens or top-level
+    cache_creation_input_tokens/cache_creation. Absence is not evidence of zero
+    writes on a generic endpoint. Native OpenAI has no separate write counter.
+    """
+    if usage is None or read_usage_counter(usage, "prompt_tokens") is None:
         return None
+    prompt_tokens = read_usage_int(usage, "prompt_tokens")
     details = read_usage_value(usage, "prompt_tokens_details")
-    cached_value = read_usage_value(details, "cached_tokens")
-    if cached_value is None:
-        cache_hit_tokens = 0
-        cache_miss_tokens = 0
-    else:
-        cache_hit_tokens = read_usage_int(details, "cached_tokens")
-        cache_miss_tokens = max(
-            0,
-            read_usage_int(usage, "prompt_tokens") - cache_hit_tokens,
-        )
+    cache_hit_tokens = read_usage_counter(details, "cached_tokens")
+    if cache_hit_tokens is None:
+        cache_hit_tokens = read_usage_counter(usage, "cache_read_input_tokens")
+    cache_write_tokens = read_usage_counter(details, "cache_write_tokens")
+    if cache_write_tokens is None:
+        cache_write_tokens = read_usage_counter(usage, "cache_creation_input_tokens")
+    creation = read_usage_value(usage, "cache_creation")
+    write_5m = read_usage_counter(creation, "ephemeral_5m_input_tokens")
+    write_1h = read_usage_counter(creation, "ephemeral_1h_input_tokens")
+    writes_complete = cache_write_tokens is not None or (
+        write_5m is not None and write_1h is not None
+    )
+    if cache_write_tokens is None and (write_5m is not None or write_1h is not None):
+        # A partial TTL breakdown proves some writes, but not the ordinary remainder.
+        cache_write_tokens = (write_5m or 0) + (write_1h or 0)
+    if cache_write_tokens is None and not separate_cache_writes:
+        cache_write_tokens = 0
+        writes_complete = True
+    ordinary = None
+    if cache_hit_tokens is not None and cache_write_tokens is not None and writes_complete:
+        ordinary = max(0, prompt_tokens - cache_hit_tokens - cache_write_tokens)
     return make_usage_sample(
         usage,
         cache_hit_tokens=cache_hit_tokens,
-        cache_miss_tokens=cache_miss_tokens,
+        cache_miss_tokens=max(0, prompt_tokens - cache_hit_tokens)
+        if cache_hit_tokens is not None
+        else 0,
+        cache_write_tokens=cache_write_tokens,
+        uncached_tokens=ordinary,
+        cache_write_5m_tokens=write_5m,
+        cache_write_1h_tokens=write_1h,
     )
 
 

@@ -32,6 +32,26 @@ def _review_response(issues, count):
 
 
 class TestReviewer(unittest.TestCase):
+    def test_review_prefix_is_stable_across_chunk_sizes(self):
+        def respond(messages, _tier, _json):
+            count = re.search(r"\[Paragraph pairs\] \((\d+) paragraphs\)", messages[1]["content"])
+            assert count is not None
+            return _review_response([], int(count[1]))
+
+        client = FakeClient(handler=respond)
+        reviewer = Reviewer(client, _cfg())
+        glossary = [GlossaryTerm(source="Alice", target="爱丽丝")]
+        reviewer.review(["Alice"], ["爱丽丝"], glossary)
+        reviewer.review(["Alice", "Hello"], ["爱丽丝", "你好"], glossary)
+        first, second = [call["messages"] for call in client.calls]
+        self.assertEqual(first[0]["content"], second[0]["content"])
+        self.assertEqual(
+            first[1]["content"].split("[Paragraph pairs]")[0],
+            second[1]["content"].split("[Paragraph pairs]")[0],
+        )
+        self.assertIn('"reviewed_segments":1', first[1]["content"])
+        self.assertIn('"reviewed_segments":2', second[1]["content"])
+
     def test_review_reports_issues(self):
         issues = [
             {
@@ -52,7 +72,7 @@ class TestReviewer(unittest.TestCase):
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
         self.assertEqual(client.calls[-1]["tier"], "cheap")  # Review uses the cheap tier.
-        self.assertIn('"reviewed_segments":2', client.calls[-1]["messages"][0]["content"])
+        self.assertIn('"reviewed_segments":2', client.calls[-1]["messages"][1]["content"])
 
     def test_reviewer_drops_fields_outside_the_initial_issue_contract(self):
         """Cheap initial review cannot bypass the strong agent to inject cross-block

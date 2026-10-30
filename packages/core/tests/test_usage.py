@@ -523,10 +523,10 @@ class TestMissingUsage(unittest.TestCase):
 
 
 class TestEmptyCacheHitRate(unittest.TestCase):
-    def test_fresh_client_zero_hit_rate_and_full_keys(self):
+    def test_fresh_client_unknown_hit_rate_and_full_keys(self):
         c = FakeClient()
         totals = c.usage_summary()["totals"]
-        self.assertEqual(totals["cache_hit_rate"], 0.0)
+        self.assertIsNone(totals["cache_hit_rate"])
         self.assertEqual(totals["total_tokens"], 0)
         for key in (
             "calls",

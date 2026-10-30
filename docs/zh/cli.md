@@ -245,6 +245,29 @@ state/srt/<slug>/targets/<目标语言>/
 
 每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
 
+缓存统计分别记录读取（`cache_hit_tokens`）、写入（`cache_write_tokens`）、
+普通输入（`uncached_tokens`）和分类未知输入（`cache_unknown_tokens`），四类之和为
+`prompt_tokens`。显示比例与 `cache_hit_rate` 统一使用**已报告读取 / 全部输入**，
+分母包含未知输入；没有可用读取计数或没有输入时，比例为未知而不是 0%。
+CLI 摘要同时显示未知 Token 数。这些是 provider 返回的用量计数，不是费用估算，
+也不是物理缓存存储的直接证据。
+
+账本 schema 3 还保留已报告的 5m/1h 写入小计，以及可累加的 `*_reported_calls`
+次数，区分字段不可用与明确为零。已知小计可能只覆盖部分调用；TTL 分类是写入的子集，
+不额外计入输入总量。原生 OpenAI、DeepSeek、Gemini 按各自适配器的用量契约归一化。
+通用 Chat Completions 接口使用包含缓存部分的 `prompt_tokens`、
+`prompt_tokens_details.cached_tokens`，以及实际返回的
+`prompt_tokens_details.cache_write_tokens` 或 `cache_creation_input_tokens`；
+TTL 明细来自 `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`。
+计数不足以推导普通输入时，剩余部分保留为未知。普通输入、读取、写入分别计数的原生
+API 必须由自身适配器归一化，不能套用 Chat Completions 的包含式总量算法。
+
+schema-2 账本在内存中兼容升级，下一次正常保存用量时持久化，保留归属和 Token 总量。
+历史 `cache_miss_tokens` 作为兼容计数保留，但**不会**事后猜分为写入和普通输入，
+这部分属于分类未知。历史读取为零不能证明 provider 明确上报了零，因此在新调用提供
+读取计数之前，其比例为未知。更早的路由归属升级前账本仍需执行
+`wenyi models migrate-usage RUN_DIR`。
+
 进度条时钟显示本次工作流的总用时，覆盖解析、等待模型响应、翻译、润色、审校和导出。
 切换阶段、章节或审校轮次不会归零；一个阶段完成后，如果后续工作仍在进行，时钟仍继续走动。
 并发模型请求按实际经过时间计时，不累加各请求的耗时。

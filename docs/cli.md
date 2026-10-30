@@ -260,6 +260,34 @@ There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives i
 
 Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
 
+Cache accounting separates reads (`cache_hit_tokens`), writes (`cache_write_tokens`),
+ordinary input (`uncached_tokens`), and unclassified input (`cache_unknown_tokens`).
+These four buckets sum to `prompt_tokens`. The displayed rate and `cache_hit_rate`
+use **reported reads / all input**, including unknown input in the denominator;
+no available read counter or no input means an unknown rate, not 0%.
+CLI summaries show the unknown token count. These are provider usage counters,
+not a cost estimate or proof of physical cache storage.
+
+Ledger schema 3 also preserves reported 5m/1h write subtotals and additive
+`*_reported_calls` counts, distinguishing an unavailable field from an explicit zero.
+Known subtotals may cover only some calls; TTL buckets are subsets of writes, not
+additional input tokens. Native OpenAI, DeepSeek and Gemini use their adapter's
+usage contract. Generic Chat Completions endpoints use inclusive `prompt_tokens`,
+`prompt_tokens_details.cached_tokens`, and, when supplied,
+`prompt_tokens_details.cache_write_tokens` or `cache_creation_input_tokens`;
+`cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens` supply TTL
+details. Without enough counters to infer ordinary input, the remainder stays
+unknown. Native APIs with separate input/read/write totals must be normalized by
+their own adapter, not passed through the inclusive Chat Completions normalizer.
+
+Schema-2 ledgers are upgraded in memory and persisted on the next normal usage
+write, preserving attribution and total tokens. Historical `cache_miss_tokens`
+remains available as a compatibility counter but is **not** retrospectively split
+into writes and ordinary input; its amount belongs to the unknown classification.
+Historical zero reads do not prove an explicitly reported zero, so their rate is
+unknown unless new calls provide a read counter.
+Older pre-routing ledgers still require `wenyi models migrate-usage RUN_DIR`.
+
 The progress-bar clock measures the entire current workflow, including parsing, model
 waits, translation, polishing, review and export. Switching stages, chapters or review
 rounds does not reset it; completing one stage does not stop it while subsequent work

@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-_USAGE_FIELDS = (
+_LEGACY_FIELDS = (
     "calls",
     "prompt_tokens",
     "completion_tokens",
@@ -14,17 +14,53 @@ _USAGE_FIELDS = (
     "cache_hit_tokens",
     "cache_miss_tokens",
 )
+# Presence counts are additive across calls, unlike a boolean "reported" flag.
+# They preserve explicit zero, partial coverage and absence in cumulative ledgers.
+_REPORTED_FIELDS = {
+    "cache_hit_tokens": "cache_hit_reported_calls",
+    "cache_write_tokens": "cache_write_reported_calls",
+    "uncached_tokens": "uncached_reported_calls",
+    "cache_write_5m_tokens": "cache_write_5m_reported_calls",
+    "cache_write_1h_tokens": "cache_write_1h_reported_calls",
+}
+_USAGE_FIELDS = (
+    *_LEGACY_FIELDS,
+    "cache_write_tokens",
+    "uncached_tokens",
+    "cache_unknown_tokens",
+    "cache_write_5m_tokens",
+    "cache_write_1h_tokens",
+    *_REPORTED_FIELDS.values(),
+)
 
 
 @dataclass(frozen=True)
 class UsageSample:
-    """Normalized provider usage for one call."""
+    """One inclusive input total; None means a cache counter was not available.
+
+    cache_miss_tokens is retained only as a compatibility counter. It cannot
+    distinguish writes from ordinary input and is never used for that purpose.
+    """
 
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    cache_hit_tokens: int = 0
+    cache_hit_tokens: int | None = None
     cache_miss_tokens: int = 0
+    cache_write_tokens: int | None = None
+    uncached_tokens: int | None = None
+    cache_write_5m_tokens: int | None = None
+    cache_write_1h_tokens: int | None = None
+
+    @property
+    def cache_unknown_tokens(self) -> int:
+        return max(
+            0,
+            self.prompt_tokens
+            - (self.cache_hit_tokens or 0)
+            - (self.cache_write_tokens or 0)
+            - (self.uncached_tokens or 0),
+        )
 
 
 def read_usage_value(usage: Any, name: str) -> Any:
@@ -46,31 +82,58 @@ def read_usage_int(usage: Any, name: str) -> int:
         return 0
 
 
+def read_usage_counter(usage: Any, name: str) -> int | None:
+    """Read a nonnegative integer counter without turning missing/invalid data into zero."""
+    value = read_usage_value(usage, name)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def make_usage_sample(
     usage: Any,
     *,
-    cache_hit_tokens: int = 0,
+    cache_hit_tokens: int | None = None,
     cache_miss_tokens: int = 0,
+    cache_write_tokens: int | None = None,
+    uncached_tokens: int | None = None,
+    cache_write_5m_tokens: int | None = None,
+    cache_write_1h_tokens: int | None = None,
 ) -> UsageSample | None:
-    """Build a provider-independent usage record from common API token fields."""
+    """Build usage from inclusive totals supplied by an adapter, not native wire fields."""
     if usage is None:
         return None
     prompt_tokens = read_usage_int(usage, "prompt_tokens")
     completion_tokens = read_usage_int(usage, "completion_tokens")
     total_tokens = read_usage_int(usage, "total_tokens") or (prompt_tokens + completion_tokens)
+    known = (cache_hit_tokens, cache_write_tokens, uncached_tokens)
+    if (
+        any(value is not None and value < 0 for value in known)
+        or sum(value or 0 for value in known) > prompt_tokens
+    ):
+        # Keep billable totals, but do not publish an impossible cache partition.
+        cache_hit_tokens = cache_write_tokens = uncached_tokens = None
+        cache_write_5m_tokens = cache_write_1h_tokens = None
+        cache_miss_tokens = 0
+    ttl_total = (cache_write_5m_tokens or 0) + (cache_write_1h_tokens or 0)
+    if ttl_total > (cache_write_tokens if cache_write_tokens is not None else prompt_tokens):
+        cache_write_5m_tokens = cache_write_1h_tokens = None
     return UsageSample(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
-        cache_hit_tokens=max(0, cache_hit_tokens),
+        cache_hit_tokens=cache_hit_tokens,
         cache_miss_tokens=max(0, cache_miss_tokens),
+        cache_write_tokens=cache_write_tokens,
+        uncached_tokens=uncached_tokens,
+        cache_write_5m_tokens=cache_write_5m_tokens,
+        cache_write_1h_tokens=cache_write_1h_tokens,
     )
 
 
-def _hit_rate(hit: int, miss: int) -> float:
-    """Compute the cache-token hit rate, or zero when no tokens are available."""
-    total = hit + miss
-    return round(hit / total, 4) if total else 0.0
+def _hit_rate(slot: dict[str, Any]) -> float | None:
+    """Reported reads / all input, including unknown input; never a classified-only rate."""
+    total = slot["prompt_tokens"]
+    known_read = slot["cache_hit_reported_calls"] or slot["cache_hit_tokens"]
+    return round(slot["cache_hit_tokens"] / total, 4) if total and known_read else None
 
 
 def _normalize_usage_group(
@@ -82,12 +145,12 @@ def _normalize_usage_group(
         for name, values in group.items()
     }
     for slot in normalized.values():
-        slot["cache_hit_rate"] = _hit_rate(slot["cache_hit_tokens"], slot["cache_miss_tokens"])
+        slot["cache_hit_rate"] = _hit_rate(slot)
     return normalized
 
 
 _GROUPS = ("by_tier", "by_stage", "by_provider", "by_model")
-USAGE_SCHEMA_VERSION = 2
+USAGE_SCHEMA_VERSION = 3
 
 
 def _usage_summary(groups: dict[str, dict], labels: dict[str, str] | None = None) -> dict[str, Any]:
@@ -96,7 +159,7 @@ def _usage_summary(groups: dict[str, dict], labels: dict[str, str] | None = None
     for values in normalized["by_tier"].values():
         for field in _USAGE_FIELDS:
             totals[field] += values[field]
-    totals["cache_hit_rate"] = _hit_rate(totals["cache_hit_tokens"], totals["cache_miss_tokens"])
+    totals["cache_hit_rate"] = _hit_rate(totals)
     return {
         "schema_version": USAGE_SCHEMA_VERSION,
         "totals": totals,
@@ -110,12 +173,13 @@ def empty_usage() -> dict[str, Any]:
 
 
 def validate_usage(value: dict[str, Any] | None) -> dict[str, Any]:
-    """Reject nonempty historical ledgers until explicitly converted."""
+    """Upgrade v2 in memory; older attribution formats still require explicit conversion."""
     if not value or value == {}:
         return empty_usage()
     if not isinstance(value, dict):
         raise ValueError("Usage ledger must be an object")
-    if value.get("schema_version") != USAGE_SCHEMA_VERSION:
+    version = value.get("schema_version")
+    if version not in (2, USAGE_SCHEMA_VERSION):
         if not any(value.get("by_tier", {}).values()) and not any(
             value.get("totals", {}).get(field, 0) for field in _USAGE_FIELDS
         ):
@@ -129,23 +193,38 @@ def validate_usage(value: dict[str, Any] | None) -> dict[str, Any]:
         if not all(isinstance(slot, dict) for slot in value[group].values()):
             raise ValueError("Invalid usage ledger slot")
     reconstructed = _usage_summary({"by_tier": value["by_tier"]})["totals"]
-    if any(
-        read_usage_int(value["totals"], field) != reconstructed[field] for field in _USAGE_FIELDS
-    ):
+    fields = _LEGACY_FIELDS if version == 2 else _USAGE_FIELDS
+    if any(read_usage_int(value["totals"], field) != reconstructed[field] for field in fields):
         raise ValueError("Usage totals disagree with tier attribution")
+    if version == 2:
+        return _usage_summary(
+            {name: _upgrade_cache_group(value[name]) for name in _GROUPS}, value.get("labels")
+        )
     return value
+
+
+def _upgrade_cache_group(group: dict[str, dict]) -> dict[str, dict]:
+    """Preserve old misses verbatim; their write/ordinary split is unknowable."""
+    upgraded = {}
+    for name, slot in group.items():
+        values = {field: read_usage_int(slot, field) for field in _LEGACY_FIELDS}
+        if not 0 <= values["cache_hit_tokens"] <= values["prompt_tokens"]:
+            raise ValueError("Historical cache reads exceed input tokens")
+        values["cache_unknown_tokens"] = values["prompt_tokens"] - values["cache_hit_tokens"]
+        upgraded[name] = values
+    return upgraded
 
 
 def convert_usage_ledger(value: dict[str, Any]) -> dict[str, Any]:
     """Convert historical attribution explicitly without guessing past providers or models."""
-    if value.get("schema_version") == USAGE_SCHEMA_VERSION:
+    if value.get("schema_version") in (2, USAGE_SCHEMA_VERSION):
         return validate_usage(value)
     if value.get("schema_version") not in (None, 1):
         raise ValueError("Unsupported usage ledger version")
-    groups = {name: value.get(name, {}) for name in ("by_tier", "by_stage")}
+    groups = {name: _upgrade_cache_group(value.get(name, {})) for name in ("by_tier", "by_stage")}
     reconstructed = _usage_summary(groups)
     totals = reconstructed["totals"]
-    for field in _USAGE_FIELDS:
+    for field in _LEGACY_FIELDS:
         if read_usage_int(value.get("totals", {}), field) != totals[field]:
             raise ValueError(f"Historical usage totals disagree with tiers: {field}")
     if totals["calls"]:
@@ -235,7 +314,10 @@ class UsageTracker:
                 slot = self._groups[group].setdefault(key, dict.fromkeys(_USAGE_FIELDS, 0))
                 slot["calls"] += 1
                 for field in _USAGE_FIELDS[1:]:
-                    slot[field] += getattr(sample, field)
+                    if field not in _REPORTED_FIELDS.values():
+                        slot[field] += getattr(sample, field) or 0
+                for field, presence in _REPORTED_FIELDS.items():
+                    slot[presence] += int(getattr(sample, field) is not None)
             self._labels.update(labels or {})
 
     def summary(self) -> dict[str, Any]:

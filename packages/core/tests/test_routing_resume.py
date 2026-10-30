@@ -52,7 +52,15 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     debug = ReviewRunStore(store.run_dir)
     client.usage.record(
         "strong",
-        UsageSample(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        UsageSample(
+            prompt_tokens=7,
+            completion_tokens=3,
+            total_tokens=10,
+            cache_hit_tokens=1,
+            cache_write_tokens=3,
+            uncached_tokens=2,
+            cache_write_1h_tokens=3,
+        ),
         "review.verify",
         provider="provider-id",
         model="model-id",
@@ -97,6 +105,15 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     book_usage = store.load_usage()
     assert book_usage is not None
     assert book_usage["totals"]["calls"] == 1
+    for usage in (book_usage, review_usage):
+        totals = usage["totals"]
+        assert totals["cache_hit_tokens"] == 1
+        assert totals["cache_write_tokens"] == 3
+        assert totals["uncached_tokens"] == 2
+        assert totals["cache_unknown_tokens"] == 1
+        assert totals["cache_write_1h_tokens"] == 3
+        assert totals["cache_write_1h_reported_calls"] == 1
+        assert totals["cache_write_5m_reported_calls"] == 0
 
 
 def test_fixer_protocol_revisions_invalidate_old_autofix_plans(tmp_path, monkeypatch):
