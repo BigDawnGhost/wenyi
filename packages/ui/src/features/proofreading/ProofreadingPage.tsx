@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { statusLabel } from "@/i18n/status";
 import { api, isProjectBusy } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -15,17 +16,14 @@ import { ChapterProofreading } from "./ChapterProofreading";
 export default function ProofreadingPage() {
   const { t } = useI18n();
   const { pid = "", ci } = useParams();
-  const project = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const project = useProjectQuery(pid);
+  const busy = isProjectBusy(project.data?.status);
   const subtitle = project.data?.fmt === "srt";
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
     enabled: !!project.data && !subtitle,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -39,7 +37,6 @@ export default function ProofreadingPage() {
   const statuses = [
     ...new Set(chapters.data?.map((chapter) => chapter.status)),
   ];
-  const busy = isProjectBusy(project.data?.status);
   if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   if (ci !== undefined) {
     return (

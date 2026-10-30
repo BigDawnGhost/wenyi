@@ -151,6 +151,8 @@ Desktop and Web share these workspace pages; see the [interface preview](../READ
 
 The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
 
+Project pages poll only while a task is active, including queueing and pausing. Completed, paused and other idle projects stop periodic requests after reconciling the final saved data. The project list also stops polling when no listed project is active. Opening pages, saving edits, starting/resuming tasks and connected progress events can still trigger reads; export jobs refresh independently until finished. On an idle page without a progress subscription, reopen or reload it to see work started by another client. Conflicting edits are still rejected by the server and reload the latest values without discarding the draft.
+
 Cache hit rate uses `hit / (hit + miss)` from the provider's reported cache tokens,
 not from all input tokens. Unreported input remains "unknown cache status" and is
 neither counted as a cache miss nor included in the rate. Missing hit/miss counters
@@ -166,7 +168,9 @@ total, the cache breakdown and rate are both treated as unknown.
 5. For books, edit glossary, style, and paragraphs, and inspect whole-book review history, suggestions, and published fixes. For SRT, edit subtitle cues and timestamps.
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
 
-**Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list appears after parsing, before AI preparation. Uninitialized books show source text only, without edit/history/draft actions; prepared books include unfinished translations. The chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
+**Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list appears after parsing, before AI preparation. Uninitialized books show source text only, without edit/history/draft actions; prepared books include unfinished translations. While a task is active, the chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes; paused and completed projects do not poll the chapter or its revision history. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
+
+Large chapters retain their full text for native find, cross-paragraph selection and paragraph deep links. Paragraphs share one on-demand action menu; recorded chapter review notes mount only when first expanded. Leaving a chapter cancels its unused in-flight content request.
 
 Open a paragraph's **Precision drafts** action/tab to inspect archived T1/T2/T3 on demand.
 T1 is the before-polish comparison, not a selected winner. The final text is one synthesis
@@ -235,7 +239,7 @@ In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in
 
 The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
 
-The event log displays the newest entries first and refreshes every 5 seconds.
+The event log displays the newest entries first and refreshes every 5 seconds while a project task is active.
 
 Shared defaults enable pre-understanding, polishing, review, and Autofix. Matching review fingerprints reuse a completed result or resume an interrupted run. Turning Autofix off keeps suggestions without publishing them to formal chapters.
 

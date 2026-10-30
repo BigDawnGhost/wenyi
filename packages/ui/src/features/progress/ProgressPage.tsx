@@ -3,6 +3,7 @@ import { useI18n } from "@/i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,6 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
 import { toast } from "@/lib/toast";
-import { useEffect } from "react";
 import { progressInterval } from "@/lib/runtime";
 
 export default function ProgressPage() {
@@ -22,24 +22,21 @@ export default function ProgressPage() {
   const { pid = "" } = useParams();
   const qc = useQueryClient();
   const { msg, connected } = useProjectProgress(pid);
-  const projectQuery = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: progressInterval(connected, 2500),
-  });
+  const projectQuery = useProjectQuery(pid, progressInterval(connected, 2500));
   const project = projectQuery.data;
+  const busy = isProjectBusy(project?.status);
   const subtitle = project?.fmt === "srt";
   const chapterQuery = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
     enabled: !!project && !subtitle,
-    refetchInterval: progressInterval(connected, 3000),
+    refetchInterval: busy ? progressInterval(connected, 3000) : false,
   });
   const { data: cues } = useQuery({
     queryKey: ["subtitles", pid],
     queryFn: () => api.getSubtitles(pid),
     enabled: subtitle,
-    refetchInterval: progressInterval(connected, 3000),
+    refetchInterval: busy ? progressInterval(connected, 3000) : false,
   });
   const report = useQuery({
     queryKey: ["report", pid],
@@ -50,20 +47,10 @@ export default function ProgressPage() {
     queryKey: ["stats", pid],
     queryFn: () => api.getStats(pid),
     enabled: !!project,
-    refetchInterval: isProjectBusy(project?.status)
+    refetchInterval: busy
       ? progressInterval(connected, 5000)
       : false,
   });
-  useEffect(() => {
-    // Fetch the terminal totals even when the busy-only polling interval has just stopped.
-    if (project?.status) {
-      qc.invalidateQueries({ queryKey: ["stats", pid] });
-      qc.invalidateQueries({ queryKey: ["workflow", pid] });
-      qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      qc.invalidateQueries({ queryKey: ["subtitles", pid] });
-      qc.invalidateQueries({ queryKey: ["report", pid] });
-    }
-  }, [pid, project?.status, qc]);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", pid] });
     qc.invalidateQueries({ queryKey: ["chapters", pid] });
@@ -98,7 +85,6 @@ export default function ProgressPage() {
     : chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) ||
       project?.total_word_count ||
       0;
-  const busy = isProjectBusy(project?.status);
   const paused = project?.status === "paused";
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -176,7 +162,7 @@ export default function ProgressPage() {
             </div>
           </CardContent>
         </Card>
-        <WorkflowPanel pid={pid} msg={msg} connected={connected} />
+        <WorkflowPanel pid={pid} msg={msg} connected={connected} busy={busy} />
         <p className="text-xs text-muted-foreground">
           {tr("progress.progressConnection")}:{" "}
           {connected ? tr("progress.live") : tr("progress.polling")}

@@ -201,6 +201,10 @@ for (const locale of ["en", "zh-CN"] as const) {
           json: { ...project, fmt: "pdf", status: "translating" },
         }),
       );
+      await page.reload();
+      await page.getByRole("button", {
+        name: locale === "en" ? "Chapter summaries" : "章节摘要", exact: true,
+      }).click();
       await expect(
         page.getByRole("button", { name: updated, exact: true }),
       ).toBeDisabled({ timeout: 8000 });

@@ -107,7 +107,7 @@ for (const locale of ["en", "zh-CN"] as const) {
   }
 }
 
-test("detected Japanese source enables readings without reopening the details", async ({ page }) => {
+test("detected Japanese source enables readings after refreshing an idle project", async ({ page }) => {
   let source = "auto";
   await fakeApi(page, { [`/projects/${pid}/glossary/terms`]: [term] });
   await page.route(`**/api/projects/${pid}`, (route) =>
@@ -119,6 +119,8 @@ test("detected Japanese source enables readings without reopening the details", 
   const reading = details.getByRole("textbox", { name: "Reading", exact: true });
   await expect(reading).toHaveCount(0);
   source = "ja";
+  await page.reload();
+  await page.getByRole("button", { name: "Edit term", exact: true }).click();
   await expect(reading).toHaveValue(term.reading, { timeout: 10_000 });
   await expect(page.getByRole("table").getByRole("columnheader", { name: "Reading" })).toHaveCount(0);
 });

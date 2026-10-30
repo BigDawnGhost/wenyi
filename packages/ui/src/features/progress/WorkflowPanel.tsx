@@ -13,10 +13,12 @@ export function WorkflowPanel({
   pid,
   msg,
   connected = false,
+  busy,
 }: {
   pid: string;
   msg: ProgressMessage | null;
   connected?: boolean;
+  busy: boolean;
 }) {
   const { t: tr } = useI18n();
   const TASKS: Record<string, string> = {
@@ -31,7 +33,7 @@ export function WorkflowPanel({
   const query = useQuery({
     queryKey: ["workflow", pid],
     queryFn: () => api.getWorkflow(pid),
-    refetchInterval: progressInterval(connected, 2500),
+    refetchInterval: busy ? progressInterval(connected, 2500) : false,
   });
   const workflow = query.data;
   const cached = workflow?.progress;
