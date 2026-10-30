@@ -11,36 +11,13 @@ from unittest.mock import patch
 
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.reviewer import Reviewer, ReviewOutputError
-from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.ingest.models import Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
-from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
-
-
-def _cfg():
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
-        }
-    )
+from tests.pipeline_fixtures import fake_agent_config as _cfg
 
 
 def _review_response(issues, count):

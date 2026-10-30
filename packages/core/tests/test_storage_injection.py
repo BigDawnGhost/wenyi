@@ -23,13 +23,6 @@ from wenyi_core.storage.protocol import Storage
 from tests.fake_llm import MeteredFakeClient, routing_handler
 
 
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
-
-
 class MemoryArtifacts:
     """An independent artifact backend with no filesystem delegation."""
 
