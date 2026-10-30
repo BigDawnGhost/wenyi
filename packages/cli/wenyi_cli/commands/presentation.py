@@ -20,8 +20,37 @@ def print_timing(console: Console, timing: dict[str, Any] | None) -> None:
     )
 
 
+def _cache_description(slot: dict[str, Any]) -> str:
+    """Describe cache coverage without reinterpreting legacy misses as ordinary input."""
+    hit = slot.get("cache_hit_tokens", 0)
+    prompt = slot.get("prompt_tokens", 0)
+    known_read = hit or slot.get("cache_hit_reported_calls")
+    rate = f"{hit / prompt:.1%}" if prompt and known_read else "unknown"
+    write = slot.get("cache_write_tokens", 0)
+    ordinary = slot.get("uncached_tokens", 0)
+    unknown = slot.get("cache_unknown_tokens", max(0, prompt - hit - write - ordinary))
+
+    def counter(field: str, presence: str) -> str:
+        value = slot.get(field, 0)
+        return f"{value:,}" if value or slot.get(presence) else "unknown"
+
+    description = (
+        f"cache read / all input {rate}"
+        f" (read {f'{hit:,}' if known_read else 'unknown'}"
+        f" / write {counter('cache_write_tokens', 'cache_write_reported_calls')}"
+        f" / ordinary {counter('uncached_tokens', 'uncached_reported_calls')}"
+        f" / unknown {unknown:,} tok)"
+    )
+    if slot.get("cache_write_5m_reported_calls") or slot.get("cache_write_1h_reported_calls"):
+        description += (
+            f" [write TTL: 5m {counter('cache_write_5m_tokens', 'cache_write_5m_reported_calls')}"
+            f" / 1h {counter('cache_write_1h_tokens', 'cache_write_1h_reported_calls')} tok]"
+        )
+    return description
+
+
 def print_usage(console: Console, usage: dict[str, Any] | None) -> None:
-    """Print cumulative book token usage and tier cache hit rates when available."""
+    """Print cumulative usage with an all-input denominator and unknown coverage."""
     usage = usage or {}
     totals = usage.get("totals") or {}
     if not totals.get("total_tokens"):
@@ -29,13 +58,13 @@ def print_usage(console: Console, usage: dict[str, Any] | None) -> None:
     console.print(
         f"Usage (book total): {totals['total_tokens']:,} tok"
         f" (prompt {totals['prompt_tokens']:,} / completion {totals['completion_tokens']:,}), "
-        f"cache hit rate {totals.get('cache_hit_rate', 0.0):.1%}"
-        f" (hits {totals['cache_hit_tokens']:,} / misses {totals['cache_miss_tokens']:,} tok)"
+        f"{_cache_description(totals)}",
+        markup=False,
     )
     for tier, v in sorted(usage.get("by_tier", {}).items()):
         console.print(
-            f"  · {tier}: {v['total_tokens']:,} tok, {v['calls']} calls, "
-            f"cache hit rate {v['cache_hit_rate']:.1%}"
+            f"  · {tier}: {v['total_tokens']:,} tok, {v['calls']} calls, {_cache_description(v)}",
+            markup=False,
         )
     for stage, v in sorted(
         (usage.get("by_stage") or {}).items(),
@@ -44,7 +73,8 @@ def print_usage(console: Console, usage: dict[str, Any] | None) -> None:
         console.print(
             f"  · Stage {stage}: {v['total_tokens']:,} tok"
             f" (prompt {v['prompt_tokens']:,} / completion {v['completion_tokens']:,}), "
-            f"{v['calls']} calls, cache hit rate {v['cache_hit_rate']:.1%}"
+            f"{v['calls']} calls, {_cache_description(v)}",
+            markup=False,
         )
 
     for identity, value in sorted((usage.get("by_model") or {}).items()):
