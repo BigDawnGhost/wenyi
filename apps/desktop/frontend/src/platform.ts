@@ -20,6 +20,9 @@ const DesktopCredential = lazy(() =>
 const DesktopUpdates = lazy(() =>
   import("./DesktopUpdates").then((module) => ({ default: module.DesktopUpdates })),
 );
+const BabeldocPlugin = lazy(() =>
+  import("./BabeldocPlugin").then((module) => ({ default: module.BabeldocPlugin })),
+);
 // Warm the credential chunk at startup so the settings page never waits on it.
 const MinerUCredential = lazy(() =>
   import("./MinerUCredential").then((module) => ({ default: module.MinerUCredential })),
@@ -68,6 +71,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     capabilities: {
       externalCredentials: { MinerU: MinerUCredential },
       updates: { Section: DesktopUpdates },
+      plugins: { Section: BabeldocPlugin },
       saveExport: saveNativeExport,
       credentials: {
         Field: DesktopCredential,

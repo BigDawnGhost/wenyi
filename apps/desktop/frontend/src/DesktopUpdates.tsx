@@ -5,6 +5,7 @@ import { SettingsSection } from "@/features/settings/SettingsSection";
 import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
 import { ReleaseNotes } from "./ReleaseNotes";
+import { TransferProgress } from "./TransferProgress";
 
 type Status = {
   currentVersion: string;
@@ -63,17 +64,19 @@ export function DesktopUpdates({ blocked, onInstalling }: {
   const failure = error || data?.error || (status.error ? "unavailable" : undefined);
   return (
     <SettingsSection title={t("updates.title")} data-testid="desktop-updates" className="first-of-type:border-t first-of-type:pt-6">
-        <p>{t("updates.currentVersion", { version: data?.currentVersion || "—" })}</p>
-        {data && <p role="status">{t(`updates.${data.phase}`)}</p>}
-        {data?.mode !== "automatic" && <p>{t("updates.manual")}</p>}
-        {data?.version && <p>{t("updates.version", { version: data.version })}</p>}
-        {data?.phase === "downloading" && (
-          <div>
-            <progress aria-label={t("updates.downloading")} value={data.total ? data.downloaded : undefined} max={data.total || undefined} />
-            <p>{data.downloaded} / {data.total || "—"} {t("updates.bytes")}</p>
-          </div>
-        )}
-        {failure && <p role="alert">{t(`updates.${failure}`)}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <p className="font-medium">{t("updates.currentVersion", { version: data?.currentVersion || "—" })}</p>
+          {data?.version && <p className="text-muted-foreground">{t("updates.version", { version: data.version })}</p>}
+        </div>
+        {data && (["checking", "downloading", "installing"].includes(data.phase) ? (
+          <TransferProgress
+            label={t(`updates.${data.phase}`)}
+            downloaded={data.phase === "downloading" ? data.downloaded : undefined}
+            total={data.phase === "downloading" ? data.total : undefined}
+          />
+        ) : <p role="status" className="text-sm text-muted-foreground">{t(`updates.${data.phase}`)}</p>)}
+        {data?.mode !== "automatic" && <p className="text-sm text-muted-foreground">{t("updates.manual")}</p>}
+        {failure && <p role="alert" className="text-sm text-destructive">{t(`updates.${failure}`)}</p>}
         <div className="flex flex-wrap gap-3">
           <Button variant="outline" disabled={active} onClick={() => void run("check")}>
             {t(failure ? "updates.retry" : "updates.check")}
@@ -94,7 +97,7 @@ export function DesktopUpdates({ blocked, onInstalling }: {
           version={data?.version}
           notes={data?.notes}
         />
-        {unsafe && <p>{t("updates.unsaved")}</p>}
+        {unsafe && <p className="text-sm text-muted-foreground">{t("updates.unsaved")}</p>}
         {confirm && (
           <div role="alertdialog" aria-label={t("updates.install")} className="space-y-3">
             <p>{t("updates.confirm")}</p>

@@ -10,7 +10,13 @@ from starlette.responses import JSONResponse
 
 from .routers.credentials import desktop_only
 
-CONTROL_PATHS = frozenset({"/desktop/updates/prepare", "/desktop/updates/cancel"})
+CONTROL_PATHS = frozenset(
+    {
+        "/desktop/updates/prepare",
+        "/desktop/updates/cancel",
+        "/desktop/plugins/babeldoc/disable",
+    }
+)
 
 
 class UpdateGuard:
@@ -21,6 +27,7 @@ class UpdateGuard:
         self.closed = False
         self.inflight = 0
         self._control = asyncio.Lock()
+        self._plugin_control = False
 
     def runtime(self):
         runtime = self.services.runtime
@@ -28,14 +35,20 @@ class UpdateGuard:
             raise HTTPException(503, "Desktop workers are unavailable")
         return runtime
 
-    async def prepare(self) -> None:
+    async def prepare(self, *, allow_plugin_activity: bool = False) -> None:
         async with self._control:
             runtime = self.runtime()
             if self.closed:
-                return
+                if not allow_plugin_activity and not self._plugin_control:
+                    return
+                raise HTTPException(409, "Desktop admission is already closed")
             self.closed = True
+            self._plugin_control = allow_plugin_activity
             committed = False
             try:
+                plugin = getattr(self.services, "babeldoc", None)
+                if not allow_plugin_activity and plugin is not None and plugin.busy:
+                    raise HTTPException(409, "A plugin operation is in progress")
                 if self.inflight:
                     raise HTTPException(409, "Desktop mutations are in progress")
                 jobs = await asyncio.to_thread(self.services.backend.all_jobs)
@@ -49,11 +62,13 @@ class UpdateGuard:
                 if not committed:
                     self.closed = False
 
-    async def cancel(self) -> None:
+    async def cancel(self, *, allow_plugin_activity: bool = False) -> None:
         # A cancel arriving during the check waits for that check to finish. It
         # cannot reopen admission while another prepare is inspecting the catalog.
         async with self._control:
             self.runtime()
+            if self.closed and self._plugin_control != allow_plugin_activity:
+                raise HTTPException(409, "Another operation owns Desktop admission")
             self.closed = False
 
 

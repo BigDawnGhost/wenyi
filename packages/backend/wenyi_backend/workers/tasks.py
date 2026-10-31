@@ -13,6 +13,7 @@ from typing import Literal
 from uuid import uuid4
 
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
+from wenyi_core.pdf_bridge.connection import use_bridge_connection
 
 from .. import dal, paths
 from ..context import current_context, use_context
@@ -51,7 +52,10 @@ def _pipeline_storage(pid: str):
 def _worker_entry(function):
     @wraps(function)
     async def run(ctx, **kwargs):
-        with use_context(ctx["backend"]):
+        with (
+            use_context(ctx["backend"]),
+            use_bridge_connection(ctx["backend"].babeldoc_connection),
+        ):
             return await function(ctx, **kwargs)
 
     return run
