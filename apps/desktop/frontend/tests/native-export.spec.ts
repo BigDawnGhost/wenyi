@@ -72,6 +72,7 @@ test("Desktop cancellation creates no browser job; history uses native Save as",
     Object.assign(window, { saveCalls: [] });
     window.__TAURI_INTERNALS__ = {
       invoke: (command, args) => {
+        if (command !== "native_export_save") return Promise.resolve(null as never);
         (window as unknown as { saveCalls: unknown[] }).saveCalls.push({ command, args });
         return Promise.resolve(null as never);
       },

@@ -30,6 +30,7 @@ export function GlobalConfiguration() {
   const credentialsPending = useCredentialsPending();
   const Updates = platform().capabilities.updates?.Section;
   const Plugins = platform().capabilities.plugins?.Section;
+  const Diagnostics = platform().capabilities.diagnostics?.Section;
   const mutations = useIsMutating();
   const [installing, setInstalling] = useState(false);
   const query = useQuery({
@@ -263,6 +264,7 @@ export function GlobalConfiguration() {
           {pending ? t("common.saving") : t("settings.saveConfiguration")}
         </Button>
       </SettingsActionBar>
+      {Diagnostics && <Diagnostics />}
       {Updates && (
         <LazyBoundary>
           <Updates
