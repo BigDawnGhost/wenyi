@@ -123,7 +123,7 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 - 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认为 `<书名>.zh.docx`，BabelDOC PDF 状态默认为 `<书名>.zh.pdf`）；双语版 `*.zh-bi.*` 按需开启。
 - `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。该选项不适用于 SRT。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
-- 双语版按段展示译文与原文，原文默认淡化；设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。排列顺序由 `output.bilingual_order` 控制。
+- 双语版按段展示译文与原文。EPUB/HTML 原文默认淡化，设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。DOCX 原文默认使用正常正文样式，不再额外添加灰字、高亮或缩小字号；开启同一选项后，正文和表格会恢复已记录的原文字符样式，包括段内混合样式。排列顺序由 `output.bilingual_order` 独立控制。已有翻译状态只需重新导出。
 - EPUB 中未翻译的段落只保留一份原文及其注音、链接。Web 导出和部分已译章节同样遵循此规则，双语排列顺序与原文样式选项不会额外生成重复段落。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
 - 书籍状态位于 `state/<书名>/targets/<目标语言>/`，含章节中间结果、术语 SQLite 库、用量和报告。字幕运行使用独立目录树 `state/srt/`（见 [SRT 字幕](#srt-字幕)）。

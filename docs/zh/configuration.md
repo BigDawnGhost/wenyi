@@ -357,7 +357,7 @@ output:
 - `mono`：生成单语译本，文件名为 `<书名>.<目标语言>.<扩展名>`（通常为 `.zh.epub`，BabelDOC PDF 状态为 `.zh.pdf`，DOCX 输入为 `.zh.docx`）。
 - `bilingual`：请求原文与译文对照版，文件名为 `<书名>.<目标语言>-bi.<扩展名>`，使用与单语输出相同的选定格式。
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
-- `bilingual_preserve_source_style`：设为 `true` 时，原文继承书籍正文样式，不使用灰色淡化背景；仅影响 EPUB 和 HTML。
+- `bilingual_preserve_source_style`：控制 EPUB、HTML 和 DOCX 的原文样式，与 `bilingual_order` 独立。EPUB/HTML 中，`true` 表示继承书籍正文样式，替代默认的灰色淡化样式。DOCX 中，`false` 使用正常正文样式，不额外添加灰字、高亮或缩小字号；`true` 在正文和表格中恢复已记录的原文加粗、斜体、下划线、颜色和字号，包括段内混合样式。原文不会套用译文的目标字体或译文样式位置。只能恢复已记录的样式，不推测缺失信息。
 - `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
 - `punctuation_normalize`：仅对简体中文目标的内存导出副本规范标点；繁体中文及其它目标语言跳过此机械转换。正式章节 `target`、Review 输入和续跑状态均保持不变。
 
