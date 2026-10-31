@@ -156,9 +156,10 @@ Project pages poll only while a task is active, including queueing and pausing. 
 **Cache read / all input** uses reported reads divided by all input tokens,
 including unknown input in the denominator. The charts separate reads, writes,
 ordinary input and unknown classification, and show 5m/1h write subtotals only when
-available. Missing counters show `—`, not zero; known subtotals can cover only some
-calls. Without a reported read counter or an input total, the rate is unknown.
-An impossible cache partition
+available. The cache-write input entry is hidden when its count is zero; nonzero
+counts and unknown values remain visible. Missing counters show `—`, not zero;
+known subtotals can cover only some calls. Without a reported read counter or an
+input total, the rate is unknown. An impossible cache partition
 is treated as unknown. Historical misses are not assumed to be ordinary input,
 because they may include cache writes. See [usage accounting](cli.md#usage-and-event-logs)
 for supported usage dialects and ledger compatibility. These counters do not establish cost.
