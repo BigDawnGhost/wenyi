@@ -227,6 +227,52 @@ window and engine. Explicit tray exit reaped the engine, and a subsequent launch
 succeeded with the discovery files retained. This does not replace packaged
 Windows/macOS acceptance testing.
 
+## Optional BabelDOC plugin
+
+Open **Settings → BabelDOC plugin → Enable and download** to install the local
+layout-preserving PDF engine. It is off by default: ordinary Desktop installations
+do not include BabelDOC, download models, or require Python. Enabling explicitly
+downloads a separate **AGPL-3.0-only** runtime and its model/font pack from
+`BigDawnGhost/wenyi-babeldoc-bridge` releases. Supported targets are Windows x64,
+Linux x64, and macOS Apple Silicon/Intel.
+
+Wait for **Ready**, then choose **BabelDOC** as the PDF parser when creating a
+project (or as the workflow default). Enabling the plugin does not change the
+default parser from MinerU or convert existing projects. PDFs parsed with BabelDOC
+can use the existing layout-preserving PDF export.
+
+Runtime download and model/font download have separate progress bars with actual
+downloaded size and percentage. Verification, unpacking, and service startup use
+indeterminate progress. **Cancel download** / **Cancel setup** stops setup and
+disables the plugin; **Retry** reuses
+completed, checksum-verified archives, not partial downloads. On restart, an
+installed enabled plugin starts automatically; interrupted installation requires
+Retry. Disabling retains packages, models, and PDF sessions. Finish project jobs
+before disabling; application update installation also waits for plugin setup.
+
+Plugin files live under the independent Desktop workspace's `plugins/babeldoc/`:
+`plugin.json` records enablement and the selected installation, `downloads/`
+contains verified archives, `installed/` contains complete runtime/cache pairs,
+and `sessions/` retains frozen PDF snapshots. No CLI or Web state is used. The
+plugin has a separate process, random loopback port, memory-only bearer token,
+and an owner pipe so it exits when Desktop closes. Ports and tokens are not saved
+in projects; the default `http://127.0.0.1:8765` bridge address resolves to the
+managed instance only within Desktop workers. Explicit custom bridge URLs retain
+their existing HTTP behavior.
+
+The plugin installer accepts only protocol-1 release manifests from the fixed
+bridge repository, downloads version-bound HTTPS asset URLs, checks sizes and
+SHA-256 hashes, rejects archive links/path traversal, and activates only complete
+installations. This trusts the official GitHub release over HTTPS; it is **not**
+the signed whole-application updater described below. There is no arbitrary
+plugin URL or marketplace. Installed plugin versions stay pinned to preserve
+BabelDOC session compatibility; this first integration does not auto-upgrade them.
+
+The bridge release must first publish `desktop-plugin.json`, the platform runtime
+ZIPs, and the model/font ZIP using its **Desktop plugin** workflow. Until these
+assets exist, enabling reports a retryable installation error; it does not
+pretend the plugin is installed. No release is published by a local Desktop build.
+
 ## Application updates
 
 The update area is at the **bottom of global Settings** and shows the current
@@ -239,6 +285,11 @@ and task lists are rendered; raw HTML is ignored, and links/images show their te
 without external navigation or remote-image requests. There is no release-page button.
 Older installations must be upgraded manually once to a release with this updater.
 The Desktop workspace is retained; back it up before upgrading.
+
+Downloads use the same theme-aware progress card as plugin/model downloads:
+readable KB/MB/GB sizes and a percentage when the total is known, otherwise an
+indeterminate bar. Checking and installing never reuse a download percentage.
+The bar respects reduced-motion preferences and supports light/dark themes.
 
 Maintainers should keep release notes under `## English` and `## 中文`
 (`English`/`en` and `中文`/`简体中文`/`zh-CN` are recognized, case-insensitively).

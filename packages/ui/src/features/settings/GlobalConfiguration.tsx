@@ -29,6 +29,7 @@ export function GlobalConfiguration() {
   const useCredentialsPending = credentials?.usePending ?? noPendingCredentials;
   const credentialsPending = useCredentialsPending();
   const Updates = platform().capabilities.updates?.Section;
+  const Plugins = platform().capabilities.plugins?.Section;
   const mutations = useIsMutating();
   const [installing, setInstalling] = useState(false);
   const query = useQuery({
@@ -203,6 +204,11 @@ export function GlobalConfiguration() {
         />
       </SettingsSection>
       <MinerUSettings />
+      {Plugins && (
+        <LazyBoundary>
+          <Plugins disabled={installing} />
+        </LazyBoundary>
+      )}
       <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")}>
         <Disclosure
           title={t("settings.advancedYamlConfiguration")}

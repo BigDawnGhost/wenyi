@@ -63,6 +63,9 @@ export interface PlatformServices {
     updates?: {
       Section: ComponentType<{ blocked: boolean; onInstalling: (value: boolean) => void }>;
     };
+    plugins?: {
+      Section: ComponentType<{ disabled: boolean }>;
+    };
     saveExport?: (
       project: string, options: ExportOptions, exportId?: number,
     ) => Promise<{ path: string } | null>;

@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from ..ingest.errors import IngestError
+from .connection import resolve_connection
 
 
 class BabeldocBridgeError(IngestError):
@@ -22,8 +23,14 @@ class BabeldocBridgeClient:
         self.timeout = timeout
 
     def health(self) -> dict[str, Any]:
+        connection = resolve_connection(self.base_url)
         try:
-            response = httpx.get(f"{self.base_url}/health", timeout=min(30.0, self.timeout))
+            response = httpx.get(
+                f"{connection.url}/health",
+                headers=connection.headers,
+                trust_env=connection.trust_env,
+                timeout=min(30.0, self.timeout),
+            )
             response.raise_for_status()
             return response.json()
         except Exception as error:
@@ -40,11 +47,14 @@ class BabeldocBridgeClient:
         data: dict[str, str] = {}
         if pages:
             data["pages"] = pages
+        connection = resolve_connection(self.base_url)
         try:
             with pdf_path.open("rb") as handle:
                 files = {"file": (pdf_path.name, handle, "application/pdf")}
                 response = httpx.post(
-                    f"{self.base_url}/extract",
+                    f"{connection.url}/extract",
+                    headers=connection.headers,
+                    trust_env=connection.trust_env,
                     data=data,
                     files=files,
                     timeout=self.timeout,
@@ -69,9 +79,12 @@ class BabeldocBridgeClient:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         self.health()
+        connection = resolve_connection(self.base_url)
         try:
             response = httpx.post(
-                f"{self.base_url}/fillback",
+                f"{connection.url}/fillback",
+                headers=connection.headers,
+                trust_env=connection.trust_env,
                 json={"session_id": session_id, "translations": translations},
                 timeout=self.timeout,
             )

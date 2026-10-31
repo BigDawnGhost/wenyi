@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol, runti
 from fastapi import WebSocket
 from wenyi_core.config import Config
 from wenyi_core.llm.base import LLMClient
+from wenyi_core.pdf_bridge.connection import BridgeResolver
 from wenyi_core.storage.protocol import Storage
 
 from .live_statistics import StatisticsCache
@@ -169,6 +170,7 @@ class BackendContext:
     mineru_token_resolver: Callable[[], str | None] | None = None
     # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
     connection_credential: Callable[[str, Any], str | None] | None = None
+    babeldoc_connection: BridgeResolver | None = None
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

@@ -12,6 +12,7 @@ from wenyi_backend import dal
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
 
+from .babeldoc_plugin import BabeldocPlugin
 from .local_backend import LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
 from .local_runtime import LocalRuntime, progress_snapshot, statistics_snapshot
@@ -24,6 +25,7 @@ class DesktopServices:
     def __init__(self, backend: LocalBackend):
         self.backend = backend
         self.runtime: LocalRuntime | None = None
+        self.babeldoc = BabeldocPlugin(backend.workspace)
 
     def connect(self):
         if self.runtime is None:
@@ -103,6 +105,7 @@ def create_context(
         build_client=lambda config: build_local_client(config, credentials),
         mineru_token_resolver=credentials.resolve_mineru_token,
         connection_credential=credentials.resolve,
+        babeldoc_connection=services.babeldoc.connection,
         enqueue=services.enqueue,
         data_dir=str(backend.workspace / "projects"),
         project_dir=lambda pid: str(backend.project_dir(pid)),
@@ -120,7 +123,7 @@ def create_app(
     api_token: str | None = None,
 ):
     from .desktop import ORIGINS
-    from .routers import credentials, desktop_export, external_credentials
+    from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
 
     if context is None:
         if workspace is None:
@@ -135,11 +138,13 @@ def create_app(
             services.runtime = runtime
             try:
                 await runtime.start()
+                services.babeldoc.restore()
                 yield
             finally:
                 try:
                     await runtime.stop()
                 finally:
+                    await services.babeldoc.stop()
                     services.runtime = None
                     context.settings_store.credentials.clear_session()
                     context.repository.close()
@@ -149,6 +154,8 @@ def create_app(
     app.include_router(desktop_export.router)
     app.include_router(external_credentials.router)
     app.include_router(updates_router)
+    app.include_router(babeldoc_plugin.router)
+    app.state.babeldoc_plugin = services.babeldoc
     app.state.update_guard = UpdateGuard(services)
     app.add_middleware(
         UpdateAdmissionMiddleware, guard=app.state.update_guard, token=context.api_token

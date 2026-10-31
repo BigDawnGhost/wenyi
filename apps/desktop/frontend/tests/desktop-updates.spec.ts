@@ -48,16 +48,18 @@ async function setup(
   mode = "automatic",
   phase = "available",
   notes = releaseNotes,
+  transfer: { downloaded?: number; total?: number | null } = {},
 ) {
-  await page.addInitScript(({ mode, phase, notes }) => {
+  await page.addInitScript(({ mode, phase, notes, transfer }) => {
     const status = {
       currentVersion: "1.0.0", mode, phase, version: "1.1.0",
       notes, downloaded: 0, total: 100,
       error: undefined as string | undefined,
+      ...transfer,
     };
     Object.assign(window, {
       __UPDATE_COMMANDS__: [] as string[],
-      __WENYI_DESKTOP__: { apiBase: "http://127.0.0.1:4174/api", token: "fixture" },
+      __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },
       __TAURI_INTERNALS__: {
         invoke: async (command: string) => {
           (window as unknown as { __UPDATE_COMMANDS__: string[] }).__UPDATE_COMMANDS__.push(command);
@@ -72,7 +74,7 @@ async function setup(
         },
       },
     });
-  }, { mode, phase, notes });
+  }, { mode, phase, notes, transfer });
   await fakeApi(page);
   await page.goto("/settings");
 }
@@ -115,7 +117,7 @@ test("updates sit last, poll download and confirm installation with busy feedbac
   expect(await section.evaluate(el => el.nextElementSibling === null)).toBe(true);
   await section.getByRole("button", { name: "Check for updates" }).click();
   await section.getByRole("button", { name: "Download update" }).click();
-  await expect(section.getByRole("progressbar")).toHaveAttribute("value", "50");
+  await expect(section.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   await page.getByRole("link", { name: "Projects", exact: true }).click();
   await expect(section).toHaveCount(0);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -124,6 +126,40 @@ test("updates sit last, poll download and confirm installation with busy feedbac
   await section.getByRole("button", { name: "Confirm install and restart" }).click();
   await expect(section.getByRole("alert")).toContainText("all project jobs and native exports");
 });
+
+test("update transfers show readable sizes and theme-aware progress", async ({ page }, testInfo) => {
+  await setup(page, "automatic", "downloading", releaseNotes, {
+    downloaded: 64 * 1024 * 1024, total: 128 * 1024 * 1024,
+  });
+  const section = page.getByTestId("desktop-updates");
+  await expect(section).toContainText("64.0 MB / 128.0 MB");
+  await expect(section).toContainText("50%");
+  await expect(section.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+  await section.screenshot({ path: testInfo.outputPath("update-progress.png") });
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await expect(section.getByRole("progressbar").locator("div")).toHaveCSS("background-color", "rgb(250, 250, 250)");
+  await section.screenshot({ path: testInfo.outputPath("update-progress-dark.png") });
+});
+
+for (const total of [null, 0]) {
+  test(`unknown download size ${total} never invents a percentage`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await setup(page, "automatic", "downloading", releaseNotes, { downloaded: 1024, total });
+    const section = page.getByTestId("desktop-updates");
+    await expect(section).toContainText("1.0 KB downloaded · total size unknown");
+    await expect(section.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+    await expect(section.getByRole("progressbar").locator("div")).toHaveCSS("animation-name", "none");
+  });
+}
+
+for (const phase of ["checking", "installing"]) {
+  test(`${phase} is indeterminate rather than reusing downloaded bytes`, async ({ page }) => {
+    await setup(page, "automatic", phase, releaseNotes, { downloaded: 100, total: 100 });
+    const section = page.getByTestId("desktop-updates");
+    await expect(section.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+    await expect(section).not.toContainText("100%");
+  });
+}
 
 for (const mode of ["manual", "unconfigured"]) {
   test(`${mode} offers notes without a release opener or native download/install`, async ({ page }) => {
