@@ -25,6 +25,32 @@ async def enable(request: Request) -> dict:
     return plugin.status()
 
 
+@router.post("/check-update", status_code=202)
+async def check_update(request: Request) -> dict:
+    plugin = request.app.state.babeldoc_plugin
+    try:
+        await plugin.check_update()
+    except ValueError as error:
+        raise HTTPException(409, "Plugin update check is unavailable") from error
+    return plugin.status()
+
+
+@router.post("/update", status_code=202)
+async def update(request: Request) -> dict:
+    plugin = request.app.state.babeldoc_plugin
+    try:
+        await plugin.update(request.app.state.update_guard)
+    except ValueError as error:
+        raise HTTPException(409, "Plugin update is unavailable") from error
+    return plugin.status()
+
+
+@router.post("/cancel-update")
+async def cancel_update(request: Request) -> dict:
+    await request.app.state.babeldoc_plugin.cancel_update()
+    return request.app.state.babeldoc_plugin.status()
+
+
 @router.post("/disable")
 async def disable(request: Request) -> dict:
     guard = request.app.state.update_guard
