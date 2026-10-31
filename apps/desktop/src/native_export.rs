@@ -298,9 +298,7 @@ impl Connection {
             .send()
             .map_err(|_| "Local export connection failed. Retry saving.")?;
         if !response.status().is_success() {
-            return Err(
-                "The local engine could not complete this export. Check export history.".into(),
-            );
+            return Err("The local engine could not prepare this save. Retry saving.".into());
         }
         Ok(response)
     }
@@ -753,12 +751,35 @@ impl Drop for Temporary<'_> {
     }
 }
 
-fn run(
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GlossaryFormat {
+    Json,
+    Csv,
+}
+
+impl GlossaryFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Csv => "csv",
+        }
+    }
+}
+
+enum SaveRequest {
+    Book {
+        options: Value,
+        export_id: Option<u64>,
+    },
+    Glossary(GlossaryFormat),
+}
+
+fn run_save(
     connection: Connection,
     saves: Saves,
     pid: String,
-    options: Value,
-    export_id: Option<u64>,
+    request: SaveRequest,
     dialog: &impl Dialog,
 ) -> Result<Option<Saved>> {
     let _pending = saves.reserve()?;
@@ -770,9 +791,18 @@ fn run(
         return Err("Invalid project identity.".into());
     }
     let desktop = format!("/desktop/projects/{pid}/exports");
-    let value = match export_id {
-        Some(id) => connection.json(&format!("{desktop}/{id}/plan"), None)?,
-        None => connection.json(&format!("{desktop}/plan"), Some(&options))?,
+    let value = match &request {
+        SaveRequest::Book { options, export_id } => match export_id {
+            Some(id) => connection.json(&format!("{desktop}/{id}/plan"), None)?,
+            None => connection.json(&format!("{desktop}/plan"), Some(options))?,
+        },
+        SaveRequest::Glossary(format) => connection.json(
+            &format!(
+                "/desktop/projects/{pid}/glossary/plan?format={}",
+                format.as_str()
+            ),
+            None,
+        )?,
     };
     let plan: Plan = serde_json::from_value(value).map_err(|_| "Invalid export plan.")?;
     if plan.filename.is_empty()
@@ -793,28 +823,39 @@ fn run(
     }
     let _active = saves.begin()?;
     target.validate(&saves, &plan.protected_roots)?;
-    let id = match export_id {
-        Some(id) => id,
-        None => {
-            let request = plan.request.as_ref().ok_or("Invalid export plan.")?;
-            // This POST is not retried or deduplicated. Generate requests a new
-            // snapshot; uncertain responses must be reconciled through history.
-            let uncertain = |error| {
-                format!("{error} Export creation may have succeeded. Check export history before generating again.")
-            };
-            let created = connection
-                .json(&format!("/projects/{pid}/exports"), Some(request))
-                .map_err(uncertain)?;
-            created["export_id"]
-                .as_u64()
-                .ok_or_else(|| uncertain("Invalid export job.".into()))?
+    match request {
+        SaveRequest::Glossary(format) => {
+            let (length, mut response) = connection.content(
+                format!("/projects/{pid}/glossary/export?format={}", format.as_str()),
+                &saves,
+            )?;
+            target.copy(&mut response, length, &saves, &plan.protected_roots)?;
         }
-    };
-    save_created_export(&connection, &saves, &pid, &desktop, id, &target, &plan).map_err(
-        |error| {
-            format!("{error} Export ID {id}: check export history and use Save as to recover this export; Generate creates a new snapshot.")
-        },
-    )?;
+        SaveRequest::Book { export_id, .. } => {
+            let id = match export_id {
+                Some(id) => id,
+                None => {
+                    let request = plan.request.as_ref().ok_or("Invalid export plan.")?;
+                    // This POST is not retried or deduplicated. Generate requests a new
+                    // snapshot; uncertain responses must be reconciled through history.
+                    let uncertain = |error| {
+                        format!("{error} Export creation may have succeeded. Check export history before generating again.")
+                    };
+                    let created = connection
+                        .json(&format!("/projects/{pid}/exports"), Some(request))
+                        .map_err(uncertain)?;
+                    created["export_id"]
+                        .as_u64()
+                        .ok_or_else(|| uncertain("Invalid export job.".into()))?
+                }
+            };
+            save_created_export(&connection, &saves, &pid, &desktop, id, &target, &plan).map_err(
+                |error| {
+                    format!("{error} Export ID {id}: check export history and use Save as to recover this export; Generate creates a new snapshot.")
+                },
+            )?;
+        }
+    }
     Ok(Some(Saved {
         path: target.path.to_string_lossy().into_owned(),
     }))
@@ -855,6 +896,23 @@ pub async fn native_export_save(
     options: Value,
     export_id: Option<u64>,
 ) -> Result<Option<Saved>> {
+    save_native(window, project_id, SaveRequest::Book { options, export_id }).await
+}
+
+#[tauri::command]
+pub async fn native_glossary_save(
+    window: tauri::WebviewWindow,
+    project_id: String,
+    format: GlossaryFormat,
+) -> Result<Option<Saved>> {
+    save_native(window, project_id, SaveRequest::Glossary(format)).await
+}
+
+async fn save_native(
+    window: tauri::WebviewWindow,
+    project_id: String,
+    request: SaveRequest,
+) -> Result<Option<Saved>> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err("Native saving is unavailable.".into());
     }
@@ -871,12 +929,11 @@ pub async fn native_export_save(
     };
     let saves = window.state::<Saves>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        run(
+        run_save(
             Connection::new(&raw)?,
             saves,
             project_id,
-            options,
-            export_id,
+            request,
             &NativeDialog,
         )
     })
@@ -888,6 +945,23 @@ pub async fn native_export_save(
 mod tests {
     use super::*;
     use std::{io, net::TcpListener, thread};
+
+    fn run(
+        connection: Connection,
+        saves: Saves,
+        pid: String,
+        options: Value,
+        export_id: Option<u64>,
+        dialog: &impl Dialog,
+    ) -> Result<Option<Saved>> {
+        run_save(
+            connection,
+            saves,
+            pid,
+            SaveRequest::Book { options, export_id },
+            dialog,
+        )
+    }
 
     #[test]
     fn updates_reserve_idle_saves_without_interrupting_active_operations() {
@@ -1024,6 +1098,120 @@ mod tests {
             "request": {"format": "html", "bilingual": true}
         })
         .to_string()
+    }
+
+    fn glossary_plan(root: &Path, format: GlossaryFormat) -> String {
+        let format = format.as_str();
+        serde_json::json!({
+            "filename": format!("glossary-project-1.{format}"), "extension": format,
+            "label": format.to_ascii_uppercase(), "protected_roots": [root],
+            "request": null,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn glossary_saves_use_authenticated_scoped_routes_without_creating_jobs() {
+        for format in [GlossaryFormat::Json, GlossaryFormat::Csv] {
+            let fixture = Fixture::new();
+            let protected = Fixture::new();
+            let (connection, task) = server(vec![
+                response("200 OK", &glossary_plan(&protected.0, format), ""),
+                response("200 OK", "文译,Wenyi\n", ""),
+            ]);
+            let saved = run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Glossary(format),
+                &FakeDialog {
+                    path: Some(fixture.0.join("术语")),
+                    replace: false,
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let path = fixture.0.join(format!("术语.{}", format.as_str()));
+            assert_eq!(PathBuf::from(saved.path), path);
+            assert_eq!(std::fs::read(&path).unwrap(), "文译,Wenyi\n".as_bytes());
+            let requests = task.join().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests[0].starts_with(&format!(
+                "GET /desktop/projects/project-1/glossary/plan?format={} ",
+                format.as_str()
+            )));
+            assert!(requests[1].starts_with(&format!(
+                "GET /projects/project-1/glossary/export?format={} ",
+                format.as_str()
+            )));
+            assert!(requests.iter().all(|r| r
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fixture-only")));
+            fixture.clean();
+        }
+    }
+
+    #[test]
+    fn glossary_cancel_and_declined_overwrite_never_request_content() {
+        let fixture = Fixture::new();
+        let protected = Fixture::new();
+        let old = fixture.file("existing.json", b"old");
+        for path in [None, Some(old.clone())] {
+            let (connection, task) = server(vec![response(
+                "200 OK",
+                &glossary_plan(&protected.0, GlossaryFormat::Json),
+                "",
+            )]);
+            assert!(run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Glossary(GlossaryFormat::Json),
+                &FakeDialog {
+                    path,
+                    replace: false
+                },
+            )
+            .unwrap()
+            .is_none());
+            assert_eq!(task.join().unwrap().len(), 1);
+            assert_eq!(std::fs::read(&old).unwrap(), b"old");
+            fixture.clean();
+        }
+    }
+
+    #[test]
+    fn glossary_transfer_failures_preserve_the_existing_destination() {
+        let fixture = Fixture::new();
+        let protected = Fixture::new();
+        let old = fixture.file("existing.json", b"old");
+        for content in [
+            response("500 Internal Server Error", "unavailable", ""),
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial".into(),
+        ] {
+            let (connection, task) = server(vec![
+                response(
+                    "200 OK",
+                    &glossary_plan(&protected.0, GlossaryFormat::Json),
+                    "",
+                ),
+                content,
+            ]);
+            assert!(run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Glossary(GlossaryFormat::Json),
+                &FakeDialog {
+                    path: Some(old.clone()),
+                    replace: true
+                },
+            )
+            .is_err());
+            assert_eq!(task.join().unwrap().len(), 2);
+            assert_eq!(std::fs::read(&old).unwrap(), b"old");
+            fixture.clean();
+        }
     }
 
     #[test]

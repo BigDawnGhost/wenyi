@@ -227,6 +227,7 @@ fn main() {
             native_drop::native_drop_release,
             native_drop::native_drop_upload,
             native_export::native_export_save,
+            native_export::native_glossary_save,
             updates::desktop_update_status,
             updates::desktop_update_check,
             updates::desktop_update_download,

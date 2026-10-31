@@ -261,12 +261,17 @@ export default function GlossaryPage() {
     else setSelected(new Set(terms.map((t) => t.source)));
   };
 
-  // export
+  const exportGlossary = useMutation({
+    mutationFn: async (fmt: "json" | "csv") => {
+      const saved = await api.downloadGlossary(pid, fmt);
+      if (saved) toast.success(tr("export.savedTo", { path: saved.path }));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const handleExport = (fmt: "json" | "csv") => {
     setExportMenuOpen(false);
-    api
-      .downloadGlossary(pid, fmt)
-      .catch((error: Error) => toast.error(error.message));
+    exportGlossary.mutate(fmt);
   };
 
   // close export menu on outside click
@@ -288,6 +293,7 @@ export default function GlossaryPage() {
             <div className="relative" ref={exportRef} onBlur={handleExportBlur}>
               <Button
                 variant="outline"
+                disabled={exportGlossary.isPending}
                 onClick={() => setExportMenuOpen(!exportMenuOpen)}
               >
                 <Download className="h-4 w-4" />
