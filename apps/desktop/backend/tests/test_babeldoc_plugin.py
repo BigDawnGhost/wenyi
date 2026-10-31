@@ -228,8 +228,11 @@ def test_install_commits_only_complete_runtime_and_models(tmp_path, monkeypatch)
             lambda **kw: original(transport=httpx.MockTransport(handler), **kw),
         )
         plugin.enabled = True
-        await plugin._install()
+        identity, version = await plugin._install()
         assert phases == ["checking", "runtime", "models"]
+        assert plugin.installation is None and plugin.version is None
+        assert not (plugin.root / "plugin.json").exists()
+        plugin._select_installation(identity, version)
         restored = BabeldocPlugin(tmp_path)
         assert restored.installation == plugin.installation and restored.enabled
         folder = plugin.root / "installed" / plugin.installation
@@ -258,6 +261,30 @@ def test_failed_setup_is_retryable_and_does_not_install(tmp_path, monkeypatch):
         restored = BabeldocPlugin(tmp_path)
         restored.restore()
         assert restored.error == "interrupted"
+        await plugin.disable()
+
+    asyncio.run(run())
+
+
+def test_initial_install_does_not_select_candidate_before_health_check(tmp_path, monkeypatch):
+    async def run():
+        plugin = BabeldocPlugin(tmp_path)
+        plugin.target = "linux-x86_64"
+        monkeypatch.setattr(plugin, "_install", AsyncMock(return_value=("b" * 32, "0.1.1")))
+
+        async def start(identity):
+            assert identity == "b" * 32
+            assert plugin.installation is None and plugin.version is None
+            assert json.loads((plugin.root / "plugin.json").read_text())["installation"] is None
+            plugin.phase = "starting"
+            raise ValueError("synthetic failed health check")
+
+        monkeypatch.setattr(plugin, "_start", start)
+        await plugin.enable()
+        await plugin._task
+        assert plugin.phase == "error" and plugin.error == "start_failed"
+        assert plugin.installation is None and plugin.version is None
+        assert json.loads((plugin.root / "plugin.json").read_text())["installation"] is None
         await plugin.disable()
 
     asyncio.run(run())
@@ -314,6 +341,31 @@ def test_private_controls_and_active_job_guard(tmp_path, monkeypatch):
     assert not app.state.update_guard.closed
     assert endpoint not in app.openapi()["paths"]
     context.repository.close()
+
+
+def test_private_plugin_update_controls(tmp_path, monkeypatch):
+    context = create_context(tmp_path, api_token="test-token")
+    app = create_app(context=context)
+    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    plugin = context.telemetry.babeldoc
+    for method in ("check_update", "update", "cancel_update"):
+        monkeypatch.setattr(plugin, method, AsyncMock(), raising=False)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test-token"}
+    try:
+        for operation, status in (("check-update", 202), ("update", 202), ("cancel-update", 200)):
+            endpoint = f"/desktop/plugins/babeldoc/{operation}"
+            assert client.post(endpoint).status_code == 401
+            assert (
+                client.post(
+                    endpoint, headers={**headers, "Origin": "https://evil.test"}
+                ).status_code
+                == 403
+            )
+            assert client.post(endpoint, headers=headers).status_code == status
+            assert endpoint not in app.openapi()["paths"]
+    finally:
+        context.repository.close()
 
 
 def test_updates_cannot_interrupt_setup_or_reopen_plugin_admission(tmp_path):
