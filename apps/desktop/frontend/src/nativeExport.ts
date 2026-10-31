@@ -21,3 +21,16 @@ export async function saveNativeExport(
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
+
+export async function saveNativeGlossary(
+  projectId: string,
+  format: "json" | "csv",
+): Promise<SavedExport | null> {
+  if (!window.__TAURI_INTERNALS__)
+    throw new Error("Native saving is unavailable.");
+  try {
+    return await window.__TAURI_INTERNALS__.invoke("native_glossary_save", { projectId, format });
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}

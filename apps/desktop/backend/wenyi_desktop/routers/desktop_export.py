@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from wenyi_backend.context import current_context
 from wenyi_backend.export_plan import export_filename, resolve_export
 from wenyi_backend.export_response import ExportResponse
-from wenyi_backend.project_service import effective_config, require_project
+from wenyi_backend.project_service import effective_config, require_book, require_project
 from wenyi_backend.schemas import ExportRequest
 
 from ..local_backend import LocalBackend
 
-router = APIRouter(prefix="/desktop/projects/{pid}/exports", tags=["desktop-export"])
+router = APIRouter(prefix="/desktop/projects/{pid}", tags=["desktop-export"])
 
 
 class NativeExportPlan(BaseModel):
@@ -39,7 +40,13 @@ def _plan(filename: str, fmt: str, request: ExportRequest | None = None) -> Nati
     )
 
 
-@router.post("/plan")
+@router.get("/glossary/plan")
+def plan_glossary(pid: str, format: Literal["json", "csv"] = "json") -> NativeExportPlan:
+    require_book(require_project(pid))
+    return _plan(f"glossary-{pid}.{format}", format)
+
+
+@router.post("/exports/plan")
 def plan_export(pid: str, body: ExportRequest) -> NativeExportPlan:
     _backend()
     project = require_project(pid)
@@ -56,7 +63,7 @@ def plan_export(pid: str, body: ExportRequest) -> NativeExportPlan:
     return _plan(filename, fmt, ExportRequest(format=fmt, **options))
 
 
-@router.get("/{export_id}/plan")
+@router.get("/exports/{export_id}/plan")
 def plan_history(pid: str, export_id: int) -> NativeExportPlan:
     backend = _backend()
     require_project(pid)
@@ -68,7 +75,7 @@ def plan_history(pid: str, export_id: int) -> NativeExportPlan:
         return _plan(file.name, file.suffix.lstrip("."))
 
 
-@router.get("/{export_id}/content")
+@router.get("/exports/{export_id}/content")
 def save_content(pid: str, export_id: int) -> ExportResponse:
     backend = _backend()
     require_project(pid)

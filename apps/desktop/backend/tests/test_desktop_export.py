@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import os
 import zipfile
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from wenyi_backend import dal
+from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_desktop import main
 
@@ -64,6 +66,57 @@ def test_plan_is_side_effect_free_and_matches_export_filename(desktop_exports, f
     assert plan["request"]["bilingual"] is bilingual
     assert plan["protected_roots"] == [str(backend.workspace.resolve())]
     assert (backend.list_exports(pid), backend.all_jobs()) == before
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports, fmt):
+    client, backend, pid = desktop_exports
+    terms = [
+        GlossaryTerm(source="文译", target="Wenyi", note='A "quoted", multiline\nnote'),
+        GlossaryTerm(source="東京", target="Tokyo", reading="とうきょう", type="place"),
+    ]
+    store = backend.storage_for(pid)
+    try:
+        for term in terms:
+            store.upsert_term(term)
+    finally:
+        store.close()
+    before = (backend.list_exports(pid), backend.all_jobs())
+    response = client.get(f"/desktop/projects/{pid}/glossary/plan?format={fmt}")
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan == {
+        "filename": f"glossary-{pid}.{fmt}",
+        "extension": fmt,
+        "label": fmt.upper(),
+        "request": None,
+        "protected_roots": [str(backend.workspace.resolve())],
+    }
+    content = client.get(f"/projects/{pid}/glossary/export?format={fmt}")
+    assert content.status_code == 200, content.text
+    assert plan["filename"] in content.headers["content-disposition"]
+    assert int(content.headers["content-length"]) == len(content.content)
+    rows = content.json() if fmt == "json" else list(csv.DictReader(io.StringIO(content.text)))
+    by_source = {row["source"]: row for row in rows}
+    assert set(by_source) == {term.source for term in terms}
+    for term in terms:
+        assert by_source[term.source]["target"] == term.target
+        assert by_source[term.source]["reading"] == term.reading
+        assert by_source[term.source]["note"] == term.note
+    assert (backend.list_exports(pid), backend.all_jobs()) == before
+
+
+def test_glossary_plan_rejects_unknown_project_format_and_subtitles(desktop_exports):
+    client, _, pid = desktop_exports
+    assert client.get("/desktop/projects/missing/glossary/plan?format=json").status_code == 404
+    assert client.get(f"/desktop/projects/{pid}/glossary/plan?format=txt").status_code == 422
+    subtitle_pid = dal.create_project("Subtitles", "en", "zh", {})
+    dal.set_project_source(
+        subtitle_pid, source_path="source.srt", book_title="Subtitles", fmt="srt"
+    )
+    response = client.get(f"/desktop/projects/{subtitle_pid}/glossary/plan?format=json")
+    assert response.status_code == 422
+    assert "only available for book projects" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(
