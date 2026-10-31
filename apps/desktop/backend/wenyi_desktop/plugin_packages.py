@@ -22,6 +22,14 @@ MAX_ARCHIVE = 2 * 1024**3
 MAX_UNPACKED = 6 * 1024**3
 
 
+def version_key(version: str) -> tuple[int, int, int]:
+    """Compare only stable protocol-1 versions, numerically rather than lexically."""
+    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
+        raise ValueError("Unsupported plugin version")
+    major, minor, patch = version.split(".")
+    return int(major), int(minor), int(patch)
+
+
 async def require_https(request: httpx.Request) -> None:
     if request.url.scheme != "https":
         raise ValueError("Plugin downloads require HTTPS, including redirects")
@@ -39,11 +47,10 @@ def platform_key() -> str | None:
 
 
 def validate_manifest(value: dict, target: str) -> dict:
-    if value.get("protocol") != 1 or not re.fullmatch(
-        r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", str(value.get("version", ""))
-    ):
+    if value.get("protocol") != 1 or not isinstance(value.get("version"), str):
         raise ValueError("Unsupported plugin manifest")
     version = value["version"]
+    version_key(version)
     runtime = value["platforms"][target]
     models = value["models"]
     for item in (runtime, models):
