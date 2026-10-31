@@ -13,7 +13,6 @@ import {
   cacheRate,
   formatDuration,
   record,
-  tokenParts,
   type Stats,
 } from "./accountingData";
 import { useLiveTiming } from "./useLiveTiming";
@@ -84,12 +83,6 @@ export function Accounting({
           </div>
         ))}
       </dl>
-      <p className="text-xs text-muted-foreground">
-        {t("accounting.cacheCoverage", {
-          unknown: number(tokenParts(totals).unknownInput),
-          input: number(totals.prompt_tokens),
-        })}
-      </p>
       <div className="border-t pt-4">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <BarChart3
