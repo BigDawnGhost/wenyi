@@ -2713,9 +2713,7 @@ class TestFullGlossary(unittest.TestCase):
 
 class TestTierRouting(unittest.TestCase):
     def test_task_tiers(self):
-        """Use fast for mechanical tasks, cheap for judgments and strong for translation; bound
-        digest output.
-        """
+        """Route tasks to their tiers without implicit output caps."""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -2739,10 +2737,7 @@ class TestTierRouting(unittest.TestCase):
                     if marker in system:
                         self.assertEqual(c["tier"], tier, f"{marker} 应走 {tier} 档")
                         seen.add(marker)
-                        if marker == "chapter digest writer":
-                            self.assertEqual(c["max_tokens"], 8192)
-                        if marker == "whole-book synopsis writer":
-                            self.assertEqual(c["max_tokens"], 8192)
+                        self.assertIsNone(c["max_tokens"])
             self.assertEqual(seen, set(expect), "各类调用都应出现")
 
 

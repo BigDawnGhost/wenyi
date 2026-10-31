@@ -16,13 +16,12 @@ TIERS = ("strong", "cheap", "fast")
 
 @dataclass(frozen=True)
 class OperationSpec:
-    """Declare routing, output hints and workflow reachability together."""
+    """Declare routing and workflow reachability together."""
 
     id: str
     description: str
     tier: str | None = None
     inherits: str | None = None
-    output_tokens: int | None = None
     workflows: tuple[str, ...] = ("translate",)
     flags: tuple[str, ...] = ()
     review: bool = False
@@ -42,8 +41,6 @@ def register_operations(specs: Iterable[OperationSpec]) -> Mapping[str, Operatio
             raise ValueError(f"Operation {spec.id} needs exactly one default selection")
         if spec.tier is not None and spec.tier not in TIERS:
             raise ValueError(f"Unknown default tier: {spec.tier}")
-        if spec.output_tokens is not None and spec.output_tokens <= 0:
-            raise ValueError(f"Invalid output hint: {spec.id}")
         if spec.protocol_version <= 0:
             raise ValueError(f"Invalid operation protocol version: {spec.id}")
         registry[spec.id] = spec
@@ -79,7 +76,6 @@ OPERATIONS = register_operations(
             "synopsis.chapter",
             "Summarize one chapter",
             "fast",
-            output_tokens=8192,
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),
@@ -87,7 +83,6 @@ OPERATIONS = register_operations(
             "synopsis.book",
             "Merge digests into a book synopsis",
             "fast",
-            output_tokens=8192,
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),

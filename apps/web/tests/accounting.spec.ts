@@ -222,6 +222,7 @@ test("usage charts switch attribution without double counting and retain resumed
   await expect(totals).toContainText("10,000");
   await expect(totals).toContainText("60%");
   await expect(totals).toContainText("1h 30m 0s");
+  await expect(accounting).not.toContainText("Reported reads are divided by");
   await expect(
     accounting.getByRole("heading", { name: "Token usage", exact: true }),
   ).toHaveCount(0);
@@ -334,6 +335,7 @@ test("Chinese accounting fits narrow screens with long provider names and locali
     page.getByRole("heading", { name: "翻译总览", level: 2, exact: true }),
   ).toBeVisible();
   const accounting = page.getByRole("region", { name: "累计用量与运行耗时" });
+  await expect(accounting).not.toContainText("已报告缓存读取以全部输入 Token 为分母");
   await expect(accounting.getByRole("group").getByRole("button")).toHaveText([
     "按步骤",
     "按模型",
@@ -541,5 +543,5 @@ test("cache writes, ordinary input, unknown coverage and reported TTL stay separ
   await expect(row).toContainText("Cache read / all input: 10%");
   await expect(row).toContainText("Cache writes (1h): 70");
   await expect(row).not.toContainText("Cache writes (5m)");
-  await expect(accounting).toContainText("Unknown classification: 100 / 200");
+  await expect(accounting).not.toContainText("Unknown classification:");
 });

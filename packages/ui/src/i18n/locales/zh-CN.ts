@@ -276,7 +276,6 @@ const zhCN = {
   "accounting.unknownInput": "输入 Token（缓存未知）",
   "accounting.legacyMiss": "历史非读取输入（写入/普通未知）",
   "accounting.writeTtl": "缓存写入（{ttl}）：{count}",
-  "accounting.cacheCoverage": "已报告缓存读取以全部输入 Token 为分母，包含未知部分。分类未知：{unknown} / {input} 输入 Token。未上报的计数显示 —；已报告小计可能只覆盖部分调用。历史未命中不视为普通输入。",
   "accounting.groupBy": "用量分组",
   "accounting.callCount": "调用：{count} 次",
   "accounting.unclassifiedTokens": "未分类 Token",
