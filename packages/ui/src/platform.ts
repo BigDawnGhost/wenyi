@@ -48,7 +48,8 @@ export interface PlatformServices {
     subscribe: (key: "wenyi.locale", listener: () => void) => () => void;
   };
   request: <T>(path: string, init?: RequestInit) => Promise<T>;
-  download: (path: string, fallback: string) => Promise<void>;
+  /** Native hosts return the saved destination, or null when the picker is canceled. */
+  download: (path: string, fallback: string) => Promise<{ path: string } | null | void>;
   apiBase: () => string;
   setAuthToken: (token: string | null) => void;
   connectProgress: (project: string) => WebSocket;

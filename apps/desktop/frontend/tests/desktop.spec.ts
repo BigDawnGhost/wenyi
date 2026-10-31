@@ -113,7 +113,7 @@ test("lazy credentials do not blank settings after its configuration loads", asy
   }
 });
 
-test("pending gate waits for ready, uses memory auth for HTTP, socket and download", async ({ page }) => {
+test("pending gate uses memory auth for HTTP and sockets, and delegates downloads to native IPC", async ({ page }) => {
   await desktop(page, true);
   await fakeApi(page, {}, origin);
   const requests: { url: string; auth?: string }[] = [];
@@ -138,19 +138,26 @@ test("pending gate waits for ready, uses memory auth for HTTP, socket and downlo
   await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
   await expect.poll(() => frames.length).toBeGreaterThan(0);
   expect(JSON.parse(frames[0])).toEqual({ token });
-  await page.route(`${origin}/projects/${pid}/glossary/export?format=json`, route =>
-    route.fulfill({ body: "[]", headers: {
-      "content-disposition": "attachment; filename=terms.json",
-      "access-control-expose-headers": "Content-Disposition",
-    } }));
-  const download = page.waitForEvent("download");
-  await page.evaluate(async pid => {
+  const calls: unknown[] = [];
+  await page.exposeFunction("captureNativeSave", (command: string, args: unknown) => {
+    calls.push({ command, args });
+    return { path: "/fixture/terms.json" };
+  });
+  const saved = await page.evaluate(async pid => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: (command, args) =>
+        (window as unknown as { captureNativeSave: (command: string, args: unknown) => Promise<never> })
+          .captureNativeSave(command, args),
+    };
     const modulePath = "/tests/api-harness.ts";
     const { api, setAuthToken } = await import(modulePath);
     setAuthToken("must-not-persist");
-    await api.downloadGlossary(pid, "json");
+    return api.downloadGlossary(pid, "json");
   }, pid);
-  expect((await download).suggestedFilename()).toBe("terms.json");
+  expect(saved).toEqual({ path: "/fixture/terms.json" });
+  expect(calls).toEqual([{
+    command: "native_glossary_save", args: { projectId: pid, format: "json" },
+  }]);
   expect(requests.length).toBeGreaterThan(3);
   expect(requests.every(request => request.url.startsWith(origin + "/") &&
     !request.url.includes(token) && request.auth === `Bearer ${token}`)).toBe(true);

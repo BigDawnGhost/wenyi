@@ -64,6 +64,11 @@ Completed and paused projects do not periodically poll their pages, including ch
 
 Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
 
+On the **Glossary** page, choose **Export → CSV file** or **JSON file** to save the
+complete glossary through the system save dialog. Saving shows the destination path;
+canceling writes nothing. A failed save reports an error and preserves any existing
+destination file. Glossary exports do not create book export tasks.
+
 PDF is offered only for saved BabelDOC projects, using the external bridge to preserve
 the original layout. MinerU and other book projects export EPUB, DOCX, HTML, TXT or
 Markdown instead. No local PDF rendering engine is installed or selected.
