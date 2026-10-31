@@ -15,6 +15,8 @@ CONTROL_PATHS = frozenset(
         "/desktop/updates/prepare",
         "/desktop/updates/cancel",
         "/desktop/plugins/babeldoc/disable",
+        "/desktop/plugins/babeldoc/update",
+        "/desktop/plugins/babeldoc/cancel-update",
     }
 )
 
@@ -66,7 +68,8 @@ class UpdateGuard:
         # A cancel arriving during the check waits for that check to finish. It
         # cannot reopen admission while another prepare is inspecting the catalog.
         async with self._control:
-            self.runtime()
+            if not allow_plugin_activity:
+                self.runtime()
             if self.closed and self._plugin_control != allow_plugin_activity:
                 raise HTTPException(409, "Another operation owns Desktop admission")
             self.closed = False
