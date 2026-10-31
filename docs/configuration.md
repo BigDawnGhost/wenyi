@@ -384,7 +384,7 @@ output:
 - `mono`: produce a monolingual edition as `<book-name>.<target-language>.<extension>` (`.zh.epub` normally; `.zh.pdf` for BabelDOC PDF state and `.zh.docx` for DOCX input).
 - `bilingual`: request a source-and-translation edition as `<book-name>.<target-language>-bi.<extension>`, using the same selected format as monolingual output.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
-- `bilingual_preserve_source_style`: when `true`, source blocks inherit the book's normal text style instead of using the subdued gray style. This affects EPUB and HTML output only.
+- `bilingual_preserve_source_style`: controls source styling independently of `bilingual_order` in EPUB, HTML, and DOCX. In EPUB/HTML, `true` inherits the book's normal text style instead of the default subdued gray style. In DOCX, `false` uses normal body text without added gray text, highlighting, or reduced font sizes; `true` restores recorded source bold, italic, underline, color, and size, including mixed-style spans, in paragraphs and tables. Source text never receives the translation's target font or translated span positions. Only recorded styles can be restored.
 - `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
 - `punctuation_normalize`: normalize punctuation only on the in-memory export copy for Simplified Chinese targets. Traditional Chinese and other targets skip this deterministic conversion. Formal chapter `target` values, Review input, and resume state remain unchanged.
 

@@ -5,17 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from docx.document import Document as DocxDocument
-from docx.shared import Pt, RGBColor
 
 from wenyi_core.assemble.docx_numbering import _list_style_name, _restart_list_numbering
 from wenyi_core.assemble.docx_styles import (
-    _apply_run_style,
+    _append_styled_text,
     _fill_paragraph,
     _font_for_text,
     _neutralize_heading_theme_color,
     _segment_style_payload,
     _set_outline_level,
-    _style_slices,
 )
 from wenyi_core.assemble.writer_common import (
     _bilingual_source,
@@ -72,7 +70,6 @@ def _add_normal(
     align: str | None = None,
     shade: str | None = None,
     output_font: str | None = None,
-    dim: bool = False,
     list_fmt: str | None = None,
     list_ilvl: int = 0,
     list_restart: bool = False,
@@ -92,7 +89,6 @@ def _add_normal(
             align=align,
             shade=shade,
             output_font=output_font,
-            dim=dim,
         )
         if list_restart:
             _restart_list_numbering(doc, paragraph, style_name=style_name, ilvl=list_ilvl)
@@ -107,7 +103,6 @@ def _add_normal(
         align=align,
         shade=shade,
         output_font=output_font,
-        dim=dim,
     )
 
 
@@ -119,46 +114,32 @@ def _add_bilingual_paragraphs(
     *,
     style: dict[str, Any] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    source_style: dict[str, Any] | None = None,
+    source_placements: list[dict[str, Any]] | None = None,
     align: str | None = None,
     shade: str | None = None,
     output_font: str | None = None,
 ) -> None:
+    """Order both sides without changing their character styles."""
     src = _bilingual_source(source, target)
     target_font = _font_for_text(output_font, source=source, output_text=target)
-    if not src:
+    blocks = [(target, style, placements, target_font)]
+    if src:
+        source_block = (src, source_style, source_placements, None)
+        if order == "source_first":
+            blocks.insert(0, source_block)
+        else:
+            blocks.append(source_block)
+    for text, block_style, block_placements, block_font in blocks:
         _add_normal(
             doc,
-            target,
-            style=style,
-            placements=placements,
+            text,
+            style=block_style,
+            placements=block_placements,
             align=align,
             shade=shade,
-            output_font=target_font,
+            output_font=block_font,
         )
-        return
-    # Use SimSun on the translated side where applicable; preserve source-side font defaults.
-    if order == "source_first":
-        _add_normal(doc, src, dim=False, align=align, shade=shade, output_font=None)
-        _add_normal(
-            doc,
-            target,
-            style=style,
-            placements=placements,
-            align=align,
-            shade=shade,
-            output_font=target_font,
-        )
-    else:
-        _add_normal(
-            doc,
-            target,
-            style=style,
-            placements=placements,
-            align=align,
-            shade=shade,
-            output_font=target_font,
-        )
-        _add_normal(doc, src, dim=True, align=align, shade=shade, output_font=None)
 
 
 def _flush_table(
@@ -170,6 +151,7 @@ def _flush_table(
     bilingual: bool,
     order: str,
     output_font: str | None = None,
+    preserve_source_style: bool = False,
 ) -> None:
     table = doc.add_table(rows=rows, cols=cols)
     try:
@@ -186,55 +168,30 @@ def _flush_table(
             cell = table.cell(r, c)
             cell.text = ""
             paragraph = cell.paragraphs[0]
+            blocks = [(target, style, placements, target_font)]
             if bilingual:
                 src = _bilingual_source(source, target)
                 if src:
+                    source_style, source_placements = None, None
+                    if preserve_source_style:
+                        source_style, source_placements, _, _ = _segment_style_payload(
+                            meta, source=source, output_text=src
+                        )
+                    source_block = (src, source_style, source_placements, None)
                     if order == "source_first":
-                        _fill_paragraph(
-                            paragraph,
-                            src,
-                            align=align,
-                            shade=shade,
-                            output_font=None,
-                        )
-                        paragraph.add_run("\n")
-                        # Place the translation on a second line within the same paragraph.
-                        for fragment, frag_style in _style_slices(target, style, placements):
-                            run = paragraph.add_run(fragment)
-                            _apply_run_style(run, frag_style, output_font=target_font)
+                        blocks.insert(0, source_block)
                     else:
-                        _fill_paragraph(
-                            paragraph,
-                            target,
-                            style=style,
-                            placements=placements,
-                            align=align,
-                            shade=shade,
-                            output_font=target_font,
-                        )
-                        paragraph.add_run("\n")
-                        dim_run = paragraph.add_run(src)
-                        dim_run.font.size = Pt(9)
-                        dim_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-                else:
-                    _fill_paragraph(
-                        paragraph,
-                        target,
-                        style=style,
-                        placements=placements,
-                        align=align,
-                        shade=shade,
-                        output_font=target_font,
-                    )
-            else:
-                _fill_paragraph(
+                        blocks.append(source_block)
+            _fill_paragraph(paragraph, "", align=align, shade=shade)
+            for index, (text, block_style, block_placements, block_font) in enumerate(blocks):
+                if index:
+                    paragraph.add_run("\n")
+                _append_styled_text(
                     paragraph,
-                    target,
-                    style=style,
-                    placements=placements,
-                    align=align,
-                    shade=shade,
-                    output_font=target_font,
+                    text,
+                    style=block_style,
+                    placements=block_placements,
+                    output_font=block_font,
                 )
 
 
@@ -245,6 +202,7 @@ def _emit_chapter_blocks(
     bilingual: bool,
     order: str,
     output_font: str | None = None,
+    preserve_source_style: bool = False,
 ) -> None:
     """Write in paragraph order, group contiguous table IDs and merge continuation segments."""
     i = 0
@@ -277,6 +235,7 @@ def _emit_chapter_blocks(
                 bilingual=bilingual,
                 order=order,
                 output_font=output_font,
+                preserve_source_style=preserve_source_style,
             )
             last_list_num_id = None
             continue
@@ -330,6 +289,11 @@ def _emit_chapter_blocks(
             )
             last_list_num_id = None
         elif bilingual:
+            source_style, source_placements = None, None
+            if preserve_source_style:
+                source_style, source_placements, _, _ = _segment_style_payload(
+                    style_meta, source=source, output_text=_bilingual_source(source, target)
+                )
             _add_bilingual_paragraphs(
                 doc,
                 source,
@@ -337,6 +301,8 @@ def _emit_chapter_blocks(
                 order,
                 style=style,
                 placements=placements,
+                source_style=source_style,
+                source_placements=source_placements,
                 align=align,
                 shade=shade,
                 output_font=output_font,

@@ -83,7 +83,8 @@ output:
   mono: true # Monolingual output (<title>.<target-language>.epub; default target is zh)
   bilingual: false # Bilingual output (<title>.<target-language>-bi.epub)
   bilingual_order: target_first # target_first=translation first; source_first=source first
-  bilingual_preserve_source_style: false # true=preserve original source styling; false=render source in muted gray
+  # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
+  bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
   punctuation_normalize: true # Normalize only exported copies; preserve formal translation state
 """
@@ -175,7 +176,7 @@ class OutputConfig(BaseModel):
     bilingual_order: Literal["target_first", "source_first"] = (
         "target_first"  # target_first=translation first (default); source_first=source first
     )
-    bilingual_preserve_source_style: bool = False
+    bilingual_preserve_source_style: bool = False  # EPUB/HTML styling and DOCX source metadata
     about_page: bool = True  # Append the project about page
     punctuation_normalize: bool = (
         True  # Normalize export copies only; never write back to chapter target

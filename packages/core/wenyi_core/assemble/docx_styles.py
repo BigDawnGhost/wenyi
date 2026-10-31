@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
@@ -188,6 +188,20 @@ def _apply_paragraph_shade(paragraph, shade: str | None) -> None:
     shd.set(qn("w:fill"), str(shade).upper()[-6:])
 
 
+def _append_styled_text(
+    paragraph,
+    text: str,
+    *,
+    style: dict[str, Any] | None = None,
+    placements: list[dict[str, Any]] | None = None,
+    output_font: str | None = None,
+) -> None:
+    """Append styled runs without clearing existing paragraph content."""
+    for fragment, frag_style in _style_slices(text, style, placements):
+        run = paragraph.add_run(fragment)
+        _apply_run_style(run, frag_style, output_font=output_font)
+
+
 def _fill_paragraph(
     paragraph,
     text: str,
@@ -197,22 +211,14 @@ def _fill_paragraph(
     align: str | None = None,
     shade: str | None = None,
     output_font: str | None = None,
-    dim: bool = False,
 ) -> None:
     """Clear the paragraph and write styled text slices."""
     paragraph.clear()
     _apply_paragraph_align(paragraph, align)
     _apply_paragraph_shade(paragraph, shade)
-    for fragment, frag_style in _style_slices(text, style, placements):
-        run = paragraph.add_run(fragment)
-        _apply_run_style(run, frag_style, output_font=output_font)
-        if dim:
-            run.font.size = Pt(10)
-            run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-            try:
-                run.font.highlight_color = WD_COLOR_INDEX.GRAY_25
-            except (AttributeError, ValueError):
-                pass
+    _append_styled_text(
+        paragraph, text, style=style, placements=placements, output_font=output_font
+    )
 
 
 def _segment_style_payload(
