@@ -8,6 +8,10 @@ Core paths below are relative to `packages/core/wenyi_core/`.
 For the proposed next steps, see the [component decoupling and directory plan](design/component-decoupling.md).
 That plan is not a description of completed migrations.
 
+For Desktop-only application logging and user-triggered support bundles, see the
+[user guide](desktop.md#diagnostics-and-feedback) and [incremental diagnostics design](design/application-diagnostics.md).
+Desktop owns collection and native publication; shared components expose optional observation hooks only.
+
 | Area | Owner |
 |---|---|
 | Entry points | `packages/cli/wenyi_cli/cli.py` assembles the CLI; `commands/` registers commands with an invocation context. Web entry points live in `apps/api/wenyi_api/`; the local Desktop entry point lives in `apps/desktop/backend/wenyi_desktop/`. |

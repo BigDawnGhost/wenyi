@@ -10,8 +10,12 @@ import socket
 import sys
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import uvicorn
+from .diagnostics import Reporter, failure_attributes
+
+if TYPE_CHECKING:
+    import uvicorn
 
 ORIGINS = (
     "tauri://localhost",
@@ -74,10 +78,12 @@ def watch_parent(server: uvicorn.Server) -> None:
     watchdog.start()
 
 
-async def serve(workspace: Path, protocol_stream) -> None:
+async def serve(workspace: Path, protocol_stream, reporter: Reporter | None = None) -> None:
+    import uvicorn
+
     from .main import create_app
 
-    app = create_app(workspace, api_token=os.environ.get("WENYI_API_TOKEN"))
+    app = create_app(workspace, api_token=os.environ.get("WENYI_API_TOKEN"), diagnostics=reporter)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
@@ -97,12 +103,16 @@ async def serve(workspace: Path, protocol_stream) -> None:
                 await asyncio.sleep(0.01)
             if server.started and not server.should_exit:
                 try:
-                    protocol_stream.write(
+                    ready = (
                         "WENYI_READY "
                         + json.dumps({"protocol": 1, "port": port, "pid": os.getpid()})
                         + "\n"
                     )
-                    protocol_stream.flush()
+                    if reporter is not None:
+                        reporter.protocol(ready)
+                    else:
+                        protocol_stream.write(ready)
+                        protocol_stream.flush()
                 except (BrokenPipeError, OSError):
                     server.should_exit = True
             await task
@@ -118,7 +128,21 @@ def main() -> None:
         parser.error("WENYI_API_TOKEN must be supplied by the desktop parent")
     protocol_stream = sys.stdout
     sys.stdout = sys.stderr
-    asyncio.run(serve(args.data_dir or default_workspace(), protocol_stream))
+    reporter = (
+        Reporter(protocol_stream) if os.environ.get("WENYI_DIAGNOSTICS_PROTOCOL") == "1" else None
+    )
+    if reporter is not None:
+        reporter.emit("engine_bootstrap")
+    try:
+        asyncio.run(serve(args.data_dir or default_workspace(), protocol_stream, reporter))
+    except Exception as error:
+        if reporter is not None:
+            reporter.emit("engine_bootstrap_failed", **failure_attributes(error))
+        raise
+    finally:
+        if reporter is not None:
+            reporter.emit("engine_stopped")
+            reporter.close()
 
 
 if __name__ == "__main__":

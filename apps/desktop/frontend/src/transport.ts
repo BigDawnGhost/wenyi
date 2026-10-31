@@ -1,11 +1,25 @@
 import { decodeResponse, requestHeaders } from "@wenyi/ui/lib/http";
 import { apiBase, authToken } from "./runtime";
 import { saveNativeExport, saveNativeGlossary } from "./nativeExport";
+import { reportDiagnostic } from "./diagnostics";
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return decodeResponse<T>(await fetch(`${apiBase()}${path}`, {
-    ...init, headers: requestHeaders(init, authToken()),
-  }));
+  try {
+    const response = await fetch(`${apiBase()}${path}`, {
+      ...init, headers: requestHeaders(init, authToken()),
+    });
+    try {
+      return await decodeResponse<T>(response);
+    } catch (error) {
+      const errorId = response.headers.get("X-Error-ID");
+      if (error instanceof Error && errorId && /^[0-9a-f]{32}$/.test(errorId))
+        error.message += ` [${errorId}]`;
+      throw error;
+    }
+  } catch (error) {
+    reportDiagnostic("frontend_request_failed");
+    throw error;
+  }
 }
 
 /** Webview downloads must use native saving, never browser-only blob anchors. */

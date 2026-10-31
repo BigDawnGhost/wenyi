@@ -1,0 +1,57 @@
+[
+  {
+    "input": {
+      "status_code": 429,
+      "attempt": 2,
+      "wait_ms": 500,
+      "phase": "translation",
+      "kind": "translation",
+      "category": "timeout",
+      "module": "router",
+      "line": 42,
+      "call_ref": "0123456789abcdef0123456789abcdef",
+      "body": "fake-private-book",
+      "request_id": "fake-private-key",
+      "provider": "fake-private-connection",
+      "headers": {"Authorization": "fake-private-key"}
+    },
+    "expected": {
+      "status_code": 429,
+      "attempt": 2,
+      "wait_ms": 500,
+      "phase": "translation",
+      "kind": "translation",
+      "category": "timeout",
+      "module": "router",
+      "line": 42,
+      "call_ref": "0123456789abcdef0123456789abcdef"
+    }
+  },
+  {
+    "input": {
+      "tokens": -1,
+      "count": true,
+      "duration_ms": 9007199254740992,
+      "module": ["fake-private-key"],
+      "category": {"password": "fake-private-key"},
+      "phase": "fake-private-key",
+      "kind": "fake-private-key",
+      "error_id": "fake-private-key"
+    },
+    "expected": {}
+  },
+  {
+    "input": {
+      "tokens": 0,
+      "duration_ms": 1200,
+      "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "error_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "expected": {
+      "tokens": 0,
+      "duration_ms": 1200,
+      "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "error_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }
+]
