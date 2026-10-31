@@ -135,7 +135,7 @@ llm:
 - `tiers` 必须恰好将 `strong`、`cheap`、`fast` 映射到模型配置；不用预设时需完整填写，也可以全部指向同一模型。档位表示偏好，不代表实测质量或价格。
 - `routes.<操作>` 必须且只能选择 `{model: 配置名}` 或 `{tier: strong}`。未知操作、字段及引用在请求前报错，不再隐式回退缺失档位。
 - 覆盖预设时，按 ID 整体替换连接或模型配置，需要重复必填字段；不同模型的 options 不合并。档位和路由按各自键替换。
-- 显式 `max_output_tokens` 优先于流程的静态、动态输出提示；不设置时，梗概和注释定位沿用原有提示预算。OpenAI 兼容适配器在 thinking 开启时将低于 4,096 的提示预算提升到 4,096；显式设置更小上限则报错。实际模型限制仍取决于服务端。
+- 所有流程操作均不自动附加输出 token 上限，包括章节梗概、全书概览和注释定位。未显式设置模型 `max_output_tokens` 时，请求不传输出上限，采用服务端默认值，并不代表无限输出；显式模型上限仍然生效。OpenAI 兼容适配器在 thinking 开启时拒绝低于 4,096 的显式上限。实际模型限制仍取决于服务端。连通性探测使用独立的小输出预算。
 - CLI/Web 的 API Key 只从环境变量读取，Desktop 另支持系统凭据库或仅本次会话的手动输入；密钥不写入 YAML、地址或原始请求扩展。原始扩展不能覆盖模型身份、消息、流式开关、JSON 模式、密钥和输出上限。
 
 ### 提供商选项
@@ -163,7 +163,7 @@ SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/42
 仅当未缓存的 PDF 需要 MinerU 转换时才解析凭据；已有转换 HTML 与非 PDF 输入无需密钥。
 密钥不会进入项目/任务快照、manifest 或解析缓存。
 
-DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: false` 显式关闭思考，此时不发送推理强度。未配置输出上限且流程没有输出提示时，由服务采用默认上限：非思考模式 8K、思考模式 64K，`max` 强度下为 128K。流程提示和显式 `max_output_tokens` 仍按上述配置规则处理。详见 [DeepSeek 请求参数](https://api-docs.deepseek.com/api/create-chat-completion/)。
+DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: false` 显式关闭思考，此时不发送推理强度。未显式设置模型 `max_output_tokens` 时，流程请求采用服务默认上限：非思考模式 8K、思考模式 64K，`max` 强度下为 128K。详见 [DeepSeek 请求参数](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
 ### 已注册操作
 
@@ -171,14 +171,14 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 |---|---|---|
 | `language.detect` | `cheap` | 源语言识别 |
 | `analysis.style` | `strong` | 风格与人物语气分析 |
-| `synopsis.chapter` | `fast` | 章节梗概；600 token 输出提示 |
-| `synopsis.book` | `fast` | 全书概要；1,200 token 输出提示 |
+| `synopsis.chapter` | `fast` | 章节梗概 |
+| `synopsis.book` | `fast` | 全书概要 |
 | `translation.body` | `strong` | 正文翻译及段落对齐恢复 |
 | `translation.title` | `strong` | 章节与目录标题 |
 | `polish.body` | `strong` | 译文润色 |
 | `glossary.extract` | `fast` | 术语抽取 |
 | `glossary.align_history` | `fast` | 历史译法对齐 |
-| `annotation.align` | `cheap` | 注释定位；动态输出提示 |
+| `annotation.align` | `cheap` | 注释定位 |
 | `review.scan` | `cheap` | 初审与盲审复查 |
 | `review.verify` | `strong` | 取证核查 |
 | `review.arbitrate` | `strong` | 冲突仲裁 |

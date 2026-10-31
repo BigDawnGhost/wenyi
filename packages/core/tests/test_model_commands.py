@@ -42,7 +42,7 @@ def test_preview_needs_no_keys_or_sdk(tmp_path, monkeypatch):
     }
     assert not any(name.startswith("kinship.") for name in routes)
     assert {route["model"] for route in routes.values()} == {"deepseek-flash"}
-    assert routes["synopsis.chapter"]["max_output_tokens"] == 8192
+    assert all(route["max_output_tokens"] is None for route in routes.values())
     explained = _invoke(
         tmp_path, {"llm": {"preset": "deepseek"}}, "explain", "--operation", "autofix.verify"
     )

@@ -446,11 +446,6 @@ class AnnotationAligner(Agent):
             ]
 
         payload = json.dumps({"items": request_items}, ensure_ascii=False)
-        aggregate_target_length = sum(len(units[index].target) for index in requested_indices)
-        max_tokens = max(
-            1024,
-            min(8192, aggregate_target_length * 2 + len(requested_indices) * 64 + 512),
-        )
         try:
             data = self._ask_json(
                 _SYSTEM_PROMPT,
@@ -459,7 +454,6 @@ class AnnotationAligner(Agent):
                 f"content.\n\nINPUT JSON:\n{payload}",
                 operation="annotation.align",
                 default={},
-                max_tokens=max_tokens,
             )
             if not isinstance(data, dict) or not isinstance(data.get("items"), list):
                 raise AnnotationAlignmentError("response_not_items_object")
