@@ -68,6 +68,41 @@ The following segment is a quoted, read-only reference from the same chapter. It
 
 Alignment retries retain the reference. Single-paragraph fallback uses that paragraph's immediate source neighbor, including an unchanged number or symbol. Resume recomputes the neighbor from source order after splitting completed and pending batches, preserving completed targets and stable segment identities. Lookahead is never added to the saved rolling translation context. It adds at most one source segment to each translation or polishing request, with no extra model call. This supplies continuity evidence; actual wording and sentence endings still depend on the model.
 
+### BabelDOC layout-aware continuity
+
+BabelDOC PDFs use a separate continuity policy within the same translation workflow.
+Only `plain text` units in a prose section can supply recent translations or the
+following source reference. Headings bound sections rather than becoming preceding
+prose. Lookahead skips intervening page decorations, tables, captions and other
+non-prose units, but never crosses a heading or chapter boundary. These excluded units
+do not evict preceding prose from the recent-context window.
+
+Contiguous layout roles and sections are batched separately before applying token
+budgets and completed/pending boundaries. Non-prose batches receive no rolling prose
+context, external following-prose reference, book synopsis or chapter digest. The same
+batch plan supplies standard translation, alignment recovery, polishing and
+best-of-three translation. All source units remain available for translation and
+fillback, with their original order, indices and `babeldoc_id`; exclusion from context
+does not mean deletion or automatic source passthrough.
+
+The policy recognizes common English/Chinese reference and publication-information
+headings. When an explicit abstract heading occurs in the first chapter, earlier
+author/front-matter text is excluded from prose context. Actual heading positions
+take precedence over page-based TOC chapter titles, so prose ending above a References
+heading on the same page remains prose. Unknown labels, including `fallback_line`,
+are conservatively excluded from prose context, not assumed to be structured table
+cells. Unrecognized metadata and incorrect layout labels remain classification limits.
+
+Each BabelDOC chapter rebuilds its recent context from consumed formal targets, also
+on resume and chapter-only runs; legacy saved context strings are not reused.
+Completed targets, including already saved empty strings, are preserved. Older
+glossary checkpoints covering a newly split completed batch remain reusable without
+repeating that batch's extraction. This first phase does not change prescan/style
+sampling, glossary evidence, Review context, table row/column reconstruction or
+page-decoration translation policy. Smaller isolated batches can increase model-call
+overhead, and conservative selection can omit useful context after a layout
+misclassification. Offline tests do not establish a model-quality improvement.
+
 ## Glossary
 
 Preparation analyzes style and character voices without proposing name translations or extracting glossary entries. As translation proceeds, Wenyi extracts and updates people, places, organizations, terms, techniques, recurring expressions, and forms of address from completed source-and-target pairs. Existing project terms, including imports and earlier automatically seeded entries, remain unchanged by preparation on resume. By default, without imported terms, the first body-translation batch starts with an empty glossary: this avoids locking in sample-based guesses, but gives that batch no predefined terminology mappings. The optional terminology-evidence mode described below can admit discovered candidates before a pending body batch. Every body-translation batch receives the full current glossary, including entries absent from the current chapter. Fresh Reviewer requests share the complete final glossary snapshot across chapters and workers. Entries retain insertion order, and new entries append at the end to preserve stable prompt prefixes. After extraction changes the glossary, translation refreshes its snapshot before the next pending batch; completed batches keep their saved targets. If interruption occurs after targets are saved but before extraction is checkpointed, resume completes extraction before translating the next batch. Checkpointed batches skip both translation and extraction.

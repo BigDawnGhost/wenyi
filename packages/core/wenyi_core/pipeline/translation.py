@@ -11,6 +11,7 @@ overwriting targets.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from ..config import PipelineConfig
@@ -19,6 +20,7 @@ from ..glossary.extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
 from ..ingest.models import Chapter, Segment
 from ..storage.protocol import Storage
+from .babeldoc_context import BabeldocContext
 from .context import RollingContext
 from .docx_styles import DocxStyleService
 from .precision import PrecisionBatchExecutor, PrecisionError
@@ -183,14 +185,40 @@ class TranslationService:
         total = 0
         done = 0
         for ci in chapter_indices:
-            segments = store.load_chapter(ci).text_segments
-            total += len(segments)
-            for batch in resume_batches(
-                segments, self._runtime.config.segment.max_tokens_per_batch
-            ):
+            chapter = store.load_chapter(ci)
+            total += len(chapter.text_segments)
+            for batch in self._chapter_batches(chapter):
                 if all(segment.target is not None for segment in batch):
                     done += len(batch)
         return total, done
+
+    def _chapter_batches(self, chapter: Chapter) -> list[list[Segment]]:
+        """Apply source-specific boundaries without changing original text positions."""
+        segments = chapter.text_segments
+        policy = BabeldocContext.for_chapter(chapter)
+        groups = policy.groups(segments) if policy is not None else [segments]
+        return [
+            batch
+            for group in groups
+            for batch in resume_batches(group, self._runtime.config.segment.max_tokens_per_batch)
+        ]
+
+    @staticmethod
+    def _glossary_checkpoint_covers(checkpoints: set[str], start: int, count: int) -> bool:
+        """Reuse completed extraction when BabelDOC role boundaries split an older batch."""
+        ranges = []
+        for key in checkpoints:
+            match = re.fullmatch(r"(\d+):([1-9]\d*)", key)
+            if match is not None:
+                saved_start, saved_count = map(int, match.groups())
+                ranges.append((saved_start, saved_start + saved_count))
+        cursor = start
+        for saved_start, saved_end in sorted(ranges):
+            if saved_start <= cursor < saved_end:
+                cursor = saved_end
+                if cursor >= start + count:
+                    return True
+        return False
 
     def translate_chapter(
         self,
@@ -223,12 +251,17 @@ class TranslationService:
             store.log_event("chapter_skipped", chapter=ci, reason="empty")
             return done
         chapter_digest = chapter.meta.get("source_digest", "")
+        context_policy = BabeldocContext.for_chapter(chapter)
+        if context_policy is not None:
+            # Legacy context strings have no source identity. Replay this chapter's
+            # completed units instead of reusing them or leaking the previous chapter.
+            context.recent_targets.clear()
         annotation_contexts = self._annotations.annotation_contexts_for_segments(
             text_segs,
             annotation_context_registry,
         )
 
-        batches = resume_batches(text_segs, self._runtime.config.segment.max_tokens_per_batch)
+        batches = self._chapter_batches(chapter)
         label = self.chapter_progress_label(chapter.title, ci)
         # Preparation often ends with a parsing label, but resume may first restore glossary terms.
         # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
@@ -253,7 +286,10 @@ class TranslationService:
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Blank "" is a completed MinerU allowance; only None means not yet translated.
                 self._align_batch_context(store, chapter, text_segs, context, batch_start, len(b))
-                if glossary_key in glossary_checkpoints:
+                if glossary_key in glossary_checkpoints or (
+                    context_policy is not None
+                    and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
+                ):
                     summary = {
                         "inserted": 0,
                         "conflict": 0,
@@ -315,10 +351,20 @@ class TranslationService:
                 else style
             )
 
-            ctx_text = context.render(self._runtime.config.pipeline.rolling_context_segments)
             next_index = batch_start + len(b)
-            # Read the immediate source neighbor without changing batches or saved context.
-            next_source = text_segs[next_index].source if next_index < len(text_segs) else ""
+            body_context = context_policy is None or context_policy.body[batch_start]
+            ctx_text = (
+                context.render(self._runtime.config.pipeline.rolling_context_segments)
+                if body_context
+                else ""
+            )
+            next_source = (
+                context_policy.next_source(text_segs, next_index)
+                if context_policy is not None
+                else text_segs[next_index].source
+                if next_index < len(text_segs)
+                else ""
+            )
             plan = BatchPlan.capture(
                 ci,
                 batch_start,
@@ -326,8 +372,8 @@ class TranslationService:
                 term_snapshot,
                 ctx_text,
                 batch_style,
-                book_synopsis,
-                chapter_digest,
+                book_synopsis if body_context else "",
+                chapter_digest if body_context else "",
                 annotation_contexts[batch_start : batch_start + len(b)],
                 next_source,
                 allow_empty_translations=allow_empty_translations,
@@ -441,6 +487,12 @@ class TranslationService:
         """
         self._annotations.align_annotations_after_batch(chapter.index, chapter, start, count, store)
         self._docx_styles.align_styles_after_batch(chapter.index, chapter, start, count, store)
+        policy = BabeldocContext.for_chapter(chapter)
+        if policy is not None:
+            context.recent_targets = policy.recent_targets(text_segments, start + count)[
+                -context.max_recent_keep :
+            ]
+            return
         context.add_targets(
             [segment.target or "" for segment in text_segments[start : start + count]]
         )
