@@ -56,6 +56,45 @@ def test_workspace_second_owner_is_rejected_and_release_allows_restart(catalog):
     asyncio.run(run())
 
 
+def test_diagnostics_distinguish_runner_timeout_from_user_cancellation(catalog, monkeypatch):
+    import io
+
+    from wenyi_backend.workers import tasks
+    from wenyi_desktop.diagnostics import Reporter
+
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+
+    async def execute(ctx, **values):
+        await asyncio.Future()
+
+    monkeypatch.setattr(tasks, "run_translation", execute)
+
+    async def run():
+        runtime = LocalRuntime(catalog, current_context(), diagnostics=reporter)
+        runtime.accepting = True
+        queue = asyncio.Queue()
+        await queue.put(
+            ("run_translation", {"project_id": "fake-private-project", "run_id": "run"}, "run")
+        )
+        await queue.put(None)
+        await asyncio.wait_for(runtime._consume(queue, 0.01), 3)
+        assert runtime.idle
+
+    try:
+        asyncio.run(run())
+    finally:
+        reporter.close()
+    rows = [
+        json.loads(line.removeprefix("WENYI_DIAGNOSTIC "))
+        for line in stream.getvalue().splitlines()
+    ]
+    assert [row["event"] for row in rows] == ["task_started", "task_timeout", "task_cancelled"]
+    assert all(row["attributes"]["kind"] == "translation" for row in rows)
+    assert len({row["attributes"]["run_ref"] for row in rows}) == 1
+    assert "fake-private-project" not in stream.getvalue()
+
+
 @pytest.mark.parametrize("status", ["queued", "running"])
 def test_recovery_pauses_orphan_workflows_and_fails_exports(catalog, status):
     async def run():

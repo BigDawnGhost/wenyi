@@ -1,6 +1,6 @@
 //! A single owner for the private server and its anonymous protocol pipes.
 use std::{
-    io::{BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::Path,
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver},
@@ -87,6 +87,7 @@ impl Backend {
     pub fn spawn(
         resources: &Path,
         workspace: Option<&Path>,
+        diagnostics: crate::diagnostics::Diagnostics,
     ) -> Result<(Self, ReadySignal), &'static str> {
         let token = token()?;
         let mut command = Command::new(resources.join("sidecar/wenyi-engine").join(engine_name()));
@@ -110,6 +111,7 @@ impl Backend {
         }
         command
             .env("WENYI_API_TOKEN", &token)
+            .env("WENYI_DIAGNOSTICS_PROTOCOL", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Never forward arbitrary backend output (which might contain credentials).
@@ -126,22 +128,7 @@ impl Backend {
         let pid = child.id();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut reader = BufReader::new(output);
-            let mut line = String::new();
-            // Bounded read: a broken child cannot allocate arbitrary memory.
-            let result =
-                std::io::BufRead::read_line(&mut std::io::Read::take(&mut reader, 4096), &mut line)
-                    .map_err(|_| "Could not read ready protocol")
-                    .and_then(|_| ready(&line, pid))
-                    .map(|port| {
-                        serde_json::json!({
-                            "apiBase": format!("http://127.0.0.1:{port}"),
-                            "token": token
-                        })
-                        .to_string()
-                    });
-            let _ = tx.send(result);
-            let _ = std::io::copy(&mut reader, &mut std::io::sink());
+            receive_protocol(output, pid, &token, &diagnostics, tx);
         });
         Ok((Self { child }, rx))
     }
@@ -176,6 +163,40 @@ impl Drop for Backend {
     }
 }
 
+fn receive_protocol(
+    output: impl Read, pid: u32, token: &str,
+    diagnostics: &crate::diagnostics::Diagnostics,
+    tx: mpsc::Sender<Result<String, &'static str>>,
+) {
+    let mut reader = BufReader::new(output);
+    let mut sent = false;
+    let mut discard = false;
+    loop {
+        let mut bytes = Vec::new();
+        let Ok(count) = reader.by_ref().take(crate::diagnostics::MAX_RECORD as u64 + 1)
+            .read_until(b'\n', &mut bytes) else { break; };
+        if count == 0 { break; }
+        let complete = bytes.ends_with(b"\n");
+        if discard || !complete || bytes.len() > crate::diagnostics::MAX_RECORD {
+            discard = !complete;
+            continue;
+        }
+        let Ok(line) = std::str::from_utf8(&bytes) else { continue; };
+        if let Some(payload) = line.strip_prefix("WENYI_DIAGNOSTIC ") {
+            // Only typed content-free observations cross the persistence boundary.
+            diagnostics.ingest(crate::diagnostics::Source::Engine, payload);
+        } else if !sent {
+            let result = ready(line, pid).map(|port| {
+                serde_json::json!({"apiBase": format!("http://127.0.0.1:{port}"), "token": token}).to_string()
+            });
+            let _ = tx.send(result);
+            sent = true;
+        }
+        // Unknown post-ready output is discarded, never saved as raw text.
+    }
+    if !sent { let _ = tx.send(Err("Local engine exited before readiness")); }
+}
+
 fn engine_name() -> &'static str {
     if cfg!(windows) {
         "wenyi-engine.exe"
@@ -187,6 +208,25 @@ fn engine_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_frames_do_not_change_ready_identity_or_capture_arbitrary_output() {
+        let diagnostics = crate::diagnostics::Diagnostics::new(None);
+        let input = concat!(
+            "WENYI_DIAGNOSTIC {\"event\":\"engine_bootstrap\"}\n",
+            "WENYI_READY {\"protocol\":1,\"port\":1234,\"pid\":9}\n",
+            "fake-private-token\n",
+            "WENYI_DIAGNOSTIC {\"event\":\"task_failed\",\"attributes\":{\"raw\":\"fake-private-token\"}}\n",
+        );
+        let (tx, rx) = mpsc::channel();
+        receive_protocol(input.as_bytes(), 9, "owner-token", &diagnostics, tx);
+        let connection: serde_json::Value = serde_json::from_str(&rx.recv().unwrap().unwrap()).unwrap();
+        assert_eq!(connection["apiBase"], "http://127.0.0.1:1234");
+        assert_eq!(connection["token"], "owner-token");
+        assert!(rx.try_recv().is_err());
+        diagnostics.drain();
+        assert!(diagnostics.status().last_error_id.is_some());
+    }
 
     struct PythonFixture(std::path::PathBuf);
 

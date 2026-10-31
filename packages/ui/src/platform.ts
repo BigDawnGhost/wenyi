@@ -58,6 +58,12 @@ export interface PlatformServices {
   progressKeys: (kind: string) => string[];
   bindSourceDrop: (zone: HTMLElement, callbacks: SourceDropCallbacks) => () => void;
   capabilities: {
+    diagnostics?: {
+      Section: ComponentType;
+      ExportButton: ComponentType;
+      /** No exception object or user text crosses this optional observation hook. */
+      reportRenderFailure: () => void;
+    };
     externalCredentials?: {
       MinerU: ComponentType;
     };

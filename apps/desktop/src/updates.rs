@@ -262,6 +262,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                 }
             }
             Err(error) => {
+                app.state::<crate::diagnostics::Diagnostics>().record(crate::diagnostics::Source::Native, crate::diagnostics::Event::UpdateFailed, serde_json::json!({}));
                 state.snapshot.phase = Phase::Error;
                 state.snapshot.error = Some(error);
             }
@@ -324,6 +325,7 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
                 state.snapshot.phase = Phase::Ready;
             }
             Err(_) => {
+                app.state::<crate::diagnostics::Diagnostics>().record(crate::diagnostics::Source::Native, crate::diagnostics::Event::UpdateFailed, serde_json::json!({}));
                 state.snapshot.phase = Phase::Available;
                 state.snapshot.error = Some("download_failed");
             }
@@ -405,6 +407,9 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
         crate::publish(app, &state);
         return Err("install_failed");
     }
+    let diagnostics = app.state::<crate::diagnostics::Diagnostics>();
+    diagnostics.record(crate::diagnostics::Source::Native, crate::diagnostics::Event::AppStopped, serde_json::json!({}));
+    diagnostics.drain();
     engine.closed.store(true, Ordering::SeqCst);
     app.restart();
 }
@@ -431,6 +436,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let result = install(&app, update, bytes);
         if let Err(error) = result {
+            app.state::<crate::diagnostics::Diagnostics>().record(crate::diagnostics::Source::Native, crate::diagnostics::Event::UpdateFailed, serde_json::json!({}));
             let updates = app.state::<Updates>();
             let mut state = updates.0.lock().unwrap();
             state.snapshot.phase = Phase::Ready;

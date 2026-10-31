@@ -10,7 +10,10 @@ import { useRuntimeStatus } from "./runtime";
 import { useDesktopI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { configureQueryActivity } from "./activity";
+import { installDiagnostics } from "./diagnostics";
+import { DiagnosticExportButton } from "./DesktopDiagnostics";
 
+installDiagnostics();
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: { staleTime: 5_000, refetchOnWindowFocus: false, retry: 1 },
@@ -44,6 +47,7 @@ function Bootstrap() {
         <button className="underline" onClick={() => location.reload()}>
           {t("runtime.reload")}
         </button>
+        <div className="mt-4"><DiagnosticExportButton /></div>
       </main>
     );
   return (

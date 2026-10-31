@@ -176,9 +176,10 @@ pub fn close(app: &tauri::AppHandle, tray_available: bool) {
 pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
     let show = MenuItem::with_id(app, "show-wenyi", "Show Wenyi", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit-wenyi", "Quit Wenyi", true, Some("CmdOrCtrl+Q"))?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let diagnostics = MenuItem::with_id(app, "wenyi-diagnostics", "Export diagnostic report…", true, Some("CmdOrCtrl+Shift+D"))?;
+    let menu = Menu::with_items(app, &[&show, &diagnostics, &quit])?;
     // Always install the application menu and its keyboard quit accelerator.
-    let application = Submenu::with_items(app, "Wenyi", true, &[&show, &quit])?;
+    let application = Submenu::with_items(app, "Wenyi", true, &[&show, &diagnostics, &quit])?;
     app.set_menu(Menu::with_items(app, &[&application])?)?;
     if hide_window_menu_on(std::env::consts::OS) {
         if let Some(window) = app.get_webview_window("main") {
@@ -192,6 +193,7 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
     app.on_menu_event(|app, event| match event.id().as_ref() {
         "show-wenyi" => restore(app),
         "quit-wenyi" => app.exit(0),
+        "wenyi-diagnostics" => crate::diagnostics_ui::export_from_menu(app),
         _ => {}
     });
     let result = (|| -> tauri::Result<()> {

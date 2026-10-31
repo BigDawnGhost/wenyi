@@ -2,6 +2,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod background;
+mod diagnostics;
+mod diagnostics_ui;
 mod graphics;
 mod instance;
 mod local_connection;
@@ -70,6 +72,8 @@ struct Engine {
 /// The same launch path is used at startup and to recover a failed installation.
 fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), &'static str> {
     let resources = app.path().resource_dir().map_err(|_| "Local resources unavailable.")?;
+    let diagnostics = app.state::<diagnostics::Diagnostics>();
+    diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineSpawned, serde_json::json!({}));
     let ready = {
         let mut owner = engine.child.lock().unwrap();
         if engine.closed.load(Ordering::SeqCst)
@@ -77,12 +81,13 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
         {
             return Err("Wenyi is closing.");
         }
-        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref())?;
+        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref(), diagnostics.inner().clone())?;
         *owner = Some(backend);
         ready
     };
     match ready.recv_timeout(std::time::Duration::from_secs(60)) {
         Ok(Ok(connection)) => {
+            diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineReady, serde_json::json!({}));
             let state = app.state::<Arc<Mutex<State>>>();
             let mut state = state.lock().unwrap();
             state.connected(connection);
@@ -118,6 +123,7 @@ fn publish_background(app: &tauri::AppHandle, state: &Mutex<State>) {
 }
 
 fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
+    app.state::<diagnostics::Diagnostics>().record(diagnostics::Source::Native, diagnostics::Event::EngineFailed, serde_json::json!({}));
     state.lock().unwrap().error = Some(error);
     publish(app, state);
 }
@@ -187,6 +193,7 @@ fn main() {
         Ok(workspace) => workspace,
         Err(error) => {
             instance_error(error);
+            diagnostics_ui::startup_failure(&diagnostics::Diagnostics::new(None));
             return;
         }
     };
@@ -195,9 +202,18 @@ fn main() {
         Ok(None) => return,
         Err(error) => {
             instance_error(error);
+            diagnostics_ui::startup_failure(&diagnostics::Diagnostics::new(None));
             return;
         }
     };
+    let diagnostics = diagnostics::Diagnostics::for_workspace(&workspace);
+    diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStarted, serde_json::json!({}));
+    let panic_diagnostics = diagnostics.clone();
+    let previous_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        panic_diagnostics.record(diagnostics::Source::Native, diagnostics::Event::NativePanic, serde_json::json!({}));
+        previous_panic(info);
+    }));
     graphics::configure();
     let state = Arc::new(Mutex::new(State::default()));
     let closing = Arc::new(AtomicBool::new(false));
@@ -216,6 +232,8 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(primary.activation.clone())
         .manage(state.clone())
+        .manage(diagnostics.clone())
+        .manage(Arc::new(diagnostics_ui::ExportControl::default()))
         .manage(engine)
         .manage(updates::Updates::new())
         .plugin(tauri_plugin_updater::Builder::new()
@@ -232,6 +250,13 @@ fn main() {
             updates::desktop_update_check,
             updates::desktop_update_download,
             updates::desktop_update_install,
+            diagnostics_ui::desktop_diagnostics_status,
+            diagnostics_ui::desktop_diagnostics_record,
+            diagnostics_ui::desktop_diagnostics_detail,
+            diagnostics_ui::desktop_diagnostics_export,
+            diagnostics_ui::desktop_diagnostics_cancel,
+            diagnostics_ui::desktop_diagnostics_clear,
+            diagnostics_ui::desktop_diagnostics_open,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
@@ -302,8 +327,14 @@ fn main() {
             });
             Ok(())
         })
-        .build(application_context())
-        .expect("Could not build the Wenyi desktop window");
+        .build(application_context());
+    let app = match app {
+        Ok(app) => app,
+        Err(_) => {
+            diagnostics_ui::startup_failure(&diagnostics);
+            return;
+        }
+    };
     app.run(move |handle, event_kind| {
         let requested = match event_kind {
             tauri::RunEvent::Ready => {
@@ -349,6 +380,9 @@ fn main() {
                 if let Some(mut backend) = child.lock().unwrap().take() {
                     backend.shutdown();
                 }
+                let diagnostics = handle.state::<diagnostics::Diagnostics>();
+                diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStopped, serde_json::json!({}));
+                diagnostics.drain();
                 closed.store(true, Ordering::SeqCst);
                 handle.exit(0);
             });

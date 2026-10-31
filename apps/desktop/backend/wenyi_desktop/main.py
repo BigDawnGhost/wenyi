@@ -13,6 +13,7 @@ from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
 
 from .babeldoc_plugin import BabeldocPlugin
+from .diagnostics import DiagnosticsMiddleware, Reporter, scope
 from .local_backend import LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
 from .local_runtime import LocalRuntime, progress_snapshot, statistics_snapshot
@@ -121,6 +122,7 @@ def create_app(
     *,
     context: BackendContext | None = None,
     api_token: str | None = None,
+    diagnostics: Reporter | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
@@ -133,8 +135,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        with use_context(context):
-            runtime = LocalRuntime(context.repository, context)
+        with use_context(context), scope(diagnostics):
+            runtime = LocalRuntime(context.repository, context, diagnostics=diagnostics)
             services.runtime = runtime
             try:
                 await runtime.start()
@@ -160,4 +162,8 @@ def create_app(
     app.add_middleware(
         UpdateAdmissionMiddleware, guard=app.state.update_guard, token=context.api_token
     )
+    if diagnostics is not None:
+        app.add_middleware(DiagnosticsMiddleware, reporter=diagnostics, origins=ORIGINS)
+        if context.settings_store.credentials.vault is None:
+            diagnostics.emit("credentials_degraded")
     return app

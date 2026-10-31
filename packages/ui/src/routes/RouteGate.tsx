@@ -1,6 +1,7 @@
 import { Component, Suspense, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useI18n } from "@/i18n";
+import { platform } from "@/platform";
 
 /**
  * Shared failure presentation. Renders as a top-level `<main>` for the global
@@ -9,12 +10,14 @@ import { useI18n } from "@/i18n";
  */
 export function ErrorFallback({ fullScreen = false }: { fullScreen?: boolean }) {
   const { t } = useI18n();
+  const ExportDiagnostics = platform().capabilities.diagnostics?.ExportButton;
   const body = (
     <>
       {t("runtime.pageFailed")}{" "}
       <button className="underline" onClick={() => location.reload()}>
         {t("runtime.reload")}
       </button>
+      {ExportDiagnostics && <div className="mt-4"><ExportDiagnostics /></div>}
     </>
   );
   return fullScreen ? (
@@ -41,6 +44,9 @@ class RouteErrorBoundary extends Component<
   state = { failed: false, resetKey: this.props.resetKey };
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+  componentDidCatch() {
+    platform().capabilities.diagnostics?.reportRenderFailure();
   }
   static getDerivedStateFromProps(
     props: BoundaryProps,

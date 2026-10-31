@@ -286,6 +286,58 @@ pub struct Saved {
     path: String,
 }
 
+/// Save a Desktop diagnostic archive without contacting the engine or creating a book job.
+/// Destination admission, source protection and publication are shared with native exports.
+pub(crate) fn save_diagnostics(
+    saves: &Saves,
+    roots: &[PathBuf],
+    build: impl FnOnce() -> Result<Vec<u8>>,
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<Saved>> {
+    run_diagnostic_save(saves, roots, build, cancelled, &NativeDialog)
+}
+
+fn run_diagnostic_save(
+    saves: &Saves,
+    roots: &[PathBuf],
+    build: impl FnOnce() -> Result<Vec<u8>>,
+    cancelled: impl Fn() -> bool,
+    dialog: &impl Dialog,
+) -> Result<Option<Saved>> {
+    let _pending = saves.reserve()?;
+    let plan = Plan {
+        filename: format!("wenyi-diagnostics-{}.zip", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")),
+        extension: "zip".into(),
+        label: "Wenyi diagnostic report".into(),
+        request: None,
+        protected_roots: roots.to_vec(),
+    };
+    let Some(path) = dialog.choose(&plan) else { return Ok(None); };
+    if cancelled() { return Ok(None); }
+    let target = Target::new(plan.destination(path), saves, roots)?;
+    if target.existing.is_some() && !dialog.replace(&target.path) { return Ok(None); }
+    let _active = saves.begin()?;
+    struct CancelReader<R, F>(R, F);
+    impl<R: Read, F: Fn() -> bool> Read for CancelReader<R, F> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if (self.1)() { return Err(std::io::Error::other("Diagnostic export canceled")); }
+            self.0.read(buffer)
+        }
+    }
+    let result = (|| {
+        let bytes = build()?;
+        let length = bytes.len() as u64;
+        target.copy(&mut CancelReader(std::io::Cursor::new(bytes), &cancelled), length, saves, roots)?;
+        Ok(Some(Saved { path: target.path.to_string_lossy().into_owned() }))
+    })();
+    // Picker, collection and copy cancellation have the same neutral UI outcome.
+    // A successful publication stays successful even if cancellation arrives too late.
+    match result {
+        Err(_) if cancelled() => Ok(None),
+        result => result,
+    }
+}
+
 impl Connection {
     fn request(&self, path: &str, body: Option<&Value>) -> Result<reqwest::blocking::Response> {
         let url = format!("{}{path}", self.base);
@@ -928,14 +980,21 @@ async fn save_native(
             .ok_or("Local engine unavailable.")?
     };
     let saves = window.state::<Saves>().inner().clone();
+    let diagnostics = window.state::<crate::diagnostics::Diagnostics>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        run_save(
+        let result = run_save(
             Connection::new(&raw)?,
             saves,
             project_id,
             request,
             &NativeDialog,
-        )
+        );
+        match &result {
+            Ok(Some(_)) => { diagnostics.record(crate::diagnostics::Source::Native, crate::diagnostics::Event::ExportCompleted, serde_json::json!({})); }
+            Err(_) => { diagnostics.record(crate::diagnostics::Source::Native, crate::diagnostics::Event::ExportFailed, serde_json::json!({})); }
+            _ => {}
+        }
+        result
     })
     .await
     .map_err(|_| "Native saving stopped unexpectedly.".to_string())?
@@ -1027,6 +1086,67 @@ mod tests {
         fn replace(&self, _: &Path) -> bool {
             self.replace
         }
+    }
+
+    #[test]
+    fn diagnostics_choose_before_collection_and_preserve_existing_files_on_failure() {
+        let fixture = Fixture::new();
+        let saves = Saves::default();
+        let cancel = FakeDialog { path: None, replace: false };
+        assert!(run_diagnostic_save(&saves, &[], || panic!("must not collect"), || false, &cancel).unwrap().is_none());
+        let path = fixture.file("report.zip", b"existing");
+        let refuse = FakeDialog { path: Some(path.clone()), replace: false };
+        assert!(run_diagnostic_save(&saves, &[], || panic!("must not collect"), || false, &refuse).unwrap().is_none());
+        let replace = FakeDialog { path: Some(path.clone()), replace: true };
+        assert!(run_diagnostic_save(&saves, &[], || Err("collection failed".into()), || false, &replace).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        fixture.clean();
+        let result = run_diagnostic_save(&saves, &[], || Ok(b"new archive".to_vec()), || false, &replace).unwrap();
+        assert!(result.is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), b"new archive");
+        fixture.clean();
+    }
+
+    #[test]
+    fn diagnostic_cancellation_during_collection_or_copy_is_not_a_failure() {
+        let fixture = Fixture::new();
+        let saves = Saves::default();
+        let path = fixture.file("report.zip", b"existing");
+        let dialog = FakeDialog { path: Some(path.clone()), replace: true };
+        for fail_collection in [true, false] {
+            let cancelled = std::cell::Cell::new(false);
+            let result = run_diagnostic_save(
+                &saves,
+                &[],
+                || {
+                    cancelled.set(true);
+                    if fail_collection {
+                        Err("Diagnostic export canceled.".into())
+                    } else {
+                        Ok(b"new archive".to_vec())
+                    }
+                },
+                || cancelled.get(),
+                &dialog,
+            );
+            assert!(result.unwrap().is_none());
+            assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+            fixture.clean();
+        }
+    }
+
+    #[test]
+    fn diagnostic_destinations_obey_workspace_and_source_protection() {
+        let fixture = Fixture::new();
+        let saves = Saves::default();
+        let path = fixture.file("source.zip", b"private source");
+        saves.protect_source(path.clone(), File::open(&path).unwrap()).unwrap();
+        let dialog = FakeDialog { path: Some(path.clone()), replace: true };
+        assert!(run_diagnostic_save(&saves, &[], || panic!("must not collect"), || false, &dialog).is_err());
+        let dialog = FakeDialog { path: Some(fixture.0.join("new.zip")), replace: true };
+        assert!(run_diagnostic_save(&saves, &[fixture.0.clone()], || panic!("must not collect"), || false, &dialog).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"private source");
+        fixture.clean();
     }
 
     fn response(status: &str, body: &str, extra: &str) -> String {
