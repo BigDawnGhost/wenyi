@@ -12,6 +12,8 @@ import {
   useCredentialDraftsPending,
 } from "./credentials";
 import { activity } from "./activity";
+import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
+import { reportDiagnostic } from "./diagnostics";
 
 const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
@@ -69,6 +71,11 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      diagnostics: {
+        Section: DesktopDiagnostics,
+        ExportButton: DiagnosticExportButton,
+        reportRenderFailure: () => reportDiagnostic("frontend_render_failed"),
+      },
       externalCredentials: { MinerU: MinerUCredential },
       updates: { Section: DesktopUpdates },
       plugins: { Section: BabeldocPlugin },

@@ -8,6 +8,10 @@
 后续建议见[功能组件解耦与目录规划](design/component-decoupling.md)。
 该方案不表示对应迁移已经完成。
 
+仅面向 Desktop 的应用级日志与用户主动导出诊断包见
+[使用说明](desktop.md#诊断与反馈)和[增量诊断设计](design/application-diagnostics.md)。
+采集和原生发布归 Desktop 所有，共享组件仅提供可选观察钩子。
+
 | 领域 | 职责归属 |
 |---|---|
 | 入口 | `packages/cli/wenyi_cli/cli.py` 装配 CLI；`commands/` 通过调用上下文注册命令。Web 入口位于 `apps/api/wenyi_api/`，本地 Desktop 入口位于 `apps/desktop/backend/wenyi_desktop/`。 |

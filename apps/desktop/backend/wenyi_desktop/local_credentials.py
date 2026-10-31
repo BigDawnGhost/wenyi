@@ -16,9 +16,10 @@ from uuid import uuid4
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import ProviderConfig
 from wenyi_core.llm.credentials import validate_credential
-from wenyi_core.llm.factory import build_client
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.router import RoutedLLMClient
+
+from .diagnostic_client import DesktopLLMClient
 
 SERVICE = "org.wenyi.desktop"
 
@@ -411,6 +412,6 @@ def credential_store() -> CredentialStore:
 
 def build_local_client(config: Config, store: CredentialStore | None = None) -> RoutedLLMClient:
     """Freeze credentials now, before validation or execution starts."""
-    return build_client(
-        config, credentials=(store or credential_store()).snapshot(config.llm.providers)
+    return DesktopLLMClient(
+        config.llm, credentials=(store or credential_store()).snapshot(config.llm.providers)
     )

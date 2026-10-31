@@ -12,6 +12,7 @@ async function setup(page: Page) {
     Object.assign(window, { nativeCalls: calls });
     window.__TAURI_INTERNALS__ = {
       invoke: (command, args) => {
+        if (!command.startsWith("native_drop_")) return Promise.resolve(null as never);
         calls.push({ command, args });
         if (command === "native_drop_upload")
           return new Promise((resolve, reject) => Object.assign(window, {

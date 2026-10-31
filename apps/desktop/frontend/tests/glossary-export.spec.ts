@@ -11,6 +11,7 @@ test.beforeEach(async ({ page }) => {
     Object.assign(window, { glossarySaveCalls: [] });
     window.__TAURI_INTERNALS__ = {
       invoke: (command, args) => {
+        if (command !== "native_glossary_save") return Promise.resolve(null as never);
         (window as unknown as { glossarySaveCalls: unknown[] })
           .glossarySaveCalls.push({ command, args });
         return new Promise((resolve, reject) =>

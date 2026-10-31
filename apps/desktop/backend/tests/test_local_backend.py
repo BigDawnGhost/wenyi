@@ -669,7 +669,7 @@ def test_local_lifespan_starts_runner_without_pg_and_closes_backend(backend, mon
         close()
 
     monkeypatch.setattr(backend, "close", close_backend)
-    monkeypatch.setattr(main, "LocalRuntime", lambda catalog, owner: runtime)
+    monkeypatch.setattr(main, "LocalRuntime", lambda catalog, owner, *, diagnostics=None: runtime)
     with TestClient(main.create_app(context=context)) as client:
         assert client.get("/health").status_code == 200
         assert calls == ["start"]

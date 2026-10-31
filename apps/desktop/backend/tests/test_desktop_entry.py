@@ -105,10 +105,13 @@ def test_owned_python_preserves_venv_and_process_identity(tmp_path):
 
 
 @pytest.mark.parametrize("shutdown", ["command", "eof"])
-def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutdown):
+@pytest.mark.parametrize("diagnostics", [False, True])
+def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutdown, diagnostics):
     token = secrets.token_hex(32)
     env = {k: v for k, v in os.environ.items() if not k.startswith("WENYI_")}
     env.update(WENYI_API_TOKEN=token)
+    if diagnostics:
+        env["WENYI_DIAGNOSTICS_PROTOCOL"] = "1"
     # A sentinel CLI configuration must not be read or changed.
     sentinel = tmp_path / "config.yaml"
     sentinel.write_text("This is not a Wenyi configuration.")
@@ -123,7 +126,17 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         text=True,
     )
     lines: queue.Queue[str] = queue.Queue()
-    threading.Thread(target=lambda: lines.put(child.stdout.readline()), daemon=True).start()
+    observations = []
+
+    def collect():
+        for line in child.stdout:
+            if line.startswith("WENYI_DIAGNOSTIC "):
+                observations.append(json.loads(line.removeprefix("WENYI_DIAGNOSTIC ")))
+            else:
+                lines.put(line)
+
+    reader = threading.Thread(target=collect, daemon=True)
+    reader.start()
     try:
         line = lines.get(timeout=30)
         assert line.startswith("WENYI_READY "), child.stderr.read() if child.poll() else line
@@ -152,8 +165,16 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         else:
             child.stdin.close()
         child.wait(timeout=30)
+        reader.join(timeout=5)
         assert child.returncode == 0
-        assert token not in child.stdout.read() + child.stderr.read()
+        assert token not in json.dumps(observations) + child.stderr.read()
+        if diagnostics:
+            assert observations[0]["event"] == "engine_bootstrap"
+            assert observations[-1]["event"] == "engine_stopped"
+            assert any(row["event"] == "http_failed" for row in observations)
+            assert str(workspace) not in json.dumps(observations)
+        else:
+            assert observations == []
         assert sentinel.read_text() == "This is not a Wenyi configuration."
         assert workspace.is_dir()
     finally:

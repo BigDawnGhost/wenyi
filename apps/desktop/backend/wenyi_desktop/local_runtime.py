@@ -24,6 +24,7 @@ from typing import Any, Iterator
 from wenyi_backend.context import BackendContext
 from wenyi_backend.live_statistics import read_live_statistics
 
+from .diagnostics import Reporter, emit, failure_attributes, scope
 from .local_backend import LocalBackend
 
 log = logging.getLogger(__name__)
@@ -194,9 +195,12 @@ class LocalJob:
 class LocalRuntime:
     """Own bounded task slots; cancellation waits for the synchronous checkpoint boundary."""
 
-    def __init__(self, backend: LocalBackend, context: BackendContext):
+    def __init__(
+        self, backend: LocalBackend, context: BackendContext, *, diagnostics: Reporter | None = None
+    ):
         self.backend = backend
         self.context = context
+        self.diagnostics = diagnostics
         self.lock = WorkspaceLock(backend.workspace)
         self.hub = ProgressHub(backend, asyncio.get_running_loop())
         self.workflow_queue: asyncio.Queue = asyncio.Queue(maxsize=128)
@@ -256,9 +260,28 @@ class LocalRuntime:
             self._cancelling.add(task)
             task.cancel()
 
-    async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
+    async def _run_observed(self, name: str, values: dict, run_id: str) -> None:
         from wenyi_backend.workers import tasks
 
+        with scope(self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id):
+            started = time.monotonic()
+            kind = name.removeprefix("run_")
+            emit("task_started", kind=kind)
+            try:
+                await getattr(tasks, name)({"backend": self.context}, **values)
+            except asyncio.CancelledError:
+                emit("task_cancelled", kind=kind)
+                raise
+            except Exception as error:
+                emit("task_failed", kind=kind, **failure_attributes(error))
+                raise
+            else:
+                # Return can mean completed or paused; the durable job remains authoritative.
+                emit(
+                    "task_finished", kind=kind, duration_ms=int((time.monotonic() - started) * 1000)
+                )
+
+    async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
         while True:
             item = await queue.get()
             if item is None:
@@ -269,13 +292,15 @@ class LocalRuntime:
                 if not self.accepting:
                     await asyncio.to_thread(self._interrupt, run_id, "Desktop is shutting down.")
                     continue
-                task = asyncio.create_task(
-                    getattr(tasks, name)({"backend": self.context}, **values)
-                )
+                task = asyncio.create_task(self._run_observed(name, values, run_id))
                 self._active[run_id] = task
                 try:
                     await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
                 except asyncio.TimeoutError:
+                    with scope(
+                        self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id
+                    ):
+                        emit("task_timeout", kind=name.removeprefix("run_"), category="timeout")
                     self._cancel(task)
                     await asyncio.gather(task, return_exceptions=True)
                 except asyncio.CancelledError:

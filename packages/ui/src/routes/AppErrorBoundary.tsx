@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { ErrorFallback } from "./RouteGate";
+import { platform } from "@/platform";
 
 /**
  * Root-level safety net for failures outside the route content (providers,
@@ -10,6 +11,9 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, { faile
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+  componentDidCatch() {
+    platform().capabilities.diagnostics?.reportRenderFailure();
   }
   render() {
     return this.state.failed ? <ErrorFallback fullScreen /> : this.props.children;

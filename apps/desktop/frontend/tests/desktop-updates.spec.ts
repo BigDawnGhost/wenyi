@@ -62,6 +62,7 @@ async function setup(
       __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },
       __TAURI_INTERNALS__: {
         invoke: async (command: string) => {
+          if (!command.startsWith("desktop_update_")) return null;
           (window as unknown as { __UPDATE_COMMANDS__: string[] }).__UPDATE_COMMANDS__.push(command);
           if (command === "desktop_update_status") return { ...status };
           if (command === "desktop_update_check") status.phase = "available";
