@@ -223,6 +223,12 @@ translations, gender, notes, and aliases, plus readings for Japanese-source proj
 terms, translations, aliases, readings, and notes, ignoring case and surrounding query
 whitespace. Type filters also apply to search results.
 
+In Web and Desktop, the glossary table, type filter, and add/edit dialogs localize all
+11 built-in types: person, place, organization, term, technique, item, setting,
+appellation, honorific, speech habit, and fixed expression. Labels follow the interface
+language; stored and exported type IDs remain English. Custom types keep their original
+labels in the table.
+
 The Web and Desktop glossary tables load 100 terms per page, ordered by the original
 source's Unicode code points (not locale or phonetic order). Search, type filters and
 pagination share the top toolbar, wrapping on narrow screens; no pager is repeated

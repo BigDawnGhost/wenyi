@@ -165,6 +165,11 @@ const en = {
   "export.retentionHelp":
     "Only the latest 5 exports are kept. Save files elsewhere to keep them.",
   "glossary.person": "Person",
+  "glossary.place": "Place",
+  "glossary.organization": "Organization",
+  "glossary.technique": "Technique",
+  "glossary.item": "Item",
+  "glossary.setting": "Setting",
   "glossary.appellation": "Appellation",
   "glossary.honorific": "Honorific",
   "glossary.speechHabit": "Speech habit",
