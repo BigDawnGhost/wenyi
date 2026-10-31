@@ -252,6 +252,24 @@ installed enabled plugin starts automatically; interrupted installation requires
 Retry. Disabling retains packages, models, and PDF sessions. Finish project jobs
 before disabling; application update installation also waits for plugin setup.
 
+For an installed plugin, choose **Check for plugin updates**, then **Update plugin**
+and confirm the available version. Checks and upgrades are manual: restarting
+Desktop, disabling/re-enabling the plugin, or publishing a new bridge release does
+not upgrade an existing installation. Stable versions are compared numerically;
+an equal or older release is never offered as an upgrade.
+
+The current service remains usable while the new runtime and assets download
+and unpack into a separate installation. Switching requires all project jobs,
+native exports, and saves to be idle; otherwise the old version stays selected
+and the verified downloads can be reused on retry. The selected version changes
+only after the new service reports readiness and passes its health check.
+**Cancel update** or an installation/startup failure retains the previous version
+and restarts it if necessary. A disabled plugin stays disabled after updating.
+If the previous runtime cannot restart, Settings reports that failure rather
+than claiming it is ready. Old installations and project/session data are not
+deleted. Frozen sessions are not automatically migrated: re-parse affected PDFs
+when a bridge update changes extraction or session compatibility.
+
 Plugin files live under the independent Desktop workspace's `plugins/babeldoc/`:
 `plugin.json` records enablement and the selected installation, `downloads/`
 contains verified archives, `installed/` contains complete runtime/cache pairs,
@@ -267,8 +285,8 @@ bridge repository, downloads version-bound HTTPS asset URLs, checks sizes and
 SHA-256 hashes, rejects archive links/path traversal, and activates only complete
 installations. This trusts the official GitHub release over HTTPS; it is **not**
 the signed whole-application updater described below. There is no arbitrary
-plugin URL or marketplace. Installed plugin versions stay pinned to preserve
-BabelDOC session compatibility; this first integration does not auto-upgrade them.
+plugin URL or marketplace. Installed plugin versions stay pinned until the user
+explicitly confirms a manual upgrade.
 
 The bridge release must first publish `desktop-plugin.json`, the platform runtime
 ZIPs, and the model/font ZIP using its **Desktop plugin** workflow. Until these
