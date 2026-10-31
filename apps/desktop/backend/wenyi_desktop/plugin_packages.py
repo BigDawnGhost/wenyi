@@ -127,6 +127,8 @@ def unpack(archive: Path, destination: Path) -> None:
             mode = item.external_attr >> 16
             if (
                 not name
+                # ZIP normalizes backslashes on Windows and truncates NUL bytes.
+                or item.orig_filename != item.filename
                 or path.is_absolute()
                 or str(path) != name
                 or any(

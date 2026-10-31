@@ -30,7 +30,10 @@ def archive(files):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as bundle:
         for name, value in files.items():
-            bundle.writestr(name, value)
+            item = zipfile.ZipInfo(name)
+            # Preserve malformed names verbatim instead of sanitizing the fixture.
+            item.filename = name
+            bundle.writestr(item, value)
     return output.getvalue()
 
 
@@ -140,11 +143,13 @@ def test_plugin_process_connection_is_private_and_restarts_without_changing_save
 
 
 @pytest.mark.parametrize(
-    "name", ["../evil", "/absolute", "C:/evil", "a\\evil", "a/../evil", "a//b", "a. /b"]
+    "name", ["../evil", "/absolute", "C:/evil", "a\\evil", "a/../evil", "a//b", "a. /b", "a\0evil"]
 )
 def test_archive_rejects_unsafe_paths(tmp_path, name):
     path = tmp_path / "bad.zip"
     path.write_bytes(archive({name: b"untrusted"}))
+    with zipfile.ZipFile(path) as bundle:
+        assert bundle.infolist()[0].orig_filename == name
     with pytest.raises(ValueError, match="Unsafe"):
         packages.unpack(path, tmp_path / "stage")
     assert not (tmp_path.parent / "evil").exists()
