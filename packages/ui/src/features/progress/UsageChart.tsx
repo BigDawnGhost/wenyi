@@ -31,11 +31,15 @@ function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
       value: parts.cachedInput,
       color: "bg-sky-300",
     },
-    {
-      label: "accounting.writtenInput",
-      value: parts.writtenInput,
-      color: "bg-amber-500",
-    },
+    ...(parts.writtenInput !== 0
+      ? [
+          {
+            label: "accounting.writtenInput" as const,
+            value: parts.writtenInput,
+            color: "bg-amber-500",
+          },
+        ]
+      : []),
     {
       label: "accounting.uncachedInput",
       value: parts.uncachedInput,

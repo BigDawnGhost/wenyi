@@ -52,7 +52,9 @@ Start translation from the project page. Wenyi parses the source, prepares whole
 The shared usage display separates cache reads, writes, ordinary input and unknown
 classification. **Cache read / all input** includes unknown input in its denominator;
 historical misses are not reclassified as ordinary input. Available write TTL subtotals
-are shown separately. See [usage accounting](cli.md#usage-and-event-logs) for details.
+are shown separately. The cache-write input entry is hidden when its count is zero;
+nonzero counts and unknown values (`—`) remain visible.
+See [usage accounting](cli.md#usage-and-event-logs) for details.
 
 ### 4. Proofread and save
 

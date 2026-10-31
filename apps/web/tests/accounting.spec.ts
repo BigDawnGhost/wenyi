@@ -132,6 +132,44 @@ test("merged model rows preserve known cache subtotals but not incomplete input 
   expect(cacheRate(rows[0].slot)).toBeUndefined();
 });
 
+test("zero cache writes stay hidden across usage groups without hiding other zero counters", async ({
+  page,
+}) => {
+  const slot = {
+    calls: 1,
+    prompt_tokens: 100,
+    completion_tokens: 0,
+    total_tokens: 100,
+    ...cacheFields(0, 100),
+  };
+  await fakeApi(page, {
+    [`/projects/${pid}/stats`]: {
+      usage: {
+        schema_version: 3,
+        totals: slot,
+        by_stage: { "translation.body": slot },
+        by_model: { "model-a": slot },
+        by_provider: { "provider-a": slot },
+      },
+    },
+  });
+  await page.goto(`/projects/${pid}`);
+  const accounting = page.getByRole("region", {
+    name: "Total usage & run time",
+  });
+  for (const group of ["By stage", "By model", "By provider"]) {
+    await accounting.getByRole("button", { name: group, exact: true }).click();
+    const row = accounting.getByRole("list", { name: group, exact: true });
+    await expect(row).toContainText("100 tokens");
+    await expect(row).toContainText("Cache read input: 0");
+    await expect(row).toContainText("Ordinary input: 100");
+    await expect(row).toContainText("Output tokens: 0");
+    await expect(row).not.toContainText("Cache write input");
+  }
+  await expect(accounting.locator("dl")).toContainText("100");
+  await expect(accounting.locator("dl")).toContainText("0%");
+});
+
 test("model usage combines configuration identities with the same provider and model name", async ({
   page,
 }) => {
@@ -328,6 +366,9 @@ test("Chinese accounting fits narrow screens with long provider names and locali
   await expect(page.getByRole("list", { name: "按步骤" })).toContainText(
     "输入 Token（普通输入）: 1,800",
   );
+  await expect(page.getByRole("list", { name: "按步骤" })).not.toContainText(
+    "输入 Token（缓存写入）",
+  );
   await expect(page.getByRole("list", { name: "按步骤" })).toContainText(
     "缓存读取 / 全部输入: 67.9%",
   );
@@ -429,6 +470,7 @@ test("unknown cache usage remains distinct from uncached input", async ({
   const row = page.getByRole("list", { name: "By model", exact: true });
   await page.getByRole("button", { name: "By model", exact: true }).click();
   await expect(row).toContainText("Cache read input: 200");
+  await expect(row).toContainText("Cache write input: —");
   await expect(row).toContainText("Ordinary input: —");
   await expect(row).toContainText("Input with unknown cache status: 800");
   // Legacy misses remain unknown; all input stays in the denominator.
