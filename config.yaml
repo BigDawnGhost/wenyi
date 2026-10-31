@@ -59,8 +59,9 @@ paths:
 # ── Output ───────────────────────────────────────────────────────────────────
 output:
   mono: true # Monolingual output in language.target
-  bilingual: false # Bilingual output with visually muted source text
+  bilingual: false # Bilingual output with source and translation
   bilingual_order: target_first # target_first=translation first; source_first=source first
-  bilingual_preserve_source_style: false # true=preserve original source styling; false=render source in muted gray
+  # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
+  bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
   punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state

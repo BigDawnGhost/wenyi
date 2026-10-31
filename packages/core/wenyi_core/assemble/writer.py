@@ -53,8 +53,9 @@ def assemble(
     prefers source templates and otherwise rebuilds chapters. PDF is only available through
     BabelDOC layout-preserving fillback. DOCX reconstructs headings, paragraphs and tables.
     With bilingual=True, include source text in the requested order. preserve_source_style
-    reuses original styles instead of muted CSS. about_page appends the translation about
-    page. punctuation_normalize changes only export copies, never chapter target state.
+    reuses original styles instead of muted CSS in EPUB/HTML or plain source text in DOCX.
+    about_page appends the translation about page. punctuation_normalize changes only export
+    copies, never chapter target state.
     """
     if out_format is not None and out_format not in _OUT_EXT:
         supported = " / ".join(_OUT_EXT)
@@ -132,7 +133,13 @@ def assemble(
             source_path, "docx", "", bilingual=bilingual, target_lang=target_lang
         )
         _ensure_parent_dir(out_path)
-        return _assemble_docx(view, out_path, bilingual=bilingual, order=order)
+        return _assemble_docx(
+            view,
+            out_path,
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+        )
     out_path = out_path or _default_out(
         source_path, "epub", "", bilingual=bilingual, target_lang=target_lang
     )
