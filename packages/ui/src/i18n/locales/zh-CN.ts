@@ -189,6 +189,7 @@ const zhCN = {
   "glossary.translatedTerm": "译词",
   "glossary.reading": "读音",
   "glossary.editTerm": "编辑术语",
+  "glossary.termDetails": "术语详情",
   "glossary.deleteTerm": "删除术语",
   "glossary.noTermsYetTermsAreExtractedDuring":
     "暂无术语",

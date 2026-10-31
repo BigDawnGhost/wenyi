@@ -8,7 +8,7 @@ import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
+import { Select, SelectDismissScope, SelectItem } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
@@ -17,6 +17,7 @@ import {
   Plus,
   Trash2,
   Pencil,
+  Eye,
   Download,
   Upload,
   ChevronDown,
@@ -468,11 +469,12 @@ export default function GlossaryPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          disabled={busy}
-                          aria-label={tr("glossary.editTerm")}
+                          aria-label={tr(busy ? "glossary.termDetails" : "glossary.editTerm")}
                           onClick={() => setEditTerm(t)}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          {busy
+                            ? <Eye className="h-3.5 w-3.5" />
+                            : <Pencil className="h-3.5 w-3.5" />}
                         </Button>
                         <Button
                           variant="ghost"
@@ -555,6 +557,19 @@ export default function GlossaryPage() {
           </Card>
         )}
 
+        <SelectDismissScope dismissKey={busy ? "read-only" : "editable"}>
+          <TermDetailsDialog
+            pid={pid}
+            term={editTerm}
+            showReading={showReading}
+            readOnly={busy}
+            onClose={() => setEditTerm(null)}
+            onSaved={() => {
+              invalidate();
+              setEditTerm(null);
+            }}
+          />
+        </SelectDismissScope>
         {!busy && (
           <>
             <AddTermDialog
@@ -565,16 +580,6 @@ export default function GlossaryPage() {
               onSaved={() => {
                 invalidate();
                 setAddOpen(false);
-              }}
-            />
-            <EditTermDialog
-              pid={pid}
-              term={editTerm}
-              showReading={showReading}
-              onClose={() => setEditTerm(null)}
-              onSaved={() => {
-                invalidate();
-                setEditTerm(null);
               }}
             />
             <ImportDialog
@@ -702,17 +707,19 @@ function AddTermDialog({
   );
 }
 
-// ── Edit Term Dialog ────────────────────────────────────────────────────
-function EditTermDialog({
+// ── Term Details Dialog ─────────────────────────────────────────────────
+function TermDetailsDialog({
   pid,
   term,
   showReading,
+  readOnly,
   onClose,
   onSaved,
 }: {
   pid: string;
   term: Term | null;
   showReading: boolean;
+  readOnly: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -768,7 +775,12 @@ function EditTermDialog({
   if (!term) return null;
 
   return (
-    <Dialog open={!!term} onClose={onClose} title={tr("glossary.editTerm")}>
+    <Dialog
+      open={!!term}
+      onClose={onClose}
+      title={tr(readOnly ? "glossary.termDetails" : "glossary.editTerm")}
+    >
+      {readOnly && <ReadOnlyNotice className="mb-3" />}
       {m.error && (
         <p role="alert" className="mb-3 text-sm text-destructive">
           {tr("glossary.couldNotUpdateTerm", { error: m.error.message })}
@@ -779,6 +791,7 @@ function EditTermDialog({
           <Label>{tr("glossary.requiredSourceTerm")}</Label>
           <Input
             value={form.source}
+            readOnly={readOnly}
             onChange={(e) => setForm({ ...form, source: e.target.value })}
           />
         </div>
@@ -786,6 +799,7 @@ function EditTermDialog({
           <Label>{tr("glossary.requiredTranslatedTerm")}</Label>
           <Input
             value={form.target}
+            readOnly={readOnly}
             onChange={(e) => setForm({ ...form, target: e.target.value })}
           />
         </div>
@@ -796,6 +810,7 @@ function EditTermDialog({
               <Input
                 aria-label={tr("glossary.reading")}
                 value={form.reading}
+                readOnly={readOnly}
                 onChange={(e) => setForm({ ...form, reading: e.target.value })}
               />
             </div>
@@ -805,6 +820,7 @@ function EditTermDialog({
             <Select
               value={form.type}
               aria-label={tr("common.type")}
+              disabled={readOnly}
               onValueChange={(value) => setForm({ ...form, type: value })}
             >
               {Object.entries(termTypes()).map(([id, label]) => (
@@ -821,6 +837,7 @@ function EditTermDialog({
             <Select
               value={form.gender}
               aria-label={tr("common.gender")}
+              disabled={readOnly}
               onValueChange={(value) => setForm({ ...form, gender: value })}
             >
               <SelectItem value="">{tr("glossary.unspecified")}</SelectItem>
@@ -835,6 +852,7 @@ function EditTermDialog({
           <Label>{tr("glossary.aliasesCommaSeparated")}</Label>
           <Input
             value={form.aliases}
+            readOnly={readOnly}
             onChange={(e) => setForm({ ...form, aliases: e.target.value })}
             placeholder={tr("glossary.aliasPlaceholder")}
           />
@@ -843,20 +861,23 @@ function EditTermDialog({
           <Label>{tr("glossary.notes")}</Label>
           <Textarea
             value={form.note}
+            readOnly={readOnly}
             onChange={(e) => setForm({ ...form, note: e.target.value })}
           />
         </div>
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button variant="outline" onClick={onClose}>
-          {tr("common.cancel")}
+          {tr(readOnly ? "common.close" : "common.cancel")}
         </Button>
-        <Button
-          onClick={() => m.mutate()}
-          disabled={!form.source || !form.target || m.isPending}
-        >
-          {tr("common.save")}
-        </Button>
+        {!readOnly && (
+          <Button
+            onClick={() => m.mutate()}
+            disabled={!form.source || !form.target || m.isPending}
+          >
+            {tr("common.save")}
+          </Button>
+        )}
       </div>
     </Dialog>
   );

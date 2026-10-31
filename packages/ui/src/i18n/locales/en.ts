@@ -195,6 +195,7 @@ const en = {
   "glossary.translatedTerm": "Translated term",
   "glossary.reading": "Reading",
   "glossary.editTerm": "Edit term",
+  "glossary.termDetails": "Term details",
   "glossary.deleteTerm": "Delete term",
   "glossary.noTermsYetTermsAreExtractedDuring":
     "No terms yet",
