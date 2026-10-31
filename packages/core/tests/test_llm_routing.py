@@ -1,5 +1,6 @@
 """Offline contracts for registered operations and immutable model routing."""
 
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -8,6 +9,7 @@ from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.limits import RequestCancelled, RequestLimits, RequestStopped
 from wenyi_core.llm.operations import OperationSpec, register_operations
 from wenyi_core.llm.providers.fake import FakeProvider
+from wenyi_core.llm.registry import PROVIDERS
 from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import inference_snapshot, resolve_routes
 from wenyi_core.llm.usage import UsageSample
@@ -285,7 +287,7 @@ def test_dynamic_output_hint_respects_explicit_profile_cap(monkeypatch):
     assert client.routes["annotation.align"].max_output_tokens == 256
     assert requested == [256]
     config = Config.from_dict({"llm": {"preset": "deepseek"}})
-    assert resolve_routes(config.llm)["synopsis.chapter"].max_output_tokens == 8192
+    assert resolve_routes(config.llm)["synopsis.chapter"].max_output_tokens is None
     with pytest.raises(ValueError, match="Thinking mode"):
         Config.from_dict(
             {
@@ -304,7 +306,7 @@ def test_dynamic_output_hint_respects_explicit_profile_cap(monkeypatch):
 
 
 @pytest.mark.parametrize("thinking", [False, True])
-def test_summary_headroom_is_effective_and_explicit_profile_limits_are_respected(thinking):
+def test_summary_uses_provider_defaults_and_respects_explicit_profile_limits(thinking):
     config = Config.from_dict(
         {
             "llm": {
@@ -320,12 +322,62 @@ def test_summary_headroom_is_effective_and_explicit_profile_limits_are_respected
         }
     )
     for operation in ("synopsis.chapter", "synopsis.book"):
-        assert resolve_routes(config.llm)[operation].max_output_tokens == 8192
+        assert resolve_routes(config.llm)[operation].max_output_tokens is None
     raw = config.llm.model_dump()
     raw["models"]["default_fast"]["max_output_tokens"] = 4096
     limited = LLMConfig.model_validate(raw)
     for operation in ("synopsis.chapter", "synopsis.book"):
         assert resolve_routes(limited)[operation].max_output_tokens == 4096
+
+
+@pytest.mark.parametrize("kind", sorted(set(PROVIDERS) - {"fake"}))
+@pytest.mark.parametrize("explicit", [None, 16384])
+def test_workflow_wire_limits_match_profile_or_provider_defaults(kind, explicit):
+    config = LLMConfig.model_validate(
+        {
+            "providers": {"remote": {"kind": kind, "base_url": "https://offline.invalid"}},
+            "models": {
+                "shared": {
+                    "provider": "remote",
+                    "model": "test-model",
+                    "max_output_tokens": explicit,
+                }
+            },
+            "tiers": {"strong": "shared", "cheap": "shared", "fast": "shared"},
+        }
+    )
+    client = RoutedLLMClient(config)
+    assert all(route.max_output_tokens == explicit for route in client.routes.values())
+    requests = []
+    events = []
+    client.set_event_sink(lambda event, **data: events.append(data))
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"), finish_reason="stop")],
+            text="ok",
+            candidates=[SimpleNamespace(finish_reason="STOP")],
+        )
+
+    client.adapter("remote")._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=request)),
+        models=SimpleNamespace(generate_content=request),
+    )
+    for operation in ("synopsis.chapter", "synopsis.book", "annotation.align"):
+        assert client.complete([{"role": "user", "content": "source"}], operation=operation) == "ok"
+    assert len(requests) == 3
+    for kwargs in requests:
+        payload = kwargs["config"] if kind == "gemini" else kwargs
+        key = {"gemini": "max_output_tokens", "openai": "max_completion_tokens"}.get(
+            kind, "max_tokens"
+        )
+        if explicit is None:
+            assert not {"max_tokens", "max_completion_tokens", "max_output_tokens"} & payload.keys()
+        else:
+            assert payload[key] == explicit
+    assert events
+    assert all(event["max_output_tokens"] == explicit for event in events)
 
 
 def test_retry_releases_permit_and_records_every_returned_usage(monkeypatch):

@@ -44,7 +44,7 @@ def test_precision_reuses_standard_translation_and_polish_routes_without_output_
     for operation in body_operations:
         assert OPERATIONS[operation].tier == "strong"
         assert OPERATIONS[operation].protocol_version == 2
-        assert OPERATIONS[operation].output_tokens is None
+        assert routes[operation].max_output_tokens is None
         assert routes[operation].tier == "strong"
 
 

@@ -38,7 +38,7 @@ class Synopsizer(Agent):
     def _digest(self, source: str) -> str:
         system = self.render("chapter_digest_system", src=self.src, tgt=self.tgt)
         user = self.render("chapter_digest_user", src=self.src, tgt=self.tgt, source=source)
-        # Use the fast tier with output headroom above the language-specific digest budget.
+        # Use the fast tier without overriding its configured or provider-default output limit.
         return self._ask_text(system, user, operation="synopsis.chapter").strip()
 
     def _merge_digests(self, digests: list[str]) -> str:
