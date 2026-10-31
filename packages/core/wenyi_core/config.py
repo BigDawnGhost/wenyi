@@ -49,7 +49,8 @@ pipeline:
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
   translation_mode: standard # standard | best_of_three; best_of_three requires polish
   rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
-  book_understanding: true # Prescan the source for a whole-book synopsis and chapter digests used during translation
+  terminology_context: false # CLI-only experimental whole-book terminology evidence
+  book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   annotation_alignment: true # Align EPUB annotation links per paragraph; if disabled, target links fall back to paragraph ends
   annotation_alignment_concurrency: 4 # Maximum concurrent alignment requests when a paragraph has multiple annotations
@@ -123,6 +124,8 @@ class PipelineConfig(BaseModel):
         True  # Polish the full translation with the strong tier by default; disable to save cost
     )
     rolling_context_segments: int = 6
+    # Experimental evidence production requires the CLI prepare/translate entrypoint.
+    terminology_context: bool = False
     # Prescan for a synopsis and chapter digests; disable to save prescan cost.
     book_understanding: bool = True
     prescan_concurrency: int = (
@@ -229,23 +232,36 @@ class Config(BaseModel):
             order=self.output.bilingual_order,
             preserve_source_style=self.output.bilingual_preserve_source_style,
             about_page=self.output.about_page,
+            terminology_context=self.pipeline.terminology_context,
         )
         return resolve_policy(context)
 
     def _policy_tasks(self, phase: Phase, path: str) -> tuple[str, ...]:
         if path == "srt":
             return ("srt_batch", "srt_single")
+        terminology = (
+            ("terminology_discover", "terminology_evidence", "terminology_merge")
+            if self.pipeline.terminology_context
+            else ()
+        )
         if phase == "analysis":
             return (
                 ("analyzer", "chapter_digest", "book_synopsis")
                 if self.pipeline.book_understanding
                 else ("analyzer",)
-            )
+            ) + terminology
         if phase == "translation":
             if self.pipeline.translation_mode == "best_of_three":
-                return ("precision", "title_translator", "glossary_extractor", "glossary_history")
-            return ("translator", "title_translator", "glossary_extractor", "glossary_history") + (
-                ("polisher",) if self.pipeline.polish else ()
+                return (
+                    "precision",
+                    "title_translator",
+                    "glossary_extractor",
+                    "glossary_history",
+                ) + terminology
+            return (
+                ("translator", "title_translator", "glossary_extractor", "glossary_history")
+                + (("polisher",) if self.pipeline.polish else ())
+                + terminology
             )
         if phase == "review":
             groups = ["reviewer"]

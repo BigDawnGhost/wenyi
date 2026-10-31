@@ -49,9 +49,16 @@ Once parsing finishes, **Read contents & source** opens the chapter list and ori
 
 Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
 
+The shared usage display separates cache reads, writes, ordinary input and unknown
+classification. **Cache read / all input** includes unknown input in its denominator;
+historical misses are not reclassified as ordinary input. Available write TTL subtotals
+are shown separately. See [usage accounting](cli.md#usage-and-event-logs) for details.
+
 ### 4. Proofread and save
 
 Compare the translation with the source, edit paragraphs, inspect revisions, and review reported issues. Review can publish fixes to the translation; disable automatic fixes when you want a read-only review. Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
+
+Completed and paused projects do not periodically poll their pages, including chapters, glossary and revision history. When a task stops, the interface reads its final saved data; starting/resuming a task restarts active polling. Saving edits and restoring a hidden window still reconcile data without discarding drafts. Large chapters retain native find, cross-paragraph selection and deep links, with one shared paragraph menu and chapter review notes mounted only on first expansion.
 
 Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
 
@@ -512,6 +519,6 @@ If the window still fails, try this diagnostic for one launch rather than settin
 WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm desktop
 ```
 
-The NVIDIA/KDE Wayland `Gdk Error 71` was reproduced with a native GTK/WebKit probe and avoided by the targeted explicit-sync setting. This confirms that compatibility case, not universal GPU performance. Interface performance measurements are documented separately from correctness tests.
+The NVIDIA/KDE Wayland `Gdk Error 71` was reproduced with a native GTK/WebKit probe and avoided by the targeted explicit-sync setting. This confirms that compatibility case, not universal GPU performance. [Interface performance measurements](../apps/web/tests/proofreading-performance.md) distinguish Chromium checks from native Tauri/WebKitGTK observations, including remaining large-chapter stalls.
 
 The Rust backend rewrite remains paused. Desktop uses the existing Python engine behind the shared backend interfaces; Rust owns only native application capabilities and process lifecycle.

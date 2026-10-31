@@ -55,7 +55,13 @@ class PrecisionAgent(Agent):
                 {
                     "style": inputs.style,
                     "book_synopsis": inputs.book_synopsis,
-                    "glossary": prompts.render_glossary(list(inputs.terms), source_lang=self.src),
+                    "glossary": prompts.render_glossary(
+                        list(inputs.terms),
+                        source_lang=self.src,
+                        note_source="\n".join(inputs.sources)
+                        if self.config.pipeline.terminology_context
+                        else None,
+                    ),
                     "chapter_digest": inputs.chapter_digest,
                     "context": inputs.context,
                     "sources": inputs.sources,

@@ -50,12 +50,18 @@ class Reviewer(Agent):
         """Return issues with recovery metadata; leave service exceptions to the caller."""
         if not sources:
             return ReviewResult([])
-        system = self.render("reviewer_system", src=self.src, tgt=self.tgt, n=len(sources))
+        system = self.render("reviewer_system", src=self.src, tgt=self.tgt)
         user = self.render(
             "reviewer_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or [], source_lang=self.src),
+            glossary=prompts.render_glossary(
+                glossary_terms or [],
+                source_lang=self.src,
+                note_source="\n".join(sources)
+                if self.config.pipeline.terminology_context
+                else None,
+            ),
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )

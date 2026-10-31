@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { useI18n } from "@/i18n";
 import { statusLabel } from "@/i18n/status";
 import { api, isProjectBusy } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { useProjectProgress } from "@/lib/ws";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -24,32 +25,28 @@ function ReviewWorkbench({ pid }: { pid: string }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string>();
-  const project = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const project = useProjectQuery(pid);
+  const busy = isProjectBusy(project.data?.status);
   const subtitle = project.data?.fmt === "srt";
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
     enabled: !subtitle,
-    refetchInterval: 4000,
+    refetchInterval: busy ? 4000 : false,
   });
   const runs = useQuery({
     queryKey: ["review-runs", pid],
     queryFn: () => api.listReviewRuns(pid),
     enabled: !subtitle,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   const rid = selected || runs.data?.[0]?.id;
   const historical = !!selected && selected !== runs.data?.[0]?.id;
-  const busy = isProjectBusy(project.data?.status);
   const workflow = useQuery({
     queryKey: ["workflow", pid],
     queryFn: () => api.getWorkflow(pid),
     enabled: !subtitle,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   const { msg } = useProjectProgress(subtitle ? undefined : pid);
   const run = useQuery({
@@ -58,11 +55,6 @@ function ReviewWorkbench({ pid }: { pid: string }) {
     enabled: !!rid && !subtitle,
     refetchInterval: !historical && busy ? 3000 : false,
   });
-  useEffect(() => {
-    // A terminal status can arrive through polling while the socket is disconnected.
-    if (!busy && rid && !historical)
-      qc.invalidateQueries({ queryKey: ["review-run", pid, rid] });
-  }, [busy, historical, pid, qc, rid]);
   const progress = reviewProgress(pid, workflow.data, msg);
   const job = workflow.data;
   const active = job?.status === "running" || job?.status === "queued";

@@ -32,6 +32,8 @@ separate release versions.
 
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
+API keys are read only from environment variables. Supply them in your local process environment, or load them into that environment from a private key file outside the shared workspace/session. Do not put real keys in configuration, shared files, or conversations. The CLI does not automatically load a repository-root `.env` file. Key values in examples are placeholders, not credentials.
+
 ## Inspect model routing
 
 ```bash
@@ -260,6 +262,34 @@ There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives i
 
 Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
 
+Cache accounting separates reads (`cache_hit_tokens`), writes (`cache_write_tokens`),
+ordinary input (`uncached_tokens`), and unclassified input (`cache_unknown_tokens`).
+These four buckets sum to `prompt_tokens`. The displayed rate and `cache_hit_rate`
+use **reported reads / all input**, including unknown input in the denominator;
+no available read counter or no input means an unknown rate, not 0%.
+CLI summaries show the unknown token count. These are provider usage counters,
+not a cost estimate or proof of physical cache storage.
+
+Ledger schema 3 also preserves reported 5m/1h write subtotals and additive
+`*_reported_calls` counts, distinguishing an unavailable field from an explicit zero.
+Known subtotals may cover only some calls; TTL buckets are subsets of writes, not
+additional input tokens. Native OpenAI, DeepSeek and Gemini use their adapter's
+usage contract. Generic Chat Completions endpoints use inclusive `prompt_tokens`,
+`prompt_tokens_details.cached_tokens`, and, when supplied,
+`prompt_tokens_details.cache_write_tokens` or `cache_creation_input_tokens`;
+`cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens` supply TTL
+details. Without enough counters to infer ordinary input, the remainder stays
+unknown. Native APIs with separate input/read/write totals must be normalized by
+their own adapter, not passed through the inclusive Chat Completions normalizer.
+
+Schema-2 ledgers are upgraded in memory and persisted on the next normal usage
+write, preserving attribution and total tokens. Historical `cache_miss_tokens`
+remains available as a compatibility counter but is **not** retrospectively split
+into writes and ordinary input; its amount belongs to the unknown classification.
+Historical zero reads do not prove an explicitly reported zero, so their rate is
+unknown unless new calls provide a read counter.
+Older pre-routing ledgers still require `wenyi models migrate-usage RUN_DIR`.
+
 The progress-bar clock measures the entire current workflow, including parsing, model
 waits, translation, polishing, review and export. Switching stages, chapters or review
 rounds does not reset it; completing one stage does not stop it while subsequent work
@@ -311,6 +341,8 @@ Use `prepare` or `translate` afterward with the same source and configuration. M
 
 `prepare` parses the book, detects its language, generates chapter digests when enabled, builds style and character-voice guidance, and then generates the whole-book synopsis when enabled, without translating any body text or extracting glossary entries. Glossary extraction starts from completed source-and-target pairs during translation. Existing project terms are preserved on resume. Run `translate` with the same source file to continue from the saved state.
 
+With `book_understanding` enabled, ordinary translation and person-evidence mode share the same preparation: full-source chapter digests, style analysis using original samples plus digests, and a synopsis retaining original identities with relevant existing glossary mappings. Long chapters need more initial prescan calls than the former first-8,000-character sample; valid preparation caches are reused across retries and evidence-mode switches. See [preparation and cache behavior](pipeline.md).
+
 ## Best-of-three precision translation
 
 Select **Three-draft precision** when creating a Web book project. The choice is
@@ -334,6 +366,33 @@ The final synthesis is structurally validated, not independently accuracy-judged
 In comparisons, `target_before_polish` is the first initial draft, not a selected
 accurate draft. Quality improvement is not guaranteed.
 
+### Enable whole-book terminology evidence
+
+This CLI-only experimental feature defaults to `false`. Merge this fragment into your configuration, retaining existing model settings:
+
+```yaml
+language:
+  source: en
+  target: zh
+pipeline:
+  terminology_context: true
+```
+
+```bash
+uv run wenyi --config config.yaml models explain --operation terminology.evidence
+uv run wenyi --config config.yaml models check --for translate
+uv run wenyi --config config.yaml prepare book.epub
+uv run wenyi --config config.yaml translate book.epub
+```
+
+`terminology_context` checks only person entries (`type: person`) discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. Pretranslation discovery is person-only; other types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. It keeps the full glossary mappings, preserves existing person translations and protected manual fields, and records differing translations as conflicts. Existing notes are not deleted. `prepare` analyzes style and character voices but does not extract or seed glossary entries; evidence work begins with pending translation batches.
+
+Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review, assemble and report may consume existing notes without generating evidence. SRT does not use this path.
+
+The glossary still stores one source identity and one main target per term. Whole-book notes can explain context and uncertainty, but there is no real sense model or per-occurrence target selection. Notes are source-grounded, supplementary and read-only, not permission to add future plot details or overwrite the authoritative target. Model adherence to these constraints is not guaranteed.
+
+The `terminology.discover`, `terminology.evidence`, and `terminology.merge` operations default to `strong`. Expect additional context, calls, and first-batch latency. FakeClient tests are not quality evidence; public-domain long-book before/after evaluation with real models remains pending. See [pipeline details](pipeline.md#optional-whole-book-terminology-evidence).
+
 ## Interrupting and resuming
 
 Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:
@@ -351,6 +410,8 @@ Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
 Language policies are built into the source code. When they change or saved state lacks a policy identity, `prepare`/`translate` automatically rebuilds affected analysis before pending work resumes; this may call models. Completed translations remain saved. Font and other export-only changes need a fresh export only. See [built-in language policies](configuration.md#built-in-language-policies) for book/SRT behavior and developer diagnostics.
+
+Chapter digests now cover the complete source in chunks. Their v2 source-hash and policy identity invalidates older caches, so the first resume after upgrading may regenerate analysis. Digests retain source-language character identities; translated names come from the current glossary. With terminology evidence enabled, retry reuses cached discoveries and successful evidence groups after a failure, completes missing admission work, and keeps already translated body text. No partial group result is published as complete knowledge.
 
 ## Independent stages and glossary management
 

@@ -28,6 +28,8 @@ CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包
 
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
+API Key 只从环境变量读取。请在本机进程环境中设置，或从共享工作区／会话之外的私有密钥文件加载到环境；不要把真实密钥写入配置、共享文件或对话。CLI 不会自动加载仓库根目录的 `.env` 文件。下方密钥值均为占位符，不是真实凭据。
+
 ## 检查模型路由
 
 ```bash
@@ -245,6 +247,29 @@ state/srt/<slug>/targets/<目标语言>/
 
 每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
 
+缓存统计分别记录读取（`cache_hit_tokens`）、写入（`cache_write_tokens`）、
+普通输入（`uncached_tokens`）和分类未知输入（`cache_unknown_tokens`），四类之和为
+`prompt_tokens`。显示比例与 `cache_hit_rate` 统一使用**已报告读取 / 全部输入**，
+分母包含未知输入；没有可用读取计数或没有输入时，比例为未知而不是 0%。
+CLI 摘要同时显示未知 Token 数。这些是 provider 返回的用量计数，不是费用估算，
+也不是物理缓存存储的直接证据。
+
+账本 schema 3 还保留已报告的 5m/1h 写入小计，以及可累加的 `*_reported_calls`
+次数，区分字段不可用与明确为零。已知小计可能只覆盖部分调用；TTL 分类是写入的子集，
+不额外计入输入总量。原生 OpenAI、DeepSeek、Gemini 按各自适配器的用量契约归一化。
+通用 Chat Completions 接口使用包含缓存部分的 `prompt_tokens`、
+`prompt_tokens_details.cached_tokens`，以及实际返回的
+`prompt_tokens_details.cache_write_tokens` 或 `cache_creation_input_tokens`；
+TTL 明细来自 `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`。
+计数不足以推导普通输入时，剩余部分保留为未知。普通输入、读取、写入分别计数的原生
+API 必须由自身适配器归一化，不能套用 Chat Completions 的包含式总量算法。
+
+schema-2 账本在内存中兼容升级，下一次正常保存用量时持久化，保留归属和 Token 总量。
+历史 `cache_miss_tokens` 作为兼容计数保留，但**不会**事后猜分为写入和普通输入，
+这部分属于分类未知。历史读取为零不能证明 provider 明确上报了零，因此在新调用提供
+读取计数之前，其比例为未知。更早的路由归属升级前账本仍需执行
+`wenyi models migrate-usage RUN_DIR`。
+
 进度条时钟显示本次工作流的总用时，覆盖解析、等待模型响应、翻译、润色、审校和导出。
 切换阶段、章节或审校轮次不会归零；一个阶段完成后，如果后续工作仍在进行，时钟仍继续走动。
 并发模型请求按实际经过时间计时，不累加各请求的耗时。
@@ -291,6 +316,8 @@ uv run wenyi translate book.epub --no-mono --bilingual
 
 `prepare` 会解析书籍、识别语言、在启用时生成逐章梗概，再生成风格和人物语气指导，最后在启用时生成全书概览，但不翻译正文，也不抽取术语。术语在翻译过程中从已完成的原译文对中抽取；续跑保留项目已有词条。之后对同一源文件运行 `translate`，即可复用状态继续翻译。
 
+启用 `book_understanding` 后，普通翻译与人物证据模式共用相同准备流程：完整原文的章节梗概、原文样本加梗概的风格分析，以及保留原文身份并参考相关已有术语映射的全书概览。相较此前仅取章首 8,000 字符，长章节首次预扫需要更多请求；重试和切换证据模式会复用有效的准备缓存。详见[准备与缓存行为](pipeline.md)。
+
 ## 三选一精翻
 
 仅在 Web 创建书籍项目时选择**三译合润精翻**，之后不在总设置或项目配置中提供切换选项；
@@ -309,6 +336,33 @@ uv run wenyi translate book.epub --translation-mode best_of_three --polish
 最终综合结果仅进行结构校验，不经过独立准确性评判。
 对比中的 `target_before_polish` 是第一份初稿，不是选出的准确稿；不保证质量提升。
 
+### 启用全书术语证据
+
+此功能仅 CLI 可用，属于实验功能，默认 `false`。将此片段合并到配置文件，保留现有模型设置：
+
+```yaml
+language:
+  source: en
+  target: zh
+pipeline:
+  terminology_context: true
+```
+
+```bash
+uv run wenyi --config config.yaml models explain --operation terminology.evidence
+uv run wenyi --config config.yaml models check --for translate
+uv run wenyi --config config.yaml prepare book.epub
+uv run wenyi --config config.yaml translate book.epub
+```
+
+`terminology_context` 仅对译前发现和译后补漏候选中的人物条目（`type: person`），检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。译前发现仅处理人物；其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。全量术语映射不变，既有人物译名和受保护的人工字段保留，不同译名建议记录为冲突，不删除已有备注。`prepare` 只分析风格与人物语气，不抽取或建立术语；取证从待译批次开始。
+
+只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review、assemble 和 report 可以消费已有备注，不生产证据。SRT 不使用此路径。
+
+术语表仍按词条保存单一原文身份、单一主译名。全书备注可以解释上下文和不确定性，但没有真正的义项模型或逐次出现的译名选择。备注基于原文，只是只读补充，不授权添加后文剧情或覆盖权威译名；无法保证模型始终遵守这些约束。
+
+`terminology.discover`、`terminology.evidence` 和 `terminology.merge` 默认使用 `strong`，会增加上下文、调用次数和首批延迟。FakeClient 测试不是质量证明；真实模型的公版长书前后对比仍待执行。详见[流程说明](pipeline.md#可选全书术语证据)。
+
 ## 中断与续跑
 
 已完成的批次会写入状态目录。中断后使用同一个源文件执行：
@@ -324,6 +378,8 @@ uv run wenyi status book.epub
 才应使用新的状态目录或清理对应状态。
 
 语言策略内置于源码。策略变更或保存的状态缺少策略身份时，`prepare`/`translate` 会自动重建受影响的分析，再继续待完成工作；重建可能调用模型。已完成译文继续保留，字体等仅影响导出的变更只需重新导出。书籍／字幕行为和开发者诊断见[内置语言策略](configuration.md#内置语言策略)。
+
+章节梗概现完整分块覆盖原文，v2 原文哈希与策略身份会令旧缓存失效，因此升级后首次续跑可能重新生成分析。梗概人物保留原文身份，译名来自当前术语表。开启术语证据后，失败重试复用缓存的发现结果和成功证据组，补齐未完成准入，保留已译正文；不会把局部分组结果作为完整知识发布。
 
 ## 独立阶段与术语管理
 

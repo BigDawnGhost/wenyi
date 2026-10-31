@@ -18,30 +18,14 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review_chunks import ReviewChunkService
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.pipeline.translation_batch import (
-    BatchPlan,
     TranslationBatchExecutor,
     resume_batches,
 )
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler
+from tests.pipeline_fixtures import batch_plan as _plan
 from tests.pipeline_fixtures import fake_pipeline_config as _config
-
-
-def _plan(sources, *, allow_empty=False):
-    return BatchPlan.capture(
-        3,
-        5,
-        [Segment(index=10 + i, source=s) for i, s in enumerate(sources)],
-        [],
-        "previous translation",
-        "style",
-        "synopsis",
-        "digest",
-        [[] for _ in sources],
-        "next source",
-        allow_empty_translations=allow_empty,
-    )
 
 
 def test_resume_and_review_pack_by_tokens_and_preserve_completed_blank():

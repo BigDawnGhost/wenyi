@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { api, isProjectBusy, type ProjectConfig } from "@/lib/api";
+import { useProjectQuery } from "@/lib/projectQuery";
 import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
@@ -29,11 +30,7 @@ export default function SettingsPage() {
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
   });
-  const { data: project } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const { data: project } = useProjectQuery(pid);
   const { data: caps } = useQuery({
     queryKey: ["capabilities"],
     queryFn: api.capabilities,

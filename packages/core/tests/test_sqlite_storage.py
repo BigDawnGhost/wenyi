@@ -54,6 +54,27 @@ def store(tmp_path):
     storage.close()
 
 
+@pytest.mark.parametrize("published", [False, True])
+def test_initialization_retry_preserves_preparation_and_recovers_usage(store, published):
+    tracker = UsageTracker()
+    tracker.record("fast", UsageSample(10, 5, 15), stage="analysis")
+    ledger = tracker.summary()
+    key = "preparation/analysis/source-bound.json"
+    store.begin_initialization("a" * 64)
+    store.write_artifact(key, {"style": "restrained"})
+    store.prepare_usage_commit({"usage.json": ledger})
+    if published:
+        store.save_usage(ledger)
+    for _ in range(2):
+        store.begin_initialization("a" * 64)
+        assert store.load_usage() == ledger
+        assert store.read_artifact("usage-pending.json") is None
+        assert store.read_artifact(key) == {"style": "restrained"}
+    store.begin_initialization("b" * 64)
+    assert store.load_usage() is None
+    assert store.read_artifact(key) is None
+
+
 def test_missing_discovery_never_creates_state(tmp_path):
     root = tmp_path / "missing"
     store = SqliteStorage(str(root), create=False)

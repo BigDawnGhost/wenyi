@@ -35,6 +35,12 @@ def test_preview_needs_no_keys_or_sdk(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     routes = json.loads(result.output)
     assert set(routes) == set(OPERATIONS)
+    assert {name for name in routes if name.startswith("terminology.")} == {
+        "terminology.discover",
+        "terminology.evidence",
+        "terminology.merge",
+    }
+    assert not any(name.startswith("kinship.") for name in routes)
     assert {route["model"] for route in routes.values()} == {"deepseek-flash"}
     assert routes["synopsis.chapter"]["max_output_tokens"] == 8192
     explained = _invoke(

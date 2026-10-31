@@ -105,6 +105,27 @@ OPERATIONS = register_operations(
         OperationSpec("glossary.extract", "Extract glossary candidates", "fast"),
         OperationSpec("glossary.align_history", "Align terms with earlier translations", "fast"),
         OperationSpec(
+            "terminology.discover",
+            "Discover source-grounded terminology",
+            "strong",
+            workflows=("prepare", "translate"),
+            flags=("terminology_context",),
+        ),
+        OperationSpec(
+            "terminology.evidence",
+            "Extract terminology knowledge from source evidence",
+            "strong",
+            workflows=("prepare", "translate"),
+            flags=("terminology_context",),
+        ),
+        OperationSpec(
+            "terminology.merge",
+            "Merge source-grounded terminology knowledge",
+            "strong",
+            workflows=("prepare", "translate"),
+            flags=("terminology_context",),
+        ),
+        OperationSpec(
             "annotation.align",
             "Align EPUB annotation positions",
             "cheap",

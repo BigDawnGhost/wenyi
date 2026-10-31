@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
@@ -10,6 +10,11 @@ import { Textarea } from "@/components/ui/form";
 import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
 import { RevisionHistory } from "./RevisionHistory";
 import { PrecisionDrafts } from "./PrecisionDrafts";
+
+function fitTextarea(element: HTMLTextAreaElement) {
+  element.style.height = "0px";
+  element.style.height = `${element.scrollHeight + 2}px`;
+}
 
 export function ParagraphEditor({
   pid,
@@ -43,10 +48,11 @@ export function ParagraphEditor({
     queryKey: ["segmentHistory", pid, chapterIndex, segment.index],
     queryFn: () => api.segmentHistory(pid, chapterIndex, segment.index),
     enabled: view === "history",
-    refetchInterval: view === "history" ? 3000 : false,
+    refetchInterval: view === "history" && busy ? 3000 : false,
   });
   const refresh = () =>
     Promise.all([
+      qc.invalidateQueries({ queryKey: ["project", pid] }),
       qc.invalidateQueries({ queryKey: ["review", pid, chapterIndex] }),
       qc.invalidateQueries({ queryKey: ["chapters", pid] }),
       qc.invalidateQueries({
@@ -73,9 +79,10 @@ export function ParagraphEditor({
   });
   const stale = segment.target !== baseline;
   const disabled = readOnly || segment.target == null || save.isPending;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = dialog.current!;
     const previous = document.activeElement;
+    // Open before measuring the textarea; a closed dialog has no usable dimensions.
     element.showModal();
     if (textarea.current && !textarea.current.disabled)
       textarea.current.focus({ preventScroll: true });
@@ -89,21 +96,31 @@ export function ParagraphEditor({
   useLayoutEffect(() => {
     const element = textarea.current;
     if (!element) return;
-    const fit = () => {
-      element.style.height = "0px";
-      element.style.height = `${element.scrollHeight + 2}px`;
-    };
-    fit();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (element.clientWidth !== width) {
-        width = element.clientWidth;
-        fit();
+    fitTextarea(element);
+  }, [draft, view]);
+  useLayoutEffect(() => {
+    const element = textarea.current;
+    if (!element) return;
+    let width: number | undefined;
+    let frame: number | undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const nextWidth = entry.contentRect.width;
+      if (nextWidth !== width && frame === undefined) {
+        // Writing the observed height inside delivery causes ResizeObserver loop errors.
+        // Include the first delivery: scrollbars or fonts can change the initial width.
+        frame = requestAnimationFrame(() => {
+          frame = undefined;
+          fitTextarea(element);
+        });
       }
+      width = nextWidth;
     });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [draft, view]);
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, [view]);
   const close = () => {
     if (!save.isPending) onClose();
   };

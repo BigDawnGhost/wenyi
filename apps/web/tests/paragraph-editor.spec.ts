@@ -1,6 +1,130 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid } from "./fixtures";
 
+test("collapsed chapter review notes mount only after expansion", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/review/0`]: {
+      index: 0, title: "Chapter One",
+      segments: [{ index: 0, source: "Source", target: "Translation", kind: "text" }],
+      review_issues: Array.from({ length: 1000 }, (_, index) => ({
+        index, detail: `Deferred review note ${index}`,
+      })),
+    },
+  });
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  await expect(page.getByTestId("translation-text")).toHaveText("Translation");
+  const note = page.getByText("Deferred review note 999", { exact: true });
+  await expect(note).toHaveCount(0);
+  const summary = page.locator("summary").filter({ hasText: "Recorded review notes" });
+  await summary.click();
+  await expect(note).toHaveCount(1);
+  await summary.click();
+  await expect(note).toHaveCount(1);
+});
+
+test("one shared paragraph menu follows the active row and restores keyboard focus", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}/review/0`]: {
+      index: 0, title: "Chapter One", review_issues: [],
+      segments: [
+        { index: 12, source: "First source", target: "First translation", kind: "text" },
+        { index: 18, source: "Second source", target: "", kind: "text" },
+      ],
+    },
+  });
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  const first = page.locator("#paragraph-12").getByRole("button");
+  const second = page.locator("#paragraph-18").getByRole("button");
+  await first.click();
+  await expect(first).toHaveAttribute("aria-expanded", "true");
+  await page.locator("#paragraph-18").getByTestId("translation-text")
+    .click({ button: "right", position: { x: 20, y: 20 } });
+  await expect(page.getByRole("menu")).toHaveCount(1);
+  await expect(first).toHaveAttribute("aria-expanded", "false");
+  await expect(second).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("End");
+  await expect(page.getByRole("menuitem", { name: "Copy source", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(second).toBeFocused();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: "Edit translation", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText("Second source", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Edit translation", { exact: true })).toHaveValue("");
+  await page.keyboard.press("Escape");
+  await expect(second).toBeFocused();
+});
+
+test("paragraph menus dismiss outside without registering global pointer listeners", async ({ page }) => {
+  await page.addInitScript(() => {
+    const registrations: string[] = [];
+    (window as any).__pointerRegistrations = registrations;
+    const add = window.addEventListener;
+    window.addEventListener = function (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type.startsWith("pointer") || type.startsWith("touch")) registrations.push(type);
+      return add.call(this, type, listener, options);
+    };
+  });
+  await fakeApi(page);
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  const trigger = page.getByRole("button", { name: "Paragraph actions", exact: true });
+  await expect(trigger).toBeVisible();
+  const before = await page.evaluate(() => (window as any).__pointerRegistrations.length);
+  await trigger.click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__pointerRegistrations.length)).toBe(before);
+  const heading = page.getByRole("heading", { name: /Manual proofreading/ });
+  await heading.click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await trigger.click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await heading.click({ button: "right" });
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("editor autosizing survives opening, resizing and tab changes without observer errors", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    (window as any).__resizeErrors = [];
+    window.addEventListener("error", (event) => {
+      if (event.message.includes("ResizeObserver")) (window as any).__resizeErrors.push(event.message);
+    });
+  });
+  const text = "A long translated sentence. 较长的中文译文。\n".repeat(80);
+  await fakeApi(page, {
+    [`/projects/${pid}/review/0`]: {
+      index: 0, title: "Chapter One", review_issues: [],
+      segments: [{ index: 0, kind: "text", source: "Synthetic source.", target: text }],
+    },
+  });
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  await page.getByRole("button", { name: "Paragraph actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit translation", exact: true }).click();
+  const input = page.getByLabel("Edit translation", { exact: true });
+  const dialog = page.getByRole("dialog");
+  await expect(input).toBeFocused();
+  for (const width of [900, 390, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    await expect.poll(() => input.evaluate((element) => element.scrollHeight <= element.clientHeight + 2)).toBe(true);
+    await expect(dialog.getByRole("button", { name: "Save translation", exact: true })).toBeInViewport();
+  }
+  await input.fill("Short draft");
+  await expect.poll(() => input.evaluate((element) => element.clientHeight)).toBeLessThan(300);
+  await dialog.getByRole("tab", { name: "Change history", exact: true }).click();
+  await dialog.getByRole("tab", { name: "Translation", exact: true }).click();
+  await expect(input).toHaveValue("Short draft");
+  await input.fill(text);
+  await expect.poll(() => input.evaluate((element) => element.scrollHeight <= element.clientHeight + 2)).toBe(true);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(await page.evaluate(() => (window as any).__resizeErrors)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test("reading and selection do not edit; the context menu copies the selected text", async ({
   page,
 }) => {

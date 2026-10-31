@@ -1,5 +1,7 @@
 """Offline regressions for complete, resumable book-understanding results."""
 
+import hashlib
+import json
 import unittest
 from unittest.mock import Mock, call
 
@@ -7,6 +9,7 @@ import pytest
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
@@ -41,7 +44,11 @@ class TestStyleAnalysis(unittest.TestCase):
         self.assertNotIn("Pacing:", sparse)
 
 
-def _service(tmp_path, chapters=None):
+def _selected_config():
+    return Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"terminology_context": True}})
+
+
+def _service(tmp_path, chapters=None, *, terminology=True):
     source = tmp_path / "source.txt"
     source.write_text("Temporary source text.", encoding="utf-8")
     store = FileStorage(str(tmp_path / "state"))
@@ -61,9 +68,10 @@ def _service(tmp_path, chapters=None):
     store.save_analysis({"style_guide": "Restrained."})
     runtime = Mock(
         spec=PipelineRuntime,
-        config=Config.from_dict({"llm": {"preset": "fake"}}),
+        config=_selected_config() if terminology else Config.from_dict({"llm": {"preset": "fake"}}),
         synopsizer=Mock(),
         analyzer=Mock(),
+        flush_usage=Mock(),
     )
     runtime.synopsizer.digest_chapter.return_value = "Chapter digest."
     runtime.synopsizer.book_synopsis.return_value = "Whole-book synopsis."
@@ -96,8 +104,9 @@ def test_reduce_failure_does_not_omit_a_group_and_publish_the_rest():
     assert client.complete.call_count == 1
 
 
-def test_failed_chapter_digest_requires_retry_and_preserves_successes(tmp_path):
-    service, store, runtime = _service(tmp_path)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_failed_chapter_digest_requires_retry_and_preserves_successes(tmp_path, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
     runtime.synopsizer.digest_chapter.side_effect = lambda source: (
         "Opening digest." if source == "Opening." else ""
     )
@@ -113,7 +122,7 @@ def test_failed_chapter_digest_requires_retry_and_preserves_successes(tmp_path):
     assert service.ensure_understanding(store) == "Whole-book synopsis."
     runtime.synopsizer.digest_chapter.assert_called_once_with("Ending.")
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Opening digest.", "Ending digest."], "Restrained."
+        ["Opening digest.", "Ending digest."], "Restrained.", glossary=[]
     )
 
 
@@ -124,11 +133,14 @@ def test_empty_chapter_does_not_require_a_digest(tmp_path):
     )
     assert service.ensure_understanding(store) == "Whole-book synopsis."
     runtime.synopsizer.digest_chapter.assert_called_once_with("Body.")
-    runtime.synopsizer.book_synopsis.assert_called_once_with(["Chapter digest."], "Restrained.")
+    runtime.synopsizer.book_synopsis.assert_called_once_with(
+        ["Chapter digest."], "Restrained.", glossary=[]
+    )
 
 
-def test_book_failure_is_not_cached_and_resume_reuses_chapter_digests(tmp_path):
-    service, store, runtime = _service(tmp_path)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_book_failure_is_not_cached_and_resume_reuses_chapter_digests(tmp_path, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
     runtime.synopsizer.book_synopsis.return_value = ""
     assert service.ensure_understanding(store) == ""
     analysis = store.load_analysis()
@@ -165,7 +177,7 @@ def test_changed_digest_invalidates_book_cache(tmp_path):
     runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
     assert service.ensure_understanding(store) == "Revised synopsis."
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Chapter digest.", "Revised ending."], "Restrained."
+        ["Chapter digest.", "Revised ending."], "Restrained.", glossary=[]
     )
 
 
@@ -197,5 +209,217 @@ def test_legacy_truncated_digest_and_unverified_synopsis_are_regenerated(tmp_pat
         [call("Opening."), call("Ending.")], any_order=True
     )
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Chapter digest.", "Chapter digest."], "Restrained."
+        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=[]
     )
+
+
+def test_chapter_digest_covers_all_blocks_and_merges_in_order():
+    agent = Synopsizer(FakeClient(), _selected_config())
+    agent._ask_text = Mock(side_effect=["First part.", "Middle part.", "Final part.", "Complete."])
+    source = "a" * 8000 + "b" * 8000 + "LAST-SOURCE-IDENTITY"
+    assert agent.digest_chapter(source) == "Complete."
+    prompts = [call.args[1] for call in agent._ask_text.call_args_list]
+    for block, prompt in zip([source[:8000], source[8000:16000], source[16000:]], prompts):
+        assert block in prompt
+    assert prompts[3].index("First part.") < prompts[3].index("Middle part.")
+    assert prompts[3].index("Middle part.") < prompts[3].index("Final part.")
+    assert "original source spelling" in agent._ask_text.call_args.args[0]
+
+
+@pytest.mark.parametrize("responses", [["First.", ""], ["First.", "Last.", ""]])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_chapter_map_or_merge_failure_never_publishes_partial_digest(responses, enabled):
+    agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
+    agent._ask_text = Mock(side_effect=responses)
+    assert agent.digest_chapter("a" * 8000 + "ENDING") == ""
+    assert agent._ask_text.call_count == len(responses)
+
+
+def test_chapter_recursive_reduction_preserves_every_group():
+    agent = Synopsizer(FakeClient(), _selected_config())
+    agent._ask_text = Mock(side_effect=["A" * 7000, "B" * 7000, "a", "b", "All."])
+    assert agent.digest_chapter("x" * 16000) == "All."
+    assert agent._ask_text.call_count == 5
+    assert "\na\nb" in agent._ask_text.call_args.args[1]
+
+
+@pytest.mark.parametrize("output_length", [7000, 13000])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_noncontracting_or_oversized_outputs_stop_without_looping(output_length, enabled):
+    agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
+    agent._ask_text = Mock(return_value="x" * output_length)
+    assert agent.digest_chapter("a" * 16000) == ""
+    assert agent._ask_text.call_count <= 4
+
+
+def test_live_terms_replace_static_characters_even_when_empty():
+    agent = Analyzer(FakeClient(), _selected_config())
+    analysis = {
+        "narration": "Source-supported first person.",
+        "characters": [{"source": "Alice", "target": "Stale", "note": "Obsolete"}],
+    }
+    assert "Obsolete" in agent.style_brief(analysis)
+    assert "Alice" not in agent.style_brief(analysis, terms=[])
+    live = GlossaryTerm(source="Alice", target="Current", type="person", note="Live note")
+    brief = agent.style_brief(analysis, terms=[live])
+    assert "Alice" in brief and "Live note" not in brief
+    assert "Current" not in brief
+    assert "Stale" not in brief and "Obsolete" not in brief
+    assert analysis["narration"] in brief
+
+
+def test_synopsis_receives_authoritative_terms_without_replacing_digest_substrings():
+    agent = Synopsizer(FakeClient(), _selected_config())
+    agent._ask_text = Mock(return_value="Synopsis.")
+    term = GlossaryTerm(source="Ann", target="安", type="person", note="Confirmed")
+    assert agent.book_synopsis(["Ann meets Anna."], "Style.", glossary=[term]) == "Synopsis."
+    system, prompt = agent._ask_text.call_args.args
+    assert "Ann meets Anna." in prompt
+    assert '["Ann", "安", "person"]' in prompt
+    assert "Confirmed" not in prompt
+    assert "only the authoritative glossary" in system
+
+
+def test_synopsis_cache_tracks_the_model_configuration(tmp_path):
+    service, store, runtime = _service(tmp_path)
+    service.ensure_understanding(store)
+    runtime.synopsizer.book_synopsis.reset_mock()
+    runtime.config.llm = Config.from_dict({"llm": {"preset": "deepseek"}}).llm
+    service.ensure_understanding(store)
+    runtime.synopsizer.book_synopsis.assert_called_once()
+
+
+def test_glossary_change_invalidates_synopsis_cache(tmp_path):
+    service, store, runtime = _service(tmp_path)
+    service.ensure_understanding(store)
+    term = GlossaryTerm(source="Citadel", target="城堡", type="place", note="Location")
+    store.upsert_term(term, chapter=0)
+    runtime.synopsizer.reset_mock()
+    service.ensure_understanding(store)
+    runtime.synopsizer.digest_chapter.assert_not_called()
+    runtime.synopsizer.book_synopsis.assert_called_once_with(
+        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=store.all_terms()
+    )
+    runtime.analyzer.style_brief.assert_called_with(store.load_analysis(), terms=store.all_terms())
+
+
+@pytest.mark.parametrize("change", ["version", "source"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_full_coverage_cache_requires_version_and_source_hash(tmp_path, change, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
+    service.ensure_understanding(store)
+    chapter = store.load_chapter(0)
+    if change == "version":
+        chapter.meta["source_digest_version"] = 1
+    else:
+        chapter.segments[0].source = "Changed opening."
+    store.save_chapter(chapter)
+    runtime.synopsizer.reset_mock()
+    service.ensure_understanding(store)
+    if change == "version":
+        runtime.synopsizer.digest_chapter.assert_not_called()
+        assert store.load_chapter(0).meta["source_digest_version"] == 2
+    else:
+        runtime.synopsizer.digest_chapter.assert_called_once_with(chapter.segments[0].source)
+
+
+def test_short_chapter_does_not_need_an_extra_merge():
+    agent = Synopsizer(FakeClient(), Config())
+    agent._ask_text = Mock(return_value="Digest.")
+    assert agent.digest_chapter("a" * 8000) == "Digest."
+    agent._ask_text.assert_called_once()
+    assert "a" * 8000 in agent._ask_text.call_args.args[1]
+
+
+def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_path):
+    service, store, runtime = _service(tmp_path, terminology=False)
+    policy = runtime.config.language_policy("analysis")
+    digests = ["Opening digest.", "Ending digest."]
+    for index, digest in enumerate(digests):
+        chapter = store.load_chapter(index)
+        chapter.segments[0].target = "Saved target."
+        chapter.meta.update(
+            source_digest=digest,
+            source_digest_policy=policy.task_fingerprint("chapter_digest"),
+        )
+        store.save_chapter(chapter)
+    inputs = {
+        "language_policy": policy.task_fingerprint("book_synopsis"),
+        "chapters": list(enumerate(digests)),
+        "style": "Restrained.",
+        "source_lang": runtime.config.source_lang,
+        "target_lang": runtime.config.target_lang,
+    }
+    store.save_analysis(
+        {
+            "book_synopsis": "Legacy synopsis.",
+            "book_synopsis_meta": {
+                "version": 1,
+                "inputs_sha256": hashlib.sha256(
+                    json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+            },
+        }
+    )
+    runtime.config.llm = Config.from_dict({"llm": {"preset": "deepseek"}}).llm
+    store.upsert_term(GlossaryTerm(source="Alice", target="Current", type="person"))
+    terms = store.all_terms()
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    assert runtime.synopsizer.digest_chapter.call_count == 2
+    runtime.synopsizer.book_synopsis.assert_called_once_with(
+        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=terms
+    )
+    analysis = store.load_analysis()
+    assert analysis is not None
+    assert analysis["book_synopsis_meta"]["version"] == 2
+    assert store.all_terms() == terms
+    assert all(store.load_chapter(i).segments[0].target == "Saved target." for i in range(2))
+
+
+def test_default_analysis_uses_digests_and_explicit_style_terms():
+    agent = Analyzer(FakeClient(), Config())
+    agent._ask_json = Mock(return_value={})
+    agent.analyze("Original samples.", chapter_digests=["FACTUAL-DIGEST"])
+    assert "FACTUAL-DIGEST" in agent._ask_json.call_args.args[1]
+    assert "Original samples." in agent._ask_json.call_args.args[1]
+    analysis = {"characters": [{"source": "Alice", "target": "Legacy", "note": "Voice"}]}
+    assert "Voice" in agent.style_brief(analysis)
+    brief = agent.style_brief(analysis, terms=[])
+    assert "Alice" not in brief and "Legacy" not in brief
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_synopsis_bounds_style_and_uses_authoritative_glossary(enabled):
+    agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
+    agent._ask_text = Mock(return_value="Synopsis.")
+    style = "Keep a restrained voice.\n" + "x" * 5000 + "STYLE-ENDING"
+    agent.book_synopsis(
+        ["Alice arrives."], style, glossary=[GlossaryTerm(source="Alice", target="Current")]
+    )
+    prompt = agent._ask_text.call_args.args[1]
+    assert "Keep a restrained voice." in prompt
+    assert "STYLE-ENDING" not in prompt
+    assert "Additional style context omitted" in prompt
+    assert "authoritative mappings" in prompt
+    assert '["Alice", "Current", "term"]' in prompt
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_analysis_uses_digest_context_and_resumes_paid_result(tmp_path, enabled):
+    service, store, runtime = _service(tmp_path, terminology=enabled)
+    document = Document(
+        source_lang="en",
+        target_lang="zh",
+        fmt="text",
+        chapters=[store.load_chapter(0), store.load_chapter(1)],
+    )
+    runtime.analyzer.analyze.return_value = {"style_guide": "Source-supported."}
+    result = service._analyze_document(store, document, ["Full digest."], "source-hash")
+    assert service._analyze_document(store, document, ["Full digest."], "source-hash") == result
+    runtime.analyzer.analyze.assert_called_once_with(
+        service.sample_text(document), chapter_digests=["Full digest."]
+    )
+    agent = Analyzer(FakeClient(), runtime.config)
+    agent._ask_json = Mock(return_value={})
+    agent.analyze("Source prose.", chapter_digests=["Full digest."])
+    assert "Full digest." in agent._ask_json.call_args.args[1]

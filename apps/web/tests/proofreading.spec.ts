@@ -75,9 +75,10 @@ test("proofreading is separate and refreshes saved batches before a chapter fini
   ).toBeVisible();
 });
 
-test("paused partial proofreading preserves drafts while polling and isolates chapters", async ({
+test("paused proofreading stops polling, preserves conflicting drafts and isolates chapters", async ({
   page,
 }) => {
+  await page.clock.install();
   let target = "Saved translation";
   let reads = 0;
   let edit: unknown;
@@ -122,6 +123,8 @@ test("paused partial proofreading preserves drafts while polling and isolates ch
   });
   await page.route(`**/api/projects/${pid}/review/0/segments/12`, (route) => {
     edit = route.request().postDataJSON();
+    if ((edit as { expected_target: string }).expected_target !== target)
+      return route.fulfill({ status: 409, json: { detail: "Translation changed before saving" } });
     target = (edit as { target: string }).target;
     return route.fulfill({ json: { ok: true, index: 12 } });
   });
@@ -135,7 +138,10 @@ test("paused partial proofreading preserves drafts while polling and isolates ch
   await page.getByLabel("Edit translation").fill("Human draft");
   const before = reads;
   target = "Updated stored translation";
-  await expect.poll(() => reads, { timeout: 8000 }).toBeGreaterThan(before);
+  await page.clock.runFor(60_000);
+  expect(reads).toBe(before);
+  await page.getByRole("button", { name: "Save translation" }).click();
+  await expect.poll(() => reads).toBeGreaterThan(before);
   await expect(page.getByLabel("Edit translation")).toHaveValue("Human draft");
   await expect(
     page.getByRole("button", { name: "Save translation" }),

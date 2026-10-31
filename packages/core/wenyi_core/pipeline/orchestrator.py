@@ -39,11 +39,17 @@ class Orchestrator:
         client: LLMClient | None = None,
         storage: Storage | None = None,
         *,
+        allow_terminology_context: bool = False,
         mineru_token_resolver: Callable[[], str | None] | None = None,
     ):
         """Assemble shared runtime and domain services without domain I/O."""
         self.config = config
-        self._runtime = PipelineRuntime(config, client=client, storage=storage)
+        self._runtime = PipelineRuntime(
+            config,
+            client=client,
+            storage=storage,
+            allow_terminology_context=allow_terminology_context,
+        )
         self.client = self._runtime.client
         self._preparation = PreparationService(
             self._runtime, mineru_token_resolver=mineru_token_resolver
