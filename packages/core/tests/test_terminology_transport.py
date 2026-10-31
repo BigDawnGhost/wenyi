@@ -48,8 +48,8 @@ def mocked_client(monkeypatch, *, kind="deepseek", explicit=None, retries=1):
         ("terminology.discover", None),
         ("terminology.evidence", None),
         ("terminology.merge", None),
-        ("synopsis.chapter", 8192),
-        ("synopsis.book", 8192),
+        ("synopsis.chapter", None),
+        ("synopsis.book", None),
     ],
 )
 def test_plain_deepseek_preset_wire_output_limits(monkeypatch, operation, limit):
@@ -67,7 +67,7 @@ def test_plain_deepseek_preset_wire_output_limits(monkeypatch, operation, limit)
 
 
 @pytest.mark.parametrize("operation", ["terminology.evidence", "synopsis.chapter", "synopsis.book"])
-def test_explicit_profile_limit_overrides_operation_and_call_hints(monkeypatch, operation):
+def test_explicit_profile_limit_overrides_call_hints(monkeypatch, operation):
     _, client, create = mocked_client(monkeypatch, explicit=4096)
     create.return_value = response("{}")
     client.complete([], operation=operation, max_tokens=16000)

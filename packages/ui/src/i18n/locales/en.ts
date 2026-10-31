@@ -289,7 +289,6 @@ const en = {
   "accounting.unknownInput": "Input with unknown cache status",
   "accounting.legacyMiss": "Legacy non-read input (write/ordinary unknown)",
   "accounting.writeTtl": "Cache writes ({ttl}): {count}",
-  "accounting.cacheCoverage": "Reported reads are divided by all input tokens, including unknowns. Unknown classification: {unknown} / {input} input tokens. Missing counters show —; reported subtotals may cover only some calls. Legacy misses are not assumed to be ordinary input.",
   "accounting.groupBy": "Group usage by",
   "accounting.callCount": "Calls: {count}",
   "accounting.unclassifiedTokens": "Unclassified tokens",

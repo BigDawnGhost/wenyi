@@ -185,6 +185,28 @@ class TestAnnotationAligner(unittest.TestCase):
         self.assertEqual(client.calls[0]["stage"], "annotation.align")
         self.assertTrue(client.calls[0]["json_mode"])
 
+    def test_long_target_uses_provider_output_default(self):
+        unit = _point_unit(target="你好世界" * 3000)
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: json.dumps(
+                {
+                    "items": [
+                        {
+                            "unit_id": unit.unit_id,
+                            "marked_target": unit.target + "⟪tn1_0_annotation_0⟫",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        result = AnnotationAligner(client, _config()).align_unit(unit)
+
+        self.assertFalse(result.used_fallback)
+        self.assertEqual(result.placements[0]["target_start"], len(unit.target))
+        self.assertIsNone(client.calls[0]["max_tokens"])
+
     def test_model_or_json_failure_returns_deterministic_fallback(self):
         unit = _point_unit()
         clients = (
@@ -266,11 +288,7 @@ class TestAnnotationAligner(unittest.TestCase):
         self.assertTrue(all(not result.used_fallback for result in results))
         self.assertEqual(results[0].placements[0]["target_start"], 2)
         self.assertEqual(results[1].placements[0]["target_start"], 2)
-        expected_max_tokens = max(
-            1024,
-            min(8192, (len(point.target) + len(range_unit.target)) * 2 + 2 * 64 + 512),
-        )
-        self.assertEqual(client.calls[0]["max_tokens"], expected_max_tokens)
+        self.assertIsNone(client.calls[0]["max_tokens"])
 
     def test_bad_batch_items_fall_back_individually(self):
         valid = _point_unit()

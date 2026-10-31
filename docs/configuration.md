@@ -149,7 +149,7 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 - `tiers` maps exactly `strong`, `cheap`, and `fast` to profiles. Without a preset, all three are required; they can select the same profile. Tier names describe preferences, not measured quality or price.
 - `routes.<operation>` selects exactly one of `{model: profile}` or `{tier: strong}`. Unknown operations, fields and references fail before requests. There is no missing-tier fallback.
 - Preset overrides replace whole connection/profile entries by ID. Repeat required fields when replacing an entry; model options are not merged across profiles. Tier and route mappings replace individual keys.
-- An explicit `max_output_tokens` overrides static and dynamic workflow hints. Without it, synopsis and annotation hints retain their prior behavior. OpenAI-compatible thinking profiles expand hints below 4,096 to 4,096; explicit smaller caps are rejected while thinking is enabled. Actual model limits still depend on the service.
+- Workflow operations do not add output-token caps, including chapter digests, book synopses, and annotation alignment. Without an explicit model `max_output_tokens`, requests omit the output limit and use the service's default; this is not unlimited output. Explicit profile caps are respected. OpenAI-compatible thinking profiles reject explicit caps below 4,096. Actual model limits still depend on the service. Connectivity probes use a separate small output budget.
 - CLI/Web API keys come only from environment variables; Desktop additionally supports its OS credential store or session-only manual input. Do not place credentials in YAML, endpoints or request overrides. Raw overrides cannot replace model identity, messages, streaming, JSON mode, credentials or output caps.
 
 ### Provider options
@@ -179,7 +179,7 @@ configuration YAML or model registrations. Credentials are resolved only when an
 PDF needs MinerU conversion; existing converted HTML and non-PDF inputs require no MinerU
 key. The key never enters project/job snapshots, manifests, or parser caches.
 
-DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. When neither a profile cap nor a workflow hint applies, the service supplies its default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. Workflow hints and explicit `max_output_tokens` still follow the configuration rules above. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
+DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` explicitly disables thinking and omits the effort parameter. Without an explicit profile `max_output_tokens`, workflow requests use the service's default output limit: 8K without thinking, 64K with thinking, or 128K at `max` effort. See the [DeepSeek request parameters](https://api-docs.deepseek.com/api/create-chat-completion/).
 
 ### Registered operations
 
@@ -187,14 +187,14 @@ DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` ex
 |---|---|---|
 | `language.detect` | `cheap` | Detect source language |
 | `analysis.style` | `strong` | Analyze style and character voices |
-| `synopsis.chapter` | `fast` | Chapter digest; 600-token hint |
-| `synopsis.book` | `fast` | Book synopsis; 1,200-token hint |
+| `synopsis.chapter` | `fast` | Chapter digest |
+| `synopsis.book` | `fast` | Book synopsis |
 | `translation.body` | `strong` | Body translation and alignment recovery |
 | `translation.title` | `strong` | Chapter and TOC titles |
 | `polish.body` | `strong` | Prose polishing |
 | `glossary.extract` | `fast` | Glossary extraction |
 | `glossary.align_history` | `fast` | Earlier translation alignment |
-| `annotation.align` | `cheap` | Annotation alignment; dynamic output hint |
+| `annotation.align` | `cheap` | Annotation alignment |
 | `review.scan` | `cheap` | Initial and blind review |
 | `review.verify` | `strong` | Evidence verification |
 | `review.arbitrate` | `strong` | Conflict arbitration |
