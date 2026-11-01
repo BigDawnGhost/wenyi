@@ -219,12 +219,12 @@ jobs:
       - name: Test Windows local state and artifact paths
         if: runner.os == 'Windows'
         run: >
-          uv run --no-sync pytest -q
+          uv run --no-sync pytest -q -n auto
           packages/core/tests/test_file_artifacts.py
           packages/core/tests/test_file_storage.py
           packages/core/tests/test_precision_pipeline.py
           packages/core/tests/test_orchestrator.py
-      - run: uv run --no-sync pytest -q apps/desktop/backend/tests
+      - run: uv run --no-sync pytest -q -n auto apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
       - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
