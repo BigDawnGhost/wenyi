@@ -21,14 +21,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from ..errors import WenyiError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
 from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
 from .protocol import STATUS_DONE, STATUS_PENDING
 
 
-class StorageBusyError(BlockingIOError):
-    """Another local process owns the requested workflow lock."""
+class StorageBusyError(WenyiError, BlockingIOError):
+    """Another local process owns the requested workflow lock.
+
+    Keeps ``BlockingIOError`` so existing ``except BlockingIOError`` guards keep
+    matching while the code migrates.
+    """
 
 
 class SqliteStorage:
