@@ -330,6 +330,14 @@ def test_workflows_use_main_as_the_only_trunk(file):
         assert events["push"]["branches"] == ["main"]
         assert "paths" not in events["pull_request"]
         assert "paths-ignore" not in events["pull_request"]
+    elif file == "desktop.yml":
+        # The desktop workflow listens to main only to warm the Rust caches, but
+        # the packaging job must never run there: four runners would burn on
+        # artefacts nobody consumes.
+        assert events["push"]["branches"] == ["main"]
+        jobs = document["jobs"]
+        assert jobs["local-package"]["if"] == "github.event_name != 'push'"
+        assert jobs["cargo-warm"]["if"] == "github.event_name == 'push'"
     else:
         assert "push" not in events
 
@@ -345,16 +353,42 @@ def test_desktop_workflow_builds_native_macos_installers_and_updates():
     jobs = document["jobs"]
     # The platform list is produced by the plan job so a pull request can run a
     # reduced subset; the full list is the non-pull-request branch of that step.
-    plan_step = jobs["plan"]["steps"][0]
+    plan_step = next(step for step in jobs["plan"]["steps"] if step.get("id") == "set")
     script = plan_step["run"]
-    full_block = script.split("else", 1)[1].split("fi", 1)[0]
-    matrix_json = full_block.split("matrix='", 1)[1].rsplit("'", 1)[0]
+    lines = script.splitlines()
+    # The outer if/else picks the event; the inner one only picks the Linux tier.
+    outer_else = next(i for i, line in enumerate(lines) if line.strip() == "else")
+    full_line = next(line for line in lines[outer_else:] if "matrix='" in line)
+    matrix_json = full_line.split("matrix='", 1)[1].rsplit("'", 1)[0]
     matrix = {entry["platform"]: entry for entry in json.loads(matrix_json)}
     assert set(matrix) == {"windows-x64", "linux-x64", "macos-arm64", "macos-x64"}
     for platform, runner in [("macos-arm64", "macos-15"), ("macos-x64", "macos-15-intel")]:
         assert matrix[platform]["os"] == runner
         assert matrix[platform]["bundles"] == "dmg"
         assert matrix[platform]["signed_bundles"] == "dmg,app"
+
+    # A pull request keeps one Linux leg, and its tier follows the changed paths:
+    # desktop changes need the full packaging run, business code does not.
+    pr_lines = lines[:outer_else]
+    pr_block = "\n".join(pr_lines)
+    assert "tier=full" in pr_block and "tier=test" in pr_block
+    assert "$DESKTOP_CHANGED" in pr_block
+    assert '\\"platform\\":\\"linux-x64\\",\\"tier\\":\\"${tier}\\' in pr_block
+    assert "windows-x64" in pr_block and "smoke" in pr_block
+    # The filter must cover every path the packaging path consumes, including
+    # this workflow file so a change to the tiering itself still builds fully.
+    filters = next(
+        step["with"]["filters"] for step in jobs["plan"]["steps"] if step.get("id") == "filter"
+    )
+    for expected in (
+        "apps/desktop/**",
+        "scripts/desktop*",
+        "package.json",
+        "pnpm-lock.yaml",
+        ".github/workflows/desktop.yml",
+    ):
+        assert expected in filters, expected
+
     job = jobs["local-package"]
     assert job["needs"] == "plan"
     assert "needs.plan.outputs.matrix" in job["strategy"]["matrix"]
