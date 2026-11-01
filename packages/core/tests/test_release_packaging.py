@@ -366,3 +366,52 @@ def test_desktop_workflow_builds_native_macos_installers_and_updates():
     assert (
         "steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles"
     ) in build
+
+
+def test_cli_workflow_builds_every_platform_on_release_only():
+    import json
+
+    import yaml
+
+    document = yaml.load((ROOT / ".github/workflows/build.yml").read_text(), Loader=yaml.BaseLoader)
+    jobs = document["jobs"]
+    # The platform list comes from the plan job so a pull request builds only one
+    # leg; the full list is the else branch, used by release and dispatch.
+    script = jobs["plan"]["steps"][0]["run"]
+    pr_block = script.split("if", 1)[1].split("else", 1)[0]
+    full_block = script.split("else", 1)[1].split("fi", 1)[0]
+    pr_matrix = json.loads(pr_block.split("matrix='", 1)[1].rsplit("'", 1)[0])
+    full_matrix = json.loads(full_block.split("matrix='", 1)[1].rsplit("'", 1)[0])
+
+    # A pull request keeps exactly one packaging signal on the cheapest runner.
+    assert [leg["platform"] for leg in pr_matrix] == ["linux-x64"]
+    assert pr_matrix[0]["runner"] == "ubuntu-latest"
+
+    # A release still builds every platform with its original runner and checks.
+    by_platform = {leg["platform"]: leg for leg in full_matrix}
+    assert set(by_platform) == {
+        "windows-x64",
+        "linux-x64",
+        "linux-arm64",
+        "macos-arm64",
+        "macos-x64",
+    }
+    expected = {
+        "windows-x64": ("windows-latest", "expected_machine", "8664"),
+        "linux-x64": ("ubuntu-latest", "expected_arch", "x86-64"),
+        "linux-arm64": ("ubuntu-24.04-arm", "expected_arch", "aarch64"),
+        "macos-arm64": ("macos-15", "expected_arch", "arm64"),
+        "macos-x64": ("macos-15-intel", "expected_arch", "x86_64"),
+    }
+    for platform, (runner, key, value) in expected.items():
+        assert by_platform[platform]["runner"] == runner
+        assert by_platform[platform][key] == value
+        assert by_platform[platform]["binary"].startswith("./dist/wenyi")
+
+    # The build job consumes the plan output and keeps failing fast.
+    job = jobs["build"]
+    assert job["needs"] == "plan"
+    assert "needs.plan.outputs.matrix" in job["strategy"]["matrix"]
+    assert job["strategy"]["fail-fast"] == "false"
+    # Publishing still waits on the build job.
+    assert jobs["release"]["needs"] == "build"
