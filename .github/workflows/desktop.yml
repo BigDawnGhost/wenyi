@@ -44,12 +44,34 @@ jobs:
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
+      # Full history so the path filter can diff a push; a pull request reads it
+      # through the API, but the shallow clone costs little here.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            # Everything the packaging path actually consumes. The workflow file
+            # itself is listed so a change to this logic still builds in full.
+            desktop:
+              - "apps/desktop/**"
+              - "scripts/desktop*"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - ".github/workflows/desktop.yml"
       - id: set
         # The value must be a single line: a multi-line $GITHUB_OUTPUT entry is
         # rejected by the runner as an invalid output format.
+        env:
+          # A business-code pull request does not need the Tauri release build;
+          # it still runs cargo test, the menu test and the desktop suite.
+          DESKTOP_CHANGED: ${{ steps.filter.outputs.desktop }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            matrix='[{"os":"ubuntu-22.04","platform":"linux-x64","tier":"full","bundles":"appimage,deb,rpm"},{"os":"windows-latest","platform":"windows-x64","tier":"smoke","bundles":"nsis"}]'
+            if [ "$DESKTOP_CHANGED" = "true" ]; then tier=full; else tier=test; fi
+            matrix="[{\"os\":\"ubuntu-22.04\",\"platform\":\"linux-x64\",\"tier\":\"${tier}\",\"bundles\":\"appimage,deb,rpm\"},{\"os\":\"windows-latest\",\"platform\":\"windows-x64\",\"tier\":\"smoke\",\"bundles\":\"nsis\"}]"
           else
             matrix='[{"os":"ubuntu-22.04","platform":"linux-x64","tier":"full","bundles":"appimage,deb,rpm"},{"os":"windows-latest","platform":"windows-x64","tier":"full","bundles":"nsis"},{"os":"macos-15","platform":"macos-arm64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"},{"os":"macos-15-intel","platform":"macos-x64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"}]'
           fi
