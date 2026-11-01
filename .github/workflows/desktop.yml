@@ -46,10 +46,10 @@ jobs:
     steps:
       # Full history so the path filter can diff a push; a pull request reads it
       # through the API, but the shallow clone costs little here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -92,7 +92,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -122,7 +122,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
@@ -161,10 +161,10 @@ jobs:
           fi
       # pnpm/action-setup must run first: setup-node resolves the pnpm binary
       # when caching is enabled, so the reverse order fails on a clean runner.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: "9"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: pnpm
@@ -236,7 +236,7 @@ jobs:
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
           --source apps/desktop/target/release/bundle
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: matrix.tier == 'full'
         with:
           name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
@@ -253,7 +253,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
@@ -267,7 +267,7 @@ jobs:
         env:
           WENYI_BUILD_TAG: ${{ github.event.release.tag_name }}
         run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: wenyi-desktop-*
           path: release-assets

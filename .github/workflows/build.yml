@@ -52,12 +52,12 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
@@ -147,7 +147,7 @@ jobs:
           --platform "${{ matrix.platform }}" --source "${{ matrix.binary }}"
 
       - name: Upload packaged executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wenyi-cli-${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: release-assets/*.zip
@@ -165,7 +165,7 @@ jobs:
 
     steps:
       - name: Download packaged executables
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: wenyi-cli-*
           path: release-assets
