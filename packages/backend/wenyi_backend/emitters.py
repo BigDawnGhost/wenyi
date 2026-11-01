@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
 
 from wenyi_core.events import TranslationEvent, make_progress_fn
 
 from .live_statistics import StatisticsCache
+
+log = logging.getLogger(__name__)
 
 
 class RedisEmitter:
@@ -37,8 +40,14 @@ class RedisEmitter:
             encoded = json.dumps(payload, ensure_ascii=False)
             self._redis.set(f"{self.channel}:progress", encoded, ex=604800)
             self._redis.publish(self.channel, encoded)
-        except Exception:
+        except Exception as exc:
             # Redis failures must not interrupt translation; persisted events remain available.
+            log.warning(
+                "Failed to publish progress for project %s: %s",
+                self._project_id,
+                exc,
+                exc_info=False,
+            )
             return None
 
 
