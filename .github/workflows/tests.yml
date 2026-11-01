@@ -103,7 +103,15 @@ jobs:
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/desktop/frontend build
       - run: pnpm test:frontend-boundaries
+      - uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.63.0-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm -C apps/web exec playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: Install Playwright system dependencies
+        run: pnpm -C apps/web exec playwright install-deps chromium
       - run: pnpm -C apps/web test:e2e
       - run: pnpm -C apps/desktop/frontend test:e2e
       - uses: actions/upload-artifact@v4
