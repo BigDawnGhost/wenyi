@@ -80,7 +80,7 @@ def test_missing_discovery_never_creates_state(tmp_path):
     store = SqliteStorage(str(root), create=False)
     assert isinstance(store, Storage)
     assert not store.exists()
-    assert store.load_context() is None
+    assert store.read_artifact("test-state.json") is None
     assert store.all_terms() == []
     assert store.list_artifacts() == []
     assert store.read_artifact_records("events.jsonl") == []
@@ -88,7 +88,7 @@ def test_missing_discovery_never_creates_state(tmp_path):
     with pytest.raises(FileNotFoundError, match="not initialized"):
         store.load_manifest()
     with pytest.raises(FileNotFoundError):
-        store.save_context({})
+        store.write_artifact("test-state.json", {})
     store.close()
     assert not root.exists()
 
@@ -169,7 +169,7 @@ def test_stage_manifest_last_and_all_major_state(store, document):
     assert store.load_chapter(3) == document.chapters[0]
     assert store.load_annotation_contexts() == {"note": "source note"}
     assert "epub_annotation_contexts" not in manifest["meta"]
-    for name in ("context", "analysis", "report", "usage"):
+    for name in ("analysis", "report", "usage"):
         getattr(store, f"save_{name}")({"name": name})
         assert getattr(store, f"load_{name}")() == {"name": name}
     store.upsert_term(GlossaryTerm("First", "第一"), chapter=3)
@@ -261,13 +261,13 @@ def test_outer_transaction_includes_glossary_and_nested_rollback(store, document
     try:
         with pytest.raises(RuntimeError):
             with store.state_lock():
-                store.save_context({"temporary": True})
+                store.write_artifact("test-state.json", {"temporary": True})
                 store.upsert_term(GlossaryTerm("First", "第一"))
                 store.upsert_term(GlossaryTerm("First", "另译"))
                 chapter = store.load_chapter(3)
                 chapter.segments[0].target = "Uncommitted"
                 store.save_chapter_with_status(chapter, "done")
-                assert reader.load_context() is None
+                assert reader.read_artifact("test-state.json") is None
                 assert reader.get_term("First") is None
                 assert reader.load_chapter(3).segments[0].target is None
                 assert reader.chapter_statistics()[0]["status"] == "pending"
@@ -276,16 +276,16 @@ def test_outer_transaction_includes_glossary_and_nested_rollback(store, document
                 )
                 assert snapshot.load_chapter(3).segments[0].target is None
                 raise RuntimeError("rollback")
-        assert store.load_context() is None
+        assert store.read_artifact("test-state.json") is None
         assert store.stats() == {"terms": 0, "open_conflicts": 0}
         with store.state_lock():
-            store.save_context({"kept": True})
+            store.write_artifact("test-state.json", {"kept": True})
             with pytest.raises(ValueError):
                 with store.state_lock():
-                    store.save_context({"discarded": True})
+                    store.write_artifact("test-state.json", {"discarded": True})
                     raise ValueError("inner")
-            assert store.load_context() == {"kept": True}
-        assert reader.load_context() == {"kept": True}
+            assert store.read_artifact("test-state.json") == {"kept": True}
+        assert reader.read_artifact("test-state.json") == {"kept": True}
     finally:
         reader.close()
 
@@ -347,7 +347,7 @@ def test_usage_commit_is_atomic_idempotent_and_detects_interference(store):
     assert store.read_artifact("reviews/review-2/usage.json") is None
     assert store.read_artifact("usage-pending.json") is not None
     with pytest.raises(ValueError, match="Invalid usage"):
-        store.prepare_usage_commit({"context.json": usage})
+        store.prepare_usage_commit({"test-state.json": usage})
 
 
 def test_glossary_rules_and_wal_readonly_snapshot(store):
@@ -425,7 +425,7 @@ def test_cross_process_workflow_lock_contention(store, kind):
         assert child.exitcode == 0
         # Long locks must not retain a SQLite write transaction.
         other = SqliteStorage(store.run_dir, create=False)
-        other.save_context({"independent": True})
+        other.write_artifact("test-state.json", {"independent": True})
         other.close()
     with make_lock():
         pass
@@ -438,7 +438,7 @@ def test_export_history_lock_is_independent_of_rendering_and_other_projects(stor
     try:
         with store.export_history_lock(), store.export_history_lock(False):
             with other.assemble_lock(), other.export_lock(1, False), other.lock(False):
-                other.save_context({"rendering": True})
+                other.write_artifact("test-state.json", {"rendering": True})
             with unrelated.export_history_lock(False):
                 pass
             with pytest.raises(StorageBusyError):
@@ -458,7 +458,7 @@ def test_run_lock_reenters_only_on_the_owning_thread(store):
     with store.lock():
         with store.state_lock():
             with store.lock(False):
-                store.save_context({"nested": True})
+                store.write_artifact("test-state.json", {"nested": True})
         with ThreadPoolExecutor(max_workers=1) as pool:
             pool.submit(contender).result(timeout=5)
         other = SqliteStorage(store.run_dir, create=False)
@@ -468,7 +468,7 @@ def test_run_lock_reenters_only_on_the_owning_thread(store):
                     pass
         finally:
             other.close()
-    assert store.load_context() == {"nested": True}
+    assert store.read_artifact("test-state.json") == {"nested": True}
 
 
 def test_export_lock_uses_the_api_integer_identity(store):
@@ -499,8 +499,8 @@ def test_threads_and_instances_serialize_state_and_event_appends(store):
         try:
             for _ in range(5):
                 with other.state_lock():
-                    value = other.load_context() or {"count": 0}
-                    other.save_context({"count": value["count"] + 1})
+                    value = other.read_artifact("test-state.json") or {"count": 0}
+                    other.write_artifact("test-state.json", {"count": value["count"] + 1})
                 other.log_event("thread", worker=index)
         finally:
             if other is not store:
@@ -508,7 +508,7 @@ def test_threads_and_instances_serialize_state_and_event_appends(store):
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(work, range(8)))
-    assert store.load_context() == {"count": 40}
+    assert store.read_artifact("test-state.json") == {"count": 40}
     assert len(store.list_events(limit=0)) == 40
     assert store._connection().execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert store._connection().execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -645,8 +645,8 @@ def _process_writes(run_dir, worker):
     try:
         for sequence in range(10):
             with store.state_lock():
-                counter = store.load_context() or {"count": 0}
-                store.save_context({"count": counter["count"] + 1})
+                counter = store.read_artifact("test-state.json") or {"count": 0}
+                store.write_artifact("test-state.json", {"count": counter["count"] + 1})
                 store.log_event("process", worker=worker, sequence=sequence)
     finally:
         store.close()
@@ -655,7 +655,7 @@ def _process_writes(run_dir, worker):
 def _process_abandon_transaction(run_dir):
     store = SqliteStorage(run_dir, create=False)
     with store.state_lock():
-        store.save_context({"uncommitted": True})
+        store.write_artifact("test-state.json", {"uncommitted": True})
         store.upsert_term(GlossaryTerm("uncommitted", "discard"))
         os._exit(0)
 
@@ -670,7 +670,7 @@ def test_process_writers_and_crash_recovery(store):
     for child in children:
         child.join(timeout=15)
         assert child.exitcode == 0
-    assert store.load_context() == {"count": 20}
+    assert store.read_artifact("test-state.json") == {"count": 20}
     events = store.list_events(limit=0)
     for worker in range(2):
         assert [row["sequence"] for row in events if row["worker"] == worker] == list(range(10))
@@ -678,9 +678,9 @@ def test_process_writers_and_crash_recovery(store):
     child.start()
     child.join(timeout=15)
     assert child.exitcode == 0
-    assert store.load_context() == {"count": 20}
+    assert store.read_artifact("test-state.json") == {"count": 20}
     assert store.get_term("uncommitted") is None
-    store.save_context({"after_crash": True})
+    store.write_artifact("test-state.json", {"after_crash": True})
 
 
 def test_legacy_json_is_not_imported(tmp_path):

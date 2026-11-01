@@ -180,13 +180,7 @@ class FileStorage(FileArtifacts):
     def load_chapter(self, ci: int) -> Chapter:
         return self._run.load_chapter(ci)
 
-    # Context, analysis, reports and usage.
-    def save_context(self, data: dict) -> None:
-        self._run.save_context(data)
-
-    def load_context(self) -> Optional[dict]:
-        return self._run.load_context()
-
+    # Analysis, reports and usage.
     def save_analysis(self, data: dict) -> None:
         self._run.save_analysis(data)
 

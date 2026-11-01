@@ -48,7 +48,7 @@ pipeline:
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
   translation_mode: standard # standard | best_of_three; best_of_three requires polish
-  rolling_context_segments: 6 # Number of recent translated paragraphs supplied as context
+  rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
@@ -124,7 +124,7 @@ class PipelineConfig(BaseModel):
     polish: bool = (
         True  # Polish the full translation with the strong tier by default; disable to save cost
     )
-    rolling_context_segments: int = 6
+    rolling_context_tokens: int = Field(default=512, ge=0)
     # Experimental evidence production requires the CLI prepare/translate entrypoint.
     terminology_context: bool = False
     # Prescan for a synopsis and chapter digests; disable to save prescan cost.

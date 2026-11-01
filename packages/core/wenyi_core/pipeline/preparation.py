@@ -24,7 +24,6 @@ from ..ingest.models import Chapter, Document
 from ..ingest.segmenter import load_document
 from ..llm.errors import ProviderFailure, describe_provider_failure
 from ..storage.protocol import Storage
-from .context import RollingContext
 from .input_preparation import (
     ingest_config,
     load_parsed_document,
@@ -262,14 +261,6 @@ class PreparationService:
         ).task_fingerprint("analyzer")
         store.save_analysis(analysis)
         store.log_event("analysis_saved", has_analysis=bool(analysis))
-        store.save_context(
-            RollingContext(
-                max_recent_keep=max(
-                    40,
-                    self._runtime.config.pipeline.rolling_context_segments,
-                )
-            ).to_dict()
-        )
 
         # The manifest marks successful initialization and must be committed atomically last.
         manifest["initialized"] = True

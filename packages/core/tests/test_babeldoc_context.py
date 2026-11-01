@@ -117,10 +117,7 @@ def test_body_context_skips_layout_units_without_dropping_them(store, monkeypatc
         (s.index, s.source, s.meta) for s in segments
     ]
     assert all(segment.target is not None for segment in saved.segments)
-    assert store.load_context()["recent_targets"] == [
-        saved.segments[0].target,
-        saved.segments[-1].target,
-    ]
+    assert store.read_artifact("context.json") is None
 
 
 def test_policy_uses_heading_ranges_not_whole_toc_pages():
@@ -204,7 +201,7 @@ def test_resume_discards_legacy_context_and_reuses_old_larger_glossary_checkpoin
     for segment, target in zip(segments, ["SAVED BODY", "SAVED FOOTER", ""]):
         segment.target = target
     _initialize(store, segments)
-    store.save_context({"recent_targets": ["LEGACY TABLE NOISE", "FUTURE TEXT"]})
+    store.write_artifact("context.json", {"recent_targets": ["LEGACY TABLE NOISE", "FUTURE TEXT"]})
     # Before role isolation, one mixed batch covered all three completed units.
     store.log_event("batch_glossary_extracted", chapter=0, start_index=0, count=3, summary={})
     config = _config()
@@ -238,7 +235,7 @@ def test_interrupted_run_rebuilds_context_without_retranslating_saved_units(stor
         _segment(2, "Second body.", "plain text"),
     ]
     _initialize(store, segments)
-    store.save_context({"recent_targets": ["LEGACY NOISE"]})
+    store.write_artifact("context.json", {"recent_targets": ["LEGACY NOISE"]})
 
     def interrupt(messages, tier, json_mode):
         if "literary translator" in messages[0]["content"]:
@@ -269,7 +266,9 @@ def test_completed_previous_chapter_does_not_supply_pdf_context(store, monkeypat
     segments[0].target = "PREVIOUS CHAPTER TARGET"
     _initialize(store, segments)
     store.set_chapter_status(0, "done")
-    store.save_context({"recent_targets": ["PREVIOUS CHAPTER TARGET", "OLD FOOTER"]})
+    store.write_artifact(
+        "context.json", {"recent_targets": ["PREVIOUS CHAPTER TARGET", "OLD FOOTER"]}
+    )
     store.save_chapter(
         Chapter(
             index=1,
@@ -302,7 +301,7 @@ def test_section_boundaries_reset_context_even_when_old_targets_exist(store, mon
     plans = _record_plans(orchestrator, monkeypatch)
     orchestrator._translation.run(store, book_synopsis="")
     assert all(plan.context == plan.next_source == "" for plan in plans)
-    assert store.load_context()["recent_targets"] == []
+    assert store.read_artifact("context.json") is None
 
 
 def test_alignment_fallback_and_polish_cannot_reintroduce_layout_neighbors(store):
