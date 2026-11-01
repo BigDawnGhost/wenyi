@@ -16,7 +16,12 @@ from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, Reporter, scope
 from .local_backend import LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
-from .local_runtime import LocalRuntime, progress_snapshot, statistics_snapshot
+from .local_runtime import (
+    LocalRuntime,
+    progress_snapshot,
+    run_workflow_sync,
+    statistics_snapshot,
+)
 from .settings import DesktopSettings
 from .updates import UpdateAdmissionMiddleware, UpdateGuard
 from .updates import router as updates_router
@@ -107,6 +112,7 @@ def create_context(
         mineru_token_resolver=credentials.resolve_mineru_token,
         connection_credential=credentials.resolve,
         babeldoc_connection=services.babeldoc.connection,
+        run_workflow_sync=run_workflow_sync,
         enqueue=services.enqueue,
         data_dir=str(backend.workspace / "projects"),
         project_dir=lambda pid: str(backend.project_dir(pid)),
