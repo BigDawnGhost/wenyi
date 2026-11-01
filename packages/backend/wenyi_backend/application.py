@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
 from .context import BackendContext, ContextMiddleware
+from .request_context import RequestContextMiddleware
 from .routers import (
     chapters,
     configuration,
@@ -57,6 +58,8 @@ def create_app(
         expose_headers=["Content-Disposition"],
     )
     app.add_middleware(ContextMiddleware, context=context)
+    # Added last, so it is the outermost layer and can stamp every response.
+    app.add_middleware(RequestContextMiddleware)
     for module in (
         health,
         strategies,

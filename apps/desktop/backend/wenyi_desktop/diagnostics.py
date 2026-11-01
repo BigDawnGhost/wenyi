@@ -235,10 +235,15 @@ class DiagnosticsMiddleware:
                 response_started = True
                 status = message["status"]
                 headers = list(message.get("headers", []))
-                headers.append((b"x-request-id", request_id.encode()))
+                present = {key.lower() for key, _ in headers}
+                # The shared request-context middleware runs inside this layer and
+                # may already have stamped the response; keep a single copy.
+                if b"x-request-id" not in present:
+                    headers.append((b"x-request-id", request_id.encode()))
                 if status >= 500:
                     error_id = error_id or uuid4().hex
-                    headers.append((b"x-error-id", error_id.encode()))
+                    if b"x-error-id" not in present:
+                        headers.append((b"x-error-id", error_id.encode()))
                 # Merge with CORS rather than replace its Content-Disposition exposure.
                 exposed = [
                     value
