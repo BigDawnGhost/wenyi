@@ -11,6 +11,7 @@ from fastapi import WebSocketDisconnect
 from wenyi_backend import dal
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
+from wenyi_core.observability import configure_logging
 
 from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, Reporter, scope
@@ -126,6 +127,9 @@ def create_app(
 ):
     from .desktop import ORIGINS
     from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
+
+    # The sidecar owns its own stderr; stdout carries the parent/child protocol.
+    configure_logging(service="wenyi-desktop")
 
     if context is None:
         if workspace is None:
