@@ -95,10 +95,23 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # The desktop build script shells out to uv during compilation to
+      # resolve the Git version, so a runner without uv fails before cargo
+      # writes a single object file. Same step as the packaging job.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
+          # The cache has to be readable from the packaging job, so both jobs
+          # build the key from the same inputs: the job id and the Rust
+          # environment hash are left out, exactly as in local-package.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
           # A warm-only job must save the cache, not just consume it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: runner.os == 'Linux'
@@ -172,6 +185,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
+          # Keep the key in step with cargo-warm, which writes this cache on
+          # every push to main; the per-job suffix would make it unreadable.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf xvfb
       # Packaging tests need the root dev group and CLI console fixtures.
