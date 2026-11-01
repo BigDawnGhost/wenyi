@@ -4,12 +4,16 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from wenyi_backend.errors import (
+    CHAPTER_NOT_FOUND,
     EXPORT_NOT_FOUND,
     INVALID_CONFIGURATION,
     LEGACY_ERRORS,
     PROJECT_BUSY,
     PROJECT_NOT_FOUND,
     QUEUE_UNAVAILABLE,
+    SEGMENT_NOT_FOUND,
+    SETTINGS_CONFLICT,
+    SOURCE_NOT_READY,
     UNSUPPORTED_CLIENT,
     ApiError,
     api_error_handler,
@@ -97,12 +101,20 @@ def test_first_batch_codes_are_the_agreed_five():
     } <= codes
 
 
-def test_export_domain_added_only_the_expected_code():
+def test_domain_migrations_added_only_the_expected_codes():
     codes = {code for _, _, code in LEGACY_ERRORS}
+    # Every code beyond the first batch must be one a migration deliberately
+    # introduced, so an accidental borrow (or a typo) fails this list.
     assert codes - {
         PROJECT_NOT_FOUND,
         PROJECT_BUSY,
         QUEUE_UNAVAILABLE,
         INVALID_CONFIGURATION,
         UNSUPPORTED_CLIENT,
-    } == {EXPORT_NOT_FOUND}
+    } == {
+        EXPORT_NOT_FOUND,
+        SOURCE_NOT_READY,
+        SETTINGS_CONFLICT,
+        CHAPTER_NOT_FOUND,
+        SEGMENT_NOT_FOUND,
+    }

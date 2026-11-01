@@ -2,7 +2,7 @@
 
 import pytest
 from fastapi import HTTPException
-from wenyi_backend.errors import INVALID_CONFIGURATION, ApiError
+from wenyi_backend.errors import INVALID_CONFIGURATION, SETTINGS_CONFLICT, ApiError
 
 
 def _client(backend_context, monkeypatch, project):
@@ -39,9 +39,20 @@ def test_configuration_raise_is_still_an_http_exception():
         "Global settings changed; reload before saving again",
     ],
 )
-def test_global_settings_conflict_carries_a_code_without_the_legacy_table(text):
+def test_global_settings_conflict_has_its_own_code(text):
     from wenyi_backend.errors import code_for
 
-    # The revision conflict raises ApiError directly, so it needs no legacy
-    # mapping; pinning that keeps the table honest about what it still covers.
-    assert code_for(409, text) is None
+    # A dedicated code: settings conflict is not an invalid configuration, and
+    # clients branch on the difference.
+    assert code_for(409, text) == SETTINGS_CONFLICT
+
+
+def test_settings_adapter_raises_its_own_code():
+    """The adapter must raise SETTINGS_CONFLICT, not borrow another code."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    source = (root / "apps/api/wenyi_api/global_settings.py").read_text(encoding="utf-8")
+    assert "ApiError(" in source
+    assert "SETTINGS_CONFLICT," in source
+    assert "Global settings changed; reload before saving again" in source

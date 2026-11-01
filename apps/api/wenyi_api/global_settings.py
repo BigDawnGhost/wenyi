@@ -4,7 +4,7 @@ from contextlib import contextmanager, nullcontext
 
 from psycopg.types.json import Jsonb
 from wenyi_backend.config_documents import global_document
-from wenyi_backend.errors import INVALID_CONFIGURATION, ApiError
+from wenyi_backend.errors import SETTINGS_CONFLICT, ApiError
 from wenyi_backend.global_settings import GlobalSettings, validate_settings
 from wenyi_backend.model_registry import project_registry_updates
 from wenyi_core.config import Config
@@ -56,7 +56,7 @@ class PostgresSettings:
             current = self.load(connection=conn)
             if revision != current.revision:
                 raise ApiError(
-                    INVALID_CONFIGURATION,
+                    SETTINGS_CONFLICT,
                     409,
                     "Global settings changed; reload before saving again",
                 )

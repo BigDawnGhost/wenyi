@@ -15,6 +15,11 @@ PROJECT_BUSY = "project_busy"
 QUEUE_UNAVAILABLE = "queue_unavailable"
 # Added by the export domain migration in T-15.
 EXPORT_NOT_FOUND = "export_not_found"
+SOURCE_NOT_READY = "source_not_ready"
+SETTINGS_CONFLICT = "settings_conflict"
+# Added by the review domain migration in T-15.
+CHAPTER_NOT_FOUND = "chapter_not_found"
+SEGMENT_NOT_FOUND = "segment_not_found"
 INVALID_CONFIGURATION = "invalid_configuration"
 UNSUPPORTED_CLIENT = "unsupported_client"
 
@@ -57,7 +62,10 @@ LEGACY_ERRORS: tuple[tuple[int, str, str], ...] = (
     (503, "Task queue is unavailable; retry the operation", QUEUE_UNAVAILABLE),
     (503, "Export queue is unavailable; retry the operation", QUEUE_UNAVAILABLE),
     (404, "Completed export not found", EXPORT_NOT_FOUND),
-    (409, "Prepare or translate the source before exporting", QUEUE_UNAVAILABLE),
+    (404, "chapter not found", CHAPTER_NOT_FOUND),
+    (404, "segment not found", SEGMENT_NOT_FOUND),
+    (409, "Prepare or translate the source before exporting", SOURCE_NOT_READY),
+    (409, "Global settings changed; reload before saving again", SETTINGS_CONFLICT),
     (422, "Subtitle projects export SRT; book projects export book formats", INVALID_CONFIGURATION),
     (422, "Invalid connection settings", INVALID_CONFIGURATION),
     (422, "Invalid model list request", INVALID_CONFIGURATION),

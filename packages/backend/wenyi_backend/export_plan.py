@@ -6,7 +6,7 @@ from pathlib import Path
 
 from wenyi_core.assemble.writer_common import default_output_format, output_backend
 
-from .errors import INVALID_CONFIGURATION, QUEUE_UNAVAILABLE, ApiError
+from .errors import INVALID_CONFIGURATION, SOURCE_NOT_READY, ApiError
 from .schemas import ExportRequest
 
 
@@ -20,7 +20,7 @@ def export_filename(project: dict, target_lang: str, fmt: str, bilingual: bool) 
 
 def resolve_export(project: dict, manifest: dict, body: ExportRequest) -> tuple[str, dict]:
     if not project.get("initialized"):
-        raise ApiError(QUEUE_UNAVAILABLE, 409, "Prepare or translate the source before exporting")
+        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
     fmt = body.format or (
         "srt"
         if project["fmt"] == "srt"

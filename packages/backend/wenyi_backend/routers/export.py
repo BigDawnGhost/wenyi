@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..context import current_context
-from ..errors import EXPORT_NOT_FOUND, QUEUE_UNAVAILABLE, ApiError
+from ..errors import EXPORT_NOT_FOUND, QUEUE_UNAVAILABLE, SOURCE_NOT_READY, ApiError
 from ..export_plan import resolve_export
 from ..export_response import ExportResponse
 from ..project_service import config_document, effective_config, require_project, storage_for
@@ -29,7 +29,7 @@ def list_exports(pid: str) -> list[dict]:
 async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export") -> dict:
     project = require_project(pid)
     if not project.get("initialized"):
-        raise ApiError(QUEUE_UNAVAILABLE, 409, "Prepare or translate the source before exporting")
+        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
     store = storage_for(pid)
     try:
         fmt, options = resolve_export(project, store.load_manifest(), body)
