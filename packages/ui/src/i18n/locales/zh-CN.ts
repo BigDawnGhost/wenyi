@@ -661,6 +661,16 @@ const zhCN = {
   "connectivity.timeout": "请求超时。",
   "connectivity.connectionFailed": "无法连接，请检查接口地址与网络。",
   "connectivity.unavailable": "提供商暂不可用，请稍后重试。",
+  "error.projectNotFound": "该项目已不存在。",
+  "error.projectBusy": "项目正忙，请在当前任务结束后重试。",
+  "error.queueUnavailable": "任务队列暂不可用，请稍后重试。",
+  "error.exportNotFound": "该导出文件已不存在，请重新导出。",
+  "error.sourceNotReady": "原文尚未处理完成。",
+  "error.settingsConflict": "设置已在别处被修改，请刷新后重试。",
+  "error.chapterNotFound": "该章节已不存在。",
+  "error.segmentNotFound": "该段落已不存在。",
+  "error.invalidConfiguration": "配置无效，请检查设置。",
+  "error.unsupportedClient": "当前客户端版本不受支持，请更新文翼。",
 } satisfies Messages;
 
 export default zhCN;
