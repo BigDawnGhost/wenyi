@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from "react";
-import { cn } from "@/lib/utils";
-import { Disclosure } from "@/components/ui/disclosure";
+import { cn } from "../../lib/utils";
+import { Disclosure } from "../../components/ui/disclosure";
 
 /** One settings group: the title column names the group so its controls need no extra prose. */
 export function SettingsSection({

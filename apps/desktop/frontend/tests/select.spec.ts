@@ -1,1 +1,5 @@
-import "../../../web/tests/select.spec";
+import { registerTests } from "../../../../packages/ui/tests/e2e/select";
+import { registerDesktopSetup } from "./shared-setup";
+
+registerDesktopSetup();
+registerTests();

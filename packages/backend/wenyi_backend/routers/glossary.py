@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+from contextlib import closing
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -12,13 +13,7 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.metadata import normalize_term_type
 
 from ..context import current_context
-from ..project_service import (
-    project_write,
-    read_storage_for,
-    require_book,
-    require_project,
-    storage_for,
-)
+from ..project_service import require_book
 from ..schemas import (
     ConflictOut,
     GlossaryImport,
@@ -29,6 +24,7 @@ from ..schemas import (
     TermOut,
     TermPage,
 )
+from .dependencies import project_write, read_storage_for, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/glossary", tags=["glossary"])
 
@@ -42,7 +38,8 @@ def _term(body: TermIn) -> GlossaryTerm:
 @router.get("/terms", response_model=list[TermOut])
 def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(None)) -> list[dict]:
     require_book(require_project(pid))
-    terms = storage_for(pid).all_terms()
+    with closing(storage_for(pid)) as storage:
+        terms = storage.all_terms()
     if type:
         term_type = normalize_term_type(type)
         terms = [term for term in terms if term.type == term_type]
@@ -131,7 +128,8 @@ def delete_term(pid: str, source: str) -> dict:
 @router.get("/conflicts", response_model=list[ConflictOut])
 def list_conflicts(pid: str) -> list[dict]:
     require_book(require_project(pid))
-    return storage_for(pid).open_conflicts()
+    with closing(storage_for(pid)) as storage:
+        return storage.open_conflicts()
 
 
 @router.post("/conflicts/{cid}/resolve", response_model=Message)
@@ -162,7 +160,8 @@ def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
 @router.get("/export")
 def export_glossary(pid: str, format: Literal["json", "csv"] = "json"):
     require_book(require_project(pid))
-    terms = storage_for(pid).all_terms()
+    with closing(storage_for(pid)) as storage:
+        terms = storage.all_terms()
     if format == "csv":
         buffer = io.StringIO()
         writer = csv.writer(buffer)

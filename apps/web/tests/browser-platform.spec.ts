@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("Web keeps environment-variable-only settings", async ({ page }) => {
   // A global left by an extension cannot select a native adapter in this build.

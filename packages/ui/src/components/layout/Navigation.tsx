@@ -1,11 +1,11 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, type LucideIcon } from "lucide-react";
-import { useI18n } from "@/i18n";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { useI18n } from "../../i18n";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import {
   availableSettingsSections, isVisibleFor, navEntries, navPath, settingsPath,
-} from "@/routes/manifest";
+} from "../../routes/manifest";
 
 export function SettingsNavigation({ collapsed }: { collapsed: boolean }) {
   const { t, locale } = useI18n();

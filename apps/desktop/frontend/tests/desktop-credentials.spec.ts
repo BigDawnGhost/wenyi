@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, globalConfiguration } from "./fixtures";
+import { fakeApi, globalConfiguration } from "../../../../packages/ui/tests/e2e/fixtures";
 
 test("API keys are typed directly, saved with the configuration and shown masked", async ({ page }) => {
   await page.addInitScript(() => {

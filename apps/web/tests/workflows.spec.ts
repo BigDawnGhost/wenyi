@@ -9,7 +9,7 @@ import {
   configuration,
   capabilities,
   globalConfiguration,
-} from "./fixtures";
+} from "../../../packages/ui/tests/e2e/fixtures";
 
 test("creates a multilingual project and waits for background parsing", async ({
   page,

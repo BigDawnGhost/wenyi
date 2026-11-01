@@ -91,6 +91,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v9.0.0
+      - run: uv sync --locked --package wenyi-backend --no-dev
+      - run: pnpm check:schema
       - run: pnpm -C apps/web typecheck
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/web typecheck:tests

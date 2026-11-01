@@ -2,7 +2,7 @@
 This is neither a global singleton nor a guarantee of concurrent reuse across books.
 Centralize construction to avoid duplicate clients/accounting or lost language state.
 Restore manifest languages into config and all agents.
-Own event sinks, usage checkpoints/flushes, language restoration and source hashes.
+Compose one usage coordinator; own event sinks, language restoration and source hashes.
 """
 
 from __future__ import annotations
@@ -25,10 +25,11 @@ from ..i18n.languages import require_language, validate_run_languages
 from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.routing import resolve_routes
-from ..llm.usage import empty_usage, merge_usage_summaries, usage_delta, validate_usage
+from ..llm.usage import validate_usage
 from ..storage.protocol import Storage
 from ..timing import RunTimer
 from .runstore import source_sha256
+from .runtime_usage import UsageCoordinator
 
 
 class PipelineRuntime:
@@ -65,8 +66,7 @@ class PipelineRuntime:
         self.llm_config = config.llm.model_copy(deep=True)
         self.client = client or build_client(config)
         self._timer: RunTimer | None = None
-        # Client usage is cumulative in-process; checkpoints isolate newly accrued usage at each flush.
-        self._usage_checkpoint = self.client.usage_summary()
+        self.usage = UsageCoordinator(self.client)
         self.analyzer = Analyzer(self.client, config)
         self.synopsizer = Synopsizer(self.client, config)
         self.translator = Translator(self.client, config)
@@ -127,33 +127,6 @@ class PipelineRuntime:
                 for operation, route in resolve_routes(self.llm_config).items()
             },
         )
-
-    def flush_usage(self, store: Storage, *, scope: str, review=None) -> dict[str, Any]:
-        """Merge the client's unpersisted usage delta into the book's usage.json."""
-        store.recover_usage()
-        current = self.client.usage_summary()
-        increment = usage_delta(current, self._usage_checkpoint)
-        accumulated = store.load_usage() or empty_usage()
-        if not increment["totals"]["calls"]:
-            if review is not None and review.load_usage() is None:
-                review.save_usage(empty_usage())
-            return merge_usage_summaries(accumulated, increment)
-        cumulative = merge_usage_summaries(accumulated, increment)
-        ledgers = {"usage.json": cumulative}
-        if review is not None:
-            ledgers[f"reviews/{review.review_id}/usage.json"] = merge_usage_summaries(
-                review.load_usage() or empty_usage(), increment
-            )
-        store.prepare_usage_commit(ledgers)
-        self._usage_checkpoint = current
-        store.recover_usage()
-        store.log_event(
-            "usage_summary",
-            scope=scope,
-            increment=increment,
-            cumulative=cumulative,
-        )
-        return cumulative
 
     # Source identity.
     def ensure_store_source(self, store: Storage, input_path: str) -> str:

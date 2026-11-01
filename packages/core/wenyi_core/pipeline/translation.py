@@ -89,7 +89,7 @@ class TranslationService:
             TerminologyService.for_store(
                 store,
                 self._runtime.terminology_agent,
-                checkpoint_usage=lambda: self._runtime.flush_usage(store, scope="terminology"),
+                checkpoint_usage=lambda: self._runtime.usage.flush(store, scope="terminology"),
             )
             if policy.enabled("terminology.context")
             else None
@@ -118,12 +118,12 @@ class TranslationService:
                     allow_empty_translations=allow_empty_translations,
                     terminology=terminology,
                 )
-                self._runtime.flush_usage(store, scope="chapter")
+                self._runtime.usage.flush(store, scope="chapter")
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
                 self._titles.run(store, glossary, progress=progress)
         finally:
-            self._runtime.flush_usage(store, scope="translate")
+            self._runtime.usage.flush(store, scope="translate")
         if progress and total:
             progress(total, total, "Translation complete")
         store.log_event("translate_run_finished", total_segments=total)
@@ -369,7 +369,7 @@ class TranslationService:
             if self._runtime.config.pipeline.translation_mode == "best_of_three":
 
                 def checkpoint_precision_usage() -> None:
-                    self._runtime.flush_usage(store, scope="precision")
+                    self._runtime.usage.flush(store, scope="precision")
 
                 result = self._precision.execute(
                     plan,

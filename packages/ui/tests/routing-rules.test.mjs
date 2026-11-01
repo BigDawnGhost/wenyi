@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { routeModules } from "./source-contracts.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const uiSrc = resolve(root, "packages/ui/src");
@@ -73,11 +74,14 @@ test("route manifest is complete and consistent", () => {
   const paths = [...manifest.matchAll(/path:\s*"([^"]+)"/g)].map((m) => m[1]);
   assert(paths.length >= 14, `expected the full route table, found ${paths.length}`);
   assert.equal(new Set(paths).size, paths.length, "route paths must be unique");
+  for (const required of [
+    "/", "/projects/new", "/settings", "/settings/:section", "/projects/:pid",
+    "/projects/:pid/proofreading/:ci", "/projects/:pid/review", "/projects/:pid/subtitles",
+  ]) assert(paths.includes(required), `Required URL disappeared: ${required}`);
+  assert(manifest.includes('<Navigate to="/settings" replace />'), "Keep legacy settings redirects");
 
-  const loadersBlock = manifest.match(/pageLoaders[\s\S]*?=\s*\[([\s\S]*?)\]/);
-  assert(loadersBlock, "pageLoaders must exist for warm-up and prefetch");
-  const loaderCount = (loadersBlock[1].match(/load[A-Z]\w*/g) || []).length;
-  assert.equal(loaderCount, 13, "one loader per code-split page");
+  for (const target of routeModules())
+    assert(readFileSync(resolve(uiSrc, "routes", `${target}.tsx`), "utf8").length > 0);
 
   const navLines = manifest
     .split("\n")

@@ -1,4 +1,4 @@
-import { decodeResponse, requestHeaders } from "@wenyi/ui/lib/http";
+import { decodeResponse, requestHeaders } from "@wenyi/ui/http";
 import { apiBase, authToken } from "./runtime";
 import { saveNativeExport, saveNativeGlossary } from "./nativeExport";
 import { reportDiagnostic } from "./diagnostics";

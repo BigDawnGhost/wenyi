@@ -7,13 +7,14 @@ import json
 from fastapi import WebSocketDisconnect
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
-from wenyi_backend import dal
 from wenyi_backend.live_statistics import read_live_statistics
+from wenyi_backend.ports.projects import ProjectQueries
 
 
 class RedisTelemetry:
-    def __init__(self, url: str):
+    def __init__(self, url: str, projects: ProjectQueries):
         self.url = url
+        self.projects = projects
 
     def connect(self):
         return Redis.from_url(self.url, socket_timeout=1, socket_connect_timeout=1)
@@ -39,8 +40,8 @@ class RedisTelemetry:
         disconnected = None
         try:
             await pubsub.subscribe(f"project:{pid}")
-            project = await asyncio.to_thread(dal.get_project, pid)
-            chapters = await asyncio.to_thread(dal.chapter_summaries, pid)
+            project = await asyncio.to_thread(self.projects.get_project, pid)
+            chapters = await asyncio.to_thread(self.projects.chapter_summaries, pid)
             await websocket.send_json(
                 {"kind": "snapshot", "project": project or {}, "chapters": chapters}
             )

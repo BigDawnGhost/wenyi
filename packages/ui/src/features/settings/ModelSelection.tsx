@@ -1,7 +1,7 @@
-import { Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { useI18n } from "@/i18n";
-import { operationLabel } from "@/i18n/labels";
+import { Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { useI18n } from "../../i18n";
+import { operationLabel } from "../../i18n/labels";
 import { SettingsGroup } from "./SettingsSection";
 
 type Document = Record<string, unknown>;

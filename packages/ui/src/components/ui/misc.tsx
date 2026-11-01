@@ -1,7 +1,7 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import * as React from "react";
 import * as Primitive from "@radix-ui/react-dialog";
-import { cn } from "@/lib/utils";
+import { cn } from "../../lib/utils";
 import { X } from "lucide-react";
 
 export function Dialog({

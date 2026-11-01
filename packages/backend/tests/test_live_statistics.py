@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 import pytest
+from wenyi_backend.context import current_context
 from wenyi_backend.live_statistics import LiveStatistics, read_live_statistics
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, empty_usage
@@ -38,6 +39,9 @@ class MemoryStore:
 
     def load_usage(self):
         return deepcopy(self.usage)
+
+    def close(self):
+        pass
 
     def read_artifact(self, key):
         assert key == "timing.json"
@@ -170,7 +174,7 @@ def test_stats_endpoint_uses_current_job_and_falls_back_to_durable_totals(
         configuration, "require_project", lambda _: {"id": "book", "status": "translating"}
     )
     monkeypatch.setattr(
-        configuration.dal,
+        current_context().repository,
         "list_jobs",
         lambda _: [
             {"kind": "export", "run_id": "export", "status": "running"},

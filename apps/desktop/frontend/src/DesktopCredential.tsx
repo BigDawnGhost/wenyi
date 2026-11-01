@@ -10,11 +10,8 @@ import {
 } from "./credentials";
 import { useDesktopI18n } from "./i18n";
 import type { CredentialFieldProps } from "@wenyi/ui/platform";
-import { ErrorNotice } from "@/components/ui/data";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/form";
-import { PasswordInput } from "@/components/ui/password-input";
-import { SettingsGroup } from "@/features/settings/SettingsSection";
+import { ErrorNotice, Button, Label, PasswordInput } from "@wenyi/ui/primitives";
+import { SettingsGroup } from "@wenyi/ui/settings";
 
 /**
  * API key field. A saved manual key is loaded into the field masked with dots;

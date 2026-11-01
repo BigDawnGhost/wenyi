@@ -1,5 +1,5 @@
-import { Progress } from "@/components/ui/progress";
-import { formatBytes } from "@/lib/utils";
+import { Progress } from "@wenyi/ui/primitives";
+import { formatBytes } from "@wenyi/ui/format";
 import { useDesktopI18n } from "./i18n";
 
 /** One transfer presentation for app packages, plugin runtimes, and model assets. */

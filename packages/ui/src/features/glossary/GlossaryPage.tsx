@@ -1,18 +1,19 @@
-import { useI18n, translate as tr } from "@/i18n";
+import { useI18n, translate as tr } from "../../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { api, isProjectBusy, type Term } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Input, Textarea, Label } from "@/components/ui/form";
-import { Select, SelectDismissScope, SelectItem } from "@/components/ui/select";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
-import { Dialog } from "@/components/ui/misc";
+import { toast } from "../../lib/toast";
+import { api, isProjectBusy } from "../../api/client";
+import type { Term } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Input, Textarea, Label } from "../../components/ui/form";
+import { Select, SelectDismissScope, SelectItem } from "../../components/ui/select";
+import { Card, CardContent } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Dialog } from "../../components/ui/misc";
 import {
   Plus,
   Trash2,

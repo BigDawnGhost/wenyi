@@ -1,6 +1,6 @@
 // Desktop bridge contract tests; these do not drive OS/Wayland drag-and-drop.
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../../../packages/ui/tests/e2e/fixtures";
 import type { NativeDrag } from "../src/nativeDrop";
 
 const origin = "http://127.0.0.1:19481";

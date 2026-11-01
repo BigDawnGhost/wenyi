@@ -1,15 +1,16 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { api, isProjectBusy, type ProjectConfig } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/form";
-import { ErrorNotice, ReadOnlyNotice, StructuredData } from "@/components/ui/data";
+import { toast } from "../../lib/toast";
+import { api, isProjectBusy } from "../../api/client";
+import type { ProjectConfig } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Disclosure } from "../../components/ui/disclosure";
+import { Button } from "../../components/ui/button";
+import { Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice, StructuredData } from "../../components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
 import { SettingsActionBar, SettingsSection } from "./SettingsSection";

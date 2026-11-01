@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Label } from "@/components/ui/form";
-import { PasswordInput } from "@/components/ui/password-input";
+import { Label, PasswordInput } from "@wenyi/ui/primitives";
 import { useDesktopI18n } from "./i18n";
 import {
   clearMineruCredential,

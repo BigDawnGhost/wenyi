@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, pid, project, workflow } from "./fixtures";
+import { fakeApi, pid, project, workflow } from "../../../../packages/ui/tests/e2e/fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";

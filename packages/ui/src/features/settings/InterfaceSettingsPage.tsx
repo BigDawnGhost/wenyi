@@ -1,7 +1,7 @@
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { useI18n } from "@/i18n";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { useI18n } from "../../i18n";
 import { Navigate, useLocation, useParams } from "react-router-dom";
-import { availableSettingsSections } from "@/routes/manifest";
+import { availableSettingsSections } from "../../routes/manifest";
 import { GlobalConfiguration } from "./GlobalConfiguration";
 
 export default function InterfaceSettingsPage() {

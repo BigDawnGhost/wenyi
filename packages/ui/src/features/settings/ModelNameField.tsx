@@ -1,12 +1,13 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
-import { api, type ModelListResult } from "@/lib/api";
-import { useI18n, type MessageKey } from "@/i18n";
-import { Input, Label } from "@/components/ui/form";
-import { Button } from "@/components/ui/button";
-import { platform } from "@/platform";
-import { cn } from "@/lib/utils";
+import { api } from "../../api/client";
+import type { ModelListResult } from "../../api/types";
+import { useI18n, type MessageKey } from "../../i18n";
+import { Input, Label } from "../../components/ui/form";
+import { Button } from "../../components/ui/button";
+import { platform } from "../../platform";
+import { cn } from "../../lib/utils";
 
 type Document = Record<string, unknown>;
 type ListingDraft = {

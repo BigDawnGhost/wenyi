@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Monitor } from "lucide-react";
-import { useI18n } from "@/i18n";
+import { useI18n } from "../i18n";
 
 // User agent only: narrow windows and touch-enabled computers remain supported.
 const mobileUserAgent = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile|Tablet/i;

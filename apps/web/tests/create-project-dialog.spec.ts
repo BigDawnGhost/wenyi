@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, project } from "./fixtures";
+import { fakeApi, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 for (const chinese of [false, true]) {
   test(`creation is a modal over the retained dashboard in ${chinese ? "Chinese" : "English"}`, async ({ page }) => {

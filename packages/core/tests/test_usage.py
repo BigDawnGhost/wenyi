@@ -646,11 +646,11 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 completion=20,
                 stage="translation.body",
             )
-            cumulative = first._runtime.flush_usage(store, scope="translate")
+            cumulative = first._runtime.usage.flush(store, scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
 
             # A second flush in the same process without new calls must not double-count usage.
-            unchanged = first._runtime.flush_usage(store, scope="pipeline")
+            unchanged = first._runtime.usage.flush(store, scope="pipeline")
             self.assertEqual(unchanged["totals"]["total_tokens"], 120)
 
             # Simulate resume with a new client/Orchestrator, adding deltas to the same book.
@@ -663,7 +663,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 completion=10,
                 stage="review.scan",
             )
-            cumulative = resumed._runtime.flush_usage(store, scope="translate")
+            cumulative = resumed._runtime.usage.flush(store, scope="translate")
 
             self.assertEqual(cumulative["totals"]["total_tokens"], 170)
             self.assertEqual(cumulative["totals"]["calls"], 2)
@@ -691,7 +691,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             initial = Orchestrator(config, client=initial_client)
             store = initial.run_steps(source, {"translate"})["store"]
             self._record(initial_client, "strong", prompt=100, completion=20)
-            initial._runtime.flush_usage(store, scope="translate")
+            initial._runtime.usage.flush(store, scope="translate")
 
             resumed_client = FakeClient(handler=routing_handler)
             resumed = Orchestrator(config, client=resumed_client)

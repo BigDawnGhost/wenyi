@@ -1,6 +1,6 @@
-import { useI18n } from "@/i18n";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
+import { useI18n } from "../../i18n";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
 import { SettingsGroup } from "./SettingsSection";
 
 const section = (config: Record<string, unknown>, key: string) =>

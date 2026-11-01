@@ -8,7 +8,6 @@ from pathlib import Path
 
 import anyio
 from fastapi import WebSocketDisconnect
-from wenyi_backend import dal
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
 
@@ -59,8 +58,8 @@ class DesktopServices:
 
     async def relay(self, ws, pid):
         with self.connect().subscribe(pid) as queue:
-            project = await asyncio.to_thread(dal.get_project, pid)
-            chapters = await asyncio.to_thread(dal.chapter_summaries, pid)
+            project = await asyncio.to_thread(self.backend.get_project, pid)
+            chapters = await asyncio.to_thread(self.backend.chapter_summaries, pid)
             await ws.send_json({"kind": "snapshot", "project": project or {}, "chapters": chapters})
             disconnected = asyncio.create_task(ws.receive())
             received = None

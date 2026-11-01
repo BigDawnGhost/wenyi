@@ -1,7 +1,7 @@
 import { Component, Suspense, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import { useI18n } from "@/i18n";
-import { platform } from "@/platform";
+import { useI18n } from "../i18n";
+import { platform } from "../platform";
 
 /**
  * Shared failure presentation. Renders as a top-level `<main>` for the global

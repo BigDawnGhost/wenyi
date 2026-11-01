@@ -14,9 +14,10 @@ from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.adapters import postgres_repository
 from wenyi_api.main import create_app
-from wenyi_backend import job_service
 from wenyi_backend.context import current_context
-from wenyi_backend.project_service import storage_for
+from wenyi_backend.execution.bindings import build_config_for
+from wenyi_backend.routers import dependencies as job_service
+from wenyi_backend.routers.dependencies import storage_for
 from wenyi_backend.workers import tasks
 
 
@@ -126,7 +127,7 @@ def test_creation_database_failure_removes_its_uploaded_file(api, monkeypatch, t
     def fail(*args, **kwargs):
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(dal, "create_project", fail)
+    monkeypatch.setattr(current_context().repository, "create_project", fail)
     with pytest.raises(RuntimeError, match="database unavailable"):
         client.post(
             "/projects",
@@ -172,7 +173,10 @@ def test_creation_saves_pdf_parser_before_queueing(api):
     project = must(dal.get_project(response.json()["id"]))
     assert project["config"]["pipeline"]["pdf_backend"] == "babeldoc"
     run_id = queue[0][1]["run_id"]
-    assert tasks._build_config_for(project["id"], run_id).pipeline.pdf_backend == "babeldoc"
+    assert (
+        build_config_for(current_context(), project["id"], run_id).pipeline.pdf_backend
+        == "babeldoc"
+    )
 
 
 def test_creation_freezes_project_precision_before_queueing(api):
@@ -188,7 +192,7 @@ def test_creation_freezes_project_precision_before_queueing(api):
     assert pipeline["translation_mode"] == "best_of_three"
     assert "precision_concurrency" not in pipeline
     assert pipeline["polish"] is True
-    snapshot = tasks._build_config_for(pid, queue[0][1]["run_id"]).pipeline
+    snapshot = build_config_for(current_context(), pid, queue[0][1]["run_id"]).pipeline
     assert snapshot.translation_mode == "best_of_three"
     assert "precision_concurrency" not in snapshot.model_dump()
     assert snapshot.polish is True
@@ -327,7 +331,7 @@ def test_source_identity_and_config_snapshot(api):
     response = client.post(f"/projects/{pid}/prepare")
     run_id = response.json()["job_id"]
     dal.set_project_config(pid, {"llm": {"preset": "deepseek"}})
-    assert tasks._build_config_for(pid, run_id).llm.preset == "fake"
+    assert build_config_for(current_context(), pid, run_id).llm.preset == "fake"
     execute_next(api)
     assert storage_for(pid).exists()
     assert (

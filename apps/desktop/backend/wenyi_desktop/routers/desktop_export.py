@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from wenyi_backend.context import current_context
 from wenyi_backend.export_plan import export_filename, resolve_export
 from wenyi_backend.export_response import ExportResponse
-from wenyi_backend.project_service import effective_config, require_book, require_project
+from wenyi_backend.project_service import require_book
+from wenyi_backend.routers.dependencies import effective_config, require_project
 from wenyi_backend.schemas import ExportRequest
 
 from ..local_backend import LocalBackend

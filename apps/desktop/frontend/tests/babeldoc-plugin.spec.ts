@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "./fixtures";
+import { fakeApi } from "../../../../packages/ui/tests/e2e/fixtures";
 
 test("plugin setup persists across navigation, retries and shares update progress style", async ({ page }, testInfo) => {
   await page.addInitScript(() => {

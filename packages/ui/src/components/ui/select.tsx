@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as Primitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "../../lib/utils";
 
 // Encode every value, not just "", so application values cannot collide with
 // Radix's reserved empty placeholder. FormData still receives the original value.

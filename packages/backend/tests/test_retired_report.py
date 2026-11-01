@@ -5,7 +5,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from wenyi_backend.application import create_app
-from wenyi_backend.workers import tasks
+from wenyi_backend.execution.contracts import ExecutionRequest
+from wenyi_backend.execution.operations import OperationServices, book_operation
 from wenyi_core.config import Config
 
 
@@ -24,11 +25,19 @@ def test_report_routes_are_absent(backend_context):
 def test_book_tasks_no_longer_generate_reports(monkeypatch, kind, review):
     orch = Mock(spec=["run_review", "run_steps"])
     monkeypatch.setattr("wenyi_core.pipeline.orchestrator.Orchestrator", lambda *a, **kw: orch)
-    monkeypatch.setattr(tasks, "_resolve_source", lambda pid: "book.txt")
+    services = OperationServices(
+        projects=Mock(),
+        config_for=Mock(),
+        source_for=lambda pid: "book.txt",
+        build_client=Mock(),
+        exports_dir=Mock(),
+        create_export=Mock(),
+        publish_export=Mock(),
+    )
     config = Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"review": review}})
     progress = Mock()
 
-    status = tasks._book_operation(kind, "p", Mock(), config, Mock(), progress, {})
+    status = book_operation(ExecutionRequest(kind, "p"), Mock(), config, Mock(), progress, services)
 
     if kind == "review":
         assert status == "reviewed"

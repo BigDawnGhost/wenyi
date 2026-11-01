@@ -1,17 +1,17 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { SelectDismissScope } from "@/components/ui/select";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+import { SelectDismissScope } from "../ui/select";
 import { NavigationLink, ProjectNavigation, SettingsNavigation } from "./Navigation";
-import { navEntries } from "@/routes/manifest";
-import { RouteGate } from "@/routes/RouteGate";
-import { NotificationToaster } from "@/components/NotificationToaster";
+import { navEntries } from "../../routes/manifest";
+import { RouteGate } from "../../routes/RouteGate";
+import { NotificationToaster } from "../NotificationToaster";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { platform } from "@/platform";
+import { api } from "../../api/client";
+import { platform } from "../../platform";
 
 const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
   .href;

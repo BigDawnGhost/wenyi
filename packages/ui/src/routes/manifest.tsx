@@ -22,12 +22,11 @@ import {
   Workflow,
   type LucideIcon,
 } from "lucide-react";
-import type { MessageKey } from "@/i18n";
-import { platform } from "@/platform";
+import type { MessageKey } from "../i18n";
+import { platform } from "../platform";
 
 // Single source of truth for routes, sidebar navigation, chunk warm-up and
 // intent prefetch. Adding or removing a page changes only this file.
-// Keep routeChunks in packages/ui/tests/platform-boundaries.test.mjs in sync.
 
 const loadDashboard = () => import("../features/dashboard/Dashboard");
 const loadCreateProject = () => import("../features/project-create/CreateProject");

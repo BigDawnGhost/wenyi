@@ -290,6 +290,13 @@ Historical zero reads do not prove an explicitly reported zero, so their rate is
 unknown unless new calls provide a read counter.
 Older pre-routing ledgers still require `wenyi models migrate-usage RUN_DIR`.
 
+This command operates only on the selected CLI target directory and its Review
+ledgers, under the existing run lock. It validates every ledger before writing,
+keeps an exact-byte `usage.before-routing-<timestamp>.json` backup beside each changed
+ledger, and publishes each converted file atomically. If interrupted, repeat the same
+command: already converted ledgers are skipped, and existing backups are retained.
+It does not discover or migrate Web/Desktop state.
+
 The progress-bar clock measures the entire current workflow, including parsing, model
 waits, translation, polishing, review and export. Switching stages, chapters or review
 rounds does not reset it; completing one stage does not stop it while subsequent work

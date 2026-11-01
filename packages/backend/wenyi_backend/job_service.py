@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
+from wenyi_core.config import Config
 
-from .context import current_context
-from .project_service import config_document, effective_config, project_write
-from .workers import enqueue
+from .context import BackendStorage
+from .ports.jobs import JobAdmission
+from .ports.projects import ProjectReader
+from .project_service import config_document, project_write
 
 TASK_FUNCTIONS = {
     "parse": "run_parse",
@@ -28,21 +32,30 @@ TASK_STATUSES = {
 }
 
 
-async def start_job(pid: str, kind: str, *, params: dict | None = None) -> dict:
+async def start_job(
+    pid: str,
+    kind: str,
+    *,
+    projects: ProjectReader,
+    jobs: JobAdmission,
+    storage_for: Callable[[str], BackendStorage],
+    config_for: Callable[[dict], Config],
+    enqueue: Callable[..., Awaitable[Any]],
+    params: dict | None = None,
+) -> dict:
     if kind not in TASK_FUNCTIONS:
         raise HTTPException(422, "unsupported task kind")
     params = dict(params or {})
     params.pop("config_snapshot", None)
-    with project_write(pid) as (project, _storage):
+    with project_write(pid, projects, storage_for) as (project, _storage):
         if not project.get("source_path"):
             raise HTTPException(409, "upload a source file first")
         run_id = uuid4().hex
         try:
-            snapshot = config_document(effective_config(project))
+            snapshot = config_document(config_for(project))
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        repository = current_context().repository
-        db_id = repository.admit_job(
+        db_id = jobs.admit_job(
             pid,
             kind,
             run_id,
@@ -58,6 +71,6 @@ async def start_job(pid: str, kind: str, *, params: dict | None = None) -> dict:
             if job is None:
                 raise RuntimeError("The queue did not accept this task")
         except Exception as error:
-            repository.fail_admission(db_id, project["status"], str(error))
+            jobs.fail_admission(db_id, project["status"], str(error))
             raise HTTPException(503, "Task queue is unavailable; retry the operation") from error
     return {"job_id": run_id, "project_id": pid, "kind": kind}
