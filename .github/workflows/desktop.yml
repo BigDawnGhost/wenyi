@@ -93,12 +93,15 @@ jobs:
           else
             echo "signed=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+      # pnpm/action-setup must run first: setup-node resolves the pnpm binary
+      # when caching is enabled, so the reverse order fails on a clean runner.
       - uses: pnpm/action-setup@v4
         with:
           version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
