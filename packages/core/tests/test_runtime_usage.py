@@ -1,12 +1,19 @@
 """One coordinator owns the client checkpoint without constructing a pipeline or agents."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
 from wenyi_core.pipeline.runtime_usage import UsageCoordinator
 from wenyi_core.storage.file import FileStorage
+
+
+class UsageSource:
+    def __init__(self, tracker: UsageTracker):
+        self.tracker = tracker
+
+    def usage_summary(self) -> dict:
+        return self.tracker.summary()
 
 
 def record(tracker):
@@ -18,7 +25,7 @@ def record(tracker):
 @pytest.mark.parametrize("failure", ["prepare", "event"])
 def test_checkpoint_advances_only_after_durable_prepare(tmp_path, monkeypatch, failure):
     tracker = UsageTracker()
-    coordinator = UsageCoordinator(SimpleNamespace(usage_summary=tracker.summary))
+    coordinator = UsageCoordinator(UsageSource(tracker))
     store = FileStorage(str(tmp_path))
     record(tracker)
     method = "prepare_usage_commit" if failure == "prepare" else "log_event"
@@ -34,7 +41,7 @@ def test_checkpoint_advances_only_after_durable_prepare(tmp_path, monkeypatch, f
 def test_initial_checkpoint_excludes_previous_client_calls_and_creates_empty_review(tmp_path):
     tracker = UsageTracker()
     record(tracker)
-    coordinator = UsageCoordinator(SimpleNamespace(usage_summary=tracker.summary))
+    coordinator = UsageCoordinator(UsageSource(tracker))
     review = Mock(review_id="review-empty", load_usage=Mock(return_value=None))
     store = FileStorage(str(tmp_path))
     assert coordinator.flush(store, scope="review", review=review) == empty_usage()

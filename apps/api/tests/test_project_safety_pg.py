@@ -20,7 +20,9 @@ def test_pause_requires_an_active_matching_job(api, status):
     dal.set_project_status(pid, "translating")
     active = status in {"queued", "running"}
     assert dal.request_pause(pid, pid) is active
-    assert dal.get_project(pid)["status"] == ("pausing" if active else "translating")
+    project = dal.get_project(pid)
+    assert project is not None
+    assert project["status"] == ("pausing" if active else "translating")
 
 
 def test_pause_rechecks_completion_and_new_run(api, monkeypatch):
@@ -40,12 +42,16 @@ def test_pause_rechecks_completion_and_new_run(api, monkeypatch):
     with pytest.raises(HTTPException) as raised:
         projects.pause(pid)
     assert raised.value.status_code == 409
-    assert dal.get_project(pid)["status"] == "done"
+    project = dal.get_project(pid)
+    assert project is not None
+    assert project["status"] == "done"
     dal.create_job(pid, "translation", new_run, run_id=new_run)
     dal.create_job(pid, "export", pid + "-export", run_id=pid + "-export")
     dal.set_project_status(pid, "translating")
     assert not dal.request_pause(pid, old_run)
-    assert dal.get_project(pid)["status"] == "translating"
+    project = dal.get_project(pid)
+    assert project is not None
+    assert project["status"] == "translating"
     assert dal.request_pause(pid, new_run)
     assert dal.request_pause(pid, new_run)
 
@@ -110,6 +116,8 @@ def test_lost_publication_acknowledgement_keeps_the_new_original(uploaded_projec
                 pid, UploadFile(BytesIO(b"Replacement."), filename="new.txt"), None
             )
         )
-    referenced = Path(current_context().data_dir) / dal.get_project(pid)["source_path"]
+    project = dal.get_project(pid)
+    assert project is not None
+    referenced = Path(current_context().data_dir) / project["source_path"]
     assert referenced.read_bytes() == b"Replacement."
     assert old_source.is_file()
