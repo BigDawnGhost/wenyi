@@ -13,22 +13,39 @@ from wenyi_core.observability import current_request_id
 PROJECT_NOT_FOUND = "project_not_found"
 PROJECT_BUSY = "project_busy"
 QUEUE_UNAVAILABLE = "queue_unavailable"
+# Added by the export domain migration in T-15.
+EXPORT_NOT_FOUND = "export_not_found"
 INVALID_CONFIGURATION = "invalid_configuration"
 UNSUPPORTED_CLIENT = "unsupported_client"
 
 
-class ApiError(Exception):
+class ApiError(HTTPException):
     """A client-visible failure identified by a stable, machine-readable code.
 
     ``message`` is the previous human-readable text, so the legacy ``detail``
     field keeps its value while clients migrate to ``code``.
+
+    It subclasses FastAPI's ``HTTPException`` so existing ``except HTTPException``
+    guards and tests that assert on that type keep working during the migration
+    window; ``status_code`` and ``detail`` are the inherited equivalents of
+    ``status`` and ``message``. FastAPI re-exports its own subclass, so inheriting
+    the Starlette base would not satisfy ``isinstance(exc, fastapi.HTTPException)``.
     """
 
     def __init__(self, code: str, status: int, message: str) -> None:
-        super().__init__(message)
+        super().__init__(status_code=status, detail=message)
         self.code = code
-        self.status = status
         self.message = message
+
+    @property
+    def status(self) -> int:
+        return self.status_code
+
+    def __str__(self) -> str:
+        # HTTPException renders "status: detail", which would change what a
+        # caller matching on the message sees. Keep the message alone, exactly
+        # as the pre-migration exception did.
+        return self.message
 
 
 # Legacy (status, detail) pairs translated into codes during the dual-write
@@ -39,6 +56,9 @@ LEGACY_ERRORS: tuple[tuple[int, str, str], ...] = (
     (409, "project already has a running task", PROJECT_BUSY),
     (503, "Task queue is unavailable; retry the operation", QUEUE_UNAVAILABLE),
     (503, "Export queue is unavailable; retry the operation", QUEUE_UNAVAILABLE),
+    (404, "Completed export not found", EXPORT_NOT_FOUND),
+    (409, "Prepare or translate the source before exporting", QUEUE_UNAVAILABLE),
+    (422, "Subtitle projects export SRT; book projects export book formats", INVALID_CONFIGURATION),
     (422, "Invalid connection settings", INVALID_CONFIGURATION),
     (422, "Invalid model list request", INVALID_CONFIGURATION),
     (422, "Unsupported client", UNSUPPORTED_CLIENT),

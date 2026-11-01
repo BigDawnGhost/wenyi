@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from wenyi_backend.errors import (
+    EXPORT_NOT_FOUND,
     INVALID_CONFIGURATION,
     LEGACY_ERRORS,
     PROJECT_BUSY,
@@ -85,10 +86,23 @@ def test_envelope_omits_request_id_when_absent_but_always_writes_detail():
 
 def test_first_batch_codes_are_the_agreed_five():
     codes = {code for _, _, code in LEGACY_ERRORS}
-    assert codes == {
+    # The first batch stays present and unchanged; later domain migrations may
+    # add codes (export added export_not_found), never remove the original five.
+    assert {
         PROJECT_NOT_FOUND,
         PROJECT_BUSY,
         QUEUE_UNAVAILABLE,
         INVALID_CONFIGURATION,
         UNSUPPORTED_CLIENT,
-    }
+    } <= codes
+
+
+def test_export_domain_added_only_the_expected_code():
+    codes = {code for _, _, code in LEGACY_ERRORS}
+    assert codes - {
+        PROJECT_NOT_FOUND,
+        PROJECT_BUSY,
+        QUEUE_UNAVAILABLE,
+        INVALID_CONFIGURATION,
+        UNSUPPORTED_CLIENT,
+    } == {EXPORT_NOT_FOUND}
