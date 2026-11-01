@@ -8,7 +8,7 @@ import pytest
 from api_test_support import new_project
 from tests.fake_llm import routing_handler
 from wenyi_api import dal
-from wenyi_backend.project_service import storage_for
+from wenyi_backend.routers.dependencies import storage_for
 from wenyi_core.config import Config
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient

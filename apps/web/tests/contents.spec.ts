@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "./fixtures";
+import { chapter, fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 const longTitle =
   "A long title about rivers, mountains and regional traditions ".repeat(8);

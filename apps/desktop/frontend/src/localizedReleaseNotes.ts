@@ -1,6 +1,6 @@
 import type { Root } from "mdast";
 import { toString } from "mdast-util-to-string";
-import type { Locale } from "@wenyi/ui/i18n/catalog";
+import type { Locale } from "@wenyi/ui/i18n";
 
 const languageLabels: Record<Locale, readonly string[]> = {
   en: ["english", "en"],

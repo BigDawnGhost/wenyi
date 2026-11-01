@@ -1,12 +1,13 @@
-import { useI18n, translate as tr } from "@/i18n";
+import { useI18n, translate as tr } from "../../i18n";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, isProjectBusy, type EventOut } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Badge } from "@/components/ui/badge";
+import { api, isProjectBusy } from "../../api/client";
+import type { EventOut } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card, CardContent } from "../../components/ui/card";
+import { ErrorNotice, StructuredData } from "../../components/ui/data";
+import { Badge } from "../../components/ui/badge";
 
 function badgeFor(type: string) {
   const BADGE: Record<

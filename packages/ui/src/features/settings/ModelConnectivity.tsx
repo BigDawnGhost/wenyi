@@ -1,9 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
-import { api, type ModelPingResult } from "@/lib/api";
-import { useI18n, type MessageKey } from "@/i18n";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ErrorNotice } from "@/components/ui/data";
+import { api } from "../../api/client";
+import type { ModelPingResult } from "../../api/types";
+import { useI18n, type MessageKey } from "../../i18n";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { ErrorNotice } from "../../components/ui/data";
 
 // Provider-independent failure categories from wenyi_core.llm.errors and the probe itself.
 const categoryMessages: Record<string, MessageKey> = {

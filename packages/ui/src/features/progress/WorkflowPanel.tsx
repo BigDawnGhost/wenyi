@@ -1,13 +1,13 @@
-import { StatusBadge } from "@/components/StatusBadge";
-import { useI18n } from "@/i18n";
-import { workflowStageLabel } from "@/i18n/labels";
+import { StatusBadge } from "../../components/StatusBadge";
+import { useI18n } from "../../i18n";
+import { workflowStageLabel } from "../../i18n/labels";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import type { ProgressMessage } from "@/lib/ws";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice } from "@/components/ui/data";
-import { progressInterval } from "@/lib/runtime";
+import { api } from "../../api/client";
+import type { ProgressMessage } from "../../lib/ws";
+import { Disclosure } from "../../components/ui/disclosure";
+import { Card, CardContent } from "../../components/ui/card";
+import { ErrorNotice } from "../../components/ui/data";
+import { progressInterval } from "../../lib/runtime";
 
 export function WorkflowPanel({
   pid,

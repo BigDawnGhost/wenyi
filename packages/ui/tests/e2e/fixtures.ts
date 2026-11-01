@@ -593,7 +593,7 @@ export async function fakeApi(
   apiOrigin?: string,
 ) {
   await page.routeWebSocket("**/ws/**", () => {});
-  await page.route(apiOrigin ? `${apiOrigin}/**` : "**/api/**", async (route) => {
+  await page.route(apiOrigin ? `${apiOrigin}/**` : url => url.pathname.startsWith("/api/"), async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname + url.search;
     const method = route.request().method();

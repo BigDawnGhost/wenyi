@@ -1,21 +1,22 @@
-import { StatusBadge } from "@/components/StatusBadge";
-import { useI18n } from "@/i18n";
+import { StatusBadge } from "../../components/StatusBadge";
+import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { useProjectProgress } from "@/lib/ws";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
+import { api, isProjectBusy } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { useProjectProgress } from "../../lib/ws";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { Progress } from "../../components/ui/progress";
+import { ErrorNotice, StructuredData } from "../../components/ui/data";
+import { Disclosure } from "../../components/ui/disclosure";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
-import { toast } from "@/lib/toast";
-import { progressInterval } from "@/lib/runtime";
+import { toast } from "../../lib/toast";
+import { progressInterval } from "../../lib/runtime";
 
 export default function ProgressPage() {
   const { t: tr } = useI18n();

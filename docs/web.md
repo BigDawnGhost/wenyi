@@ -123,7 +123,7 @@ pnpm -C apps/web dev
 
 The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the API. The API initializes a fresh database schema. Starting only the ordinary worker does not consume the export queue.
 
-To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`apps/web/tests/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
+To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`packages/ui/tests/e2e/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
 
 ## Interface language
 
@@ -169,9 +169,15 @@ for supported usage dialects and ledger compatibility. These counters do not est
    Browser Back can still leave during an upload; it does not cancel the request. The project may be created in the background, and completion will not redirect you away from the current page.
 2. Successful creation immediately opens the project overview; parsing or optional preparation continues in the background. As soon as parsing finishes, **Read contents & source** opens the chapter list and read-only original text without waiting for model preparation. Optional preparation parses before constructing/checking the model client, so missing credentials or later AI failures do not hide successfully parsed source. Titles and translations remain read-only until initialization completes. The overview refreshes task status, including queue failures and resume actions. Matching parse results are reused during preparation.
 3. The creation dialog uses a flat form for the project name, language direction, source file, and translation mode, with its actions pinned below the scrolling form. For books, choose **Standard translation** or **Three-draft precision** using the two-option switch only here. The mode defaults to standard independently of global settings; precision enables polishing and uses built-in three-branch concurrency, without a concurrency option. Global and project settings have no mode/template selectors, and Quick draft is retired. Use **Project settings** to adjust other workflow steps and registered model selections, and validate actual routes before starting translation. Changing translation mode requires creating another project.
-4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.
+4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type. A pause arriving after completion, or after the active run has changed, is rejected with HTTP 409 instead of leaving a completed project stuck in “Pausing”; refresh to see the latest state.
 5. For books, edit glossary, style, and paragraphs, and inspect whole-book review history, suggestions, and published fixes. For SRT, edit subtitle cues and timestamps.
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
+
+API source replacement is limited to uninitialized projects. If preview-cache invalidation
+fails, the previous source reference and caches remain intact. If source publication has
+an uncertain outcome, the complete new file is retained, even when the request fails;
+reload the project before retrying. This favors preserving a possibly published source
+over automatically removing an unreferenced upload.
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list appears after parsing, before AI preparation. Uninitialized books show source text only, without edit/history/draft actions; prepared books include unfinished translations. While a task is active, the chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes; paused and completed projects do not poll the chapter or its revision history. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
 
@@ -266,10 +272,14 @@ After a job is confirmed orphaned, ordinary workflows are marked interrupted and
 
 ## APIs, checks, and troubleshooting
 
-The live `/openapi.json` is the source of API types. `GET /capabilities` reports languages, formats, providers, and registered operations. Generate frontend types with:
+The shared app's route/schema definitions are the source of API types. The live
+`/openapi.json` remains available for inspection, but generation does not require a
+running API, PostgreSQL, Redis or credentials. After installing the workspace Python
+dependencies and frontend dependencies, generate or check the contract offline:
 
 ```bash
-pnpm gen:schema  # API already running on localhost:8000
+pnpm gen:schema  # Update shared types from the shared app factory, offline
+pnpm check:schema  # Compare temporary generated types; does not change tracked files
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync pytest -q
 pnpm -C apps/web typecheck
@@ -277,6 +287,11 @@ pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
+
+CI runs `check:schema` before frontend typechecks. Generation uses unavailable runtime
+ports and no production lifespan; only the schema artifact's installation-dependent
+version is normalized. `GET /capabilities` still reports runtime languages, formats,
+providers and registered operations.
 
 Web and Desktop share the chunking rule in `packages/ui/vite.shared.ts`: React,
 React DOM and Scheduler form a separate `react-runtime` chunk, while pages keep

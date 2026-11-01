@@ -60,7 +60,7 @@ async function measure(directory, desktop) {
     });
     const page = await context.newPage();
     await page.routeWebSocket("**/ws/**", () => {});
-    await page.route(desktop ? "http://127.0.0.1:19481/**" : "**/api/**", route => {
+    await page.route(desktop ? "http://127.0.0.1:19481/**" : `${origin}/api/**`, route => {
       const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
       return route.fulfill({ json: data[path] || {} });
     });

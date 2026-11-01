@@ -1,6 +1,6 @@
-import type { MessageKey } from "@/i18n";
-import type { ReviewItem, Workflow } from "@/lib/api";
-import type { ProgressMessage } from "@/lib/ws";
+import type { MessageKey } from "../../i18n";
+import type { ReviewItem, Workflow } from "../../api/types";
+import type { ProgressMessage } from "../../lib/ws";
 
 export const itemStatuses = {
   pending: { key: "review.pending", tone: "secondary" },

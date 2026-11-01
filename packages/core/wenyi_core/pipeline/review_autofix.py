@@ -154,7 +154,7 @@ class ReviewAutofixService:
         scope: str,
     ) -> None:
         """Merge unflushed runtime calls into both the review ledger and whole-book totals."""
-        self._runtime.flush_usage(store, scope=scope, review=debug)
+        self._runtime.usage.flush(store, scope=scope, review=debug)
 
     def _apply_index(
         self,

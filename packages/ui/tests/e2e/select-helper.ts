@@ -1,6 +1,6 @@
 import { expect, type Locator } from "@playwright/test";
 
-/** Operate the visible popup, never Radix's internal form compatibility control. */
+/** Shared interaction: operate the popup, never Radix's internal form compatibility control. */
 export async function chooseOption(trigger: Locator, name: string | RegExp) {
   await expect(trigger).toHaveAttribute("role", "combobox");
   await trigger.click();

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, termPageFixture } from "./fixtures";
-import { chooseOption } from "./select-helper";
+import { fakeApi, pid, termPageFixture } from "../../../packages/ui/tests/e2e/fixtures";
+import { chooseOption } from "../../../packages/ui/tests/e2e/select-helper";
 
 const terms = [
   { source: "An", target: "安", reading: "An", type: "person" },

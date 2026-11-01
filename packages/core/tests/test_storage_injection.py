@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
+from wenyi_core.pipeline.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.preparation import PreparationService
 from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.srt.store import SrtRunStore
@@ -64,13 +64,13 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
         "parsed_document.json",
         {
             "source_sha256": source_sha256(str(source)),
-            "ingest_config": PreparationService.ingest_config(config),
+            "ingest_config": ingest_config(config),
             "document": document.model_dump(mode="json"),
         },
     )
     changed = config.model_copy(deep=True)
     changed.segment.max_tokens_per_segment += 1
-    assert PreparationService.load_parsed_document(store, str(source), changed) is None
+    assert load_parsed_document(store, str(source), changed) is None
 
     def unexpected_parse(*args, **kwargs):
         raise AssertionError("Preparation re-parsed a matching upload preview")

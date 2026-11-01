@@ -131,7 +131,7 @@ class ReviewService:
     ) -> ReviewInputs | ReviewOutcome:
         """Validate formal state and restore or initialize the appropriate Review directory."""
         manifest = store.load_manifest()
-        self._runtime.flush_usage(store, scope="before_review")
+        self._runtime.usage.flush(store, scope="before_review")
         pending = [
             chapter["index"]
             for chapter in manifest.get("chapters", [])
@@ -245,7 +245,7 @@ class ReviewService:
             """Persist this review's usage delta and merge it into cumulative book usage."""
             from ..llm.usage import empty_usage
 
-            self._runtime.flush_usage(store, scope="review", review=debug)
+            self._runtime.usage.flush(store, scope="review", review=debug)
             return debug.load_usage() or empty_usage()
 
         policy = ReviewPolicy(

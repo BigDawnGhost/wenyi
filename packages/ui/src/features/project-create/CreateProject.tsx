@@ -1,19 +1,19 @@
-import { useI18n } from "@/i18n";
-import { languageName } from "@/i18n/labels";
+import { useI18n } from "../../i18n";
+import { languageName } from "../../i18n/labels";
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { useLocation, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/form";
-import { Dialog } from "@/components/ui/misc";
-import { Select, SelectItem } from "@/components/ui/select";
-import { ErrorNotice } from "@/components/ui/data";
-import { api, isProjectBusy } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { Button } from "../../components/ui/button";
+import { Input, Label } from "../../components/ui/form";
+import { Dialog } from "../../components/ui/misc";
+import { Select, SelectItem } from "../../components/ui/select";
+import { ErrorNotice } from "../../components/ui/data";
+import { api, isProjectBusy } from "../../api/client";
+import { cn } from "../../lib/utils";
 import { SourcePreview } from "./SourcePreview";
 import { SourceFilePicker } from "./SourceFilePicker";
-import { releaseSource, type ProjectSource } from "@/platform";
+import { releaseSource, type ProjectSource } from "../../platform";
 
 export default function CreateProjectDialog() {
   const { t: tr, locale } = useI18n();

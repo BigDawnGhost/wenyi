@@ -1,7 +1,7 @@
-import { Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { locales, useI18n } from "@/i18n";
-import { isLocale } from "@/i18n/catalog";
+import { Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { locales, useI18n } from "../../i18n";
+import { isLocale } from "../../i18n/catalog";
 import { SettingsSection } from "./SettingsSection";
 
 export function LanguageSettings() {

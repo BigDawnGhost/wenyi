@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { SettingsSection } from "@/features/settings/SettingsSection";
+import { Badge, Button } from "@wenyi/ui/primitives";
+import { SettingsSection } from "@wenyi/ui/settings";
 import { request } from "./transport";
 import { TransferProgress } from "./TransferProgress";
 import { useDesktopI18n } from "./i18n";

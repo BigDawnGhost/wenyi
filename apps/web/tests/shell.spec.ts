@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("navigating between routes keeps the sidebar shell as the same node", async ({
   page,

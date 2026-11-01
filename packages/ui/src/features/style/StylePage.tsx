@@ -1,16 +1,17 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { skipToken, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { api, isProjectBusy, type AnalysisPayload } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
+import { toast } from "../../lib/toast";
+import { api, isProjectBusy } from "../../api/client";
+import type { AnalysisPayload } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Label, Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/misc";
 
 const styleFields = [
   ["genre", "style.genre"],

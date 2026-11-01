@@ -203,6 +203,25 @@ class TestArchitectureBoundaries(unittest.TestCase):
         self.assertIn("i18n.languages", relative_imports)
         self.assertNotIn("preparation", relative_imports)
 
+    def test_preparation_usage_and_file_migration_have_independent_owners(self):
+        for name in ("book_understanding", "runtime_usage"):
+            path = PIPELINE_DIR / f"{name}.py"
+            self.assertTrue(path.is_file())
+            imports = _imported_modules(path)
+            self.assertNotIn("wenyi_core.pipeline.runtime", imports)
+            self.assertNotIn("wenyi_core.pipeline.preparation", imports)
+            self.assertNotIn("self._runtime", path.read_text(encoding="utf-8"))
+        runtime = _module_source("runtime")
+        self.assertIn("UsageCoordinator(self.client)", runtime)
+        self.assertNotIn("prepare_usage_commit(", runtime)
+        preparation = _module_source("preparation")
+        self.assertIn("BookUnderstandingService(", preparation)
+        self.assertNotIn("ThreadPoolExecutor", preparation)
+        command = (CLI_DIR / "model_commands.py").read_text(encoding="utf-8")
+        self.assertIn("migrate_usage_ledgers(run_dir)", command)
+        self.assertNotIn("_write_json", command)
+        self.assertNotIn("RunStore", command)
+
     def test_services_exist_as_pure_modules(self):
         """Extracted modules must import independently and expose their service classes."""
         import importlib

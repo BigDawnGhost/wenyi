@@ -1,8 +1,8 @@
 import { NavLink } from "react-router-dom";
 import { type LucideIcon } from "lucide-react";
-import { useI18n, type MessageKey } from "@/i18n";
-import { cn } from "@/lib/utils";
-import { isVisibleFor, navEntries, navPath } from "@/routes/manifest";
+import { useI18n, type MessageKey } from "../../i18n";
+import { cn } from "../../lib/utils";
+import { isVisibleFor, navEntries, navPath } from "../../routes/manifest";
 
 export function NavigationLink({
   to,

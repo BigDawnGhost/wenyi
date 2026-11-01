@@ -1,14 +1,15 @@
-import { StatusBadge } from "@/components/StatusBadge";
-import { useI18n } from "@/i18n";
+import { StatusBadge } from "../../components/StatusBadge";
+import { useI18n } from "../../i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
+import { toast } from "../../lib/toast";
 import { Link, Outlet } from "react-router-dom";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { LazyBoundary } from "@/routes/LazyBoundary";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice } from "@/components/ui/data";
-import { api, isProjectBusy, type Project } from "@/lib/api";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { LazyBoundary } from "../../routes/LazyBoundary";
+import { Card, CardContent } from "../../components/ui/card";
+import { ErrorNotice } from "../../components/ui/data";
+import { api, isProjectBusy } from "../../api/client";
+import type { Project } from "../../api/types";
 import { LoaderCircle, Trash2 } from "lucide-react";
 
 export default function Dashboard() {

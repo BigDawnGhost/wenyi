@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, chapter, project } from "./fixtures";
+import { fakeApi, pid, chapter, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("chapter rows localize pending status and support search and filtering", async ({
   page,

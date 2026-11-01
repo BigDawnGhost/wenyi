@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import type { SegmentRevision } from "@/lib/api";
+import { useI18n } from "../../i18n";
+import { Button } from "../../components/ui/button";
+import type { SegmentRevision } from "../../api/types";
 import { TranslationDiff } from "./TranslationDiff";
 
 export function RevisionHistory({

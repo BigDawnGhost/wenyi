@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import asdict
 
 import yaml
@@ -11,19 +12,11 @@ from wenyi_core.llm.operations import OPERATIONS, configured_operations
 from wenyi_core.llm.registry import PROVIDERS
 from wenyi_core.llm.routing import resolve_routes
 
-from .. import dal
 from ..config_documents import project_document
 from ..context import current_context
 from ..global_settings import load_settings, registry_guard
-from ..project_service import (
-    config_document,
-    config_response,
-    effective_config,
-    parse_project_yaml,
-    project_write,
-    require_project,
-    storage_for,
-)
+from ..ports.projects import RUNNING_PROJECT_STATUSES
+from ..project_service import config_document, config_response, parse_project_yaml
 from ..schemas import (
     Capabilities,
     ConfigInput,
@@ -33,6 +26,7 @@ from ..schemas import (
     ProjectStats,
     WorkflowOut,
 )
+from .dependencies import effective_config, project_write, require_project, storage_for
 
 router = APIRouter(tags=["configuration"])
 
@@ -89,9 +83,12 @@ def save_config(pid: str, body: ConfigInput) -> dict:
             )
         except (ValueError, yaml.YAMLError) as error:
             raise HTTPException(422, str(error)) from error
-        dal.set_project_config(pid, project_document(config), connection=conn)
+        repository = current_context().repository
+        repository.set_project_config(pid, project_document(config), connection=conn)
         # The project direction must also drive upload, list and worker dispatch.
-        dal.set_project_languages(pid, config.source_lang, config.target_lang, connection=conn)
+        repository.set_project_languages(
+            pid, config.source_lang, config.target_lang, connection=conn
+        )
         return config_response(project, config)
 
 
@@ -118,8 +115,10 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
 @router.get("/projects/{pid}/stats", response_model=ProjectStats)
 def project_stats(pid: str) -> dict:
     project = require_project(pid)
-    if project.get("status") in dal.RUNNING_PROJECT_STATUSES:
-        job = next((j for j in dal.list_jobs(pid) if j["kind"] != "export"), None)
+    if project.get("status") in RUNNING_PROJECT_STATUSES:
+        job = next(
+            (j for j in current_context().repository.list_jobs(pid) if j["kind"] != "export"), None
+        )
         if job and job.get("status") == "running":
             try:
                 live = current_context().telemetry.statistics_snapshot(pid, job)
@@ -128,11 +127,11 @@ def project_stats(pid: str) -> dict:
             except Exception:
                 # Cached live telemetry is optional; canonical ledgers remain available.
                 pass
-    store = storage_for(pid)
     from wenyi_core.llm.usage import empty_usage
 
-    usage = store.load_usage() or empty_usage()
-    timing = store.read_artifact("timing.json") or {"runs": [], "total_seconds": 0}
+    with closing(storage_for(pid)) as store:
+        usage = store.load_usage() or empty_usage()
+        timing = store.read_artifact("timing.json") or {"runs": [], "total_seconds": 0}
     return {"usage": usage, "timing": timing}
 
 
@@ -140,7 +139,8 @@ def project_stats(pid: str) -> dict:
 def workflow(pid: str) -> dict:
     """Describe the latest workflow using its frozen configuration, not edited settings."""
     project = require_project(pid)
-    job = next((j for j in dal.list_jobs(pid) if j["kind"] != "export"), None)
+    repository = current_context().repository
+    job = next((j for j in repository.list_jobs(pid) if j["kind"] != "export"), None)
     params = (job or {}).get("params") or {}
     snapshot = params.get("config_snapshot")
     document = snapshot or config_document(effective_config(project))
@@ -194,7 +194,7 @@ def workflow(pid: str) -> dict:
         "kind": kind,
         "status": job["status"] if job else "not_started",
         "run_id": job.get("run_id") if job else None,
-        "review_id": dal.job_review_id(job["id"]) if job and job.get("id") else None,
+        "review_id": repository.job_review_id(job["id"]) if job and job.get("id") else None,
         "stages": stages,
         "progress": progress,
     }

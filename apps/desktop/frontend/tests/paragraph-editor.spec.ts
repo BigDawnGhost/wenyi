@@ -1,8 +1,10 @@
 import { test } from "@playwright/test";
-import "../../../web/tests/paragraph-editor.spec";
+import { registerTests } from "../../../../packages/ui/tests/e2e/paragraph-editor";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {
     __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "editor-fixture" },
   }));
 });
+
+registerTests();

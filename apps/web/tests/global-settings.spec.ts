@@ -1,12 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { chooseOption } from "./select-helper";
+import { chooseOption } from "../../../packages/ui/tests/e2e/select-helper";
 import {
   fakeApi,
   globalConfiguration,
   configuration,
   pid,
   project,
-} from "./fixtures";
+} from "../../../packages/ui/tests/e2e/fixtures";
 
 const models = {
   ...configuration.registered_models,

@@ -54,11 +54,12 @@ def deletion_api(tmp_path, monkeypatch):
             value.commit()
 
     monkeypatch.setattr(repository, "_pool", SimpleNamespace(connection=connection))
-    monkeypatch.setattr(dal, "get_project", records.get)
+    monkeypatch.setattr(repository, "get_project", records.get)
     monkeypatch.setattr(dal, "delete_project", lambda pid, **_: records.pop(pid))
-    context = replace(
-        context,
-        storage_for=lambda pid: SimpleNamespace(lock=lambda **_: nullcontext(), close=lambda: None),
+    monkeypatch.setattr(
+        repository,
+        "storage_for",
+        lambda pid: SimpleNamespace(lock=lambda **_: nullcontext(), close=lambda: None),
     )
     directory = Path(settings.data_dir) / "book"
     directory.mkdir(parents=True)

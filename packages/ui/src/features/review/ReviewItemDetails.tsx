@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import { useI18n } from "@/i18n";
-import type { ReviewItem, ReviewLocation } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
-import { StructuredData } from "@/components/ui/data";
+import { useI18n } from "../../i18n";
+import type { ReviewItem, ReviewLocation } from "../../api/types";
+import { Badge } from "../../components/ui/badge";
+import { StructuredData } from "../../components/ui/data";
 import { text } from "./reviewData";
 
 export function ReviewItemDetails({

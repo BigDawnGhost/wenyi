@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
+import { useI18n } from "../../i18n";
+import { Button } from "../../components/ui/button";
+import { Label, Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 
 export function ContentsEditor({
   source,

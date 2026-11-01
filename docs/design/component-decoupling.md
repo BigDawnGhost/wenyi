@@ -4,7 +4,7 @@
 
 ## Status and decision
 
-**Incremental plan.** The initial review used source revision `80d448f` and added documentation only. The model-free input-parsing portion of F3 has since been implemented, including CLI `parse` and Web/Desktop read-only source views; see the [current module map](../architecture.md) and [CLI workflow](../cli.md#common-commands). Other target paths below remain proposals, not completed migrations.
+**Implemented: F1–F7 and S0–S5.** The initial review used source revision `80d448f` and added documentation only; this document now records the completed extraction. Execution lifecycle, explicit backend dependencies, input preparation and book understanding, usage ownership, UI public contracts, shared verification, and CLI file migration have separate owners. The temporary DAL, client-type and host-fixture forwarding paths are removed. See the [current module map](../architecture.md), [CLI workflow](../cli.md#common-commands), and verification record below.
 
 Keep the existing modular monorepo and deployment boundaries. Decouple responsibilities **inside** packages before moving directories. Preserve public entry points during each migration, and remove compatibility forwarding only after all callers and tests have migrated.
 
@@ -19,8 +19,8 @@ No database/state migration, new runtime service, new workspace package, prompt 
 ## 1. Boundaries already worth preserving
 
 - Core owns translation behavior; CLI, shared Backend and platform adapters depend on it, not the reverse.
-- The [Orchestrator](../../packages/core/wenyi_core/pipeline/orchestrator.py#L17) already delegates to services. Its stage routing and lock scopes are legitimate responsibilities, not another reason to split it.
-- [BackendContext](../../packages/backend/wenyi_backend/context.py#L143) supplies per-application adapters. Its ContextVar is request/task scoped, **not** a process-wide Web/Desktop selector. Retain context propagation to threads and callbacks.
+- The [Orchestrator](../../packages/core/wenyi_core/pipeline/orchestrator.py#L30) already delegates to services. Its stage routing and lock scopes are legitimate responsibilities, not another reason to split it.
+- [BackendContext](../../packages/backend/wenyi_backend/context.py#L89) supplies per-application adapters. Its ContextVar is request/task scoped, **not** a process-wide Web/Desktop selector. Retain context propagation to threads and callbacks.
 - Web owns PostgreSQL and Redis/Arq; Desktop owns its workspace, SQLite catalog, credentials and local runner. PostgreSQL adapters must remain in `apps/api`, never move into Core.
 - Shared UI already uses feature directories and injected host capabilities. Keep routes, shell, primitives and features separate; do not move every page merely to rename its parent directory.
 - `ArtifactStorage`, review evidence/models, markup, DOCX style policy, language policies and independent SRT execution already have useful boundaries. Extend these rather than introduce parallel abstractions.
@@ -32,122 +32,128 @@ Priorities below describe migration order, not confirmed production failures. Fi
 
 ### F1 — Task execution and scheduler entry points share one lifecycle owner
 
-**Evidence:** [workers/tasks.py](../../packages/backend/wenyi_backend/workers/tasks.py#L50) binds worker context; its [_execute](../../packages/backend/wenyi_backend/workers/tasks.py#L196) also resolves configuration, checks durable job identity, monitors cancellation, runs domain operations, and owns telemetry/storage cleanup. [Desktop LocalRuntime](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L258) calls these functions using the same worker-shaped dictionary.
+**Original finding:** `workers/tasks.py` combined scheduler context, configuration, durable identity checks, cancellation, domain operations and telemetry/storage cleanup. Web and Desktop called the same worker-shaped entry points.
 
 **Risk:** changing scheduler invocation or terminal-state handling touches the business execution path. Late completion and duplicate delivery depend on job identity and lock checks embedded in that path.
 
-**P1 seam:** introduce a typed execution request and an explicitly supplied execution dependency object. Extract one runner that owns admission rechecks, interruption, cleanup and terminal-state handling; operation functions own only preview/book/subtitle work. Keep `workers/tasks.py` as thin compatibility entry points with the existing task names and signatures. Web Arq and Desktop scheduling remain platform adapters. CLI continues to call Core directly, not this HTTP application layer.
+**Implemented P1 seam:** [ExecutionRequest and dependencies](../../packages/backend/wenyi_backend/execution/contracts.py#L20) are explicit inputs to the [runner](../../packages/backend/wenyi_backend/execution/runner.py#L63), which owns admission rechecks, interruption, cleanup and terminal-state handling. [Operations](../../packages/backend/wenyi_backend/execution/operations.py#L108) own preview/book/subtitle work; `workers/tasks.py` retains the existing task names and signatures as thin wrappers. Web Arq and Desktop scheduling remain platform adapters. CLI continues to call Core directly, not this HTTP application layer.
 
-The runner owns the long book lock from durable identity rechecks through recovery, execution and successful status writes. Move export execution separately: one export coordinator retains the same `export_lock` across claim, render, publish and terminal status. Book rendering uses the consistent Core snapshot and assemble lock; SRT retains its independent state-lock snapshot path. Rendering must not update catalog status, and publication must not invoke a writer. Reuse existing export plan/path/response helpers instead of creating a second export policy.
+The runner owns the long book lock from durable identity rechecks through recovery and domain execution. Successful catalog status writes follow live-statistics cleanup and lock exit, preserving the existing execution contract rather than the original plan's proposed wider lock. Resource cleanup is registered at acquisition, including startup failures; async cancellation drains synchronous work before returning. Read routes also close per-operation storage on success and error.
+
+The separate export coordinator retains the same `export_lock` across claim, render, publish and terminal status. Book rendering uses the consistent Core snapshot and assemble lock; SRT retains its independent state-lock snapshot path. Rendering does not update catalog status, and publication does not invoke a writer. Existing export plan/path/response helpers are reused rather than creating a second export policy.
 
 ### F2 — Scoped context is correct, but dynamic forwarding hides service dependencies
 
-**Evidence:** [dal.__getattr__](../../packages/backend/wenyi_backend/dal.py#L1) forwards through the current repository; [Repository](../../packages/backend/wenyi_backend/context.py#L28) combines project, job and export operations. [PostgresRepository](../../apps/api/wenyi_api/adapters.py#L21) also forwards to the platform DAL. The execution function's signature does not reveal these dependencies.
+**Original finding:** the shared DAL forwarded arbitrary attributes through the current repository, and the PostgreSQL repository forwarded again to its platform DAL. The aggregate repository combined unrelated consumer capabilities.
 
 **Risk:** a service can acquire additional persistence capabilities without changing its declared inputs; dynamic forwarding also weakens static checking.
 
-**P1 seam, alongside F1:** define job and project protocols from the extracted consumers, then pass those ports explicitly. Keep `BackendContext` as the composition root and keep the existing settings/export/telemetry contracts. Replace dynamic forwarding incrementally with typed calls.
+**Implemented:** project/job protocols in `ports/` are supplied explicitly to execution, project, admission and source-view services. Read projections have a read-only contract. [Execution bindings](../../packages/backend/wenyi_backend/execution/bindings.py#L63) and [HTTP bindings](../../packages/backend/wenyi_backend/routers/dependencies.py#L19) compose dependencies from `BackendContext`; business services do not discover them through ambient context. Routes use the typed repository directly for catalog operations. The shared dynamic DAL is deleted, and [PostgresRepository](../../apps/api/wenyi_api/adapters.py#L28) declares its supported methods explicitly instead of using `__getattr__`.
 
-Do **not** split logically coupled admission and compensation into unrelated repository calls. Preserve each platform's existing boundaries: Desktop uses single SQLite transactions; Web uses its current locks, sequential writes and failure compensation, not one shared database transaction. Strengthening Web atomicity would be a separate behavior change. Existing `PostgresRepository` and `LocalBackend` may implement multiple small protocols. Do not create one new adapter object per method or move SQL into shared Backend.
+Do **not** split logically coupled admission and compensation into unrelated repository calls. Existing `PostgresRepository` and `LocalBackend` implement multiple small protocols; SQL stays in platform adapters. General admission and compensation keep their existing platform boundaries, not a new shared cross-store transaction. Two separately tested safety fixes accompany this extraction: pause atomically checks current run identity/status in the catalog, and source replacement commits cache invalidation before publishing a source reference. An uncertain publication preserves the candidate file; automatic orphan cleanup is not introduced.
 
 ### F3 — Input preparation mixes parsing, initialization and model-assisted understanding
 
-**Evidence:** [PreparationService](../../packages/core/wenyi_core/pipeline/preparation.py#L63) owns parsed-cache validation, state lookup and initialization as well as book understanding. The Backend [preview path](../../packages/backend/wenyi_backend/workers/tasks.py#L72) calls its static cache helpers but independently assembles parser arguments, source checks and the parsed-document cache payload. Core's [prepare path](../../packages/core/wenyi_core/pipeline/preparation.py#L149) has its own parsing branches.
+**Original finding:** preparation and Backend preview duplicated parser arguments, source checks and parsed-document cache rules, while preparation also coordinated concurrent book understanding.
 
 **Risk:** parser options, cache identity and source-change handling have several callers that must evolve together; preview should not need a model-equipped runtime.
 
-**P1 seam:** extract an input-preparation API for parsing options, source identity checks and validated cached documents. Return a document and its identity; use injected artifact access where caching is supported. Backend retains HTTP preview projection, and Core retains initialization and manifest commit ownership.
+**Implemented:** the shared input-preparation API owns parsing options, source identity checks and validated cached documents, using injected artifact access where caching is supported. Backend retains HTTP preview projection; `PreparationService` retains initialization, stage coordination and manifest commit ownership. Retired parser forwarding methods are removed after caller migration.
 
-First preserve the existing cache-read/write policy for each caller; do not silently add caches or change invalidation. PDF's known state path and pre-conversion initialization marker must remain distinct from title-based discovery for other formats. Later extract book understanding, including its stable-order concurrency and checkpoints, while keeping `PreparationService` as the coordinator.
+The caller-specific cache policy is preserved, including PDF's known state path and pre-conversion initialization marker versus title-based discovery for other formats. [BookUnderstandingService](../../packages/core/wenyi_core/pipeline/book_understanding.py#L34) separately owns digest/synopsis coordination, stable-order concurrency and resumable checkpoints. It receives configuration, agents and the usage coordinator, not the whole Runtime; source hashes, cache versions and language-policy fingerprints are unchanged.
 
 ### F4 — Runtime assembly also owns recoverable usage publication
 
-**Evidence:** [PipelineRuntime](../../packages/core/wenyi_core/pipeline/runtime.py#L36) constructs clients and agents, while [flush_usage](../../packages/core/wenyi_core/pipeline/runtime.py#L113) updates a client checkpoint and publishes both book and Review ledgers. [Storage](../../packages/core/wenyi_core/storage/protocol.py#L30) is a broad aggregate, but an artifact-only port already exists.
+**Original finding:** Runtime constructed clients and agents while also updating a client checkpoint and publishing both book and Review ledgers. Passing it to extracted services exposed more than their actual accounting dependency.
 
 **Risk:** moving apparently small accounting code can change checkpoint timing, recovery or once-only charging. Passing the entire runtime into every extracted service would preserve the coupling.
 
-**P2 seam:** first extract a run-owned usage coordinator with explicit client-usage and ledger dependencies. Preserve one client and one checkpoint owner per run. Reuse the existing usage arithmetic; retain the aggregate `Storage` for compatibility and introduce narrower protocols only for actual consumers.
+**Implemented:** [UsageCoordinator](../../packages/core/wenyi_core/pipeline/runtime_usage.py#L28) owns the single client checkpoint and depends on explicit usage-source, book-ledger and Review-ledger protocols. All book workflow consumers share that owner. Recovery precedes reading totals; the durable absolute-total journal precedes the in-memory checkpoint; retry cannot replay a delta. Existing arithmetic, empty Review ledger behavior, event payloads and storage formats are preserved.
 
-Do not pre-create a matrix of empty ports. Language binding and timing stay in Runtime until a specific consumer needs an independent contract. Keep `RunStore` and storage schemas in place during this stage.
+No matrix of unused ports is introduced. Language binding and timing remain legitimate Runtime responsibilities; `RunStore` and the aggregate `Storage` contract stay in place. Independent SRT accounting is unchanged.
 
 ### F5 — UI contracts expose implementation paths and a type-only dependency cycle
 
-**Evidence:** [platform.ts](../../packages/ui/src/platform.ts#L1) imports `ProjectDetail` from the API implementation, while [lib/api.ts](../../packages/ui/src/lib/api.ts#L1) imports platform access and source capabilities. This is a **type-only back edge**, not a demonstrated runtime cycle. The package [wildcard export](../../packages/ui/package.json#L6), host [TypeScript aliases](../../apps/desktop/frontend/tsconfig.json#L16) and [Vite aliases](../../apps/desktop/frontend/vite.config.ts#L7) expose shared UI internals; [DesktopCredential](../../apps/desktop/frontend/src/DesktopCredential.tsx#L6) consumes primitive implementation paths.
+**Original finding:** platform contracts imported API implementation types, while wildcard package exports and host aliases exposed shared UI internals. This was a type-only back edge and public API design issue, not a demonstrated runtime cycle.
 
 **Risk:** moving a private UI module forces host edits, and foundational contracts depend on the client implementation they support. This is a public API design issue, not an invalid host-to-shared dependency.
 
-**P1 seam, independently parallelizable:** extract schema-derived API types, then let platform contracts and the client import those types. Keep a single API client. Compose transport/progress, preferences/activity and optional native UI capabilities from smaller interfaces; retain pre-mount host configuration and the `platform()` facade.
+**Implemented P1 seam:** [API types](../../packages/ui/src/api/types.ts#L1) depend only on the generated schema; the client and [platform contracts](../../packages/ui/src/platform/contracts.ts#L1) consume them. Transport, progress, preferences, activity and optional capabilities are composable interfaces. The single client, pre-mount configuration and `platform()` facade retain their behavior.
 
-Publish explicit host entry points for App, platform contracts, HTTP helpers, i18n, styles and approved primitives. Update package exports, TypeScript resolution and Vite resolution together: wildcard aliases must not bypass the new exports. Shared UI's own `@/` imports also need conversion or a package-local resolution strategy **before** a host alias is redirected to host `src`.
+[Explicit package exports](../../packages/ui/package.json#L6) cover the app, platform, API/types, HTTP, i18n, document language, styles, approved primitives, settings layout and formatting. Both TypeScript and Vite honor these exports; host `@/` points only at host `src`, and shared UI uses relative imports. [Resolved-import checks](../../packages/ui/tests/public-surface.test.mjs#L14) reject private subpaths, relative escapes and alias bypasses, including deliberately forbidden examples.
+
+The single client now lives in `api/client.ts`. Consumers import types from `api/types.ts`; the old `lib/api.ts` implementation/type-forwarding entry is removed without changing the public `@wenyi/ui/api` export.
 
 Keep query/mutation ownership with its feature. Split endpoint modules only as consumers require it; do not add a second state cache, generic service framework or standalone API-client package.
 
 ### F6 — Some shared verification still belongs to one host or repeats contracts
 
-**Evidence:** Desktop [fixtures](../../apps/desktop/frontend/tests/fixtures.ts#L1) and [shell suite](../../apps/desktop/frontend/tests/unified-shell.spec.ts#L1) import Web tests. The [bundle test](../../packages/ui/tests/platform-boundaries.test.mjs#L14) hand-maintains route chunk names despite the runtime route manifest. [Schema generation](../../package.json#L15) reads a running localhost API; the reviewed [CI workflow](../../.github/workflows/tests.yml#L94) does not regenerate and compare that contract.
+**Original finding:** Desktop imported Web's fixtures and shell tests; bundle checks repeated route chunk names, and schema generation needed a live API without a CI freshness check.
 
 **Risk:** shared test changes are owned by Web accidentally; new routes or schema changes may not update every duplicated test/type input. These are guardrail gaps, not proof that current types or routes are broken.
 
-**P0/P1 seam:** add deterministic offline OpenAPI generation using the shared app factory with fake ports and no production lifespan. Generate TypeScript to a temporary file and compare it with the committed schema; retain one source of truth. Derive route enumeration from the manifest, while keeping independent assertions for required URLs, redirects, audience filtering and shell continuity.
+**Implemented guardrails:** [offline schema export](../../scripts/export_openapi.py#L21) uses the shared app factory and unavailable runtime ports without a production lifespan. `pnpm check:schema` generates temporary types and compares them with the committed file; CI runs it before frontend checks. [Route-loader inspection](../../packages/ui/tests/source-contracts.mjs#L43) derives chunks from the manifest, with separate required-URL/redirect assertions and existing audience/shell E2E coverage.
 
-Move platform-neutral fixtures and parameterized shared behavior into UI test support. Each host explicitly registers the suite with its own setup; native save/drop/credentials/bootstrap and browser behavior remain separate. Keep test support outside runtime exports and production bundles.
+**Implemented test ownership:** all 18 cross-host suites, API fixtures, select helpers and the select harness live in UI test support. Each host explicitly registers suites with its own bootstrap and capability options; no host imports another host's tests. Host fixture forwarders are removed. Boundary checks require both hosts to register every shared suite and forbid native bootstrap in shared support. Native save/drop/credentials/bootstrap and browser behavior remain separate; test support is not a runtime export.
 
 ### F7 — CLI migration reaches a private file-store method
 
-**Evidence:** [migrate_usage](../../packages/cli/wenyi_cli/model_commands.py#L114) knows ledger paths, creates backups and calls `RunStore._write_json`.
+**Original finding:** the CLI migration command knew ledger paths, created backups and called `RunStore._write_json`.
 
 **Risk:** a storage refactor can silently break a user-facing migration command.
 
-**P2 seam:** introduce a public file-storage migration function owning enumeration, backup, locking and atomic writes; reuse the pure ledger converter. CLI owns argument validation and presentation. This is intentionally a CLI file-state operation, not a new Web/Desktop migration route.
+**Implemented:** [migrate_usage_ledgers](../../packages/core/wenyi_core/storage/file_migrations.py#L13) owns enumeration, validation, exact-byte backups, the run lock and atomic writes through the public file-storage interface. It reuses the pure ledger converter and validates all candidates before changing any ledger. Completed conversions are skipped on retry; an interrupted publication retains the original and its backup. CLI owns argument validation and presentation. No Web/Desktop state is discovered or migrated.
 
-The workflow command may later extract pure option validation when touched; do not reorganize all CLI commands as a prerequisite.
+Unrelated CLI command reorganization is outside this plan.
 
 ## 3. Target directory map
 
-This is a **selected target map**, not a full tree. `+` means proposed, `~` means retained with a narrower role; unlisted modules stay where they are. Create modules only in the stage that gives them a real implementation.
+This is the **implemented selected module map**, not a full tree. Unlisted modules stay where they are; each extracted module has actual consumers.
 
 ```text
 packages/
   core/wenyi_core/
     pipeline/
       orchestrator.py                  # unchanged facade
-      preparation.py                  # ~ initialization and stage coordination
+      preparation.py                  # initialization and stage coordination
       input_preparation.py            # extracted parsing/cache rules shared with preview
-      book_understanding.py           # + digest/synopsis coordination, later stage
-      runtime.py                      # ~ composition, language binding and timing
-      runtime_usage.py                # + run-owned usage checkpoint/publication
+      book_understanding.py           # digest/synopsis concurrency and checkpoints
+      runtime.py                      # composition, language binding and timing
+      runtime_usage.py                # run-owned usage checkpoint/publication
       runstore.py                     # unchanged file-state compatibility layer
     storage/
       protocol.py                     # retained; consumer-sized protocols as needed
       file.py / sqlite.py             # retained adapters
-      file_migrations.py              # + public CLI file migration operation
+      file_migrations.py              # public CLI file migration operation
   backend/wenyi_backend/
     application.py / context.py       # retained HTTP and adapter composition
     ports/
-      projects.py / jobs.py           # + consumer-sized persistence contracts
+      projects.py / jobs.py           # implemented consumer-sized persistence contracts
     execution/
-      contracts.py                    # + typed run request and dependencies
-      runner.py                       # + identity, cancellation, cleanup, terminal state
-      operations.py                   # + preview/book/SRT dispatch into Core
-      exporting.py                    # + rendering/publication with distinct functions
-    workers/tasks.py                  # ~ stable task entry-point wrappers
+      contracts.py                    # implemented typed run request and dependencies
+      runner.py                       # implemented lifecycle and resource ownership
+      operations.py                   # implemented preview/book/SRT dispatch into Core
+      exporting.py                    # implemented rendering/publication separation
+      bindings.py                     # implemented context-to-port composition
+    workers/tasks.py                  # implemented stable task entry-point wrappers
     routers/                          # retained HTTP translation layer
+      dependencies.py                 # explicit HTTP-to-service dependency binding
     export_plan.py / export_paths.py  # retained, not duplicated
-    dal.py                           # transitional forwarding, no new consumers
   ui/
     src/
       App.tsx / routes/              # retained shell and routing
-      platform.ts                    # ~ compatibility entry point
-      platform/contracts.ts          # + composable host capability contracts
-      platform/runtime.ts            # + pre-mount configuration and access
-      api/types.ts                   # + aliases derived from generated schema
-      api/client.ts                  # + the existing single client, relocated later
-      lib/api.ts                     # ~ temporary API re-export
-      components/ui/index.ts         # + approved host-facing primitives
+      platform.ts                    # implemented stable host entry point
+      platform/contracts.ts          # implemented composable host capability contracts
+      platform/runtime.ts            # implemented pre-mount configuration and access
+      api/types.ts                   # implemented aliases derived from generated schema
+      api/client.ts                  # the single client, with no type forwarding
+      components/ui/index.ts         # implemented approved host-facing primitives
       features/                      # retained; feature-local queries/components
       i18n/                          # retained
     tests/e2e/
-      fixtures.ts / contracts.ts     # + host-neutral support, not runtime exports
+      fixtures.ts                    # shared API fixtures
+      shell.ts / ...                 # 18 explicitly registered cross-host suites
+      select-helper.ts / select-harness.tsx
   shared-schema/src/api.d.ts          # retained generated contract
 apps/
   api/wenyi_api/                      # PostgreSQL, Redis/Arq and Web assembly stay here
@@ -177,12 +183,12 @@ Stages are review units, not promises about calendar duration. Do not combine a 
 
 | Stage | Scope and dependencies | Required acceptance evidence |
 |---|---|---|
-| S0 — Guardrails | Establish baseline; add schema freshness and resolved-import/route checks for planned seams | Scans assert non-empty input; a deliberately forbidden import is detected; fake-port schema export uses no external services; both existing host builds precede bundle checks |
-| S1 — UI public surface | F5 type extraction/exports, then F6 shared test support; independent of Python extraction after S0 | Both hosts typecheck/build; boundary tests and affected E2E pass; no URL, query-key, DOM/shell, native capability or credential behavior change |
-| S2 — Backend execution | F1 runner plus only the F2 ports it consumes; preserve worker wrappers before changing host callers | Cover duplicate/stale jobs, pause/cancel, cleanup, compensation, lock contention, duplicate exports and publication/terminal failures; concurrent app/worker isolation and `to_thread`/raw-thread/callback propagation; isolated PostgreSQL/Redis and Desktop runner contracts |
-| S3 — Shared input preparation | F3; can start after S0, coordinate preview call-site changes with S2 | Cache hit/miss/config/source mismatch, PDF failure/retry, manifest-last commit and no-model preview tests; book-understanding extraction is a separate follow-up |
-| S4 — Accounting and file migration | F4/F7 after the consuming interfaces are stable; separate changes | Crash/retry tests prove book/Review usage merged once; backups and atomic writes unchanged; full Python suite and storage adapters verified |
-| S5 — Remove forwarding | Only after migrated callers and packaging checks pass | No remaining callers of retired entry points; docs/tests/import scanners updated together; package smoke tests discover actual modules/resources |
+| S0 — Guardrails (complete) | Schema freshness, resolved-import/route checks, backend service boundaries and package-content checks | Scans assert non-empty input; deliberately forbidden imports are detected; fake-port schema export uses no external services; both host builds precede bundle checks |
+| S1 — UI public surface (complete) | F5/F6: public types/exports, all shared fixtures/suites/helpers, host-owned bootstrap | Both hosts typecheck/build; boundary tests and E2E pass; no URL, query-key, DOM/shell, native capability or credential behavior change |
+| S2 — Backend execution (complete) | F1/F2: lifecycle runner, consumer ports, explicit application services and platform adapters; stable worker wrappers | Duplicate/stale jobs, pause/cancel, cleanup, compensation, lock contention, duplicate exports and publication/terminal failures; concurrent app/worker isolation and thread/callback propagation; isolated PostgreSQL/Redis and Desktop runner contracts |
+| S3 — Input and book understanding (complete) | F3: model-free parser/cache API and separate book-understanding service | Cache hit/miss/config/source mismatch, PDF failure/retry, manifest-last commit, no-model preview, stable ordering and interrupted prescan resume |
+| S4 — Accounting and file migration (complete) | F4/F7: one usage checkpoint owner and public local-file migration operation | Crash/retry proves book/Review usage merged once; journal/event failures, backups and atomic publication retries; full Python suite and storage adapters |
+| S5 — Remove forwarding (complete) | Retired shared DAL, parser helpers, client type forwarding and host fixture wrappers removed | No callers of retired entry points; docs/tests/import scanners agree; clean-install smoke tests discover actual modules/resources |
 
 Each extraction starts with characterization tests for existing behavior. A genuine bug fix first adds a failing regression case and is separated from behavior-preserving moves. If a stage cannot preserve its contract, stop that stage and revisit its design rather than normalize a changed snapshot.
 
@@ -199,7 +205,9 @@ Each extraction starts with characterization tests for existing behavior. A genu
 7. Preserve Web/Desktop state and dependency isolation, loopback authentication, opaque native file grants, credential secrecy, and “cancel save before enqueue means no task.”
 8. Preserve CLI commands, HTTP contracts, generated types, URLs, navigation ordering, language-policy fingerprints, prompt resources and clean-install behavior.
 
-## 6. Verification and initial audit result
+## 6. Verification record
+
+### Initial documentation-only audit
 
 Baseline environment: `uv sync --locked --all-packages --group dev`. The initial test attempt could not import `wenyi_backend` before this workspace setup; after setup the following two selections passed: **47 + 41 = 88 tests**, with no skips.
 
@@ -221,5 +229,23 @@ uv run --no-sync pytest -q \
 ```
 
 These establish the initial audit's limited baseline, **not** implementation or full-system validation. That documentation-only audit did not run frontend typechecks/builds/E2E, the full Python suite, clean-wheel installs, native builds, PostgreSQL/Redis integration, or model-quality evaluation. Implementation follow-ups require their own verification. No private books, project state or real credentials were used.
+
+### Completed implementation acceptance
+
+Local validation used Python 3.12 and Node 22/pnpm 9, temporary fixture state and disposable PostgreSQL/Redis services:
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -rs` with isolated test database/Redis URLs | 2743 passed, 73 subtests passed, 5 skipped; includes architecture, storage, recovery, API integration and Desktop lifecycle coverage |
+| Both hosts: `typecheck`, `typecheck:tests`, `build` | Passed |
+| Both hosts: full `test:e2e --workers=2 --max-failures=1` | Web 285 passed; Desktop 246 passed on full rerun with `--trace=retain-on-failure` |
+| `pnpm check:schema` and `pnpm test:frontend-boundaries` after both builds | Schema unchanged; 13 boundary tests passed |
+| Ruff check/format, targeted Pyright on extracted Core/backend services and adapters, `git diff --check` | Passed; Pyright reported no errors or warnings |
+| Five Python package sdist/wheel builds; resource/version and clean-install checks | Passed; 66 bundled language resources and CLI/shared/Web/Desktop dependency isolation verified |
+| Default `uv sync --locked` in a fresh environment | CLI/Core only; refreshed editable-package metadata matches the built Git-derived version |
+
+The shared API mock now matches the root `/api/` path rather than any nested `api` directory. A regression test reproduced interception of frontend source modules before the fix and passes afterward. One initial Desktop source-view wait timed out; its isolated rerun and the subsequent full traced suite passed without relaxing assertions. This is recorded as an intermittent test observation, not a separately established product fix.
+
+The five Python skips are three Windows-only cases, the opt-in Nginx proxy integration, and an absent optional Weaver PDF sample. Native Tauri packaging, other OS/Python matrix entries and real-model/real-parser quality comparisons were not run. The extraction changes no prompts or translation semantics. No private books, existing project state or real credentials were used.
 
 For implementation, follow the [repository verification rules](../../AGENTS.md#验证与完成): affected Python tests plus Ruff check/format and `git diff --check`; full Python tests for state/locking/resume or cross-domain changes; both frontend builds/typechecks and affected Playwright suites for shared UI changes. Use isolated `WENYI_TEST_DATABASE_URL` and `WENYI_TEST_REDIS_URL` for integration checks and report skips as unverified. Directory/package moves additionally require clean installation, sdist/wheel resource checks and non-empty architecture scans. Model-quality comparison is necessary only if a separately approved change alters prompt or translation semantics.

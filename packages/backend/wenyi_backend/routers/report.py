@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 from fastapi import APIRouter
 from wenyi_core.assemble.report import build_report
 from wenyi_core.srt.store import SrtRunStore
 
-from ..project_service import project_write, require_project, storage_for
+from .dependencies import project_write, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/report", tags=["report"])
 
@@ -34,7 +36,9 @@ def _report(project: dict, storage) -> dict:
 
 @router.get("")
 def get_report(pid: str) -> dict:
-    return _report(require_project(pid), storage_for(pid))
+    project = require_project(pid)
+    with closing(storage_for(pid)) as storage:
+        return _report(project, storage)
 
 
 @router.post("")

@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
 import { BookOpen, Pencil } from "lucide-react";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { useI18n } from "../../i18n";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
 
 export interface ContentsEntry {
   id: string;

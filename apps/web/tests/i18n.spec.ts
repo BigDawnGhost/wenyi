@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { locales, createTranslator } from "../../../packages/ui/src/i18n/catalog";
 import { statusLabel, statusTone } from "../../../packages/ui/src/i18n/status";
-import { fakeApi, pid } from "./fixtures";
-import { chooseOption } from "./select-helper";
+import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
+import { chooseOption } from "../../../packages/ui/tests/e2e/select-helper";
 
 test("locale catalogs have matching keys and interpolation parameters", () => {
   const english = locales.en.messages;

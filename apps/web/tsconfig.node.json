@@ -16,7 +16,7 @@
   "include": [
     "vite.config.ts",
     "playwright.config.ts",
-    "tests/fixtures.ts",
+    "../../packages/ui/tests/e2e/fixtures.ts",
     "../../packages/ui/vite.shared.ts"
   ]
 }

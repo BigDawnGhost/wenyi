@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "./fixtures";
+import { fakeApi } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("MinerU is an informational deployment setting, including Chinese mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

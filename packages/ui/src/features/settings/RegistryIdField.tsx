@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Input, Label } from "@/components/ui/form";
-import { useI18n } from "@/i18n";
+import { Input, Label } from "../../components/ui/form";
+import { useI18n } from "../../i18n";
 import type { RegistryGroup } from "./registryEdits";
 
 /** Registry ID input; edits apply on Enter or blur, Escape restores the saved ID. */

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from wenyi_backend.context import current_context
 from wenyi_backend.emitters import RedisEmitter
 from wenyi_backend.routers import configuration
 from wenyi_core.events import TranslationEvent
@@ -14,7 +15,7 @@ def test_workflow_uses_snapshot_and_excludes_exports(
 ):
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "epub"})
     monkeypatch.setattr(
-        configuration.dal,
+        current_context().repository,
         "list_jobs",
         lambda pid: [
             {"kind": "export"},
@@ -47,7 +48,7 @@ def test_workflow_uses_snapshot_and_excludes_exports(
 
 def test_subtitle_plan_does_not_show_book_steps(monkeypatch):
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "srt"})
-    monkeypatch.setattr(configuration.dal, "list_jobs", lambda pid: [])
+    monkeypatch.setattr(current_context().repository, "list_jobs", lambda pid: [])
     monkeypatch.setattr(configuration, "effective_config", lambda project: None)
     monkeypatch.setattr(configuration, "config_document", lambda config: {"pipeline": {}})
     result = configuration.workflow("p")
@@ -96,7 +97,7 @@ def test_progress_cache_carries_run_identity_and_cumulative_elapsed_time(monkeyp
 def test_unrelated_progress_is_not_displayed(monkeypatch, backend_context, cached):
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "epub"})
     monkeypatch.setattr(
-        configuration.dal,
+        current_context().repository,
         "list_jobs",
         lambda pid: [
             {

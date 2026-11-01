@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { routeModules } from "./source-contracts.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 function files(directory) {
@@ -11,22 +12,7 @@ function files(directory) {
   );
 }
 const nativeCode = /__TAURI|__WENYI_DESKTOP|isDesktop|native_drop_|native_export_|native_glossary_|desktop_update_|Desktop updates|桌面端更新|\/desktop\/credentials|System credential store|系统凭据库/;
-// One lazy chunk per route in packages/ui/src/App.tsx; keep in sync with the route manifest.
-const routeChunks = [
-  "Dashboard",
-  "CreateProject",
-  "ProgressPage",
-  "GlossaryPage",
-  "StylePage",
-  "ReviewPage",
-  "ProofreadingPage",
-  "ExportPage",
-  "EventsPage",
-  "ContentsPage",
-  "InterfaceSettingsPage",
-  "SettingsPage",
-  "SubtitlesPage",
-];
+const routeChunks = routeModules().map(path => basename(path));
 
 test("shared UI cannot import hosts or own platform transports/storage", () => {
   const sources = files(resolve(root, "packages/ui/src")).filter((file) => /\.(ts|tsx)$/.test(file));
@@ -40,6 +26,7 @@ test("shared UI cannot import hosts or own platform transports/storage", () => {
       const specifier = match[1];
       const target = specifier.startsWith(".") ? resolve(dirname(file), specifier) : specifier;
       assert(!/[/\\]apps[/\\]|@wenyi\/(?:web|desktop)/.test(target), `${file} imports host ${specifier}`);
+      assert(!/[/\\]tests[/\\]/.test(target), `${file} imports test support ${specifier}`);
     }
   }
 });

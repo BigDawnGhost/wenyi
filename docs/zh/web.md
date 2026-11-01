@@ -119,7 +119,7 @@ pnpm -C apps/web dev
 
 Web 开发地址为 http://localhost:5173，Vite 代理 `/api` 与 `/ws` 至 API。API 初始化全新数据库结构。仅起普通 Worker 不会消费导出队列。
 
-若不想启动任何后端、只想在浏览器里点着看界面，运行 `MOCK_API=1 pnpm -C apps/web dev`。Vite 会用 Playwright 测试同一套 fixture 数据（`apps/web/tests/fixtures.ts`）应答 `/api`：所有页面都带示例数据打开，按钮操作直接在 mock 上完成，不接触真实服务。进度 WebSocket 不可用时界面自动退回轮询 mock API。不设 `MOCK_API` 时行为与平常一致，代理到真实 API。
+若不想启动任何后端、只想在浏览器里点着看界面，运行 `MOCK_API=1 pnpm -C apps/web dev`。Vite 会用 Playwright 测试同一套 fixture 数据（`packages/ui/tests/e2e/fixtures.ts`）应答 `/api`：所有页面都带示例数据打开，按钮操作直接在 mock 上完成，不接触真实服务。进度 WebSocket 不可用时界面自动退回轮询 mock API。不设 `MOCK_API` 时行为与平常一致，代理到真实 API。
 
 ## 界面语言
 
@@ -156,9 +156,13 @@ Desktop 与 Web 共用这些工作台页面，截图见[界面预览](README.md#
    上传中仍可通过浏览器后退离开，但这不会取消请求。项目可能在后台创建，完成后不会强制跳离当前页面。
 2. 创建成功后立即进入项目总览，解析或可选的译前准备继续在后台执行。解析完成即可通过「查看目录与原文」打开章节列表和只读原文，不必等待模型预处理。勾选译前准备时，也会先解析，再构造和校验模型客户端，因此缺少凭据或后续 AI 失败不会隐藏已成功解析的原文。初始化完成前，标题和译文保持只读。总览自动更新任务状态，排队失败时也在项目内显示错误与恢复入口；匹配的解析结果在准备时复用。
 3. 创建对话框使用平铺表单填写项目名称、语言方向、原文文件和翻译方式，操作按钮固定在可滚动表单下方。书籍只在这里通过两段切换按钮选择「标准翻译」或「三译合润」。默认标准，不继承全局模式；精翻开启本项目润色并内置三分支并发，不提供并发选项。总设置和项目配置都没有模式或模板选择器，新请求不再支持快速出稿。需要微调时进入「项目配置」调整其他步骤及注册模型选择，启动翻译前可校验实际路由；更换翻译方式需创建新项目。
-4. 开始执行，在进度页查看状态；安全边界暂停后用恢复继续实际任务类型。
+4. 开始执行，在进度页查看状态；安全边界暂停后用恢复继续实际任务类型。如果暂停请求到达时任务已完成，或活动运行已经改变，接口返回 HTTP 409，不会把已完成项目留在“正在暂停”；刷新可查看最新状态。
 5. 书籍可编辑术语、风格、段落并查看全书审校历史、建议和实际修复记录；SRT 显示字幕条目及时间戳编辑入口。
 6. 导出选择格式和单语/双语，独立 Worker 读取已保存快照。每次导出有独立文件位置，完成后下载。
+
+API 仅允许未初始化项目替换原文。预览缓存失效失败时，原引用和缓存保持完整。
+如果原文发布结果不确定，即使请求报错也会保留完整的新文件；重试前先重新读取项目。
+这里优先保护可能已经发布的原文，不会为了自动清理未引用上传而冒误删风险。
 
 **人工校阅**有独立导航入口，与全书审校分开。解析完成、AI 预处理之前即可显示章节列表；未初始化的书籍只显示原文，不提供编辑、历史或初稿操作，完成准备后才显示包含未完成译文的工作台。任务活动期间，详情页每 3 秒读取已落盘的段落，每批译文保存后即可查看，无需等整章完成；暂停和完成后不再轮询章节及改动记录。待翻译段落显示“等待译文落盘”，有意保存的空译文仍计为完成。任务运行时可查看，暂停后可编辑已保存段落。自动刷新保留正在编辑的草稿。
 
@@ -240,10 +244,13 @@ Worker 启动独立的异步恢复循环，每 30 秒检查一次数据库中超
 
 ## 接口、检查与排错
 
-运行中的 `/openapi.json` 是接口类型源，`GET /capabilities` 提供语言、格式、提供商和操作注册信息。生成前端类型：
+共享 app 的路由/schema 定义是接口类型源。运行中的 `/openapi.json` 仍可用于检查，
+但类型生成不需要启动 API、PostgreSQL、Redis 或提供凭据。安装工作区 Python 依赖及
+前端依赖后，离线生成或检查契约：
 
 ```bash
-pnpm gen:schema  # API 已在 localhost:8000 运行
+pnpm gen:schema  # Update shared types from the shared app factory, offline
+pnpm check:schema  # Compare temporary generated types; does not change tracked files
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync pytest -q
 pnpm -C apps/web typecheck
@@ -251,6 +258,10 @@ pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
+
+CI 在前端类型检查前执行 `check:schema`。生成过程使用不可调用的运行端口，不启动生产
+lifespan；仅将 schema 产物中依赖安装版本的信息标准化。`GET /capabilities` 继续提供
+运行时语言、格式、提供商和操作注册信息。
 
 Web 和 Desktop 共用 `packages/ui/vite.shared.ts` 中的分包规则：React、React DOM
 和 Scheduler 独立为 `react-runtime` chunk，页面继续保留现有懒加载分包。构建两端后，

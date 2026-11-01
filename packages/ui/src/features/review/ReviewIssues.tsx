@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useI18n } from "@/i18n";
-import type { ReviewItem } from "@/lib/api";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
+import { useI18n } from "../../i18n";
+import type { ReviewItem } from "../../api/types";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { Badge } from "../../components/ui/badge";
 import { ReviewItemDetails } from "./ReviewItemDetails";
 import { itemStatuses, itemType } from "./reviewData";
 

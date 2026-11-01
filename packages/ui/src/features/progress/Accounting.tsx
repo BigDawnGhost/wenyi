@@ -6,8 +6,8 @@ import {
   MessagesSquare,
 } from "lucide-react";
 import { lazy } from "react";
-import { useI18n } from "@/i18n";
-import { LazyBoundary } from "@/routes/LazyBoundary";
+import { useI18n } from "../../i18n";
+import { LazyBoundary } from "../../routes/LazyBoundary";
 import {
   amount,
   cacheRate,

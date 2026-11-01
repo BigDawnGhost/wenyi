@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { useI18n } from "@/i18n";
-import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
-import { Input } from "@/components/ui/form";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
+import { api, isProjectBusy } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Input } from "../../components/ui/form";
 import { ContentsEditor } from "./ContentsEditor";
 import { ContentsList } from "./ContentsList";
 
