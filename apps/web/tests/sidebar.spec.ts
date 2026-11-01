@@ -105,7 +105,7 @@ for (const chinese of [false, true]) {
       await expect(sidebar).toHaveCSS("width", "240px");
     });
 
-    test("mobile navigation collapses without hiding its restore control", async ({
+    test("narrow desktop navigation keeps the icon rail and scrollable content", async ({
       page,
     }, testInfo) => {
       await page.setViewportSize({ width: 390, height: 844 });
@@ -127,23 +127,24 @@ for (const chinese of [false, true]) {
         exact: true,
       });
       await expect(expand).toBeInViewport();
-      await expect(navigation).not.toBeVisible();
-      await expect(global).not.toBeVisible();
+      await expect(navigation).toBeVisible();
+      await expect(global).toBeVisible();
+      await expect(page.getByRole("complementary")).toHaveCSS("width", "64px");
       expect(
         await main.evaluate((element) => element.clientHeight),
-      ).toBeGreaterThan(expandedHeight + 100);
+      ).toBe(expandedHeight);
       await page.reload();
       await expect(expand).toBeVisible();
-      await expect(navigation).not.toBeVisible();
+      await expect(navigation).toBeVisible();
       await page.screenshot({
-        path: testInfo.outputPath("collapsed-mobile-navigation.png"),
+        path: testInfo.outputPath("narrow-desktop-navigation.png"),
       });
       await page.setViewportSize({ width: 1280, height: 960 });
       await expect(navigation).toBeVisible();
       await expect(global).toBeVisible();
       await expect(page.getByRole("complementary")).toHaveCSS("width", "64px");
       await page.setViewportSize({ width: 390, height: 844 });
-      await expect(navigation).not.toBeVisible();
+      await expect(navigation).toBeVisible();
       await expand.focus();
       await page.keyboard.press("Space");
       await expect(navigation).toBeVisible();
@@ -154,7 +155,7 @@ for (const chinese of [false, true]) {
       await expect(page).toHaveURL(`/projects/${pid}/proofreading`);
       expect(
         await main.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
+          (element) => element.scrollWidth > element.clientWidth,
         ),
       ).toBe(true);
     });

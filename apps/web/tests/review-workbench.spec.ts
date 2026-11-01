@@ -276,10 +276,10 @@ test("unrelated cached progress is rejected and missing totals do not invent per
   await expect(page.getByRole("progressbar")).toHaveCount(0);
 });
 
-test("paused review freezes elapsed time and retains unfinished findings in Chinese on mobile", async ({
+test("paused review freezes elapsed time and retains unfinished findings in Chinese on desktop", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await page.clock.install({ time: new Date("2026-09-17T09:10:00Z") });
   const interrupted = {
@@ -345,7 +345,7 @@ test("paused review freezes elapsed time and retains unfinished findings in Chin
     ),
   ).toBeTruthy();
   await page.screenshot({
-    path: testInfo.outputPath("review-mobile.png"),
+    path: testInfo.outputPath("review-compact.png"),
     fullPage: true,
   });
 });

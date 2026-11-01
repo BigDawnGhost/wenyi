@@ -146,7 +146,6 @@ def test_full_workflow_counts_nested_stages_once_and_includes_export(timed_book,
     inspection = CliRunner().invoke(app, ["status", str(source)])
     assert inspection.exit_code == 0, inspection.output
     assert f"cumulative {format_duration(ledger['total_seconds'])}" in inspection.output
-    orch.run_report(str(source))
     assert load_timing(run_dir) == ledger
 
 

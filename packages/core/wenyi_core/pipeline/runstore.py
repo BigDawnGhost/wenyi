@@ -4,7 +4,6 @@ chapter status; chapters/ch{n}.json stores segments; source/ caches preprocessin
 annotation_contexts.json indexes immutable EPUB annotation sources;
 analysis.json stores global analysis. Recent translations are derived from chapters.
 usage.json accumulates tokens across runs; glossary.db stores terms/conflicts;
-report.json summarizes translation;
 events.jsonl is append-only; reviews/ holds review results, round records and optional
 autofix publication indices.
 """
@@ -69,7 +68,7 @@ class RunStore(FileArtifacts):
 
     @contextmanager
     def lock(self) -> Iterator[None]:
-        """Serialize long-running translation, review and report operations for one book."""
+        """Serialize long-running translation and review operations for one book."""
         with self._file_lock(".run.lock"):
             yield
 
@@ -131,11 +130,6 @@ class RunStore(FileArtifacts):
     def glossary_path(self) -> str:
         """Return the glossary and translation-conflict database path."""
         return os.path.join(self.run_dir, "glossary.db")
-
-    @property
-    def report_path(self) -> str:
-        """Return the quality-report path."""
-        return os.path.join(self.run_dir, "report.json")
 
     @property
     def usage_path(self) -> str:
@@ -221,7 +215,6 @@ class RunStore(FileArtifacts):
             f"{self.glossary_path}-wal",
             f"{self.glossary_path}-shm",
             f"{self.glossary_path}-journal",
-            self.report_path,
             f"{self.manifest_path}.tmp",
         ):
             try:
@@ -398,7 +391,7 @@ class RunStore(FileArtifacts):
         """Read and validate chapter state."""
         return Chapter.model_validate(self._read_json(self.chapter_path(ci)))
 
-    # Annotation contexts, analysis and reports.
+    # Annotation contexts and analysis.
     def save_annotation_contexts(self, data: dict) -> None:
         """Atomically save the deduplicated EPUB annotation-source index."""
         self._write_json(self.annotation_contexts_path, data)
@@ -418,10 +411,6 @@ class RunStore(FileArtifacts):
     def load_analysis(self) -> dict | None:
         """Read book analysis, or return None if absent."""
         return self._read_json(self.analysis_path) if os.path.isfile(self.analysis_path) else None
-
-    def save_report(self, data: dict) -> None:
-        """Atomically save the quality report."""
-        self._write_json(self.report_path, data)
 
     def save_usage(self, data: dict) -> None:
         """Atomically save cumulative book token usage."""

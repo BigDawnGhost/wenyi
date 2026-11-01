@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, globalConfiguration, pid, project } from "./fixtures";
+import { fakeApi, globalConfiguration, pid, project, workflow } from "./fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -234,7 +234,10 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   // Pause before app timers exist; a fixed future time avoids sampling a running clock.
   await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2025-01-02T00:00:00Z"));
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } }, origin);
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "translating" },
+    [`/projects/${pid}/workflow`]: { ...workflow, status: "running" },
+  }, origin);
   let socket: WebSocketRoute;
   let accept = true;
   await page.routeWebSocket("**/ws/**", ws => {
@@ -242,7 +245,7 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
     else void ws.close();
   });
   const initialResponses = new Set<string>();
-  const initialPaths = ["", "/chapters", "/report", "/stats", "/workflow"]
+  const initialPaths = ["", "/chapters", "/stats", "/workflow"]
     .map(path => `/projects/${pid}${path}`);
   page.on("response", response => {
     if (response.url().startsWith(origin)) initialResponses.add(new URL(response.url()).pathname);

@@ -22,12 +22,12 @@ export function SettingsSection({
       aria-labelledby={headingId}
       data-slot="settings.section"
       className={cn(
-        "grid min-w-0 scroll-mt-4 gap-4 border-t py-6 first-of-type:border-t-0 first-of-type:pt-0 md:grid-cols-[11rem_minmax(0,1fr)] md:gap-8",
+        "grid min-w-0 grid-cols-[11rem_minmax(0,1fr)] scroll-mt-4 gap-8 border-t py-6 first-of-type:border-t-0 first-of-type:pt-0",
         className,
       )}
       {...rest}
     >
-      <h2 id={headingId} className="text-sm font-semibold md:pt-1">
+      <h2 id={headingId} className="pt-1 text-sm font-semibold">
         {title}
       </h2>
       <div className="min-w-0 space-y-4">{children}</div>

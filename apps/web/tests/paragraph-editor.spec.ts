@@ -107,7 +107,7 @@ test("editor autosizing survives opening, resizing and tab changes without obser
   const input = page.getByLabel("Edit translation", { exact: true });
   const dialog = page.getByRole("dialog");
   await expect(input).toBeFocused();
-  for (const width of [900, 390, 1280]) {
+  for (const width of [1440, 1024, 1280]) {
     await page.setViewportSize({ width, height: 850 });
     await expect.poll(() => input.evaluate((element) => element.scrollHeight <= element.clientHeight + 2)).toBe(true);
     await expect(dialog.getByRole("button", { name: "Save translation", exact: true })).toBeInViewport();
@@ -280,10 +280,10 @@ test("the editor expands long text and combines polishing and manual history", a
   });
 });
 
-test("the mobile editor fits long Chinese text and retains a single scroll area", async ({
+test("the desktop editor fits long Chinese text and retains a single scroll area", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   const text = "在宁静的清晨，河流穿过树林。".repeat(70);
   await fakeApi(page, {
@@ -321,7 +321,7 @@ test("the mobile editor fits long Chinese text and retains a single scroll area"
     dialog.getByRole("button", { name: "保存译文", exact: true }),
   ).toBeInViewport();
   await page.screenshot({
-    path: testInfo.outputPath("mobile-paragraph-editor.png"),
+    path: testInfo.outputPath("compact-paragraph-editor.png"),
     fullPage: true,
   });
 });

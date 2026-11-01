@@ -9,6 +9,7 @@ import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
 from wenyi_core.ingest.errors import IngestError
+from wenyi_core.storage.protocol import STATUS_DONE
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
@@ -263,9 +264,19 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 out_path=out,
             )
 
-        presentation.print_translation_summary(console, result["report"]["summary"])
-        presentation.print_usage(console, result["store"].load_usage() or {})
-        presentation.print_timing(console, load_timing(result["store"].run_dir))
+        store = result["store"]
+        with store.lock(), store.state_lock():
+            chapters = store.load_manifest()["chapters"]
+            chapters_done = sum(chapter["status"] == STATUS_DONE for chapter in chapters)
+            term_count = store.stats()["terms"]
+        presentation.print_translation_summary(
+            console,
+            chapters_done=chapters_done,
+            chapters_total=len(chapters),
+            terms=term_count,
+        )
+        presentation.print_usage(console, store.load_usage() or {})
+        presentation.print_timing(console, load_timing(store.run_dir))
         for path in result.get("outputs") or [result["output"]]:
             console.print(f"Translation: [bold]{path}[/]")
         if result.get("review_dir"):
@@ -324,7 +335,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             None,
             "--chapter",
             min=0,
-            help="Translate and save one chapter (zero-based); skip review, report and export",
+            help="Translate and save one chapter (zero-based); skip review and export",
         ),
         fmt: str | None = typer.Option(
             None,
@@ -362,7 +373,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             help="Override output.bilingual to enable or disable bilingual output",
         ),
     ):
-        """Prepare, translate, optionally review, report and export. Repeat to resume."""
+        """Prepare, translate, optionally review and export. Repeat to resume."""
         _translate_impl(
             input,
             chapter=chapter,

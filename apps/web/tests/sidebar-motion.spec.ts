@@ -104,24 +104,21 @@ test.describe("sidebar motion", () => {
     await noOverflow(sidebar);
   });
 
-  test("mobile navigation interpolates height and restores accessible navigation", async ({ page }) => {
+  test("narrow desktop navigation animates width without hiding its links", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/projects/${pid}/proofreading`);
     const sidebar = page.locator(sidebarSelector);
     const navigation = sidebar.getByRole("navigation", { name: "Project navigation" });
     await expect(navigation).toBeVisible();
-    const expanded = await sidebar.evaluate((element) => element.getBoundingClientRect().height);
-    const middle = await midpoint(sidebar, "grid-template-rows");
+    const middle = await midpoint(sidebar, "width");
     await noOverflow(sidebar);
     await finish(sidebar);
-    await expect(navigation).not.toBeVisible();
-    await expect(sidebar.locator("#sidebar-navigation")).toHaveCSS("visibility", "hidden");
-    const closed = await sidebar.evaluate((element) => element.getBoundingClientRect().height);
-    expect(middle.height).toBeGreaterThan(closed);
-    expect(middle.height).toBeLessThan(expanded);
+    await expect(navigation).toBeVisible();
+    await expect(sidebar).toHaveCSS("width", "64px");
+    expect(middle.width).toBeGreaterThan(64);
+    expect(middle.width).toBeLessThan(240);
     await expect(sidebar.getByRole("button", { name: "Expand sidebar", exact: true })).toBeInViewport();
-    await expect(sidebar.getByRole("link", { name: "Wenyi", exact: true })).toBeVisible();
-    await midpoint(sidebar, "grid-template-rows");
+    await midpoint(sidebar, "width");
     await finish(sidebar);
     await expect(navigation).toBeVisible();
     await expect(sidebar).toHaveAttribute("data-collapsed", "false");

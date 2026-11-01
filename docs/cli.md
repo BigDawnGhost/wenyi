@@ -302,7 +302,7 @@ timestamps, durations and completion statuses. Repeating a command adds only tha
 invocation's execution time, excluding downtime between runs; nested pipeline stages
 are counted once. Separately launched commands contribute their own durations, even
 when they overlap. Book timing can also be inspected with `wenyi status book.epub`;
-inspection and report regeneration do not add time.
+inspection does not add time.
 
 Once book state has been initialized or validated, failures and normal Ctrl+C exits
 also save the invocation's elapsed time. Timing is committed atomically under its own
@@ -387,7 +387,7 @@ uv run wenyi --config config.yaml translate book.epub
 
 `terminology_context` checks only person entries (`type: person`) discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. Pretranslation discovery is person-only; other types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. It keeps the full glossary mappings, preserves existing person translations and protected manual fields, and records differing translations as conflicts. Existing notes are not deleted. `prepare` analyzes style and character voices but does not extract or seed glossary entries; evidence work begins with pending translation batches.
 
-Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review, assemble and report may consume existing notes without generating evidence. SRT does not use this path.
+Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review and assemble may consume existing notes without generating evidence. SRT does not use this path.
 
 The glossary still stores one source identity and one main target per term. Whole-book notes can explain context and uncertainty, but there is no real sense model or per-occurrence target selection. Notes are source-grounded, supplementary and read-only, not permission to add future plot details or overwrite the authoritative target. Model adherence to these constraints is not guaranteed.
 
@@ -421,9 +421,14 @@ uv run wenyi review book.epub --autofix
 uv run wenyi glossary list book.epub
 uv run wenyi glossary conflicts book.epub
 uv run wenyi glossary resolve book.epub "source term" "chosen translation"
-uv run wenyi report book.epub
 uv run wenyi assemble book.epub
 ```
+
+The project summary report and `wenyi report` command have been removed. Translation
+completion still prints chapter and term counts directly from saved state, alongside
+usage and timing. Use `status`, glossary commands, and Review results to inspect the
+book; there is no separate empty-translation summary. Historical `report.json` files
+are left untouched and are no longer read or updated.
 
 `review` checks the complete translated book using the final glossary. Its
 unchanged initial Reviewer runs over contiguous chunks concurrently; candidates
@@ -443,11 +448,9 @@ delta, an event stream, and internal round traces to
 `state/<book>/targets/<target-language>/reviews/review-<timestamp>/`. The same usage delta is also added once
 to the book's cumulative `usage.json`. Autofix keeps its full before/after chain,
 issue decisions, failures, and idempotent write journal in `autofix/index.json`;
-annotation and DOCX style offsets are refreshed after publishing. `report.json`
-contains a compact Review and Autofix summary.
+annotation and DOCX style offsets are refreshed after publishing.
 
-`report` summarizes the current translation and latest Review result without
-modifying translated text. `assemble` rebuilds output from existing state without
+`assemble` rebuilds output from existing state without
 calling the model again. If another terminal is still translating, export uses a
 consistent snapshot of the batches already persisted when the command starts; run
 it again to include batches completed afterward.

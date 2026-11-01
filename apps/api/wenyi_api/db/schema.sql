@@ -27,7 +27,6 @@ CREATE TABLE IF NOT EXISTS projects (
     annotation_contexts JSONB,
     analysis JSONB,
     usage JSONB,
-    report JSONB,
     book_title TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),

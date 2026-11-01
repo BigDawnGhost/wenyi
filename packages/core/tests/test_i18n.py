@@ -341,7 +341,7 @@ def test_language_list_needs_no_api_and_reads_packaged_templates():
         validate.assert_not_called()
 
 
-@pytest.mark.parametrize("command", ["translate", "status", "report", "assemble"])
+@pytest.mark.parametrize("command", ["translate", "status", "assemble"])
 @pytest.mark.parametrize("invalid", ["language: {target: typo}\n", "language: [\n"])
 def test_cli_invalid_language_or_yaml_is_a_concise_error(command, invalid):
     runner = CliRunner()

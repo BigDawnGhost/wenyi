@@ -17,9 +17,53 @@ from wenyi_core.srt.store import SrtRunStore
 from wenyi_core.srt.translate import translate_srt
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
+from wenyi_core.storage.sqlite import SqliteStorage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.storage_fixtures import MemoryArtifacts
+
+
+@pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
+def test_full_workflow_preserves_review_and_legacy_reports_on_resume(tmp_path, storage_type):
+    source = tmp_path / "book.txt"
+    source.write_text("First chapter\n\nA short story.\n", encoding="utf-8")
+    config = Config.from_dict(
+        {
+            "language": {"source": "en", "target": "zh"},
+            "llm": {"preset": "fake"},
+            "pipeline": {"book_understanding": False, "review": True, "review_autofix": False},
+        }
+    )
+    store = storage_type(str(tmp_path / "state"))
+    client = MeteredFakeClient(handler=routing_handler)
+    output = str(tmp_path / "translated.txt")
+    try:
+        first = Orchestrator(config, client=client, storage=store).run_all(
+            str(source), out_format="txt", out_path=output
+        )
+        assert store.read_artifact("report.json") is None
+        assert "report" not in first
+        review = store.load_latest_review_result()
+        assert review is not None
+        usage = store.load_usage()
+        assert usage is not None and usage["totals"]["calls"] > 0
+        legacy = {"summary": {"chapters_done": 1}, "legacy": True}
+        store.write_artifact("report.json", legacy)
+
+        resumed_client = MeteredFakeClient(handler=routing_handler)
+        resumed = Orchestrator(config, client=resumed_client, storage=store).run_all(
+            str(source), out_format="txt", out_path=output
+        )
+
+        assert store.read_artifact("report.json") == legacy
+        assert store.pending_chapters() == []
+        assert resumed["review_result"]["review_id"] == review["review_id"]
+        assert resumed_client.calls == []
+        assert store.load_usage() == usage
+        assert Path(output).is_file()
+        assert all(event["event"] != "report_saved" for event in store.list_events(limit=0))
+    finally:
+        store.close()
 
 
 def test_review_rounds_resume_and_events_use_artifacts_without_creating_files(tmp_path):

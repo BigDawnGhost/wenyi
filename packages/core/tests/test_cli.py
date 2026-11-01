@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import unittest
+from contextlib import nullcontext
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -26,6 +27,18 @@ def plain_text(value: str) -> str:
 
 class FakeStore:
     run_dir = "state/book"
+
+    def lock(self):
+        return nullcontext()
+
+    def state_lock(self):
+        return nullcontext()
+
+    def load_manifest(self):
+        return {"chapters": [{"index": 0, "status": "done"}]}
+
+    def stats(self):
+        return {"terms": 3}
 
     def load_usage(self):
         return None
@@ -89,13 +102,6 @@ class TestCliConfig(unittest.TestCase):
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
                 return {
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
                     "output": "out.epub",
                     "store": FakeStore(),
                 }
@@ -112,6 +118,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertTrue(captured["review"])
         self.assertEqual(captured["rolling_context_tokens"], 512)
         self.assertTrue(captured["allow_terminology_context"])
+        self.assertIn("1/1 chapters, terms: 3", plain_text(result.output))
 
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
@@ -135,13 +142,6 @@ class TestCliConfig(unittest.TestCase):
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
                 return {
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
                     "output": "out.epub",
                     "store": FakeStore(),
                 }
@@ -252,7 +252,6 @@ class TestCliConfig(unittest.TestCase):
             "translate",
             "prepare",
             "review",
-            "report",
             "assemble",
             "status",
             "glossary",
@@ -260,6 +259,7 @@ class TestCliConfig(unittest.TestCase):
             self.assertIn(command, plain_text(result.output))
         self.assertNotRegex(result.output, r"(?m)^│\s*resume\s{2,}")
         self.assertNotRegex(result.output, r"(?m)^│\s*tools\s{2,}")
+        self.assertNotRegex(result.output, r"(?m)^│\s*report\s{2,}")
 
     def test_glossary_help_exposes_action_subcommands(self):
         result = CliRunner().invoke(app, ["glossary", "--help"])
@@ -288,7 +288,6 @@ class TestCliConfig(unittest.TestCase):
     def test_api_preflight_skips_local_commands(self):
         for args in (
             ["status", "missing.txt"],
-            ["report", "missing.txt"],
             ["glossary", "list", "missing.txt"],
             ["glossary", "conflicts", "missing.txt"],
             [
@@ -494,46 +493,13 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(captured["kwargs"]["out_format"], "pdf")
         self.assertIn("out.pdf", plain_text(result.output))
 
-    def test_report_uses_local_orchestrator_entry(self):
-        cfg = Config.from_dict(
-            {"llm": {"preset": "fake"}, "pipeline": {"terminology_context": True}}
-        )
-        captured = {}
+    def test_retired_report_command_is_not_registered(self):
+        with patch("wenyi_core.pipeline.orchestrator.Orchestrator") as orchestrator:
+            result = CliRunner().invoke(app, ["report", "missing.epub"])
 
-        class ReportStore:
-            report_path = "state/book/report.json"
-
-        class FakeOrchestrator:
-            def __init__(self, config, client=None):
-                self.client = FakeClient()
-                del client
-                captured["config"] = config
-
-            def run_report(self, input_path):
-                captured["input"] = input_path
-                return {
-                    "store": ReportStore(),
-                    "report": {
-                        "summary": {
-                            "chapters_done": 2,
-                            "chapters_total": 2,
-                            "terms": 3,
-                            "open_conflicts": 0,
-                            "empty_targets": 0,
-                        }
-                    },
-                }
-
-        with (
-            patch("wenyi_cli.commands.context.CommandContext.load_config", return_value=cfg),
-            patch("wenyi_core.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
-            patch("wenyi_cli.commands.validation.os.path.isfile", return_value=True),
-        ):
-            result = CliRunner().invoke(app, ["report", "input.epub"])
-
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(captured["input"], "input.epub")
-        self.assertIn("state/book/report.json", plain_text(result.output))
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("No such command", plain_text(result.output))
+        orchestrator.assert_not_called()
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
         cfg = Config.from_dict(

@@ -279,7 +279,7 @@ schema-2 账本在内存中兼容升级，下一次正常保存用量时持久�
 包含运行 ID、操作、起止时间、用时和完成状态的 `runs` 列表。重复执行命令只追加本次实际
 执行时长，不计入两次运行之间的停机时间；嵌套流程只计一次。分别启动的命令各自计时，
 即使它们有重叠执行的时间。书籍也可通过 `wenyi status book.epub` 查看计时记录；
-查看状态和重新生成报告不会增加累计时长。
+查看状态不会增加累计时长。
 
 书籍状态初始化成功或通过身份校验后，异常退出和正常 Ctrl+C 中断也会保存本次用时。
 计时使用独立锁和原子写入，不影响 token 用量账本。旧版本没有可恢复的计时历史，
@@ -357,7 +357,7 @@ uv run wenyi --config config.yaml translate book.epub
 
 `terminology_context` 仅对译前发现和译后补漏候选中的人物条目（`type: person`），检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。译前发现仅处理人物；其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。全量术语映射不变，既有人物译名和受保护的人工字段保留，不同译名建议记录为冲突，不删除已有备注。`prepare` 只分析风格与人物语气，不抽取或建立术语；取证从待译批次开始。
 
-只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review、assemble 和 report 可以消费已有备注，不生产证据。SRT 不使用此路径。
+只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review 和 assemble 可以消费已有备注，不生产证据。SRT 不使用此路径。
 
 术语表仍按词条保存单一原文身份、单一主译名。全书备注可以解释上下文和不确定性，但没有真正的义项模型或逐次出现的译名选择。备注基于原文，只是只读补充，不授权添加后文剧情或覆盖权威译名；无法保证模型始终遵守这些约束。
 
@@ -389,9 +389,12 @@ uv run wenyi review book.epub --autofix
 uv run wenyi glossary list book.epub
 uv run wenyi glossary conflicts book.epub
 uv run wenyi glossary resolve book.epub "原文术语" "指定译名"
-uv run wenyi report book.epub
 uv run wenyi assemble book.epub
 ```
+
+项目汇总报告及 `wenyi report` 命令已移除。翻译完成后仍直接从保存的状态读取并显示
+章节数、术语数，以及用量和耗时。可通过 `status`、术语命令和 Review 结果检查书籍；
+不再提供单独的空译文汇总。历史 `report.json` 文件保留原样，不再读取或更新。
 
 `review` 会使用最终术语库检查完整译文。原有 Reviewer 提示词先并发检查连续
 文本块；候选问题随后可进入有界取证循环，互相矛盾的跨块一致性建议还可获得
@@ -405,8 +408,6 @@ Fixer。最终完整段落只写入章节 `target`，不会给章节 JSON 增加
 `state/<书名>/targets/<目标语言>/reviews/review-<时间戳>/`。同一份用量增量还会且只会计入一次
 本书累计 `usage.json`。Autofix 的完整前后版本链、issue 判定、失败原因和幂等
 写回日志保存在 `autofix/index.json`；发布后会刷新注释与 DOCX 样式偏移。
-`report.json` 保存简短的 Review 与 Autofix 摘要。
 
-`report` 汇总当前翻译状态和最新 Review 结果，不会修改正文；`assemble` 可在
-不重新调用模型的情况下重新导出已有译文。若另一个终端仍在翻译，导出会读取
+`assemble` 可在不重新调用模型的情况下重新导出已有译文。若另一个终端仍在翻译，导出会读取
 调用时已经落盘的一致快照，不必等到整本书结束；之后新完成的批次需再次导出才会进入成品。

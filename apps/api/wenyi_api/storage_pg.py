@@ -180,7 +180,7 @@ class PostgresStorage:
                 """UPDATE projects SET initialization_sha256=%s, source_sha256=%s,
                 manifest='{}'::jsonb, meta='{}'::jsonb,
                 annotation_contexts=NULL, analysis=NULL,
-                usage=CASE WHEN %s THEN usage ELSE NULL END, report=NULL,
+                usage=CASE WHEN %s THEN usage ELSE NULL END,
                 updated_at=now() WHERE id=%s""",
                 (source_hash, source_hash, same_source, self.project_id),
             )
@@ -490,12 +490,6 @@ class PostgresStorage:
 
     def load_analysis(self) -> dict | None:
         return self._load_field("analysis")
-
-    def save_report(self, data: dict) -> None:
-        self._save_field("report", data)
-
-    def load_report(self) -> dict | None:
-        return self._load_field("report")
 
     def save_usage(self, data: dict) -> None:
         self._save_field("usage", data)

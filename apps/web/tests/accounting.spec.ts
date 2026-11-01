@@ -313,10 +313,10 @@ test("usage charts switch attribution without double counting and retain resumed
   ).toHaveAttribute("aria-pressed", "true");
 });
 
-test("Chinese accounting fits narrow screens with long provider names and localizes steps", async ({
+test("Chinese accounting fits compact desktop windows with long provider names and localizes steps", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page, {
     [`/projects/${pid}/stats`]: {
@@ -347,7 +347,7 @@ test("Chinese accounting fits narrow screens with long provider names and locali
   await accounting.locator("dl").scrollIntoViewIfNeeded();
   await expect(accounting.locator("dl")).toContainText("1时30分0秒");
   await page.screenshot({
-    path: testInfo.outputPath("accounting-mobile-summary.png"),
+    path: testInfo.outputPath("accounting-compact-summary.png"),
   });
   await page.getByRole("button", { name: "按提供商", exact: true }).click();
   await expect(
@@ -381,13 +381,13 @@ test("Chinese accounting fits narrow screens with long provider names and locali
     "completed",
   );
   await page.screenshot({
-    path: testInfo.outputPath("accounting-mobile.png"),
+    path: testInfo.outputPath("accounting-compact.png"),
   });
   await accounting
     .getByRole("region", { name: "运行记录" })
     .scrollIntoViewIfNeeded();
   await page.screenshot({
-    path: testInfo.outputPath("accounting-mobile-runs.png"),
+    path: testInfo.outputPath("accounting-compact-runs.png"),
   });
 });
 

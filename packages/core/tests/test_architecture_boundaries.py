@@ -1,6 +1,6 @@
 """Lightweight architecture tests protecting the thin orchestrator facade.
 Forbid direct agents/ingest/glossary/assemble/postprocess/llm imports, thread pools and
-direct parsing/model/report/export calls. Require every extracted service to be assembled.
+direct parsing/model/export calls. Require every extracted service to be assembled.
 Forbid lower-layer imports of orchestrator and agent imports of pipeline; agents may use
 top-level review models.
 """
@@ -139,21 +139,19 @@ class TestArchitectureBoundaries(unittest.TestCase):
                     self.assertNotIn("futures", alias.name)
 
     def test_orchestrator_does_not_call_domain_functions(self):
-        """Forbid direct parsing, model, report and export calls in the orchestrator."""
+        """Forbid direct parsing, model and export calls in the orchestrator."""
         source = _module_source("orchestrator")
-        for forbidden in ("load_document(", "complete_json(", "build_report("):
+        for forbidden in ("load_document(", "complete_json("):
             self.assertNotIn(forbidden, source)
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 self.assertNotEqual(node.func.id, "assemble")
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                self.assertNotIn(node.func.attr, ("load_document", "complete_json", "build_report"))
+                self.assertNotIn(node.func.attr, ("load_document", "complete_json"))
 
     def test_orchestrator_does_not_touch_glossary_store_directly(self):
-        """Report/Review services own glossary lifetime; the orchestrator cannot reference it
-        directly.
-        """
+        """Storage owns glossary lifetime; the orchestrator cannot reference it directly."""
         source = _module_source("orchestrator")
         self.assertNotIn("GlossaryStore", source)
 
@@ -214,13 +212,11 @@ class TestArchitectureBoundaries(unittest.TestCase):
             "translation": "TranslationService",
             "review_workflow": "ReviewService",
             "review_autofix": "ReviewAutofixService",
-            "finalization": "ReportService",
+            "finalization": "AssemblyService",
         }
         for module_name, class_name in classes.items():
             module = importlib.import_module(f"wenyi_core.pipeline.{module_name}")
             self.assertTrue(hasattr(module, class_name), f"{module_name}.{class_name} 缺失")
-        finalization = importlib.import_module("wenyi_core.pipeline.finalization")
-        self.assertTrue(hasattr(finalization, "AssemblyService"))
 
     def test_agents_do_not_import_pipeline_orchestration(self):
         """Agents may use pure top-level review models, never pipeline orchestration."""

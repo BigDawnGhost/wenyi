@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 import zipfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from xml.etree import ElementTree
 
 from docx import Document as DocxDocument
@@ -498,22 +498,14 @@ class TestDocxCliDefaults(unittest.TestCase):
             def run_all(self, input_path, **kwargs):
                 captured["input"] = input_path
                 captured["kwargs"] = kwargs
-                store = type(
-                    "S",
-                    (),
-                    {"run_dir": "state/sample", "load_usage": staticmethod(lambda: {})},
-                )()
+                store = MagicMock(run_dir="state/sample")
+                store.load_manifest.return_value = {"chapters": [{"status": "done"}]}
+                store.stats.return_value = {"terms": 0}
+                store.load_usage.return_value = {}
                 return {
                     "store": store,
                     "outputs": ["output/sample.zh.docx"],
                     "output": "output/sample.zh.docx",
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
                 }
 
         with tempfile.TemporaryDirectory() as directory:
@@ -541,22 +533,14 @@ class TestDocxCliDefaults(unittest.TestCase):
 
             def run_all(self, input_path, **kwargs):
                 captured["kwargs"] = kwargs
-                store = type(
-                    "S",
-                    (),
-                    {"run_dir": "state/sample", "load_usage": staticmethod(lambda: {})},
-                )()
+                store = MagicMock(run_dir="state/sample")
+                store.load_manifest.return_value = {"chapters": [{"status": "done"}]}
+                store.stats.return_value = {"terms": 0}
+                store.load_usage.return_value = {}
                 return {
                     "store": store,
                     "outputs": ["output/book.zh.docx"],
                     "output": "output/book.zh.docx",
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
                 }
 
         with tempfile.TemporaryDirectory() as directory:
