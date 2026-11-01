@@ -17,7 +17,7 @@ from uuid import uuid4
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from wenyi_core.pdf_bridge.connection import use_bridge_connection
 
-from .. import dal, paths
+from .. import dal, metrics, paths
 from ..context import current_context, use_context
 from ..emitters import publish_error, redis_progress_fn
 from ..live_statistics import LiveStatistics
@@ -319,6 +319,8 @@ def _execute(
         # Tell live subscribers the run is over; failure here must not mask the
         # original error, so publish_error swallows transport problems.
         publish_error(redis, pid, code=_error_code(error), message=str(error), run_id=run_id)
+        # Observability only: the counter swallows its own failures.
+        metrics.record_task(status="error", code=_error_code(error))
         raise
     finally:
         finished.set()

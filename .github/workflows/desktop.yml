@@ -95,10 +95,23 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # The desktop build script shells out to uv during compilation to
+      # resolve the Git version, so a runner without uv fails before cargo
+      # writes a single object file. Same step as the packaging job.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
+          # The cache has to be readable from the packaging job, so both jobs
+          # build the key from the same inputs: the job id and the Rust
+          # environment hash are left out, exactly as in local-package.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
           # A warm-only job must save the cache, not just consume it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: runner.os == 'Linux'
@@ -169,9 +182,16 @@ jobs:
           node-version: "22"
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      # nextest runs every test in its own process and reports per-test timings,
+      # which the plain harness cannot do.
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
+          # Keep the key in step with cargo-warm, which writes this cache on
+          # every push to main; the per-job suffix would make it unreadable.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf xvfb
       # Packaging tests need the root dev group and CLI console fixtures.
@@ -193,7 +213,26 @@ jobs:
       - run: uv run --no-sync pytest -q apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
-      - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
+      - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
+      # Feature unification is the quiet failure mode here: if any dependency
+      # enables a rustls-backed reqwest for the Windows target, ring returns to
+      # that build graph and the C compile path comes back with it. Windows is
+      # deliberately on the system TLS stack (native-tls/schannel), so this
+      # asserts the Windows graph stays free of every C TLS backend.
+      - name: Assert the Windows target links no C TLS backend
+        if: matrix.tier == 'full'
+        run: |
+          set -eu
+          for crate in ring aws-lc-sys openssl-sys; do
+            output=$(cargo tree --locked --manifest-path apps/desktop/Cargo.toml \
+              --target x86_64-pc-windows-msvc -i "$crate" 2>&1 || true)
+            if ! printf '%s' "$output" | grep -q "nothing to print"; then
+              echo "::error::$crate reached the Windows target graph; the system TLS path is broken."
+              printf '%s\n' "$output"
+              exit 1
+            fi
+          done
+          echo "Windows target graph is free of ring, aws-lc-sys and openssl-sys."
       - name: Test Linux menu visibility after native window remaps
         if: runner.os == 'Linux'
         run: >

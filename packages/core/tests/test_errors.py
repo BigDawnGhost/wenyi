@@ -121,3 +121,58 @@ def test_agents_exceptions_are_catchable_by_the_cli_guard():
         assert str(error) == "bad precision output"
     else:
         pytest.fail("agent failures must be catchable as WenyiError")
+
+
+def test_llm_errors_join_the_shared_base_and_declare_retryability():
+    """The provider failures keep RuntimeError/ValueError and gain a code."""
+    from wenyi_core.llm.json_parser import JsonParseError
+    from wenyi_core.llm.retrying import (
+        EmptyResponseError,
+        ProviderRequestError,
+        TruncatedResponseError,
+    )
+
+    # Existing except RuntimeError / except ValueError guards must keep matching.
+    assert issubclass(EmptyResponseError, RuntimeError)
+    assert issubclass(TruncatedResponseError, RuntimeError)
+    assert issubclass(ProviderRequestError, RuntimeError)
+    assert issubclass(JsonParseError, ValueError)
+    assert issubclass(JsonParseError, RuntimeError) is False
+    for error_type in (
+        EmptyResponseError,
+        TruncatedResponseError,
+        ProviderRequestError,
+        JsonParseError,
+    ):
+        assert issubclass(error_type, WenyiError), error_type
+
+    # Only an empty answer is worth repeating unchanged.
+    assert EmptyResponseError.retryable is True
+    assert TruncatedResponseError.retryable is False
+    assert JsonParseError.retryable is False
+    assert ProviderRequestError.retryable is False
+
+    codes = {
+        EmptyResponseError.code,
+        TruncatedResponseError.code,
+        ProviderRequestError.code,
+        JsonParseError.code,
+    }
+    assert len(codes) == 4, codes
+
+
+def test_truncated_provider_error_keeps_both_identities():
+    """The alignment-recovery path depends on this being two things at once."""
+    from wenyi_core.llm import retrying
+
+    error = retrying.safe_provider_error(
+        retrying.TruncatedResponseError("cut off"),
+        provider="openai",
+        operation="translation.body",
+    )
+    assert isinstance(error, retrying._SafeTruncatedResponseError)
+    assert isinstance(error, retrying.ProviderRequestError)
+    assert isinstance(error, retrying.TruncatedResponseError)
+    assert isinstance(error, WenyiError)
+    # The safe wrapper keeps provider detail out of the message.
+    assert "cut off" not in str(error)

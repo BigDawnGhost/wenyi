@@ -10,11 +10,13 @@ use serde::Serialize;
 use tauri::Manager;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::{local_connection::Connection, native_export::Saves, Engine, State};
+use crate::{
+    ipc_error::IpcError, local_connection::Connection, native_export::Saves, Engine, State,
+};
 
 const MANIFEST: &str = "https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json";
 const RELEASE_API: &str = "https://api.github.com/repos/BigDawnGhost/wenyi/releases/latest";
-type Result<T> = std::result::Result<T, &'static str>;
+type Result<T> = std::result::Result<T, IpcError>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +58,8 @@ pub struct Snapshot {
     downloaded: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     total: Option<u64>,
+    // The page's own failure vocabulary, not an IPC code: this is the state
+    // the status command reports, and its shape must not change.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<&'static str>,
 }
@@ -114,7 +118,10 @@ fn trusted(window: &tauri::WebviewWindow) -> Result<()> {
     if window.label() == "main" && window.url().is_ok_and(|url| crate::trusted(&url)) {
         Ok(())
     } else {
-        Err("unavailable")
+        Err(IpcError::new(
+            "update_unavailable",
+            "Updates are not available right now.",
+        ))
     }
 }
 
@@ -124,23 +131,39 @@ pub fn desktop_update_status(window: tauri::WebviewWindow) -> Result<Snapshot> {
     Ok(window.state::<Updates>().0.lock().unwrap().snapshot.clone())
 }
 
-fn release_metadata(value: &serde_json::Value, current: &Version) -> Result<Option<(String, String)>> {
+fn release_metadata(
+    value: &serde_json::Value,
+    current: &Version,
+) -> Result<Option<(String, String)>> {
     if value["draft"].as_bool() != Some(false) || value["prerelease"].as_bool() != Some(false) {
-        return Err("check_failed");
+        return Err(IpcError::new(
+            "update_check_failed",
+            "Could not check for updates.",
+        ));
     }
-    let tag = value["tag_name"].as_str().ok_or("check_failed")?;
+    let tag = value["tag_name"].as_str().ok_or(IpcError::new(
+        "update_check_failed",
+        "Could not check for updates.",
+    ))?;
     let mut parts: Vec<&str> = tag.strip_prefix('v').unwrap_or(tag).split('.').collect();
     if !(1..=3).contains(&parts.len())
         || parts
             .iter()
             .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
     {
-        return Err("check_failed");
+        return Err(IpcError::new(
+            "update_check_failed",
+            "Could not check for updates.",
+        ));
     }
     parts.resize(3, "0");
-    let version = Version::parse(&parts.join(".")).map_err(|_| "check_failed")?;
+    let version = Version::parse(&parts.join("."))
+        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
     if !stable(&version) {
-        return Err("check_failed");
+        return Err(IpcError::new(
+            "update_check_failed",
+            "Could not check for updates.",
+        ));
     }
     Ok((version > *current).then(|| {
         (
@@ -161,21 +184,34 @@ fn manual_check() -> Result<Option<(String, String)>> {
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|_| "check_failed")?;
-    let response = client.get(RELEASE_API).send().map_err(|_| "check_failed")?;
+        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+    let response = client
+        .get(RELEASE_API)
+        .send()
+        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
     if !response.status().is_success() {
-        return Err("check_failed");
+        return Err(IpcError::new(
+            "update_check_failed",
+            "Could not check for updates.",
+        ));
     }
     let mut bytes = Vec::new();
     response
         .take(1024 * 1024 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| "check_failed")?;
+        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
     if bytes.len() > 1024 * 1024 {
-        return Err("check_failed");
+        return Err(IpcError::new(
+            "update_check_failed",
+            "Could not check for updates.",
+        ));
     }
-    let value = serde_json::from_slice(&bytes).map_err(|_| "check_failed")?;
-    release_metadata(&value, &Version::parse(env!("WENYI_DESKTOP_VERSION")).unwrap())
+    let value = serde_json::from_slice(&bytes)
+        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+    release_metadata(
+        &value,
+        &Version::parse(env!("WENYI_DESKTOP_VERSION")).unwrap(),
+    )
 }
 
 fn trusted_artifact(url: &reqwest::Url) -> bool {
@@ -186,12 +222,17 @@ fn trusted_artifact(url: &reqwest::Url) -> bool {
         && url.password().is_none()
         && url.query().is_none()
         && url.fragment().is_none()
-        && url.path().starts_with("/BigDawnGhost/wenyi/releases/download/")
+        && url
+            .path()
+            .starts_with("/BigDawnGhost/wenyi/releases/download/")
 }
 
 fn begin_check(state: &mut UpdateState) -> Result<()> {
     if state.snapshot.phase.busy() {
-        return Err("busy");
+        return Err(IpcError::new(
+            "update_busy",
+            "Wenyi is busy. Try again when the current task finishes.",
+        ));
     }
     state.update = None;
     state.bytes = None;
@@ -218,7 +259,9 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                 let updater = app
                     .updater_builder()
                     .endpoints(vec![MANIFEST.parse().unwrap()])
-                    .map_err(|_| "check_failed")?
+                    .map_err(|_| {
+                        IpcError::new("update_check_failed", "Could not check for updates.")
+                    })?
                     .timeout(Duration::from_secs(30))
                     .version_comparator(|current, remote| {
                         stable(&remote.version) && remote.version > current
@@ -227,11 +270,18 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                     // The engine and native exports are already drained by our host.
                     .on_before_exit(|| {})
                     .build()
-                    .map_err(|_| "check_failed")?;
-                let update = updater.check().await.map_err(|_| "check_failed")?;
+                    .map_err(|_| {
+                        IpcError::new("update_check_failed", "Could not check for updates.")
+                    })?;
+                let update = updater.check().await.map_err(|_| {
+                    IpcError::new("update_check_failed", "Could not check for updates.")
+                })?;
                 if let Some(update) = &update {
                     if !trusted_artifact(&update.download_url) {
-                        return Err("check_failed");
+                        return Err(IpcError::new(
+                            "update_check_failed",
+                            "Could not check for updates.",
+                        ));
                     }
                 }
                 let release = update
@@ -243,7 +293,12 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
         } else {
             tauri::async_runtime::spawn_blocking(manual_check)
                 .await
-                .unwrap_or(Err("check_failed"))
+                .unwrap_or_else(|_| {
+                    Err(IpcError::new(
+                        "update_check_failed",
+                        "Could not check for updates.",
+                    ))
+                })
                 .map(|release| (release, None))
         };
         let updates = app.state::<Updates>();
@@ -261,10 +316,14 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                     state.snapshot.notes = Some(notes);
                 }
             }
-            Err(error) => {
-                app.state::<crate::diagnostics::Diagnostics>().record(crate::diagnostics::Source::Native, crate::diagnostics::Event::UpdateFailed, serde_json::json!({}));
+            Err(_) => {
+                app.state::<crate::diagnostics::Diagnostics>().record(
+                    crate::diagnostics::Source::Native,
+                    crate::diagnostics::Event::UpdateFailed,
+                    serde_json::json!({}),
+                );
                 state.snapshot.phase = Phase::Error;
-                state.snapshot.error = Some(error);
+                state.snapshot.error = Some("check_failed");
             }
         }
     });
@@ -290,12 +349,21 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
         let updates = window.state::<Updates>();
         let mut state = updates.0.lock().unwrap();
         if state.snapshot.phase.busy() {
-            return Err("busy");
+            return Err(IpcError::new(
+                "update_busy",
+                "Wenyi is busy. Try again when the current task finishes.",
+            ));
         }
         if state.snapshot.mode != Mode::Automatic || state.snapshot.phase != Phase::Available {
-            return Err("unavailable");
+            return Err(IpcError::new(
+                "update_unavailable",
+                "Updates are not available right now.",
+            ));
         }
-        let update = state.update.clone().ok_or("unavailable")?;
+        let update = state.update.clone().ok_or(IpcError::new(
+            "update_unavailable",
+            "Updates are not available right now.",
+        ))?;
         state.snapshot.phase = Phase::Downloading;
         state.snapshot.error = None;
         state.snapshot.downloaded = 0;
@@ -325,7 +393,11 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
                 state.snapshot.phase = Phase::Ready;
             }
             Err(_) => {
-                app.state::<crate::diagnostics::Diagnostics>().record(crate::diagnostics::Source::Native, crate::diagnostics::Event::UpdateFailed, serde_json::json!({}));
+                app.state::<crate::diagnostics::Diagnostics>().record(
+                    crate::diagnostics::Source::Native,
+                    crate::diagnostics::Event::UpdateFailed,
+                    serde_json::json!({}),
+                );
                 state.snapshot.phase = Phase::Available;
                 state.snapshot.error = Some("download_failed");
             }
@@ -340,11 +412,17 @@ fn prepare_engine(connection: &Connection) -> Result<()> {
         .post(format!("{}/desktop/updates/prepare", connection.base))
         .bearer_auth(&connection.token)
         .send()
-        .map_err(|_| "unavailable")?;
+        .map_err(|_| IpcError::new("update_unavailable", "Updates are not available right now."))?;
     match response.status().as_u16() {
         204 => Ok(()),
-        409 => Err("busy"),
-        _ => Err("unavailable"),
+        409 => Err(IpcError::new(
+            "update_busy",
+            "Wenyi is busy. Try again when the current task finishes.",
+        )),
+        _ => Err(IpcError::new(
+            "update_unavailable",
+            "Updates are not available right now.",
+        )),
     }
 }
 
@@ -362,18 +440,31 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     let raw = {
         let state = state.lock().unwrap();
         if state.closing || state.error.is_some() {
-            return Err("unavailable");
+            return Err(IpcError::new(
+                "update_unavailable",
+                "Updates are not available right now.",
+            ));
         }
-        state.connection.clone().ok_or("unavailable")?
+        state.connection.clone().ok_or(IpcError::new(
+            "update_unavailable",
+            "Updates are not available right now.",
+        ))?
     };
-    let connection = Connection::new(&raw).map_err(|_| "unavailable")?;
+    let connection = Connection::new(&raw)
+        .map_err(|_| IpcError::new("update_unavailable", "Updates are not available right now."))?;
     if engine.closing.swap(true, Ordering::SeqCst) {
-        return Err("busy");
+        return Err(IpcError::new(
+            "update_busy",
+            "Wenyi is busy. Try again when the current task finishes.",
+        ));
     }
     let saves = app.state::<Saves>();
     if !saves.close_if_idle() {
         engine.closing.store(false, Ordering::SeqCst);
-        return Err("busy");
+        return Err(IpcError::new(
+            "update_busy",
+            "Wenyi is busy. Try again when the current task finishes.",
+        ));
     }
     state.lock().unwrap().closing = true;
     crate::publish(app, &state);
@@ -405,10 +496,17 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
         saves.reopen();
         engine.closing.store(false, Ordering::SeqCst);
         crate::publish(app, &state);
-        return Err("install_failed");
+        return Err(IpcError::new(
+            "update_install_failed",
+            "The update could not be installed.",
+        ));
     }
     let diagnostics = app.state::<crate::diagnostics::Diagnostics>();
-    diagnostics.record(crate::diagnostics::Source::Native, crate::diagnostics::Event::AppStopped, serde_json::json!({}));
+    diagnostics.record(
+        crate::diagnostics::Source::Native,
+        crate::diagnostics::Event::AppStopped,
+        serde_json::json!({}),
+    );
     diagnostics.drain();
     engine.closed.store(true, Ordering::SeqCst);
     app.restart();
@@ -421,13 +519,25 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
         let updates = window.state::<Updates>();
         let mut state = updates.0.lock().unwrap();
         if state.snapshot.phase.busy() {
-            return Err("busy");
+            return Err(IpcError::new(
+                "update_busy",
+                "Wenyi is busy. Try again when the current task finishes.",
+            ));
         }
         if state.snapshot.mode != Mode::Automatic || state.snapshot.phase != Phase::Ready {
-            return Err("unavailable");
+            return Err(IpcError::new(
+                "update_unavailable",
+                "Updates are not available right now.",
+            ));
         }
-        let update = state.update.clone().ok_or("unavailable")?;
-        let bytes = state.bytes.clone().ok_or("unavailable")?;
+        let update = state.update.clone().ok_or(IpcError::new(
+            "update_unavailable",
+            "Updates are not available right now.",
+        ))?;
+        let bytes = state.bytes.clone().ok_or(IpcError::new(
+            "update_unavailable",
+            "Updates are not available right now.",
+        ))?;
         state.snapshot.phase = Phase::Installing;
         state.snapshot.error = None;
         (update, bytes)
@@ -435,17 +545,26 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
     let app = window.app_handle().clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let result = install(&app, update, bytes);
-        if let Err(error) = result {
-            app.state::<crate::diagnostics::Diagnostics>().record(crate::diagnostics::Source::Native, crate::diagnostics::Event::UpdateFailed, serde_json::json!({}));
+        if result.is_err() {
+            app.state::<crate::diagnostics::Diagnostics>().record(
+                crate::diagnostics::Source::Native,
+                crate::diagnostics::Event::UpdateFailed,
+                serde_json::json!({}),
+            );
             let updates = app.state::<Updates>();
             let mut state = updates.0.lock().unwrap();
             state.snapshot.phase = Phase::Ready;
-            state.snapshot.error = Some(error);
+            state.snapshot.error = Some("install_failed");
         }
         result
     })
     .await;
-    result.unwrap_or(Err("install_failed"))
+    result.unwrap_or_else(|_| {
+        Err(IpcError::new(
+            "update_install_failed",
+            "The update could not be installed.",
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -556,7 +675,13 @@ mod tests {
         for phase in [Phase::Checking, Phase::Downloading, Phase::Installing] {
             state.snapshot.phase = phase;
             state.bytes = Some(Arc::new(vec![1, 2, 3]));
-            assert_eq!(begin_check(&mut state), Err("busy"));
+            assert_eq!(
+                begin_check(&mut state),
+                Err(IpcError::new(
+                    "update_busy",
+                    "Wenyi is busy. Try again when the current task finishes."
+                ))
+            );
             assert_eq!(state.bytes.as_ref().unwrap().as_slice(), &[1, 2, 3]);
         }
         state.snapshot.phase = Phase::Ready;

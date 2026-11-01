@@ -682,6 +682,16 @@ const en = {
   "connectivity.timeout": "The request timed out.",
   "connectivity.connectionFailed": "Could not connect. Check the base URL and network.",
   "connectivity.unavailable": "The provider is unavailable. Try again later.",
+  "error.projectNotFound": "That project no longer exists.",
+  "error.projectBusy": "The project is busy. Try again when the current task finishes.",
+  "error.queueUnavailable": "The task queue is unavailable. Try again in a moment.",
+  "error.exportNotFound": "That export is no longer available. Generate it again.",
+  "error.sourceNotReady": "The source has not finished preparing yet.",
+  "error.settingsConflict": "These settings were changed elsewhere. Reload and try again.",
+  "error.chapterNotFound": "That chapter no longer exists.",
+  "error.segmentNotFound": "That paragraph no longer exists.",
+  "error.invalidConfiguration": "The configuration is not valid. Check the settings.",
+  "error.unsupportedClient": "This client version is not supported. Update Wenyi.",
 } as const;
 
 export default en;

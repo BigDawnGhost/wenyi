@@ -71,7 +71,12 @@ async function setup(
             status.downloaded = 50;
             setTimeout(() => { status.phase = "ready"; status.downloaded = 100; }, 1500);
           }
-          if (command === "desktop_update_install") { status.error = "busy"; status.phase = "ready"; throw "busy"; }
+          if (command === "desktop_update_install") {
+            // The native command rejects with { code, message }, not a sentence.
+            status.error = "busy";
+            status.phase = "ready";
+            throw { code: "update_busy", message: "Wenyi is busy." };
+          }
         },
       },
     });

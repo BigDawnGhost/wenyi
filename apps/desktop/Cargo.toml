@@ -17,13 +17,11 @@ tauri = { version = "2", features = ["tray-icon"] }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json", "rustls"] }
 same-file = "1"
 cap-std = "3"
 cap-fs-ext = "3"
 rfd = "0.15"
 semver = "1"
-tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
@@ -36,4 +34,15 @@ dbus = "0.9"
 gtk = "0.18"
 
 [target.'cfg(windows)'.dependencies]
+# Windows uses the system TLS stack (schannel), so the build never enters the
+# cc-rs path that produces D8050 under the local MSVC toolchain. `native-tls`
+# without `vendored` deliberately: vendoring compiles OpenSSL from C sources,
+# which is the same failure mode this avoids.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json", "native-tls"] }
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls"] }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+# Every other target keeps rustls, so Linux and macOS behaviour is unchanged.
+[target.'cfg(not(windows))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json", "rustls"] }
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }

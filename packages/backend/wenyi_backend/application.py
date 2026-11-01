@@ -19,6 +19,7 @@ from .routers import (
     export,
     glossary,
     health,
+    metrics,
     projects,
     report,
     review,
@@ -82,6 +83,7 @@ def create_app(
         export,
         events,
         ws,
+        metrics,
     ):
         app.include_router(module.router)
     return app
