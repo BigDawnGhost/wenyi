@@ -108,6 +108,10 @@ export function useProjectProgress(pid: string | undefined) {
           }
           if (incoming.kind === "stats") {
             invalidate(["stats"]);
+          } else if (incoming.kind === "error") {
+            // A failed run carries no stage label, so keep the last one readable
+            // and let the refetch surface the failure instead of "waiting".
+            invalidate(["project", "workflow"], true);
           } else if (incoming.kind === "state" || incoming.kind === "final") {
             invalidate(all, true);
           } else {

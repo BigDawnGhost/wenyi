@@ -110,6 +110,40 @@ def test_model_failures_still_record_an_error(worker_state, monkeypatch):
     assert "RuntimeError: Provider connection failed" in failure["traceback"]
 
 
+def test_failed_task_publishes_an_error_event(worker_state, monkeypatch):
+    """Live clients must stop waiting when a run fails, and learn the code."""
+    pid = worker_state.project_id
+    dal.create_job(pid, "translation", "failing-run", run_id="failing-run")
+    dal.set_project_status(pid, "translating")
+    published = []
+
+    class RecordingRedis:
+        def publish(self, channel, value):
+            published.append((channel, __import__("json").loads(value)))
+
+        def set(self, *args, **kwargs):
+            return None
+
+        def get(self, key):
+            return None
+
+    monkeypatch.setattr(tasks, "_record_terminal_status", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "publish_error", lambda *a, **k: published.append(("error", k)))
+    monkeypatch.setattr(tasks, "redis_progress_fn", lambda *_a, **_k: lambda *_: None)
+
+    def failed(*_):
+        raise RuntimeError("Provider connection failed")
+
+    monkeypatch.setattr(tasks, "_book_operation", failed)
+    with pytest.raises(RuntimeError):
+        tasks._execute("translation", pid, "failing-run", {})
+    errors = [entry for entry in published if entry[0] == "error"]
+    assert errors, published
+    assert errors[0][1]["code"] == "pipeline_failed"
+    assert errors[0][1]["message"] == "Provider connection failed"
+    assert errors[0][1]["run_id"] == "failing-run"
+
+
 def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, monkeypatch):
     pid = worker_state.project_id
     old = dal.create_job(pid, "translation", "old-delivery", run_id="old-delivery")
