@@ -11,7 +11,6 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
-from openai import APIConnectionError, APITimeoutError
 from tenacity import (
     RetryCallState,
     retry,
@@ -136,6 +135,21 @@ def error_status_code(error: Any) -> int | None:
     return None
 
 
+def _matches_type_name(error: Any, name: str) -> bool:
+    """Detect an SDK exception class by name, avoiding an eager SDK import."""
+    return any(type(item).__name__ == name for item in _exception_chain(error))
+
+
+def is_connection_error(error: Any) -> bool:
+    """Return True for provider connection failures without importing the SDK."""
+    return _matches_type_name(error, "APIConnectionError")
+
+
+def is_sdk_timeout_error(error: Any) -> bool:
+    """Return True for provider timeout failures without importing the SDK."""
+    return _matches_type_name(error, "APITimeoutError")
+
+
 def _retry_override(error: Any) -> bool | None:
     """Read the explicit x-should-retry instruction from compatible endpoints."""
     value = (_header(error, "x-should-retry") or "").lower()
@@ -186,13 +200,12 @@ def retry_reason(error: Any, *, operation: str | None = None) -> str | None:
         return None
 
     for item in chain:
-        if isinstance(item, (TimeoutError, httpx.TimeoutException, APITimeoutError)):
+        if isinstance(item, (TimeoutError, httpx.TimeoutException)) or is_sdk_timeout_error(item):
             return "timeout"
-        if isinstance(
+        if is_connection_error(item) or isinstance(
             item,
             (
                 ConnectionError,
-                APIConnectionError,
                 httpx.NetworkError,
                 httpx.ProxyError,
                 httpx.RemoteProtocolError,
