@@ -75,10 +75,13 @@ test("route manifest is complete and consistent", () => {
   assert(paths.length >= 14, `expected the full route table, found ${paths.length}`);
   assert.equal(new Set(paths).size, paths.length, "route paths must be unique");
   for (const required of [
-    "/", "/projects/new", "/settings", "/settings/:section", "/projects/:pid",
+    "/", "/projects/new", "/settings/:section?", "/projects/:pid",
     "/projects/:pid/proofreading/:ci", "/projects/:pid/review", "/projects/:pid/subtitles",
   ]) assert(paths.includes(required), `Required URL disappeared: ${required}`);
-  assert(manifest.includes('<Navigate to="/settings" replace />'), "Keep legacy settings redirects");
+  assert(
+    manifest.includes('{ path: "/settings/:section?", element: <InterfaceSettingsPage /> }'),
+    "Settings categories must share the same mounted configuration page",
+  );
 
   for (const target of routeModules())
     assert(readFileSync(resolve(uiSrc, "routes", `${target}.tsx`), "utf8").length > 0);
