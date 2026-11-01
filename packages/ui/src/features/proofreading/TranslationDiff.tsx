@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { diffArrays, diffChars } from "diff";
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 
 type WordSegmenter = {
   segment(text: string): Iterable<{ segment: string }>;

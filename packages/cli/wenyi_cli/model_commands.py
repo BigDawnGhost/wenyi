@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -156,32 +155,12 @@ def register_model_commands(
     @models.command("migrate-usage")
     def migrate_usage(run_dir: Path = typer.Argument(..., exists=True, file_okay=False)):
         """Back up and convert usage ledgers in one selected target run directory."""
-        from wenyi_core.llm.usage import convert_usage_ledger
-        from wenyi_core.pipeline.runstore import RunStore
+        from wenyi_core.storage.file_migrations import migrate_usage_ledgers
 
         try:
-            store = RunStore(str(run_dir), create=False)
-            if not store.exists():
-                raise ValueError("Select a target run directory containing manifest.json")
-            with store.lock():
-                paths = [
-                    run_dir / "usage.json",
-                    *sorted((run_dir / "reviews").glob("review-*/usage.json")),
-                ]
-                changes = []
-                for path in paths:
-                    if path.is_file():
-                        original = path.read_bytes()
-                        converted = convert_usage_ledger(json.loads(original))
-                        if json.loads(original) != converted:
-                            changes.append((path, original, converted))
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-                for path, original, converted in changes:
-                    with path.with_name(f"usage.before-routing-{stamp}.json").open("xb") as backup:
-                        backup.write(original)
-                    store._write_json(str(path), converted)
+            count = migrate_usage_ledgers(run_dir)
             console.print(
-                f"Converted {len(changes)} usage ledgers; original files backed up alongside them."
+                f"Converted {count} usage ledgers; original files backed up alongside them."
             )
         except (OSError, ValueError) as error:
             console.print(f"[red]Error: {error}[/]")

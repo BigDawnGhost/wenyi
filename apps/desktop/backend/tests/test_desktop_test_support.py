@@ -4,10 +4,11 @@ from types import SimpleNamespace
 
 import desktop_test_support
 import pytest
+from wenyi_backend.context import current_context
 
 
 @pytest.fixture
-def clock(monkeypatch):
+def clock(monkeypatch, desktop_context):
     clock = SimpleNamespace(now=0.0)
 
     def sleep(seconds):
@@ -28,7 +29,7 @@ def test_wait_job_allows_slow_local_checkpoint_commits(clock, monkeypatch):
             "status": "done" if clock.now >= 12 else "running",
         }
 
-    monkeypatch.setattr(desktop_test_support.dal, "get_job_by_arq_id", get_job)
+    monkeypatch.setattr(current_context().repository, "get_job_by_arq_id", get_job)
 
     assert desktop_test_support.wait_job("slow-run") == {"run_id": "slow-run", "status": "done"}
 
@@ -36,7 +37,7 @@ def test_wait_job_allows_slow_local_checkpoint_commits(clock, monkeypatch):
 @pytest.mark.parametrize("status", ["done", "error", "paused", "interrupted"])
 def test_wait_job_returns_terminal_status_without_delay(clock, monkeypatch, status):
     job = {"run_id": "finished-run", "status": status}
-    monkeypatch.setattr(desktop_test_support.dal, "get_job_by_arq_id", lambda _: job)
+    monkeypatch.setattr(current_context().repository, "get_job_by_arq_id", lambda _: job)
 
     assert desktop_test_support.wait_job("finished-run") == job
     assert clock.now == 0
@@ -45,7 +46,7 @@ def test_wait_job_returns_terminal_status_without_delay(clock, monkeypatch, stat
 @pytest.mark.parametrize("status", [None, "queued", "running"])
 def test_wait_job_keeps_explicit_timeout_and_last_job_diagnostic(clock, monkeypatch, status):
     job = {"run_id": "stuck-run", "status": status} if status else None
-    monkeypatch.setattr(desktop_test_support.dal, "get_job_by_arq_id", lambda _: job)
+    monkeypatch.setattr(current_context().repository, "get_job_by_arq_id", lambda _: job)
 
     with pytest.raises(pytest.fail.Exception) as error:
         desktop_test_support.wait_job("stuck-run", timeout=0.05)
@@ -57,7 +58,7 @@ def test_wait_job_keeps_explicit_timeout_and_last_job_diagnostic(clock, monkeypa
 
 def test_wait_job_default_deadline_remains_bounded(clock, monkeypatch):
     job = {"run_id": "stuck-run", "status": "running"}
-    monkeypatch.setattr(desktop_test_support.dal, "get_job_by_arq_id", lambda _: job)
+    monkeypatch.setattr(current_context().repository, "get_job_by_arq_id", lambda _: job)
 
     with pytest.raises(pytest.fail.Exception, match="Local task did not finish within 60s"):
         desktop_test_support.wait_job("stuck-run")

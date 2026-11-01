@@ -1,7 +1,7 @@
-import { useI18n } from "@/i18n";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
+import { useI18n } from "../../i18n";
+import { Disclosure } from "../../components/ui/disclosure";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;

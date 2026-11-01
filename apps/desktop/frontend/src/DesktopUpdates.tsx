@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { SettingsSection } from "@/features/settings/SettingsSection";
+import { Button } from "@wenyi/ui/primitives";
+import { SettingsSection } from "@wenyi/ui/settings";
 import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
 import { ReleaseNotes } from "./ReleaseNotes";

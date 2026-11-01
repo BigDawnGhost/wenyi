@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, isProjectBusy } from "./api";
+import { api, isProjectBusy } from "../api/client";
 import { platform } from "../platform";
 
 const snapshotKeys = new Set([

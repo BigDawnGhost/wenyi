@@ -1,5 +1,5 @@
 import { test, expect, type Route } from "@playwright/test";
-import { configuration, fakeApi, pid, project } from "./fixtures";
+import { configuration, fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 const preview = {
   title: "Source preview",

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
 
 for (const format of ["csv", "json"] as const) {
   test(`Web glossary ${format} keeps authenticated browser downloads`, async ({ page }) => {

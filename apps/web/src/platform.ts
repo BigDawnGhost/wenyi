@@ -1,5 +1,5 @@
 import type { PlatformServices, SourceDropCallbacks } from "@wenyi/ui/platform";
-import { decodeResponse, requestHeaders } from "@wenyi/ui/lib/http";
+import { decodeResponse, requestHeaders } from "@wenyi/ui/http";
 import { translate } from "@wenyi/ui/i18n";
 
 const authToken = () => localStorage.getItem("wenyi_token");

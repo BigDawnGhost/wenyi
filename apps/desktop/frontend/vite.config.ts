@@ -7,8 +7,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "../../../packages/ui/src"),
-      "@wenyi/ui": path.resolve(__dirname, "../../../packages/ui/src"),
+      "@": path.resolve(__dirname, "./src"),
     },
   },
   build: {

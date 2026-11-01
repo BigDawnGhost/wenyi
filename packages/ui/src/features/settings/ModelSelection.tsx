@@ -1,8 +1,8 @@
-import { Disclosure } from "@/components/ui/disclosure";
-import { Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { useI18n } from "@/i18n";
-import { operationLabel } from "@/i18n/labels";
+import { Disclosure } from "../../components/ui/disclosure";
+import { Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { useI18n } from "../../i18n";
+import { operationLabel } from "../../i18n/labels";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;

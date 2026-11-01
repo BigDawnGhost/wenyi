@@ -9,6 +9,7 @@ from typing import Any, Optional
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 from wenyi_backend.chapter_state import chapter_review_state
+from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
 
 from .db import get_pool
 
@@ -111,6 +112,27 @@ def set_project_status(pid: str, status: str, *, error: str | None = None) -> No
             "UPDATE projects SET status=%s, error=%s, updated_at=now() WHERE id=%s",
             (status, error, pid),
         )
+
+
+def request_pause(pid: str, run_id: str) -> bool:
+    """Lock only the catalog row, never wait for the long-running domain lock."""
+    with _conn() as connection:
+        project = connection.execute(
+            "SELECT status FROM projects WHERE id=%s FOR UPDATE", (pid,)
+        ).fetchone()
+        if project is None or project[0] not in RUNNING_PROJECT_STATUSES:
+            return False
+        job = connection.execute(
+            """SELECT run_id,status FROM jobs
+               WHERE project_id=%s AND kind<>'export' ORDER BY id DESC LIMIT 1""",
+            (pid,),
+        ).fetchone()
+        if job is None or job[0] != run_id or job[1] not in {"queued", "running"}:
+            return False
+        connection.execute(
+            "UPDATE projects SET status='pausing',error=NULL,updated_at=now() WHERE id=%s", (pid,)
+        )
+        return True
 
 
 def set_project_strategy(

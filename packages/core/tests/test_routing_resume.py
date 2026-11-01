@@ -80,7 +80,7 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
 
     monkeypatch.setattr(store._run, "_write_json", write)
     with pytest.raises(OSError):
-        runtime.flush_usage(store, scope="review", review=debug)
+        runtime.usage.flush(store, scope="review", review=debug)
     book_usage = store.load_usage()
     assert book_usage is not None
     assert book_usage["totals"]["total_tokens"] == 10
@@ -89,19 +89,19 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     if fresh_process:
         runtime = PipelineRuntime(config, FakeClient())
     # Repeating the flush in the same process cannot replay the increment.
-    runtime.flush_usage(store, scope="review", review=debug)
+    runtime.usage.flush(store, scope="review", review=debug)
     review_usage = debug.load_usage()
     book_usage = store.load_usage()
     assert review_usage is not None
     assert book_usage is not None
     assert review_usage["totals"]["total_tokens"] == 10
     assert book_usage["by_model"]["model-id"]["total_tokens"] == 10
-    runtime.flush_usage(store, scope="review", review=debug)
+    runtime.usage.flush(store, scope="review", review=debug)
     review_usage = debug.load_usage()
     assert review_usage is not None
     assert review_usage["totals"]["calls"] == 1
     # A fresh invocation retains cumulative totals without attributing old calls to new models.
-    PipelineRuntime(config, FakeClient()).flush_usage(store, scope="resume", review=debug)
+    PipelineRuntime(config, FakeClient()).usage.flush(store, scope="resume", review=debug)
     book_usage = store.load_usage()
     assert book_usage is not None
     assert book_usage["totals"]["calls"] == 1

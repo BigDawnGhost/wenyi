@@ -12,8 +12,9 @@ from api_test_support import new_project
 from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.db import get_pool
+from wenyi_backend.context import current_context
+from wenyi_backend.execution.bindings import build_config_for
 from wenyi_backend.model_registry import rename_model_references
-from wenyi_backend.workers import tasks
 
 
 @pytest.fixture(autouse=True)
@@ -104,14 +105,14 @@ def test_global_changes_preserve_existing_projects_and_queued_snapshots(api):
     ).json()
     pid = created["id"]
     run = dal.list_jobs(pid)[0]
-    original = tasks._build_config_for(pid, run["arq_job_id"])
+    original = build_config_for(current_context(), pid, run["arq_job_id"])
     document = before["effective"]
     document["pipeline"]["polish"] = False
     model_id = document["llm"]["tiers"]["strong"]
     document["llm"]["models"][model_id]["model"] = "new-model"
     changed = client.put("/settings", json=payload(before))
     assert changed.status_code == 200, changed.text
-    assert tasks._build_config_for(pid, run["arq_job_id"]).llm == original.llm
+    assert build_config_for(current_context(), pid, run["arq_job_id"]).llm == original.llm
     existing = client.get(f"/projects/{pid}/config").json()
     assert existing["effective"]["pipeline"]["polish"] is True
     assert existing["registered_models"][model_id]["model"] == "new-model"

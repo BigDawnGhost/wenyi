@@ -90,7 +90,7 @@ class Orchestrator:
                         book_understanding=self.config.pipeline.book_understanding,
                     )
                 finally:
-                    self._runtime.flush_usage(store, scope="prepare")
+                    self._runtime.usage.flush(store, scope="prepare")
             return store
 
     def run(
@@ -139,7 +139,7 @@ class Orchestrator:
             )
         finally:
             # Prescan can stop before translation's own usage checkpoint is reached.
-            self._runtime.flush_usage(store, scope="translate")
+            self._runtime.usage.flush(store, scope="translate")
 
     def run_review(
         self,
@@ -300,7 +300,7 @@ class Orchestrator:
         try:
             if "review" in steps:
                 # Flush earlier stage deltas first so session usage.json contains only review calls.
-                self._runtime.flush_usage(store, scope="pipeline")
+                self._runtime.usage.flush(store, scope="pipeline")
                 terms = self._review.session_terms(store)
                 outcome = self._run_review_locked(
                     store,
@@ -312,7 +312,7 @@ class Orchestrator:
                 review_result = outcome.result
                 review_dir = outcome.run_dir
         finally:
-            self._runtime.flush_usage(store, scope="pipeline")
+            self._runtime.usage.flush(store, scope="pipeline")
 
         outputs: list[str] = []
         if "assemble" in steps:

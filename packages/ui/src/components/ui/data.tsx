@@ -1,5 +1,5 @@
-import { useI18n, type MessageKey } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
+import { useI18n, type MessageKey } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
 import { Lock } from "lucide-react";
 export function ErrorNotice({ error }: { error?: unknown }) {
   if (!error) return null;

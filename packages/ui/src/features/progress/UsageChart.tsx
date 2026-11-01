@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useI18n, type MessageKey } from "@/i18n";
-import { operationLabel } from "@/i18n/labels";
-import { cn } from "@/lib/utils";
+import { useI18n, type MessageKey } from "../../i18n";
+import { operationLabel } from "../../i18n/labels";
+import { cn } from "../../lib/utils";
 import {
   amount,
   cacheRate,

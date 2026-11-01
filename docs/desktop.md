@@ -90,6 +90,10 @@ Markdown instead. No local PDF rendering engine is installed or selected.
 
 Completed batches are saved in the local workspace. Reopen Desktop, open the same project, and resume from its checkpoints. Save any in-progress proofreading edits before closing. For workspace locations and backup instructions, see [Independent data](#independent-data).
 
+Pause is accepted only for the current queued or running task. If completion or a new
+run wins the race, the request is rejected instead of changing the completed state to
+“Pausing”; refresh the project to see the latest state.
+
 ## Interface language
 
 The interface defaults to English. Open global **Settings → Interface language**

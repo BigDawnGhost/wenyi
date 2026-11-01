@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from wenyi_backend.context import current_context
 from wenyi_backend.routers import chapters
 
 
@@ -13,7 +14,9 @@ def test_translate_chapter_enqueues_only_requested_chapter(monkeypatch):
     enqueued = []
     monkeypatch.setattr(chapters, "require_project", lambda pid: {"id": pid, "fmt": "text"})
     monkeypatch.setattr(
-        chapters.dal, "chapter_summaries", lambda pid: [{"index": 2, "status": "pending"}]
+        current_context().repository,
+        "chapter_summaries",
+        lambda pid: [{"index": 2, "status": "pending"}],
     )
 
     async def start(pid, kind, *, params):
@@ -29,7 +32,7 @@ def test_translate_chapter_enqueues_only_requested_chapter(monkeypatch):
 @pytest.mark.parametrize("entries,code", [([], 404), ([{"index": 0, "status": "done"}], 409)])
 def test_translate_chapter_rejects_missing_or_completed_chapter(monkeypatch, entries, code):
     monkeypatch.setattr(chapters, "require_project", lambda pid: {"id": pid, "fmt": "text"})
-    monkeypatch.setattr(chapters.dal, "chapter_summaries", lambda pid: entries)
+    monkeypatch.setattr(current_context().repository, "chapter_summaries", lambda pid: entries)
     with pytest.raises(HTTPException) as error:
         asyncio.run(chapters.translate_chapter("project-1", 0))
     assert error.value.status_code == code
@@ -38,7 +41,9 @@ def test_translate_chapter_rejects_missing_or_completed_chapter(monkeypatch, ent
 def test_translate_chapter_propagates_queue_failure(monkeypatch):
     monkeypatch.setattr(chapters, "require_project", lambda pid: {"id": pid, "fmt": "text"})
     monkeypatch.setattr(
-        chapters.dal, "chapter_summaries", lambda pid: [{"index": 1, "status": "pending"}]
+        current_context().repository,
+        "chapter_summaries",
+        lambda pid: [{"index": 1, "status": "pending"}],
     )
 
     async def fail(*args, **kwargs):

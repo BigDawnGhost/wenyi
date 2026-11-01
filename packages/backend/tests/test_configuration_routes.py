@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from wenyi_backend.application import create_app
+from wenyi_backend.context import current_context
 from wenyi_backend.project_service import effective_config
 from wenyi_backend.routers import configuration
 from wenyi_core.config import Config
@@ -39,6 +40,7 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
     valid = effective_config(
         project,
         defaults=defaults,
+        state_dir="unused",
         document={"pipeline": {"translation_mode": "best_of_three", "polish": True}},
     )
     assert valid.pipeline.translation_mode == "best_of_three"
@@ -48,10 +50,14 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         {"translation_mode": "standard"},
     ):
         with pytest.raises(ValueError):
-            effective_config(project, defaults=defaults, document={"pipeline": pipeline})
+            effective_config(
+                project, defaults=defaults, state_dir="unused", document={"pipeline": pipeline}
+            )
 
     for document in ({}, {"pipeline": {"review": False}}):
-        restored = effective_config(project, defaults=defaults, document=document)
+        restored = effective_config(
+            project, defaults=defaults, state_dir="unused", document=document
+        )
         assert restored.pipeline.translation_mode == "best_of_three"
         assert restored.pipeline.polish is True
 
@@ -61,7 +67,9 @@ def test_legacy_quick_project_read_preserves_saved_configuration():
 
     project = {"id": "legacy", "strategy": {"template": "快速出稿"}}
     before = deepcopy(project)
-    config = effective_config(project, defaults=Config.from_dict({"llm": {"preset": "fake"}}))
+    config = effective_config(
+        project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
+    )
     assert not any(
         getattr(config.pipeline, key)
         for key in ("book_understanding", "polish", "review", "review_autofix")
@@ -69,7 +77,7 @@ def test_legacy_quick_project_read_preserves_saved_configuration():
     assert project == before
     project["config"] = {"pipeline": {"polish": True}}
     assert effective_config(
-        project, defaults=Config.from_dict({"llm": {"preset": "fake"}})
+        project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
     ).pipeline.polish
 
 
@@ -84,7 +92,7 @@ def test_workflow_keeps_frozen_quick_snapshot_independent(monkeypatch):
     before = deepcopy(snapshot)
     monkeypatch.setattr(configuration, "require_project", lambda _: {"id": "legacy"})
     monkeypatch.setattr(
-        configuration.dal,
+        current_context().repository,
         "list_jobs",
         lambda _: [
             {"kind": "translation", "status": "queued", "params": {"config_snapshot": snapshot}}
@@ -111,7 +119,10 @@ def test_project_stats_read_workflow_usage_and_timing(monkeypatch, initialized):
         assert key == "timing.json"
         return timing if initialized else None
 
-    storage = SimpleNamespace(load_usage=lambda: usage, read_artifact=read_artifact)
+    closed = []
+    storage = SimpleNamespace(
+        load_usage=lambda: usage, read_artifact=read_artifact, close=lambda: closed.append(True)
+    )
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid})
     monkeypatch.setattr(configuration, "storage_for", lambda pid: storage)
     expected = {
@@ -120,3 +131,4 @@ def test_project_stats_read_workflow_usage_and_timing(monkeypatch, initialized):
     }
     assert configuration.project_stats("test") == expected
     assert configuration.project_stats("test") == expected
+    assert closed == [True, True]

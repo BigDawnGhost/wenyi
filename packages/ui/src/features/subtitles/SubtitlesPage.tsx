@@ -1,15 +1,15 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, isProjectBusy } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
-import { SegmentEditor } from "@/components/SegmentEditor";
+import { api, isProjectBusy } from "../../api/client";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card, CardContent } from "../../components/ui/card";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/form";
+import { ErrorNotice } from "../../components/ui/data";
+import { SegmentEditor } from "../../components/SegmentEditor";
 
 export default function SubtitlesPage() {
   const { t: tr } = useI18n();

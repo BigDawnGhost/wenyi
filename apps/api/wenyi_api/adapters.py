@@ -4,7 +4,6 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
@@ -27,30 +26,30 @@ from .telemetry import RedisTelemetry
 
 
 class PostgresRepository:
-    # __getattr__ returns these module functions without binding a repository argument.
-    # Keep lookup dynamic so DAL replacements remain visible to an existing context.
-    if TYPE_CHECKING:
-        create_project = staticmethod(dal.create_project)
-        get_project = staticmethod(dal.get_project)
-        list_projects = staticmethod(dal.list_projects)
-        delete_project = staticmethod(dal.delete_project)
-        set_project_status = staticmethod(dal.set_project_status)
-        set_project_strategy = staticmethod(dal.set_project_strategy)
-        set_project_config = staticmethod(dal.set_project_config)
-        set_project_languages = staticmethod(dal.set_project_languages)
-        set_project_source = staticmethod(dal.set_project_source)
-        chapter_summaries = staticmethod(dal.chapter_summaries)
-        total_word_count = staticmethod(dal.total_word_count)
-        create_job = staticmethod(dal.create_job)
-        get_job = staticmethod(dal.get_job)
-        get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
-        set_job_status = staticmethod(dal.set_job_status)
-        list_jobs = staticmethod(dal.list_jobs)
-        latest_resumable_job = staticmethod(dal.latest_resumable_job)
-        job_review_id = staticmethod(dal.job_review_id)
-        is_paused = staticmethod(dal.is_paused)
-        create_export = staticmethod(dal.create_export)
-        set_export_status = staticmethod(dal.set_export_status)
+    """Explicit adapter surface; SQL helpers retain their typed call signatures."""
+
+    create_project = staticmethod(dal.create_project)
+    get_project = staticmethod(dal.get_project)
+    list_projects = staticmethod(dal.list_projects)
+    delete_project = staticmethod(dal.delete_project)
+    set_project_status = staticmethod(dal.set_project_status)
+    request_pause = staticmethod(dal.request_pause)
+    set_project_strategy = staticmethod(dal.set_project_strategy)
+    set_project_config = staticmethod(dal.set_project_config)
+    set_project_languages = staticmethod(dal.set_project_languages)
+    set_project_source = staticmethod(dal.set_project_source)
+    chapter_summaries = staticmethod(dal.chapter_summaries)
+    total_word_count = staticmethod(dal.total_word_count)
+    create_job = staticmethod(dal.create_job)
+    get_job = staticmethod(dal.get_job)
+    get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
+    set_job_status = staticmethod(dal.set_job_status)
+    list_jobs = staticmethod(dal.list_jobs)
+    latest_resumable_job = staticmethod(dal.latest_resumable_job)
+    job_review_id = staticmethod(dal.job_review_id)
+    is_paused = staticmethod(dal.is_paused)
+    create_export = staticmethod(dal.create_export)
+    set_export_status = staticmethod(dal.set_export_status)
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -70,9 +69,6 @@ class PostgresRepository:
             self._pool.close()
             self._pool = None
 
-    def __getattr__(self, name):
-        return getattr(dal, name)
-
     def project_dir(self, pid):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", pid):
             raise ValueError("Invalid project ID")
@@ -89,7 +85,10 @@ class PostgresRepository:
         root = Path(self.settings.data_dir).resolve()
         if directory.is_symlink() or directory.resolve().parent != root:
             raise HTTPException(409, "Project directory is outside DATA_DIR")
-        with project_write(pid), export_history_session_lock(self.pool, pid) as connection:
+        with (
+            project_write(pid, self, self.storage_for),
+            export_history_session_lock(self.pool, pid) as connection,
+        ):
             row = connection.execute(
                 """SELECT EXISTS (
                     SELECT 1 FROM jobs WHERE project_id=%s AND status IN ('queued','running')
@@ -237,7 +236,7 @@ def create_context(settings: Settings) -> BackendContext:
         repository=repository,
         settings_store=PostgresSettings(repository, settings.config_path),
         exports=PostgresExports(repository),
-        telemetry=RedisTelemetry(settings.redis_url),
+        telemetry=RedisTelemetry(settings.redis_url, repository),
         storage_for=repository.storage_for,
         read_storage_for=repository.storage_for,
         build_client=build_client,

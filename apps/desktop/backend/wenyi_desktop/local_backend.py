@@ -213,6 +213,31 @@ class LocalBackend:
     def set_project_status(self, pid: str, status: str, *, error: str | None = None) -> None:
         self.update_project(pid, status=status, error=error)
 
+    def request_pause(self, pid: str, run_id: str) -> bool:
+        """Serialize the pause decision with completion and new task admission."""
+        from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
+
+        with self.transaction() as connection:
+            project = self._get("projects", pid, connection)
+            job = next(
+                (
+                    row
+                    for row in self._list("jobs", pid=pid, connection=connection)
+                    if row["kind"] != "export"
+                ),
+                None,
+            )
+            if (
+                project is None
+                or project["status"] not in RUNNING_PROJECT_STATUSES
+                or job is None
+                or job["run_id"] != run_id
+                or job["status"] not in {"queued", "running"}
+            ):
+                return False
+            self.update_project(pid, status="pausing", error=None, connection=connection)
+            return True
+
     def set_project_strategy(
         self, pid: str, strategy: dict, *, connection: sqlite3.Connection | None = None
     ) -> None:
@@ -284,7 +309,7 @@ class LocalBackend:
         try:
             # Book and export locks protect admission, not recursive file cleanup:
             # Windows cannot remove their files while our own handles remain open.
-            with project_write(pid), self._export_history_lock(pid):
+            with project_write(pid, self, self.storage_for), self._export_history_lock(pid):
                 with self.transaction() as connection:
                     self._check_project_deletion(pid, connection)
                     exports = self._list("exports", pid=pid, connection=connection)
@@ -357,7 +382,7 @@ class LocalBackend:
         run_id: str | None = None,
     ) -> int:
         """Commit scheduling identity and busy status together, outside domain state."""
-        from wenyi_backend.dal import RUNNING_PROJECT_STATUSES
+        from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
 
         with self.transaction() as connection:
             self._reject_removing(pid)

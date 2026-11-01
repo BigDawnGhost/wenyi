@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project, workflow } from "./fixtures";
+import { fakeApi, pid, project, workflow } from "../../../packages/ui/tests/e2e/fixtures";
 
 const started = "2026-09-17T09:00:00Z";
 const run = {

@@ -7,12 +7,8 @@ configured. Share pure language normalization with Runtime through top-level i18
 
 from __future__ import annotations
 
-import hashlib
-import json
-import logging
 import os
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from ..events import ProgressFn
@@ -20,13 +16,12 @@ from ..i18n.languages import normalize_language
 from ..i18n.policy.models import Phase, content_hash
 from ..i18n.prompts import render
 from ..ingest.epub_reader import peek_epub_title
-from ..ingest.models import Chapter, Document
+from ..ingest.models import Document
 from ..ingest.segmenter import load_document
 from ..llm.errors import ProviderFailure, describe_provider_failure
 from ..storage.protocol import Storage
+from .book_understanding import BookUnderstandingService
 from .input_preparation import (
-    ingest_config,
-    load_parsed_document,
     locate_input_storage,
     parse_document,
 )
@@ -36,9 +31,6 @@ from .runstore import source_sha256, translation_run_dir
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
 
-_LOGGER = logging.getLogger(__name__)
-_DIGEST_VERSION = 2
-
 
 class LanguageDetectionError(ValueError):
     """Preserve a safe provider diagnostic instead of reporting an invalid language."""
@@ -47,17 +39,6 @@ class LanguageDetectionError(ValueError):
         self.failure = failure
         status = f" (HTTP {failure.status_code})" if failure.status_code is not None else ""
         super().__init__(f"Source language detection request failed{status}: {failure.message}")
-
-
-def _digest_complete(chapter: Chapter) -> bool:
-    """Only verified full-source digests satisfy preparation."""
-    digest = chapter.meta.get("source_digest")
-    return bool(
-        isinstance(digest, str)
-        and digest.strip()
-        and chapter.meta.get("source_digest_complete") is True
-        and chapter.meta.get("source_digest_version") == _DIGEST_VERSION
-    )
 
 
 class PreparationService:
@@ -71,18 +52,9 @@ class PreparationService:
     ):
         self._runtime = runtime
         self._mineru_token_resolver = mineru_token_resolver
-
-    @staticmethod
-    def ingest_config(config) -> dict[str, Any]:
-        """Fingerprint only parsing inputs shared by upload preview and initialization."""
-        return ingest_config(config)
-
-    @staticmethod
-    def load_parsed_document(
-        storage, input_path: str, config, *, actual_sha256: str | None = None
-    ) -> Document | None:
-        """Reuse validated preview parsing; changed input/config triggers normal parsing."""
-        return load_parsed_document(storage, input_path, config, actual_sha256=actual_sha256)
+        self._understanding = BookUnderstandingService(
+            runtime.config, runtime.synopsizer, runtime.analyzer, runtime.usage
+        )
 
     # State lookup and resume.
     def locate_existing(
@@ -200,7 +172,7 @@ class PreparationService:
         try:
             return self._initialize_document(doc, store, input_path, progress, source_hash)
         finally:
-            self._runtime.flush_usage(store, scope="prepare")
+            self._runtime.usage.flush(store, scope="prepare")
 
     def _initialize_document(
         self,
@@ -251,7 +223,7 @@ class PreparationService:
         manifest["language_policies"] = initialize_policies(store, self._runtime.config)
         digests = None
         if self._runtime.config.pipeline.book_understanding:
-            digests = self._ensure_chapter_digests(store, doc.chapters, progress)
+            digests = self._understanding.ensure_chapter_digests(store, doc.chapters, progress)
         if progress:
             progress(0, 0, "Analyzing book style…")
         analysis = self._analyze_document(store, doc, digests, source_hash)
@@ -323,7 +295,7 @@ class PreparationService:
             store.write_artifact(key, analysis)
             return analysis
         finally:
-            self._runtime.flush_usage(store, scope="analysis")
+            self._runtime.usage.flush(store, scope="analysis")
 
     def activate(self, store: Storage, *, phase: Phase | None = None) -> dict[str, Any]:
         """Restore manifest languages, propagate them to all agents and return the manifest."""
@@ -341,7 +313,7 @@ class PreparationService:
         chapters = [store.load_chapter(row["index"]) for row in manifest["chapters"]]
         digests = None
         if self._runtime.config.pipeline.book_understanding:
-            digests = self._ensure_chapter_digests(store, chapters, None)
+            digests = self._understanding.ensure_chapter_digests(store, chapters, None)
         # Assemble only the source samples; formal chapters are never rewritten here.
         document = Document(
             title=manifest.get("title", ""),
@@ -421,193 +393,5 @@ class PreparationService:
         store: Storage,
         progress: ProgressFn | None = None,
     ) -> str:
-        """Prescan source chapters into chapter.meta digests and an analysis synopsis.
-        Require digests for nonempty chapters and reuse verified synopsis caches on resume.
-        Return empty when book understanding is disabled or optional synopsis synthesis fails.
-        """
-        if not self._runtime.config.pipeline.book_understanding:
-            store.log_event("book_understanding_skipped", reason="disabled")
-            return ""
-        manifest = store.load_manifest()
-        chapters = manifest.get("chapters", [])
-
-        loaded = [store.load_chapter(row.get("index", i)) for i, row in enumerate(chapters)]
-        digests = self._ensure_chapter_digests(store, loaded, progress)
-        if not digests:
-            return ""
-
-        analysis = store.load_analysis() or {}
-        terms = sorted(store.all_terms(), key=lambda term: term.source)
-        style = self._runtime.analyzer.style_brief(analysis, terms=terms)
-        inputs = {
-            "language_policy": self._runtime.config.language_policy("analysis").task_fingerprint(
-                "book_synopsis"
-            ),
-            "chapters": [
-                [chapter.index, chapter.meta["source_digest"]]
-                for chapter in loaded
-                if chapter.text_segments
-            ],
-            "style": style,
-            "source_lang": self._runtime.config.source_lang,
-            "target_lang": self._runtime.config.target_lang,
-            "glossary": [
-                [term.source, term.target, term.type, term.gender, term.note] for term in terms
-            ],
-            "routing": self._runtime.config.llm.model_dump(mode="json"),
-        }
-        fingerprint = hashlib.sha256(
-            json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        metadata = {"version": 2, "inputs_sha256": fingerprint}
-        synopsis = analysis.get("book_synopsis", "")
-        if (
-            isinstance(synopsis, str)
-            and synopsis.strip()
-            and analysis.get("book_synopsis_meta") == metadata
-        ):
-            return synopsis
-        if progress:
-            progress(0, 0, "Generating whole-book synopsis…")
-        synopsis = self._runtime.synopsizer.book_synopsis(digests, style, glossary=terms)
-        if synopsis:
-            analysis["book_synopsis"] = synopsis
-            analysis["book_synopsis_meta"] = metadata
-            store.save_analysis(analysis)
-            store.log_event("book_synopsis_saved", synopsis=synopsis)
-        else:
-            store.log_event("book_synopsis_failed", reason="generation_failed")
-            _LOGGER.warning(
-                "Whole-book synopsis generation failed; translation continues with chapter digests. "
-                "The synopsis will be retried on the next prepare/translate run."
-            )
-        return synopsis
-
-    def _ensure_chapter_digests(
-        self,
-        store: Storage,
-        chapters: list[Chapter],
-        progress: ProgressFn | None,
-    ) -> list[str]:
-        """Checkpoint all incurred requests even when prescan cannot finish."""
-        try:
-            return self._build_chapter_digests(store, chapters, progress)
-        finally:
-            self._runtime.flush_usage(store, scope="prescan")
-
-    def _build_chapter_digests(
-        self,
-        store: Storage,
-        chapters: list[Chapter],
-        progress: ProgressFn | None,
-    ) -> list[str]:
-        """Prescan staged or initialized chapters and return digests in source order."""
-        # Digest chapters independently in a thread pool, but persist all results on the main thread
-        # to avoid competing atomic writes and preserve incremental chapter-level resume. Skip saved digests.
-        loaded = {chapter.index: chapter for chapter in chapters}
-        sources = {
-            ci: "\n".join(s.source for s in ch.text_segments)
-            for ci, ch in loaded.items()
-            if ch.text_segments
-        }
-        fingerprint = content_hash(
-            [
-                self._runtime.config.language_policy("analysis").task_fingerprint("chapter_digest"),
-                self._runtime.config.llm.model_dump(mode="json"),
-            ]
-        )
-        source_hashes = {
-            ci: hashlib.sha256(source.encode("utf-8")).hexdigest() for ci, source in sources.items()
-        }
-        cache_keys = {}
-        for ci in sources:
-            cache_keys[ci] = (
-                "preparation/digests/"
-                + content_hash(
-                    [
-                        _DIGEST_VERSION,
-                        source_hashes[ci],
-                        fingerprint,
-                        self._runtime.config.llm.model_dump(mode="json"),
-                    ]
-                )
-                + ".json"
-            )
-            saved = store.read_artifact(cache_keys[ci])
-            if (
-                (
-                    not _digest_complete(loaded[ci])
-                    or loaded[ci].meta.get("source_digest_policy") != fingerprint
-                    or loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
-                )
-                and isinstance(saved, dict)
-                and isinstance(saved.get("digest"), str)
-                and saved["digest"]
-            ):
-                loaded[ci].meta.update(
-                    source_digest=saved["digest"],
-                    source_digest_complete=True,
-                    source_digest_policy=fingerprint,
-                    source_digest_version=_DIGEST_VERSION,
-                    source_digest_sha256=source_hashes[ci],
-                )
-                store.save_chapter(loaded[ci])
-        todo = [
-            (ci, source)
-            for ci, source in sources.items()
-            if not _digest_complete(loaded[ci])
-            or loaded[ci].meta.get("source_digest_policy") != fingerprint
-            or loaded[ci].meta.get("source_digest_sha256") != source_hashes[ci]
-        ]
-        failed: list[int] = []
-        error: Exception | None = None
-        if todo:
-            store.log_event(
-                "book_understanding_chapter_digest_started",
-                chapters=[ci for ci, _ in todo],
-                workers=max(1, self._runtime.config.pipeline.prescan_concurrency),
-            )
-            workers = max(1, self._runtime.config.pipeline.prescan_concurrency)
-            if progress:
-                progress(0, len(todo), "Prescanning chapter digests")
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs = {
-                    ex.submit(self._runtime.synopsizer.digest_chapter, src): ci for ci, src in todo
-                }
-                for n_done, fut in enumerate(as_completed(futs), 1):
-                    ci = futs[fut]
-                    try:
-                        digest = fut.result().strip()
-                    except Exception as exc:
-                        # Drain submitted work and save other successful chapters before
-                        # propagating the original provider/cancellation failure.
-                        error = error or exc
-                        digest = ""
-                    if digest:
-                        loaded[ci].meta["source_digest"] = digest
-                        loaded[ci].meta["source_digest_complete"] = True
-                        loaded[ci].meta["source_digest_policy"] = fingerprint
-                        loaded[ci].meta["source_digest_version"] = _DIGEST_VERSION
-                        loaded[ci].meta["source_digest_sha256"] = source_hashes[ci]
-                        store.write_artifact(cache_keys[ci], {"digest": digest})
-                        store.save_chapter(loaded[ci])
-                        store.log_event(
-                            "book_understanding_chapter_digest_saved", chapter=ci, digest=digest
-                        )
-                    else:
-                        failed.append(ci)
-                        store.log_event("book_understanding_chapter_digest_failed", chapter=ci)
-                    if progress:
-                        progress(n_done, len(todo), "Prescanning chapter digests")
-
-        if error is not None:
-            raise error
-        if failed:
-            indices = ", ".join(str(ci) for ci in sorted(failed))
-            raise ValueError(
-                f"Chapter digests could not be generated for chapters: {indices}. "
-                "Retry prepare/translate; completed digests have been saved."
-            )
-
-        # Assemble in manifest chapter order, independent of worker completion order.
-        return [loaded[ci].meta["source_digest"] for ci in sources]
+        """Coordinate understanding after initialization; the service owns its checkpoints."""
+        return self._understanding.ensure_understanding(store, progress)

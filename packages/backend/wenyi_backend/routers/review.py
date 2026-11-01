@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import re
+from contextlib import closing
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from ..job_service import start_job
-from ..project_service import (
-    project_write,
-    read_storage_for,
-    require_book,
-    require_project,
-    storage_for,
-)
+from ..project_service import require_book
 from ..review_presentation import review_items
 from ..schemas import (
     ChapterSegments,
@@ -25,6 +19,7 @@ from ..schemas import (
     SegmentRevision,
 )
 from .chapters import chapter_payload
+from .dependencies import project_write, read_storage_for, require_project, start_job, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/review", tags=["review"])
 
@@ -55,32 +50,31 @@ def _review_run(storage, rid: str) -> dict:
 @router.post("/run", response_model=JobEnqueued)
 async def run_ai_review(pid: str, body: ReviewRunRequest | None = None) -> dict:
     require_book(require_project(pid))
-    storage = storage_for(pid)
-    if not storage.exists():
-        raise HTTPException(409, "Prepare and translate the book before review")
-    manifest = storage.load_manifest()
-    if not manifest.get("chapters") or storage.pending_chapters():
-        raise HTTPException(409, "Complete every chapter translation before whole-book review")
+    with closing(storage_for(pid)) as storage:
+        if not storage.exists():
+            raise HTTPException(409, "Prepare and translate the book before review")
+        manifest = storage.load_manifest()
+        if not manifest.get("chapters") or storage.pending_chapters():
+            raise HTTPException(409, "Complete every chapter translation before whole-book review")
     return await start_job(pid, "review", params={"autofix": body.autofix if body else None})
 
 
 @router.get("/runs", response_model=list[ReviewRun])
 def list_runs(pid: str) -> list[dict]:
     require_book(require_project(pid))
-    storage = storage_for(pid)
-    ids = {
-        key.split("/")[1]
-        for key in storage.list_artifacts("reviews/")
-        if re.fullmatch(r"reviews/review-[A-Za-z0-9_-]+/result\.json", key)
-    }
-    return [_review_run(storage, rid) for rid in sorted(ids, reverse=True)]
+    with closing(storage_for(pid)) as storage:
+        ids = {
+            key.split("/")[1]
+            for key in storage.list_artifacts("reviews/")
+            if re.fullmatch(r"reviews/review-[A-Za-z0-9_-]+/result\.json", key)
+        }
+        return [_review_run(storage, rid) for rid in sorted(ids, reverse=True)]
 
 
 @router.get("/runs/{rid}", response_model=ReviewRun)
 def get_run(pid: str, rid: str) -> dict:
     require_book(require_project(pid))
-    storage = storage_for(pid)
-    with storage.state_lock():
+    with closing(storage_for(pid)) as storage, storage.state_lock():
         run = _review_run(storage, rid)
         run["items"] = review_items(storage, rid, run["result"], run["autofix"])
     return run

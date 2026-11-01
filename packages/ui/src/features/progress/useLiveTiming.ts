@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useForeground } from "@/lib/runtime";
+import { useForeground } from "../../lib/runtime";
 import { amount, record, type Stats } from "./accountingData";
 
 export function useLiveTiming(value: Stats | undefined, running: boolean) {

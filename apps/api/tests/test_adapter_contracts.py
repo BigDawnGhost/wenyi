@@ -16,13 +16,12 @@ from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
 
-def test_repository_contract_retains_dynamic_dal_lookup(monkeypatch):
+def test_repository_exposes_only_explicit_typed_operations(monkeypatch):
     repository: Repository = PostgresRepository(Settings())
-    first, second = {"id": "first"}, {"id": "second"}
-    monkeypatch.setattr(dal, "get_project", lambda pid: first)
-    assert repository.get_project("project") is first
-    monkeypatch.setattr(dal, "get_project", lambda pid: second)
-    assert repository.get_project("project") is second
+    assert repository.get_project is dal.get_project
+    monkeypatch.setattr(dal, "accidental_export", lambda: None, raising=False)
+    assert not hasattr(repository, "accidental_export")
+    assert not hasattr(repository, "__getattr__")
     assert postgres_repository(current_context()) is current_context().repository
 
 
@@ -58,7 +57,7 @@ def test_progress_snapshot_reads_a_synchronous_redis_value(monkeypatch, raw, exp
     def connect():
         yield Cache()
 
-    telemetry = RedisTelemetry("redis://fixture/0")
+    telemetry = RedisTelemetry("redis://fixture/0", current_context().repository)
     monkeypatch.setattr(telemetry, "connect", connect)
     assert telemetry.progress_snapshot("project") == expected
     assert keys == ["project:project:progress"]

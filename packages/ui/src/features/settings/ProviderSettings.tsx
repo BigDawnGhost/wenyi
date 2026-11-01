@@ -3,12 +3,12 @@ import { Plus, Trash2 } from "lucide-react";
 import { RegistryIdField } from "./RegistryIdField";
 import { registryReferences, type RegistryGroup } from "./registryEdits";
 import { SettingsGroupHeader } from "./SettingsSection";
-import { useI18n } from "@/i18n";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { platform } from "@/platform";
-import { LazyBoundary } from "@/routes/LazyBoundary";
+import { useI18n } from "../../i18n";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { Button } from "../../components/ui/button";
+import { platform } from "../../platform";
+import { LazyBoundary } from "../../routes/LazyBoundary";
 import { ModelConnectivity } from "./ModelConnectivity";
 import { ModelNameField } from "./ModelNameField";
 

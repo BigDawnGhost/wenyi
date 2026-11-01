@@ -5,8 +5,8 @@ import json
 import pytest
 from desktop_test_support import wait_job
 from tests.precision_fixtures import PrecisionHandler
-from wenyi_backend import dal
 from wenyi_backend.config_documents import config_document
+from wenyi_backend.context import current_context
 from wenyi_core.config import Config
 from wenyi_core.pipeline.language_policies import CHECKPOINT
 from wenyi_core.pipeline.precision_records import load_precision_call
@@ -50,7 +50,7 @@ def test_precision_structural_retry_finishes_without_manual_resume(desktop, stag
     assert created.status_code == 201, created.text
     pid = created.json()["id"]
     root = f"/projects/{pid}"
-    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
     configured = client.put(
         root + "/config",
         json={"yaml": "pipeline: {review: false, book_understanding: false, align_retry_limit: 2}"},
@@ -122,7 +122,7 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):
     assert created.status_code == 201, created.text
     pid = created.json()["id"]
     root = f"/projects/{pid}"
-    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
     configured = client.put(
         root + "/config",
         json={"yaml": "pipeline: {review: false, book_understanding: false}"},
@@ -226,7 +226,7 @@ def test_precision_keeps_protected_source_when_model_changes_spacing(desktop):
     assert created.status_code == 201, created.text
     pid = created.json()["id"]
     root = f"/projects/{pid}"
-    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
     configured = client.put(
         root + "/config",
         json={"yaml": "pipeline: {review: false, book_understanding: false}"},

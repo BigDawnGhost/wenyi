@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Copy, History, Pencil } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { useI18n } from "@/i18n";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
 import { copyText } from "./clipboard";
 
 export interface ParagraphMenuAnchor {

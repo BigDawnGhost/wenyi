@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../../../packages/ui/tests/e2e/fixtures";
 
 const origin = "http://127.0.0.1:19481";
 
