@@ -5,10 +5,10 @@ from __future__ import annotations
 import csv
 import io
 from contextlib import closing
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
+from wenyi_core.glossary.anki import export_anki_glossary
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.metadata import normalize_term_type
 
@@ -16,6 +16,7 @@ from ..context import current_context
 from ..project_service import require_book
 from ..schemas import (
     ConflictOut,
+    GlossaryExportFormat,
     GlossaryImport,
     Message,
     ResolveConflict,
@@ -158,10 +159,23 @@ def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
 
 
 @router.get("/export")
-def export_glossary(pid: str, format: Literal["json", "csv"] = "json"):
-    require_book(require_project(pid))
+def export_glossary(pid: str, format: GlossaryExportFormat = "json"):
+    project = require_project(pid)
+    require_book(project)
     with closing(storage_for(pid)) as storage:
         terms = storage.all_terms()
+    if format == "apkg":
+        return Response(
+            export_anki_glossary(
+                terms,
+                project_id=pid,
+                title=project.get("book_title") or project["name"],
+                source_lang=project.get("source_lang") or "auto",
+                target_lang=project.get("target_lang") or "zh",
+            ),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename=glossary-{pid}.apkg"},
+        )
     if format == "csv":
         buffer = io.StringIO()
         writer = csv.writer(buffer)

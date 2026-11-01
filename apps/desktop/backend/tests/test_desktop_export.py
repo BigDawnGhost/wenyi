@@ -68,7 +68,7 @@ def test_plan_is_side_effect_free_and_matches_export_filename(desktop_exports, f
     assert (backend.list_exports(pid), backend.all_jobs()) == before
 
 
-@pytest.mark.parametrize("fmt", ["csv", "json"])
+@pytest.mark.parametrize("fmt", ["csv", "json", "apkg"])
 def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports, fmt):
     client, backend, pid = desktop_exports
     terms = [
@@ -96,6 +96,11 @@ def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports,
     assert content.status_code == 200, content.text
     assert plan["filename"] in content.headers["content-disposition"]
     assert int(content.headers["content-length"]) == len(content.content)
+    if fmt == "apkg":
+        with zipfile.ZipFile(io.BytesIO(content.content)) as archive:
+            assert set(archive.namelist()) == {"collection.anki2", "media"}
+        assert (backend.list_exports(pid), backend.all_jobs()) == before
+        return
     rows = content.json() if fmt == "json" else list(csv.DictReader(io.StringIO(content.text)))
     by_source = {row["source"]: row for row in rows}
     assert set(by_source) == {term.source for term in terms}

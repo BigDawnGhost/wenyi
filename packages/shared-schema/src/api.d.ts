@@ -3256,7 +3256,7 @@ export interface operations {
     export_glossary_projects__pid__glossary_export_get: {
         parameters: {
             query?: {
-                format?: "json" | "csv";
+                format?: "json" | "csv" | "apkg";
             };
             header?: never;
             path: {

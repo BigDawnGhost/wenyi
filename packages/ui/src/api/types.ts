@@ -15,6 +15,9 @@ export type SegmentRevision = Output<"SegmentRevision">;
 export type PrecisionDrafts = Output<"PrecisionDraftsOut">;
 export type Term = Output<"TermOut">;
 export type TermPage = Omit<Output<"TermPage">, "items"> & { items: Term[] };
+export type GlossaryExportFormat = NonNullable<
+  NonNullable<paths["/projects/{pid}/glossary/export"]["get"]["parameters"]["query"]>["format"]
+>;
 export type Conflict = Output<"ConflictOut">;
 export type StrategyTemplate = Output<"StrategyTemplateOut">;
 export type ExportFormat = NonNullable<

@@ -184,6 +184,7 @@ const en = {
   "glossary.couldNotDeleteSelectedTerms": "Could not delete selected terms",
   "glossary.csvFile": "CSV file",
   "glossary.jsonFile": "JSON file",
+  "glossary.ankiDeck": "Anki deck (.apkg)",
   "glossary.import": "Import",
   "glossary.addTerm": "Add term",
   "glossary.searchSourceTermsTranslationsOrAliases":
