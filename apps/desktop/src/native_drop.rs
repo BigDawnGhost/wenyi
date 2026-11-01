@@ -312,9 +312,12 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         .send()
         .map_err(|_| "Local upload failed. Drop the source again to retry.")?;
     if !response.status().is_success() {
-        return Err(format!(
-            "Local upload failed (HTTP {}). Drop the source again to retry.",
-            response.status().as_u16()
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_upload_failed",
+            format!(
+                "Local upload failed (HTTP {}). Drop the source again to retry.",
+                response.status().as_u16()
+            ),
         ));
     }
     let mut bytes = Vec::new();
@@ -714,8 +717,8 @@ mod tests {
                 serde_json::json!({}),
             )
             .unwrap_err();
-            assert!(error.contains(&status[..3]));
-            assert!(!error.contains("private"));
+            assert!(error.message.contains(&status[..3]));
+            assert!(!error.message.contains("private"));
             server.join().unwrap();
             assert_eq!(
                 forbidden.accept().unwrap_err().kind(),
@@ -801,8 +804,8 @@ mod tests {
                 &saves,
             )
             .unwrap_err();
-            assert!(error.contains("limit reached"));
-            assert!(error.contains("No upload was started"));
+            assert!(error.message.contains("limit reached"));
+            assert!(error.message.contains("No upload was started"));
             assert_eq!(
                 listener.accept().unwrap_err().kind(),
                 io::ErrorKind::WouldBlock

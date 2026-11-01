@@ -293,7 +293,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
         } else {
             tauri::async_runtime::spawn_blocking(manual_check)
                 .await
-                .unwrap_or_else(|| {
+                .unwrap_or_else(|_| {
                     Err(IpcError::new(
                         "update_check_failed",
                         "Could not check for updates.",
@@ -559,7 +559,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
         result
     })
     .await;
-    result.unwrap_or_else(|| {
+    result.unwrap_or_else(|_| {
         Err(IpcError::new(
             "update_install_failed",
             "The update could not be installed.",

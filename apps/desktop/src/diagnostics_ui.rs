@@ -168,7 +168,13 @@ fn save(app: &tauri::AppHandle, range: Range) -> Result<Option<Saved>, crate::ip
     let result = crate::native_export::save_diagnostics(
         &app.state::<Saves>(),
         &roots,
-        || diagnostics.bundle(range, || control.cancel.load(Ordering::SeqCst)),
+        || {
+            diagnostics
+                .bundle(range, || control.cancel.load(Ordering::SeqCst))
+                .map_err(|message| {
+                    crate::ipc_error::IpcError::new("diagnostics_collection_failed", message)
+                })
+        },
         || control.cancel.load(Ordering::SeqCst),
     );
     match &result {
@@ -192,7 +198,12 @@ pub async fn desktop_diagnostics_export(
     let app = window.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || save(&app, range))
         .await
-        .map_err(|_| "Diagnostic export stopped unexpectedly.".to_string())?
+        .map_err(|_| {
+            crate::ipc_error::IpcError::new(
+                "diagnostics_interrupted",
+                "Diagnostic export stopped unexpectedly.",
+            )
+        })?
 }
 
 pub fn export_from_menu(app: &tauri::AppHandle) {
@@ -206,7 +217,7 @@ pub fn export_from_menu(app: &tauri::AppHandle) {
         Err(error) => {
             rfd::MessageDialog::new()
                 .set_title("Wenyi diagnostics")
-                .set_description(error)
+                .set_description(error.message)
                 .set_level(rfd::MessageLevel::Error)
                 .show();
         }
@@ -221,7 +232,9 @@ pub fn startup_failure(diagnostics: &Diagnostics) {
         .set_buttons(rfd::MessageButtons::YesNo).show() == rfd::MessageDialogResult::Yes {
         let roots = diagnostics.status().directory.into_iter().map(PathBuf::from).collect::<Vec<_>>();
         if crate::native_export::save_diagnostics(&Saves::default(), &roots,
-            || diagnostics.bundle(Range::Day, || false), || false).is_err() {
+            || diagnostics.bundle(Range::Day, || false).map_err(|message| {
+                crate::ipc_error::IpcError::new("diagnostics_collection_failed", message)
+            }), || false).is_err() {
             rfd::MessageDialog::new().set_title("Wenyi Desktop")
                 .set_description("Could not save the diagnostic report. Check destination permissions and free space.")
                 .set_level(rfd::MessageLevel::Error).show();

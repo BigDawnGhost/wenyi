@@ -1624,8 +1624,8 @@ mod tests {
             )
             .err()
             .unwrap();
-            assert!(error.contains("may have succeeded"));
-            assert!(error.contains("Check export history"));
+            assert!(error.message.contains("may have succeeded"));
+            assert!(error.message.contains("Check export history"));
             assert_eq!(task.join().unwrap().len(), 2);
             assert_eq!(std::fs::read(path).unwrap(), b"old");
         }
@@ -1672,9 +1672,9 @@ mod tests {
             )
             .err()
             .unwrap();
-            assert!(error.contains("Export ID 7"));
-            assert!(error.contains("Save as"));
-            assert!(error.contains("Generate creates a new snapshot"));
+            assert!(error.message.contains("Export ID 7"));
+            assert!(error.message.contains("Save as"));
+            assert!(error.message.contains("Generate creates a new snapshot"));
             let requests = task.join().unwrap();
             assert_eq!(
                 requests
@@ -2114,7 +2114,7 @@ mod tests {
             } else {
                 b.unwrap_err()
             };
-            assert!(error.contains("destination changed"));
+            assert!(error.message.contains("destination changed"));
             fixture.clean();
         }
     }
