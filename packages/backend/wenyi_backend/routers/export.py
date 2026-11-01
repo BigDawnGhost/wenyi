@@ -6,9 +6,11 @@ import mimetypes
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..context import current_context
+from ..errors import EXPORT_NOT_FOUND, QUEUE_UNAVAILABLE, SOURCE_NOT_READY, ApiError
 from ..export_plan import resolve_export
 from ..export_response import ExportResponse
 from ..project_service import config_document, effective_config, require_project, storage_for
@@ -27,7 +29,7 @@ def list_exports(pid: str) -> list[dict]:
 async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export") -> dict:
     project = require_project(pid)
     if not project.get("initialized"):
-        raise HTTPException(409, "Prepare or translate the source before exporting")
+        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
     store = storage_for(pid)
     try:
         fmt, options = resolve_export(project, store.load_manifest(), body)
@@ -38,10 +40,14 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
     exports = current_context().exports
     try:
         export_id, job_id = exports.admit_export(pid, fmt, options, run_id, snapshot)
-    except HTTPException:
+    except (ApiError, StarletteHTTPException):
+        # admit_export already carries a code; re-raise it untouched instead of
+        # letting the generic handler relabel it as a queue failure.
         raise
     except Exception as error:
-        raise HTTPException(503, "Export queue is unavailable; retry the operation") from error
+        raise ApiError(
+            QUEUE_UNAVAILABLE, 503, "Export queue is unavailable; retry the operation"
+        ) from error
     try:
         job = await enqueue(
             "run_export",
@@ -56,7 +62,9 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
             raise RuntimeError("The queue did not accept this export")
     except Exception as error:
         exports.fail_export_admission(job_id, str(error))
-        raise HTTPException(503, "Export queue is unavailable; retry the operation") from error
+        raise ApiError(
+            QUEUE_UNAVAILABLE, 503, "Export queue is unavailable; retry the operation"
+        ) from error
     return {"job_id": run_id, "project_id": pid, "kind": kind, "export_id": export_id}
 
 
@@ -71,7 +79,7 @@ def download_export(pid: str, export_id: int):
     try:
         stream, file = current_context().exports.open_export(pid, export_id)
     except FileNotFoundError as error:
-        raise HTTPException(404, "Completed export not found") from error
+        raise ApiError(EXPORT_NOT_FOUND, 404, "Completed export not found") from error
 
     return ExportResponse(
         stream,

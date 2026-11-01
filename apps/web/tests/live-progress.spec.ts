@@ -310,6 +310,13 @@ test("an error event from the worker keeps the last stage readable", async ({
   await page.route(`**/api/projects/${pid}`, (route) =>
     route.fulfill({ json: { ...project, status: "translating" } }),
   );
+  // Pin the workflow to a running state with no persisted progress, so the
+  // stage text can only come from the socket events this test sends.
+  await page.route(`**/api/projects/${pid}/workflow`, (route) =>
+    route.fulfill({
+      json: { ...workflow, status: "running", run_id: "run-a", progress: null },
+    }),
+  );
   await page.routeWebSocket("**/ws/projects/*/progress", (ws) => {
     socket = ws;
   });
@@ -325,10 +332,7 @@ test("an error event from the worker keeps the last stage readable", async ({
       total: 12,
     }),
   );
-  await page.clock.runFor(500);
   await expect(page.getByRole("status")).toContainText("Batch saved");
-  // The worker publishes this shape when a run fails (task T-14). It carries no
-  // stage label, so the previous one must stay instead of resetting to waiting.
   socket!.send(
     JSON.stringify({
       kind: "error",
@@ -338,12 +342,10 @@ test("an error event from the worker keeps the last stage readable", async ({
       message: "Provider connection failed",
     }),
   );
-  await page.clock.runFor(500);
   await expect(page.getByRole("status")).toContainText("Batch saved");
   await expect(page.getByRole("status")).not.toContainText(
     "Waiting for progress updates",
   );
-  // A later progress event still renders after the failure did.
   socket!.send(
     JSON.stringify({
       kind: "translation",
@@ -354,6 +356,5 @@ test("an error event from the worker keeps the last stage readable", async ({
       total: 12,
     }),
   );
-  await page.clock.runFor(500);
   await expect(page.getByRole("status")).toContainText("Recovered after error");
 });
