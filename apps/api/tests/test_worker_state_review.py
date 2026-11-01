@@ -102,7 +102,12 @@ def test_model_failures_still_record_an_error(worker_state, monkeypatch):
     assert must(dal.get_project(pid))["status"] == "error"
     assert must(dal.get_project(pid))["error"] == "Provider connection failed"
     assert must(dal.get_job(job_id))["error"] == "Provider connection failed"
-    assert any(event["event"] == "pipeline_error" for event in worker_state.list_events())
+    failure = next(
+        event for event in worker_state.list_events() if event["event"] == "pipeline_error"
+    )
+    assert failure["error"] == "Provider connection failed"
+    assert failure["error_type"] == "RuntimeError"
+    assert "RuntimeError: Provider connection failed" in failure["traceback"]
 
 
 def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, monkeypatch):
