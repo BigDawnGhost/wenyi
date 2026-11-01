@@ -148,6 +148,7 @@ llm:
 | `opencode-go` | OpenCode Go 网关（`https://opencode.ai/zen/go/v1`）；`OPENCODE_API_KEY`。会发送 `User-Agent: wenyi` 与连接级稳定的 `x-opencode-session`。无内置 preset，需自行配置模型 | `thinking`、`reasoning_effort`、`extra_body` |
 | `gemini` | 原生 Gemini API；未指定自定义变量时，从 `GEMINI_API_KEY` 回退到 `GOOGLE_API_KEY` | `thinking_level` 或 `thinking_budget`、`temperature`、`extra_body` |
 | `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
+| `atlascloud` | `https://api.atlascloud.ai/v1`；`ATLASCLOUD_API_KEY`；`reasoning_style`。会输出思维链的模型把它放在 `reasoning_content` 里，这类模型用 `reasoning_style: deepseek`；其余保持默认 `none` | 同 `openai-compatible` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`；`ORCAROUTER_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
 | `ollama`、`vllm` | `http://localhost:11434/v1`、`http://localhost:8000/v1`；可选密钥；`reasoning_style` | 同 `openai-compatible` |
 | `fake` | 无网络、无需密钥 | 无提供商选项 |
