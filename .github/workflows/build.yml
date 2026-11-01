@@ -22,43 +22,34 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request only needs one packaging signal; a release or a manual
+  # dispatch still builds every platform, so a per-platform break is caught
+  # before publishing rather than on every pull request.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        # The value must be a single line: a multi-line $GITHUB_OUTPUT entry is
+        # rejected by the runner as an invalid output format.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            matrix='[{"name":"Linux x64","runner":"ubuntu-latest","python_arch":"x64","platform":"linux-x64","binary":"./dist/wenyi","expected_arch":"x86-64"}]'
+          else
+            matrix='[{"name":"Windows x64","runner":"windows-latest","python_arch":"x64","platform":"windows-x64","binary":"./dist/wenyi.exe","expected_machine":"8664"},{"name":"Linux x64","runner":"ubuntu-latest","python_arch":"x64","platform":"linux-x64","binary":"./dist/wenyi","expected_arch":"x86-64"},{"name":"Linux ARM64","runner":"ubuntu-24.04-arm","python_arch":"arm64","platform":"linux-arm64","binary":"./dist/wenyi","expected_arch":"aarch64"},{"name":"macOS Apple Silicon","runner":"macos-15","python_arch":"arm64","platform":"macos-arm64","binary":"./dist/wenyi","expected_arch":"arm64"},{"name":"macOS Intel","runner":"macos-15-intel","python_arch":"x64","platform":"macos-x64","binary":"./dist/wenyi","expected_arch":"x86_64"}]'
+          fi
+          echo "matrix={\"include\":${matrix}}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     name: CLI · ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Windows x64
-            runner: windows-latest
-            python_arch: x64
-            platform: windows-x64
-            binary: ./dist/wenyi.exe
-            expected_machine: "8664"
-          - name: Linux x64
-            runner: ubuntu-latest
-            python_arch: x64
-            platform: linux-x64
-            binary: ./dist/wenyi
-            expected_arch: x86-64
-          - name: Linux ARM64
-            runner: ubuntu-24.04-arm
-            python_arch: arm64
-            platform: linux-arm64
-            binary: ./dist/wenyi
-            expected_arch: aarch64
-          - name: macOS Apple Silicon
-            runner: macos-15
-            python_arch: arm64
-            platform: macos-arm64
-            binary: ./dist/wenyi
-            expected_arch: arm64
-          - name: macOS Intel
-            runner: macos-15-intel
-            python_arch: x64
-            platform: macos-x64
-            binary: ./dist/wenyi
-            expected_arch: x86_64
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -168,6 +159,7 @@ jobs:
     if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
 

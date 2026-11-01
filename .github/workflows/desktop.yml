@@ -34,35 +34,45 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request needs feedback on Linux plus a Windows smoke check; only a
+  # release or a manual dispatch pays for every platform and the packaging run.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        # The value must be a single line: a multi-line $GITHUB_OUTPUT entry is
+        # rejected by the runner as an invalid output format.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            matrix='[{"os":"ubuntu-22.04","platform":"linux-x64","tier":"full","bundles":"appimage,deb,rpm"},{"os":"windows-latest","platform":"windows-x64","tier":"smoke","bundles":"nsis"}]'
+          else
+            matrix='[{"os":"ubuntu-22.04","platform":"linux-x64","tier":"full","bundles":"appimage,deb,rpm"},{"os":"windows-latest","platform":"windows-x64","tier":"full","bundles":"nsis"},{"os":"macos-15","platform":"macos-arm64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"},{"os":"macos-15-intel","platform":"macos-x64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"}]'
+          fi
+          echo "matrix={\"include\":${matrix}}" >> "$GITHUB_OUTPUT"
+
   local-package:
+    needs: plan
     name: Desktop · ${{ matrix.platform }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux-x64
-            bundles: appimage,deb,rpm
-          - os: windows-latest
-            platform: windows-x64
-            bundles: nsis
-          - os: macos-15
-            platform: macos-arm64
-            bundles: dmg
-            signed_bundles: dmg,app
-          - os: macos-15-intel
-            platform: macos-x64
-            bundles: dmg
-            signed_bundles: dmg,app
+      # The plan job decides which platforms this event actually needs, so a
+      # pull request stops paying for two macOS builds and a full packaging run.
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - name: Resolve Git version
         id: version
         shell: bash
@@ -91,13 +101,19 @@ jobs:
           else
             echo "signed=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+      # pnpm/action-setup must run first: setup-node resolves the pnpm binary
+      # when caching is enabled, so the reverse order fails on a clean runner.
       - uses: pnpm/action-setup@v4
         with:
           version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop -> target
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf xvfb
       # Packaging tests need the root dev group and CLI console fixtures.
@@ -125,16 +141,19 @@ jobs:
         run: >
           xvfb-run -a cargo test --locked --manifest-path apps/desktop/Cargo.toml
           gtk_menu_stays_hidden_after_repeated_window_remaps -- --ignored
-      - run: pnpm desktop:build --bundles ${{ steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles }}
+      - name: Build installers
+        if: matrix.tier == 'full'
+        run: pnpm desktop:build --bundles ${{ steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles }}
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
           WENYI_UPDATER_PUBLIC_KEY: ${{ steps.updater.outputs.signed == 'true' && vars.WENYI_UPDATER_PUBLIC_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
       - name: Verify native Windows GUI subsystem
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.tier == 'full'
         run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
       - name: Verify native application version
+        if: matrix.tier == 'full'
         shell: bash
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
@@ -144,13 +163,14 @@ jobs:
           actual="$("$binary" --version)"
           test "$actual" = "Wenyi Desktop $EXPECTED_VERSION"
       - name: Collect standalone installers (no extra ZIP)
+        if: matrix.tier == 'full'
         run: >
           uv run --no-project python scripts/package_release.py desktop
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
           --source apps/desktop/target/release/bundle
       - name: Collect signed updater payload and signature
-        if: steps.updater.outputs.signed == 'true'
+        if: steps.updater.outputs.signed == 'true' && matrix.tier == 'full'
         env:
           WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
         run: >
@@ -159,6 +179,7 @@ jobs:
           --platform "${{ matrix.platform }}"
           --source apps/desktop/target/release/bundle
       - uses: actions/upload-artifact@v4
+        if: matrix.tier == 'full'
         with:
           name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: release-assets/*
@@ -170,6 +191,7 @@ jobs:
     if: github.event_name == 'release'
     needs: local-package
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -177,9 +199,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - name: Resolve release identity
         id: version
         env:

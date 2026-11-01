@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
+  // Retry once in CI only: a retried pass is reported as flaky, never as green.
+  retries: process.env.CI ? 1 : 0,
   projects: [
     {
       name: "web",
